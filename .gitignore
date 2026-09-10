@@ -1,0 +1,9 @@
+# local artefacts — the store is durable but machine-local; the workbook is disposable output
+metrics.db
+metrics.db-journal
+token_metrics.xlsx
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/_scratch/

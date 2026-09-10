@@ -1,0 +1,5 @@
+date,project,metric,value,source_note,entered_on
+# Columns: date (YYYY-MM-DD), project (exact name from config.py), metric (key from config.METRICS), value (number), source_note, entered_on (YYYY-MM-DD)
+# Loaded last on every run; overrides the fetched value for the matching (date, project, metric).
+# Cells fed by these rows render with a yellow fill and the entered_on date in a cell comment.
+# Lines beginning with # are ignored. Delete the example rows below once real data is entered.
