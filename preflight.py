@@ -389,9 +389,17 @@ def print_check(timeout: int) -> int:
     print("\nLocal prerequisites:")
 
     def probe_playwright():
+        """Launch exactly the way scrape.py does, including its executable_path fallback.
+
+        Probing with a bare chromium.launch() reports DOWN on an image where the browser sits at
+        an explicit path, which is a false alarm about a scraper that would actually work.
+        """
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
-            b = pw.chromium.launch(headless=True)
+            try:
+                b = pw.chromium.launch(headless=True)
+            except Exception:  # noqa: BLE001 — same fallback the adapter uses
+                b = pw.chromium.launch(headless=True, executable_path="/opt/pw-browsers/chromium")
             v = b.version
             b.close()
         return f"Chromium {v}"

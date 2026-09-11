@@ -158,6 +158,17 @@ TRON node API, six scraper domains, Playwright and LibreOffice, ending with
 `--check` exits non-zero if anything critical is down, so it works in a script:
 `python preflight.py --check && python token_metrics.py`.
 
+**Do not start the run when the check reports critical sources down.** Each failed call retries
+four times with exponential backoff (2s, 4s, 8s, 16s), so roughly 30 seconds per failing call.
+A run with no network takes *longer* than a successful one — well over ten minutes of grinding
+through retries to produce almost no data. Thirty seconds of `--check` saves that every time.
+
+To fail fast deliberately while debugging, set `TOKEN_METRICS_RETRIES=0`:
+
+```bash
+TOKEN_METRICS_RETRIES=0 python token_metrics.py
+```
+
 Run `python preflight.py` with no arguments first anyway. It tells you exactly which metrics
 will be attempted and which will not, so nothing in the output of step 8 is a surprise.
 
