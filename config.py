@@ -52,7 +52,9 @@ derived figure. Never estimate a split we have not documented.
 
 BRIEF_DATE = "2026-09-11"
 TODAY_VERIFIED = "2026-09-11"
-UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"   # date the parameters below were set from the working brief
+UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"
+# Pendle's own deployment file — the primary source for every Pendle mainnet address.
+PENDLE_DEPLOYMENTS_1_CORE = "https://raw.githubusercontent.com/pendle-finance/pendle-core-v2-public/main/deployments/1-core.json"   # date the parameters below were set from the working brief
 
 # =======================================================================================
 # Source tiers. Every stored value carries its tier; the workbook shows it.
@@ -194,6 +196,10 @@ CONTRACT_KINDS = {
     "ve_total_supply":      {"metric": "locked_tokens",        "call": "totalSupply", "scale": "decimals"},
     "buyback_fund_balance": {"metric": "buyback_fund_balance", "call": "balanceOf",   "scale": "decimals"},
 }
+
+# Some protocols publish their canonical addresses as a file in their own public repository, which
+# is a primary source and is usually easier to reach than their docs site. Pendle's
+# deployments/1-core.json is the worked example — see PENDLE_DEPLOYMENTS_1_CORE.
 
 # Public RPC endpoints. Fallback list per chain so one provider going down doesn't kill the run.
 # Override per chain in .env, e.g. RPC_ETHEREUM=https://...  (comma-separated for a custom list).
@@ -1199,28 +1205,33 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x808507121B80c02388fAd14726482e061B8da827", "ethereum", "erc20_total_supply", "PENDLE",
-                               "https://docs.pendle.finance/pendle-v2/Developers/Deployments",
-                               verified="2026-09-11", provenance="protocol docs", token_standard="erc20",
-                               purpose="PENDLE token."),
+                               PENDLE_DEPLOYMENTS_1_CORE,
+                               verified="2026-09-11", provenance="Pendle's own deployment file", token_standard="erc20",
+                               purpose="PENDLE token. Matches the 'PENDLE' key in Pendle's deployments/1-core.json."),
             # vePENDLE IS DEPRECATED and has been REMOVED as the lock-rate source. Pendle's own
             # tokenomics docs state the contract is winding down and users should migrate to sPENDLE.
             # A vePENDLE balance read would show a FALLING figure that reflects migration, not falling
             # lock-in — a false negative on the exact metric this tool exists to measure.
             "spendle": _contract(
-                None, "ethereum", "ve_total_supply", "sPENDLE",
-                "https://docs.pendle.finance/pendle-v2/Developers/Deployments",
+                "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "ve_total_supply", "sPENDLE",
+                PENDLE_DEPLOYMENTS_1_CORE,
+                verified="2026-09-11", provenance="Pendle's own deployment file",
                 read_method=None, token_standard=None, underlying="token",
                 purpose="sPENDLE — the CURRENT lock-rate source, replacing the deprecated vePENDLE.",
-                note="ADDRESS STILL NEEDS SOURCING from Pendle's own deployment files: /deployments/1-core.json "
-                     "in the Pendle contract repository (docs.pendle.finance/pendle-v2/Developers/Deployments). "
-                     "The read method is not established either. Nothing is read until both are set. The "
-                     "sources.yaml entry already points at the sPENDLE staking page and covers this meanwhile."),
+                note="ADDRESS RESOLVED from Pendle's own deployments/1-core.json, key 'sPendle'. The same file "
+                     "lists vePendle under a 'deprecated' block, independently confirming that vePENDLE is not "
+                     "the lock source. READ METHOD IS STILL NOT ESTABLISHED — it is unknown whether sPENDLE is a "
+                     "fungible ERC-20 (totalSupply is the staked amount) or an NFT-based position (totalSupply is "
+                     "a COUNT), so nothing is read yet. Confirm the expected symbol at the same time: the symbol "
+                     "check rejects a mismatch, which fails closed but would also block a correct address."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
         "materiality": "high",
-        "notes": "LOCK SOURCE MIGRATED: vePENDLE is deprecated and winding down per Pendle's own tokenomics docs, "
+        "notes": "LOCK SOURCE MIGRATED: vePENDLE is deprecated — Pendle's own deployments/1-core.json lists it "
+                 "under a 'deprecated' block, alongside feeDistributor, feeDistributorV2 and votingController, "
+                 "which independently confirms the tokenomics docs. "
                  "and users are moving to sPENDLE. A vePENDLE read would show a falling figure that reflects "
                  "MIGRATION rather than falling lock-in — a false negative on the metric this tool exists to "
                  "measure — so it has been removed rather than kept as a fallback. sPENDLE address still to be "
@@ -1507,13 +1518,15 @@ OPEN_QUESTIONS = [
                       "token contract is already confirmed.",
     },
     {
-        "project": "Pendle", "topic": "sPENDLE address and read method",
-        "reason": "vePENDLE has been REMOVED as the lock source: Pendle's own tokenomics docs state it is winding "
-                  "down and users should migrate to sPENDLE, so a vePENDLE read would show a falling figure that "
-                  "reflects migration rather than falling lock-in. sPENDLE has neither address nor read method yet.",
-        "suggestion": "Source the sPENDLE address from /deployments/1-core.json in the Pendle contract repository "
-                      "(docs.pendle.finance/pendle-v2/Developers/Deployments), establish the read method, then "
-                      "set both. The sPENDLE staking page covers the metric meanwhile.",
+        "project": "Pendle", "topic": "sPENDLE read method and expected symbol",
+        "reason": "ADDRESS RESOLVED: 0x999999999991E178D52Cd95AFd4b00d066664144, from the 'sPendle' key in "
+                  "Pendle's own deployments/1-core.json. The READ METHOD is still unestablished — it is not known "
+                  "whether sPENDLE is a fungible ERC-20 (totalSupply is the staked amount) or an NFT-based "
+                  "position (totalSupply is a COUNT, wrong by orders of magnitude), so nothing is read. The "
+                  "contract source could not be reached from this machine to settle it.",
+        "suggestion": "Check whether sPENDLE is ERC-20 or ERC-721, then set read_method to 'erc20_total_supply' "
+                      "or 'escrow_balance_of' and token_standard in config.py. Confirm the expected symbol at the "
+                      "same time. The sPENDLE staking page in sources.yaml covers the metric meanwhile.",
     },
     {
         "project": "PancakeSwap", "topic": "complete LayerZero OFT deployment list",
