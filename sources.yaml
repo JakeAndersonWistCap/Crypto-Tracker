@@ -679,7 +679,7 @@
   sanity_max: 2000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "DISABLED AND NOW SUPERSEDED: dune.com robots.txt disallows scraping, and this was always the wrong tier. It has been replaced by the tier 4 API route — query 8683038 is wired in config.py under Ether.fi dune_queries.locked_tokens (staked sETHFI, recorded as locked_tokens rather than staked_tokens) with perc_staked_cnt as lock_rate_pct. The query returns ONE undated row, so it is a current-state snapshot and builds history one run at a time. Do not re-enable this scrape: it would duplicate the API route and break robots.txt."
+  note: "DISABLED AND NOW SUPERSEDED: dune.com robots.txt disallows scraping, and this was always the wrong tier. It has been replaced by the tier 4 API route — query 8683038 is wired in config.py under Ether.fi dune_queries.locked_tokens (staked sETHFI, recorded as locked_tokens rather than staked_tokens) with perc_staked as lock_rate_pct. The query is a DAILY HISTORY, 794 rows dated by `day`, so it backfills the trajectory columns properly. Do not re-enable this scrape: it would duplicate the API route and break robots.txt."
 
 # ---- Aave: the two pages are NOT parallel. This was a correction, verified against Aave's docs.
 #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,

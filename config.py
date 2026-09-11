@@ -165,10 +165,14 @@ METRICS = {
     # Published lock rate, stored AS PUBLISHED. Deliberately not derived from locked_tokens /
     # supply: where a protocol publishes its own lock rate the published figure is the citable
     # one, and a derived percentage sitting next to it would invite the two being confused.
-    # The label carries its own caveat because the scale and the basis are not yet confirmed.
-    "lock_rate_pct":              {"label": "Lock rate, as published (scale and basis unconfirmed)",
+    # Stored as a FRACTION (0.17452 = 17.452%), the same convention as every other pct metric,
+    # and displayed with a 0.0% format. The upper bound is 1.0 and that is load-bearing: Dune
+    # 8683038 publishes the same measure twice, as perc_staked (0.17452) and perc_staked_cnt
+    # (17.452), and mapping the wrong one would put a plausible-looking figure 100x too large in
+    # the sheet. At this bound the x100 column is REJECTED to the Review Queue instead.
+    "lock_rate_pct":              {"label": "Lock rate (share staked, as published)",
                                    "kind": "stock", "unit": "pct", "archetypes": [3], "tiers": [3, 4],
-                                   "sanity_min": 0, "sanity_max": 100, "only_projects": ["Ether.fi"]},
+                                   "sanity_min": 0, "sanity_max": 1.0, "only_projects": ["Ether.fi"]},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
     #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
@@ -1484,18 +1488,19 @@ PROJECTS = [
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": {
-            # Mapped from the columns the query actually returned on the 2026-09-11 run:
-            # staked_supply, perc_staked_cnt, agg_14, agg_30, num_holders.
-            # NONE of those is a date, so this is a CURRENT-STATE SNAPSHOT, not a history: the row
-            # is dated at the run date and the series accumulates one point per run. The adapter
-            # verifies that claim on every run and refuses to store anything if the query ever
-            # returns several rows or grows a date-like column, because dating a real time series
-            # by the run date would collapse its history onto today.
+            # Mapped from the probe of query 8683038: THIRTEEN columns, 794 rows, dated by `day`
+            # ("2026-09-10 00:00:00.000 UTC"). It is a DAILY HISTORY like any other backfill —
+            # an earlier reading of it as a current-state snapshot came from a partial column
+            # list and was wrong, so Ether.fi's 3/6/9-month trajectory comes from real history,
+            # not from points accumulating forward from install.
             "locked_tokens": {
                 "query_id": 8683038,
-                "snapshot": True,
-                "date_col": None,
+                "date_col": "day",
                 "value_col": "staked_supply",
+                "granularity": "daily",
+                # No drop_current_period: staked_supply is a STOCK, and a stock read part-way
+                # through a day is a valid reading of it. Dropping the current period is for
+                # FLOWS, where an incomplete period understates the total.
                 # agg_14 and agg_30 are 14- and 30-day aggregates. They are a CANDIDATE for the
                 # 30-day trajectory column and are captured to the staging table so the choice can
                 # be made on real numbers — but nothing reads them, and the trajectory columns are
@@ -1503,25 +1508,32 @@ PROJECTS = [
                 "staging_cols": ["agg_14", "agg_30"],
                 "staging_note": "14d/30d aggregate from Dune 8683038. Candidate for the 30-day trajectory "
                                 "column; NOT used in any figure. Switching to it is a deliberate change.",
-                # num_holders is not mapped: it is a holder count, not a supply-and-demand figure,
-                # and no metric in the library takes it.
+                # Not mapped, and deliberately so: num_holders, deposit/request/processed amounts
+                # and user counts are withdrawal-queue and holder figures. No metric in the
+                # library takes them, and inventing one to hold a column is how a sheet fills up
+                # with numbers nobody chose.
                 "source_url": "https://dune.com/queries/8683038",
-                "note": "Staked sETHFI, recorded as locked_tokens (not staked_tokens) as instructed. Tier 4 "
-                        "is Ether.fi's ONLY automated route for this figure — there is no contract read for "
-                        "it — so this query is ongoing rather than a one-off backfill and is never skipped "
-                        "on the grounds that the store already holds history.",
+                "note": "Staked sETHFI, recorded as locked_tokens (not staked_tokens) as instructed. "
+                        "141,470,107.5 sETHFI as at 2026-09-10. Tier 4 is Ether.fi's ONLY automated route "
+                        "for this figure — there is no contract read for it — so once the backfill has run, "
+                        "the standard tier 4 skip leaves the series static until the next explicit re-pull. "
+                        "See OPEN_QUESTIONS.",
             },
             "lock_rate_pct": {
                 "query_id": 8683038,
-                "snapshot": True,
-                "date_col": None,
-                "value_col": "perc_staked_cnt",
+                "date_col": "day",
+                # perc_staked, NOT perc_staked_cnt. The two are the same measure on different
+                # scales — 0.17452 against 17.452 in every sample row — and this project stores
+                # percentages as FRACTIONS, displayed with a 0.0% format. Taking the _cnt column
+                # would put a figure 100x too large in the sheet while looking entirely plausible.
+                # The sanity bound below is the backstop: 17.452 fails it and would be rejected to
+                # the Review Queue rather than stored.
+                "value_col": "perc_staked",
+                "granularity": "daily",
                 "source_url": "https://dune.com/queries/8683038",
-                "note": "Stored EXACTLY as the query publishes it, with no rescaling. Two things about this "
-                        "column are unconfirmed and neither is guessed here: whether it is a fraction (0.42) "
-                        "or a percentage (42), and whether '_cnt' means it is computed from HOLDER COUNTS "
-                        "rather than supply — a lock rate by holder count is a different figure from a lock "
-                        "rate by supply and must not be read as one. See OPEN_QUESTIONS.",
+                "note": "Share of ETHFI staked, as published, stored as a fraction (0.17452 = 17.452%). "
+                        "Both earlier ambiguities are resolved: the scale is a fraction, and '_cnt' marks "
+                        "the x100 variant of the same measure rather than a holder-count basis.",
             },
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
         },
@@ -1792,30 +1804,22 @@ OPEN_QUESTIONS = [
                       "backfill would replace it with the post-August window alone.",
     },
     {
-        "project": "Ether.fi", "topic": "what perc_staked_cnt actually measures, and on what scale",
+        "project": "Ether.fi", "topic": "a tier-4-only series stops moving after its backfill",
         "severity": 1,
-        "reason": "Query 8683038 is now mapped: staked_supply -> locked_tokens and perc_staked_cnt -> "
-                  "lock_rate_pct. TWO THINGS ABOUT perc_staked_cnt ARE UNCONFIRMED and neither is guessed. "
-                  "(1) Scale: 0.42 and 42 are both plausible readings of the same column, and picking wrong "
-                  "puts a figure a hundred times off in the sheet. The value is therefore stored EXACTLY as "
-                  "published, with no rescaling, and the metric label says so. (2) Basis: the '_cnt' suffix "
-                  "suggests it is computed from HOLDER COUNTS, not from supply. A lock rate by holder count is "
-                  "a different figure from a lock rate by supply and must not be read as one — it says nothing "
-                  "about float.",
-        "suggestion": "Both are settled by one look at the query: `python dune_probe.py 8683038` prints a sample "
-                      "row (scale) and .cache/dune/query-8683038.json keeps it; the SQL on dune.com/queries/8683038 "
-                      "shows the denominator (basis). Then fix the metric label in METRICS, and add a rescale to "
-                      "the config entry only if the column really is a fraction.",
-    },
-    {
-        "project": "Ether.fi", "topic": "8683038 is a snapshot, so it has no history",
-        "reason": "The query returns ONE row with no date column: staked_supply, perc_staked_cnt, agg_14, agg_30, "
-                  "num_holders. It is current state, not a time series, so it cannot backfill the 3/6/9-month "
-                  "trajectory columns — those fill in one run at a time from today. Tier 4 is Ether.fi's only "
-                  "automated route for this figure; there is no contract read for it.",
-        "suggestion": "If the trajectory matters for Ether.fi, a dated query is needed — either a variant of "
-                      "8683038 grouped by day, or the sETHFI contract read that does not currently exist. The "
-                      "staged agg_14/agg_30 columns are a partial substitute and are captured already.",
+        "reason": "Query 8683038 is a DAILY HISTORY (794 rows dated by `day`), so it backfills like any "
+                  "other tier 4 source and the 3/6/9-month trajectory comes from real history. But tier 4 "
+                  "is a BACKFILL dependency by design: once the store holds a series, it is skipped. For "
+                  "every other project that is right, because a tier 2 contract read or a tier 3 page keeps "
+                  "the series current. Ether.fi has NEITHER for locked_tokens and lock_rate_pct — tier 4 is "
+                  "the only automated route — so after the backfill both figures stay at their last "
+                  "backfilled date and quietly go stale. The workbook marks a stale series, so this shows "
+                  "rather than hides, but it is not fixed.",
+        "suggestion": "Three options, in order of preference. (1) Find a contract read for staked sETHFI and "
+                      "add it at tier 2, which is what every other project relies on. (2) Re-pull Dune on a "
+                      "schedule with TOKEN_METRICS_DUNE_ALWAYS=1 — correct but pulls the whole history each "
+                      "time. (3) Set \"ongoing\": True on these two config entries, which exempts them from "
+                      "the backfill skip; the mechanism already exists and is tested. Do NOT pick (3) by "
+                      "default: it makes a paid API a daily dependency, which the tier order exists to avoid.",
     },
     {
         "project": "Aerodrome", "topic": "Dune query 2986047 returns 404 — missing, or not readable?",

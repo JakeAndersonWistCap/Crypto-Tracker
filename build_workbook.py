@@ -64,6 +64,8 @@ FMT_USD4 = '$#,##0.0000;($#,##0.0000);-'
 FMT_NUM = '#,##0;(#,##0);-'
 FMT_NUM2 = '#,##0.00;(#,##0.00);-'
 FMT_PCT = '0.0%;(0.0%);-'
+# How many staged rows per field reach the sheet. The table keeps all of them.
+STAGING_ROWS_PER_FIELD = 30
 FMT_X = '0.00"x";(0.00"x");-'
 FMT_TEXT = '@'
 
@@ -1068,7 +1070,21 @@ def write_staging(ws, staged: pd.DataFrame, run_id: str | None):
         ws.cell(row=r, column=1, value="Nothing staged this run.").font = F_BOLD
         _set_widths(ws, {"A": 16, "B": 20, "C": 11, "D": 18, "E": 20, "F": 6, "G": 80})
         return
-    for row in staged.sort_values(["project", "name", "date"]).to_dict("records"):
+    # A daily staging column is 794 rows per backfill, and two of them bury the sheet. The
+    # staging TABLE keeps every row — nothing is discarded — but the sheet shows the most recent
+    # slice per field and says how many it is not showing, so the count stays honest.
+    staged = staged.sort_values(["project", "name", "date"])
+    shown, hidden = [], 0
+    for (proj, field), g in staged.groupby(["project", "name"], sort=True):
+        hidden += max(0, len(g) - STAGING_ROWS_PER_FIELD)
+        shown.extend(g.tail(STAGING_ROWS_PER_FIELD).to_dict("records"))
+    if hidden:
+        c = ws.cell(row=r, column=1,
+                    value=f"Showing the most recent {STAGING_ROWS_PER_FIELD} row(s) per field. "
+                          f"{hidden:,} older row(s) are in the staging table in metrics.db, not discarded.")
+        c.font = F_SUB
+        r += 1
+    for row in shown:
         ws.cell(row=r, column=1, value=row["project"]).font = F_BASE
         ws.cell(row=r, column=2, value=row["name"]).font = F_BASE
         ws.cell(row=r, column=3, value=row.get("date") or "").font = F_BASE

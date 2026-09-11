@@ -173,11 +173,11 @@ def main() -> int:
     gaps = detect_gaps(config.PROJECTS, allf, manual_keys, registry_reasons, [])
     st.record_gaps(run_id, gaps)
     # two staged figures, so the Staging sheet renders with content rather than only empty
+    # a daily staging series, long enough to exercise the sheet's per-field cap
     st.record_staging(run_id, [
-        {"project": "Ether.fi", "name": "agg_14", "value": 1.23, "date": str(TODAY.date()),
-         "source": "FIXTURE:dune:8683038", "tier": 4, "note": "candidate for the 30-day column; used by nothing"},
-        {"project": "Ether.fi", "name": "agg_30", "value": 4.56, "date": str(TODAY.date()),
-         "source": "FIXTURE:dune:8683038", "tier": 4, "note": "candidate for the 30-day column; used by nothing"},
+        {"project": "Ether.fi", "name": field, "value": 1.23 + i / 100, "date": str((TODAY - pd.Timedelta(days=i)).date()),
+         "source": "FIXTURE:dune:8683038", "tier": 4, "note": "candidate for the 30-day column; used by nothing"}
+        for field in ("agg_14", "agg_30") for i in range(40)
     ])
     print(f"seeded {n} rows + {m} overrides + {len(gaps)} gaps into {DB}")
 

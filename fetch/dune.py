@@ -130,6 +130,9 @@ class Dune:
                 # A snapshot query returns CURRENT state, so it is an ongoing source, not a
                 # backfill: skipping it once the store has history would freeze the series at
                 # its first reading. Only a dated historical query is skip-eligible.
+                # NOTE: no query in config is a snapshot today — 8683038 was read that way from a
+                # partial column list and turned out to be a daily history. The shape is real
+                # though, and the guard below is what catches that mistake, so both stay.
                 ongoing = bool(q.get("snapshot") or q.get("ongoing"))
                 if (name, metric) in self.has_history and not always_refetch() and not ongoing:
                     out.unconfigured(SOURCE, name, f"{metric}: store already holds history — backfill skipped", TIER)
