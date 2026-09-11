@@ -618,7 +618,7 @@
 # =====================================================================================
 
 - project: Aerodrome
-  metric: locked_tokens
+  metric: locked_tokens_dashboard
   tier: 4
   enabled: true
   url: https://dune.com/0xkhmer/aerodrome
@@ -631,10 +631,10 @@
   sanity_max: 2000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "veAERO locked — the lock rate and average lock duration are required inputs for effective float. Prefer the Dune API with this dashboard's query id over scraping the page."
+  note: "veAERO locked. CROSS-CHECK ONLY: the tier 2 contract read (AERO.balanceOf(escrow)) is authoritative and this page is compared against it, so a scrape can never overwrite a verified contract figure. Prefer the Dune API with this dashboard's query id over scraping the page."
 
 - project: Pendle
-  metric: staked_tokens
+  metric: locked_tokens_dashboard
   tier: 3
   enabled: true
   url: https://app.pendle.finance/spendle/stake/in
@@ -647,10 +647,10 @@
   sanity_max: 300000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "sPENDLE total staked. NOTE this is sPENDLE, which is NOT the same as the vePENDLE lock — vePENDLE stays a separate contract read under locked_tokens. Do not conflate them."
+  note: "sPENDLE total staked. CROSS-CHECK ONLY: sPENDLE IS the lock source now (vePENDLE is deprecated), and the tier 2 contract read of sPENDLE.totalSupply() is authoritative. This page is compared against it."
 
 - project: Sky
-  metric: locked_tokens
+  metric: locked_tokens_dashboard
   tier: 3
   enabled: true
   url: https://info.skyeco.com/staking
@@ -663,7 +663,7 @@
   sanity_max: 30000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "This page reports lssky, the Staked SKY Token, which IS the Sky lock-rate metric — hence locked_tokens rather than staked_tokens. Tokens paid to stakers re-enter float, so that leg stays separate and is NEVER netted against the burn. Once the lssky contract address is sourced, prefer the tier 2 contract read over this page."
+  note: "This page reports lssky, the Staked SKY Token, which IS the Sky lock-rate metric. CROSS-CHECK slot: once the lssky contract address and read method are set, the tier 2 read becomes authoritative and this page is compared against it. Until then this is the only source, and the cross-check simply has nothing to compare. Tokens paid to stakers re-enter float, so that leg stays separate and is NEVER netted against the burn."
 
 - project: Ether.fi
   metric: staked_tokens
@@ -692,7 +692,7 @@
 #   Sources: https://aave.com/docs/aave-v3/umbrella and https://app.aave.com/safety-module/
 
 - project: Aave
-  metric: locked_tokens
+  metric: locked_tokens_dashboard
   tier: 3
   enabled: true
   url: https://app.aave.com/safety-module/
@@ -705,7 +705,7 @@
   sanity_max: 20000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "THE AAVE lock rate — the legacy Safety Module, where AAVE and ABPT are staked into stkAAVE and stkABPT. This is AAVE, so it belongs in the float calculation."
+  note: "THE AAVE lock rate — the legacy Safety Module, where AAVE and ABPT are staked into stkAAVE and stkABPT. This is AAVE, so it belongs in the float calculation. CROSS-CHECK slot: once the stkAAVE read method is established the tier 2 read becomes authoritative and this page is compared against it."
 
 - project: Aave
   metric: umbrella_staked_usd

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
+
 from .base import FetchOutput, LogEntry, new_run_id, today  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
@@ -40,6 +42,56 @@ TIER_ORDER = [
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
 ]
+
+
+def _resolve_tier_collisions(out: FetchOutput) -> None:
+    """Stop a later tier silently overwriting an earlier one for the same figure.
+
+    Frames are concatenated in tier order and the store upserts on (date, project, metric), so
+    without this the LAST writer wins — meaning a tier 3 page scrape would overwrite a verified
+    tier 2 contract read, and the verified address would never reach the sheet.
+
+    Two sources for one figure is usually a mistake in the registry: the deliberate case is a
+    cross-check, which is stored under its own metric name and never collides. So a collision is
+    resolved in favour of the tier that ran FIRST (contract before page) and flagged to the
+    Review Queue, because one of the two entries is pointing at the wrong metric.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    key = ["date", "project", "metric"]
+    dupes = frame[frame.duplicated(subset=key, keep=False)]
+    if dupes.empty:
+        return
+    # only a collision ACROSS tiers is a problem; within one adapter the last value is intended
+    clashing = (dupes.groupby(key)["tier"].nunique() > 1)
+    clashing = set(clashing[clashing].index)
+    if not clashing:
+        return
+
+    for (date, project, metric), group in dupes.groupby(key):
+        if (date, project, metric) not in clashing:
+            continue
+        ordered = group.sort_index()
+        kept, dropped = ordered.iloc[0], ordered.iloc[1:]
+        for _, row in dropped.iterrows():
+            log.warning("tier collision on %s/%s: keeping tier %s (%s), dropping tier %s (%s)",
+                        project, metric, kept["tier"], kept["source"], row["tier"], row["source"])
+            out.review_item(project, metric, "tier_collision", "rejected",
+                            value=row["value"], prior_value=kept["value"], date=date,
+                            source=f"dropped {row['source']} (tier {row['tier']}) in favour of "
+                                   f"{kept['source']} (tier {kept['tier']})",
+                            tier=int(row["tier"]) if pd.notna(row["tier"]) else None)
+            out.gap(project, metric,
+                    reason=f"two sources wrote the same figure: {kept['source']} (tier {kept['tier']}) and "
+                           f"{row['source']} (tier {row['tier']}). The earlier tier was kept.",
+                    tiers_attempted=f"{kept['tier']},{row['tier']}",
+                    suggestion="One of these is pointing at the wrong metric. A deliberate second source should "
+                               "be a cross-check stored under its own metric name (see cross_checks in config.py), "
+                               "not written over the primary.")
+
+    deduped = frame.drop_duplicates(subset=key, keep="first")
+    out.frames = [deduped]
 
 
 def fetch_all(projects: list[dict], window_days: int | None, *,
@@ -73,6 +125,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
             out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out)
         out.frames = [f for f in out.frames if f is not None and not f.empty]
 
+    _resolve_tier_collisions(out)
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
 

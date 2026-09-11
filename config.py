@@ -156,6 +156,10 @@ METRICS = {
     # be compared: the contract read is preferred and the dashboard is a cross-check, with any
     # divergence flagged rather than one being silently picked.
     "buyback_fund_balance_dashboard": {"label": "Buyback fund balance (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15},
+    # Same pattern for lock rates. Where a project has BOTH a contract read and a published page,
+    # the page is stored here rather than over the contract read: a tier 3 page must never
+    # overwrite a verified tier 2 contract figure, it cross-checks it.
+    "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
@@ -1042,6 +1046,13 @@ PROJECTS = [
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
+                "cross_checks": [
+            {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
+             "secondary": "locked_tokens_dashboard", "secondary_source": "https://dune.com/0xkhmer/aerodrome",
+             "tolerance": 0.03, "prefer": "primary",
+             "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
+                     "tolerance is flagged rather than one figure silently replacing the other."},
+        ],
         "materiality": "high",
         "notes": "veAERO — lock rate and average lock duration are required inputs.",
     },
@@ -1188,6 +1199,13 @@ PROJECTS = [
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
         "destination_effect": "mixed",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "staked_tokens"),
+                "cross_checks": [
+            {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
+             "secondary": "locked_tokens_dashboard", "secondary_source": "https://info.skyeco.com/staking",
+             "tolerance": 0.03, "prefer": "primary",
+             "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
+                     "tolerance is flagged rather than one figure silently replacing the other."},
+        ],
         "materiality": "high",
         "notes": "Smart Burn Engine: 55% of each cycle burned, 45% to LSSKY stakers (Executive Proposal, 13 Aug 2026). "
                  "THE SPLIT HAS MOVED BEFORE AND WILL MOVE AGAIN — treat each historical period as potentially "
@@ -1216,18 +1234,26 @@ PROJECTS = [
                 "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "ve_total_supply", "sPENDLE",
                 PENDLE_DEPLOYMENTS_1_CORE,
                 verified="2026-09-11", provenance="Pendle's own deployment file",
-                read_method=None, token_standard=None, underlying="token",
-                purpose="sPENDLE — the CURRENT lock-rate source, replacing the deprecated vePENDLE.",
+                read_method="erc20_total_supply", token_standard="erc20", underlying="token",
+                purpose="sPENDLE — the CURRENT lock-rate source, replacing the deprecated vePENDLE. A fungible "
+                        "ERC-20, so totalSupply() IS the staked amount.",
                 note="ADDRESS RESOLVED from Pendle's own deployments/1-core.json, key 'sPendle'. The same file "
                      "lists vePendle under a 'deprecated' block, independently confirming that vePENDLE is not "
-                     "the lock source. READ METHOD IS STILL NOT ESTABLISHED — it is unknown whether sPENDLE is a "
-                     "fungible ERC-20 (totalSupply is the staked amount) or an NFT-based position (totalSupply is "
-                     "a COUNT), so nothing is read yet. Confirm the expected symbol at the same time: the symbol "
-                     "check rejects a mismatch, which fails closed but would also block a correct address."),
+                     "the lock source. READ METHOD CONFIRMED ERC-20, so totalSupply() is the correct read. The "
+                     "expected symbol is still unconfirmed: the on-chain symbol check compares case-insensitively "
+                     "and fails CLOSED, so a mismatch rejects the address with a clear message rather than "
+                     "returning a wrong number."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
+                "cross_checks": [
+            {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
+             "secondary": "locked_tokens_dashboard", "secondary_source": "https://app.pendle.finance/spendle/stake/in",
+             "tolerance": 0.03, "prefer": "primary",
+             "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
+                     "tolerance is flagged rather than one figure silently replacing the other."},
+        ],
         "materiality": "high",
         "notes": "LOCK SOURCE MIGRATED: vePENDLE is deprecated — Pendle's own deployments/1-core.json lists it "
                  "under a 'deprecated' block, alongside feeDistributor, feeDistributorV2 and votingController, "
@@ -1306,6 +1332,13 @@ PROJECTS = [
         "destination_effect": "yield_payout",
         "destination_split": None, "burn_execution": "n/a",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
+                "cross_checks": [
+            {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
+             "secondary": "locked_tokens_dashboard", "secondary_source": "https://app.aave.com/safety-module/",
+             "tolerance": 0.03, "prefer": "primary",
+             "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
+                     "tolerance is flagged rather than one figure silently replacing the other."},
+        ],
         "materiality": "high",
         "notes": "HAS A SUPPLY LEG: stkAAVE rewards are AAVE allowance top-ups at 150 AAVE/day (Safety Module "
                  "August 2026 Allowance Update AIP), which is emissions running alongside the buyback, not funded "

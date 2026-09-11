@@ -219,11 +219,21 @@ timelock with no withdrawals expected for years, so accumulated LINK is **locked
 subtracted from effective float. A distribution returns tokens to float instead. The A3 tab has a
 separate column for each, and no project can populate both.
 
+## A later tier never overwrites an earlier one
+
+Frames concatenate in tier order and the store upserts on `(date, project, metric)`, so without a
+guard the last writer would win and a tier 3 page scrape would overwrite a verified tier 2
+contract read. `_resolve_tier_collisions` keeps the earlier tier, drops the later one, and raises
+both a Review Queue item and a Gap Report row, because a collision means one of the two entries
+is pointing at the wrong metric. A deliberate second source is a cross-check with its own metric
+name, so it never collides.
+
 ## Two sources for one figure are compared, not silently merged
 
 Where a figure is available from both a contract read and the protocol's own dashboard, both are
 stored as separate metrics. The contract read is preferred; a divergence beyond the configured
-tolerance is flagged to the Review Queue. Chainlink's Reserve is the live case.
+tolerance is flagged to the Review Queue, and the divergence is shown as a column on the sheet.
+Chainlink's Reserve and the four lock rates (Aerodrome, Pendle, Sky, Aave) all work this way.
 
 ## Ambiguous addresses are never guessed
 

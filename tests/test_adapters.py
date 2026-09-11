@@ -305,6 +305,43 @@ def test_scrape_registry_reports_incomplete_entries_as_gaps():
     print("tier 3 registry ok: incomplete entries become gap rows, nothing is guessed")
 
 
+def test_later_tier_never_overwrites_an_earlier_one():
+    """A tier 3 page must not overwrite a verified tier 2 contract read for the same metric.
+
+    Frames concatenate in tier order and the store upserts on (date, project, metric), so without
+    the guard the last writer wins and the verified contract figure never reaches the sheet.
+    """
+    from fetch import _resolve_tier_collisions
+
+    out = FetchOutput()
+    out.frames.append(pd.DataFrame([{"date": pd.Timestamp("2026-09-11"), "project": "Aerodrome",
+                                     "metric": "locked_tokens", "value": 512_000_000.0,
+                                     "source": "chain:base:ve", "tier": 2}]))
+    out.frames.append(pd.DataFrame([{"date": pd.Timestamp("2026-09-11"), "project": "Aerodrome",
+                                     "metric": "locked_tokens", "value": 498_300_000.0,
+                                     "source": "scrape:dune.com", "tier": 3}]))
+    out.frames.append(pd.DataFrame([{"date": pd.Timestamp("2026-09-11"), "project": "Aerodrome",
+                                     "metric": "locked_tokens_dashboard", "value": 498_300_000.0,
+                                     "source": "scrape:dune.com", "tier": 3}]))
+    _resolve_tier_collisions(out)
+    df = out.frame()
+    kept = df[df.metric == "locked_tokens"].iloc[0]
+    assert kept["source"] == "chain:base:ve", f"the contract read must win, got {kept['source']}"
+    assert len(df[df.metric == "locked_tokens_dashboard"]) == 1, "a cross-check must not be collapsed"
+    assert any(r["reason"] == "tier_collision" for r in out.review), out.review
+    assert out.gaps, "a collision must be reported, not silently resolved"
+    print("tier collision ok: contract read kept, cross-check preserved, collision surfaced")
+
+
+def test_cross_check_metrics_do_not_collide_with_their_primary():
+    """Every declared cross-check must use a DIFFERENT metric name from its primary."""
+    for p in config.PROJECTS:
+        for check in p.get("cross_checks") or []:
+            assert check["primary"] != check["secondary"], f"{p['name']}: cross-check collides with its primary"
+            assert check["secondary"] in config.METRICS, f"{p['name']}: {check['secondary']} is not a known metric"
+    print("cross-check naming ok: every secondary has its own metric key")
+
+
 # ---------------------------------------------------------------------------- tier 4
 def test_dune_backfill_only():
     du = Dune(has_history={("Ethereum", "gross_burn_tokens")})
@@ -383,6 +420,7 @@ if __name__ == "__main__":
                test_unestablished_lock_read_method_is_refused,
                test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
                test_scrape_registry_reports_incomplete_entries_as_gaps,
+               test_later_tier_never_overwrites_an_earlier_one, test_cross_check_metrics_do_not_collide_with_their_primary,
                test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
                test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:
         fn()
