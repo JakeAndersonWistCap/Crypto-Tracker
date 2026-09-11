@@ -111,6 +111,7 @@ def main() -> int:
             frames.append(frame(name, "total_supply", [supply0 * 1.3], "chain:erc20", today_only, tier=2))
         if 4 in arch:
             frames.append(frame(name, "burn_address_balance", series(supply0 * 0.01, drift=0.2, noise=0.05), "chain:burn", tier=2))
+        if p.get("self_reported_net_mint"):   # only protocols that actually publish it
             frames.append(frame(name, "net_mint_monthly", series(supply0 * 0.0002, noise=0.4) * -1, "scrape:dashboard", tier=3))
         if 3 in arch and name in ("Aerodrome", "Pendle"):
             frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "chain:ve", tier=2))

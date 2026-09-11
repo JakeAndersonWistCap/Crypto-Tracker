@@ -23,6 +23,7 @@ import config
 REASON_BOUNDS = "out_of_bounds"
 REASON_CHANGE = "change_threshold"
 REASON_UNVERIFIED = "address_unverified"
+REASON_REFERENCE = "disagrees_with_published_reference"
 
 ACTION_REJECTED = "rejected"
 ACTION_FLAGGED = "stored_flagged"
@@ -65,6 +66,37 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
             out.review_item(row.project, row.metric, REASON_CHANGE, ACTION_FLAGGED, value=row.value,
                             prior_value=prior, date=row.date, source=row.source, tier=row.tier)
     return df
+
+
+def check_reference_values(df: pd.DataFrame, out, tolerance: float = 0.005) -> None:
+    """Compare fetched values against figures the protocol has already published.
+
+    PancakeSwap publishes net mint monthly, and two of those months are recorded in config. If
+    a scraper returns something different for one of those months, the scraper is wrong, not
+    history — so it is flagged. This is a regression test on the extraction, running against
+    live data every time.
+    """
+    if df is None or df.empty:
+        return
+    d = df.copy()
+    d["period"] = pd.to_datetime(d["date"]).dt.to_period("M").astype(str)
+    for project in config.PROJECTS:
+        refs = project.get("reference_values") or []
+        if not refs:
+            continue
+        for ref in refs:
+            rows = d[(d["project"] == project["name"]) & (d["metric"] == ref["metric"])
+                     & (d["period"] == ref["period"])]
+            if rows.empty:
+                continue
+            got = float(rows["value"].sum())
+            expected = float(ref["value"])
+            if expected == 0:
+                continue
+            if abs(got - expected) / abs(expected) > tolerance:
+                out.review_item(project["name"], ref["metric"], REASON_REFERENCE, ACTION_FLAGGED,
+                                value=got, prior_value=expected, date=f"{ref['period']}-01",
+                                source=ref.get("source", ""), tier=None)
 
 
 def flagged_keys(review_items: list[dict]) -> set[tuple[str, str]]:

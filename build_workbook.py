@@ -70,6 +70,7 @@ FMT_TEXT = '@'
 UNIT_FMT = {"usd": FMT_USD, "tokens": FMT_NUM, "count": FMT_NUM, "pct": FMT_PCT, "days": FMT_NUM, "units": FMT_NUM}
 
 CFG = "'Config & Sources'"
+_WINDOWS: dict[str, tuple[str, str]] = {}   # window key -> (start, end) ISO dates, set per build
 NA = '"n/a"'
 
 # Data sheet layout (column letters)
@@ -89,6 +90,13 @@ CFG_COLS = [
     ("Buyback destination", 11), ("Destination split (share burned, where destination = split)", 12), ("Burn execution", 12),
     ("Share of fees burned", 11), ("Burn source URL", 30), ("Burn source date", 11), ("Burn status", 11),
     ("Issuance schedule (tokens/day, current step)", 14), ("Schedule source URL", 30), ("Schedule source date", 11), ("Schedule status", 11),
+    ("Per-product split (never collapsed)", 34),
+    ("Share Q0 (trailing window)", 12), ("Status Q0", 11),
+    ("Share Q1 (-3m window)", 12), ("Status Q1", 11),
+    ("Share Q2 (-6m window)", 12), ("Status Q2", 11),
+    ("Share Q3 (-9m window)", 12), ("Status Q3", 11),
+    ("Revenue accruing but NOT booked", 40),
+    ("Self-reported figure preferred", 16),
     ("Notes", 60), ("Status changes", 40),
 ]
 CC = {name: get_column_letter(i + 1) for i, (name, _) in enumerate(CFG_COLS)}
@@ -99,6 +107,20 @@ CFG_R1 = CFG_R0 + len(PROJECTS) - 1
 
 MONTHLY_METRICS = ["fees_usd", "revenue_usd", "price_usd", "gross_issuance_tokens", "gross_burn_tokens",
                    "customer_revenue_usd", "emissions_tokens", "actual_buyback_usd"]
+
+
+WINDOW_SHARE_COL = {"q0": "Share Q0 (trailing window)", "q1": "Share Q1 (-3m window)",
+                    "q2": "Share Q2 (-6m window)", "q3": "Share Q3 (-9m window)"}
+WINDOW_STATUS_COL = {"q0": "Status Q0", "q1": "Status Q1", "q2": "Status Q2", "q3": "Status Q3"}
+
+
+def _programmed_label(value) -> str:
+    """programmed is tri-state: True, False, or 'unconfirmed_conflict' where sources disagree."""
+    if value is None:
+        return ""
+    if value == "unconfirmed_conflict":
+        return "sources conflict"
+    return "yes" if value else "no"
 
 
 def G(name: str) -> str:
@@ -301,7 +323,17 @@ def _style(cell, kind: str, fmt: str | None, bold: bool = False):
         cell.number_format = fmt
 
 
-def write_config(ws):
+def _period_windows(asof: pd.Timestamp) -> list[tuple[str, pd.Timestamp, pd.Timestamp]]:
+    """The four comparison windows, as (label, start, end). Must match aggregate()'s q0..q3."""
+    period = GLOBALS["period_days"]
+    out = []
+    for i, label in enumerate(["Q0", "Q1", "Q2", "Q3"]):
+        end = asof - pd.Timedelta(days=period * i)
+        out.append((label, end - pd.Timedelta(days=period), end))
+    return out
+
+
+def write_config(ws, asof: pd.Timestamp):
     _title(ws, "Config & Sources", "Every fee-split / burn-split / issuance parameter with its source URL and date. Blue cells are levers: change them here and every formula follows. "
                                     "status = active | paused | unconfirmed | n/a. Unconfirmed splits are greyed on the archetype tabs and their derived figures suppressed.")
     ws["A2"].alignment = Alignment(wrap_text=False)
@@ -318,6 +350,13 @@ def write_config(ws):
     c = ws.cell(row=7, column=2, value=f"={G('days_per_year')}/{G('period_days')}")
     _style(c, "calc", FMT_NUM2)
 
+    ws.cell(row=8, column=1, value=
+            "Splits change. Where a project documents a history, each comparison window below carries the split that "
+            "actually applied to it — the current split is NEVER applied retroactively. A window spanning a change, or "
+            "sitting in a period we have not documented, reads 'unconfirmed' and its derived figure is suppressed."
+            ).font = F_SUB
+
+    windows = _period_windows(asof)
     headers = [h for h, _ in CFG_COLS]
     _header(ws, CFG_HEADER_ROW, headers)
     for i, p in enumerate(PROJECTS):
@@ -329,33 +368,64 @@ def write_config(ws):
         if sched.get("steps"):
             cur_step = sorted(sched["steps"], key=lambda s: s["from"])[-1]["tokens_per_day"]
         changes = "; ".join(f"{c['date']}: {c['event']} ({c['source_url']})" for c in p.get("status_changes", []))
+
+        # A per-product split is NEVER collapsed into one number.
+        per_product = "; ".join(f"{prod}: {rendered}" for prod, rendered, _ in config.per_product_shares(p["name"]))
+        share_cell = "per-product — see column" if config.share_is_per_product(p["name"]) else fs.get("share_to_buyback")
+
+        # The split that actually applied to each window.
+        window_cells = []
+        for _, start, end in windows:
+            applied = config.split_for_window(p["name"], start.date().isoformat(), end.date().isoformat())
+            sh, stat = applied["share_to_buyback"], applied["status"]
+            window_cells.append("per-product" if isinstance(sh, dict) else (sh if sh is not None else "n/a"))
+            window_cells.append(stat)
+
+        # Revenue legs that have started accruing but have not paid — excluded from revenue.
+        accruing = "; ".join(
+            f"{rs['name']} ({rs.get('share', '?')}, live {rs.get('live_from', '?')}, "
+            f"first payment {rs.get('first_payment_date', '?')}) — ACCRUING, NOT BOOKED"
+            for rs in (p.get("revenue_sources") or []) if not rs.get("booked", True)
+        )
+        self_reported = "yes — preferred over derived" if p.get("self_reported_net_mint") else ""
+
         values = [
             p["name"], p["symbol"], ", ".join(str(a) for a in p["archetypes"]), p["archetypes"][0],
             ", ".join(str(a) for a in p.get("archetypes_held", [])) or "", p["materiality"],
             p.get("coingecko_id") or "", p.get("defillama_fees_slug") or "", p.get("defillama_protocol") or "", p.get("defillama_chain") or "",
-            fs.get("share_to_buyback"), fs.get("source_url") or "", fs.get("source_date") or "",
-            ("yes" if fs.get("programmed") else "no") if fs.get("programmed") is not None else "", fs.get("status", "n/a"),
+            share_cell, fs.get("source_url") or "", fs.get("source_date") or "",
+            _programmed_label(fs.get("programmed")), fs.get("status", "n/a"),
             p.get("buyback_destination", ""), p.get("destination_split"), p.get("burn_execution", ""),
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
             bs.get("status", "n/a") if bs else "n/a",
             cur_step, sched.get("source_url") or "", sched.get("source_date") or "", sched.get("status", "n/a") if sched else "n/a",
+            per_product, *window_cells, accruing, self_reported,
             "; ".join(x for x in [p.get("notes", ""), fs.get("note", ""), (bs or {}).get("note", "")] if x), changes,
         ]
         for j, v in enumerate(values, start=1):
             c = ws.cell(row=r, column=j, value=v)
             head = CFG_COLS[j - 1][0]
-            if head in ("Share of revenue to buyback", "Share of fees burned", "Destination split (share burned, where destination = split)"):
-                _style(c, "input", FMT_PCT)
+            if head.startswith("Share Q") or head in ("Share of revenue to buyback", "Share of fees burned",
+                                                      "Destination split (share burned, where destination = split)"):
+                _style(c, "input", FMT_TEXT if isinstance(v, str) else FMT_PCT)
+                if isinstance(v, str):
+                    c.font = Font(name=FONT, size=10, color="999999")
             elif head == "Issuance schedule (tokens/day, current step)":
                 _style(c, "input", FMT_NUM2)
             elif head in ("Programmed (contract-enforced)", "Buyback status", "Buyback destination", "Burn execution", "Burn status", "Schedule status", "Materiality"):
                 _style(c, "input", FMT_TEXT)
             else:
                 _style(c, "text", FMT_TEXT)
-            if head in ("Buyback status", "Burn status") and v == "unconfirmed":
+            if (head in ("Buyback status", "Burn status") or head.startswith("Status Q")) and v == "unconfirmed":
                 c.fill = FILL_UNCONFIRMED
-            if head == "Buyback status" and v == "paused":
+            if head in ("Buyback status", "Burn status") and v in ("paused",):
                 c.fill = FILL_PAUSED
+            if head == "Programmed (contract-enforced)" and v == "sources conflict":
+                c.fill = FILL_UNCONFIRMED
+            if head == "Revenue accruing but NOT booked" and v:
+                c.fill = FILL_PAUSED
+            if head == "Per-product split (never collapsed)" and v:
+                c.fill = FILL_KEY
             if head in ("Notes", "Status changes"):
                 c.alignment = Alignment(wrap_text=False)
     _set_widths(ws, {get_column_letter(i + 1): w for i, (_, w) in enumerate(CFG_COLS)})
@@ -437,6 +507,21 @@ def write_monthly(ws, months: list[str], monthly: pd.DataFrame):
 # ---------------------------------------------------------------------------------------
 # Archetype tabs — column specs. Each spec: (header, builder(r, p) -> value/formula, fmt, kind[, bold])
 # ---------------------------------------------------------------------------------------
+def _net_change(R, r: int, p: dict, iss, burn) -> str:
+    """Net supply change for one project.
+
+    Where the PROTOCOL ITSELF publishes net mint (self_reported_net_mint in config), that figure
+    is preferred over the derived one, per the build spec. The preference is keyed on the config
+    flag, NOT merely on a row being present: a project that does not publish net mint always uses
+    issuance − burn, even if a stray net_mint_monthly row turns up from somewhere.
+    """
+    derived = f"{iss(r)}-{burn(r)}"
+    if not p.get("self_reported_net_mint"):
+        return derived
+    sr = R.D(r, "net_mint_monthly", "q0")
+    return f"IF(ISNUMBER({sr}),{sr},{derived})"
+
+
 def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:
     out = []
     for m in metrics:
@@ -474,6 +559,17 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     elif st["status"] == "stale":
                         c.fill = FILL_STALE
                         c.comment = Comment(f"STALE — {st['note']}", "token_metrics")
+            gw = meta.get("gate_window")
+            if gw:
+                from datetime import timedelta as _td
+                applied = config.split_for_window(p["name"], _WINDOWS[gw][0], _WINDOWS[gw][1])
+                if applied["status"] == "unconfirmed":
+                    c.fill = FILL_UNCONFIRMED
+                    c.comment = Comment(
+                        f"Split for this window is unconfirmed: {applied['why']}. "
+                        f"The derived figure is suppressed rather than borrowing today's split.", "token_metrics")
+                elif applied["status"] == "paused":
+                    c.fill = FILL_PAUSED
             gate = meta.get("gate")
             if gate:
                 status = (p.get(gate) or {}).get("status", "n/a")
@@ -535,8 +631,9 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Revenue Q0 ($)", lambda r, p: pull(R.D(r, "revenue_usd", "q0")), FMT_USD, "pull", False, {"metric": "revenue_usd"}),
         ("TVL ($) — chain for A1 names, protocol otherwise",
          lambda r, p: pull(R.D(r, "tvl_usd" if 1 in p["archetypes"] else "protocol_tvl_usd", "now")), FMT_USD, "pull"),
-        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: gated(R.C(r, "Buyback status"), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, 'Share of revenue to buyback')}", R.C(r, 'Share of revenue to buyback')),
-         FMT_USD, "calc", False, {"gate": "fee_split"}),
+        ("Implied buyback Q0 ($) = revenue × the split that applied to this window",
+         lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, WINDOW_SHARE_COL['q0'])}", R.C(r, WINDOW_SHARE_COL["q0"])),
+         FMT_USD, "calc", False, {"gate_window": "q0"}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
         ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_burn_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_burn_tokens"}),
         ("Gross issuance Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_issuance_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
@@ -547,9 +644,9 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
          lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}/({R.D(r, 'gross_issuance_tokens', 'q0')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
-        ("Buyback % of supply (annualised, implied)",
-         lambda r, p: gated(R.C(r, "Buyback status"), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, 'Share of revenue to buyback')}/{R.D(r, 'price_usd', 'q0')}*{ann}/{R.D(r, 'circulating_supply', 'now')}", R.C(r, 'Share of revenue to buyback')),
-         FMT_PCT, "calc", False, {"gate": "fee_split"}),
+        ("Buyback % of supply (annualised, implied, split as at this window)",
+         lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, WINDOW_SHARE_COL['q0'])}/{R.D(r, 'price_usd', 'q0')}*{ann}/{R.D(r, 'circulating_supply', 'now')}", R.C(r, WINDOW_SHARE_COL["q0"])),
+         FMT_PCT, "calc", False, {"gate_window": "q0"}),
         *_trajectory(R, "fees_usd", "Fees"),
         ("Latest data date (core series)", lambda r, p: max([data_by_key.get(f"{p['name']}|{m}", {}).get("latest_date", "") or "" for m in ("price_usd", "fees_usd", "revenue_usd", "tvl_usd")] or [""]), FMT_TEXT, "text"),
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
@@ -562,7 +659,9 @@ def write_master(ws, R: Refs, data_by_key: dict):
 
 def write_a4(ws, R: Refs, data_by_key: dict):
     projects = [p for p in PROJECTS if 4 in p["archetypes"]]
-    _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Net = issuance − burn (positive = net inflation). "
+    _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
+                                       "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
+                                       "Otherwise net = issuance − burn (positive = net inflation). "
                                        "Q0 = trailing comparison window; $ conversions at 90-day average price. Implied burn = fees × documented share (suppressed when unconfirmed). "
                                        "PancakeSwap is the disclosure template: publishes net mint monthly.")
     ann = ANN
@@ -581,9 +680,17 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r)}*{price(r)}"), FMT_USD, "calc"),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", True, {"metric": "gross_issuance_tokens"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
-        ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn", lambda r, p: calc(f"{iss(r)}-{burn(r)}"), FMT_NUM, "calc", True),
-        ("Net supply change ($ at avg price)", lambda r, p: calc(f"({iss(r)}-{burn(r)})*{price(r)}"), FMT_USD, "calc"),
-        ("NET SUPPLY CHANGE, annualised % of circulating", lambda r, p: calc(f"({iss(r)}-{burn(r)})*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
+        ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
+        ("Self-reported preferred?", lambda r, p: "yes" if p.get("self_reported_net_mint") else "", FMT_TEXT, "text"),
+        ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn",
+         lambda r, p: calc(_net_change(R, r, p, iss, burn)), FMT_NUM, "calc", True),
+        ("Derived net supply change (issuance − burn), for comparison", lambda r, p: calc(f"{iss(r)}-{burn(r)}"), FMT_NUM, "calc"),
+        ("Self-reported − derived (a gap here means one of the two is wrong)",
+         lambda r, p: calc(f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r)})"), FMT_NUM, "calc"),
+        ("Net supply change ($ at avg price)",
+         lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{price(r)}"), FMT_USD, "calc"),
+        ("NET SUPPLY CHANGE, annualised % of circulating",
+         lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
         ("Burn ÷ issuance (x)", lambda r, p: calc(f"{burn(r)}/{iss(r)}"), FMT_X, "calc"),
         ("Burn as share of fees (measured)", lambda r, p: calc(f"{burn(r)}*{price(r)}/{R.D(r, 'fees_usd', 'q0')}"), FMT_PCT, "calc"),
         ("Burn as % of supply (annualised)", lambda r, p: calc(f"{burn(r)}*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
@@ -614,9 +721,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     ann = ANN
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
     rev = lambda r, w="q0": R.D(r, "revenue_usd", w)  # noqa: E731
-    share = lambda r: R.C(r, "Share of revenue to buyback")  # noqa: E731
     circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
-    st = lambda r: R.C(r, "Buyback status")  # noqa: E731
+    # The split that applied to each window — NEVER the current split applied backwards.
+    share = lambda r, w="q0": R.C(r, WINDOW_SHARE_COL[w])  # noqa: E731
+    st = lambda r, w="q0": R.C(r, WINDOW_STATUS_COL[w])  # noqa: E731
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
@@ -625,7 +733,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Programmed? (contract-enforced vs revisable by governance)", lambda r, p: pull(R.C(r, "Programmed (contract-enforced)")), FMT_TEXT, "pull"),
         ("Buyback destination", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
         ("Destination split (share burned)", lambda r, p: pull(R.C(r, "Destination split (share burned, where destination = split)")), FMT_PCT, "pull"),
-        ("Documented share of revenue to buyback (config)", lambda r, p: pull(share(r)), FMT_PCT, "pull", False, {"gate": "fee_split"}),
+        ("Share applied to this window (not necessarily today's)", lambda r, p: pull(share(r)), FMT_PCT, "pull", False, {"gate_window": "q0"}),
+        ("Status of that window's split", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"gate_window": "q0"}),
+        ("Current documented share (may differ from the window above)", lambda r, p: pull(R.C(r, "Share of revenue to buyback")), FMT_PCT, "pull"),
+        ("Per-product split (never collapsed into one number)", lambda r, p: pull(R.C(r, "Per-product split (never collapsed)")), FMT_TEXT, "pull"),
         ("Revenue Q0 ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull", False, {"metric": "revenue_usd"}),
         ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
         ("Implied buyback Q0 ($) = revenue × share", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}", share(r)), FMT_USD, "calc", False, {"gate": "fee_split"}),
@@ -648,9 +759,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Effective float = circulating − locked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
         ("Yield destination (tracked separately from burn)", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
         *_trajectory(R, "revenue_usd", "Revenue"),
-        ("Buyback % supply at Q1 (−3m window, implied)", lambda r, p: gated(st(r), f"{rev(r, 'q1')}*{share(r)}/{price(r, 'q1')}*{ann}/{circ(r)}", share(r)), FMT_PCT, "calc", False, {"gate": "fee_split"}),
-        ("Buyback % supply at Q2 (−6m)", lambda r, p: gated(st(r), f"{rev(r, 'q2')}*{share(r)}/{price(r, 'q2')}*{ann}/{circ(r)}", share(r)), FMT_PCT, "calc", False, {"gate": "fee_split"}),
-        ("Buyback % supply at Q3 (−9m)", lambda r, p: gated(st(r), f"{rev(r, 'q3')}*{share(r)}/{price(r, 'q3')}*{ann}/{circ(r)}", share(r)), FMT_PCT, "calc", False, {"gate": "fee_split"}),
+        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: gated(st(r, 'q1'), f"{rev(r, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/{circ(r)}", share(r, 'q1')), FMT_PCT, "calc", False, {"gate_window": "q1"}),
+        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: gated(st(r, 'q2'), f"{rev(r, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/{circ(r)}", share(r, 'q2')), FMT_PCT, "calc", False, {"gate_window": "q2"}),
+        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: gated(st(r, 'q3'), f"{rev(r, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/{circ(r)}", share(r, 'q3')), FMT_PCT, "calc", False, {"gate_window": "q3"}),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("fee_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],
@@ -852,9 +963,9 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     stale cell is worse than a visible gap; a blank one is worse still.
     """
     _title(ws, "Gap Report — the to-do list",
-           "Every metric no source tier could resolve, why it failed, and what would fix it. Most fixes are a sources.yaml edit: "
-           "find the page that publishes the figure, complete the entry, set enabled: true, re-run. "
-           "Rows marked [config] are not missing data — they are splits we have not documented, so the workbook suppresses the derived figure by design.")
+           "Sorted so the decisions come first. [open] rows are questions a human must settle, listed at the top. [config] rows are splits "
+           "we have not documented, so the workbook suppresses the derived figure by design. Everything below those is a metric no tier could "
+           "resolve: most are fixed by a sources.yaml edit — find the page that publishes the figure, complete the entry, set enabled: true, re-run.")
     headers = ["Project", "Metric", "Tiers attempted", "Reason unresolved", "What would fix it"]
     _header(ws, 4, headers)
     r = 5
@@ -864,10 +975,12 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
         return
     # config gaps first (they block derived figures), then by project, then metric
     g = gaps.copy()
+    g["_open"] = g["metric"].astype(str).str.startswith("[open]")
     g["_config"] = g["metric"].astype(str).str.startswith("[config]")
-    g = g.sort_values(["_config", "project", "metric"], ascending=[False, True, True])
+    g["_rank"] = (~g["_open"]).astype(int) * 2 + (~g["_config"]).astype(int)
+    g = g.sort_values(["_rank", "project", "metric"])
     for row in g.to_dict("records"):
-        is_config = bool(row["_config"])
+        is_config = bool(row["_config"]) or bool(row["_open"])
         vals = [row["project"], row["metric"], row.get("tiers_attempted", ""), row["reason"], row.get("suggestion", "")]
         for j, v in enumerate(vals, start=1):
             c = ws.cell(row=r, column=j, value=str(v) if v is not None else "")
@@ -1027,6 +1140,10 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     overrides_n = int(long["is_manual"].sum()) if not long.empty else 0
     asof = asof or pd.Timestamp.now('UTC').tz_localize(None).normalize()
 
+    _WINDOWS.clear()
+    for label, start, end in _period_windows(asof):
+        _WINDOWS[label.lower()] = (start.date().isoformat(), end.date().isoformat())
+
     data = aggregate(long, fetch_status, asof, gaps=gaps, review=review)
     data_by_key = {r["key"]: r for r in data.to_dict("records")}
     months, monthly = monthly_table(long, asof)
@@ -1047,7 +1164,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     ws_data = wb.create_sheet("Data")
     ws_mon = wb.create_sheet("Monthly")
 
-    write_config(ws_cfg)
+    write_config(ws_cfg, asof)
     write_data(ws_data, data, asof)
     write_monthly(ws_mon, months, monthly)
     write_master(ws_master, R, data_by_key)

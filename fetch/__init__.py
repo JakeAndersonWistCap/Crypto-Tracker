@@ -26,7 +26,7 @@ from .gaps import detect as detect_gaps
 from .llama import DefiLlama
 from .schedule import Schedule
 from .scrape import Scrape, entry_ready, load_registry
-from .validate import validate_frame
+from .validate import check_reference_values, validate_frame
 
 log = logging.getLogger("token_metrics.fetch")
 
@@ -70,6 +70,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
         for i in range(before, len(out.frames)):
             out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out)
         out.frames = [f for f in out.frames if f is not None and not f.empty]
+
+    check_reference_values(out.frame(), out)
 
     registry_reasons = {}
     for e in load_registry():

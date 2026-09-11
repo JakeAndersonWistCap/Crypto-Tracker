@@ -10,9 +10,13 @@ anything that lands there, usually by adding an entry to sources.yaml.
 """
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 import config
+
+log = logging.getLogger("token_metrics.fetch.gaps")
 
 # Metrics DefiLlama serves only on its Pro tier. Named explicitly so the report says "paywalled",
 # not "missing" — a different problem with a different fix.
@@ -36,12 +40,18 @@ TIER1_SOURCE = {
     "rwa_defillama_usd": ("DefiLlama", "defillama_chain"),
 }
 
-# Contract kinds in config that can serve a tier 2 metric.
+# Contract kinds in config that can serve a tier 2 metric. A metric NOT listed here is not
+# served by a contract read at all, so a contract problem is never the right explanation for it
+# — saying "the token address is ambiguous" about, say, average lock duration would send the
+# reader off to fix the wrong thing.
 METRIC_CONTRACT_KIND = {
     "burn_address_balance": "burn_address_balance",
+    "gross_burn_tokens": "burn_address_balance",       # derived by differencing the balance
     "buyback_fund_balance": "buyback_fund_balance",
+    "actual_buyback_tokens": "buyback_fund_balance",
     "locked_tokens": "ve_total_supply",
     "total_supply": "erc20_total_supply",
+    "circulating_supply": "erc20_total_supply",
 }
 
 
@@ -70,18 +80,43 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"Check the Run Log for the {api} failure, and confirm {field}="
                     f"{project.get(field)!r} is still correct.")
 
-    if 2 in tiers:
+    # A burn that happens at the protocol level has no address to read, so "no contract declared"
+    # would be the wrong explanation entirely — the fix is a different SOURCE, not a missing address.
+    if metric in ("gross_burn_tokens", "burn_address_balance"):
+        method = project.get("burn_read_method")
+        if method in ("protocol_level", "undetermined", "native_balance"):
+            note = project.get("burn_read_note", "")
+            headline = {
+                "protocol_level": "burn happens at the PROTOCOL LEVEL with no transfer — there is no address "
+                                  "balance to read",
+                "undetermined": "burn MECHANISM is undetermined — it is not established whether the current "
+                                "burn is a transfer or a protocol-level destruction",
+                "native_balance": "burn total sits in a native (non-ERC-20) balance the EVM adapter cannot read",
+            }[method]
+            return (f"{headline}. {note}".strip(),
+                    f"Add a sources.yaml entry for {name}/{metric} pointing at the chain-data or dashboard "
+                    f"source that publishes it. Do NOT add a burn-address contract entry — reading a dead "
+                    f"address here returns other people's discarded tokens, not the protocol burn.")
+
+    want_kind = METRIC_CONTRACT_KIND.get(metric)
+    if 2 in tiers and want_kind:
         contracts = project.get("contracts") or {}
-        want_kind = METRIC_CONTRACT_KIND.get(metric)
-        matching = [k for k, c in contracts.items() if c.get("kind") == want_kind] if want_kind else list(contracts)
+        matching = [k for k, c in contracts.items() if c.get("kind") == want_kind]
         if not matching:
             if name in NON_EVM:
                 return (f"no contract read possible — {name} is not EVM, so the tier 2 web3 path does not apply",
                         f"Use the protocol's own dashboard: add a sources.yaml entry for {name}/{metric}.")
-            kind_note = f" of kind {want_kind!r}" if want_kind else ""
-            return (f"no contract{kind_note} declared in config",
+            return (f"no contract of kind {want_kind!r} declared in config",
                     f"Add the contract to contracts in config.py for {name}, with the source URL and the date "
                     f"you verified it on the protocol's own docs.")
+        ambiguous = [k for k in matching if contracts[k].get("ambiguous")]
+        if ambiguous:
+            spec = contracts[ambiguous[0]]
+            cands = spec.get("candidates") or []
+            return (f"contract {ambiguous[0]!r} is AMBIGUOUS — {len(cands)} addresses circulate publicly and "
+                    f"none is established as correct, so none is read",
+                    f"Resolve from {spec.get('source_url') or 'the protocol docs'} and replace the candidates "
+                    f"list with the single confirmed address. Candidates: {', '.join(cands)}")
         unverified = [k for k in matching if not (contracts[k].get("verified"))]
         if unverified:
             return (f"contract {unverified[0]!r} is declared but NOT verified against the protocol's own docs",
@@ -116,6 +151,13 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     if frame is not None and not frame.empty:
         have = set(map(tuple, frame[["project", "metric"]].drop_duplicates().to_numpy()))
     have |= manual_keys
+    # A gap raised by an earlier tier is superseded when a later tier resolved the same metric.
+    # The Gap Report lists what could not be resolved AT ALL, so an unverified contract address
+    # for a figure the protocol's own dashboard already supplied does not belong on the to-do list.
+    superseded = [g for g in existing_gaps if (g["project"], g["metric"]) in have]
+    existing_gaps = [g for g in existing_gaps if (g["project"], g["metric"]) not in have]
+    if superseded:
+        log.debug("%d gap rows superseded by a later tier", len(superseded))
     already = {(g["project"], g["metric"]) for g in existing_gaps}
 
     rows = list(existing_gaps)
@@ -130,6 +172,14 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
                 "tiers_attempted": ", ".join(str(t) for t in config.METRICS[metric].get("tiers", [])),
                 "reason": reason, "suggestion": suggestion,
             })
+
+    # Open questions a human must settle. These are not "a metric has no data" — they are
+    # decisions and confirmations, and they always appear so they cannot be forgotten.
+    for q in getattr(config, "OPEN_QUESTIONS", []):
+        rows.append({
+            "project": q["project"], "metric": f"[open] {q['topic']}",
+            "tiers_attempted": "-", "reason": q["reason"], "suggestion": q["suggestion"],
+        })
 
     # Config gaps: a documented split we have not confirmed suppresses a derived figure by design.
     for p in projects:

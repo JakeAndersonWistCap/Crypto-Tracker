@@ -59,6 +59,13 @@ CUMULATIVE_FLOW = {
     "burn_address_balance": "gross_burn_tokens",
 }
 
+# Burn read methods this adapter can serve. Everything else is refused with an explanation,
+# because the two burn mechanisms are NOT interchangeable:
+#   transfer       tokens move to an address no one controls -> readable as a balance
+#   protocol_level supply destroyed with no transfer -> NOT readable; reading a dead address
+#                  here returns other people's discarded tokens, not the protocol burn
+READABLE_BURN_METHODS = {"transfer", None}
+
 
 def allow_unverified() -> bool:
     return os.environ.get("TOKEN_METRICS_ALLOW_UNVERIFIED", "").strip() in ("1", "true", "yes")
@@ -133,11 +140,49 @@ class Chain:
         self.prior = prior_values or {}
 
     def _gate(self, project: dict, key: str, spec: dict, out) -> bool:
-        """Verification gate. Returns True if the address may be read."""
+        """Every guard that must pass before an address is read. Returns True only if all do."""
         name = project["name"]
+        metric = KIND_METRIC.get(spec["kind"], key)
+
+        # 1. AMBIGUOUS ADDRESS. Two or more candidates circulate and we have not established which
+        #    is correct. Picking one on a guess would silently poison every figure downstream.
+        if spec.get("ambiguous"):
+            cands = spec.get("candidates") or []
+            mech = project.get("burn_read_note", "") if spec["kind"] == "burn_address_balance" else ""
+            out.gap(name, metric,
+                    reason=(f"contract {key!r} is AMBIGUOUS — {len(cands)} addresses circulate publicly and "
+                            f"none is established as correct, so none is read. {mech}").strip(),
+                    tiers_attempted="2",
+                    suggestion=f"Resolve from {spec.get('source_url') or 'the protocol docs'} and replace the "
+                               f"candidates list with the single confirmed address. Candidates: "
+                               f"{', '.join(cands)}")
+            out.unconfigured(SOURCE, name, f"{key}: ambiguous address, read refused", TIER)
+            return False
+
+        # 2. BURN MECHANISM. A protocol-level burn has no address to read at all.
+        method = project.get("burn_read_method")
+        if spec["kind"] == "burn_address_balance" and method not in READABLE_BURN_METHODS:
+            out.gap(name, metric,
+                    reason=f"burn is {method!r}, not a transfer — there is no address balance to read. "
+                           f"{project.get('burn_read_note', '')}".strip(),
+                    tiers_attempted="2",
+                    suggestion="Use a chain-data or dashboard source: add a sources.yaml entry for this metric.")
+            out.unconfigured(SOURCE, name, f"{key}: burn_read_method={method}, address read refused", TIER)
+            return False
+
+        # 3. CHAIN COVERAGE. The EVM adapter cannot read Solana, Tron or HyperCore.
+        chain = spec.get("chain")
+        if chain not in config.EVM_CHAINS:
+            out.gap(name, metric,
+                    reason=f"contract {key!r} is on {chain!r}, which the EVM adapter does not cover",
+                    tiers_attempted="2",
+                    suggestion=f"Needs a {chain} adapter, or use the protocol's own dashboard via sources.yaml.")
+            out.unconfigured(SOURCE, name, f"{key}: chain {chain!r} not covered by the EVM adapter", TIER)
+            return False
+
+        # 4. VERIFICATION GATE.
         if spec.get("verified"):
             return True
-        metric = KIND_METRIC.get(spec["kind"], key)
         if not allow_unverified():
             out.gap(name, metric,
                     reason=f"contract address for {key!r} is NOT verified against the protocol's own docs",

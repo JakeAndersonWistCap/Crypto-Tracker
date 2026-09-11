@@ -598,3 +598,141 @@
   anchor: null                                      # TODO the label text beside the figure
   added: 2026-09-11
   note: "Self-reported net mint — take it as published."
+
+# =====================================================================================
+# LOCK RATES AND STAKING — supplied as PAGES, so these are tier 3/4 registry entries
+# rather than contract reads. ENABLED.
+#
+# HONESTY NOTE ON THESE SIX ENTRIES: they are enabled as instructed, but the
+# `url_contains`, `json_path` and `anchor` values below were INFERRED without sight of
+# the pages, because the machine that wrote them has no network access. Each therefore
+# carries `needs_first_run_check: true`, which puts its first returned value in the
+# Review Queue. Eyeball each against the page once, correct the anchor or json_path if
+# it is wrong, then delete the flag. Tight sanity bounds are set on each so a wrong
+# match is very likely rejected rather than stored.
+#
+# FOR THE TWO DUNE DASHBOARD PAGES: scraping a Dune dashboard works but is the fragile
+# route. The robust one is the Dune API with the query id behind the dashboard — open
+# the dashboard, take the query id, and put it in config.py under the project's
+# dune_queries. Do that when you have a moment and delete the scrape entry.
+# =====================================================================================
+
+- project: Aerodrome
+  metric: locked_tokens
+  tier: 4
+  enabled: true
+  url: https://dune.com/0xkhmer/aerodrome
+  method: xhr
+  url_contains: /api/
+  json_path: result.rows.0.locked_aero
+  anchor: "veAERO"
+  needs_first_run_check: true
+  sanity_min: 1000000
+  sanity_max: 2000000000
+  change_threshold_pct: 25
+  added: 2026-09-11
+  note: "veAERO locked — the lock rate and average lock duration are required inputs for effective float. Prefer the Dune API with this dashboard's query id over scraping the page."
+
+- project: Pendle
+  metric: staked_tokens
+  tier: 3
+  enabled: true
+  url: https://app.pendle.finance/spendle/stake/in
+  method: xhr
+  url_contains: /api/
+  json_path: totalStaked
+  anchor: "Total Staked"
+  needs_first_run_check: true
+  sanity_min: 1000
+  sanity_max: 300000000
+  change_threshold_pct: 25
+  added: 2026-09-11
+  note: "sPENDLE total staked. NOTE this is sPENDLE, which is NOT the same as the vePENDLE lock — vePENDLE stays a separate contract read under locked_tokens. Do not conflate them."
+
+- project: Sky
+  metric: staked_tokens
+  tier: 3
+  enabled: true
+  url: https://info.skyeco.com/staking
+  method: xhr
+  url_contains: /api/
+  json_path: totalStaked
+  anchor: "Total SKY Staked"
+  needs_first_run_check: true
+  sanity_min: 1000000
+  sanity_max: 30000000000
+  change_threshold_pct: 25
+  added: 2026-09-11
+  note: "Staked SKY. Tokens paid to stakers re-enter float, so this leg is reported separately and is NEVER netted against the burn."
+
+- project: Ether.fi
+  metric: staked_tokens
+  tier: 4
+  enabled: true
+  url: https://dune.com/ether_fi/staked-ethfi
+  method: xhr
+  url_contains: /api/
+  json_path: result.rows.0.staked_ethfi
+  anchor: "Staked ETHFI"
+  needs_first_run_check: true
+  sanity_min: 1000
+  sanity_max: 2000000000
+  change_threshold_pct: 25
+  added: 2026-09-11
+  note: "Staked ETHFI. Prefer the Dune API with this dashboard's query id over scraping the page."
+
+# ---- Aave: TWO SEPARATE staking mechanisms. They are NOT summed.
+# Different claims on revenue and different unstaking mechanics, so they are stored as two
+# distinct metrics. The metric names say which PAGE each figure came from, NOT what the
+# mechanism is — which page is stkAAVE and which is the Umbrella/Safety Module position has
+# NOT been confirmed. See the Gap Report row asking for that. Once confirmed, rename the
+# metrics to the mechanism and record the difference in claim and unstaking terms.
+
+- project: Aave
+  metric: staked_tokens_aave_staking
+  tier: 3
+  enabled: true
+  url: https://app.aave.com/staking/?marketName=proto_mainnet_v3
+  method: xhr
+  url_contains: /api/
+  json_path: stakedTotal
+  anchor: "Staked"
+  needs_first_run_check: true
+  sanity_min: 1000
+  sanity_max: 20000000
+  change_threshold_pct: 25
+  added: 2026-09-11
+  note: "The app.aave.com/staking page, expected to be stkAAVE but NOT confirmed. NEVER sum this with staked_tokens_safety_module."
+
+- project: Aave
+  metric: staked_tokens_safety_module
+  tier: 3
+  enabled: true
+  url: https://app.aave.com/safety-module/
+  method: xhr
+  url_contains: /api/
+  json_path: stakedTotal
+  anchor: "Safety Module"
+  needs_first_run_check: true
+  sanity_min: 1000
+  sanity_max: 20000000
+  change_threshold_pct: 25
+  added: 2026-09-11
+  note: "The app.aave.com/safety-module page, expected to be the Umbrella/Safety Module position but NOT confirmed. NEVER sum this with staked_tokens_aave_staking."
+
+# ---- Fluid: NOT RESOLVED. The instruction was to check docs.fluid.io and either add the
+# entry or remove the lock-rate metric. Neither was done, because this machine has no network
+# access and could not open docs.fluid.io. The metric is therefore left in place rather than
+# removed on a guess, and the Gap Report carries a row saying the question is open. Resolve it
+# by hand: if FLUID has no staking or lock mechanism, drop locked_tokens from Fluid's
+# archetype 3 block; if it does, fill this entry in and enable it.
+
+- project: Fluid
+  metric: locked_tokens
+  tier: 3
+  enabled: false
+  url: null
+  method: dom
+  anchor: null
+  added: 2026-09-11
+  note: "UNRESOLVED — could not check docs.fluid.io (no network access). It is NOT established that FLUID staking exists at all. Confirm, then either complete this entry or remove locked_tokens from Fluid entirely."

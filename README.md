@@ -81,8 +81,12 @@ would fix it. 3. For each row, find the page that publishes the figure and compl
 in `sources.yaml` (`url`, then either `url_contains` + `json_path`, or `anchor`), set
 `enabled: true`. 4. Re-run.
 
-`sources.yaml` ships with the schema documented inline, two worked examples, and 53
-pre-populated stubs for the metrics where a published page is the only route.
+`sources.yaml` ships with the schema documented inline, two worked examples, six **enabled**
+lock-rate and staking entries, and pre-populated stubs for the metrics where a published page is
+the only route. The six enabled entries carry `needs_first_run_check: true`, because their
+anchors were inferred without sight of the pages: each puts its first value in the Review Queue
+for eyeballing. Aave's two staking pages are deliberately two separate metrics that are never
+summed, since they have different claims on revenue and different unstaking mechanics.
 
 ## Anti-brittleness
 
@@ -166,10 +170,76 @@ Token conversions use the period-**average** price; spot is shown separately and
 Where a split's status is `unconfirmed`, the workbook greys the cell and **suppresses the
 derived figure**. Nothing we have not documented is ever estimated.
 
+## Two burn mechanisms, never conflated
+
+Burning happens two different ways, and treating them as equivalent produces a confidently
+wrong number:
+
+- **Transfer burn** — tokens move to an address no one controls, readable as a balance. Gets a
+  contract entry and `burn_read_method: "transfer"`. PancakeSwap, Venice, Uniswap, Sky, GEODNET.
+- **Protocol burn** — supply is destroyed at the protocol level with no transfer. There is *no*
+  address to read; `burn_address` is `None` and the method is `"protocol_level"`. Ethereum,
+  Solana, Near, Canton, Injective. Reading a dead address for one of these returns other
+  people's discarded tokens, not the protocol burn. Injective's case is the trap: the
+  `0x1111...1111` address that circulates publicly is a contribution subaccount, **not** a burn
+  destination, and the Gap Report says so where someone would otherwise be tempted to add it.
+- **Undetermined** — Tron, where four candidate black-hole addresses circulate *and* the chain
+  also burns at the protocol level. Nothing is read until the mechanism itself is settled.
+
+The tier 2 adapter refuses to read a burn address unless the method is `transfer`, so the
+distinction is enforced rather than merely documented.
+
+## Ambiguous addresses are never guessed
+
+Where two or more addresses circulate publicly and none is established, config lists them all
+under `candidates` with `ambiguous: True`, and the adapter refuses to read any of them. Two
+cases today: the SKY token (two addresses differing only after the eighth character, which is
+exactly how a transposition survives) and Tron's four black-hole candidates. Picking one on a
+guess would silently poison every downstream figure for that project.
+
+## Splits change, and history is not rewritten
+
+`fee_split.history` records each period's split with its own source and status. At build time
+every comparison window is matched to the split that actually applied to it. A window that
+spans a change, or sits in a period we have not documented, reads `unconfirmed` and its derived
+figure is **suppressed**.
+
+Sky is the live case: the 55/45 split dates from a governance proposal of 13 August 2026, so
+the trailing-quarter window spans the change and is suppressed rather than being computed at
+55%. That column stays blank until a full quarter sits after the change date. That is the
+correct answer, not a bug.
+
+A per-product split is never collapsed into one number either. PancakeSwap burns 15-23% of spot
+trading fees and 20% of perpetual trading profit; those are shown as separate figures and the
+single implied column is suppressed.
+
+## Self-reported figures win
+
+Where a protocol publishes a figure itself, that is the number used. `self_reported_net_mint`
+marks those projects, and the A4 headline prefers the published net mint over the derived
+issuance-minus-burn, showing the derived figure beside it so a divergence is visible. The
+preference is keyed on the config flag, not on data merely being present, so a project that
+does not publish net mint always derives.
+
+`reference_values` in config holds figures the protocol has already published (PancakeSwap's
+May and June 2026 net mint). Every run compares the scraped value for those months against
+them, so a scraper that drifts is caught as a regression rather than quietly rewriting history.
+
+## Revenue that has not landed is not booked
+
+`revenue_sources` carries a `booked` flag. Hyperliquid's AQAv2 leg went live on 26 August 2026
+and accrues on 30-day cycles, but the first payment is not due until 3 October 2026, so it is
+recorded with `booked: False` and excluded from revenue. It shows on the Config tab as
+accruing-but-not-booked, and the Gap Report carries a reminder to flip it once a payment is
+actually observed.
+
 ## Status
 
-The universe table in the brief lists **29** projects (the heading says 30). All 29 are
-configured; nothing was invented to reach 30.
+The universe is **30** projects.
+
+**No live run has happened yet.** The development sandbox's egress policy blocks DefiLlama,
+CoinGecko, Dune, every public RPC endpoint and every protocol site, so tiers 1 to 5 have been
+built and tested against stubs and fixtures but never against a real source.
 
 **No live run has happened yet.** The development sandbox's egress policy blocks DefiLlama,
 CoinGecko, Dune, every public RPC endpoint and every protocol site, so tiers 1 to 5 have been

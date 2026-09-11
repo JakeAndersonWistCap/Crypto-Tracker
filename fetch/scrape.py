@@ -368,11 +368,18 @@ class Scrape:
         scale = float(entry.get("scale", 1) or 1)
         value = value * scale
         when = today()
-        out.add(point(proj, metric, value, source, TIER, when), SOURCE, proj,
-                f"{metric}={value:,.4f}" + (" (cached)" if cached else "") + (f" | {detail}" if detail else ""), TIER)
+        tier = int(entry.get("tier", TIER) or TIER)   # provenance: a Dune dashboard page is tier 4
+        note = ""
+        if entry.get("needs_first_run_check"):
+            note = " | FIRST-RUN CHECK: the anchor/json_path was inferred without sight of the page — "
+            note += "eyeball this value against the page before trusting it"
+            out.review_item(proj, metric, "anchor_unconfirmed", "stored_flagged", value=value,
+                            prior_value=self.prior.get((proj, metric)), date=when, source=source, tier=tier)
+        out.add(point(proj, metric, value, source, tier, when), SOURCE, proj,
+                f"{metric}={value:,.4f}" + (" (cached)" if cached else "") + (f" | {detail}" if detail else "") + note, tier)
         flow_metric = entry.get("derive_flow_metric")
         if entry.get("cumulative") and flow_metric:
             flow = derive_flow_from_cumulative(value, self.prior.get((proj, metric)), proj, flow_metric,
-                                               f"{source}:delta", TIER, when)
+                                               f"{source}:delta", tier, when)
             if not flow.empty:
                 out.add(flow, SOURCE, proj, f"{flow_metric} derived from {metric} delta", TIER)
