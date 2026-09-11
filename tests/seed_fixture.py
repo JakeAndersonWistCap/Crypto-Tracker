@@ -113,6 +113,8 @@ def main() -> int:
             frames.append(frame(name, "burn_address_balance", series(supply0 * 0.01, drift=0.2, noise=0.05), "chain:burn", tier=2))
         if p.get("self_reported_net_mint"):   # only protocols that actually publish it
             frames.append(frame(name, "net_mint_monthly", series(supply0 * 0.0002, noise=0.4) * -1, "scrape:dashboard", tier=3))
+        if name == "Aave":
+            frames.append(frame(name, "umbrella_staked_usd", series(3.2e9, noise=0.1), "scrape:app.aave.com", tier=3))
         if 3 in arch and name in ("Aerodrome", "Pendle"):
             frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "chain:ve", tier=2))
 

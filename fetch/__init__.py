@@ -25,6 +25,7 @@ from .dune import Dune
 from .gaps import detect as detect_gaps
 from .llama import DefiLlama
 from .schedule import Schedule
+from .tron import TronNode
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import check_reference_values, validate_frame
 
@@ -35,6 +36,7 @@ TIER_ORDER = [
     ("defillama", 1, lambda ctx: DefiLlama()),
     ("coingecko", 1, lambda ctx: CoinGecko()),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"])),
+    ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"])),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
 ]

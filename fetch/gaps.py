@@ -80,6 +80,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"Check the Run Log for the {api} failure, and confirm {field}="
                     f"{project.get(field)!r} is still correct.")
 
+    # A metric served by a node API read (TRON's BURN_TRX) has a source configured; if it produced
+    # nothing the adapter has already raised a specific gap naming the failure.
+    node_api = project.get("node_api") or {}
+    if node_api and metric in (node_api.get("metric"), "gross_burn_tokens"):
+        return (f"node API read ({node_api.get('kind')}) is configured but returned nothing this run",
+                f"Check the node_api endpoints, path and response_keys in config.py for {name}. "
+                f"Sources on file: {', '.join(node_api.get('source_urls') or []) or 'none'}")
+
     # A burn that happens at the protocol level has no address to read, so "no contract declared"
     # would be the wrong explanation entirely — the fix is a different SOURCE, not a missing address.
     if metric in ("gross_burn_tokens", "burn_address_balance"):
@@ -123,6 +131,19 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"Confirm {contracts[unverified[0]]['address']} on "
                     f"{contracts[unverified[0]].get('source_url') or 'the protocol docs'}, then set verified "
                     f"in config.py. Or set TOKEN_METRICS_ALLOW_UNVERIFIED=1 to read it anyway.")
+
+        # Every matching contract is verified, so the address is not the problem. Either the chain
+        # is outside the EVM adapter's reach, or the read itself failed this run.
+        off_chain = [k for k in matching if contracts[k].get("chain") not in config.EVM_CHAINS]
+        if off_chain:
+            chains = sorted({contracts[k]["chain"] for k in off_chain})
+            return (f"contract {off_chain[0]!r} is VERIFIED but sits on {', '.join(chains)}, which the EVM "
+                    f"adapter cannot read",
+                    f"Add a {chains[0]} adapter, or a sources.yaml entry pointing at a page that publishes "
+                    f"the figure. The address itself is confirmed, so this is purely a read-path gap.")
+        return (f"contract {matching[0]!r} is verified but the tier 2 read returned nothing this run",
+                f"Check the Run Log for the chain read failure, and confirm the RPC endpoints for "
+                f"{contracts[matching[0]].get('chain')} in .env.")
 
     if (name, metric) in scrape_entries:
         return (scrape_entries[(name, metric)],

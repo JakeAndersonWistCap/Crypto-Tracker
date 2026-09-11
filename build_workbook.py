@@ -96,6 +96,7 @@ CFG_COLS = [
     ("Share Q2 (-6m window)", 12), ("Status Q2", 11),
     ("Share Q3 (-9m window)", 12), ("Status Q3", 11),
     ("Revenue accruing but NOT booked", 40),
+    ("Governance-settable parameters (never hardcoded)", 44),
     ("Self-reported figure preferred", 16),
     ("Notes", 60), ("Status changes", 40),
 ]
@@ -387,7 +388,17 @@ def write_config(ws, asof: pd.Timestamp):
             f"first payment {rs.get('first_payment_date', '?')}) — ACCRUING, NOT BOOKED"
             for rs in (p.get("revenue_sources") or []) if not rs.get("booked", True)
         )
-        self_reported = "yes — preferred over derived" if p.get("self_reported_net_mint") else ""
+        gov = "; ".join(
+            f"{k}={'(not set)' if v.get('value') is None else v['value']} "
+            f"[{'programmed' if v.get('programmed') else 'governance-movable'}; {v.get('controller', '?')}]"
+            for k, v in (p.get("governance_parameters") or {}).items()
+        )
+        sr_bits = []
+        if p.get("self_reported_net_mint"):
+            sr_bits.append("net mint")
+        if p.get("self_reported_burn"):
+            sr_bits.append("burn")
+        self_reported = (", ".join(sr_bits) + " — preferred over derived") if sr_bits else ""
 
         values = [
             p["name"], p["symbol"], ", ".join(str(a) for a in p["archetypes"]), p["archetypes"][0],
@@ -399,7 +410,7 @@ def write_config(ws, asof: pd.Timestamp):
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
             bs.get("status", "n/a") if bs else "n/a",
             cur_step, sched.get("source_url") or "", sched.get("source_date") or "", sched.get("status", "n/a") if sched else "n/a",
-            per_product, *window_cells, accruing, self_reported,
+            per_product, *window_cells, accruing, gov, self_reported,
             "; ".join(x for x in [p.get("notes", ""), fs.get("note", ""), (bs or {}).get("note", "")] if x), changes,
         ]
         for j, v in enumerate(values, start=1):
@@ -424,6 +435,8 @@ def write_config(ws, asof: pd.Timestamp):
                 c.fill = FILL_UNCONFIRMED
             if head == "Revenue accruing but NOT booked" and v:
                 c.fill = FILL_PAUSED
+            if head == "Governance-settable parameters (never hardcoded)" and v:
+                c.fill = FILL_UNCONFIRMED
             if head == "Per-product split (never collapsed)" and v:
                 c.fill = FILL_KEY
             if head in ("Notes", "Status changes"):
@@ -681,7 +694,9 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", True, {"metric": "gross_issuance_tokens"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
         ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
-        ("Self-reported preferred?", lambda r, p: "yes" if p.get("self_reported_net_mint") else "", FMT_TEXT, "text"),
+        ("Self-reported figure preferred?", lambda r, p: ", ".join(
+            x for x in ["net mint" if p.get("self_reported_net_mint") else "",
+                        "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn",
          lambda r, p: calc(_net_change(R, r, p, iss, burn)), FMT_NUM, "calc", True),
         ("Derived net supply change (issuance − burn), for comparison", lambda r, p: calc(f"{iss(r)}-{burn(r)}"), FMT_NUM, "calc"),
@@ -758,6 +773,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         ("Effective float = circulating − locked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
         ("Yield destination (tracked separately from burn)", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
+        ("Umbrella staked $ (Aave only) — protocol risk cover, NOT AAVE supply, excluded from every float figure",
+         lambda r, p: pull(R.D(r, "umbrella_staked_usd", "now")), FMT_USD, "pull", False, {"metric": "umbrella_staked_usd"}),
         *_trajectory(R, "revenue_usd", "Revenue"),
         ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: gated(st(r, 'q1'), f"{rev(r, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/{circ(r)}", share(r, 'q1')), FMT_PCT, "calc", False, {"gate_window": "q1"}),
         ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: gated(st(r, 'q2'), f"{rev(r, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/{circ(r)}", share(r, 'q2')), FMT_PCT, "calc", False, {"gate_window": "q2"}),

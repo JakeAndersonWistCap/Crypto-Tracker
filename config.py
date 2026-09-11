@@ -50,7 +50,8 @@ Where a split's status is "unconfirmed" the workbook greys the cell and SUPPRESS
 derived figure. Never estimate a split we have not documented.
 """
 
-BRIEF_DATE = "2026-09-11"   # date the parameters below were set from the working brief
+BRIEF_DATE = "2026-09-11"
+UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"   # date the parameters below were set from the working brief
 
 # =======================================================================================
 # Source tiers. Every stored value carries its tier; the workbook shows it.
@@ -150,12 +151,19 @@ METRICS = {
     "buyback_fund_balance":       {"label": "Buyback fund balance",            "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2],    "sanity_min": 0,    "sanity_max": 1e15},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
-    # Aave runs TWO separate staking mechanisms with different claims on revenue and different
-    # unstaking mechanics. They are deliberately two metrics so nothing can sum them into one
-    # misleading figure. Which page maps to stkAAVE and which to Umbrella/Safety Module is NOT
-    # yet confirmed — the metric names say which PAGE each came from, not what it is.
-    "staked_tokens_aave_staking": {"label": "Staked (app.aave.com/staking page)",        "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ["Aave"]},
-    "staked_tokens_safety_module": {"label": "Staked (app.aave.com/safety-module page)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ["Aave"]},
+    # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
+    #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
+    #                                 producing stkAAVE and stkABPT. THIS is the AAVE lock rate,
+    #                                 and it feeds locked_tokens like every other project's.
+    #   app.aave.com/staking        = UMBRELLA. Stakes aTokens (aUSDC, aUSDT, aWETH) and GHO, NOT
+    #                                 AAVE. It says nothing about AAVE float, so it is NOT stored as
+    #                                 an AAVE staked or lock figure under any label. It is kept only
+    #                                 as a separate protocol-risk measure, in dollars, and is
+    #                                 excluded from every supply and float calculation.
+    "umbrella_staked_usd": {"label": "Umbrella staked (aTokens + GHO) — protocol risk cover, NOT AAVE supply",
+                            "kind": "stock", "unit": "usd", "archetypes": [3], "tiers": [3],
+                            "sanity_min": 0, "sanity_max": 1e11, "only_projects": ["Aave"],
+                            "excluded_from_supply": True},
     # --- off-chain operational (archetype 2)
     "supply_units":               {"label": "Supply units (nodes/hotspots/GPUs)", "kind": "stock", "unit": "units", "archetypes": [2],        "tiers": [5, 3], "sanity_min": 0,    "sanity_max": 1e8},
     "utilisation_pct":            {"label": "Capacity utilisation",            "kind": "stock", "unit": "pct",    "archetypes": [2],          "tiers": [5, 3], "sanity_min": 0,    "sanity_max": 1.0},
@@ -172,6 +180,10 @@ MANUAL_ONLY_METRICS: list[str] = []   # nothing is manual-only by design; unreso
 # Every read self-checks symbol() against expected_symbol before accepting a value.
 CONTRACT_KINDS = {
     "erc20_total_supply":   {"metric": "total_supply",         "call": "totalSupply", "scale": "decimals"},
+    # Solana reads. NOT served by the EVM adapter — they need a Solana RPC adapter, and the
+    # Gap Report says so rather than the read failing obscurely.
+    "spl_mint":             {"metric": "total_supply",         "call": "getTokenSupply",        "scale": "decimals"},
+    "spl_token_account":    {"metric": "burn_address_balance", "call": "getTokenAccountBalance", "scale": "decimals"},
     "erc20_balance":        {"metric": None,                   "call": "balanceOf",   "scale": "decimals"},
     "burn_address_balance": {"metric": "burn_address_balance", "call": "balanceOf",   "scale": "decimals"},
     "ve_total_supply":      {"metric": "locked_tokens",        "call": "totalSupply", "scale": "decimals"},
@@ -208,6 +220,10 @@ DEFAULT_RPC = {
     "polygon": [
         "https://polygon-bor-rpc.publicnode.com",
         "https://polygon-rpc.com",
+    ],
+    "unichain": [
+        "https://mainnet.unichain.org",
+        "https://unichain-rpc.publicnode.com",
     ],
 }
 
@@ -384,33 +400,36 @@ PROJECTS = [
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://developers.tron.network/docs/resource-model", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "TRX paid for bandwidth/energy is burned. Document the share before enabling the tier 1 rule."},
         "issuance_schedule": None,
-        "contracts": {
-            # UNDETERMINED MECHANISM. Four candidate black-hole addresses circulate publicly AND Tron
-            # also burns at the protocol level. Until we establish which mechanism the current burn
-            # actually uses, nothing is read and no method is assigned.
-            "burn_candidates": _contract(
-                None, "tron", "burn_address_balance", "TRX",
-                "https://developers.tron.network/docs/resource-model",
-                purpose="Candidate black-hole addresses — NOT resolved, NOT read.",
-                ambiguous=True,
-                candidates=["T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb",
-                            "TMerfyf1KwvKeszfVoLH3PEJH52fC2DENq",
-                            "TTnCasLiippWFp5avYftdeCvtFiowDjn44",
-                            "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"],
-                note="Four candidates circulate, the last being the older fee-burn address. Tron ALSO burns at "
-                     "the protocol level, so the MECHANISM is unresolved, not merely the address. Determine "
-                     "which mechanism the current burn uses before assigning either method."),
-        },
+        # MECHANISM RESOLVED, and every black-hole address is the WRONG APPROACH. TRON burns TRX by
+        # protocol rule when bandwidth/energy is insufficient, and TIP proposal #49 moved burned TRX
+        # OUT of the black-hole address into DynamicPropertiesStore under the key BURN_TRX, precisely
+        # so burns could be counted flexibly. A balance read on T9yD14... does NOT return the fee burn.
+        "contracts": {},
         "burn_address": None,
-        "burn_read_method": "undetermined",
-        "burn_read_note": "TRX paid for bandwidth/energy is burned, but it is NOT established whether the current "
-                          "burn is a transfer to a black-hole address or a protocol-level destruction. Four candidate "
-                          "addresses circulate. Nothing is read until this is resolved.",
+        "burn_read_method": "protocol_level",
+        "node_api": {
+            "kind": "tron_burn_trx",
+            "metric": "burn_address_balance",     # cumulative burned TRX; period burn by differencing
+            "endpoints": ["https://api.trongrid.io"],
+            "path": "/wallet/getburntrx",
+            "response_keys": ["burnTrxAmount", "burnTrxAmountInSun", "amount"],
+            "scale": 1e-6,                        # sun -> TRX
+            "source_urls": ["https://developers.tron.network/docs/glossary",
+                            "https://github.com/tronprotocol/tips/issues/234"],
+            "verified": "2026-09-11",
+            "note": "Read the BURN_TRX value from a TRON node (TronGrid or any node), NOT an address balance. "
+                    "The endpoint path and response key are implementation detail and are configurable here; "
+                    "if the first run returns nothing, check them against the node API docs.",
+        },
+        "burn_read_note": "Protocol-rule burn when bandwidth/energy is insufficient. TIP #49 moved burned TRX out of "
+                          "the black-hole address into DynamicPropertiesStore under key BURN_TRX, so the read is a "
+                          "node API call for BURN_TRX, not an address balance. The four black-hole addresses that "
+                          "circulate are the wrong approach and have been removed.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
-        "notes": "TVM, not EVM-compatible via web3.py standard JSON-RPC. Tronscan publishes a running burn total — "
-                 "a tier 3 candidate, and probably the fastest route once the mechanism question is settled.",
+        "notes": "TVM, not EVM-compatible via web3.py standard JSON-RPC. Burn is read from the node API key BURN_TRX "
+                 "(TIP #49), not from any black-hole address.",
     },
     {
         "name": "Near", "symbol": "NEAR",
@@ -517,7 +536,21 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x514910771AF9Ca656af840dff83E8264EcF986CA", "ethereum", "erc20_total_supply", "LINK",
-                               "https://docs.chain.link/resources/link-token-contracts"),
+                               "https://docs.chain.link/resources/link-token-contracts",
+                               verified="2026-09-11", provenance="protocol docs",
+                               purpose="LINK token contract. CONFIRMED. Note this is only a SUPPLY read — it is not "
+                                       "the revenue input for the archetype 3 block."),
+            # THE address that matters for Chainlink's archetype 3 assignment. Payment Abstraction
+            # revenue accumulates here as LINK. Without it the archetype 3 block has NO revenue input
+            # at all, which is why it is listed even with no address yet.
+            "reserve": _contract(
+                None, "ethereum", "buyback_fund_balance", "LINK",
+                "https://blog.chain.link/chainlink-reserve/",
+                purpose="Chainlink Reserve — where Payment Abstraction revenue accumulates as LINK. This, not the "
+                        "token contract, is the archetype 3 revenue input.",
+                note="ADDRESS STILL NEEDS SOURCING from Chainlink's own Reserve documentation. Until it is filled "
+                     "in and verified, Chainlink's archetype 3 block has no revenue input and its derived figures "
+                     "stay suppressed."),
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "staked_tokens", "emissions_tokens"),
@@ -549,33 +582,45 @@ PROJECTS = [
         "burn_split": {"share_of_fees_burned": 0.80, "source_url": "https://geodnet.com/tokenomics", "source_date": BRIEF_DATE, "status": "active",
                        "note": "80% of console (data) revenue buys back and burns GEOD. Confirmed burn; re-check the share against the current docs page."},
         "issuance_schedule": None,
+        # CORRECTED from the working Dune query that actually tracks GEOD burns. The
+        # "1nc1nerator111..." address previously here is NOT what that query reads and has been removed.
+        # The query UNIONs both chains, which settles the open question: Polygon-era burns DO belong in
+        # the series alongside the Solana ones, so both paths are read and summed.
         "contracts": {
-            "burn_incinerator": _contract(
-                "1nc1nerator11111111111111111111111111111111", "solana", "burn_address_balance", "GEOD",
-                "https://geodnet.com/tokenomics",
-                purpose="TRANSFER BURN — the current Solana incinerator address.",
-                note="UNVERIFIED. Solana is not covered by the EVM adapter, so this needs a Solana read. "
-                     "GEODNET migrated from Polygon: CONFIRM which chain the current burn path uses and "
-                     "whether the historical Polygon burns need including for backfill."),
-            "burn_polygon_historical": _contract(
-                "0x000000000000000000000000000000000000dEaD", "polygon", "burn_address_balance", "GEOD",
-                "https://geodnet.com/tokenomics",
-                purpose="TRANSFER BURN — Polygon-era historical burns, pre-migration.",
-                note="UNVERIFIED and HISTORICAL ONLY. Include for backfill only once it is confirmed whether "
-                     "these burns belong in the series alongside the Solana ones."),
+            "token_polygon": _contract(
+                "0xAC0F66379A6d7801D7726d5a943356A172549Adb", "polygon", "erc20_total_supply", "GEOD",
+                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                purpose="Polygon GEOD token — balanceOf is called on this for the Polygon burn."),
+            "burn_polygon": _contract(
+                "0x000000000000000000000000000000000000dead", "polygon", "burn_address_balance", "GEOD",
+                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                purpose="TRANSFER BURN — Polygon burn destination. IN SCOPE for the backfill, not historical-only: "
+                        "the working query unions Polygon and Solana burns into one series."),
+            "mint_solana": _contract(
+                "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu", "solana", "spl_mint", "GEOD",
+                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                purpose="Solana GEOD mint."),
+            "burn_solana_token_account": _contract(
+                "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED", "solana", "spl_token_account", "GEOD",
+                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                purpose="TRANSFER BURN — Solana burn destination. This is a TOKEN-ACCOUNT read, not an "
+                        "incinerator balance, so it needs a Solana RPC adapter rather than the EVM one."),
             "buyback_wallet_polygon_historical": _contract(
                 "0xc327C048d75398Da9DB5254679bb84a4a9e42010", "polygon", "buyback_fund_balance", "GEOD",
                 "https://geodnet.com/tokenomics",
                 purpose="Polygon-era buyback wallet, pre-migration.",
-                note="UNVERIFIED and HISTORICAL ONLY."),
+                note="UNVERIFIED, and NOT referenced by the working burn query. Left in place but refused; "
+                     "confirm whether it is still relevant before enabling."),
         },
         "burn_read_method": "transfer",
+        "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "dune_queries": _dune("gross_burn_tokens", "emissions_tokens"),
         "materiality": "low",
-        "notes": "Console revenue burn — confirmed. Migrated from Polygon to Solana: confirm which chain the "
-                 "current burn path uses and whether historical Polygon burns belong in the backfill. "
-                 "GEODNET publishes miner counts and burn on its own dashboard (tier 3/5).",
+        "notes": "Console revenue burn — confirmed. Migrated Polygon -> Solana, and BOTH burn paths belong in the "
+                 "same series: the working Dune query unions them. Polygon burns via balanceOf on the GEOD token at "
+                 "the dead address; Solana via a token-account read, which needs a Solana adapter. "
+                 "GEODNET publishes miner counts on its own dashboard (tier 3/5).",
     },
     {
         "name": "peaq", "symbol": "PEAQ",
@@ -697,6 +742,14 @@ PROJECTS = [
                                    note="UNVERIFIED — confirm against Venice's own docs."),
         },
         "burn_read_method": "transfer",
+        "self_reported_burn": True,
+        "self_reported_source": {
+            "what": "Venice publishes its burns directly",
+            "url": "https://venice.ai/token/burns",
+            "metric": "gross_burn_tokens",
+            "note": "Self-reported, so preferred over any derived calculation — the same rule as PancakeSwap's "
+                    "published net mint.",
+        },
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "medium",
@@ -781,12 +834,14 @@ PROJECTS = [
         "contracts": {
             "assistance_fund": _contract(
                 "0xfefefefefefefefefefefefefefefefefefefefe", "hyperliquid", "burn_address_balance", "HYPE",
-                "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/assistance-fund",
-                purpose="Assistance Fund — since the Dec 2025 validator vote its balance is recognised as "
-                        "BURNED, so this is the cumulative burn total, not a treasury holding. Period burn "
-                        "is derived by differencing against the previous reading.",
-                note="UNVERIFIED — confirm against Hyperliquid's own docs. HYPE on HyperCore is not an "
-                     "ERC-20 on a chain the EVM adapter covers, so this needs a native-balance read."),
+                "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees",
+                verified="2026-09-11", provenance="protocol docs",
+                purpose="Assistance Fund — cumulative burn total, not a treasury holding. Period burn is "
+                        "derived by differencing against the previous reading.",
+                note="CONFIRMED against Hyperliquid's own docs: the fund converts trading fees to HYPE as part "
+                     "of L1 execution, and HYPE in the fund is burned — removed permanently from circulating "
+                     "AND total supply. The address has never had a private key, so nothing can leave. "
+                     "Still needs a HyperCore read: HYPE is not an ERC-20 on a chain the EVM adapter covers."),
         },
         "burn_read_method": "native_balance",
         "buyback_destination": "burn",          # resolved — no longer disputed
@@ -828,23 +883,49 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "ethereum", "erc20_total_supply", "UNI",
-                               "https://docs.uniswap.org/contracts/v3/reference/deployments",
+                               UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                purpose="UNI token contract."),
             "token_jar": _contract("0xf38521f130fcCF29dB1961597bc5d2B60F995f85", "ethereum", "buyback_fund_balance", "UNI",
-                                   "https://gov.uniswap.org/",
-                                   purpose="Token Jar — where fees accumulate before holders elect to burn.",
-                                   note="UNVERIFIED — confirm from gov.uniswap.org or the Uniswap Labs repo."),
+                                   UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                   purpose="TokenJar (AssetSink), mainnet — where fees accumulate before holders elect to burn."),
             "fire_pit": _contract("0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721", "ethereum", "burn_address_balance", "UNI",
-                                  "https://gov.uniswap.org/",
-                                  purpose="Fire Pit (Releaser) — TRANSFER BURN destination for holder-elected burns.",
-                                  note="UNVERIFIED — confirm from gov.uniswap.org or the Uniswap Labs repo."),
+                                  UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                  purpose="Releaser (Firepit), mainnet — TRANSFER BURN destination for holder-elected burns."),
+            "v3_fee_adapter": _contract("0x5E74C9f42EEd283bFf3744fBD1889d398d40867d", "ethereum", "buyback_fund_balance", "UNI",
+                                        UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                        purpose="V3FeeAdapter, mainnet."),
+            # SECOND BURN PATH. Unichain has its own TokenJar and releaser, and Unichain sequencer
+            # revenue routes into the UNI burn. Omitting this UNDERSTATES the total, so both paths
+            # are read and summed into one burn figure.
+            "token_jar_unichain": _contract("0xD576BDF6b560079a4c204f7644e556DbB19140b5", "unichain", "buyback_fund_balance", "UNI",
+                                            UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                            purpose="TokenJar, Unichain — the second fee accumulation path."),
+            "fire_pit_unichain": _contract("0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB", "unichain", "burn_address_balance", "UNI",
+                                           UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                           purpose="OptimismBridgedResourceFirepit, Unichain — the second TRANSFER BURN path. "
+                                                   "Summed with the mainnet fire pit; omitting it understates total burn."),
         },
         "burn_read_method": "transfer",
+        # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
+        # constant: the Uniswap Governance Timelock holds thresholdSetter and can appoint a different
+        # one. No number is hardcoded here — read it on-chain or record it with its source and date.
+        "governance_parameters": {
+            "release_threshold_uni": {
+                "value": None,
+                "programmed": False,
+                "controller": "Uniswap Governance Timelock (holds thresholdSetter, and can appoint a different setter)",
+                "source_url": UNISWAP_FEE_DEPLOYMENTS,
+                "source_date": None,
+                "note": "The UNI-burn threshold that must be met before release() can be called. Governance-movable, "
+                        "so it is never hardcoded. Leaving value None keeps any figure derived from it suppressed.",
+            },
+        },
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "holder_elected",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens"),
         "materiality": "high",
         "notes": "Archetype 4 only — no distribution leg, no staking yield. Implied and actual burn diverge for reasons unrelated "
-                 "to revenue, because the burn is holder-elected.",
+                 "to revenue, because the burn is holder-elected. TWO burn paths: mainnet and Unichain, summed. "
+                 "The release() threshold is a governance-settable parameter, not a constant.",
     },
     {
         "name": "Aerodrome", "symbol": "AERO",
@@ -957,26 +1038,28 @@ PROJECTS = [
                                "currently 55% burn / 45% stakers. Never net staking rewards against burn."},
         "issuance_schedule": None,
         "contracts": {
-            # AMBIGUOUS — two conflicting SKY token addresses circulate publicly and we have NOT
-            # established which is correct. ambiguous=True makes the adapter refuse to read any of
-            # them and raise a Gap Report row. Picking one on a guess is exactly the failure this
-            # design exists to prevent, and it would silently poison every SKY figure downstream.
             "token": _contract(
-                None, "ethereum", "erc20_total_supply", "SKY",
-                "https://docs.sky.money/",
+                "0x56072C95FAA701256059aa122697B133aDEd9279", "ethereum", "erc20_total_supply", "SKY",
+                "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
+                verified="2026-09-11", provenance="protocol docs",
                 purpose="SKY token contract — needed to read any balance, including the burn.",
-                ambiguous=True,
-                candidates=["0x56072C95FAA701256059aa122697B133aDEd9279",
-                            "0x56072C171D3cD400185536b71B50494659d87cdf"],
-                note="TWO CONFLICTING ADDRESSES IN PUBLIC CIRCULATION. Resolve from docs.sky.money or the "
-                     "Sky governance repo before using either. Note how similar they are — a transposition "
-                     "is the likely origin, which is precisely why guessing is unsafe."),
+                note="RESOLVED. Confirmed against Sky's own developer docs; the contract declares name "
+                     "'SKY Governance Token', symbol 'SKY'. Codebase: https://github.com/sky-ecosystem/sky. "
+                     "The other address that was circulating is WRONG and has been deleted "
+                     "entirely rather than kept as a fallback."),
             "burn_zero": _contract(
                 "0x0000000000000000000000000000000000000000", "ethereum", "burn_address_balance", "SKY",
-                "https://docs.sky.money/",
+                "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
+                verified="2026-09-11", provenance="protocol docs",
                 purpose="TRANSFER BURN — the Smart Burn Engine sends repurchased SKY to the zero address.",
-                note="UNVERIFIED. Blocked in practice until the ambiguous SKY token address above is "
-                     "resolved, because balanceOf is called on the token contract."),
+                note="Unblocked by the SKY token resolution: balanceOf is called on the confirmed token contract."),
+            "lssky": _contract(
+                None, "ethereum", "ve_total_supply", "lssky",
+                "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
+                purpose="Staked SKY Token (lssky) — THE lock-rate metric for Sky. This is what "
+                        "info.skyeco.com/staking reports.",
+                note="ADDRESS STILL NEEDS SOURCING from the same Sky developer docs page. Listed so the "
+                     "Gap Report carries it; nothing is read until the address is filled in and verified."),
         },
         "burn_read_method": "transfer",
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
@@ -1041,19 +1124,39 @@ PROJECTS = [
                     "VERIFY against governance.aave.com directly before treating the mechanism as hard-coded.",
         },
         "paused_since": "2026-04-19",
+        # AAVE IS NOT A CLEAN REVENUE-FUNDED NAME — it has a supply leg. stkAAVE rewards are funded
+        # by AAVE allowance top-ups at 150 AAVE per day, which is EMISSIONS running alongside the
+        # buyback rather than being funded by it. Counting the buyback without this would overstate
+        # net absorption.
+        "issuance_schedule": {
+            "steps": [{"from": "2026-08-28", "tokens_per_day": 150.0}],
+            "source_url": "https://governance.aave.com/",
+            "source_date": "2026-08-28",
+            "status": "active",
+            "also_emissions": True,   # the same figure is emissions to stakers, so it feeds both metrics
+            "note": "Safety Module August 2026 Allowance Update AIP (governance.aave.com, authored by "
+                    "TokenLogic, created 2026-08-28): stkAAVE rewards funded by AAVE allowance top-ups at "
+                    "150 AAVE/day. This is the supply leg that sits alongside the buyback.",
+        },
         "burn_split": None,
-        "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", "ethereum", "erc20_total_supply", "AAVE",
                                "https://aave.com/docs"),
             "staking": _contract("0x4da27a545c0c5B758a6BA100e3a049001de870f5", "ethereum", "ve_total_supply", "stkAAVE",
-                                 "https://aave.com/docs", note="stkAAVE — destination is stakers, NOT burn."),
+                                 "https://app.aave.com/safety-module/",
+                                 purpose="stkAAVE, the LEGACY Safety Module — AAVE and ABPT staked on Ethereum. "
+                                         "THIS is the AAVE lock rate.",
+                                 note="stkAAVE — destination is stakers, NOT burn. Not to be confused with Umbrella, "
+                                      "which stakes aTokens and GHO rather than AAVE."),
         },
         "buyback_destination": "distribute",   # to stakers — NOT in dispute
         "destination_split": None, "burn_execution": "n/a",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "high",
-        "notes": "Destination is stakers, not burn — that part is not in dispute. Buybacks PAUSED since "
+        "notes": "HAS A SUPPLY LEG: stkAAVE rewards are AAVE allowance top-ups at 150 AAVE/day (Safety Module "
+                 "August 2026 Allowance Update AIP), which is emissions running alongside the buyback, not funded "
+                 "by it — so net absorption must net them off. "
+                 "Destination is stakers, not burn — that part is not in dispute. Buybacks PAUSED since "
                  "19 April 2026 following the rsETH bridge exploit; an ARFC was filed 22 April formalising the "
                  "pause. No resumption found as of Sept 2026. Roughly $15bn TVL migrated away post-exploit and "
                  "the DAO stated buybacks resume \"when business cashflow permits\". Whether the mechanism is "
@@ -1062,6 +1165,7 @@ PROJECTS = [
             {"date": "2026-03-01", "event": "Buyback budget cut from ~$50m to ~$30m", "source_url": "https://governance.aave.com/"},
             {"date": "2026-04-19", "event": "Buybacks paused after the rsETH bridge exploit", "source_url": "https://governance.aave.com/"},
             {"date": "2026-04-22", "event": "ARFC filed formalising the pause", "source_url": "https://governance.aave.com/"},
+            {"date": "2026-08-28", "event": "Safety Module Allowance Update AIP: stkAAVE rewards at 150 AAVE/day", "source_url": "https://governance.aave.com/"},
             {"date": "2026-09-11", "event": "No resumption found; c.$15bn TVL migrated away post-exploit", "source_url": "https://governance.aave.com/"},
         ],
     },
@@ -1229,13 +1333,12 @@ OPEN_QUESTIONS = [
                       "Until then the trailing-quarter buyback figure stays suppressed, which is correct.",
     },
     {
-        "project": "Aave", "topic": "which staking page is which mechanism",
-        "reason": "Two staking pages are now scraped into two separate metrics, deliberately never summed. "
-                  "Which one is stkAAVE and which is the Umbrella/Safety Module position is NOT confirmed, so "
-                  "the metric names currently say which PAGE each came from rather than what it is. They have "
-                  "different claims on revenue and different unstaking mechanics, so the distinction matters.",
-        "suggestion": "Open both pages, establish what each figure represents, then rename the metrics to the "
-                      "mechanism and record the difference in revenue claim and unstaking terms in config.py.",
+        "project": "Sky", "topic": "lssky contract address",
+        "reason": "Sky's docs list a separate Staked SKY Token (lssky), which is what info.skyeco.com/staking "
+                  "reports and which IS the Sky lock-rate metric. The contract entry exists but has no address, "
+                  "so the tier 2 read is blocked and the figure comes from the page instead.",
+        "suggestion": "Source the lssky address from the same Sky developer docs page as the SKY token, then "
+                      "fill it in and mark it verified. The contract read is more durable than the page scrape.",
     },
     {
         "project": "Aave", "topic": "is the buyback immutable or committee-directed",
@@ -1266,12 +1369,52 @@ OPEN_QUESTIONS = [
                       "that revenue source in config.py and add its source URL.",
     },
     {
-        "project": "GEODNET", "topic": "which chain the current burn path uses",
-        "reason": "GEODNET migrated from Polygon to Solana. Three addresses are on file: the current Solana "
-                  "incinerator, a Polygon-era dead address and a Polygon-era buyback wallet. It is not "
-                  "established whether the historical Polygon burns belong in the same series as the Solana ones.",
-        "suggestion": "Confirm the current burn path, then decide whether Polygon-era burns are part of the "
-                      "backfill or a separate historical series, and mark the historical entries accordingly.",
+        "project": "Hyperliquid", "topic": "is there a second Assistance Fund",
+        "reason": "A community address directory lists an 'Assistance Fund 2' at "
+                  "0xccd69f432ce1d8c9cdc31bd535dd11b37cbea4ea. It does NOT appear in Hyperliquid's own docs, so "
+                  "it has deliberately not been added. IF IT IS REAL, the burn total is understated by whatever "
+                  "sits in it — the same failure mode as omitting Uniswap's Unichain burn path.",
+        "suggestion": "Check Hyperliquid's own documentation and on-chain history for this address. If it is a "
+                      "genuine second fund, add it as another burn path; the adapter already sums multiple paths.",
+    },
+    {
+        "project": "Hyperliquid", "topic": "HyperCore balance read",
+        "reason": "The Assistance Fund address is now CONFIRMED, but HYPE on HyperCore is not an ERC-20 on a "
+                  "chain the EVM adapter covers, so the balance still cannot be read. The cumulative burn "
+                  "figure has a verified address and no way to fetch it.",
+        "suggestion": "Add a HyperCore read, or a sources.yaml entry pointing at a page that publishes the "
+                      "Assistance Fund balance. This is the single highest-value unread figure in the universe.",
+    },
+    {
+        "project": "Chainlink", "topic": "Chainlink Reserve address",
+        "reason": "The LINK token address is confirmed, but that is only a supply read. The address that "
+                  "matters for the archetype 3 assignment is the Chainlink Reserve, where Payment Abstraction "
+                  "revenue accumulates as LINK. Without it, Chainlink's archetype 3 block has NO revenue input "
+                  "at all and every derived figure stays suppressed.",
+        "suggestion": "Source the Reserve address from Chainlink's own Reserve documentation, add it to the "
+                      "existing 'reserve' contract entry in config.py, and mark it verified.",
+    },
+    {
+        "project": "Uniswap", "topic": "release() burn threshold value",
+        "reason": "The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a "
+                  "constant: the Uniswap Governance Timelock holds thresholdSetter and can appoint a different "
+                  "setter. No number is hardcoded, so anything derived from the threshold stays suppressed.",
+        "suggestion": "Read the current threshold on-chain, or record it from governance with its source URL "
+                      "and date, in config.py under Uniswap governance_parameters.release_threshold_uni.",
+    },
+    {
+        "project": "GEODNET", "topic": "record the Dune query URL",
+        "reason": "The four corrected burn addresses came from a working Dune query rather than a documentation "
+                  "page, so they are marked verified with that provenance but no URL. The audit trail is "
+                  "incomplete without it.",
+        "suggestion": "Put the Dune query URL in the source_url field of the four GEODNET contract entries so "
+                      "the provenance is checkable later.",
+    },
+    {
+        "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",
+        "reason": "0xc327C048d75398Da9DB5254679bb84a4a9e42010 is on file as a Polygon-era buyback wallet but is "
+                  "NOT referenced by the working burn query. It remains unverified and refused.",
+        "suggestion": "Confirm whether it still matters post-migration; if not, delete the entry.",
     },
     {
         "project": "Virtuals", "topic": "buyback split and DefiLlama slug",
@@ -1280,5 +1423,14 @@ OPEN_QUESTIONS = [
                   "defillama_protocol ('virtuals-protocol') and has not been confirmed.",
         "suggestion": "Document the buyback split with a source URL and date, and confirm the DefiLlama slug — "
                       "a wrong slug shows up as a 404 in the Run Log.",
+    },
+    {
+        "project": "Tron", "topic": "confirm the BURN_TRX node endpoint on the first run",
+        "reason": "The burn MECHANISM is resolved: TIP #49 moved burned TRX into DynamicPropertiesStore under "
+                  "BURN_TRX, so the read is a node API call rather than any black-hole address balance. The "
+                  "exact endpoint path and response key are implementation detail and were not verified live.",
+        "suggestion": "On the first run check the Run Log. If the read failed, adjust node_api.path and "
+                      "node_api.response_keys in config.py. Do NOT substitute a black-hole address balance — "
+                      "it would report a different number entirely.",
     },
 ]

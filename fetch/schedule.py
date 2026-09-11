@@ -35,7 +35,14 @@ class Schedule:
             per_day = per_day.dropna()
             if per_day.empty:
                 continue
-            df = pd.DataFrame({"date": per_day.index, "project": p["name"],
-                               "metric": "gross_issuance_tokens", "value": per_day.values,
-                               "source": SOURCE, "tier": TIER})
-            out.add(df[LONG_COLUMNS], SOURCE, p["name"], sched.get("note", "issuance schedule"), TIER)
+            metrics = ["gross_issuance_tokens"]
+            # Where the schedule IS emissions to stakers (Aave's stkAAVE allowance top-ups), the same
+            # figure feeds emissions_tokens as well, so net absorption nets it off rather than
+            # counting the buyback alone and overstating the result.
+            if sched.get("also_emissions"):
+                metrics.append("emissions_tokens")
+            for metric in metrics:
+                df = pd.DataFrame({"date": per_day.index, "project": p["name"],
+                                   "metric": metric, "value": per_day.values,
+                                   "source": SOURCE, "tier": TIER})
+                out.add(df[LONG_COLUMNS], SOURCE, p["name"], sched.get("note", "issuance schedule"), TIER)

@@ -93,7 +93,15 @@ class Http:
         self.timeout = timeout
         self._last = 0.0
 
+    def post(self, url: str, json_body: dict | None = None, headers: dict | None = None):
+        """Same retry/backoff policy as get(). Some node APIs only accept POST."""
+        return self._request("POST", url, json_body=json_body, headers=headers)
+
     def get(self, url: str, params: dict | None = None, headers: dict | None = None):
+        return self._request("GET", url, params=params, headers=headers)
+
+    def _request(self, verb: str, url: str, params: dict | None = None,
+                 json_body: dict | None = None, headers: dict | None = None):
         wait = time.monotonic() - self._last
         if wait < self.min_interval:
             time.sleep(self.min_interval - wait)
@@ -101,7 +109,9 @@ class Http:
         for attempt in range(self.retries + 1):
             self._last = time.monotonic()
             try:
-                r = self.s.get(url, params=params, headers=headers, timeout=self.timeout)
+                r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=self.timeout)
+                     if verb == "POST" else
+                     self.s.get(url, params=params, headers=headers, timeout=self.timeout))
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
                     if attempt < self.retries:

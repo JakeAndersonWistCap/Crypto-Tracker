@@ -650,7 +650,7 @@
   note: "sPENDLE total staked. NOTE this is sPENDLE, which is NOT the same as the vePENDLE lock — vePENDLE stays a separate contract read under locked_tokens. Do not conflate them."
 
 - project: Sky
-  metric: staked_tokens
+  metric: locked_tokens
   tier: 3
   enabled: true
   url: https://info.skyeco.com/staking
@@ -663,7 +663,7 @@
   sanity_max: 30000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "Staked SKY. Tokens paid to stakers re-enter float, so this leg is reported separately and is NEVER netted against the burn."
+  note: "This page reports lssky, the Staked SKY Token, which IS the Sky lock-rate metric — hence locked_tokens rather than staked_tokens. Tokens paid to stakers re-enter float, so that leg stays separate and is NEVER netted against the burn. Once the lssky contract address is sourced, prefer the tier 2 contract read over this page."
 
 - project: Ether.fi
   metric: staked_tokens
@@ -681,44 +681,48 @@
   added: 2026-09-11
   note: "Staked ETHFI. Prefer the Dune API with this dashboard's query id over scraping the page."
 
-# ---- Aave: TWO SEPARATE staking mechanisms. They are NOT summed.
-# Different claims on revenue and different unstaking mechanics, so they are stored as two
-# distinct metrics. The metric names say which PAGE each figure came from, NOT what the
-# mechanism is — which page is stkAAVE and which is the Umbrella/Safety Module position has
-# NOT been confirmed. See the Gap Report row asking for that. Once confirmed, rename the
-# metrics to the mechanism and record the difference in claim and unstaking terms.
+# ---- Aave: the two pages are NOT parallel. This was a correction, verified against Aave's docs.
+#   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
+#                                 producing stkAAVE and stkABPT. THIS is the AAVE lock rate.
+#   app.aave.com/staking        = UMBRELLA. Stakes aTokens (aUSDC, aUSDT, aWETH) and GHO, NOT
+#                                 AAVE. It tells you nothing about AAVE float, so it is NOT stored
+#                                 as an AAVE staked or lock figure under any label — it is a
+#                                 separate protocol-risk measure in dollars, excluded from every
+#                                 supply and float calculation.
+#   Sources: https://aave.com/docs/aave-v3/umbrella and https://app.aave.com/safety-module/
 
 - project: Aave
-  metric: staked_tokens_aave_staking
-  tier: 3
-  enabled: true
-  url: https://app.aave.com/staking/?marketName=proto_mainnet_v3
-  method: xhr
-  url_contains: /api/
-  json_path: stakedTotal
-  anchor: "Staked"
-  needs_first_run_check: true
-  sanity_min: 1000
-  sanity_max: 20000000
-  change_threshold_pct: 25
-  added: 2026-09-11
-  note: "The app.aave.com/staking page, expected to be stkAAVE but NOT confirmed. NEVER sum this with staked_tokens_safety_module."
-
-- project: Aave
-  metric: staked_tokens_safety_module
+  metric: locked_tokens
   tier: 3
   enabled: true
   url: https://app.aave.com/safety-module/
   method: xhr
   url_contains: /api/
   json_path: stakedTotal
-  anchor: "Safety Module"
+  anchor: "Staked AAVE"
   needs_first_run_check: true
   sanity_min: 1000
   sanity_max: 20000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "The app.aave.com/safety-module page, expected to be the Umbrella/Safety Module position but NOT confirmed. NEVER sum this with staked_tokens_aave_staking."
+  note: "THE AAVE lock rate — the legacy Safety Module, where AAVE and ABPT are staked into stkAAVE and stkABPT. This is AAVE, so it belongs in the float calculation."
+
+- project: Aave
+  metric: umbrella_staked_usd
+  tier: 3
+  enabled: true
+  url: https://app.aave.com/staking/?marketName=proto_mainnet_v3
+  method: xhr
+  url_contains: /api/
+  json_path: totalStakedUsd
+  anchor: "Total staked"
+  needs_first_run_check: true
+  sanity_min: 0
+  sanity_max: 100000000000
+  change_threshold_pct: 40
+  added: 2026-09-11
+  note: "UMBRELLA — stakes aTokens (aUSDC, aUSDT, aWETH) and GHO, NOT AAVE. Protocol-risk cover measured in dollars. It has NO bearing on AAVE supply or float and must never be summed with the Safety Module figure or labelled as AAVE staked."
+
 
 # ---- Fluid: NOT RESOLVED. The instruction was to check docs.fluid.io and either add the
 # entry or remove the lock-rate metric. Neither was done, because this machine has no network
@@ -736,3 +740,23 @@
   anchor: null
   added: 2026-09-11
   note: "UNRESOLVED — could not check docs.fluid.io (no network access). It is NOT established that FLUID staking exists at all. Confirm, then either complete this entry or remove locked_tokens from Fluid entirely."
+
+# ---- Venice AI: the protocol publishes its burns directly, so this is a self-reported figure and
+# is preferred over any derived calculation, the same way PancakeSwap's net mint is.
+- project: Venice AI
+  metric: burn_address_balance
+  tier: 3
+  enabled: true
+  url: https://venice.ai/token/burns
+  method: xhr
+  url_contains: /api/
+  json_path: totalBurned
+  anchor: "Total Burned"
+  cumulative: true
+  derive_flow_metric: gross_burn_tokens
+  needs_first_run_check: true
+  sanity_min: 0
+  sanity_max: 100000000
+  change_threshold_pct: 40
+  added: 2026-09-11
+  note: "Venice publishes burns directly — self-reported, preferred over any derived figure. CONFIGURED AS A RUNNING TOTAL: the value is stored as burn_address_balance and the period burn is derived by differencing. If the page actually shows per-period burns rather than a cumulative total, change metric to gross_burn_tokens and delete the cumulative and derive_flow_metric lines. Check this on the first run."

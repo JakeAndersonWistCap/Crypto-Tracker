@@ -31,7 +31,7 @@ import os
 
 import config
 
-from .base import derive_flow_from_cumulative, point, today
+from .base import LogEntry, derive_flow_from_cumulative, point, today
 
 log = logging.getLogger("token_metrics.fetch.chain")
 
@@ -52,6 +52,10 @@ KIND_METRIC = {
     "burn_address_balance": "burn_address_balance",
     "ve_total_supply": "locked_tokens",
     "buyback_fund_balance": "buyback_fund_balance",
+    # Solana kinds. Declared so the gap report can name them precisely; the EVM adapter refuses
+    # them at the chain-coverage guard rather than failing obscurely.
+    "spl_mint": "total_supply",
+    "spl_token_account": "burn_address_balance",
 }
 
 # A cumulative stock that also yields a flow once differenced against the prior observation.
@@ -204,6 +208,11 @@ class Chain:
             if not contracts:
                 continue
             token = contracts.get("token")
+            # A project can have SEVERAL burn paths — Uniswap burns on mainnet and Unichain, GEODNET
+            # on Polygon and Solana. Each is read separately and they are SUMMED into one burn figure:
+            # reporting only one path understates the total, which is the exact failure this tool exists
+            # to prevent. Components are named in the source string so the composition stays auditable.
+            burn_parts: list[tuple[str, float]] = []
             for key, spec in contracts.items():
                 if not self._gate(p, key, spec, out):
                     continue
@@ -239,10 +248,24 @@ class Chain:
                             suggestion="Check the RPC endpoints for this chain in .env")
                     continue
                 src = f"{SOURCE}:{chain}:{key}"
+                if metric == "burn_address_balance":
+                    burn_parts.append((f"{chain}:{key}", value))
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok", f"burn path {chain}:{key}={value:,.4f}", TIER))
+                    continue
                 out.add(point(name, metric, value, src, TIER, when), SOURCE, name, f"{key}={value:,.4f}", TIER)
-                flow_metric = CUMULATIVE_FLOW.get(metric)
-                if flow_metric:
-                    flow = derive_flow_from_cumulative(value, self.prior.get((name, metric)), name,
-                                                       flow_metric, f"{src}:delta", TIER, when)
-                    if not flow.empty:
-                        out.add(flow, SOURCE, name, f"{flow_metric} derived from {metric} delta", TIER)
+
+            self._emit_burn(name, burn_parts, when, out)
+
+    def _emit_burn(self, name: str, parts: list[tuple[str, float]], when, out):
+        """Sum every burn path into one cumulative figure, then derive the period flow from it."""
+        if not parts:
+            return
+        total = sum(v for _, v in parts)
+        composition = " + ".join(f"{label} {v:,.4f}" for label, v in parts)
+        src = f"{SOURCE}:sum(" + "+".join(label for label, _ in parts) + ")"
+        out.add(point(name, "burn_address_balance", total, src, TIER, when), SOURCE, name,
+                f"burn_address_balance={total:,.4f} from {len(parts)} path(s): {composition}", TIER)
+        flow = derive_flow_from_cumulative(total, self.prior.get((name, "burn_address_balance")), name,
+                                           "gross_burn_tokens", f"{src}:delta", TIER, when)
+        if not flow.empty:
+            out.add(flow, SOURCE, name, f"gross_burn_tokens derived from the summed burn delta", TIER)
