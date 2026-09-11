@@ -375,6 +375,70 @@ def test_unestablished_lock_read_method_is_refused():
     print("unestablished lock read ok: refused rather than assuming ERC-20 semantics")
 
 
+def test_hypercore_info_reads_the_assistance_fund_without_any_chain():
+    """Hyperliquid's balance comes from its own HTTP API: no RPC, no key, no chain field.
+
+    HYPE on HyperCore is not an ERC-20 on any chain the EVM adapter covers, so this REPLACES the
+    contract-read route rather than supplementing it. Hyperliquid declares no contracts at all.
+    """
+    from fetch.hypercore import HyperCoreInfo
+
+    class StubHttp:
+        def __init__(self, payload):
+            self.payload, self.calls = payload, []
+
+        def post(self, url, json_body=None, headers=None):
+            self.calls.append((url, json_body))
+            return self.payload
+
+    payload = {"balances": [{"coin": "USDC", "total": "12345.6"},
+                            {"coin": "HYPE", "total": "48420000.0"}]}
+    h = HyperCoreInfo(prior_values={("Hyperliquid", "burn_address_balance"): 48_000_000.0})
+    h.http = StubHttp(payload)
+    out = FetchOutput()
+    h.run(config.PROJECTS, None, out)
+    rows = dict(zip(out.frame().metric, out.frame().value))
+    assert rows["burn_address_balance"] == 48_420_000.0, rows
+    assert rows["gross_burn_tokens"] == 420_000.0, "period burn is the delta against the prior reading"
+    assert set(out.frame().tier) == {1}, "a free unauthenticated HTTP API is tier 1"
+
+    hype = config.PROJECT_BY_NAME["Hyperliquid"]
+    assert hype["contracts"] == {}, "the contract route is replaced, not supplemented"
+    api = hype["node_api"]
+    assert "chain" not in api and not any("rpc" in k.lower() for k in api), \
+        f"the info API must need no chain and no RPC: {sorted(api)}"
+    print("hypercore ok: 48,420,000 HYPE read over plain HTTPS, no chain and no RPC involved")
+
+
+def test_hypercore_reports_a_response_shape_change_rather_than_guessing():
+    from fetch.hypercore import HyperCoreInfo
+
+    class StubHttp:
+        def post(self, url, json_body=None, headers=None):
+            return {"balances": [{"coin": "USDC", "total": "1"}]}
+
+    h = HyperCoreInfo()
+    h.http = StubHttp()
+    out = FetchOutput()
+    h.run(config.PROJECTS, None, out)
+    assert out.frame().empty, "a missing coin must produce nothing, never a substituted figure"
+    assert any("HYPE not present" in g["reason"] for g in out.gaps), out.gaps
+    print("hypercore shape change ok: reported with the coins actually returned, nothing guessed")
+
+
+def test_venice_buy_and_burn_stays_refused_as_uncorroborated():
+    """'Could not be corroborated' is a distinct state from 'not yet checked', and must not be promoted."""
+    venice = config.PROJECT_BY_NAME["Venice AI"]["contracts"]
+    bnb = venice["buy_and_burn"]
+    assert not bnb.get("verified"), "an uncorroborated address must never be marked verified"
+    assert "uncorroborated" in bnb["provenance"], bnb["provenance"]
+    assert venice["token"].get("verified"), "the VVV token is confirmed from Venice's own docs"
+    assert venice["staking"].get("verified"), "the staking contract is confirmed from Venice's own docs"
+    assert venice["staking"]["read_method"] == "escrow_balance_of", \
+        "a staking contract is not a token: read the VVV it custodies, not totalSupply on it"
+    print("venice ok: token and staking verified, buy_and_burn refused as uncorroborated")
+
+
 # ---------------------------------------------------------------------------- tier 3
 class StubPage:
     """Minimal Playwright page: evaluate() runs the DOM-anchor contract against a fake DOM."""
@@ -546,6 +610,9 @@ if __name__ == "__main__":
                test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
                test_venft_misconfiguration_fails_loudly, test_escrow_balance_of_reads_the_underlying_not_the_nft,
                test_unestablished_lock_read_method_is_refused,
+               test_hypercore_info_reads_the_assistance_fund_without_any_chain,
+               test_hypercore_reports_a_response_shape_change_rather_than_guessing,
+               test_venice_buy_and_burn_stays_refused_as_uncorroborated,
                test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
                test_scrape_registry_reports_incomplete_entries_as_gaps,
                test_later_tier_never_overwrites_an_earlier_one, test_cross_check_metrics_do_not_collide_with_their_primary,

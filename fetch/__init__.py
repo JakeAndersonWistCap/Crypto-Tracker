@@ -25,6 +25,7 @@ from .chain import Chain
 from .coingecko import CoinGecko
 from .dune import Dune
 from .gaps import detect as detect_gaps
+from .hypercore import HyperCoreInfo
 from .llama import DefiLlama
 from .schedule import Schedule
 from .tron import TronNode
@@ -37,6 +38,7 @@ TIER_ORDER = [
     ("schedule:config", 1, lambda ctx: Schedule()),
     ("defillama", 1, lambda ctx: DefiLlama()),
     ("coingecko", 1, lambda ctx: CoinGecko()),
+    ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"])),
     ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"])),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"])),

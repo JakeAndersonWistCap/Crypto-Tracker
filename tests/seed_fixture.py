@@ -101,6 +101,8 @@ def main() -> int:
             frames.append(frame(name, "actual_buyback_usd", series(price0 * supply0 * 0.0002, noise=0.5), "dune:10", tier=4))
             frames.append(frame(name, "actual_buyback_tokens", series(supply0 * 0.0002 / 1.0, noise=0.5), "dune:11", tier=4))
             frames.append(frame(name, "emissions_tokens", series(supply0 * 0.00015, drift=-0.2, noise=0.1), "dune:9", tier=4))
+            if name == "Venice AI":
+                frames.append(frame(name, "locked_tokens", series(supply0 * 0.18, noise=0.06), "chain:base:staking", tier=2))
             if name == "Sky":
                 frames.append(frame(name, "locked_tokens", series(supply0 * 0.30, noise=0.04), "chain:lssky", tier=2))
             if name in ("Aerodrome", "Pendle"):
@@ -117,6 +119,8 @@ def main() -> int:
             frames.append(frame(name, "total_supply", [supply0 * 1.3], "chain:erc20", today_only, tier=2))
         if 4 in arch:
             frames.append(frame(name, "burn_address_balance", series(supply0 * 0.01, drift=0.2, noise=0.05), "chain:burn", tier=2))
+        if name == "Hyperliquid":
+            frames.append(frame(name, "burn_address_balance", series(48e6, drift=0.15, noise=0.02), "hypercore_info:spotClearinghouseState", tier=1))
         if p.get("self_reported_net_mint"):   # only protocols that actually publish it
             frames.append(frame(name, "net_mint_monthly", series(supply0 * 0.0002, noise=0.4) * -1, "scrape:dashboard", tier=3))
         if name == "Aave":

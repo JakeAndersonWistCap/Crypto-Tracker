@@ -271,6 +271,7 @@ BURN_READ_METHODS = {
     "protocol_level": "Supply destroyed at the protocol level with no transfer. NOT readable as an address "
                       "balance — needs a chain-data or dashboard source.",
     "native_balance": "A native (non-ERC-20) balance on a chain the EVM adapter does not cover.",
+    "protocol_api": "The protocol publishes the balance through its own HTTP API. No chain RPC involved.",
     "undetermined": "Mechanism not yet established. Nothing is read until it is resolved.",
 }
 
@@ -814,17 +815,43 @@ PROJECTS = [
         },
         "contracts": {
             "token": _contract("0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf", "base", "erc20_total_supply", "VVV",
-                               "https://venice.ai/blog",
-                               purpose="VVV token contract on Base.",
-                               note="UNVERIFIED — confirm against Venice's own docs."),
+                               "https://docs.venice.ai/", verified="2026-09-11",
+                               provenance="Venice developer docs (embedded in working integration code)",
+                               token_standard="erc20",
+                               purpose="VVV token contract on Base."),
+            # Venice's own docs describe VVV staked here becoming sVVV. Read as VVV.balanceOf(staking):
+            # this is a STAKING CONTRACT, not a token, so totalSupply() on it would be the TokenJar
+            # mistake. Reading the VVV it custodies is well-defined for any address and fails safely.
+            "staking": _contract("0x321b7ff75154472B18EDb199033fF4D116F340Ff", "base", "ve_total_supply", "VVV",
+                                 "https://docs.venice.ai/", verified="2026-09-11",
+                                 provenance="Venice developer docs (embedded in working integration code)",
+                                 read_method="escrow_balance_of", underlying="token",
+                                 purpose="VVV staking contract — VVV staked here becomes sVVV. THE Venice "
+                                         "lock-rate metric, which was missing entirely until now.",
+                                 note="READ METHOD ASSUMED, NOT DOCUMENTED: escrow_balance_of reads the VVV this "
+                                      "contract custodies, which is correct if 'staked here' means it holds the "
+                                      "tokens. If Venice forwards custody to another vault the figure would read "
+                                      "low. Eyeball the first value against Venice's published staking total "
+                                      "before trusting it."),
+            # NOT CORROBORATED — a different state from 'not yet checked'. This address could not be
+            # found in ANY Venice-authored source, and every description of the Buy and Burn programme
+            # describes revenue-funded BEHAVIOUR rather than a named contract. There may be no such
+            # contract at all. It stays refused and is NOT to be promoted without positive evidence.
             "buy_and_burn": _contract("0x35Fb3b67C57849Bf57EB24b061EEF0B5E560dc57", "base", "buyback_fund_balance", "VVV",
-                                      "https://venice.ai/blog",
-                                      purpose="Buy-and-burn contract — the monthly revenue-funded repurchase.",
-                                      note="UNVERIFIED — confirm against Venice's own docs."),
+                                      None, provenance="uncorroborated — not found in any Venice-authored source",
+                                      purpose="Claimed buy-and-burn contract.",
+                                      note="COULD NOT BE CORROBORATED, which is NOT the same as 'not yet checked'. "
+                                           "A search of Venice-authored sources did not find this address, and the "
+                                           "Buy and Burn programme is described as a revenue-funded behaviour rather "
+                                           "than a named contract — there may be no dedicated contract to read. Do "
+                                           "not mark verified without positive evidence from Venice's own material. "
+                                           "Deleting it is reasonable once that is settled."),
             "burn_zero": _contract("0x0000000000000000000000000000000000000000", "base", "burn_address_balance", "VVV",
-                                   "https://venice.ai/blog",
-                                   purpose="TRANSFER BURN — repurchased VVV is sent to the zero address.",
-                                   note="UNVERIFIED — confirm against Venice's own docs."),
+                                   "https://eips.ethereum.org/EIPS/eip-20", verified="2026-09-11",
+                                   provenance="universal constant — the EVM zero address, not project-specific",
+                                   purpose="TRANSFER BURN destination. The zero address needs no per-project "
+                                           "verification; what remains open is whether Venice's burn actually "
+                                           "routes here, which is the burn-methodology question, not an address one."),
         },
         "burn_read_method": "transfer",
         "self_reported_burn": True,
@@ -920,19 +947,36 @@ PROJECTS = [
         },
         "burn_split": None,
         "issuance_schedule": None,
-        "contracts": {
-            "assistance_fund": _contract(
-                "0xfefeFEFeFEFEFEFEFeFefefefefeFEfEfefefEfe", "hyperliquid", "burn_address_balance", "HYPE",
-                "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees",
-                verified="2026-09-11", provenance="protocol docs",
-                purpose="Assistance Fund — cumulative burn total, not a treasury holding. Period burn is "
-                        "derived by differencing against the previous reading.",
-                note="CONFIRMED against Hyperliquid's own docs: the fund converts trading fees to HYPE as part "
-                     "of L1 execution, and HYPE in the fund is burned — removed permanently from circulating "
-                     "AND total supply. The address has never had a private key, so nothing can leave. "
-                     "Still needs a HyperCore read: HYPE is not an ERC-20 on a chain the EVM adapter covers."),
+        # NO CONTRACTS. HYPE on HyperCore is not an ERC-20 on any chain the EVM adapter covers, so
+        # the contract-read route was never viable. Hyperliquid publishes the balance through its own
+        # documented info endpoint instead, which REPLACES that approach: a plain HTTPS POST with no
+        # RPC, no key and no chain field. See node_api below.
+        "contracts": {},
+        "burn_address": "0xfefeFEFeFEFEFEFEFeFefefefefeFEfEfefefEfe",
+        "burn_read_method": "protocol_api",
+        "burn_read_note": "The Assistance Fund balance IS the cumulative burn: since the December 2025 validator "
+                          "vote HYPE held there is recognised as permanently burned, and the address has never had "
+                          "a private key so nothing can leave. Read from Hyperliquid's own info endpoint, not from "
+                          "any chain RPC.",
+        "node_api": {
+            "kind": "hypercore_info",
+            "metric": "burn_address_balance",
+            "derive_flow_metric": "gross_burn_tokens",
+            "endpoint": "https://api.hyperliquid.xyz/info",
+            "request": {"type": "spotClearinghouseState",
+                        "user": "0xfefefefefefefefefefefefefefefefefefefefe"},
+            # response shape, read from config so a change here is not a code change
+            "balances_path": "balances",
+            "coin_key": "coin",
+            "coin": "HYPE",
+            "amount_keys": ["total", "balance", "amount"],
+            "source_urls": ["https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint",
+                            "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"],
+            "verified": "2026-09-11",
+            "note": "Free, unauthenticated, documented. The `user` address is lowercase because it is a JSON "
+                    "request parameter to Hyperliquid's API, NOT an EVM call argument — no checksumming applies "
+                    "and web3 never sees it.",
         },
-        "burn_read_method": "native_balance",
         "buyback_destination": "burn",          # resolved — no longer disputed
         "destination_effect": "removed_from_supply",
         "destination_confirmed_date": "2025-12-27",
@@ -1529,16 +1573,27 @@ OPEN_QUESTIONS = [
         "suggestion": "Document the earlier split and add it to Sky fee_split.history as its own period.",
     },
     {
-        "project": "Venice AI", "topic": "NO automated route to the burn figure at all",
-        "severity": 1,
-        "reason": "HIGHEST-PRIORITY GAP IN THE UNIVERSE. Venice publishes its burns, but venice.ai robots.txt "
-                  "disallows the page and that is not worked around. Its three on-chain addresses (token, "
-                  "buy_and_burn, burn_zero) are all still unverified, so tier 2 is refused too. The result is "
-                  "that Venice AI has NO automated route to its burn figure by any tier — and Venice is the "
-                  "clearest case in the universe for showing buyback and emissions together.",
-        "suggestion": "Either verify the three Base addresses against Venice's own docs, which unblocks tier 2 "
-                      "entirely, or establish whether Venice publishes a documented data endpoint that robots "
-                      "permits. Until one of those, the burn figure is manual entry via manual_overrides.csv.",
+        "project": "Venice AI", "topic": "burn methodology — does the burn route to the zero address",
+        "reason": "NARROWED, no longer a total blackout. The VVV token and the staking contract are now verified "
+                  "from Venice's own developer docs, so Venice has a working lock-rate metric (VVV staked) and a "
+                  "readable zero-address balance. What remains open is METHODOLOGY: it is not established that "
+                  "Venice's Buy and Burn actually routes tokens to the zero address, and the claimed "
+                  "buy_and_burn contract could not be corroborated in any Venice-authored source — the programme "
+                  "is described as a revenue-funded behaviour, so there may be no contract to read. The "
+                  "zero-address figure may therefore understate or miss the burn entirely.",
+        "suggestion": "Establish from Venice's own material where burned VVV actually goes. If it is the zero "
+                      "address, the existing read is complete. If it is a different sink, add that address. If "
+                      "the burn is executed as supply reduction rather than a transfer, set burn_read_method to "
+                      "protocol_level and delete the buy_and_burn entry.",
+    },
+    {
+        "project": "Venice AI", "topic": "DIEM is a second Venice asset, not tracked",
+        "reason": "Venice has a second token, DIEM, at 0xF4d97F2da56e8c3098f3a8D538DB630A2606a024. It is NOT "
+                  "tracked by this tool and no pipeline has been built for it. Recorded here only so its "
+                  "existence is not rediscovered from scratch later, and so that any Venice supply or burn "
+                  "figure is understood to cover VVV alone.",
+        "suggestion": "Decide whether DIEM belongs in the universe at all. If it does, it needs its own project "
+                      "entry rather than being folded into Venice AI's VVV figures.",
     },
     {
         "project": "Uniswap", "topic": "UNI token address on Unichain",
@@ -1560,14 +1615,17 @@ OPEN_QUESTIONS = [
                       "dune_queries.locked_tokens with its date_col and value_col. Needs DUNE_API_KEY set.",
     },
     {
-        "project": "Ether.fi", "topic": "Dune query id for staked ETHFI",
+        "project": "Ether.fi", "topic": "Dune query id for staked ETHFI — NEEDS A HUMAN OR A KEY",
         "severity": 1,
-        "reason": "dune.com robots.txt disallows scraping and this was the wrong tier. Unlike Aerodrome this is "
-                  "NOT low stakes: Ether.fi has no contract read for staked_tokens, so tier 4 is its only "
-                  "automated route and the metric is currently empty.",
-        "suggestion": "Open https://dune.com/ether_fi/staked-ethfi, take the query id from the underlying query "
-                      "URL, and put it in config.py under Ether.fi dune_queries.staked_tokens with its date_col "
-                      "and value_col. Needs DUNE_API_KEY set.",
+        "reason": "CONFIRMED UNRESOLVABLE BY FETCHING. The dashboard is a client-rendered SPA: the query id is "
+                  "not in the page source and is only produced by JavaScript after load, so no amount of "
+                  "fetching will recover it. dune.com robots.txt also disallows scraping. Ether.fi has no "
+                  "contract read for staked_tokens, so tier 4 is its only automated route and the metric is "
+                  "empty. Do NOT spend further effort on automated resolution — the finding is settled.",
+        "suggestion": "Two routes, both needing something this tool cannot supply on its own: open the dashboard "
+                      "in a browser, click through to the underlying query and copy the id from its URL; or set "
+                      "DUNE_API_KEY and use Dune's search API to find the query programmatically. Then put the id "
+                      "in config.py under Ether.fi dune_queries.staked_tokens with its date_col and value_col.",
     },
     {
         "project": "Pendle", "topic": "is there a documented data endpoint robots permits",
@@ -1629,14 +1687,6 @@ OPEN_QUESTIONS = [
                   "omitting Uniswap's Unichain burn path.",
         "suggestion": "Check Hyperliquid's own documentation and on-chain history. If genuine, add it as another "
                       "burn path; the adapter already sums multiple paths.",
-    },
-    {
-        "project": "Hyperliquid", "topic": "HyperCore balance read",
-        "severity": 1,
-        "reason": "The Assistance Fund address is CONFIRMED, but HYPE on HyperCore is not an ERC-20 on a chain the "
-                  "EVM adapter covers, so the cumulative burn still cannot be fetched.",
-        "suggestion": "Add a HyperCore read, or a sources.yaml entry pointing at a page that publishes the "
-                      "Assistance Fund balance. This is the highest-value unread figure in the universe.",
     },
     {
         "project": "Uniswap", "topic": "release() burn threshold value",

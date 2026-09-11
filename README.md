@@ -30,6 +30,11 @@ Paid data is the constraint, not engineering effort. Sources are tried in this o
 | 2 | **contract reads** (`web3.py`, public RPC) | burn-address balances, vote-escrow totalSupply for lock rates, buyback-fund balances, authoritative supply | free |
 | 3 | **the protocol's own dashboard** (Playwright) | anything a protocol publishes itself: net mint, burn totals, node counts | free |
 | 4 | Dune | historical backfill only, for the month-by-month series a point-in-time read cannot give | API key |
+
+A protocol's own HTTP API sits alongside tier 1 where one exists: Hyperliquid publishes the
+Assistance Fund balance through its documented info endpoint and Tron exposes BURN_TRX through any
+node. Both are plain HTTPS with no key, no chain and no RPC, and they replace a contract read that
+was never viable rather than supplementing one.
 | 5 | off-chain operational | archetype 2 supply units, utilisation, customer revenue | free where an API exists |
 
 Where a protocol publishes a figure on its own dashboard, the tool takes the self-reported

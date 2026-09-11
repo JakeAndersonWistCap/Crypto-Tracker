@@ -96,10 +96,24 @@ def tier2_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]
                    else "balanceOf(holder)" if c["kind"] in ("burn_address_balance", "buyback_fund_balance")
                    else "totalSupply()")
             attempted.append((name, metric, f"{where} via {how}"))
-        api = p.get("node_api") or {}
-        if api:
-            attempted.append((name, api.get("metric", "?"), f"node API {api['kind']} -> {api['endpoints'][0]}{api['path']}"))
     return attempted, skipped
+
+
+def protocol_api_plan() -> list[tuple[str, str, str]]:
+    """Protocol HTTP APIs: a chain node (Tron) or a protocol info endpoint (Hyperliquid).
+
+    Neither uses a chain RPC and neither needs a key, so they are listed separately from the
+    contract reads rather than being lumped in with tier 2.
+    """
+    out = []
+    for p in config.PROJECTS:
+        api = p.get("node_api") or {}
+        if not api:
+            continue
+        base = (api.get("endpoints") or [api.get("endpoint", "?")])[0]
+        out.append((p["name"], api.get("metric", "?"),
+                    f"{api['kind']} -> POST {base}{api.get('path', '')}"))
+    return out
 
 
 def tier3_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
@@ -135,7 +149,15 @@ def dependencies() -> dict:
             if f"on {chain}" in where:
                 chains[chain].append(name)
     domains = sorted({e["url"].split("/")[2] for e in load_registry() if entry_ready(e)[0]})
-    node_apis = [(p["name"], p["node_api"]["endpoints"]) for p in config.PROJECTS if p.get("node_api")]
+    # two shapes: a chain node with a fallback endpoint list (Tron), and a protocol info endpoint
+    # with a POST body (Hyperliquid). Neither needs a chain or an RPC.
+    node_apis = []
+    for proj in config.PROJECTS:
+        api = proj.get("node_api")
+        if not api:
+            continue
+        endpoints = api.get("endpoints") or ([api["endpoint"]] if api.get("endpoint") else [])
+        node_apis.append((proj["name"], endpoints, api.get("kind")))
     return {"chains": dict(chains), "scrape_domains": domains, "node_apis": node_apis,
             "apis": ["api.llama.fi", "stablecoins.llama.fi", "api.coingecko.com"],
             "dune_needed": bool(tier4_plan()[0])}
@@ -218,6 +240,7 @@ def timing_estimate() -> list[tuple[str, str, str]]:
 def print_plan() -> None:
     t1 = tier1_plan()
     t2_go, t2_no = tier2_plan()
+    tapi = protocol_api_plan()
     t3_go, t3_no = tier3_plan()
     t4_go, t4_no = tier4_plan()
 
@@ -233,6 +256,7 @@ def print_plan() -> None:
     print(RULE)
     for label, rows in (("TIER 1 — free APIs and config schedules", t1),
                         ("TIER 2 — contract reads", t2_go),
+                        ("PROTOCOL HTTP APIs — no chain RPC, no key", tapi),
                         ("TIER 3/5 — protocol pages", t3_go),
                         ("TIER 4 — Dune backfill", t4_go)):
         print(f"\n{label}: {len(rows)} metric reads")
@@ -282,9 +306,9 @@ def print_plan() -> None:
         print(f"  {chain:<10} {len(eps)} endpoint(s), needed by: {', '.join(sorted(set(projects)))}")
         for e in eps:
             print(f"             {e}")
-    print("\nNode APIs (not EVM RPC):")
-    for name, eps in deps["node_apis"]:
-        print(f"  {name:<10} {', '.join(eps)}")
+    print("\nProtocol HTTP APIs (no chain RPC, no key):")
+    for name, eps, kind in deps["node_apis"]:
+        print(f"  {name:<12} {kind:<16} {', '.join(eps)}")
     print("\nDomains the scraper will load with headless Chromium:")
     for d in deps["scrape_domains"]:
         print(f"  {d}")
@@ -368,17 +392,26 @@ def print_check(timeout: int) -> int:
 
         probe(f"chain {chain}", probe_chain)
 
-    print("\nNode APIs (tier 2, not EVM):")
-    for name, eps in dependencies()["node_apis"]:
+    print("\nProtocol HTTP APIs (no chain RPC, no key):")
+    for name, eps, kind in dependencies()["node_apis"]:
         api = config.PROJECT_BY_NAME[name]["node_api"]
 
-        def probe_node(base=eps[0], path=api["path"], keys=api["response_keys"]):
-            r = session.post(base.rstrip("/") + path, json={}, timeout=timeout)
+        def probe_node(base=eps[0], api=api):
+            url = base.rstrip("/") + api.get("path", "")
+            body = api.get("request") or {}
+            r = session.post(url, json=body, timeout=timeout)
             payload = r.json()
-            hit = next((k for k in keys if k in payload), None)
-            return f"HTTP {r.status_code}, key {hit!r}" if hit else f"HTTP {r.status_code}, none of {keys} present"
+            if api.get("balances_path"):      # a protocol info endpoint returning a balance list
+                from fetch.base import json_path_get
+                items = json_path_get(payload, api["balances_path"])
+                coins = [str(i.get(api.get("coin_key", "coin"))) for i in items] if isinstance(items, list) else []
+                hit = api.get("coin") in coins
+                return f"HTTP {r.status_code}, {api.get('coin')} {'present' if hit else 'ABSENT'} in {len(coins)} balances"
+            keys = api.get("response_keys") or []
+            found = next((k for k in keys if k in payload), None)
+            return f"HTTP {r.status_code}, key {found!r}" if found else f"HTTP {r.status_code}, none of {keys} present"
 
-        probe(f"{name} node API", probe_node, critical=False)
+        probe(f"{name} {kind}", probe_node, critical=False)
 
     print("\nScraper targets (tier 3) — reachability only, not extraction:")
     for domain in dependencies()["scrape_domains"]:
