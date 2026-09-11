@@ -7,7 +7,10 @@ Dune is for.
 
 So Dune is a backfill dependency, not an ongoing one. Once the store holds history for a
 series, this adapter skips it and daily tier 2/3 snapshots keep it current. Set
-TOKEN_METRICS_DUNE_ALWAYS=1 to re-pull regardless (useful after fixing a query).
+TOKEN_METRICS_DUNE_ALWAYS=1 to re-pull regardless — which is what you want after correcting a
+column mapping, since the stored rows were written by the OLD mapping and only a re-pull
+overwrites them. A forced re-pull ignores the trailing-window limit and takes the full history:
+rebuilding only the last 30 days of a 794-row series would leave the rest at their old values.
 
 No query is assumed to exist. A metric with no query_id in config is written to the Gap
 Report naming the project, the metric and why it failed, rather than silently returning
@@ -120,6 +123,18 @@ class Dune:
         return total if seen else None
 
     def run(self, projects: list[dict], window_days, out):
+        # A forced re-pull means the WHOLE history, never a trailing slice.
+        #
+        # Later runs pass a 30-day window so the daily tiers re-fetch recent revisions cheaply.
+        # Applied to a forced tier 4 re-pull that is exactly wrong: TOKEN_METRICS_DUNE_ALWAYS is
+        # set precisely when a mapping has changed and the stored series needs rebuilding, and
+        # trimming the result to 30 days would rewrite the last month, leave the other 760 rows
+        # standing at their old values, and report success. The cost of ignoring the window here
+        # is one extra paid query; the cost of honouring it is a silently half-corrected series.
+        if always_refetch() and window_days is not None:
+            log.info("TOKEN_METRICS_DUNE_ALWAYS is set — pulling full history, ignoring the %d-day window",
+                     window_days)
+            window_days = None
         for p in projects:
             name = p["name"]
             for metric, q in (p.get("dune_queries") or {}).items():
@@ -135,7 +150,9 @@ class Dune:
                 # though, and the guard below is what catches that mistake, so both stay.
                 ongoing = bool(q.get("snapshot") or q.get("ongoing"))
                 if (name, metric) in self.has_history and not always_refetch() and not ongoing:
-                    out.unconfigured(SOURCE, name, f"{metric}: store already holds history — backfill skipped", TIER)
+                    out.skipped(SOURCE, name,
+                                f"{metric}: store already holds a row — backfill NOT run. Set "
+                                f"TOKEN_METRICS_DUNE_ALWAYS=1 to force it.", TIER)
                     continue
                 if not self.key:
                     out.fail(SOURCE, name, f"{metric}: DUNE_API_KEY not set in .env", TIER)
@@ -171,6 +188,15 @@ class Dune:
                         continue
 
                     write_shape(qid, name, metric, rows)
+
+                    # A query can be correctly mapped and still have a half of it that cannot be
+                    # trusted. Declaring that in config puts it on the to-do list every run,
+                    # rather than in a comment nobody reads before promoting a column.
+                    qw = q.get("quality_warning")
+                    if qw:
+                        out.gap(name, f"[data] {qw['label']}",
+                                reason=f"Dune query {qid}: {qw['reason']}",
+                                tiers_attempted="4", suggestion=qw["suggestion"])
 
                     # A query declared as a snapshot is checked, not trusted. Both of these would
                     # otherwise turn history into a single wrongly dated point.

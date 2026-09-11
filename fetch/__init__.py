@@ -20,6 +20,8 @@ import logging
 
 import pandas as pd
 
+import config
+
 from .base import FetchOutput, LogEntry, new_run_id, today  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
@@ -96,6 +98,58 @@ def _resolve_tier_collisions(out: FetchOutput) -> None:
     out.frames = [deduped]
 
 
+def _resolve_period_overlaps(out: FetchOutput) -> None:
+    """Stop two tiers double counting the same FLOW over the same month.
+
+    The collision guard above catches two sources writing the same DATE. A period aggregate and a
+    running delta never share a date, and still double count: GEODNET's Dune backfill writes one
+    monthly total dated at the month start, while the tier 2 contract read writes a delta on each
+    run day. Both inside a 90-day window sums the month twice, in gross burn — the headline
+    figure of the whole exercise — and nothing about the result looks wrong.
+
+    Resolved the same way as a same-date collision, and for the same reason: the earlier tier is
+    the verified primary, the later tier is backfill for periods the primary does not cover. So
+    the later tier's rows are dropped for MONTHS THE EARLIER TIER ALREADY COVERS, never for the
+    months it does not — a backfill still fills the history in front of the contract read.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    flows = {m for m, spec in config.METRICS.items() if spec.get("kind") == "flow"}
+    mask = frame["metric"].isin(flows) & frame["tier"].notna()
+    if not mask.any():
+        return
+    f = frame[mask].assign(_month=frame.loc[mask, "date"].dt.to_period("M"))
+
+    drop = []
+    for (project, metric, month), g in f.groupby(["project", "metric", "_month"], sort=True):
+        tiers = sorted({int(t) for t in g["tier"]})
+        if len(tiers) < 2:
+            continue
+        keep_tier, losers = tiers[0], g[g["tier"].astype(int) != tiers[0]]
+        drop.extend(losers.index.tolist())
+        kept_total = float(g[g["tier"].astype(int) == keep_tier]["value"].sum())
+        for lose_tier in tiers[1:]:
+            lost = losers[losers["tier"].astype(int) == lose_tier]
+            log.warning("period overlap on %s/%s in %s: keeping tier %d, dropping %d row(s) from tier %d",
+                        project, metric, month, keep_tier, len(lost), lose_tier)
+            out.review_item(project, metric, "period_overlap", "rejected",
+                            value=float(lost["value"].sum()), prior_value=kept_total,
+                            date=str(month), source=f"dropped {len(lost)} tier {lose_tier} row(s) covering "
+                                                    f"{month}, already covered by tier {keep_tier}",
+                            tier=lose_tier)
+        out.gap(project, f"[data] {metric} double counted in {month}",
+                reason=f"tier {keep_tier} and tier {', '.join(str(t) for t in tiers[1:])} both reported "
+                       f"{metric} for {month} on different dates. A flow counted twice inside the trailing "
+                       f"window overstates it, so the later tier's rows for that month were dropped.",
+                tiers_attempted=", ".join(str(t) for t in tiers),
+                suggestion=f"Expected where a tier 4 backfill reaches into months the live read already "
+                           f"covers — nothing to fix, the overlap is removed. Investigate only if tier "
+                           f"{keep_tier} is NOT the right source for {metric} in {month}.")
+    if drop:
+        out.frames = [frame.drop(index=drop)]
+
+
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
               has_history: set | None = None,
@@ -128,6 +182,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
         out.frames = [f for f in out.frames if f is not None and not f.empty]
 
     _resolve_tier_collisions(out)
+    _resolve_period_overlaps(out)
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
 

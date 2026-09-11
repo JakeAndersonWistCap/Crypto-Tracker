@@ -140,6 +140,11 @@ def main() -> int:
             st.record_fetch(run_id, src, p["name"], 100, "ok" if ok else "failed", "" if ok else "HTTP 503 from FIXTURE (simulated outage)")
     st.record_fetch(run_id, "rwa.xyz", "Plume", 0, "unconfigured", "rwa_xyz_usd: no API on our tier — manual_overrides.csv only")
     st.record_fetch(run_id, "dune", "peaq", 0, "unconfigured", "supply_units: no query_id in config")
+    # a SKIP, so the Run Log's skipped section renders with content rather than only empty. This is
+    # the case that was once reported as a success: no error, no failure, no gap, and no data.
+    st.record_fetch(run_id, "dune", "GEODNET", 0, "skipped",
+                    "gross_burn_tokens: store already holds a row — backfill NOT run. "
+                    "Set TOKEN_METRICS_DUNE_ALWAYS=1 to force it.", 4)
 
     csv = SCRATCH / "manual_overrides.csv"
     csv.write_text(

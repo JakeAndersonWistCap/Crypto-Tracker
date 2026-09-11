@@ -66,6 +66,15 @@ class FetchOutput:
     def unconfigured(self, source: str, project: str | None, message: str, tier: int | None = None):
         self.log.append(LogEntry(source, project, 0, "unconfigured", message, tier))
 
+    def skipped(self, source: str, project: str | None, message: str, tier: int | None = None):
+        """A source that COULD have run and deliberately did not.
+
+        Distinct from unconfigured (nothing to run) and from ok (it ran). Collapsing the three is
+        how a backfill that never executed gets read as a backfill that succeeded: no error, no
+        failure, no gap — just a quiet zero that looks like a clean run.
+        """
+        self.log.append(LogEntry(source, project, 0, "skipped", message, tier))
+
     def review_item(self, project: str, metric: str, reason: str, action: str, value=None,
                     prior_value=None, date=None, source=None, tier=None):
         self.review.append({"project": project, "metric": metric, "reason": reason, "action": action,

@@ -1160,7 +1160,11 @@ def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: s
     r = 4
     ws.cell(row=r, column=1, value="Rows fetched per source (this run)").font = F_BOLD
     r += 1
-    _header(ws, r, ["Source", "Tier", "OK calls", "Rows", "Failed", "Unconfigured / not applicable"])
+    # "Skipped" gets its own column, next to Failed rather than folded into Unconfigured. A
+    # skipped source produces no error, no failure and no gap, so anywhere it is merged with
+    # "nothing to do" it reads as a clean run that simply had nothing to add.
+    _header(ws, r, ["Source", "Tier", "OK calls", "Rows", "Failed", "Skipped (ran nothing)",
+                    "Unconfigured / not applicable"])
     ws.row_dimensions[r].height = 18
     r += 1
     if runlog is not None and not runlog.empty:
@@ -1168,15 +1172,37 @@ def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: s
             tiers = sorted({int(t) for t in g["tier"].dropna().unique()}) if "tier" in g else []
             vals = [src, ", ".join(str(t) for t in tiers), int((g["status"] == "ok").sum()),
                     int(g["rows"].fillna(0).sum()), int((g["status"] == "failed").sum()),
+                    int((g["status"] == "skipped").sum()),
                     int((g["status"] == "unconfigured").sum())]
             for j, v in enumerate(vals, start=1):
                 c = ws.cell(row=r, column=j, value=v)
                 _style(c, "text", FMT_NUM if j > 2 else FMT_TEXT)
                 if j == 5 and v:
                     c.font = Font(name=FONT, size=10, color="C00000", bold=True)
+                if j == 6 and v:
+                    c.font = Font(name=FONT, size=10, color="B85C00", bold=True)
+                    c.fill = FILL_STALE
             r += 1
     else:
         ws.cell(row=r, column=1, value="no fetch log for this run").font = F_SUB
+        r += 1
+    r += 1
+    ws.cell(row=r, column=1,
+            value="Skipped (this run) — these sources COULD have run and deliberately did not. "
+                  "A skip is not a success: nothing was fetched.").font = F_BOLD
+    r += 1
+    _header(ws, r, ["Timestamp (UTC)", "Source", "Project", "Message"])
+    ws.row_dimensions[r].height = 18
+    r += 1
+    skipped = runlog[runlog["status"] == "skipped"] if runlog is not None and not runlog.empty else pd.DataFrame()
+    if skipped.empty:
+        ws.cell(row=r, column=1, value="none — every configured source ran").font = F_SUB
+        r += 1
+    for row in skipped.itertuples(index=False):
+        for j, v in enumerate([row.ts, row.source, row.project or "", row.message], start=1):
+            c = ws.cell(row=r, column=j, value=v)
+            c.font = Font(name=FONT, size=10, color="B85C00")
+            c.fill = FILL_STALE
         r += 1
     r += 1
     ws.cell(row=r, column=1, value="Fetch failures (this run) — last known values carried forward and marked stale").font = F_BOLD
@@ -1232,7 +1258,7 @@ def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: s
             for j, v in enumerate([row.ts, row.source, row.project or "", int(row.rows or 0), row.status, row.message], start=1):
                 ws.cell(row=r, column=j, value=v).font = F_BASE
             r += 1
-    _set_widths(ws, {"A": 22, "B": 18, "C": 18, "D": 22, "E": 12, "F": 80})
+    _set_widths(ws, {"A": 22, "B": 18, "C": 18, "D": 22, "E": 12, "F": 22, "G": 80})
 
 
 # ---------------------------------------------------------------------------------------

@@ -61,6 +61,9 @@ ACTIONABLE_SIGNALS = (
 def _priority(project_name: str, metric: str, reason: str, severity: int | None = None) -> int:
     if metric.startswith("[open]"):
         return P_CRITICAL if severity == 1 else P_DECISION
+    if metric.startswith("[data]"):
+        # a figure that arrives but cannot be trusted yet: a decision for a human, not a missing row
+        return P_DECISION
     if metric.startswith("[config]"):
         return P_SUPPRESSED
     if any(k in reason.lower() for k in ACTIONABLE_SIGNALS):

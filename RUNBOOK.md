@@ -302,6 +302,11 @@ DefiLlama-tracked ones; `n/a` in many burn and buyback columns.
 (unconfirmed split, figure suppressed by design), anything in the net supply change column for a
 project whose burn source is not yet configured.
 
+**Read the Skipped section of the Run Log before you read anything else.** A skipped source
+produces no error, no failure and no gap — it looks exactly like a source that ran and had
+nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
+row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
+
 ### 10.5 Staging — captured, used by nothing
 
 Figures a source returned that no metric in the library takes: Ether.fi's `agg_14` and `agg_30`,
@@ -329,6 +334,25 @@ What changes on a second run:
   an ongoing one.
 - Page scrapes from the same calendar day are served from `.cache/scrape/` and make no request.
   To force a fresh scrape, delete that day's cache folder.
+
+**To force a Dune re-pull** — after correcting a column mapping, or where a backfill was skipped
+because the store already held a row:
+
+```bash
+TOKEN_METRICS_DUNE_ALWAYS=1 python token_metrics.py     # or set it in .env
+```
+
+It is **additive and safe**. The store upserts on `(date, project, metric)`, so no row is
+duplicated and none is lost: the only rows that change are ones with an identical key, which are
+rewritten with the new value. A forced re-pull also ignores the trailing 30-day window and takes
+the full history — rebuilding only the last month of a 794-row series would leave the rest at
+their old values and still report success.
+
+Two guards protect a verified contract read from the backfill landing on top of it: the
+collision guard keeps the earlier tier where both wrote the same date, and the period-overlap
+guard drops a monthly Dune row for any month the live read already covers, while still
+backfilling the months it does not. Both are flagged to the Review Queue rather than done
+silently.
 
 **To start completely fresh** (you will re-backfill, so only do this deliberately):
 ```bash

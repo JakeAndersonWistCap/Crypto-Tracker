@@ -88,11 +88,19 @@ def main() -> int:
     n_staged = st.record_staging(run_id, out.staged)
 
     failures = [e for e in out.log if e.status == "failed"]
-    log.info("run summary: %d rows | %d fetch failures | %d review items | %d gaps | %d manual overrides "
-             "| %d staged (captured, used by nothing)",
-             written, len(failures), n_review, n_gaps, n_manual, n_staged)
+    skips = [e for e in out.log if e.status == "skipped"]
+    log.info("run summary: %d rows | %d fetch failures | %d SKIPPED (ran nothing) | %d review items "
+             "| %d gaps | %d manual overrides | %d staged (captured, used by nothing)",
+             written, len(failures), len(skips), n_review, n_gaps, n_manual, n_staged)
     if failures:
         log.warning("%d fetch failures — see the Run Log tab", len(failures))
+    # A skip is not a success. It produces no error, no failure and no gap, so without this it
+    # reads exactly like a source that ran and had nothing to add — which is how a backfill that
+    # never executed gets reported as one that worked.
+    if skips:
+        log.warning("%d source/metric pair(s) were SKIPPED and fetched nothing:", len(skips))
+        for e in skips:
+            log.warning("    SKIPPED  tier %s  %s / %s — %s", e.tier, e.source, e.project, e.message)
     if n_gaps:
         log.warning("%d unresolved metrics — see the Gap Report tab, it is the to-do list", n_gaps)
 

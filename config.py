@@ -173,6 +173,12 @@ METRICS = {
     "lock_rate_pct":              {"label": "Lock rate (share staked, as published)",
                                    "kind": "stock", "unit": "pct", "archetypes": [3], "tiers": [3, 4],
                                    "sanity_min": 0, "sanity_max": 1.0, "only_projects": ["Ether.fi"]},
+    # Holder count. only_projects because Ether.fi is the one project with a source for it today,
+    # and the Gap Report is meant to be a to-do list rather than a census of everything missing.
+    # Widen the list as soon as a second project gets a route to it.
+    "staker_count":               {"label": "Holders / stakers", "kind": "stock", "unit": "count",
+                                   "archetypes": [3], "tiers": [3, 4],
+                                   "sanity_min": 0, "sanity_max": 1e8, "only_projects": ["Ether.fi"]},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
     #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
@@ -1508,10 +1514,26 @@ PROJECTS = [
                 "staging_cols": ["agg_14", "agg_30"],
                 "staging_note": "14d/30d aggregate from Dune 8683038. Candidate for the 30-day trajectory "
                                 "column; NOT used in any figure. Switching to it is a deliberate change.",
-                # Not mapped, and deliberately so: num_holders, deposit/request/processed amounts
-                # and user counts are withdrawal-queue and holder figures. No metric in the
-                # library takes them, and inventing one to hold a column is how a sheet fills up
-                # with numbers nobody chose.
+                # Not mapped, and deliberately so: deposit_amount, deposit_users, request_amount,
+                # request_users, processed_amount and processed_users are withdrawal-queue flows.
+                # No metric in the library takes them, they read as inert (see quality_warning),
+                # and inventing a metric to hold a column is how a sheet fills up with numbers
+                # nobody chose.
+                "quality_warning": {
+                    "label": "the FLOW half of query 8683038 looks inert",
+                    "reason": "In every sample row the deposit/request/processed amount and user columns are 0, "
+                              "and agg_14/agg_30 are floating-point noise (-5.8e-10, -2.4e-09) rather than "
+                              "values. Either there has genuinely been no vault activity, or the "
+                              "get_vault_details CTE is not matching rows — it filters strategy_symbol = "
+                              "'sethfi' in lowercase, a plausible case-sensitivity mismatch. Until that is "
+                              "settled, agg_14/agg_30 must NOT be promoted to the 30-day trajectory column: "
+                              "a trajectory built on noise around zero would read as a flat, healthy series.",
+                    "suggestion": "Check the strategy_symbol casing in the get_vault_details CTE on "
+                                  "dune.com/queries/8683038 against the underlying table, and confirm whether "
+                                  "vault activity is genuinely zero over the period. The LOCK-RATE half of "
+                                  "this query (staked_supply, perc_staked, num_holders) is unaffected and is "
+                                  "trusted — this warning is about the flow columns only.",
+                },
                 "source_url": "https://dune.com/queries/8683038",
                 "note": "Staked sETHFI, recorded as locked_tokens (not staked_tokens) as instructed. "
                         "141,470,107.5 sETHFI as at 2026-09-10. Tier 4 is Ether.fi's ONLY automated route "
@@ -1534,6 +1556,15 @@ PROJECTS = [
                 "note": "Share of ETHFI staked, as published, stored as a fraction (0.17452 = 17.452%). "
                         "Both earlier ambiguities are resolved: the scale is a fraction, and '_cnt' marks "
                         "the x100 variant of the same measure rather than a holder-count basis.",
+            },
+            "staker_count": {
+                "query_id": 8683038,
+                "date_col": "day",
+                "value_col": "num_holders",
+                "granularity": "daily",
+                "source_url": "https://dune.com/queries/8683038",
+                "note": "sETHFI holders, 13,011 as at 2026-09-10. A demand-side datapoint, not a supply one: "
+                        "it is never used in any float, lock-rate or net-supply calculation.",
             },
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
         },
@@ -1789,19 +1820,25 @@ OPEN_QUESTIONS = [
                       "date, under Uniswap governance_parameters.release_threshold_uni.",
     },
     {
-        "project": "GEODNET", "topic": "is the pre-August-2026 snapshot table still queryable",
+        "project": "GEODNET", "topic": "the burn backfill has NEVER RUN — it was skipped, not successful",
         "severity": 1,
-        "reason": "Query 8683175 only reaches back to 2026-08-01. Everything earlier is unioned in from a STATIC "
-                  "table, dune.geodnet_console.result_geod_tokens_burned_20260731. That is a dependency, not a "
-                  "detail: if it stops being queryable under the account the API key belongs to, a full "
-                  "re-backfill silently loses ALL GEODNET burn history before August 2026. Reachability could NOT "
-                  "be confirmed from here — it needs a Dune API key, which this environment does not have.",
-        "suggestion": "`python dune_probe.py --stored GEODNET/gross_burn_tokens --before 2026-08-01` answers this "
-                      "from the store in one command: it prints the rows held, their date range, how many came "
-                      "from Dune BEFORE August 2026 (that count is the snapshot table's reachability — zero means "
-                      "it has gone), and whether the incomplete current month was dropped. If the snapshot has "
-                      "gone, export the history the store already holds BEFORE re-backfilling, because a fresh "
-                      "backfill would replace it with the post-August window alone.",
+        "reason": "CORRECTION to an earlier report that read this as a success because it logged no error. "
+                  "The read-back shows 1 row stored, dated today, sourced chain:polygon:burn_polygon — the "
+                  "TIER 2 contract read. Dune contributed 0 rows and its run-log line said the store already "
+                  "held history, so the backfill was skipped. That is the backfill-only rule working as "
+                  "designed (tier 4 is a backfill dependency, and the store did hold a row), but it means "
+                  "GEODNET's burn history has never been fetched: the 3/6/9-month trajectory has nothing "
+                  "behind it. It also means the question of whether the pre-August-2026 snapshot table is "
+                  "still queryable remains COMPLETELY UNTESTED — the 'before 2026-08-01: 0 rows' result "
+                  "says only that no Dune call was made.",
+        "suggestion": "Run once with TOKEN_METRICS_DUNE_ALWAYS=1 in .env, which forces tier 4 regardless of "
+                      "what the store holds. It is additive: the store upserts on (date, project, metric), so "
+                      "nothing is lost or overwritten except a row with an identical key, and the tier 2 read "
+                      "is protected twice over — the collision guard keeps the earlier tier on a shared date, "
+                      "and the period-overlap guard drops a monthly Dune row for any month the contract read "
+                      "already covers. Then confirm with `python dune_probe.py --stored "
+                      "GEODNET/gross_burn_tokens --before 2026-08-01`: a non-zero 'before' count is the "
+                      "snapshot table answering, and 'from Dune: 0' would mean it was skipped again.",
     },
     {
         "project": "Ether.fi", "topic": "a tier-4-only series stops moving after its backfill",
@@ -1822,18 +1859,20 @@ OPEN_QUESTIONS = [
                       "default: it makes a paid API a daily dependency, which the tier order exists to avoid.",
     },
     {
-        "project": "Aerodrome", "topic": "Dune query 2986047 returns 404 — missing, or not readable?",
-        "reason": "The 2026-09-11 run with a live key got HTTP 404 from this query id, so nothing is mapped and "
-                  "nothing is read. A 404 alone does NOT establish that the query is gone: an id you do not own "
-                  "can fail the same way as an id that never existed, and the two need different remedies. "
-                  "LOW STAKES either way: this writes locked_tokens_dashboard, a cross-check of the tier 2 read "
-                  "of AERO.balanceOf(escrow), which is verified and working. Its absence costs the second "
+        "project": "Aerodrome", "topic": "2986047 — JAKE TO OPEN IN A BROWSER; no further automated attempts",
+        "reason": "SETTLED as far as the API can settle it. The control comparison ran: query 2986047 and a "
+                  "control id that certainly does not exist (999999999) return the IDENTICAL response, 404 "
+                  "'not found: Query not found or private'. The Dune API therefore does NOT distinguish a "
+                  "query that is gone from one that is private, so non-existence is not established — only "
+                  "unreadability by this key. No amount of further API calls can separate the two, and none "
+                  "should be made. For the record: this is only a CROSS-CHECK of the tier 2 "
+                  "AERO.balanceOf(escrow) read, which is verified and working. Its absence costs a second "
                   "opinion, never the figure.",
-        "suggestion": "`python dune_probe.py 2986047 --diagnose` sends exactly two requests — this id and a "
-                      "control id that certainly does not exist — and compares the answers. Same status and same "
-                      "message means the API does not distinguish the two cases; different means it does, and the "
-                      "difference is the verdict. Do not retry variations of the id: a second identical answer "
-                      "adds nothing. If it turns out to exist but be unreadable, fork it and use the fork's id.",
+        "suggestion": "Jake opens https://dune.com/queries/2986047 in a browser while signed in. If it "
+                      "RENDERS, it exists and the API will not serve it to this key: fork it and supply the "
+                      "fork's id, which goes in config under Aerodrome dune_queries.locked_tokens_dashboard. "
+                      "If it 404s there too, it is gone and the cross-check is sourced elsewhere or dropped. "
+                      "Until then this stays open and nothing further is attempted against the API.",
     },
     {
         "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",

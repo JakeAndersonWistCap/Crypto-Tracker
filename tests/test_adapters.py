@@ -599,6 +599,40 @@ def test_later_tier_never_overwrites_an_earlier_one():
     print("tier collision ok: contract read kept, cross-check preserved, collision surfaced")
 
 
+def test_a_monthly_backfill_does_not_double_count_a_month_the_live_read_covers():
+    """The GEODNET shape: a tier 4 monthly total plus tier 2 daily deltas in the same month.
+
+    They never share a date, so the same-date collision guard does not see them, and summing both
+    inside the 90-day window reports the month's burn twice — in the headline figure of the whole
+    exercise, with nothing about the result looking wrong. Months the live read does NOT cover
+    must still backfill, or the guard would destroy the history it exists to protect.
+    """
+    from fetch import _resolve_period_overlaps
+
+    out = FetchOutput()
+    rows = [
+        # tier 2 daily deltas, September only
+        ("2026-09-03", 100.0, "chain:polygon", 2), ("2026-09-07", 150.0, "chain:polygon", 2),
+        # tier 4 monthly totals: September overlaps the deltas, July and August do not
+        ("2026-09-01", 900.0, "dune:8683175", 4),
+        ("2026-08-01", 800.0, "dune:8683175", 4),
+        ("2026-07-01", 700.0, "dune:8683175", 4),
+    ]
+    out.frames = [pd.DataFrame([{"date": pd.Timestamp(d), "project": "GEODNET",
+                                 "metric": "gross_burn_tokens", "value": v, "source": src, "tier": t}
+                                for d, v, src, t in rows])]
+    _resolve_period_overlaps(out)
+    kept = out.frame()
+
+    sept = kept[kept.date.dt.to_period("M") == pd.Period("2026-09")]
+    assert set(sept.tier) == {2}, "the live read wins the month it covers"
+    assert sept.value.sum() == 250.0, f"September must not be counted twice, got {sept.value.sum()}"
+    assert set(kept[kept.tier == 4].date.dt.strftime("%Y-%m")) == {"2026-08", "2026-07"}, \
+        "months the live read does not cover must still backfill"
+    assert any(r["reason"] == "period_overlap" for r in out.review)
+    print("period overlap ok: September deduped to the tier 2 read, July and August backfilled intact")
+
+
 def test_cross_check_metrics_do_not_collide_with_their_primary():
     """Every declared cross-check must use a DIFFERENT metric name from its primary."""
     for p in config.PROJECTS:
@@ -750,7 +784,7 @@ def test_a_snapshot_query_is_never_skipped_as_already_backfilled():
 
 # The 13 columns query 8683038 really returns, with the sample values from the probe.
 ETHERFI_ROW = {"agg_14": 0.0121, "agg_30": 0.0233, "day": "2026-09-10 00:00:00.000 UTC",
-               "deposit_amount": 12, "deposit_users": 3, "num_holders": 41234,
+               "deposit_amount": 12, "deposit_users": 3, "num_holders": 13_011,
                "perc_staked": 0.17452, "perc_staked_cnt": 17.452,
                "processed_amount": 8, "processed_users": 2, "request_amount": 5,
                "request_users": 1, "staked_supply": 141_470_107.5}
@@ -782,7 +816,11 @@ def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     rate = df[df.metric == "lock_rate_pct"].sort_values("date")
     assert rate.value.iloc[-1] == 0.17452, f"the FRACTION column, not its x100 twin: {rate.value.iloc[-1]}"
     assert 17.452 not in set(df.value), "perc_staked_cnt must not reach the store under any metric"
-    assert "num_holders" not in set(df.metric) and 41234 not in set(df.value)
+
+    holders = df[df.metric == "staker_count"].sort_values("date")
+    assert holders.value.iloc[-1] == 13_011, "num_holders lands under staker_count"
+    assert set(df.metric) == {"locked_tokens", "lock_rate_pct", "staker_count"}, \
+        "the withdrawal-queue columns must not reach the store under any metric"
 
     # the bound is the backstop if the mapping is ever changed to the wrong column
     lo, hi = config.sanity_bounds("Ether.fi", "lock_rate_pct")
@@ -790,17 +828,61 @@ def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     print("etherfi ok: daily history, perc_staked (0.17452) stored, perc_staked_cnt refused twice over")
 
 
+def test_forced_repull_takes_the_full_history_not_the_trailing_window():
+    """TOKEN_METRICS_DUNE_ALWAYS after a mapping fix must rebuild the WHOLE series.
+
+    Later runs pass a 30-day window. Honouring it on a forced re-pull would rewrite the last
+    month, leave every older row at the value the OLD mapping wrote, and report success — a
+    half-corrected series that looks corrected.
+    """
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    now = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    rows = [dict(ETHERFI_ROW, day=f"{(now - pd.Timedelta(days=i)).date()} 00:00:00.000 UTC")
+            for i in range(120)]
+    held = {("Ether.fi", "locked_tokens"), ("Ether.fi", "lock_rate_pct")}
+
+    os.environ["TOKEN_METRICS_DUNE_ALWAYS"] = "1"
+    try:
+        d = Dune(has_history=held)
+        d.http = _Rows(rows)
+        out = FetchOutput()
+        d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)      # a later, incremental run
+        locked = out.frame()
+        assert not [e for e in out.log if e.status == "skipped"], "the flag overrides the skip"
+        locked = locked[locked.metric == "locked_tokens"]
+        assert len(locked) == 120, f"a forced re-pull rebuilds the whole series, got {len(locked)} rows"
+    finally:
+        del os.environ["TOKEN_METRICS_DUNE_ALWAYS"]
+
+    # without the flag the window still applies, because then it IS just a trailing re-fetch
+    d = Dune()
+    d.http = _Rows(rows)
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
+    locked = out.frame()
+    locked = locked[locked.metric == "locked_tokens"]
+    assert 25 <= len(locked) <= 31, f"an ordinary run still honours the 30-day window, got {len(locked)}"
+    print("forced re-pull ok: full 120 rows with the flag, 30-day window without it")
+
+
 def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
     """It is a normal historical source: once the store holds it, tier 4 skips it like any other."""
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
-    d = Dune(has_history={("Ether.fi", "locked_tokens"), ("Ether.fi", "lock_rate_pct")})
+    d = Dune(has_history={("Ether.fi", "locked_tokens"), ("Ether.fi", "lock_rate_pct"),
+                          ("Ether.fi", "staker_count")})
     d.http = _Rows([ETHERFI_ROW])
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
     assert out.frame().empty, "a dated query the store already holds must be skipped"
-    assert sum("already holds history" in e.message for e in out.log) == 2
+    # and the skip is reported as a SKIP, not as a success with nothing to add
+    skips = [e for e in out.log if e.status == "skipped"]
+    assert len(skips) == 3, f"every skipped metric must be logged as skipped, got {len(skips)}"
+    assert all("backfill NOT run" in e.message and "DUNE_ALWAYS" in e.message for e in skips), \
+        "a skip must say it ran nothing and name the flag that forces it"
     print("etherfi ok: dated history, so no snapshot exemption to the tier 4 backfill skip")
 
 
@@ -836,7 +918,7 @@ def test_dune_backfill_only():
     df = out.frame()
     assert set(df["metric"]) == {"staked_tokens"}, "a series with history must be skipped"
     assert set(df["tier"]) == {4} and df.source.iloc[0] == "dune:123"
-    assert any("already holds history" in e.message for e in out.log)
+    assert any(e.status == "skipped" and "backfill NOT run" in e.message for e in out.log)
     assert any("no query_id" in e.message for e in out.log)
     print("tier 4 ok: backfill only, skipped the series the store already covers")
 
@@ -908,6 +990,7 @@ if __name__ == "__main__":
                test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
                test_scrape_registry_reports_incomplete_entries_as_gaps,
                test_later_tier_never_overwrites_an_earlier_one, test_cross_check_metrics_do_not_collide_with_their_primary,
+               test_a_monthly_backfill_does_not_double_count_a_month_the_live_read_covers,
                test_dune_sums_split_columns_and_drops_the_incomplete_current_period,
                test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query,
                test_snapshot_query_is_dated_now_and_stages_the_columns_nobody_chose,
@@ -915,6 +998,7 @@ if __name__ == "__main__":
                test_a_snapshot_query_is_never_skipped_as_already_backfilled,
                test_etherfi_reads_the_fraction_column_not_its_x100_twin,
                test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read,
+               test_forced_repull_takes_the_full_history_not_the_trailing_window,
                test_geodnet_sql_addresses_match_config_exactly,
                test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
                test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:
