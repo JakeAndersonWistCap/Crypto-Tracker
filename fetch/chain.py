@@ -70,6 +70,12 @@ CUMULATIVE_FLOW = {
 #                  here returns other people's discarded tokens, not the protocol burn
 READABLE_BURN_METHODS = {"transfer", None}
 
+# Kinds whose read method must be EXPLICITLY established before anything is read. A vote escrow
+# can be a fungible ERC-20 (totalSupply is the staked amount) or an NFT position (totalSupply is a
+# COUNT OF POSITIONS, wrong by orders of magnitude and entirely plausible-looking). Assuming
+# either is unsafe, so read_method None means refuse.
+METHOD_REQUIRED_KINDS = {"ve_total_supply"}
+
 
 def allow_unverified() -> bool:
     return os.environ.get("TOKEN_METRICS_ALLOW_UNVERIFIED", "").strip() in ("1", "true", "yes")
@@ -184,7 +190,21 @@ class Chain:
             out.unconfigured(SOURCE, name, f"{key}: chain {chain!r} not covered by the EVM adapter", TIER)
             return False
 
-        # 4. VERIFICATION GATE.
+        # 4. LOCK READ METHOD. For a vote escrow, how the figure is read decides whether the cell
+        #    holds tokens locked or a count of NFT positions. Never assumed.
+        if spec["kind"] in METHOD_REQUIRED_KINDS and not spec.get("read_method"):
+            out.gap(name, metric,
+                    reason=f"lock read method for {key!r} is NOT ESTABLISHED — a vote escrow can be a fungible "
+                           f"ERC-20 (totalSupply is the staked amount) or an NFT position (totalSupply is a "
+                           f"COUNT OF POSITIONS, wrong by orders of magnitude). Neither is assumed.",
+                    tiers_attempted="2",
+                    suggestion=f"Establish whether {key!r} is ERC-20 or ERC-721, then set read_method to "
+                               f"'erc20_total_supply' or 'escrow_balance_of' (with `underlying`) and "
+                               f"token_standard in config.py.")
+            out.unconfigured(SOURCE, name, f"{key}: lock read method not established, read refused", TIER)
+            return False
+
+        # 5. VERIFICATION GATE.
         if spec.get("verified"):
             return True
         if not allow_unverified():
@@ -213,6 +233,11 @@ class Chain:
             # reporting only one path understates the total, which is the exact failure this tool exists
             # to prevent. Components are named in the source string so the composition stays auditable.
             burn_parts: list[tuple[str, float]] = []
+            # Same problem for supply: a multi-chain token (CAKE is a LayerZero OFT) has no single
+            # totalSupply. Known deployments are summed, and if any is marked partial the result is
+            # flagged so a one-chain figure never reaches a cell looking complete.
+            supply_parts: list[tuple[str, float]] = []
+            supply_partial = False
             for key, spec in contracts.items():
                 if not self._gate(p, key, spec, out):
                     continue
@@ -230,6 +255,19 @@ class Chain:
                                 tiers_attempted="2", suggestion="Add a 'token' entry to contracts in config.py")
                         continue
                     holder, read_address = spec["address"], token["address"]
+                # An NFT-based escrow is read as underlying.balanceOf(escrow): the symbol check and
+                # the balance call both target the UNDERLYING token, never the veNFT.
+                if spec.get("read_method") == "escrow_balance_of":
+                    under = contracts.get(spec.get("underlying") or "")
+                    if not under or not under.get("address"):
+                        out.gap(name, metric,
+                                reason=f"{key} needs its underlying token contract to call balanceOf, and "
+                                       f"{spec.get('underlying')!r} has no address",
+                                tiers_attempted="2",
+                                suggestion="Add the underlying token address to contracts in config.py")
+                        continue
+                    holder, read_address = spec["address"], under["address"]
+
                 try:
                     ok, actual = self.reader.symbol_matches(chain, read_address, spec["expected_symbol"])
                     if not ok:
@@ -252,9 +290,37 @@ class Chain:
                     burn_parts.append((f"{chain}:{key}", value))
                     out.log.append(LogEntry(SOURCE, name, 0, "ok", f"burn path {chain}:{key}={value:,.4f}", TIER))
                     continue
+                if metric == "total_supply":
+                    supply_parts.append((f"{chain}:{key}", value))
+                    supply_partial = supply_partial or bool(spec.get("supply_is_partial"))
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok", f"supply deployment {chain}:{key}={value:,.4f}", TIER))
+                    continue
                 out.add(point(name, metric, value, src, TIER, when), SOURCE, name, f"{key}={value:,.4f}", TIER)
 
             self._emit_burn(name, burn_parts, when, out)
+            self._emit_supply(p, supply_parts, supply_partial, when, out)
+
+    def _emit_supply(self, project: dict, parts: list[tuple[str, float]], partial: bool, when, out):
+        """Sum every known token deployment. A partial sum is flagged, never presented as complete."""
+        if not parts:
+            return
+        name = project["name"]
+        total = sum(v for _, v in parts)
+        composition = " + ".join(f"{label} {v:,.4f}" for label, v in parts)
+        src = f"{SOURCE}:sum(" + "+".join(label for label, _ in parts) + ")"
+        if partial or project.get("supply_is_partial"):
+            src += ":PARTIAL"
+            reason = project.get("supply_partial_reason") or "not all deployments are known"
+            out.review_item(name, "total_supply", "supply_partial", "stored_flagged", value=total,
+                            prior_value=self.prior.get((name, "total_supply")), date=when, source=src, tier=TIER)
+            out.gap(name, "total_supply",
+                    reason=f"on-chain supply is PARTIAL — summed over {len(parts)} known deployment(s) only. {reason}",
+                    tiers_attempted="2",
+                    suggestion="Add the remaining deployments to contracts in config.py, or rely on the "
+                               "self-reported figure. The sheet labels this figure partial either way.")
+        out.add(point(name, "total_supply", total, src, TIER, when), SOURCE, name,
+                f"total_supply={total:,.4f} from {len(parts)} deployment(s): {composition}"
+                + (" [PARTIAL]" if partial else ""), TIER)
 
     def _emit_burn(self, name: str, parts: list[tuple[str, float]], when, out):
         """Sum every burn path into one cumulative figure, then derive the period flow from it."""

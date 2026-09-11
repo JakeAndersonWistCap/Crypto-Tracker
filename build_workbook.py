@@ -87,7 +87,8 @@ CFG_COLS = [
     ("Project", 16), ("Symbol", 8), ("Archetypes", 10), ("Primary", 8), ("Held (not enabled)", 10), ("Materiality", 10),
     ("CoinGecko id", 16), ("DefiLlama fees slug", 14), ("DefiLlama protocol", 14), ("DefiLlama chain", 14),
     ("Share of revenue to buyback", 12), ("Share source URL", 30), ("Share source date", 11), ("Programmed (contract-enforced)", 12), ("Buyback status", 11),
-    ("Buyback destination", 11), ("Destination split (share burned, where destination = split)", 12), ("Burn execution", 12),
+    ("Buyback destination", 11), ("Destination effect on float", 14),
+    ("Destination split (share burned, where destination = split)", 12), ("Burn execution", 12),
     ("Share of fees burned", 11), ("Burn source URL", 30), ("Burn source date", 11), ("Burn status", 11),
     ("Issuance schedule (tokens/day, current step)", 14), ("Schedule source URL", 30), ("Schedule source date", 11), ("Schedule status", 11),
     ("Per-product split (never collapsed)", 34),
@@ -406,7 +407,8 @@ def write_config(ws, asof: pd.Timestamp):
             p.get("coingecko_id") or "", p.get("defillama_fees_slug") or "", p.get("defillama_protocol") or "", p.get("defillama_chain") or "",
             share_cell, fs.get("source_url") or "", fs.get("source_date") or "",
             _programmed_label(fs.get("programmed")), fs.get("status", "n/a"),
-            p.get("buyback_destination", ""), p.get("destination_split"), p.get("burn_execution", ""),
+            p.get("buyback_destination", ""), p.get("destination_effect", ""),
+            p.get("destination_split"), p.get("burn_execution", ""),
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
             bs.get("status", "n/a") if bs else "n/a",
             cur_step, sched.get("source_url") or "", sched.get("source_date") or "", sched.get("status", "n/a") if sched else "n/a",
@@ -423,7 +425,8 @@ def write_config(ws, asof: pd.Timestamp):
                     c.font = Font(name=FONT, size=10, color="999999")
             elif head == "Issuance schedule (tokens/day, current step)":
                 _style(c, "input", FMT_NUM2)
-            elif head in ("Programmed (contract-enforced)", "Buyback status", "Buyback destination", "Burn execution", "Burn status", "Schedule status", "Materiality"):
+            elif head in ("Programmed (contract-enforced)", "Buyback status", "Buyback destination",
+                          "Destination effect on float", "Burn execution", "Burn status", "Schedule status", "Materiality"):
                 _style(c, "input", FMT_TEXT)
             else:
                 _style(c, "text", FMT_TEXT)
@@ -713,6 +716,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: gated(R.C(r, "Burn status"), f"{burn(r)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
+         if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
         ("Net supply change Q1 (tokens, −3m window)", lambda r, p: calc(f"{iss(r, 'q1')}-{burn(r, 'q1')}"), FMT_NUM, "calc"),
@@ -758,6 +763,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}", share(r)), FMT_NUM, "calc", False, {"gate": "fee_split"}),
         ("Circulating supply", lambda r, p: pull(circ(r)), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
+        ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
+         if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)), FMT_PCT, "calc", True, {"gate": "fee_split"}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "actual_buyback_tokens"}),
@@ -771,8 +778,28 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Tokens locked (ve)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
         ("Lock rate = locked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
-        ("Effective float = circulating − locked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
-        ("Yield destination (tracked separately from burn)", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
+        ("Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)",
+         lambda r, p: calc(
+             f"{circ(r)}"
+             f"-IF(ISNUMBER({R.D(r, 'locked_tokens', 'now')}),{R.D(r, 'locked_tokens', 'now')},0)"
+             f"-IF(AND({R.C(r, 'Destination effect on float')}=\"locked_supply\","
+             f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)"),
+         FMT_NUM, "calc"),
+        ("Destination effect on float", lambda r, p: pull(R.C(r, "Destination effect on float")), FMT_TEXT, "pull"),
+        # A hold and a payout move float in OPPOSITE directions, so they never share a formula.
+        # Chainlink's Reserve is the case: a multi-day withdrawal timelock with no withdrawals
+        # expected for years, so accumulated LINK is locked supply, not a distribution.
+        ("Buyback to LOCKED supply (destination = hold) — reduces effective float",
+         lambda r, p: (calc(f"IF({R.C(r, 'Destination effect on float')}=\"locked_supply\","
+                            f"{R.D(r, 'buyback_fund_balance', 'now')},{NA})")), FMT_NUM, "calc", True),
+        ("Buyback to YIELD PAYOUT (destination = distribute) — re-enters float, never netted against burn",
+         lambda r, p: (calc(f"IF({R.C(r, 'Destination effect on float')}=\"yield_payout\","
+                            f"{R.D(r, 'actual_buyback_tokens', 'q0')},{NA})")), FMT_NUM, "calc"),
+        ("Reserve balance — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "buyback_fund_balance_dashboard", "now")),
+         FMT_NUM, "pull", False, {"metric": "buyback_fund_balance_dashboard"}),
+        ("Contract vs dashboard divergence (flagged when beyond tolerance)",
+         lambda r, p: calc(f"{R.D(r, 'buyback_fund_balance', 'now')}/{R.D(r, 'buyback_fund_balance_dashboard', 'now')}-1"),
+         FMT_PCT, "calc"),
         ("Umbrella staked $ (Aave only) — protocol risk cover, NOT AAVE supply, excluded from every float figure",
          lambda r, p: pull(R.D(r, "umbrella_staked_usd", "now")), FMT_USD, "pull", False, {"metric": "umbrella_staked_usd"}),
         *_trajectory(R, "revenue_usd", "Revenue"),

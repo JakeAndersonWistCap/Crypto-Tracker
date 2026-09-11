@@ -173,6 +173,83 @@ def test_chain_read_failure_is_logged_not_raised():
     print("tier 2 failure ok: RPC error logged and reported as a gap, run continues")
 
 
+def test_venft_misconfiguration_fails_loudly():
+    """A veNFT read as an ERC-20 supply returns a COUNT OF POSITIONS, not tokens locked.
+
+    That is wrong by orders of magnitude and looks entirely plausible in a cell, so the config
+    integrity check must reject the pairing at import rather than letting it reach the sheet.
+    """
+    import copy
+
+    bad = copy.deepcopy(config.PROJECT_BY_NAME["Aerodrome"])
+    bad["contracts"]["ve"]["read_method"] = "erc20_total_supply"
+    saved = config.PROJECTS
+    try:
+        config.PROJECTS = [bad]
+        errors = config.validate_config(raise_on_error=False)
+        assert errors, "an erc721 contract read as erc20_total_supply must be rejected"
+        assert "COUNT OF POSITIONS" in errors[0], errors
+        try:
+            config.validate_config()
+            raise AssertionError("validate_config must raise on a veNFT misconfiguration")
+        except config.ConfigError:
+            pass
+        # the same pairing via `kind` is caught too
+        bad["contracts"]["ve"]["read_method"] = "escrow_balance_of"
+        bad["contracts"]["ve"]["kind"] = "erc20_total_supply"
+        assert config.validate_config(raise_on_error=False), "kind erc20_total_supply on erc721 must also fail"
+    finally:
+        config.PROJECTS = saved
+    assert config.validate_config(raise_on_error=False) == [], "the real config must be clean"
+    print("veNFT regression ok: erc721 + erc20_total_supply is rejected at load, loudly")
+
+
+def test_escrow_balance_of_reads_the_underlying_not_the_nft():
+    class EscrowStub:
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *args):
+            # the veNFT would report a position count; the underlying escrow balance is the real figure
+            if address == "0xAERO" and args and args[0] == "0xESCROW":
+                return 512_000_000.0
+            if address == "0xESCROW":
+                return 4312.0
+            return 1_000_000_000.0
+
+    proj = {"name": "Aerodrome", "archetypes": [3], "contracts": {
+        "token": {"address": "0xAERO", "chain": "base", "kind": "erc20_total_supply", "expected_symbol": "AERO",
+                  "verified": "2026-09-11", "ambiguous": False, "source_url": "u", "read_method": None,
+                  "token_standard": "erc20", "underlying": None},
+        "ve": {"address": "0xESCROW", "chain": "base", "kind": "ve_total_supply", "expected_symbol": "AERO",
+               "verified": "2026-09-11", "ambiguous": False, "source_url": "u",
+               "read_method": "escrow_balance_of", "token_standard": "erc721", "underlying": "token"}}}
+    c = Chain()
+    c.reader = EscrowStub()
+    out = FetchOutput()
+    c.run([proj], None, out)
+    locked = dict(zip(out.frame().metric, out.frame().value))["locked_tokens"]
+    assert locked == 512_000_000.0, f"escrow balance expected, got {locked}"
+    print(f"escrow read ok: {locked:,.0f} AERO locked, not the 4,312 positions totalSupply() would report")
+
+
+def test_unestablished_lock_read_method_is_refused():
+    proj = {"name": "Aave", "archetypes": [3], "contracts": {
+        "token": {"address": "0xAAVE", "chain": "ethereum", "kind": "erc20_total_supply", "expected_symbol": "AAVE",
+                  "verified": "2026-09-11", "ambiguous": False, "source_url": "u", "read_method": None,
+                  "token_standard": "erc20", "underlying": None},
+        "staking": {"address": "0xSTK", "chain": "ethereum", "kind": "ve_total_supply", "expected_symbol": "stkAAVE",
+                    "verified": "2026-09-11", "ambiguous": False, "source_url": "u", "read_method": None,
+                    "token_standard": None, "underlying": "token"}}}
+    c = Chain()
+    c.reader = StubReader(symbol="stkAAVE")
+    out = FetchOutput()
+    c.run([proj], None, out)
+    assert "locked_tokens" not in set(out.frame().metric), "an unestablished lock read must be refused"
+    assert any("NOT ESTABLISHED" in g["reason"] for g in out.gaps), out.gaps
+    print("unestablished lock read ok: refused rather than assuming ERC-20 semantics")
+
+
 # ---------------------------------------------------------------------------- tier 3
 class StubPage:
     """Minimal Playwright page: evaluate() runs the DOM-anchor contract against a fake DOM."""
@@ -302,6 +379,8 @@ if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
                test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
+               test_venft_misconfiguration_fails_loudly, test_escrow_balance_of_reads_the_underlying_not_the_nft,
+               test_unestablished_lock_read_method_is_refused,
                test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
                test_scrape_registry_reports_incomplete_entries_as_gaps,
                test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,

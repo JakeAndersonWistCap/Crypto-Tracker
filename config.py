@@ -51,6 +51,7 @@ derived figure. Never estimate a split we have not documented.
 """
 
 BRIEF_DATE = "2026-09-11"
+TODAY_VERIFIED = "2026-09-11"
 UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"   # date the parameters below were set from the working brief
 
 # =======================================================================================
@@ -149,6 +150,10 @@ METRICS = {
     "actual_buyback_usd":         {"label": "Actual buyback (observed)",       "kind": "flow",  "unit": "usd",    "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e11},
     "actual_buyback_tokens":      {"label": "Actual buyback tokens (observed)", "kind": "flow", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
     "buyback_fund_balance":       {"label": "Buyback fund balance",            "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2],    "sanity_min": 0,    "sanity_max": 1e15},
+    # The same figure as published on the protocol's own dashboard. Stored SEPARATELY so the two can
+    # be compared: the contract read is preferred and the dashboard is a cross-check, with any
+    # divergence flagged rather than one being silently picked.
+    "buyback_fund_balance_dashboard": {"label": "Buyback fund balance (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
@@ -231,6 +236,26 @@ DEFAULT_RPC = {
 # report says so rather than the adapter failing obscurely.
 EVM_CHAINS = set(DEFAULT_RPC)
 
+# HOW a lock/escrow figure is read. Getting this wrong produces a number that is orders of
+# magnitude off and still looks entirely plausible in a cell, which is the worst kind of error.
+#
+#   erc20_total_supply   totalSupply() on an ERC-20 staking token. Correct where the staked
+#                        position is itself a fungible ERC-20 (stkAAVE-style).
+#   escrow_balance_of    TOKEN.balanceOf(<escrow address>) — the amount of the underlying token
+#                        held by the escrow. This is the correct read for a vote-escrow whose
+#                        position is an NFT.
+#   None                 NOT ESTABLISHED. The adapter refuses to read, because assuming ERC-20
+#                        semantics for a veNFT is exactly how a position COUNT ends up in a cell
+#                        labelled "tokens locked".
+LOCK_READ_METHODS = {
+    "erc20_total_supply": "totalSupply() on a fungible staking token",
+    "escrow_balance_of": "underlying.balanceOf(escrow) — the correct read for an NFT-based vote escrow",
+}
+
+# A veNFT is ERC-721: its totalSupply() returns the NUMBER OF POSITIONS, not tokens locked.
+# Pairing erc721 with erc20_total_supply is a hard config error and is rejected at load time.
+TOKEN_STANDARDS = {"erc20", "erc721"}
+
 BURN_READ_METHODS = {
     "transfer": "Tokens move to an address no one controls. Readable as a balance on the token contract.",
     "protocol_level": "Supply destroyed at the protocol level with no transfer. NOT readable as an address "
@@ -271,7 +296,9 @@ UNVERIFIED = None
 
 
 def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERIFIED, note="",
-              purpose="", provenance="model-knowledge", candidates=None, ambiguous=False):
+              purpose="", provenance="model-knowledge", candidates=None, ambiguous=False,
+              read_method=None, token_standard=None, underlying=None,
+              supply_is_partial=False, partial_reason=""):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -291,6 +318,13 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         "purpose": purpose,
         "candidates": candidates or ([address] if address else []),
         "ambiguous": bool(ambiguous),
+        # read_method / token_standard: see LOCK_READ_METHODS above. read_method None on a lock
+        # contract means NOT ESTABLISHED, and the adapter refuses rather than assuming.
+        "read_method": read_method,
+        "token_standard": token_standard,
+        "underlying": underlying,          # contract key whose balanceOf is called, for escrow_balance_of
+        "supply_is_partial": bool(supply_is_partial),
+        "partial_reason": partial_reason,
         "note": note,
     }
 
@@ -345,6 +379,7 @@ PROJECTS = [
         },
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
         "dune_queries": _dune("tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "Issuance schedule only. No burn, no buyback.",
@@ -366,6 +401,7 @@ PROJECTS = [
         "burn_read_method": "protocol_level",
         "burn_read_note": "EIP-1559 destroys the base fee at the protocol level. No transfer occurs, so there is NO burn address to read. Needs a chain-data or dashboard source (ultrasound.money publishes it).",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "EIP-1559 base fee burn. Net issuance = validator issuance - base fee burn.",
@@ -387,6 +423,7 @@ PROJECTS = [
         "burn_read_method": "protocol_level",
         "burn_read_note": "Partial fee burn via the SPL burn instruction — supply is destroyed, not sent to a wallet. There is no burn address to read. Needs a chain-data or dashboard source.",   # not EVM — tier 2 web3 path does not apply
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "Partial fee burn — confirm current share. Non-EVM, so no tier 2 contract read.",
@@ -426,6 +463,7 @@ PROJECTS = [
                           "node API call for BURN_TRX, not an address balance. The four black-hole addresses that "
                           "circulate are the wrong approach and have been removed.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "TVM, not EVM-compatible via web3.py standard JSON-RPC. Burn is read from the node API key BURN_TRX "
@@ -447,6 +485,7 @@ PROJECTS = [
         "burn_read_method": "protocol_level",
         "burn_read_note": "Execution fee burn at the protocol level, historically c.70% and moving toward 100%. CONFIRM the current share from docs.near.org. No address to read.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "medium",
         "notes": "Confirm burn share.",
@@ -467,6 +506,7 @@ PROJECTS = [
         "burn_read_method": "protocol_level",
         "burn_read_note": "Burn-mint equilibrium: CC is burned when Global Synchroniser traffic is purchased, priced in USD. Destroyed at the protocol level, no transfer. Needs the Canton dashboard or a Dune source.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "fees_usd", "tx_count", "active_addresses"),
         "materiality": "medium",
         "notes": "Not on DefiLlama. Own dashboard (tier 3) + Dune page (tier 4). Verify the CoinGecko id.",
@@ -482,6 +522,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": _dune("gross_issuance_tokens", "staked_tokens", "emissions_tokens", "tx_count", "active_addresses"),
         "materiality": "medium",
         "notes": "RWA-on-chain is the key demand metric. Pull RWA.xyz and the DefiLlama RWA category and show the divergence.",
@@ -503,6 +544,7 @@ PROJECTS = [
         "burn_read_method": "protocol_level",
         "burn_read_note": "The auction and Community BuyBack modules destroy INJ on-chain with no transfer. DO NOT USE the 0x1111...1111 address that circulates publicly — it is a contribution subaccount, NOT a burn destination, and reading it would return the wrong number entirely.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "medium",
         "notes": "Monthly Community BuyBack: committed INJ permanently burned.",
@@ -521,6 +563,7 @@ PROJECTS = [
         },
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
         "dune_queries": _dune("tx_count", "active_addresses"),
         "materiality": "medium",
         "notes": "No burn. Issuance schedule read only.",
@@ -544,18 +587,43 @@ PROJECTS = [
             # revenue accumulates here as LINK. Without it the archetype 3 block has NO revenue input
             # at all, which is why it is listed even with no address yet.
             "reserve": _contract(
-                None, "ethereum", "buyback_fund_balance", "LINK",
-                "https://blog.chain.link/chainlink-reserve/",
-                purpose="Chainlink Reserve — where Payment Abstraction revenue accumulates as LINK. This, not the "
-                        "token contract, is the archetype 3 revenue input.",
-                note="ADDRESS STILL NEEDS SOURCING from Chainlink's own Reserve documentation. Until it is filled "
-                     "in and verified, Chainlink's archetype 3 block has no revenue input and its derived figures "
-                     "stay suppressed."),
+                "0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6", "ethereum", "buyback_fund_balance", "LINK",
+                "https://blog.chain.link/chainlink-reserve-strategic-link-reserve/",
+                verified="2026-09-11", provenance="supplied and cross-checked against the Chainlink Reserve dashboard",
+                token_standard="erc20", underlying="token",
+                purpose="Chainlink Reserve — where Payment Abstraction revenue accumulates as LINK. THIS, not the "
+                        "token contract, is the archetype 3 revenue input; without it the block had none at all.",
+                note="Balance read is LINK.balanceOf(reserve). Cross-checked against the published dashboard at "
+                     "https://metrics.chain.link/reserve — see cross_checks below; a divergence is flagged, never "
+                     "silently resolved."),
         },
+        # HOLD, not burn and not distribute. The Reserve has a multi-day withdrawal timelock and
+        # Chainlink states no withdrawals are expected for multiple years, so accumulated LINK is
+        # LOCKED SUPPLY. It must never share a formula with a yield payout: a distribution returns
+        # tokens to float, a hold removes them from it. Opposite sign on effective float.
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "locked_supply",
+        "destination_source_url": "https://blog.chain.link/chainlink-reserve-strategic-link-reserve/",
+        "destination_confirmed_date": TODAY_VERIFIED,
+        "cross_checks": [
+            {"primary": "buyback_fund_balance", "primary_source": "tier 2 contract read",
+             "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://metrics.chain.link/reserve",
+             "tolerance": 0.02, "prefer": "primary",
+             "note": "Prefer the contract read; the dashboard is the cross-check. A divergence beyond the "
+                     "tolerance is flagged to the Review Queue rather than one figure being silently picked."},
+        ],
+        "sanity": {
+            # Rising series: c.2.17m LINK (Feb 2026) -> c.5.2m LINK (Jul 2026). Bounded generously above
+            # so continued growth is not rejected, but a wild value still is.
+            "buyback_fund_balance": {"min": 0, "max": 100_000_000, "change_threshold_pct": 40},
+            "buyback_fund_balance_dashboard": {"min": 0, "max": 100_000_000, "change_threshold_pct": 40},
+        },
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "staked_tokens", "emissions_tokens"),
         "materiality": "high",
-        "notes": "Chainlink Reserve balance is a tier 2/3 candidate once the address is documented.",
+        "notes": "The Reserve, not the LINK token contract, is the archetype 3 revenue input. Destination is HOLD: "
+                 "a multi-day withdrawal timelock with no withdrawals expected for years, so accumulated LINK is "
+                 "locked supply rather than a payout. Reference points for the series: c.2.17m LINK (Feb 2026), "
+                 "c.5.2m LINK (Jul 2026).",
     },
     # ------------------------------------------------------------------ Archetype 2 (+3/+4)
     {
@@ -569,6 +637,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": {},
         "materiality": "low",
         "notes": "Page being rebuilt. Everything routes through manual_overrides.csv until it returns; all gaps listed in the Gap Report.",
@@ -615,6 +684,7 @@ PROJECTS = [
         "burn_read_method": "transfer",
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "emissions_tokens"),
         "materiality": "low",
         "notes": "Console revenue burn — confirmed. Migrated Polygon -> Solana, and BOTH burn paths belong in the "
@@ -632,6 +702,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
         "dune_queries": _dune("emissions_tokens", "tx_count", "active_addresses"),
         "materiality": "low",
         "notes": "Own dashboard (machine counts) + Dune page. Verify the CoinGecko id (peaq-2).",
@@ -647,6 +718,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},   # migrated to Solana SPL — no EVM read
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens"),
         "materiality": "medium",
         "notes": "Burn-and-mint equilibrium. Now Solana-native, so no tier 2 EVM read; use the published epoch figures.",
@@ -665,6 +737,7 @@ PROJECTS = [
         },
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
         "dune_queries": _dune("emissions_tokens", "staked_tokens"),
         "materiality": "medium",
         "notes": "NOT archetype 3 — yield is emissions-funded, revenue capture unproven. ~70% staked is a float metric, not demand. "
@@ -688,6 +761,7 @@ PROJECTS = [
         "dune_queries": _dune("emissions_tokens", "staked_tokens"),
         "materiality": "low",
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "notes": "Materiality LOW: qualifies mechanically, not comparable to Aave or Hyperliquid. Also pull Publisher Conviction.",
     },
     {
@@ -703,6 +777,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "disputed", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "unresolved",
         "dune_queries": _dune("emissions_tokens", "staked_tokens"),
         "materiality": "medium",
         "notes": "HOLD archetype 3 until documented.",
@@ -751,6 +826,7 @@ PROJECTS = [
                     "published net mint.",
         },
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "medium",
         "notes": "100% of emissions to stakers AND a revenue-funded buy-and-burn. Even at 3m VVV/yr, issuance runs several multiples "
@@ -770,6 +846,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "unconfirmed", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "unresolved",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "medium",
         "notes": "Agent launch and trading fees route to buyback — split needs documenting. "
@@ -787,6 +864,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "medium",
         "notes": "No burn — confirmed.",
@@ -802,6 +880,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "locked_supply",
         "dune_queries": _dune("emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
         "materiality": "high",
         "notes": "Fee switch status needs confirming before the 3 block is enabled.",
@@ -845,6 +924,7 @@ PROJECTS = [
         },
         "burn_read_method": "native_balance",
         "buyback_destination": "burn",          # resolved — no longer disputed
+        "destination_effect": "removed_from_supply",
         "destination_confirmed_date": "2025-12-27",
         "destination_split": None, "burn_execution": "protocol",
         "revenue_sources": [
@@ -921,6 +1001,7 @@ PROJECTS = [
             },
         },
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "holder_elected",
+        "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens"),
         "materiality": "high",
         "notes": "Archetype 4 only — no distribution leg, no staking yield. Implied and actual burn diverge for reasons unrelated "
@@ -938,11 +1019,22 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x940181a94A35A4569E4529A3CDfB74e38FD98631", "base", "erc20_total_supply", "AERO",
-                               "https://aerodrome.finance/docs"),
-            "ve": _contract("0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "ve_total_supply", "veAERO",
-                            "https://aerodrome.finance/docs", note="veAERO lock rate — the required input for effective float."),
+                               "https://aerodrome.finance/docs", verified="2026-09-11", provenance="deployed source",
+                               token_standard="erc20",
+                               purpose="AERO token. Deployed source declares ERC20(\"Aerodrome\", \"AERO\")."),
+            # veAERO is an ERC-721 veNFT. totalSupply() on it returns the COUNT OF NFT POSITIONS,
+            # not AERO locked — a figure orders of magnitude wrong that would still look plausible.
+            # The correct read is AERO.balanceOf(escrow).
+            "ve": _contract("0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "ve_total_supply", "AERO",
+                            "https://aerodrome.finance/docs",
+                            read_method="escrow_balance_of", token_standard="erc721", underlying="token",
+                            purpose="veAERO escrow — the lock-rate input for effective float. Read as "
+                                    "AERO.balanceOf(this escrow), NOT totalSupply() on the veNFT.",
+                            note="ESCROW ADDRESS STILL UNVERIFIED. The read method is now correct, but the "
+                                 "address itself has not been confirmed against Aerodrome's own docs."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
         "materiality": "high",
         "notes": "veAERO — lock rate and average lock duration are required inputs.",
@@ -971,17 +1063,40 @@ PROJECTS = [
                                "33rd consecutive month). Hard cap cut 450m -> 400m Jan 2026. TAKE THE SELF-REPORTED FIGURE."},
         "issuance_schedule": None,
         "contracts": {
+            # CAKE IS A MULTI-CHAIN LayerZero OFT. BSC totalSupply is therefore NOT total supply, and a
+            # figure read from BSC alone is wrong while looking complete. Known deployments are summed and
+            # the result is marked partial until the full OFT list is confirmed; the self-reported figure
+            # remains the source of record.
             "token": _contract("0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", "bsc", "erc20_total_supply", "Cake",
-                               "https://docs.pancakeswap.finance/governance-and-tokenomics/cake-tokenomics"),
+                               "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
+                               verified="2026-09-11", provenance="deployed source", token_standard="erc20",
+                               supply_is_partial=True,
+                               partial_reason="CAKE is a LayerZero OFT with deployments beyond BSC, so this is one "
+                                              "deployment's supply, not total supply.",
+                               purpose="CAKE token on BSC. Deployed source declares CakeToken is "
+                                       "BEP20('PancakeSwap Token', 'Cake') — the symbol casing is 'Cake', not 'CAKE'."),
+            "token_base": _contract("0x3055913c90Fcc1A6CE9a358911721eEb942013a1", "base", "erc20_total_supply", "Cake",
+                                    "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
+                                    token_standard="erc20", supply_is_partial=True,
+                                    partial_reason="One of several OFT deployments; the full list is not confirmed.",
+                                    purpose="CAKE OFT deployment on Base.",
+                                    note="UNVERIFIED. Supplied as a known further deployment; confirm against "
+                                         "PancakeSwap's own docs, and see the Gap Report row asking for the "
+                                         "complete OFT deployment list."),
             "burn_dead": _contract("0x000000000000000000000000000000000000dead", "bsc", "burn_address_balance", "Cake",
                                    "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
+                                   verified="2026-09-11", provenance="deployed source",
                                    purpose="TRANSFER BURN — CAKE sent to the standard BNB Chain dead address. "
-                                           "balanceOf is called on the CAKE token holding this address.",
-                                   note="UNVERIFIED — confirm against PancakeSwap's own docs."),
+                                           "balanceOf is called on the confirmed CAKE token holding this address."),
         },
         "burn_read_method": "transfer",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
+        "destination_effect": "removed_from_supply",
         "self_reported_net_mint": True,
+        "supply_is_partial": True,
+        "supply_partial_reason": "CAKE is a LayerZero OFT deployed on several chains, so any on-chain supply read "
+                                 "covers only the deployments listed in contracts. The self-reported figure is the "
+                                 "source of record; the on-chain sum is a partial cross-check and is labelled as such.",
         "self_reported_source": {
             "what": "Monthly CAKE Burn Report blog series",
             "url": "https://blog.pancakeswap.finance/",
@@ -1056,13 +1171,16 @@ PROJECTS = [
             "lssky": _contract(
                 None, "ethereum", "ve_total_supply", "lssky",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
+                read_method=None, token_standard=None, underlying="token",
                 purpose="Staked SKY Token (lssky) — THE lock-rate metric for Sky. This is what "
                         "info.skyeco.com/staking reports.",
-                note="ADDRESS STILL NEEDS SOURCING from the same Sky developer docs page. Listed so the "
-                     "Gap Report carries it; nothing is read until the address is filled in and verified."),
+                note="ADDRESS STILL NEEDS SOURCING from the same Sky developer docs page, AND the read method "
+                     "is not established. lssky is LIKELY a fungible ERC-20 whose totalSupply is the staked "
+                     "amount, but that is not confirmed and is not assumed. Nothing is read until both are set."),
         },
         "burn_read_method": "transfer",
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
+        "destination_effect": "mixed",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "high",
         "notes": "Smart Burn Engine: 55% of each cycle burned, 45% to LSSKY stakers (Executive Proposal, 13 Aug 2026). "
@@ -1081,14 +1199,33 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x808507121B80c02388fAd14726482e061B8da827", "ethereum", "erc20_total_supply", "PENDLE",
-                               "https://docs.pendle.finance/Developers/Contracts/Deployments"),
-            "ve": _contract("0x4f30A9D41B80ecC5B94306AB4364951AE3170210", "ethereum", "ve_total_supply", "vePENDLE",
-                            "https://docs.pendle.finance/Developers/Contracts/Deployments", note="vePENDLE lock rate — required input."),
+                               "https://docs.pendle.finance/pendle-v2/Developers/Deployments",
+                               verified="2026-09-11", provenance="protocol docs", token_standard="erc20",
+                               purpose="PENDLE token."),
+            # vePENDLE IS DEPRECATED and has been REMOVED as the lock-rate source. Pendle's own
+            # tokenomics docs state the contract is winding down and users should migrate to sPENDLE.
+            # A vePENDLE balance read would show a FALLING figure that reflects migration, not falling
+            # lock-in — a false negative on the exact metric this tool exists to measure.
+            "spendle": _contract(
+                None, "ethereum", "ve_total_supply", "sPENDLE",
+                "https://docs.pendle.finance/pendle-v2/Developers/Deployments",
+                read_method=None, token_standard=None, underlying="token",
+                purpose="sPENDLE — the CURRENT lock-rate source, replacing the deprecated vePENDLE.",
+                note="ADDRESS STILL NEEDS SOURCING from Pendle's own deployment files: /deployments/1-core.json "
+                     "in the Pendle contract repository (docs.pendle.finance/pendle-v2/Developers/Deployments). "
+                     "The read method is not established either. Nothing is read until both are set. The "
+                     "sources.yaml entry already points at the sPENDLE staking page and covers this meanwhile."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
         "materiality": "high",
-        "notes": "vePENDLE lock rate required.",
+        "notes": "LOCK SOURCE MIGRATED: vePENDLE is deprecated and winding down per Pendle's own tokenomics docs, "
+                 "and users are moving to sPENDLE. A vePENDLE read would show a falling figure that reflects "
+                 "MIGRATION rather than falling lock-in — a false negative on the metric this tool exists to "
+                 "measure — so it has been removed rather than kept as a fallback. sPENDLE address still to be "
+                 "sourced; the staking page covers the metric meanwhile. "
+                 "Source: https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/Tokenomics",
     },
     {
         "name": "Fluid", "symbol": "FLUID",
@@ -1101,6 +1238,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "locked_supply",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
         "materiality": "medium",
         "notes": "CoinGecko id is still instadapp after the rebrand — verify.",
@@ -1144,12 +1282,17 @@ PROJECTS = [
                                "https://aave.com/docs"),
             "staking": _contract("0x4da27a545c0c5B758a6BA100e3a049001de870f5", "ethereum", "ve_total_supply", "stkAAVE",
                                  "https://app.aave.com/safety-module/",
+                                 read_method=None, token_standard=None, underlying="token",
                                  purpose="stkAAVE, the LEGACY Safety Module — AAVE and ABPT staked on Ethereum. "
                                          "THIS is the AAVE lock rate.",
                                  note="stkAAVE — destination is stakers, NOT burn. Not to be confused with Umbrella, "
-                                      "which stakes aTokens and GHO rather than AAVE."),
+                                      "which stakes aTokens and GHO rather than AAVE. READ METHOD NOT ESTABLISHED: "
+                                      "stkAAVE is LIKELY a fungible ERC-20 whose totalSupply is the staked amount, "
+                                      "but that has not been confirmed, so nothing is read. Verify whether it is "
+                                      "ERC-20 (erc20_total_supply) or NFT-based (escrow_balance_of)."),
         },
         "buyback_destination": "distribute",   # to stakers — NOT in dispute
+        "destination_effect": "yield_payout",
         "destination_split": None, "burn_execution": "n/a",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "high",
@@ -1180,6 +1323,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
         "materiality": "medium",
         "notes": "Buyback confirmed.",
@@ -1319,96 +1463,108 @@ OPEN_QUESTIONS = [
         "project": "Sky", "topic": "fee-split primary source URL",
         "reason": "The 55/45 split is recorded from a Sky governance Executive Proposal approved 2026-08-13, "
                   "but the PRIMARY governance forum post URL has not been captured, so fee_split.source_url "
-                  "is None. The instruction was explicitly to cite the primary post rather than a secondary "
-                  "article; no URL was invented to fill the gap.",
+                  "is None.",
         "suggestion": "Find the Executive Proposal post on the Sky governance forum and put its URL in "
                       "config.py under Sky fee_split.source_url and in the history entry for 2026-08-13.",
     },
     {
         "project": "Sky", "topic": "pre-2026-08-13 split",
-        "reason": "The split that applied BEFORE 2026-08-13 is not documented. Every window ending before "
-                  "that date, and every window spanning it, is marked unconfirmed and its derived figure is "
-                  "suppressed. The current 55% is deliberately NOT applied retroactively.",
-        "suggestion": "Document the earlier split and add it to Sky fee_split.history as its own period. "
-                      "Until then the trailing-quarter buyback figure stays suppressed, which is correct.",
+        "reason": "The split that applied BEFORE 2026-08-13 is not documented, so every window ending before "
+                  "that date, and every window spanning it, is unconfirmed and its derived figure suppressed. "
+                  "The current 55% is deliberately NOT applied retroactively.",
+        "suggestion": "Document the earlier split and add it to Sky fee_split.history as its own period.",
     },
     {
-        "project": "Sky", "topic": "lssky contract address",
-        "reason": "Sky's docs list a separate Staked SKY Token (lssky), which is what info.skyeco.com/staking "
-                  "reports and which IS the Sky lock-rate metric. The contract entry exists but has no address, "
-                  "so the tier 2 read is blocked and the figure comes from the page instead.",
-        "suggestion": "Source the lssky address from the same Sky developer docs page as the SKY token, then "
-                      "fill it in and mark it verified. The contract read is more durable than the page scrape.",
+        "project": "Sky", "topic": "lssky address AND read method",
+        "reason": "lssky is the Sky lock-rate metric and has neither an address nor an established read method. "
+                  "It is LIKELY a fungible ERC-20 whose totalSupply is the staked amount, but that is not "
+                  "confirmed and is not assumed — an NFT-based escrow read as an ERC-20 supply returns a "
+                  "position count, wrong by orders of magnitude and plausible-looking.",
+        "suggestion": "Source the address from Sky's developer docs, establish whether it is ERC-20 or "
+                      "NFT-based, then set address, read_method and token_standard in config.py.",
     },
     {
         "project": "Aave", "topic": "is the buyback immutable or committee-directed",
-        "reason": "Sources genuinely conflict, so fee_split.programmed is 'unconfirmed_conflict' rather than "
-                  "True or False. The AWW framework routes 100% of revenue to the DAO treasury and Aavenomics "
-                  "3.0 draws on that, but a June 2026 report states governance can redirect, pause or resize "
-                  "the buyback without a protocol-level change. Buybacks have been paused since 2026-04-19.",
-        "suggestion": "VERIFY against governance.aave.com directly before treating the mechanism as hard-coded. "
-                      "Do not resolve this from a secondary source.",
+        "reason": "Sources genuinely conflict, so fee_split.programmed is 'unconfirmed_conflict'. One June 2026 "
+                  "report states governance can redirect, pause or resize the buyback without a protocol-level "
+                  "change. Buybacks have been paused since 2026-04-19.",
+        "suggestion": "VERIFY against governance.aave.com directly. Do not resolve this from a secondary source.",
+    },
+    {
+        "project": "Aave", "topic": "stkAAVE read method",
+        "reason": "The stkAAVE address is on file but the read method is NOT established. stkAAVE is likely a "
+                  "fungible ERC-20, but assuming that is exactly how a veNFT position count ends up in a cell "
+                  "labelled tokens locked, so nothing is read.",
+        "suggestion": "Confirm whether stkAAVE is ERC-20 or NFT-based, then set read_method to "
+                      "'erc20_total_supply' or 'escrow_balance_of' and token_standard in config.py.",
+    },
+    {
+        "project": "Aerodrome", "topic": "veAERO escrow address",
+        "reason": "The READ METHOD is now correct — veAERO is an ERC-721 veNFT, so the figure is "
+                  "AERO.balanceOf(escrow), not totalSupply() on the NFT — but the escrow ADDRESS itself has not "
+                  "been confirmed against Aerodrome's own docs.",
+        "suggestion": "Confirm the escrow address from Aerodrome's documentation and mark it verified. The AERO "
+                      "token contract is already confirmed.",
+    },
+    {
+        "project": "Pendle", "topic": "sPENDLE address and read method",
+        "reason": "vePENDLE has been REMOVED as the lock source: Pendle's own tokenomics docs state it is winding "
+                  "down and users should migrate to sPENDLE, so a vePENDLE read would show a falling figure that "
+                  "reflects migration rather than falling lock-in. sPENDLE has neither address nor read method yet.",
+        "suggestion": "Source the sPENDLE address from /deployments/1-core.json in the Pendle contract repository "
+                      "(docs.pendle.finance/pendle-v2/Developers/Deployments), establish the read method, then "
+                      "set both. The sPENDLE staking page covers the metric meanwhile.",
+    },
+    {
+        "project": "PancakeSwap", "topic": "complete LayerZero OFT deployment list",
+        "reason": "CAKE is a multi-chain LayerZero OFT, so BSC totalSupply is NOT total supply. Two deployments "
+                  "are on file (BSC and Base) and their sum is labelled PARTIAL everywhere it appears. The "
+                  "self-reported figure remains the source of record.",
+        "suggestion": "Get the full OFT deployment list from PancakeSwap's own docs and add each as a contract "
+                      "entry. Until then the on-chain figure stays marked partial rather than looking complete.",
     },
     {
         "project": "Fluid", "topic": "does FLUID staking exist at all",
-        "reason": "NOT RESOLVED. The instruction was to check docs.fluid.io and either add a lock-rate source "
-                  "or remove the metric. Neither was done: this machine has no network access and could not "
-                  "open docs.fluid.io. The metric was left in place rather than removed on a guess, so the "
-                  "column may be permanently empty.",
-        "suggestion": "Check docs.fluid.io. If there is no staking or lock mechanism, remove locked_tokens "
-                      "from Fluid's archetype 3 block. If there is one, complete the disabled Fluid entry in "
-                      "sources.yaml and enable it.",
+        "reason": "NOT RESOLVED. This machine has no network access and could not open docs.fluid.io. The metric "
+                  "was left in place rather than removed on a guess, so the column may be permanently empty.",
+        "suggestion": "Check docs.fluid.io. If there is no staking or lock mechanism, remove locked_tokens from "
+                      "Fluid's archetype 3 block. If there is one, complete the disabled sources.yaml entry.",
     },
     {
         "project": "Hyperliquid", "topic": "AQAv2 revenue accruing but not yet paid",
-        "reason": "AQAv2 went live 2026-08-26 and routes c.90% of cost-adjusted reserve yield on platform USDC "
-                  "into the Assistance Fund on 30-day accrual cycles, but the first actual payment is not "
-                  "expected until 2026-10-03. It is recorded with booked=False so the model cannot book "
-                  "revenue that has not landed.",
-        "suggestion": "After 2026-10-03, confirm the first payment actually arrived, then set booked=True on "
-                      "that revenue source in config.py and add its source URL.",
+        "reason": "AQAv2 went live 2026-08-26 and accrues on 30-day cycles, but the first payment is not expected "
+                  "until 2026-10-03. Recorded with booked=False so the model cannot book revenue that has not landed.",
+        "suggestion": "After 2026-10-03, confirm the first payment arrived, then set booked=True and add the source URL.",
     },
     {
         "project": "Hyperliquid", "topic": "is there a second Assistance Fund",
         "reason": "A community address directory lists an 'Assistance Fund 2' at "
-                  "0xccd69f432ce1d8c9cdc31bd535dd11b37cbea4ea. It does NOT appear in Hyperliquid's own docs, so "
-                  "it has deliberately not been added. IF IT IS REAL, the burn total is understated by whatever "
-                  "sits in it — the same failure mode as omitting Uniswap's Unichain burn path.",
-        "suggestion": "Check Hyperliquid's own documentation and on-chain history for this address. If it is a "
-                      "genuine second fund, add it as another burn path; the adapter already sums multiple paths.",
+                  "0xccd69f432ce1d8c9cdc31bd535dd11b37cbea4ea. It does NOT appear in Hyperliquid's own docs, so it "
+                  "has not been added. IF IT IS REAL, the burn total is understated — the same failure mode as "
+                  "omitting Uniswap's Unichain burn path.",
+        "suggestion": "Check Hyperliquid's own documentation and on-chain history. If genuine, add it as another "
+                      "burn path; the adapter already sums multiple paths.",
     },
     {
         "project": "Hyperliquid", "topic": "HyperCore balance read",
-        "reason": "The Assistance Fund address is now CONFIRMED, but HYPE on HyperCore is not an ERC-20 on a "
-                  "chain the EVM adapter covers, so the balance still cannot be read. The cumulative burn "
-                  "figure has a verified address and no way to fetch it.",
+        "reason": "The Assistance Fund address is CONFIRMED, but HYPE on HyperCore is not an ERC-20 on a chain the "
+                  "EVM adapter covers, so the cumulative burn still cannot be fetched.",
         "suggestion": "Add a HyperCore read, or a sources.yaml entry pointing at a page that publishes the "
-                      "Assistance Fund balance. This is the single highest-value unread figure in the universe.",
-    },
-    {
-        "project": "Chainlink", "topic": "Chainlink Reserve address",
-        "reason": "The LINK token address is confirmed, but that is only a supply read. The address that "
-                  "matters for the archetype 3 assignment is the Chainlink Reserve, where Payment Abstraction "
-                  "revenue accumulates as LINK. Without it, Chainlink's archetype 3 block has NO revenue input "
-                  "at all and every derived figure stays suppressed.",
-        "suggestion": "Source the Reserve address from Chainlink's own Reserve documentation, add it to the "
-                      "existing 'reserve' contract entry in config.py, and mark it verified.",
+                      "Assistance Fund balance. This is the highest-value unread figure in the universe.",
     },
     {
         "project": "Uniswap", "topic": "release() burn threshold value",
-        "reason": "The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a "
-                  "constant: the Uniswap Governance Timelock holds thresholdSetter and can appoint a different "
-                  "setter. No number is hardcoded, so anything derived from the threshold stays suppressed.",
-        "suggestion": "Read the current threshold on-chain, or record it from governance with its source URL "
-                      "and date, in config.py under Uniswap governance_parameters.release_threshold_uni.",
+        "reason": "The UNI-burn threshold required to call release() is GOVERNANCE-SETTABLE: the Uniswap "
+                  "Governance Timelock holds thresholdSetter and can appoint a different setter. No number is "
+                  "hardcoded, so anything derived from it stays suppressed.",
+        "suggestion": "Read the current threshold on-chain, or record it from governance with its source URL and "
+                      "date, under Uniswap governance_parameters.release_threshold_uni.",
     },
     {
         "project": "GEODNET", "topic": "record the Dune query URL",
         "reason": "The four corrected burn addresses came from a working Dune query rather than a documentation "
-                  "page, so they are marked verified with that provenance but no URL. The audit trail is "
-                  "incomplete without it.",
-        "suggestion": "Put the Dune query URL in the source_url field of the four GEODNET contract entries so "
-                      "the provenance is checkable later.",
+                  "page, so they are marked verified with that provenance but no URL.",
+        "suggestion": "Put the Dune query URL in the source_url field of the four GEODNET contract entries.",
     },
     {
         "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",
@@ -1418,19 +1574,69 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Virtuals", "topic": "buyback split and DefiLlama slug",
-        "reason": "Added as the 30th project. Agent launch and trading fees route to buyback but the split is "
-                  "not documented, so the implied figure is suppressed. defillama_fees_slug is ASSUMED to match "
-                  "defillama_protocol ('virtuals-protocol') and has not been confirmed.",
-        "suggestion": "Document the buyback split with a source URL and date, and confirm the DefiLlama slug — "
-                      "a wrong slug shows up as a 404 in the Run Log.",
+        "reason": "Agent launch and trading fees route to buyback but the split is not documented, so the implied "
+                  "figure is suppressed. defillama_fees_slug is ASSUMED to match defillama_protocol.",
+        "suggestion": "Document the buyback split with a source URL and date, and confirm the DefiLlama slug.",
     },
     {
         "project": "Tron", "topic": "confirm the BURN_TRX node endpoint on the first run",
-        "reason": "The burn MECHANISM is resolved: TIP #49 moved burned TRX into DynamicPropertiesStore under "
-                  "BURN_TRX, so the read is a node API call rather than any black-hole address balance. The "
-                  "exact endpoint path and response key are implementation detail and were not verified live.",
+        "reason": "The burn MECHANISM is resolved — TIP #49 moved burned TRX into DynamicPropertiesStore under "
+                  "BURN_TRX, so the read is a node API call — but the exact endpoint path and response key were "
+                  "not verified live.",
         "suggestion": "On the first run check the Run Log. If the read failed, adjust node_api.path and "
-                      "node_api.response_keys in config.py. Do NOT substitute a black-hole address balance — "
-                      "it would report a different number entirely.",
+                      "node_api.response_keys. Do NOT substitute a black-hole address balance.",
     },
 ]
+
+
+# =======================================================================================
+# CONFIG INTEGRITY CHECKS — run at import, so a misconfiguration fails loudly at the top of
+# the run rather than producing a plausible-looking wrong number three tabs deep.
+# =======================================================================================
+class ConfigError(ValueError):
+    """A configuration mistake that would produce a wrong number if it reached a cell."""
+
+
+def _check_lock_contracts() -> list[str]:
+    """Every rule that, if broken, yields a figure orders of magnitude wrong but still plausible."""
+    errors = []
+    for p in PROJECTS:
+        for key, c in (p.get("contracts") or {}).items():
+            where = f"{p['name']}/{key}"
+            std, method, kind = c.get("token_standard"), c.get("read_method"), c.get("kind")
+
+            if std is not None and std not in TOKEN_STANDARDS:
+                errors.append(f"{where}: token_standard {std!r} is not one of {sorted(TOKEN_STANDARDS)}")
+
+            if method is not None and method not in LOCK_READ_METHODS:
+                errors.append(f"{where}: read_method {method!r} is not one of {sorted(LOCK_READ_METHODS)}")
+
+            # THE check this whole mechanism exists for. A veNFT is ERC-721, so its totalSupply()
+            # returns the NUMBER OF POSITIONS, not tokens locked. Reading it as an ERC-20 supply
+            # gives a number that is wrong by orders of magnitude and looks entirely normal.
+            if std == "erc721" and method == "erc20_total_supply":
+                errors.append(
+                    f"{where}: token_standard 'erc721' with read_method 'erc20_total_supply' — "
+                    f"totalSupply() on a veNFT returns a COUNT OF POSITIONS, not tokens locked. "
+                    f"Use read_method 'escrow_balance_of' (underlying.balanceOf(escrow)) instead.")
+            if std == "erc721" and kind == "erc20_total_supply":
+                errors.append(
+                    f"{where}: kind 'erc20_total_supply' on an ERC-721 contract — same problem, "
+                    f"totalSupply() on a veNFT counts positions.")
+
+            if method == "escrow_balance_of" and not c.get("underlying"):
+                errors.append(f"{where}: read_method 'escrow_balance_of' needs `underlying` naming the "
+                              f"contract key whose balanceOf is called")
+            if method == "escrow_balance_of" and c.get("underlying") not in (p.get("contracts") or {}):
+                errors.append(f"{where}: underlying {c.get('underlying')!r} is not a contract key on this project")
+    return errors
+
+
+def validate_config(raise_on_error: bool = True) -> list[str]:
+    errors = _check_lock_contracts()
+    if errors and raise_on_error:
+        raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
+    return errors
+
+
+validate_config()

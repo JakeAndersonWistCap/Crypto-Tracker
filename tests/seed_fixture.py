@@ -104,6 +104,9 @@ def main() -> int:
             if name in ("Aerodrome", "Pendle"):
                 frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "dune:12", tier=4))
                 frames.append(frame(name, "avg_lock_duration_days", series(900, noise=0.1), "dune:13", tier=4))
+        if name == "Chainlink":
+            frames.append(frame(name, "buyback_fund_balance", series(4.8e6, drift=0.6, noise=0.1), "chain:reserve", tier=2))
+            frames.append(frame(name, "buyback_fund_balance_dashboard", series(4.8e6, drift=0.6, noise=0.1) * 1.004, "scrape:metrics.chain.link", tier=3))
         if name == "OriginTrail":
             frames.append(frame(name, "publisher_conviction_usd", series(2e6, drift=0.5, noise=0.2), "dune:14", tier=4))
         # tier 2 (contract read) and tier 3 (protocol dashboard) point-in-time snapshots

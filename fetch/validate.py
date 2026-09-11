@@ -24,6 +24,7 @@ REASON_BOUNDS = "out_of_bounds"
 REASON_CHANGE = "change_threshold"
 REASON_UNVERIFIED = "address_unverified"
 REASON_REFERENCE = "disagrees_with_published_reference"
+REASON_CROSSCHECK = "cross_check_divergence"
 
 ACTION_REJECTED = "rejected"
 ACTION_FLAGGED = "stored_flagged"
@@ -97,6 +98,41 @@ def check_reference_values(df: pd.DataFrame, out, tolerance: float = 0.005) -> N
                 out.review_item(project["name"], ref["metric"], REASON_REFERENCE, ACTION_FLAGGED,
                                 value=got, prior_value=expected, date=f"{ref['period']}-01",
                                 source=ref.get("source", ""), tier=None)
+
+
+def check_cross_checks(df: pd.DataFrame, out) -> None:
+    """Compare two independent sources for the same figure and FLAG any divergence.
+
+    Chainlink's Reserve balance can be read from the contract and from the protocol's own
+    dashboard. Where both return a value the contract read is preferred, but a disagreement is
+    surfaced rather than silently resolved: if the two sources disagree, one of them is wrong and
+    the reader needs to know which figure they are looking at.
+    """
+    if df is None or df.empty:
+        return
+    latest = (df.sort_values("date")
+                .groupby(["project", "metric"], as_index=False)
+                .tail(1)
+                .set_index(["project", "metric"]))
+    for project in config.PROJECTS:
+        for check in project.get("cross_checks") or []:
+            name = project["name"]
+            key_a = (name, check["primary"])
+            key_b = (name, check["secondary"])
+            if key_a not in latest.index or key_b not in latest.index:
+                continue
+            a = float(latest.loc[key_a, "value"])
+            b = float(latest.loc[key_b, "value"])
+            if a == 0:
+                continue
+            divergence = abs(a - b) / abs(a)
+            if divergence > float(check.get("tolerance", 0.02)):
+                out.review_item(name, check["primary"], REASON_CROSSCHECK, ACTION_FLAGGED,
+                                value=a, prior_value=b,
+                                date=latest.loc[key_a, "date"],
+                                source=f"{check.get('primary_source', check['primary'])} vs "
+                                       f"{check.get('secondary_source', check['secondary'])}",
+                                tier=None)
 
 
 def flagged_keys(review_items: list[dict]) -> set[tuple[str, str]]:

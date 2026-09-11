@@ -760,3 +760,23 @@
   change_threshold_pct: 40
   added: 2026-09-11
   note: "Venice publishes burns directly — self-reported, preferred over any derived figure. CONFIGURED AS A RUNNING TOTAL: the value is stored as burn_address_balance and the period burn is derived by differencing. If the page actually shows per-period burns rather than a cumulative total, change metric to gross_burn_tokens and delete the cumulative and derive_flow_metric lines. Check this on the first run."
+
+# ---- Chainlink Reserve: the dashboard figure sits ALONGSIDE the tier 2 contract read, as a
+# cross-check. The contract read is preferred; a divergence beyond the configured tolerance is
+# flagged to the Review Queue rather than one figure being silently picked. Because they are
+# stored as two metrics, nothing can quietly substitute one for the other.
+- project: Chainlink
+  metric: buyback_fund_balance_dashboard
+  tier: 3
+  enabled: true
+  url: https://metrics.chain.link/reserve
+  method: xhr
+  url_contains: /api/
+  json_path: reserve.balance
+  anchor: "Reserve Balance"
+  needs_first_run_check: true
+  sanity_min: 0
+  sanity_max: 100000000
+  change_threshold_pct: 40
+  added: 2026-09-11
+  note: "Chainlink Reserve balance as published. Cross-check against the tier 2 read of LINK.balanceOf(reserve); the contract read wins where both return a value. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026) — a rising series, so a large upward move is expected and the threshold is set accordingly."

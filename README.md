@@ -189,6 +189,42 @@ wrong number:
 The tier 2 adapter refuses to read a burn address unless the method is `transfer`, so the
 distinction is enforced rather than merely documented.
 
+## Read methods matter more than addresses
+
+A correct address read the wrong way produces a number that is wrong by orders of magnitude and
+looks entirely plausible in a cell. Two cases are handled explicitly:
+
+- **veNFT versus ERC-20.** A vote escrow can be a fungible ERC-20, where `totalSupply()` is the
+  staked amount, or an NFT position, where `totalSupply()` is a *count of positions*. veAERO is
+  the latter: read as an ERC-20 supply it would report a few thousand instead of hundreds of
+  millions of AERO. Lock contracts carry `read_method` and `token_standard`, `escrow_balance_of`
+  reads `underlying.balanceOf(escrow)`, and pairing `erc721` with `erc20_total_supply` is
+  rejected at import by `config.validate_config()`. A read method left unset means **refused**,
+  never assumed.
+- **Multi-chain supply.** CAKE is a LayerZero OFT, so BSC `totalSupply` is not total supply. The
+  adapter sums every declared deployment and marks the result `PARTIAL` in the source string, the
+  Review Queue and the sheet, so a one-chain figure never reads as complete.
+
+## Deprecated contracts are removed, not kept as fallbacks
+
+vePENDLE is winding down and users are migrating to sPENDLE. A vePENDLE balance read would show a
+*falling* figure that reflects migration rather than falling lock-in, which is a false negative on
+the exact metric this tool exists to measure. It was deleted rather than retained.
+
+## Hold is not a payout
+
+`buyback_destination` drives `destination_effect`, and a hold and a distribution move float in
+opposite directions, so they never share a formula. Chainlink's Reserve has a multi-day withdrawal
+timelock with no withdrawals expected for years, so accumulated LINK is **locked supply**: it is
+subtracted from effective float. A distribution returns tokens to float instead. The A3 tab has a
+separate column for each, and no project can populate both.
+
+## Two sources for one figure are compared, not silently merged
+
+Where a figure is available from both a contract read and the protocol's own dashboard, both are
+stored as separate metrics. The contract read is preferred; a divergence beyond the configured
+tolerance is flagged to the Review Queue. Chainlink's Reserve is the live case.
+
 ## Ambiguous addresses are never guessed
 
 Where two or more addresses circulate publicly and none is established, config lists them all
