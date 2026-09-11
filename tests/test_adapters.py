@@ -609,6 +609,79 @@ def test_cross_check_metrics_do_not_collide_with_their_primary():
 
 
 # ---------------------------------------------------------------------------- tier 4
+def test_dune_sums_split_columns_and_drops_the_incomplete_current_period():
+    """GEODNET reports Polygon and Solana burns in separate columns; the total is their sum.
+
+    Taking one column alone would report a fraction of the burn as if it were the whole. The
+    current month is also dropped: it is incomplete, and the live tier 2 read already covers the
+    present, so keeping both would double count inside the trailing window.
+    """
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    now = pd.Timestamp.now("UTC").tz_localize(None)
+    cur, prev = now.to_period("M"), now.to_period("M") - 1
+
+    class Rows:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def get(self, url, params=None, headers=None):
+            return {"result": {"rows": self.rows if (params or {}).get("offset", 0) == 0 else []}}
+
+    d = Dune()
+    d.http = Rows([
+        {"month": str(prev), "tokens_burned": 1_100_000.0, "sol_tokens_burned": 300_000.0},
+        {"month": str(cur), "tokens_burned": 400_000.0, "sol_tokens_burned": 90_000.0},
+    ])
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["GEODNET"]], None, out)
+    df = out.frame()
+    assert len(df) == 1, f"the incomplete current month must be dropped, got {len(df)} rows"
+    assert df.value.iloc[0] == 1_400_000.0, f"both chains must sum, got {df.value.iloc[0]}"
+    assert cur not in set(df.date.dt.to_period("M"))
+    print("dune column summing ok: 1,100,000 + 300,000 = 1,400,000, current month dropped")
+
+
+def test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query():
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+
+    class Rows:
+        def get(self, url, params=None, headers=None):
+            return {"result": {"rows": [{"day": "2026-09-01", "total_staked_sethfi": 1.0, "usd_value": 2.0}]
+                               if (params or {}).get("offset", 0) == 0 else []}}
+
+    d = Dune()
+    d.http = Rows()
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
+    assert out.frame().empty, "an unmapped query must store nothing rather than guess a column"
+    gap = next(g for g in out.gaps if g["metric"] == "staked_tokens")
+    for col in ("day", "total_staked_sethfi", "usd_value"):
+        assert col in gap["reason"], f"the gap must name every real column, missing {col}"
+    print("dune unmapped ok: every returned column is reported, nothing is guessed")
+
+
+def test_geodnet_sql_addresses_match_config_exactly():
+    """The four addresses in query 8683175 are the four already in config, not new ones."""
+    from_sql = {"token_polygon": "0xAC0F66379A6d7801D7726d5a943356A172549Adb",
+                "burn_polygon": "0x000000000000000000000000000000000000dead",
+                "mint_solana": "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu",
+                "burn_solana_token_account": "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED"}
+    contracts = config.PROJECT_BY_NAME["GEODNET"]["contracts"]
+    for key, sql_address in from_sql.items():
+        stored = contracts[key]["address"]
+        if sql_address.startswith("0x"):
+            assert sql_address.lower() == stored.lower(), f"{key}: {sql_address} vs {stored}"
+        else:
+            # base58 is case-SENSITIVE, so a Solana address must match exactly
+            assert sql_address == stored, f"{key}: base58 mismatch, {sql_address} vs {stored}"
+    assert len(contracts) == 5, "the query documents four addresses; no new ones were added"
+    print("geodnet addresses ok: all four match, Solana exactly, EVM modulo EIP-55 casing")
+
+
 def test_dune_backfill_only():
     du = Dune(has_history={("Ethereum", "gross_burn_tokens")})
     du.http = StubHttp({"/query/123/results": {"result": {"rows": [
@@ -695,6 +768,9 @@ if __name__ == "__main__":
                test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
                test_scrape_registry_reports_incomplete_entries_as_gaps,
                test_later_tier_never_overwrites_an_earlier_one, test_cross_check_metrics_do_not_collide_with_their_primary,
+               test_dune_sums_split_columns_and_drops_the_incomplete_current_period,
+               test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query,
+               test_geodnet_sql_addresses_match_config_exactly,
                test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
                test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:
         fn()

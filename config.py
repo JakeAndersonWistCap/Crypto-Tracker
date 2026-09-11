@@ -51,6 +51,7 @@ derived figure. Never estimate a split we have not documented.
 """
 
 BRIEF_DATE = "2026-09-11"
+GEODNET_BURN_QUERY = "https://dune.com/queries/8683175"
 TODAY_VERIFIED = "2026-09-11"
 UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"
 # Pendle's own deployment file — the primary source for every Pendle mainnet address.
@@ -673,20 +674,24 @@ PROJECTS = [
         "contracts": {
             "token_polygon": _contract(
                 "0xAC0F66379A6d7801D7726d5a943356A172549Adb", "polygon", "erc20_total_supply", "GEOD",
-                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                GEODNET_BURN_QUERY, verified="2026-09-11",
+                provenance="Dune query 8683175 — the original documented source of this address",
                 purpose="Polygon GEOD token — balanceOf is called on this for the Polygon burn."),
             "burn_polygon": _contract(
                 "0x000000000000000000000000000000000000dEaD", "polygon", "burn_address_balance", "GEOD",
-                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                GEODNET_BURN_QUERY, verified="2026-09-11",
+                provenance="Dune query 8683175 — the original documented source of this address",
                 purpose="TRANSFER BURN — Polygon burn destination. IN SCOPE for the backfill, not historical-only: "
                         "the working query unions Polygon and Solana burns into one series."),
             "mint_solana": _contract(
                 "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu", "solana", "spl_mint", "GEOD",
-                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                GEODNET_BURN_QUERY, verified="2026-09-11",
+                provenance="Dune query 8683175 — the original documented source of this address",
                 purpose="Solana GEOD mint."),
             "burn_solana_token_account": _contract(
                 "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED", "solana", "spl_token_account", "GEOD",
-                None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
+                GEODNET_BURN_QUERY, verified="2026-09-11",
+                provenance="Dune query 8683175 — the original documented source of this address",
                 purpose="TRANSFER BURN — Solana burn destination. This is a TOKEN-ACCOUNT read, not an "
                         "incinerator balance, so it needs a Solana RPC adapter rather than the EVM one."),
             "buyback_wallet_polygon_historical": _contract(
@@ -700,12 +705,42 @@ PROJECTS = [
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
-        "dune_queries": _dune("gross_burn_tokens", "emissions_tokens"),
+        "dune_queries": {
+            # HISTORICAL BACKFILL for the monthly burn trend. The live tier 2 contract reads remain
+            # the source for current values; this fills the history they cannot give.
+            "gross_burn_tokens": {
+                "query_id": 8683175,
+                "date_col": "month",
+                # The query reports Polygon and Solana burns in SEPARATE columns; the monthly total
+                # is their sum. Taking one alone would report a fraction of the burn as if it were all.
+                "value_cols": ["tokens_burned", "sol_tokens_burned"],
+                "granularity": "monthly",       # NOT daily — every CTE buckets to month at the final step
+                "drop_current_period": True,    # the current month is incomplete AND tier 2 covers the present
+                "source_url": GEODNET_BURN_QUERY,
+                "provenance": "primary — this is the original source of GEODNET's four verified contract "
+                              "addresses, confirmed by Jake, 2026-09-11",
+                "note": "Output is MONTHLY. Columns available: month, tokens_burned, cumulative_tokens_burned, "
+                        "usd_burned, cumulative_usd_burned, sol_tokens_burned, sol_cumulative_tokens_burned, "
+                        "sol_usd_burned, sol_cumulative_usd_burned, total_cumulative_tokens_burned, "
+                        "total_cumulative_usd_burned.",
+                "fragility": "History before 2026-08-01 comes from a STATIC snapshot table, "
+                             "dune.geodnet_console.result_geod_tokens_burned_20260731, unioned in ahead of the "
+                             "live query's start date. If that table stops being queryable, GEODNET loses ALL "
+                             "history before August 2026 on the next full backfill. Confirm it is reachable "
+                             "under the account the API key belongs to.",
+            },
+            **_dune("emissions_tokens"),
+        },
         "materiality": "low",
         "notes": "Console revenue burn — confirmed. Migrated Polygon -> Solana, and BOTH burn paths belong in the "
                  "same series: the working Dune query unions them. Polygon burns via balanceOf on the GEOD token at "
                  "the dead address; Solana via a token-account read, which needs a Solana adapter. "
-                 "GEODNET publishes miner counts on its own dashboard (tier 3/5).",
+                 "GEODNET publishes miner counts on its own dashboard (tier 3/5). "
+                 "HISTORY FRAGILITY: everything before 2026-08-01 comes from a STATIC Dune snapshot table, "
+                 "dune.geodnet_console.result_geod_tokens_burned_20260731, unioned into query 8683175 ahead of "
+                 "its live start date. If that table stops being queryable, a full re-backfill loses ALL GEODNET "
+                 "history before August 2026 — the live query alone does not reach back that far. Reachability "
+                 "has NOT been confirmed from here; it needs a Dune API key.",
     },
     {
         "name": "peaq", "symbol": "PEAQ",
@@ -1103,7 +1138,20 @@ PROJECTS = [
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
-        "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
+        "dune_queries": {
+            "locked_tokens_dashboard": {
+                "query_id": 2986047,
+                # COLUMNS NOT SUPPLIED, and the SQL was not visible. The adapter runs the query and
+                # reports the columns it actually returns rather than guessing which holds the figure.
+                "date_col": None,
+                "value_col": None,
+                "source_url": "https://dune.com/queries/2986047",
+                "note": "veAERO locked, as a CROSS-CHECK of the tier 2 read of AERO.balanceOf(escrow), which is "
+                        "verified and working. It writes locked_tokens_dashboard, never locked_tokens, so it can "
+                        "never overwrite the contract figure. Low stakes if it stays unmapped.",
+            },
+            **_dune("avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
+        },
                 "cross_checks": [
             {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
              "secondary": "locked_tokens_dashboard", "secondary_source": "https://dune.com/0xkhmer/aerodrome",
@@ -1428,7 +1476,21 @@ PROJECTS = [
         "contracts": {},
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
+        "dune_queries": {
+            "staked_tokens": {
+                "query_id": 8683038,
+                # COLUMNS NOT SUPPLIED. The query id is unambiguous but the SQL and column mapping
+                # did not reach this config, so nothing is read yet: the adapter runs the query,
+                # reports the columns it actually returns, and refuses to guess which holds the figure.
+                "date_col": None,
+                "value_col": None,
+                "source_url": "https://dune.com/queries/8683038",
+                "note": "Staked sETHFI. Fill date_col and value_col from the column list the first run "
+                        "reports in the Gap Report, then re-run. Tier 4 is Ether.fi's ONLY automated route "
+                        "for this metric — there is no contract read for it.",
+            },
+            **_dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
+        },
         "materiality": "medium",
         "notes": "Buyback confirmed.",
     },
@@ -1612,28 +1674,6 @@ OPEN_QUESTIONS = [
                       "exists, and the PARTIAL marking clears.",
     },
     {
-        "project": "Aerodrome", "topic": "Dune query id for veAERO locked",
-        "reason": "dune.com robots.txt disallows scraping the dashboard, and it was always the wrong tier: Dune "
-                  "content belongs in tier 4 via the API. The scrape entry is disabled. LOW STAKES — the tier 2 "
-                  "read of AERO.balanceOf(escrow) is verified and working, so this is only a cross-check.",
-        "suggestion": "Open https://dune.com/0xkhmer/aerodrome, click through to the underlying query, take the "
-                      "id from its URL (dune.com/queries/<id>), and put it in config.py under Aerodrome "
-                      "dune_queries.locked_tokens with its date_col and value_col. Needs DUNE_API_KEY set.",
-    },
-    {
-        "project": "Ether.fi", "topic": "Dune query id for staked ETHFI — NEEDS A HUMAN OR A KEY",
-        "severity": 1,
-        "reason": "CONFIRMED UNRESOLVABLE BY FETCHING. The dashboard is a client-rendered SPA: the query id is "
-                  "not in the page source and is only produced by JavaScript after load, so no amount of "
-                  "fetching will recover it. dune.com robots.txt also disallows scraping. Ether.fi has no "
-                  "contract read for staked_tokens, so tier 4 is its only automated route and the metric is "
-                  "empty. Do NOT spend further effort on automated resolution — the finding is settled.",
-        "suggestion": "Two routes, both needing something this tool cannot supply on its own: open the dashboard "
-                      "in a browser, click through to the underlying query and copy the id from its URL; or set "
-                      "DUNE_API_KEY and use Dune's search API to find the query programmatically. Then put the id "
-                      "in config.py under Ether.fi dune_queries.staked_tokens with its date_col and value_col.",
-    },
-    {
         "project": "Pendle", "topic": "is there a documented data endpoint robots permits",
         "reason": "app.pendle.finance robots.txt disallows the sPENDLE staking page, and that is not worked "
                   "around. LOW STAKES — the tier 2 read of sPENDLE.totalSupply() is verified and working, so "
@@ -1703,10 +1743,36 @@ OPEN_QUESTIONS = [
                       "date, under Uniswap governance_parameters.release_threshold_uni.",
     },
     {
-        "project": "GEODNET", "topic": "record the Dune query URL",
-        "reason": "The four corrected burn addresses came from a working Dune query rather than a documentation "
-                  "page, so they are marked verified with that provenance but no URL.",
-        "suggestion": "Put the Dune query URL in the source_url field of the four GEODNET contract entries.",
+        "project": "GEODNET", "topic": "is the pre-August-2026 snapshot table still queryable",
+        "severity": 1,
+        "reason": "Query 8683175 only reaches back to 2026-08-01. Everything earlier is unioned in from a STATIC "
+                  "table, dune.geodnet_console.result_geod_tokens_burned_20260731. That is a dependency, not a "
+                  "detail: if it stops being queryable under the account the API key belongs to, a full "
+                  "re-backfill silently loses ALL GEODNET burn history before August 2026. Reachability could NOT "
+                  "be confirmed from here — it needs a Dune API key, which this environment does not have.",
+        "suggestion": "Run the query once with the key set and confirm rows dated before 2026-08 come back. If the "
+                      "snapshot has gone, export the history the store already holds BEFORE re-backfilling, "
+                      "because a fresh backfill would replace it with the post-August window alone.",
+    },
+    {
+        "project": "Ether.fi", "topic": "Dune query 8683038 column mapping",
+        "severity": 1,
+        "reason": "The query id is wired, but the column mapping did not reach this config — the SQL was "
+                  "referenced as unchanged from an earlier message that is not in the record. Nothing is read "
+                  "until date_col and value_col are set, and nothing is guessed. Tier 4 is Ether.fi's ONLY "
+                  "automated route for staked_tokens; there is no contract read for it.",
+        "suggestion": "Run once with DUNE_API_KEY set: the Gap Report will name every column the query actually "
+                      "returns. Put the date column and the value column into config under Ether.fi "
+                      "dune_queries.staked_tokens, then re-run.",
+    },
+    {
+        "project": "Aerodrome", "topic": "Dune query 2986047 column mapping",
+        "reason": "The query id is wired and the SQL was not visible, so the column mapping is unset and nothing "
+                  "is read. LOW STAKES: this writes locked_tokens_dashboard, a cross-check of the tier 2 read of "
+                  "AERO.balanceOf(escrow) which is verified and working, so it can never overwrite the contract "
+                  "figure and its absence costs only the second opinion.",
+        "suggestion": "Same as Ether.fi: one run with a key names the real columns, then set date_col and "
+                      "value_col in config.",
     },
     {
         "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",
