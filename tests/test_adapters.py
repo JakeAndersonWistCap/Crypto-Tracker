@@ -276,6 +276,83 @@ def test_no_metric_is_served_by_contracts_that_would_overwrite_each_other():
     print("contract collision ok: every multi-contract metric goes through the summing accumulator")
 
 
+def test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code():
+    """A burn or dead address is an EOA nobody controls. Empty bytecode is CORRECT there.
+
+    Regression: the eth_getCode existence check was applied to every holder, which rejected
+    GEODNET's dead address, PancakeSwap's dead address and Sky's zero address on a live run —
+    all three of which had read fine before the check existed. The check belongs only on holders
+    that are supposed to be contracts.
+    """
+    from fetch.chain import holder_should_have_code
+
+    class NoCodeAnywhereStub:
+        """Every address reports empty bytecode, as a dead address genuinely does."""
+
+        def __init__(self):
+            self.code_checks = []
+
+        def has_code(self, chain, address):
+            self.code_checks.append(address)
+            return False
+
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *args):
+            return 1_234_567.0
+
+    for project_name, entry in (("Sky", "burn_zero"), ("PancakeSwap", "burn_dead"), ("GEODNET", "burn_polygon")):
+        spec = config.PROJECT_BY_NAME[project_name]["contracts"][entry]
+        assert not holder_should_have_code(spec), \
+            f"{project_name}/{entry} is a burn address and must be exempt from the bytecode check"
+
+        c = Chain()
+        c.reader = NoCodeAnywhereStub()
+        out = FetchOutput()
+        c.run([config.PROJECT_BY_NAME[project_name]], None, out)
+        rows = dict(zip(out.frame().metric, out.frame().value))
+        assert rows.get("burn_address_balance") == 1_234_567.0, \
+            f"{project_name}/{entry} must read despite empty bytecode, got {rows}"
+        assert not any("eth_getCode is empty" in e.message for e in out.log if e.status == "failed"), \
+            f"{project_name}/{entry} was wrongly rejected for having no code"
+        assert spec["address"] not in c.reader.code_checks, \
+            f"{project_name}/{entry} should not even be code-checked"
+    print("dead/zero holders ok: all three read despite empty bytecode, and are never code-checked")
+
+
+def test_contract_holders_still_get_the_bytecode_check():
+    """The check must still fire where the holder IS supposed to be a contract."""
+    from fetch.chain import holder_should_have_code
+
+    for project_name, entry in (("Uniswap", "token_jar"), ("Uniswap", "fire_pit"),
+                                ("Chainlink", "reserve"), ("Aerodrome", "ve")):
+        spec = config.PROJECT_BY_NAME[project_name]["contracts"][entry]
+        assert holder_should_have_code(spec), f"{project_name}/{entry} is a contract and must be checked"
+
+    # a fee jar with no bytecode is a wrong address and must be rejected
+    class EmptyJarStub:
+        def has_code(self, chain, address):
+            return False
+
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *args):
+            return 999.0
+
+    proj = {"name": "Chainlink", "archetypes": [3], "contracts": {
+        "token": dict(config.PROJECT_BY_NAME["Chainlink"]["contracts"]["token"]),
+        "reserve": dict(config.PROJECT_BY_NAME["Chainlink"]["contracts"]["reserve"])}}
+    c = Chain()
+    c.reader = EmptyJarStub()
+    out = FetchOutput()
+    c.run([proj], None, out)
+    assert "buyback_fund_balance" not in set(out.frame().metric), "an empty contract address must be rejected"
+    assert any("eth_getCode is empty" in e.message for e in out.log if e.status == "failed"), out.log
+    print("contract holders ok: a fee jar with no bytecode is still rejected")
+
+
 def test_chain_symbol_mismatch_rejects():
     c = Chain()
     c.reader = StubReader(symbol="WRONG")
@@ -607,6 +684,8 @@ if __name__ == "__main__":
                test_several_contracts_serving_one_metric_are_summed,
                test_components_sum_fully_once_every_chain_has_its_token,
                test_no_metric_is_served_by_contracts_that_would_overwrite_each_other,
+               test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code,
+               test_contract_holders_still_get_the_bytecode_check,
                test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
                test_venft_misconfiguration_fails_loudly, test_escrow_balance_of_reads_the_underlying_not_the_nft,
                test_unestablished_lock_read_method_is_refused,

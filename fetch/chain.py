@@ -71,6 +71,29 @@ CUMULATIVE_FLOW = {
 #                  here returns other people's discarded tokens, not the protocol burn
 READABLE_BURN_METHODS = {"transfer", None}
 
+# Holder kinds that are SUPPOSED to be deployed contracts, so an empty eth_getCode means the
+# address is wrong. A burn or dead address is deliberately NOT in this set: it is an EOA nobody
+# controls, empty bytecode is exactly what correct looks like there, and the read is balanceOf on
+# the TOKEN with the burn address only ever used as the holder argument.
+HOLDER_MUST_HAVE_CODE = {"buyback_fund_balance", "ve_total_supply"}
+
+
+def holder_should_have_code(spec: dict) -> bool:
+    """Should this holder address have deployed bytecode?
+
+    Explicit config wins. Otherwise a canonical dead or zero address is an EOA by definition, and
+    anything else is checked only where the kind implies a contract. The default direction is NOT
+    to check: a missing check loses a safety net, while a wrong check REJECTS valid data.
+    """
+    explicit = spec.get("holder_has_code")
+    if explicit is not None:
+        return bool(explicit)
+    address = str(spec.get("address") or "").lower()
+    if address in {a.lower() for a in config.BURN_ADDRESSES.values()}:
+        return False
+    return spec.get("kind") in HOLDER_MUST_HAVE_CODE
+
+
 # Kinds whose read method must be EXPLICITLY established before anything is read. A vote escrow
 # can be a fungible ERC-20 (totalSupply is the staked amount) or an NFT position (totalSupply is a
 # COUNT OF POSITIONS, wrong by orders of magnitude and entirely plausible-looking). Assuming
@@ -311,11 +334,12 @@ class Chain:
                     # The holder is usually NOT a token — TokenJar and Firepit are custom
                     # fee-collection contracts with no ERC-20 surface — so its existence is checked
                     # with eth_getCode, not symbol(). symbol() is reserved for the token being read.
-                    if holder is not None:
+                    if holder is not None and holder_should_have_code(spec):
                         try:
                             if not self.reader.has_code(chain, holder):
                                 out.fail(SOURCE, name,
-                                         f"{key}: nothing deployed at {holder} on {chain} (eth_getCode is empty). "
+                                         f"{key}: nothing deployed at {holder} on {chain} (eth_getCode is empty), "
+                                         f"and a {spec['kind']} holder is supposed to be a contract. "
                                          f"Address rejected.", TIER)
                                 out.gap(name, metric,
                                         reason=f"contract {key!r} has no deployed bytecode at {holder} on {chain} — "

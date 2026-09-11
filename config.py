@@ -309,7 +309,7 @@ UNVERIFIED = None
 def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERIFIED, note="",
               purpose="", provenance="model-knowledge", candidates=None, ambiguous=False,
               read_method=None, token_standard=None, underlying=None,
-              supply_is_partial=False, partial_reason=""):
+              supply_is_partial=False, partial_reason="", holder_has_code=None):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -336,6 +336,10 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         "underlying": underlying,          # contract key whose balanceOf is called, for escrow_balance_of
         "supply_is_partial": bool(supply_is_partial),
         "partial_reason": partial_reason,
+        # Is this address SUPPOSED to be a deployed contract? None means "work it out from the kind
+        # and the address". A burn or dead address is an EOA nobody controls, so empty bytecode is
+        # what CORRECT looks like there — checking for code would reject a perfectly good address.
+        "holder_has_code": holder_has_code,
         "note": note,
     }
 
@@ -1024,6 +1028,7 @@ PROJECTS = [
                                    purpose="TokenJar (AssetSink), mainnet — where fees accumulate before holders elect to burn."),
             "fire_pit": _contract("0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721", "ethereum", "burn_address_balance", "UNI",
                                   UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                  holder_has_code=True,   # the Releaser is a real contract, unlike a dead address
                                   purpose="Releaser (Firepit), mainnet — TRANSFER BURN destination for holder-elected burns."),
             "v3_fee_adapter": _contract("0x5E74C9f42EEd283bFf3744fBD1889d398d40867d", "ethereum", "buyback_fund_balance", "UNI",
                                         UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
@@ -1036,6 +1041,7 @@ PROJECTS = [
                                             purpose="TokenJar, Unichain — the second fee accumulation path."),
             "fire_pit_unichain": _contract("0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB", "unichain", "burn_address_balance", "UNI",
                                            UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
+                                           holder_has_code=True,   # OptimismBridgedResourceFirepit is a real contract
                                            purpose="OptimismBridgedResourceFirepit, Unichain — the second TRANSFER BURN path. "
                                                    "Summed with the mainnet fire pit; omitting it understates total burn."),
         },
