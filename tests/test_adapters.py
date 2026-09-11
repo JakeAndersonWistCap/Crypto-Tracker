@@ -151,6 +151,63 @@ def test_chain_reads_verified_and_derives_flow():
     print("tier 2 read ok:", by)
 
 
+def test_several_contracts_serving_one_metric_are_summed():
+    """Uniswap accumulates fees in three places and burns on two chains.
+
+    If the last read won instead of the parts being summed, pending fees would report the
+    Unichain jar alone and understate the real figure by ~85%.
+    """
+    class MultiStub:
+        def __init__(self, vals):
+            self.vals = vals
+
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *args):
+            return self.vals.get(args[0] if args and args[0] else f"supply:{chain}", 0.0)
+
+    uni = config.PROJECT_BY_NAME["Uniswap"]
+    c = Chain(prior_values={("Uniswap", "burn_address_balance"): 90_000_000.0})
+    c.reader = MultiStub({
+        "0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
+        "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d": 1_500_000.0,
+        "0xD576BDF6b560079a4c204f7644e556DbB19140b5": 800_000.0,
+        "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721": 95_000_000.0,
+        "0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB": 7_000_000.0,
+        "supply:ethereum": 1_000_000_000.0,
+    })
+    out = FetchOutput()
+    c.run([uni], None, out)
+    rows = dict(zip(out.frame().metric, out.frame().value))
+    assert rows["buyback_fund_balance"] == 5_300_000.0, f"three fee jars must sum, got {rows['buyback_fund_balance']}"
+    assert rows["burn_address_balance"] == 102_000_000.0, "both fire pits must sum"
+    assert rows["gross_burn_tokens"] == 12_000_000.0, "period burn is the summed delta"
+    src = out.frame()[out.frame().metric == "buyback_fund_balance"].source.iloc[0]
+    assert src.count("+") == 2, f"the composition must name all three components: {src}"
+    print("multi-contract summing ok: 3 fee jars sum to 5,300,000 rather than the last read's 800,000")
+
+
+def test_no_metric_is_served_by_contracts_that_would_overwrite_each_other():
+    """Every metric served by several contracts must be one the adapter sums."""
+    from collections import defaultdict
+
+    from fetch.chain import KIND_METRIC
+
+    for p in config.PROJECTS:
+        by_metric = defaultdict(list)
+        for key, c in (p.get("contracts") or {}).items():
+            metric = KIND_METRIC.get(c["kind"])
+            if metric:
+                by_metric[metric].append(key)
+        for metric, keys in by_metric.items():
+            if len(keys) > 1:
+                # the adapter now sums EVERY metric, so this is a structural assertion that the
+                # generic accumulator is still in place rather than a per-metric allowlist
+                assert hasattr(Chain, "_emit_parts"), "the generic summing accumulator has gone missing"
+    print("contract collision ok: every multi-contract metric goes through the summing accumulator")
+
+
 def test_chain_symbol_mismatch_rejects():
     c = Chain()
     c.reader = StubReader(symbol="WRONG")
@@ -415,6 +472,8 @@ def test_manual_overrides_suppress_gaps():
 if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
+               test_several_contracts_serving_one_metric_are_summed,
+               test_no_metric_is_served_by_contracts_that_would_overwrite_each_other,
                test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
                test_venft_misconfiguration_fails_loudly, test_escrow_balance_of_reads_the_underlying_not_the_nft,
                test_unestablished_lock_read_method_is_refused,

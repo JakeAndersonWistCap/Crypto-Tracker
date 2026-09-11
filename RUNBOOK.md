@@ -1,0 +1,365 @@
+# RUNBOOK — first live run
+
+For someone starting from a fresh clone on a machine with network access, who has not run this
+before. Every step has the exact command, what success looks like, and what failure looks like.
+
+Total time for a first run, including setup: **roughly 20 to 35 minutes**, most of which is the
+one-time Chromium download. The data fetch itself is 4 to 11 minutes.
+
+---
+
+## 1. Prerequisites
+
+You need Python 3.10 or newer, git, and (optionally) LibreOffice for the formula check.
+
+```bash
+python3 --version
+git --version
+soffice --version      # optional, only used by recalc.py
+```
+
+**Expected:** `Python 3.11.x` or similar (3.10+), a git version, and either a LibreOffice
+version or `command not found`.
+
+**If Python is older than 3.10:** the code uses `X | None` type syntax and will fail at import
+with `TypeError: unsupported operand type(s) for |`. Install a newer Python.
+
+**If `soffice` is missing:** that is fine. Everything works; you only lose the automated formula
+check in step 8. To add it: `brew install --cask libreoffice` on macOS,
+`sudo apt install libreoffice-calc` on Debian/Ubuntu.
+
+---
+
+## 2. Clone and branch
+
+```bash
+git clone https://github.com/JakeAndersonWistCap/Crypto-Tracker.git
+cd Crypto-Tracker
+git checkout claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+```
+
+**Expected:** a commit line. The branch name is long; copy it rather than typing it.
+
+**If checkout fails** with `pathspec ... did not match`: run `git fetch origin` then retry.
+
+---
+
+## 3. Virtual environment
+
+Keeps these dependencies out of your system Python.
+
+**macOS / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+**Windows (cmd):**
+```cmd
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+```
+
+**Expected:** your prompt gains a `(.venv)` prefix. Confirm with `which python` (macOS/Linux) or
+`where python` (Windows) — it should point inside `.venv`.
+
+**If PowerShell refuses** with `running scripts is disabled`, run
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` and activate again.
+
+You must re-activate in every new terminal. If a later step reports `ModuleNotFoundError`, the
+usual cause is a terminal where the venv is not active.
+
+---
+
+## 4. Install Python dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+**Expected:** `Successfully installed ...` listing pandas, openpyxl, requests, python-dotenv,
+numpy, PyYAML, web3 and playwright. Takes 1 to 3 minutes; `web3` pulls a lot of transitive
+dependencies.
+
+**Verify:**
+```bash
+python -c "import pandas, openpyxl, requests, yaml, web3, playwright; print('all imports ok')"
+```
+
+**If `web3` fails to build** on an older pip: `pip install --upgrade pip` then retry.
+
+---
+
+## 5. Install the browser for the scraper
+
+```bash
+playwright install chromium
+```
+
+**This downloads roughly 150 to 400 MB and is one-time per machine.** It is a real browser
+binary, not a Python package, which is why it is separate from step 4.
+
+**Expected:** a progress bar, then `Chromium ... downloaded to ...`.
+
+**If it fails behind a corporate proxy,** set `HTTPS_PROXY` and retry. If you cannot install it,
+the run still works: the eight tier 3 page scrapes fail, are logged, and appear in the Gap
+Report. You lose those eight metrics, nothing else.
+
+---
+
+## 6. Create your `.env`
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`. **Nothing in it is required for the first run.** Every variable is optional and
+every one degrades gracefully.
+
+| Variable | Required run one? | Where to get it | If missing |
+|---|---|---|---|
+| `DUNE_API_KEY` | **No** | dune.com → Settings → API | Tier 4 is skipped. No Dune query ids are configured yet, so nothing is lost today. |
+| `COINGECKO_API_KEY` | No | coingecko.com/en/developers/dashboard (free demo key) | Falls back to the public tier: slower, rate-limited harder. 429s are retried with backoff, then gapped. |
+| `RPC_ETHEREUM`, `RPC_BSC`, `RPC_BASE`, `RPC_POLYGON`, `RPC_UNICHAIN` | No | Any provider (Alchemy, Infura, QuickNode), comma-separated for a fallback list | Uses the public endpoints built into `config.DEFAULT_RPC`. Public endpoints are rate-limited and sometimes flaky; if every endpoint for a chain fails, that chain's reads are gapped and the rest of the run continues. |
+| `TOKEN_METRICS_ALLOW_UNVERIFIED` | No — **leave unset** | n/a | Unverified contract addresses stay refused with a gap row. Setting it to `1` reads them anyway and flags every resulting value in the Review Queue. |
+
+**Nothing fails the run loudly.** A missing credential or an unreachable source is logged to the
+Run Log tab and written to the Gap Report. The run always produces a workbook.
+
+---
+
+## 7. Pre-flight: check connectivity BEFORE the backfill
+
+This is the step that saves you forty minutes.
+
+```bash
+python preflight.py            # the plan: what will run, what won't, and why. No network calls.
+python preflight.py --check    # probes every dependency, ~30 seconds
+```
+
+**Expected from `--check`:** a list of `OK` lines covering three HTTPS APIs, five chains, the
+TRON node API, six scraper domains, Playwright and LibreOffice, ending with
+`ALL DEPENDENCIES REACHABLE`.
+
+**If something is `DOWN`,** the summary separates critical from optional:
+
+- **Critical** means DefiLlama, CoinGecko, or an entire chain's RPC fallback list. These carry
+  most of the run. Fix before backfilling — see step 12.
+- **Optional** means a scraper domain, the TRON node, Playwright, or LibreOffice. The run
+  proceeds and gaps those metrics.
+
+`--check` exits non-zero if anything critical is down, so it works in a script:
+`python preflight.py --check && python token_metrics.py`.
+
+Run `python preflight.py` with no arguments first anyway. It tells you exactly which metrics
+will be attempted and which will not, so nothing in the output of step 8 is a surprise.
+
+---
+
+## 8. The first real run
+
+```bash
+python token_metrics.py
+```
+
+**This takes 4 to 11 minutes.** It pulls full history, not a snapshot, so the 3/6/9-month
+trajectory columns are populated on run one rather than accumulating from today.
+
+**Normal progress output**, in this order:
+
+```
+INFO token_metrics: run 20260911T... — FIRST RUN: full backfill
+INFO token_metrics.fetch: tier 1 — schedule:config (window=full history)
+INFO token_metrics.fetch: tier 1 — defillama (window=full history)
+INFO token_metrics.fetch: tier 1 — coingecko (window=full history)
+INFO token_metrics.fetch: tier 2 — chain (window=full history)
+INFO token_metrics.fetch: tier 2 — tron_node (window=full history)
+INFO token_metrics.fetch: tier 3 — scrape (window=full history)
+INFO token_metrics.fetch: tier 4 — dune (window=full history)
+INFO token_metrics: upserted NNNNN rows
+INFO token_metrics: run summary: NNNNN rows | N fetch failures | N review items | NNN gaps | 0 manual overrides
+INFO token_metrics: wrote .../token_metrics.xlsx
+```
+
+Roughly per stage: DefiLlama about 30 seconds, CoinGecko about 2 minutes (pure rate limiting,
+60 calls with a 2.2 second floor between them), contract reads about 25 seconds, page scrapes
+80 seconds to 6 minutes.
+
+**`WARNING ... FAILED` lines during the run are normal.** Some sources are expected to fail; see
+step 10 for which. They are logged, not fatal.
+
+**What a stall looks like:** no new log line for more than about 60 seconds. The most common
+cause is one RPC endpoint hanging rather than refusing. Wait 2 minutes, then Ctrl-C — the store
+is written incrementally so nothing is corrupted — and re-run. If it stalls in the same place
+twice, set the relevant `RPC_*` variable in `.env` to a provider you control.
+
+**Optional formula check** (needs LibreOffice):
+```bash
+python recalc.py token_metrics.xlsx
+```
+**Expected:** `"status": "success"` with `"total_errors": 0`. Anything else means a formula
+problem; send me the output.
+
+---
+
+## 9. Where the outputs land
+
+All in the repo root:
+
+| Path | What it is | Keep it? |
+|---|---|---|
+| `token_metrics.xlsx` | The workbook. **Rebuilt from scratch every run.** | Disposable. Never edit it expecting changes to survive. |
+| `metrics.db` | SQLite store, the full history. **This is the durable artefact.** | Back this up. Losing it means re-backfilling. |
+| `.cache/scrape/YYYY-MM-DD/` | Cached page responses, one folder per day | Safe to delete; it just forces a re-scrape. |
+| `manual_overrides.csv` | Your hand-entered values | Yours. Never overwritten by a run. |
+
+Logs go to the terminal only. To keep them:
+```bash
+python token_metrics.py 2>&1 | tee run-$(date +%Y%m%d-%H%M).log
+```
+
+---
+
+## 10. What to check in the workbook, in order
+
+Open `token_metrics.xlsx`. Check these four tabs in this order. **Some failures are expected on
+a first run**, so here is what healthy looks like for each.
+
+### 10.1 Run Log — did the plumbing work?
+
+Look at the per-source table at the top.
+
+**Healthy on run one:**
+- `defillama` and `coingecko`: high OK counts, a handful of failures. Some projects genuinely are
+  not on DefiLlama, and a few slugs may be wrong — those show as failures naming the slug.
+- `chain`: around 19 OK reads across five chains. Some failures are normal if a public RPC is busy.
+- `scrape`: up to 8 OK. Zero here with Playwright installed means the pages changed shape; check
+  the Gap Report for the specific reason.
+- `dune`: zero OK, many "unconfigured". **This is correct** — no query ids are configured.
+- **Total fetch failures under about 30 is normal.** Over 100 suggests a systemic problem such as
+  no network or a blocked proxy.
+
+**Not healthy:** every source at zero OK. That means connectivity, not configuration. Go back to
+step 7.
+
+### 10.2 Gap Report — the to-do list
+
+Sorted so decisions come first.
+
+**Healthy on run one:**
+- **`[open]` rows at the top, around 17.** These are questions for a human, not failures. Expected.
+- **`[config]` rows next, around 15.** Splits we have not documented, so the derived figure is
+  deliberately suppressed. Expected.
+- **Data gaps below, several hundred.** Most are metrics no source covers yet, each with a
+  specific reason and a suggested fix. Expected on run one and the reason this tab exists.
+
+**Worth acting on immediately:** any row saying `verified but the tier 2 read returned nothing
+this run`. That means a confirmed address failed to read, which is an RPC problem, not a
+configuration one.
+
+### 10.3 Review Queue — values the validator would not accept silently
+
+**Healthy on run one:** possibly empty, or a handful of `change_threshold` rows. On a first run
+there is no prior value to compare against, so most checks have nothing to fire on.
+
+**Worth acting on:**
+- `out_of_bounds` — the value was **rejected and is not in the store**. Either the source is
+  wrong or the bound in `config.py` is too tight.
+- `cross_check_divergence` — a contract read and a published dashboard disagree. One of them is
+  wrong. This is the tab's most valuable output.
+- `anchor_unconfirmed` — expected for the eight enabled scraper entries. Their anchors were
+  inferred without sight of the pages. **Eyeball each value against the page once**, then remove
+  `needs_first_run_check` from that entry in `sources.yaml`.
+- `supply_partial` — expected for PancakeSwap. CAKE is a multi-chain token, so the on-chain sum
+  covers only known deployments.
+
+### 10.4 Master — the actual numbers
+
+**Healthy:** price, market cap and supply populated for most projects; fees and revenue for the
+DefiLlama-tracked ones; `n/a` in many burn and buyback columns.
+
+`n/a` is a deliberate gap, never a zero. Every one has a matching Gap Report row explaining it.
+
+**Wrong-looking numbers to check against the Gap Report before trusting:** anything greyed
+(unconfirmed split, figure suppressed by design), anything in the net supply change column for a
+project whose burn source is not yet configured.
+
+---
+
+## 11. Re-running after a fix
+
+**Re-running is safe.** It will not duplicate or corrupt stored history.
+
+```bash
+python token_metrics.py
+```
+
+The store is keyed on `(date, project, metric)` and upserts, so a re-run overwrites the same
+rows rather than appending. The workbook is rebuilt from scratch every time.
+
+What changes on a second run:
+- Only a trailing 30-day window is re-fetched, not full history, so it is much faster.
+- Tier 4 skips any series the store already has history for; Dune is a backfill dependency, not
+  an ongoing one.
+- Page scrapes from the same calendar day are served from `.cache/scrape/` and make no request.
+  To force a fresh scrape, delete that day's cache folder.
+
+**To start completely fresh** (you will re-backfill, so only do this deliberately):
+```bash
+mv metrics.db metrics.db.backup
+python token_metrics.py
+```
+
+**After editing `sources.yaml` or `config.py`,** just re-run. Validate config changes first with
+`python -c "import config; config.validate_config(); print('ok')"` — it rejects mistakes that
+would produce plausible-looking wrong numbers.
+
+---
+
+## 12. Troubleshooting
+
+### `ModuleNotFoundError: No module named 'pandas'`
+The virtual environment is not active in this terminal. Re-run the activate command from step 3.
+
+### Every source fails with `ProxyError` or `Max retries exceeded`
+No outbound network, or a proxy is intercepting. Confirm with
+`curl -sS https://api.llama.fi/protocols | head -c 100`. Behind a corporate proxy, set
+`HTTPS_PROXY` in your shell before running. This is the failure mode that looks alarming in the
+log but has one cause.
+
+### `all RPC endpoints failed for ethereum`
+Public RPCs are rate-limited and go down. Set `RPC_ETHEREUM` in `.env` to a provider you control
+(Alchemy and Infura both have free tiers). Comma-separate several for a fallback list. Everything
+else in the run is unaffected — only that chain's reads are gapped.
+
+### CoinGecko returns 429 repeatedly
+You are on the public tier and hitting the rate limit. Get a free demo key and set
+`COINGECKO_API_KEY`. The adapter already backs off and retries; a key raises the ceiling.
+
+### `Playwright unavailable` or every scrape fails
+Run `playwright install chromium` (step 5). If Chromium is installed but pages still fail, the
+page shape changed: check the Gap Report for the specific reason per entry, then fix
+`url_contains` and `json_path`, or `anchor`, in `sources.yaml`. Use browser DevTools → Network →
+Fetch/XHR to find the endpoint the page calls.
+
+### `symbol check FAILED — 0x... reports 'XYZ', config expects 'ABC'`
+**This is the safety net working, not a bug.** An address is wrong or stale, and it was rejected
+before a plausible-looking wrong number reached the sheet. Re-check that address against the
+protocol's own documentation, then update `config.py`. Do not relax the check.
+
+### A figure looks an order of magnitude wrong
+Check the Data tab's Source column for that metric. A `:PARTIAL` suffix means the figure is a
+sum over known components only. A `sum(...)` source names every component. If the source is a
+lock-rate contract, confirm its `read_method` in `config.py`: reading an NFT-based escrow as an
+ERC-20 supply returns a count of positions, which is wrong by orders of magnitude and looks
+entirely plausible.
+
+### `recalc.py` reports `errors_found`
+A formula problem. Do not ship the workbook. Send me the `error_summary` from the JSON output.

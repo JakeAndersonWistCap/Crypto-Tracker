@@ -1036,12 +1036,20 @@ PROJECTS = [
             # not AERO locked — a figure orders of magnitude wrong that would still look plausible.
             # The correct read is AERO.balanceOf(escrow).
             "ve": _contract("0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "ve_total_supply", "AERO",
-                            "https://aerodrome.finance/docs",
+                            "https://aerodrome.finance/documents/AERO/legal-disclosures.pdf",
+                            verified="2026-09-11", provenance="Aerodrome legal disclosures + BaseScan label",
                             read_method="escrow_balance_of", token_standard="erc721", underlying="token",
-                            purpose="veAERO escrow — the lock-rate input for effective float. Read as "
-                                    "AERO.balanceOf(this escrow), NOT totalSupply() on the veNFT.",
-                            note="ESCROW ADDRESS STILL UNVERIFIED. The read method is now correct, but the "
-                                 "address itself has not been confirmed against Aerodrome's own docs."),
+                            purpose="veAERO VotingEscrow — the lock-rate input for effective float. Read as "
+                                    "AERO.balanceOf(this escrow), NOT any call on the escrow itself.",
+                            note="VERIFIED against two independent primaries: Aerodrome's own legal disclosures "
+                                 "name the VotingEscrow contract at this address, and BaseScan labels it "
+                                 "'Aerodrome: Voting Escrow' with the contract verified. ERC-721 is confirmed by "
+                                 "Aerodrome's SPECIFICATION.md — users escrow AERO into an ERC-721 compliant "
+                                 "veAERO NFT whose balance represents DECAYING voting weight. THREE separate "
+                                 "reasons voting weight diverges from AERO locked: the NFT totalSupply is a "
+                                 "position count, the weight decays with time to expiry, and holders receive "
+                                 "automatic weekly REBASES that increase their veAERO balance. Only "
+                                 "AERO.balanceOf(escrow) gives the tokens actually locked."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",

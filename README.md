@@ -55,6 +55,20 @@ appears in the Gap Report as *paywalled*, a different problem from *missing*.
 | `recalc.py`, `office/` | LibreOffice formula recalculation and error scan. Needs `libreoffice-calc`. |
 | `tests/` | Fixture build, mocked adapter tests, and the DOM-anchor contract against real Chromium. |
 
+## Before the first run
+
+`RUNBOOK.md` is the step-by-step for a fresh clone: prerequisites, virtualenv, credentials,
+connectivity check, the run itself, what to check in the workbook and in what order, and the
+failures most likely on day one.
+
+```bash
+python preflight.py            # what the run will attempt, what it will skip and why. No network calls.
+python preflight.py --check    # probes every dependency in ~30s. Exits non-zero if anything critical is down.
+```
+
+Run the check before the backfill. It tells you an RPC is unreachable in thirty seconds rather
+than eight minutes into a full-history pull.
+
 ## Setup
 
 ```bash

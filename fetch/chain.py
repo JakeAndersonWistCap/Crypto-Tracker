@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 
 import config
 
@@ -228,16 +229,14 @@ class Chain:
             if not contracts:
                 continue
             token = contracts.get("token")
-            # A project can have SEVERAL burn paths — Uniswap burns on mainnet and Unichain, GEODNET
-            # on Polygon and Solana. Each is read separately and they are SUMMED into one burn figure:
-            # reporting only one path understates the total, which is the exact failure this tool exists
-            # to prevent. Components are named in the source string so the composition stays auditable.
-            burn_parts: list[tuple[str, float]] = []
-            # Same problem for supply: a multi-chain token (CAKE is a LayerZero OFT) has no single
-            # totalSupply. Known deployments are summed, and if any is marked partial the result is
-            # flagged so a one-chain figure never reaches a cell looking complete.
-            supply_parts: list[tuple[str, float]] = []
-            supply_partial = False
+            # SEVERAL CONTRACTS CAN SERVE ONE METRIC, and they must be SUMMED rather than letting the
+            # last read win. Uniswap burns on both mainnet and Unichain and accumulates fees in three
+            # places; GEODNET burns on Polygon and Solana; CAKE is a LayerZero OFT with a deployment
+            # per chain. Reporting one component as if it were the whole is the exact failure this tool
+            # exists to prevent, so every metric accumulates parts and the composition is named in the
+            # source string to stay auditable.
+            parts: dict[str, list[tuple[str, float]]] = defaultdict(list)
+            partial_metrics: set[str] = set()
             for key, spec in contracts.items():
                 if not self._gate(p, key, spec, out):
                     continue
@@ -285,53 +284,47 @@ class Chain:
                     out.gap(name, metric, reason=f"contract read failed: {e}", tiers_attempted="2",
                             suggestion="Check the RPC endpoints for this chain in .env")
                     continue
-                src = f"{SOURCE}:{chain}:{key}"
-                if metric == "burn_address_balance":
-                    burn_parts.append((f"{chain}:{key}", value))
-                    out.log.append(LogEntry(SOURCE, name, 0, "ok", f"burn path {chain}:{key}={value:,.4f}", TIER))
-                    continue
-                if metric == "total_supply":
-                    supply_parts.append((f"{chain}:{key}", value))
-                    supply_partial = supply_partial or bool(spec.get("supply_is_partial"))
-                    out.log.append(LogEntry(SOURCE, name, 0, "ok", f"supply deployment {chain}:{key}={value:,.4f}", TIER))
-                    continue
-                out.add(point(name, metric, value, src, TIER, when), SOURCE, name, f"{key}={value:,.4f}", TIER)
+                parts[metric].append((f"{chain}:{key}", value))
+                if spec.get("supply_is_partial"):
+                    partial_metrics.add(metric)
+                out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                        f"{metric} component {chain}:{key}={value:,.4f}", TIER))
 
-            self._emit_burn(name, burn_parts, when, out)
-            self._emit_supply(p, supply_parts, supply_partial, when, out)
+            self._emit_parts(p, parts, partial_metrics, when, out)
 
-    def _emit_supply(self, project: dict, parts: list[tuple[str, float]], partial: bool, when, out):
-        """Sum every known token deployment. A partial sum is flagged, never presented as complete."""
-        if not parts:
-            return
+    def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, when, out):
+        """Emit one figure per metric, summing every contract that served it."""
         name = project["name"]
-        total = sum(v for _, v in parts)
-        composition = " + ".join(f"{label} {v:,.4f}" for label, v in parts)
-        src = f"{SOURCE}:sum(" + "+".join(label for label, _ in parts) + ")"
-        if partial or project.get("supply_is_partial"):
-            src += ":PARTIAL"
-            reason = project.get("supply_partial_reason") or "not all deployments are known"
-            out.review_item(name, "total_supply", "supply_partial", "stored_flagged", value=total,
-                            prior_value=self.prior.get((name, "total_supply")), date=when, source=src, tier=TIER)
-            out.gap(name, "total_supply",
-                    reason=f"on-chain supply is PARTIAL — summed over {len(parts)} known deployment(s) only. {reason}",
-                    tiers_attempted="2",
-                    suggestion="Add the remaining deployments to contracts in config.py, or rely on the "
-                               "self-reported figure. The sheet labels this figure partial either way.")
-        out.add(point(name, "total_supply", total, src, TIER, when), SOURCE, name,
-                f"total_supply={total:,.4f} from {len(parts)} deployment(s): {composition}"
-                + (" [PARTIAL]" if partial else ""), TIER)
+        for metric, components in parts.items():
+            total = sum(v for _, v in components)
+            if len(components) == 1:
+                label, _ = components[0]
+                src = f"{SOURCE}:{label}"
+                detail = f"{metric}={total:,.4f}"
+            else:
+                src = f"{SOURCE}:sum(" + "+".join(label for label, _ in components) + ")"
+                composition = " + ".join(f"{label} {v:,.4f}" for label, v in components)
+                detail = f"{metric}={total:,.4f} from {len(components)} components: {composition}"
 
-    def _emit_burn(self, name: str, parts: list[tuple[str, float]], when, out):
-        """Sum every burn path into one cumulative figure, then derive the period flow from it."""
-        if not parts:
-            return
-        total = sum(v for _, v in parts)
-        composition = " + ".join(f"{label} {v:,.4f}" for label, v in parts)
-        src = f"{SOURCE}:sum(" + "+".join(label for label, _ in parts) + ")"
-        out.add(point(name, "burn_address_balance", total, src, TIER, when), SOURCE, name,
-                f"burn_address_balance={total:,.4f} from {len(parts)} path(s): {composition}", TIER)
-        flow = derive_flow_from_cumulative(total, self.prior.get((name, "burn_address_balance")), name,
-                                           "gross_burn_tokens", f"{src}:delta", TIER, when)
-        if not flow.empty:
-            out.add(flow, SOURCE, name, f"gross_burn_tokens derived from the summed burn delta", TIER)
+            is_partial = metric in partial_metrics or (metric == "total_supply" and project.get("supply_is_partial"))
+            if is_partial:
+                src += ":PARTIAL"
+                detail += " [PARTIAL]"
+                reason = project.get("supply_partial_reason") or "not every component is known"
+                out.review_item(name, metric, "supply_partial", "stored_flagged", value=total,
+                                prior_value=self.prior.get((name, metric)), date=when, source=src, tier=TIER)
+                out.gap(name, metric,
+                        reason=f"figure is PARTIAL — summed over {len(components)} known component(s) only. {reason}",
+                        tiers_attempted="2",
+                        suggestion="Add the remaining components to contracts in config.py, or rely on the "
+                                   "self-reported figure. The sheet labels this figure partial either way.")
+
+            out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
+
+            flow_metric = CUMULATIVE_FLOW.get(metric)
+            if flow_metric:
+                flow = derive_flow_from_cumulative(total, self.prior.get((name, metric)), name,
+                                                   flow_metric, f"{src}:delta", TIER, when)
+                if not flow.empty:
+                    out.add(flow, SOURCE, name, f"{flow_metric} derived from the summed {metric} delta", TIER)
+

@@ -59,6 +59,47 @@ def main() -> int:
 
     print()
     print("=" * 132)
+    print("END-TO-END READY — a verified address, an established read method, and a reachable chain")
+    print("=" * 132)
+    print("These produce a real number on the next run. Everything else is refused, gapped, or needs")
+    print("an adapter that does not exist yet.")
+    print("-" * 132)
+    ready, blocked = [], []
+    for p in config.PROJECTS:
+        contracts = p.get("contracts") or {}
+        for key, c in contracts.items():
+            metric = {"erc20_total_supply": "total_supply", "burn_address_balance": "burn_address_balance",
+                      "ve_total_supply": "locked_tokens", "buyback_fund_balance": "buyback_fund_balance",
+                      "spl_mint": "total_supply", "spl_token_account": "burn_address_balance"}.get(c["kind"], key)
+            why = None
+            if c.get("ambiguous"):
+                why = "address ambiguous"
+            elif not c.get("address"):
+                why = "no address"
+            elif not c.get("verified"):
+                why = "address unverified"
+            elif c.get("chain") not in config.EVM_CHAINS:
+                why = f"chain {c['chain']} has no adapter"
+            elif c["kind"] == "ve_total_supply" and not c.get("read_method"):
+                why = "lock read method not established"
+            elif c["kind"] == "burn_address_balance" and p.get("burn_read_method") not in ("transfer", None):
+                why = f"burn is {p.get('burn_read_method')}, not a transfer"
+            elif c.get("read_method") == "escrow_balance_of":
+                under = contracts.get(c.get("underlying") or "")
+                if not under or not under.get("address"):
+                    why = "underlying token has no address"
+                elif not under.get("verified"):
+                    why = "underlying token unverified"
+            (blocked if why else ready).append((p["name"], key, metric, c["chain"], why))
+    print(f"{'PROJECT':<13} {'ENTRY':<26} {'METRIC':<24} CHAIN")
+    for name, key, metric, chain, _ in sorted(ready):
+        print(f"{name:<13} {key:<26} {metric:<24} {chain}")
+    print(f"\n  {len(ready)} contract reads ready, {len(blocked)} blocked:")
+    for name, key, metric, chain, why in sorted(blocked):
+        print(f"    {name:<13} {key:<26} {why}")
+
+    print()
+    print("=" * 132)
     print("LOCK-RATE READ METHODS — the veNFT versus ERC-20 split")
     print("=" * 132)
     print("A vote escrow can be a fungible ERC-20, where totalSupply() IS the staked amount, or an NFT")
