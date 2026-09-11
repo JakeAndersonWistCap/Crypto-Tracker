@@ -643,25 +643,105 @@ def test_dune_sums_split_columns_and_drops_the_incomplete_current_period():
     print("dune column summing ok: 1,100,000 + 300,000 = 1,400,000, current month dropped")
 
 
+class _Rows:
+    """A stub Dune HTTP layer returning one fixed page of rows."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def get(self, url, params=None, headers=None):
+        return {"result": {"rows": self.rows if (params or {}).get("offset", 0) == 0 else []}}
+
+
 def test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query():
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
-
-    class Rows:
-        def get(self, url, params=None, headers=None):
-            return {"result": {"rows": [{"day": "2026-09-01", "total_staked_sethfi": 1.0, "usd_value": 2.0}]
-                               if (params or {}).get("offset", 0) == 0 else []}}
-
     d = Dune()
-    d.http = Rows()
+    d.http = _Rows([{"day": "2026-09-01", "ve_locked": 1.0, "usd_value": 2.0}])
     out = FetchOutput()
-    d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
+    d.run([config.PROJECT_BY_NAME["Aerodrome"]], None, out)
     assert out.frame().empty, "an unmapped query must store nothing rather than guess a column"
-    gap = next(g for g in out.gaps if g["metric"] == "staked_tokens")
-    for col in ("day", "total_staked_sethfi", "usd_value"):
+    gap = next(g for g in out.gaps if g["metric"] == "locked_tokens_dashboard")
+    for col in ("day", "ve_locked", "usd_value"):
         assert col in gap["reason"], f"the gap must name every real column, missing {col}"
     print("dune unmapped ok: every returned column is reported, nothing is guessed")
+
+
+def test_snapshot_query_is_dated_now_and_stages_the_columns_nobody_chose():
+    """Ether.fi's query returns current state with no date column.
+
+    The figure is dated at the run date, and agg_14/agg_30 are captured to staging rather than
+    stored as metrics — they are a candidate for the 30-day trajectory column, not a substitute
+    that quietly starts driving one.
+    """
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    d = Dune()
+    d.http = _Rows([{"staked_supply": 41_000_000.0, "perc_staked_cnt": 0.41,
+                     "agg_14": 1.2, "agg_30": 3.4, "num_holders": 8123}])
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
+    df = out.frame()
+    today = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+
+    locked = df[df.metric == "locked_tokens"]
+    assert len(locked) == 1 and locked.value.iloc[0] == 41_000_000.0
+    assert locked.date.iloc[0].normalize() == today, "a snapshot carries the run date"
+
+    rate = df[df.metric == "lock_rate_pct"]
+    assert len(rate) == 1 and rate.value.iloc[0] == 0.41, "stored exactly as published, never rescaled"
+
+    staged = {s["name"]: s["value"] for s in out.staged}
+    assert staged == {"agg_14": 1.2, "agg_30": 3.4}, f"only the staging columns are staged, got {staged}"
+    assert set(df.metric) == {"locked_tokens", "lock_rate_pct"}, \
+        "nothing staged, and no holder count, may reach the metrics table"
+    print("dune snapshot ok: dated today, agg_14/agg_30 staged, num_holders ignored")
+
+
+def test_snapshot_declaration_is_checked_not_trusted():
+    """A query declared a snapshot that is really a time series must store NOTHING.
+
+    Dating a real history by the run date would collapse every period onto today — a plausible
+    wrong number, which is the worst kind.
+    """
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    etherfi = config.PROJECT_BY_NAME["Ether.fi"]
+
+    d = Dune()
+    d.http = _Rows([{"staked_supply": 1.0}, {"staked_supply": 2.0}])
+    out = FetchOutput()
+    d.run([etherfi], None, out)
+    assert out.frame().empty, "several rows means a time series, so nothing may be stored"
+    assert any("time series" in g["reason"] for g in out.gaps)
+
+    d = Dune()
+    d.http = _Rows([{"day": "2026-09-01", "staked_supply": 1.0}])
+    out = FetchOutput()
+    d.run([etherfi], None, out)
+    assert out.frame().empty, "a date-like column means the snapshot claim is wrong"
+    assert any("date-like column" in g["reason"] for g in out.gaps)
+    print("snapshot guard ok: refuses a time series and refuses a query that grew a date column")
+
+
+def test_a_snapshot_query_is_never_skipped_as_already_backfilled():
+    """Tier 4 skips a series the store already has — but a snapshot is current state, not history.
+
+    Skipping it would freeze the series at whatever it read the first time.
+    """
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    d = Dune(has_history={("Ether.fi", "locked_tokens"), ("Ether.fi", "lock_rate_pct")})
+    d.http = _Rows([{"staked_supply": 7.0, "perc_staked_cnt": 0.5}])
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
+    assert set(out.frame().metric) == {"locked_tokens", "lock_rate_pct"}
+    assert not any("already holds history" in e.message for e in out.log)
+    print("ongoing snapshot ok: read every run, not treated as a one-off backfill")
 
 
 def test_geodnet_sql_addresses_match_config_exactly():
@@ -770,6 +850,9 @@ if __name__ == "__main__":
                test_later_tier_never_overwrites_an_earlier_one, test_cross_check_metrics_do_not_collide_with_their_primary,
                test_dune_sums_split_columns_and_drops_the_incomplete_current_period,
                test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query,
+               test_snapshot_query_is_dated_now_and_stages_the_columns_nobody_chose,
+               test_snapshot_declaration_is_checked_not_trusted,
+               test_a_snapshot_query_is_never_skipped_as_already_backfilled,
                test_geodnet_sql_addresses_match_config_exactly,
                test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
                test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:

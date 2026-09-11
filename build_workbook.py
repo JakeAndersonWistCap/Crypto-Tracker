@@ -1050,6 +1050,44 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
 
 
+def write_staging(ws, staged: pd.DataFrame, run_id: str | None):
+    """Figures a source returned that are deliberately NOT metrics.
+
+    Nothing on this sheet feeds a calculation anywhere in the workbook, and nothing should start
+    doing so by accident. It exists so a useful column found while mapping a query is neither
+    thrown away nor quietly promoted into a number somebody is relying on.
+    """
+    _title(ws, "Staging — captured, used by nothing",
+           "Values a source returned that no metric in the library takes. They are recorded so the decision to "
+           "adopt one can be made on real numbers rather than re-discovered later. NO cell on any other sheet "
+           "reads this one. Promoting a figure from here into a metric is a deliberate change to config.py.")
+    headers = ["Project", "Field", "Date", "Value", "Source", "Tier", "Note"]
+    _header(ws, 4, headers)
+    r = 5
+    if staged is None or staged.empty:
+        ws.cell(row=r, column=1, value="Nothing staged this run.").font = F_BOLD
+        _set_widths(ws, {"A": 16, "B": 20, "C": 11, "D": 18, "E": 20, "F": 6, "G": 80})
+        return
+    for row in staged.sort_values(["project", "name", "date"]).to_dict("records"):
+        ws.cell(row=r, column=1, value=row["project"]).font = F_BASE
+        ws.cell(row=r, column=2, value=row["name"]).font = F_BASE
+        ws.cell(row=r, column=3, value=row.get("date") or "").font = F_BASE
+        v = row.get("value")
+        c = ws.cell(row=r, column=4)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            c.value, c.font, c.number_format = "n/a", Font(name=FONT, size=10, color="999999"), FMT_TEXT
+        else:
+            c.value, c.font, c.number_format = float(v), F_BASE, FMT_NUM2
+        ws.cell(row=r, column=5, value=str(row.get("source") or "")).font = F_BASE
+        t = row.get("tier")
+        ws.cell(row=r, column=6, value="" if t is None or pd.isna(t) else int(t)).font = F_BASE
+        c = ws.cell(row=r, column=7, value=str(row.get("note") or ""))
+        c.font = F_SUB
+        c.number_format = FMT_TEXT
+        r += 1
+    _set_widths(ws, {"A": 16, "B": 20, "C": 11, "D": 18, "E": 20, "F": 6, "G": 80})
+
+
 def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
     """Values rejected by sanity bounds or flagged by the change threshold.
 
@@ -1189,6 +1227,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     runlog = store.run_log(run_id) if run_id else store.run_log()
     gaps = store.gap_report(run_id) if run_id else store.gap_report()
     review = store.review_queue(run_id) if run_id else store.review_queue()
+    staged = store.staging(run_id) if run_id else store.staging()
     overrides_n = int(long["is_manual"].sum()) if not long.empty else 0
     asof = asof or pd.Timestamp.now('UTC').tz_localize(None).normalize()
 
@@ -1212,6 +1251,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     ws_cfg = wb.create_sheet("Config & Sources")
     ws_gap = wb.create_sheet("Gap Report")
     ws_rev = wb.create_sheet("Review Queue")
+    ws_stg = wb.create_sheet("Staging")
     ws_log = wb.create_sheet("Run Log")
     ws_data = wb.create_sheet("Data")
     ws_mon = wb.create_sheet("Monthly")
@@ -1227,6 +1267,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     write_gap_report(ws_gap, gaps, run_id)
     write_review_queue(ws_rev, review, run_id)
+    write_staging(ws_stg, staged, run_id)
     write_runlog(ws_log, runlog, fetch_status, run_id, asof, overrides_n)
 
     # legend on Master

@@ -15,15 +15,57 @@ nothing.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
+from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, tidy, window
+from .base import Http, HttpError, tidy, window
+
+log = logging.getLogger("token_metrics.fetch.dune")
 
 SOURCE = "dune"
 TIER = 4
 API = "https://api.dune.com/api/v1"
+
+# Column names that mean "this row carries its own date". Used ONLY to catch a query declared as
+# a snapshot that is really a time series — never to pick a date column automatically.
+DATEISH = ("day", "date", "month", "week", "time", "period", "block_time", "dt", "ts", "hour")
+
+# Where the shape of each query is written on first contact. Column names alone are not the shape:
+# without types and a sample row you cannot tell which column holds the figure you want. This is
+# plain JSON on disk so it is greppable without opening the workbook.
+SHAPE_DIR = Path(os.environ.get("TOKEN_METRICS_DUNE_SHAPES", ".cache/dune"))
+
+
+def describe_rows(rows: list[dict], sample: int = 3) -> dict:
+    """Columns, inferred types, and a few real rows — enough to map the query in one pass."""
+    columns = sorted({k for r in rows[:50] for k in r}) if rows else []
+    types = {}
+    for col in columns:
+        for r in rows[:50]:
+            if r.get(col) is not None:
+                types[col] = type(r[col]).__name__
+                break
+        types.setdefault(col, "null")
+    return {"row_count": len(rows), "columns": columns, "types": types,
+            "sample_rows": rows[:sample]}
+
+
+def write_shape(query_id, project: str, metric: str, rows: list[dict]) -> Path | None:
+    """Persist the shape so it survives the run and can be read without the workbook."""
+    try:
+        SHAPE_DIR.mkdir(parents=True, exist_ok=True)
+        path = SHAPE_DIR / f"query-{query_id}.json"
+        payload = {"query_id": query_id, "project": project, "metric": metric,
+                   "captured_at": pd.Timestamp.now("UTC").isoformat(), **describe_rows(rows)}
+        path.write_text(json.dumps(payload, indent=2, default=str))
+        return path
+    except Exception as e:  # noqa: BLE001 — never let bookkeeping break a run
+        log.warning("could not write the query shape for %s: %s", query_id, e)
+        return None
 
 
 def always_refetch() -> bool:
@@ -35,8 +77,11 @@ class Dune:
         self.key = os.environ.get("DUNE_API_KEY", "").strip()
         self.http = Http(min_interval=0.5)
         self.has_history = has_history or set()
+        self._cache: dict[int, list[dict]] = {}   # two metrics can share one query; fetch it once
 
     def _results(self, query_id: int) -> list[dict]:
+        if query_id in self._cache:
+            return self._cache[query_id]
         rows, offset, limit = [], 0, 5000
         while True:
             j = self.http.get(f"{API}/query/{query_id}/results",
@@ -45,6 +90,7 @@ class Dune:
             batch = (j.get("result") or {}).get("rows") or []
             rows.extend(batch)
             if len(batch) < limit:
+                self._cache[query_id] = rows
                 return rows
             offset += limit
 
@@ -81,7 +127,11 @@ class Dune:
                 if not qid:
                     out.unconfigured(SOURCE, name, f"{metric}: no query_id in config", TIER)
                     continue
-                if (name, metric) in self.has_history and not always_refetch():
+                # A snapshot query returns CURRENT state, so it is an ongoing source, not a
+                # backfill: skipping it once the store has history would freeze the series at
+                # its first reading. Only a dated historical query is skip-eligible.
+                ongoing = bool(q.get("snapshot") or q.get("ongoing"))
+                if (name, metric) in self.has_history and not always_refetch() and not ongoing:
                     out.unconfigured(SOURCE, name, f"{metric}: store already holds history — backfill skipped", TIER)
                     continue
                 if not self.key:
@@ -97,20 +147,67 @@ class Dune:
                     # guessing which one holds the figure. One round trip turns an unknown into
                     # a definitive list, and a wrong guess here would be a plausible wrong number.
                     dcol = q.get("date_col")
+                    snapshot = bool(q.get("snapshot"))
                     has_value = q.get("value_col") or q.get("value_cols")
-                    if not dcol or not has_value:
-                        out.fail(SOURCE, name, f"{metric}: query {qid} columns not mapped in config", TIER)
+                    if (not dcol and not snapshot) or not has_value:
+                        shape = write_shape(qid, name, metric, rows)
+                        types = describe_rows(rows)["types"]
+                        rendered = ", ".join(f"{c} ({types.get(c, '?')})" for c in columns) or "none"
+                        out.fail(SOURCE, name,
+                                 f"{metric}: query {qid} columns not mapped. Columns: {rendered}", TIER)
                         out.gap(name, metric,
                                 reason=f"Dune query {qid} ran and returned {len(rows)} rows, but date_col and/or "
                                        f"value_col are not set in config, so no figure was read. "
-                                       f"Columns the query ACTUALLY returns: {', '.join(columns) or 'none'}",
+                                       f"Columns the query ACTUALLY returns: {rendered}."
+                                       + (f" Full shape with sample rows written to {shape}." if shape else ""),
                                 tiers_attempted="4",
-                                suggestion=f"Pick the date column and the value column(s) from that list and set "
-                                           f"date_col and value_col (or value_cols for a figure split across "
-                                           f"several columns) under {name} dune_queries.{metric} in config.py.")
+                                suggestion=f"Pick the date column and the value column(s) and set date_col and "
+                                           f"value_col (or value_cols for a figure split across several columns) "
+                                           f"under {name} dune_queries.{metric} in config.py. "
+                                           f"`python dune_probe.py {qid}` re-reads this one query without a full run.")
                         continue
 
-                    missing = [c for c in ([dcol] + (q.get("value_cols") or [q.get("value_col")])) if c not in columns]
+                    write_shape(qid, name, metric, rows)
+
+                    # A query declared as a snapshot is checked, not trusted. Both of these would
+                    # otherwise turn history into a single wrongly dated point.
+                    if snapshot:
+                        dateish = [c for c in columns if any(d in c.lower() for d in DATEISH)]
+                        problem = None
+                        if len(rows) > 1:
+                            problem = (f"declared snapshot: True but returned {len(rows)} rows, so it is a time "
+                                       f"series, not one current-state row")
+                        elif dateish:
+                            problem = (f"declared snapshot: True but returns date-like column(s) "
+                                       f"{', '.join(dateish)}")
+                        if problem:
+                            out.fail(SOURCE, name, f"{metric}: query {qid} {problem}", TIER)
+                            out.gap(name, metric,
+                                    reason=f"Dune query {qid} {problem}. Nothing was stored: dating a series by "
+                                           f"the run date would collapse its history to today.",
+                                    tiers_attempted="4",
+                                    suggestion=f"Set date_col (columns: {', '.join(columns)}) and remove "
+                                               f"snapshot under {name} dune_queries.{metric} in config.py. "
+                                               f"`python dune_probe.py {qid}` shows the shape without a full run.")
+                            continue
+
+                    # Columns worth keeping but deliberately not metrics. Captured to the staging
+                    # table so evaluating them later costs nothing, and read by nothing until
+                    # somebody decides they should be.
+                    for col in (q.get("staging_cols") or []):
+                        if col not in columns:
+                            continue
+                        for r in rows[-1:] if snapshot else rows:
+                            try:
+                                v = float(r[col])
+                            except (TypeError, ValueError, KeyError):
+                                continue
+                            out.stage(name, col, v,
+                                      date=(r.get(dcol) if dcol else pd.Timestamp.now("UTC").date()),
+                                      source=f"dune:{qid}", tier=TIER,
+                                      note=q.get("staging_note", "captured from Dune, not used in any figure"))
+
+                    missing = [c for c in ([dcol] if dcol else []) + (q.get("value_cols") or [q.get("value_col")]) if c not in columns]
                     if missing and columns:
                         out.fail(SOURCE, name, f"{metric}: query {qid} has no column(s) {missing}", TIER)
                         out.gap(name, metric,
@@ -122,7 +219,8 @@ class Dune:
 
                     pairs = []
                     for r in rows:
-                        when, value = r.get(dcol), self._values(r, q)
+                        when = r.get(dcol) if dcol else pd.Timestamp.now("UTC").tz_localize(None).normalize()
+                        value = self._values(r, q)
                         if when is not None and value is not None:
                             pairs.append((when, value))
                     df = tidy(pairs, name, metric, f"dune:{qid}", TIER)
@@ -140,9 +238,22 @@ class Dune:
                         df = df[keep]
 
                     note = (f"{metric}: query {qid} ({len(pairs)} rows, "
-                            f"{q.get('granularity', 'unspecified')} granularity"
+                            f"{'current-state snapshot' if snapshot else q.get('granularity', 'unspecified') + ' granularity'}"
                             + (f", dropped {dropped} incomplete current-period row(s)" if dropped else "") + ")")
                     out.add(window(df, window_days), SOURCE, name, note, TIER)
+                except HttpError as e:
+                    # A 4xx is the server's definite answer, and its message is what distinguishes
+                    # "no such query" from "exists, but not yours to read".
+                    out.fail(SOURCE, name, f"{metric}: query {qid}: {e}", TIER)
+                    hint = ("The query id does not resolve for this key. Either it does not exist, or it exists "
+                            "and this account cannot read it — Dune's own message above is what tells them apart. "
+                            "A query you do not own often cannot be read through the results endpoint at all; "
+                            "forking it into your own account gives you an id that can."
+                            if e.status in (403, 404) else
+                            "Check the query id and the API key's permissions.")
+                    out.gap(name, metric,
+                            reason=f"Dune query {qid} returned HTTP {e.status}: {e.detail or 'no message'}",
+                            tiers_attempted="4", suggestion=hint)
                 except Exception as e:  # noqa: BLE001
                     out.fail(SOURCE, name, f"{metric}: query {qid}: {e}", TIER)
                     out.gap(name, metric, reason=f"Dune query {qid} failed: {e}", tiers_attempted="4",

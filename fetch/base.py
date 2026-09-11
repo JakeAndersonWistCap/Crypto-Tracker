@@ -50,6 +50,7 @@ class FetchOutput:
     log: list = field(default_factory=list)
     review: list = field(default_factory=list)
     gaps: list = field(default_factory=list)
+    staged: list = field(default_factory=list)
 
     def add(self, df: pd.DataFrame | None, source: str, project: str | None, message: str = "", tier: int | None = None):
         n = 0 if df is None else len(df)
@@ -76,10 +77,36 @@ class FetchOutput:
         self.gaps.append({"project": project, "metric": metric, "reason": reason,
                           "tiers_attempted": tiers_attempted, "suggestion": suggestion})
 
+    def stage(self, project: str, name: str, value, date=None, source=None, tier=None, note: str = ""):
+        """Capture a figure WITHOUT letting it near the metrics table.
+
+        A source sometimes returns something useful that is not yet an agreed metric — a
+        14-day aggregate where the model uses a monthly one, say. Throwing it away means
+        re-discovering it later; storing it as a metric means it silently starts driving a
+        number nobody chose it for. Staging is the third option: it is recorded, dated and
+        visible in the workbook under its own sheet, and nothing reads it.
+        """
+        self.staged.append({"project": project, "name": name, "value": value,
+                            "date": str(date)[:10] if date is not None else None,
+                            "source": source, "tier": tier, "note": note})
+
     def frame(self) -> pd.DataFrame:
         if not self.frames:
             return pd.DataFrame(columns=LONG_COLUMNS)
         return pd.concat(self.frames, ignore_index=True)
+
+
+class HttpError(RuntimeError):
+    """A 4xx, carrying the server's own message.
+
+    Kept distinct from a transport failure because the body is the useful part: it is what tells
+    you whether a resource does not exist, or exists and you lack access to it. Raised without
+    retrying, since a 4xx is a definite answer.
+    """
+
+    def __init__(self, status: int, url: str, detail: str = ""):
+        self.status, self.url, self.detail = status, url, detail
+        super().__init__(f"HTTP {status} from {url}" + (f" — {detail}" if detail else ""))
 
 
 class Http:
@@ -118,8 +145,18 @@ class Http:
                         time.sleep(max(float(r.headers.get("Retry-After", backoff)), backoff))
                         backoff *= 2
                     continue
+                if 400 <= r.status_code < 500:
+                    detail = ""
+                    try:
+                        body = r.json()
+                        detail = body.get("error") or body.get("message") or str(body)[:300]
+                    except Exception:  # noqa: BLE001
+                        detail = (r.text or "")[:300]
+                    raise HttpError(r.status_code, url, detail)
                 r.raise_for_status()
                 return r.json()
+            except HttpError:
+                raise          # a 4xx is a definite answer from the server, not worth retrying
             except requests.RequestException as e:
                 last_err = e
                 if attempt < self.retries:

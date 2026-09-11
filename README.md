@@ -74,6 +74,17 @@ python preflight.py --check    # probes every dependency in ~30s. Exits non-zero
 Run the check before the backfill. It tells you an RPC is unreachable in thirty seconds rather
 than eight minutes into a full-history pull.
 
+```bash
+python dune_probe.py 8683038          # one Dune query: its real columns, types and sample rows
+python dune_probe.py --config         # every Dune query in config and whether it is mapped yet
+python dune_probe.py --stored GEODNET/gross_burn_tokens --before 2026-08-01
+```
+
+`dune_probe.py` works on a single Dune query without a full run, and writes nothing to the store
+or the workbook. Mapping a query is iterative; a full run is the wrong unit of work for it.
+`--stored` reads the other way, showing what actually landed, so "the run did not error" and
+"the history is really there" stay separate questions. See RUNBOOK 11a.
+
 ## Setup
 
 ```bash
@@ -153,7 +164,8 @@ reaches the sheet.
 7. **Config & Sources** — every parameter with its URL, date, tier, `programmed` flag and status. This tab is what makes the numbers defensible.
 8. **Gap Report** — the to-do list. Every unresolved metric, tiers attempted, reason, and the fix.
 9. **Review Queue** — values rejected by sanity bounds or flagged by the change threshold, with old and new values.
-10. **Run Log** — rows per source and tier, failures, last successful fetch per source/project.
+10. **Staging** — figures a source returned that no metric takes. Captured so they are not lost or re-discovered; **read by nothing**. Promoting one is a deliberate edit to `config.py`.
+11. **Run Log** — rows per source and tier, failures, last successful fetch per source/project.
 
 Plus **Data** and **Monthly**, the literal aggregates the formulas reference.
 

@@ -85,10 +85,12 @@ def main() -> int:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
     n_review = st.record_review(run_id, out.review)
     n_gaps = st.record_gaps(run_id, out.gaps)
+    n_staged = st.record_staging(run_id, out.staged)
 
     failures = [e for e in out.log if e.status == "failed"]
-    log.info("run summary: %d rows | %d fetch failures | %d review items | %d gaps | %d manual overrides",
-             written, len(failures), n_review, n_gaps, n_manual)
+    log.info("run summary: %d rows | %d fetch failures | %d review items | %d gaps | %d manual overrides "
+             "| %d staged (captured, used by nothing)",
+             written, len(failures), n_review, n_gaps, n_manual, n_staged)
     if failures:
         log.warning("%d fetch failures — see the Run Log tab", len(failures))
     if n_gaps:

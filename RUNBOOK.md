@@ -302,6 +302,14 @@ DefiLlama-tracked ones; `n/a` in many burn and buyback columns.
 (unconfirmed split, figure suppressed by design), anything in the net supply change column for a
 project whose burn source is not yet configured.
 
+### 10.5 Staging — captured, used by nothing
+
+Figures a source returned that no metric in the library takes: Ether.fi's `agg_14` and `agg_30`,
+for instance, which are candidates for the 30-day trajectory column. **No cell on any other sheet
+reads this one.** It exists so a useful column found while mapping a query is neither thrown away
+nor quietly promoted into a number somebody is relying on. Adopting one is a deliberate edit to
+`config.py`, never a default.
+
 ---
 
 ## 11. Re-running after a fix
@@ -331,6 +339,42 @@ python token_metrics.py
 **After editing `sources.yaml` or `config.py`,** just re-run. Validate config changes first with
 `python -c "import config; config.validate_config(); print('ok')"` — it rejects mistakes that
 would produce plausible-looking wrong numbers.
+
+---
+
+## 11a. Working on ONE Dune query, without a full run
+
+Mapping a Dune query is iterative — look at the columns, try a mapping, look at the series it
+produces, adjust. A full run is the wrong unit of work for that, so `dune_probe.py` does it in
+one round trip. **It never writes to `metrics.db` and never rebuilds the workbook.** The only
+thing it writes is a shape file under `.cache/dune/query-<id>.json`, which is plain JSON you can
+open, grep or send on.
+
+```bash
+# what does this query actually return? columns, types and real sample rows
+python dune_probe.py 8683038
+python dune_probe.py Ether.fi/locked_tokens        # same thing, id resolved from config.py
+
+# read a shape captured earlier — no network, no API key needed
+python dune_probe.py --show 8683038
+
+# try a mapping before committing it to config.py: prints the series it WOULD store
+python dune_probe.py 8683175 --map month:tokens_burned,sol_tokens_burned --drop-current
+
+# a 4xx? compare against a control id, rather than retrying variations
+python dune_probe.py 2986047 --diagnose
+
+# what did actually land in the store for a series, and how far back does it go?
+python dune_probe.py --stored GEODNET/gross_burn_tokens --before 2026-08-01
+
+# every Dune query in config and whether its columns are mapped yet
+python dune_probe.py --config
+```
+
+`--stored` is the verification step after a backfill. It prints the rows held, the date range,
+how many came from Dune, how many predate a cut-off you name, and whether the incomplete current
+period was dropped — so "the run did not error" and "the history is actually there" stay
+separate questions.
 
 ---
 

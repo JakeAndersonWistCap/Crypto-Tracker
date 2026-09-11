@@ -86,6 +86,20 @@ CREATE TABLE IF NOT EXISTS review_queue (
     tier        INTEGER
 );
 
+-- Figures a source returned that are deliberately NOT metrics: captured so they are not lost
+-- and can be evaluated, but read by nothing. Never joined to `metrics`, never in a calculation.
+CREATE TABLE IF NOT EXISTS staging (
+    run_id   TEXT NOT NULL,
+    ts       TEXT NOT NULL,
+    date     TEXT,
+    project  TEXT NOT NULL,
+    name     TEXT NOT NULL,      -- the raw column/field name, not a metric key
+    value    REAL,
+    source   TEXT,
+    tier     INTEGER,
+    note     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS gap_report (
     run_id          TEXT NOT NULL,
     ts              TEXT NOT NULL,
@@ -264,6 +278,21 @@ class Store:
         return len(items)
 
     # ---------------------------------------------------------------- reads
+    def record_staging(self, run_id: str, items: list[dict]) -> int:
+        """Overwrite this run's staged figures. Nothing else in the codebase reads this table."""
+        if items is None:
+            return 0
+        ts = utcnow()
+        self.conn.execute("DELETE FROM staging WHERE run_id=?", (run_id,))
+        self.conn.executemany(
+            "INSERT INTO staging (run_id, ts, date, project, name, value, source, tier, note) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [(run_id, ts, i.get("date"), i["project"], i["name"], i.get("value"),
+              i.get("source"), i.get("tier"), i.get("note", "")) for i in items],
+        )
+        self.conn.commit()
+        return len(items)
+
     def load_long(self) -> pd.DataFrame:
         """All rows with manual overrides applied last.
         Columns: date, project, metric, value, source, tier, fetched_at, is_manual, entered_on, source_note."""
@@ -299,6 +328,12 @@ class Store:
         if run_id:
             return pd.read_sql_query("SELECT * FROM review_queue WHERE run_id=? ORDER BY project, metric", self.conn, params=(run_id,))
         return pd.read_sql_query("SELECT * FROM review_queue ORDER BY ts DESC", self.conn)
+
+    def staging(self, run_id: str | None = None) -> pd.DataFrame:
+        if run_id:
+            return pd.read_sql_query(
+                "SELECT * FROM staging WHERE run_id=? ORDER BY project, name, date", self.conn, params=(run_id,))
+        return pd.read_sql_query("SELECT * FROM staging ORDER BY ts DESC, project, name", self.conn)
 
     def gap_report(self, run_id: str | None = None) -> pd.DataFrame:
         if run_id:

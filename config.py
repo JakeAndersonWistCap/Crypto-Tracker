@@ -162,6 +162,13 @@ METRICS = {
     # overwrite a verified tier 2 contract figure, it cross-checks it.
     "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
+    # Published lock rate, stored AS PUBLISHED. Deliberately not derived from locked_tokens /
+    # supply: where a protocol publishes its own lock rate the published figure is the citable
+    # one, and a derived percentage sitting next to it would invite the two being confused.
+    # The label carries its own caveat because the scale and the basis are not yet confirmed.
+    "lock_rate_pct":              {"label": "Lock rate, as published (scale and basis unconfirmed)",
+                                   "kind": "stock", "unit": "pct", "archetypes": [3], "tiers": [3, 4],
+                                   "sanity_min": 0, "sanity_max": 100, "only_projects": ["Ether.fi"]},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
     #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
@@ -1477,17 +1484,44 @@ PROJECTS = [
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": {
-            "staked_tokens": {
+            # Mapped from the columns the query actually returned on the 2026-09-11 run:
+            # staked_supply, perc_staked_cnt, agg_14, agg_30, num_holders.
+            # NONE of those is a date, so this is a CURRENT-STATE SNAPSHOT, not a history: the row
+            # is dated at the run date and the series accumulates one point per run. The adapter
+            # verifies that claim on every run and refuses to store anything if the query ever
+            # returns several rows or grows a date-like column, because dating a real time series
+            # by the run date would collapse its history onto today.
+            "locked_tokens": {
                 "query_id": 8683038,
-                # COLUMNS NOT SUPPLIED. The query id is unambiguous but the SQL and column mapping
-                # did not reach this config, so nothing is read yet: the adapter runs the query,
-                # reports the columns it actually returns, and refuses to guess which holds the figure.
+                "snapshot": True,
                 "date_col": None,
-                "value_col": None,
+                "value_col": "staked_supply",
+                # agg_14 and agg_30 are 14- and 30-day aggregates. They are a CANDIDATE for the
+                # 30-day trajectory column and are captured to the staging table so the choice can
+                # be made on real numbers — but nothing reads them, and the trajectory columns are
+                # NOT switched to them. That switch is a decision, not a default.
+                "staging_cols": ["agg_14", "agg_30"],
+                "staging_note": "14d/30d aggregate from Dune 8683038. Candidate for the 30-day trajectory "
+                                "column; NOT used in any figure. Switching to it is a deliberate change.",
+                # num_holders is not mapped: it is a holder count, not a supply-and-demand figure,
+                # and no metric in the library takes it.
                 "source_url": "https://dune.com/queries/8683038",
-                "note": "Staked sETHFI. Fill date_col and value_col from the column list the first run "
-                        "reports in the Gap Report, then re-run. Tier 4 is Ether.fi's ONLY automated route "
-                        "for this metric — there is no contract read for it.",
+                "note": "Staked sETHFI, recorded as locked_tokens (not staked_tokens) as instructed. Tier 4 "
+                        "is Ether.fi's ONLY automated route for this figure — there is no contract read for "
+                        "it — so this query is ongoing rather than a one-off backfill and is never skipped "
+                        "on the grounds that the store already holds history.",
+            },
+            "lock_rate_pct": {
+                "query_id": 8683038,
+                "snapshot": True,
+                "date_col": None,
+                "value_col": "perc_staked_cnt",
+                "source_url": "https://dune.com/queries/8683038",
+                "note": "Stored EXACTLY as the query publishes it, with no rescaling. Two things about this "
+                        "column are unconfirmed and neither is guessed here: whether it is a fraction (0.42) "
+                        "or a percentage (42), and whether '_cnt' means it is computed from HOLDER COUNTS "
+                        "rather than supply — a lock rate by holder count is a different figure from a lock "
+                        "rate by supply and must not be read as one. See OPEN_QUESTIONS.",
             },
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
         },
@@ -1750,29 +1784,52 @@ OPEN_QUESTIONS = [
                   "detail: if it stops being queryable under the account the API key belongs to, a full "
                   "re-backfill silently loses ALL GEODNET burn history before August 2026. Reachability could NOT "
                   "be confirmed from here — it needs a Dune API key, which this environment does not have.",
-        "suggestion": "Run the query once with the key set and confirm rows dated before 2026-08 come back. If the "
-                      "snapshot has gone, export the history the store already holds BEFORE re-backfilling, "
-                      "because a fresh backfill would replace it with the post-August window alone.",
+        "suggestion": "`python dune_probe.py --stored GEODNET/gross_burn_tokens --before 2026-08-01` answers this "
+                      "from the store in one command: it prints the rows held, their date range, how many came "
+                      "from Dune BEFORE August 2026 (that count is the snapshot table's reachability — zero means "
+                      "it has gone), and whether the incomplete current month was dropped. If the snapshot has "
+                      "gone, export the history the store already holds BEFORE re-backfilling, because a fresh "
+                      "backfill would replace it with the post-August window alone.",
     },
     {
-        "project": "Ether.fi", "topic": "Dune query 8683038 column mapping",
+        "project": "Ether.fi", "topic": "what perc_staked_cnt actually measures, and on what scale",
         "severity": 1,
-        "reason": "The query id is wired, but the column mapping did not reach this config — the SQL was "
-                  "referenced as unchanged from an earlier message that is not in the record. Nothing is read "
-                  "until date_col and value_col are set, and nothing is guessed. Tier 4 is Ether.fi's ONLY "
-                  "automated route for staked_tokens; there is no contract read for it.",
-        "suggestion": "Run once with DUNE_API_KEY set: the Gap Report will name every column the query actually "
-                      "returns. Put the date column and the value column into config under Ether.fi "
-                      "dune_queries.staked_tokens, then re-run.",
+        "reason": "Query 8683038 is now mapped: staked_supply -> locked_tokens and perc_staked_cnt -> "
+                  "lock_rate_pct. TWO THINGS ABOUT perc_staked_cnt ARE UNCONFIRMED and neither is guessed. "
+                  "(1) Scale: 0.42 and 42 are both plausible readings of the same column, and picking wrong "
+                  "puts a figure a hundred times off in the sheet. The value is therefore stored EXACTLY as "
+                  "published, with no rescaling, and the metric label says so. (2) Basis: the '_cnt' suffix "
+                  "suggests it is computed from HOLDER COUNTS, not from supply. A lock rate by holder count is "
+                  "a different figure from a lock rate by supply and must not be read as one — it says nothing "
+                  "about float.",
+        "suggestion": "Both are settled by one look at the query: `python dune_probe.py 8683038` prints a sample "
+                      "row (scale) and .cache/dune/query-8683038.json keeps it; the SQL on dune.com/queries/8683038 "
+                      "shows the denominator (basis). Then fix the metric label in METRICS, and add a rescale to "
+                      "the config entry only if the column really is a fraction.",
     },
     {
-        "project": "Aerodrome", "topic": "Dune query 2986047 column mapping",
-        "reason": "The query id is wired and the SQL was not visible, so the column mapping is unset and nothing "
-                  "is read. LOW STAKES: this writes locked_tokens_dashboard, a cross-check of the tier 2 read of "
-                  "AERO.balanceOf(escrow) which is verified and working, so it can never overwrite the contract "
-                  "figure and its absence costs only the second opinion.",
-        "suggestion": "Same as Ether.fi: one run with a key names the real columns, then set date_col and "
-                      "value_col in config.",
+        "project": "Ether.fi", "topic": "8683038 is a snapshot, so it has no history",
+        "reason": "The query returns ONE row with no date column: staked_supply, perc_staked_cnt, agg_14, agg_30, "
+                  "num_holders. It is current state, not a time series, so it cannot backfill the 3/6/9-month "
+                  "trajectory columns — those fill in one run at a time from today. Tier 4 is Ether.fi's only "
+                  "automated route for this figure; there is no contract read for it.",
+        "suggestion": "If the trajectory matters for Ether.fi, a dated query is needed — either a variant of "
+                      "8683038 grouped by day, or the sETHFI contract read that does not currently exist. The "
+                      "staged agg_14/agg_30 columns are a partial substitute and are captured already.",
+    },
+    {
+        "project": "Aerodrome", "topic": "Dune query 2986047 returns 404 — missing, or not readable?",
+        "reason": "The 2026-09-11 run with a live key got HTTP 404 from this query id, so nothing is mapped and "
+                  "nothing is read. A 404 alone does NOT establish that the query is gone: an id you do not own "
+                  "can fail the same way as an id that never existed, and the two need different remedies. "
+                  "LOW STAKES either way: this writes locked_tokens_dashboard, a cross-check of the tier 2 read "
+                  "of AERO.balanceOf(escrow), which is verified and working. Its absence costs the second "
+                  "opinion, never the figure.",
+        "suggestion": "`python dune_probe.py 2986047 --diagnose` sends exactly two requests — this id and a "
+                      "control id that certainly does not exist — and compares the answers. Same status and same "
+                      "message means the API does not distinguish the two cases; different means it does, and the "
+                      "difference is the verdict. Do not retry variations of the id: a second identical answer "
+                      "adds nothing. If it turns out to exist but be unreadable, fork it and use the fork's id.",
     },
     {
         "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",
