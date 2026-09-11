@@ -1,0 +1,600 @@
+# =====================================================================================
+# sources.yaml — the source registry.
+#
+# THIS FILE IS THE HANDOFF POINT. Adding a source is a YAML edit; no Python.
+# Every page you currently visit by hand and read a number off belongs here.
+#
+# The Gap Report tab in token_metrics.xlsx lists every metric still unresolved and why.
+# Work from that tab: find the page that publishes the figure, add or complete the entry
+# below, set `enabled: true`, and re-run `python token_metrics.py`.
+#
+# -------------------------------------------------------------------------------------
+# FIELDS
+#
+#   project   (required)  Exact project name from config.py.
+#   metric    (required)  Metric key from config.METRICS.
+#   tier      (required)  3 = the protocol's own dashboard. 5 = off-chain operational
+#                         (node counts, utilisation, customer revenue). Informational —
+#                         both take the same path.
+#   url       (required)  The page to load.
+#   method    (required)  xhr | dom | adapter
+#   enabled               false (default for stubs) keeps the entry out of the run while
+#                         still listing it in the Gap Report. Set true once complete.
+#
+#   -- method: xhr  (PREFERRED — far more stable than DOM selectors)
+#   url_contains          Substring identifying the JSON endpoint the page calls on load.
+#                         Find it in your browser: DevTools -> Network -> Fetch/XHR.
+#   json_path             Dotted path into that JSON: "data.stats.0.totalBurned".
+#                         List indices are numbers: "items.0.value".
+#
+#   -- method: dom  (fallback, when there is no clean endpoint)
+#   anchor                The LABEL TEXT to anchor on, e.g. "Total CAKE Burned".
+#                         NEVER a positional selector. The extractor finds the element
+#                         whose text matches this label and reads the number beside it,
+#                         so the entry survives a redesign that moves the element.
+#
+#   -- method: adapter  (last resort, for a page that genuinely needs bespoke handling)
+#   adapter               Module name under adapters/, exposing extract(page, entry).
+#
+#   -- optional, any method
+#   scale                 Multiply the extracted number by this (e.g. 1000000 if the page
+#                         shows millions). Default 1.
+#   cumulative            true if the figure is a running total rather than a period flow.
+#   derive_flow_metric    With cumulative: true, also store the period flow into this
+#                         metric by differencing against the last stored value.
+#                         e.g. metric: burn_address_balance + derive_flow_metric:
+#                         gross_burn_tokens.
+#   wait_for              CSS selector to wait for before extracting, if the page is slow.
+#   wait_until            load | domcontentloaded | networkidle (default networkidle).
+#   sanity_min/max        Override the metric's default plausibility bounds. A value
+#                         outside them is REJECTED and sent to the Review Queue.
+#   change_threshold_pct  Override the default. A move larger than this is stored but
+#                         FLAGGED to the Review Queue. Default 50.
+#   added                 Date you added the entry. For your own audit trail.
+#   note                  Anything a future reader needs to know.
+#
+# -------------------------------------------------------------------------------------
+# ANTI-BRITTLENESS
+#
+# The dangerous failure is not the site going down, which is obvious. It is a redesign
+# where the selector still matches but now points at a different number. Three defences,
+# all active:
+#   1. Anchor on label text, never on position   (the `anchor` field)
+#   2. Sanity bounds per metric                  (rejected, not stored)
+#   3. Change threshold                          (stored but flagged for review)
+#
+# POLITENESS: one run a day, responses cached per day, robots.txt respected, and the user
+# agent identifies the tool honestly.
+# =====================================================================================
+
+# -------------------------------------------------------------------------------------
+# WORKED EXAMPLES — templates, not live sources. example.com is deliberately fictional.
+# Copy the shape, not the URL.
+# -------------------------------------------------------------------------------------
+
+- project: PancakeSwap
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: https://example.com/cake-tokenomics          # TODO the page publishing monthly net mint
+  method: xhr
+  url_contains: /api/tokenomics                     # from DevTools -> Network -> Fetch/XHR
+  json_path: data.monthly.0.netMint
+  anchor: "Net CAKE"                                # DOM fallback if the endpoint moves
+  unit_note: tokens, negative = net deflationary
+  sanity_min: -10000000
+  sanity_max: 10000000
+  change_threshold_pct: 40
+  added: 2026-09-11
+  note: >
+    TEMPLATE. PancakeSwap publishes net mint monthly and is the best-disclosed net burn in
+    the universe (May 2026: -1,958,514 CAKE, 33rd consecutive month). Take the self-reported
+    figure rather than reconstructing it. Replace url and url_contains with the real ones.
+
+- project: PancakeSwap
+  metric: burn_address_balance
+  tier: 3
+  enabled: false
+  url: https://example.com/cake-burn                # TODO the page publishing cumulative burn
+  method: dom
+  anchor: "Total CAKE Burned"                       # label text, never a positional selector
+  cumulative: true
+  derive_flow_metric: gross_burn_tokens             # period burn = delta vs the last reading
+  added: 2026-09-11
+  note: >
+    TEMPLATE for a cumulative figure. The running total is stored as burn_address_balance
+    and the period flow is derived by differencing, which is what the archetype 4 tab needs.
+
+# -------------------------------------------------------------------------------------
+# STUBS — one per metric the Gap Report cannot resolve any other way.
+# Fill in `url` (and `url_contains` + `json_path`, or `anchor`), then set `enabled: true`.
+# -------------------------------------------------------------------------------------
+
+# ---- Bitcoin (BTC) — archetypes 1
+- project: Bitcoin
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+
+# ---- Ethereum (ETH) — archetypes 1, 4
+- project: Ethereum
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+- project: Ethereum
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Solana (SOL) — archetypes 1, 4
+- project: Solana
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+- project: Solana
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Tron (TRX) — archetypes 1, 4
+- project: Tron
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+- project: Tron
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Near (NEAR) — archetypes 1, 4
+- project: Near
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+- project: Near
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Canton (CC) — archetypes 1, 4
+- project: Canton
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+- project: Canton
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Plume (PLUME) — archetypes 1, 3
+- project: Plume
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+
+# ---- Injective (INJ) — archetypes 1, 4
+- project: Injective
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+- project: Injective
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Zcash (ZEC) — archetypes 1
+- project: Zcash
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+
+# ---- Chainlink (LINK) — archetypes 1, 3
+- project: Chainlink
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+
+# ---- World Mobile (WMTX) — archetypes 2, 3
+- project: World Mobile
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "AirNode / hotspot count. Their page is being rebuilt — use manual_overrides.csv meanwhile."
+- project: World Mobile
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: World Mobile
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Page being rebuilt. Token Terminal or manual_overrides.csv meanwhile."
+- project: GEODNET
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+- project: GEODNET
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Miner / base-station count."
+- project: GEODNET
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: GEODNET
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: peaq
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Machine count. Has its own dashboard plus a Dune page."
+- project: peaq
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: peaq
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: Render
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+- project: Render
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "GPU node count."
+- project: Render
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: Render
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: Bittensor
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "taostats has an API — the one archetype 2 name with a real programmatic source. Prefer method: xhr against it."
+- project: Bittensor
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "taostats subnet stats."
+- project: Bittensor
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: OriginTrail
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: OriginTrail
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: OriginTrail
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: OriginTrail
+  metric: publisher_conviction_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the OriginTrail Publisher Conviction page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Pre-purchased publishing demand."
+
+# ---- Aethir (ATH) — archetypes 2
+- project: Aethir
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: Aethir
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "GPU utilisation."
+- project: Aethir
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: Venice AI
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+- project: Venice AI
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: Venice AI
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: Venice AI
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Inference volume / subscription revenue."
+- project: Morpho
+  metric: supply_units
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: Morpho
+  metric: utilisation_pct
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the network dashboard (capacity utilisation)
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Dune indexes chains, not business operations."
+- project: Morpho
+  metric: customer_revenue_usd
+  tier: 5
+  enabled: false
+  url: null                                         # TODO the protocol's revenue page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "End-user revenue in dollars, not token flow."
+- project: Hyperliquid
+  metric: rwa_xyz_usd
+  tier: 3
+  enabled: false
+  url: null                                         # TODO RWA.xyz chain page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "RWA.xyz has no API on our tier."
+
+# ---- Uniswap (UNI) — archetypes 4
+- project: Uniswap
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- PancakeSwap (CAKE) — archetypes 4, 3
+- project: PancakeSwap
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."
+
+# ---- Sky (SKY) — archetypes 3, 4
+- project: Sky
+  metric: net_mint_monthly
+  tier: 3
+  enabled: false
+  url: null                                         # TODO the protocol's tokenomics page
+  method: dom
+  anchor: null                                      # TODO the label text beside the figure
+  added: 2026-09-11
+  note: "Self-reported net mint — take it as published."

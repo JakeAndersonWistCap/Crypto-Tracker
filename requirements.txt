@@ -3,3 +3,6 @@ openpyxl>=3.1
 requests>=2.31
 python-dotenv>=1.0
 numpy>=1.24
+PyYAML>=6.0
+web3>=6.0            # tier 2 contract reads
+playwright>=1.40     # tier 3 dashboard rendering — then: playwright install chromium

@@ -4,13 +4,26 @@ token_metrics.py — orchestrator.
 
     python token_metrics.py
 
-One command, no arguments. Fetches every source, updates the local store (metrics.db),
-loads manual_overrides.csv last, and rebuilds token_metrics.xlsx from scratch.
+One command, no arguments. Runs every source tier in order, updates the local store
+(metrics.db), loads manual_overrides.csv last, and rebuilds token_metrics.xlsx from scratch.
 
-First run: full backfill of every source's available history.
-Subsequent runs: extend the series and re-fetch a trailing 30-day window to catch revisions.
-A failed source is logged to the Run Log tab and the last known values are carried forward,
-marked stale in the workbook.
+    free API  ->  contract read  ->  render the public page  ->  paid API
+
+First run  backfills the entire available history from every source, so the 3/6/9-month
+           trajectory columns are populated on run one rather than accumulating from install.
+Later runs extend the series and re-fetch a trailing 30-day window to catch source revisions.
+           Tier 4 (Dune) is skipped for any series the store already has history for.
+
+A failed source never kills the run: it is logged to the Run Log, the last known value is
+carried forward and marked stale, and anything unresolved lands in the Gap Report.
+
+Useful environment flags (all optional, all in .env):
+    DUNE_API_KEY                     tier 4 backfill
+    COINGECKO_API_KEY                raises the CoinGecko free-tier rate limit
+    RPC_ETHEREUM / RPC_BSC / ...     comma-separated override of the public RPC fallback list
+    TOKEN_METRICS_ALLOW_UNVERIFIED=1 read contract addresses not yet verified against protocol docs
+    TOKEN_METRICS_DUNE_ALWAYS=1      re-pull Dune even where the store already has history
+    TOKEN_METRICS_SOURCES=path       use a different sources.yaml
 """
 from __future__ import annotations
 
@@ -42,24 +55,44 @@ def main() -> int:
     window = None if first_run else REFETCH_WINDOW_DAYS
     log.info("run %s — %s", run_id, "FIRST RUN: full backfill" if first_run else f"incremental, trailing {window}d re-fetch")
 
-    out = fetch.fetch_all(config.PROJECTS, window)
-    frame = out.frame()
-    written = st.upsert(frame)
-    log.info("upserted %d rows", written)
-
-    for e in out.log:
-        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message)
-
+    # Manual overrides load LAST into the store, but the Gap Report needs to know what they
+    # cover before the gap detector runs, so read the file's keys up front.
     try:
-        n = st.load_overrides_csv(OVERRIDES_CSV)
-        st.record_fetch(run_id, "manual", None, n, "ok", f"{OVERRIDES_CSV.name}: {n} overrides loaded")
+        n_manual = st.load_overrides_csv(OVERRIDES_CSV)
+        manual_keys = set(
+            st.conn.execute("SELECT DISTINCT project, metric FROM manual_overrides").fetchall()
+        )
+        st.record_fetch(run_id, "manual", None, n_manual, "ok", f"{OVERRIDES_CSV.name}: {n_manual} overrides loaded")
     except Exception as e:  # noqa: BLE001
+        n_manual, manual_keys = 0, set()
         st.record_fetch(run_id, "manual", None, 0, "failed", f"{OVERRIDES_CSV.name}: {e}")
         log.error("manual overrides failed: %s", e)
 
+    prior_values = st.latest_values()
+    has_history = {k for k, _ in prior_values.items()}
+
+    out = fetch.fetch_all(
+        config.PROJECTS, window,
+        prior_values=prior_values,
+        has_history=has_history,
+        manual_keys=manual_keys,
+    )
+
+    written = st.upsert(out.frame())
+    log.info("upserted %d rows", written)
+
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+    n_review = st.record_review(run_id, out.review)
+    n_gaps = st.record_gaps(run_id, out.gaps)
+
     failures = [e for e in out.log if e.status == "failed"]
+    log.info("run summary: %d rows | %d fetch failures | %d review items | %d gaps | %d manual overrides",
+             written, len(failures), n_review, n_gaps, n_manual)
     if failures:
-        log.warning("%d fetch failures — see Run Log tab", len(failures))
+        log.warning("%d fetch failures — see the Run Log tab", len(failures))
+    if n_gaps:
+        log.warning("%d unresolved metrics — see the Gap Report tab, it is the to-do list", n_gaps)
 
     build_workbook(st, WORKBOOK, run_id=run_id)
     log.info("wrote %s", WORKBOOK)

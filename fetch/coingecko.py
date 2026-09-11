@@ -1,0 +1,82 @@
+"""
+fetch/coingecko.py — tier 1: CoinGecko free API.
+
+Price, market cap, volume, circulating/total/max supply and FDV. The public tier serves 365
+days of daily history, which covers the 30-day and 3/6/9-month trajectory columns; the store
+accumulates beyond it from run to run.
+
+circulating_supply_implied is market cap / price. It is a derivation, not a reported figure,
+so it carries the source coingecko:mcap/price and is used only as a cross-check against the
+reported supply on the archetype 4 tab.
+"""
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from .base import LONG_COLUMNS, Http, tidy, today
+
+SOURCE = "coingecko"
+TIER = 1
+API = "https://api.coingecko.com/api/v3"
+
+
+class CoinGecko:
+    def __init__(self):
+        key = os.environ.get("COINGECKO_API_KEY", "").strip()
+        self.headers = {"x-cg-demo-api-key": key} if key else {}
+        self.http = Http(min_interval=2.2)   # public tier is ~30 calls/min
+
+    @staticmethod
+    def _ms_rows(pairs):
+        return [(datetime.fromtimestamp(ts / 1000, tz=timezone.utc), v) for ts, v in pairs]
+
+    def run(self, projects: list[dict], window_days, out):
+        days = "365" if window_days is None else str(window_days)
+        for p in projects:
+            cid, name = p.get("coingecko_id"), p["name"]
+            if not cid:
+                out.unconfigured(SOURCE, name, "no coingecko_id", TIER)
+                continue
+            try:
+                j = self.http.get(f"{API}/coins/{cid}/market_chart",
+                                  params={"vs_currency": "usd", "days": days, "interval": "daily"},
+                                  headers=self.headers)
+                prices = tidy(self._ms_rows(j.get("prices", [])), name, "price_usd", SOURCE, TIER)
+                mcaps = tidy(self._ms_rows(j.get("market_caps", [])), name, "market_cap_usd", SOURCE, TIER)
+                vols = tidy(self._ms_rows(j.get("total_volumes", [])), name, "volume_usd", SOURCE, TIER)
+                out.add(prices, SOURCE, name, f"{cid}:price", TIER)
+                out.add(mcaps, SOURCE, name, f"{cid}:market cap", TIER)
+                out.add(vols, SOURCE, name, f"{cid}:volume", TIER)
+                m = prices.merge(mcaps, on="date", suffixes=("_p", "_m"))
+                m = m[m["value_p"] > 0]
+                if not m.empty:
+                    implied = pd.DataFrame({"date": m["date"], "project": name,
+                                            "metric": "circulating_supply_implied",
+                                            "value": m["value_m"] / m["value_p"],
+                                            "source": "coingecko:mcap/price", "tier": TIER})
+                    out.add(implied[LONG_COLUMNS], SOURCE, name, f"{cid}:implied supply", TIER)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{cid}:market_chart: {e}", TIER)
+            try:
+                j = self.http.get(f"{API}/coins/{cid}",
+                                  params={"localization": "false", "tickers": "false", "community_data": "false",
+                                          "developer_data": "false", "sparkline": "false"},
+                                  headers=self.headers)
+                md = j.get("market_data") or {}
+                when, rows = today(), []
+                for metric, key in (("circulating_supply", "circulating_supply"),
+                                    ("total_supply", "total_supply"), ("max_supply", "max_supply")):
+                    v = md.get(key)
+                    if v is not None:
+                        rows.append({"date": when, "project": name, "metric": metric,
+                                     "value": float(v), "source": SOURCE, "tier": TIER})
+                fdv = (md.get("fully_diluted_valuation") or {}).get("usd")
+                if fdv is not None:
+                    rows.append({"date": when, "project": name, "metric": "fdv_usd",
+                                 "value": float(fdv), "source": SOURCE, "tier": TIER})
+                out.add(pd.DataFrame(rows, columns=LONG_COLUMNS), SOURCE, name, f"{cid}:supply/fdv", TIER)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{cid}:coin detail: {e}", TIER)

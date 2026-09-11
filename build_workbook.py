@@ -50,6 +50,8 @@ FILL_MANUAL = PatternFill("solid", fgColor="FFFF00")
 FILL_UNCONFIRMED = PatternFill("solid", fgColor="D9D9D9")
 FILL_STALE = PatternFill("solid", fgColor="FCE4D6")
 FILL_PAUSED = PatternFill("solid", fgColor="FFE699")
+FILL_REVIEW = PatternFill("solid", fgColor="E4DFEC")      # flagged to the Review Queue
+FILL_GAP = PatternFill("solid", fgColor="F2F2F2")         # unresolved — see the Gap Report
 FILL_SECTION = PatternFill("solid", fgColor="EDEDED")
 FILL_KEY = PatternFill("solid", fgColor="FFF2CC")           # headline figure cells
 
@@ -71,9 +73,9 @@ CFG = "'Config & Sources'"
 NA = '"n/a"'
 
 # Data sheet layout (column letters)
-DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "latest_date",
+DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "last_success", "entered_on", "note"]
-DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Latest date",
+DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
              "Y1 (flow: 365d sum · stock: 365d avg)", "Points", "Status", "Last successful fetch", "Entered on (manual)", "Note"]
@@ -83,7 +85,7 @@ DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 CFG_COLS = [
     ("Project", 16), ("Symbol", 8), ("Archetypes", 10), ("Primary", 8), ("Held (not enabled)", 10), ("Materiality", 10),
     ("CoinGecko id", 16), ("DefiLlama fees slug", 14), ("DefiLlama protocol", 14), ("DefiLlama chain", 14),
-    ("Share of revenue to buyback", 12), ("Share source URL", 30), ("Share source date", 11), ("Discretionary", 11), ("Buyback status", 11),
+    ("Share of revenue to buyback", 12), ("Share source URL", 30), ("Share source date", 11), ("Programmed (contract-enforced)", 12), ("Buyback status", 11),
     ("Buyback destination", 11), ("Destination split (share burned, where destination = split)", 12), ("Burn execution", 12),
     ("Share of fees burned", 11), ("Burn source URL", 30), ("Burn source date", 11), ("Burn status", 11),
     ("Issuance schedule (tokens/day, current step)", 14), ("Schedule source URL", 30), ("Schedule source date", 11), ("Schedule status", 11),
@@ -124,8 +126,17 @@ def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
     return float(w.iloc[-1]) if len(w) else None
 
 
-def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp) -> pd.DataFrame:
+def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp,
+              gaps: pd.DataFrame | None = None, review: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every project x every metric in the library — so every INDEX/MATCH key resolves."""
+    gap_by_key = {}
+    if gaps is not None and not gaps.empty:
+        for r in gaps.to_dict("records"):
+            gap_by_key.setdefault((r["project"], r["metric"]), r)
+    review_keys = set()
+    if review is not None and not review.empty:
+        review_keys = {(r["project"], r["metric"]) for r in review.to_dict("records")}
+    applicable = {p["name"]: set(config.metrics_for_project(p)) for p in PROJECTS}
     short, period, stale_days = GLOBALS["short_days"], GLOBALS["period_days"], GLOBALS["stale_after_days"]
     last_success = {}
     if fetch_status is not None and not fetch_status.empty:
@@ -138,24 +149,22 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for metric, m in METRICS.items():
             g = groups.get((name, metric))
             row = {"key": f"{name}|{metric}", "project": name, "metric": metric, "label": m["label"],
-                   "kind": m["kind"], "unit": m["unit"], "source": "", "latest_date": "", "now": None, "m1": None,
+                   "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": ""}
             if g is None or g.empty:
-                if metric in config.MANUAL_ONLY_METRICS:
-                    row["status"], row["note"] = "manual only", "no API on our tier — enter via manual_overrides.csv"
-                elif metric in config.DUNE_ONLY_METRICS:
-                    q = (p.get("dune_queries") or {}).get(metric)
-                    if q is None:
-                        row["status"], row["note"] = "n/a", "not expected for this project"
-                    elif not q.get("query_id"):
-                        row["status"], row["note"] = "unconfigured", "Dune query_id not set in config.py"
+                gap = gap_by_key.get((name, metric))
+                if gap is not None:
+                    row["status"], row["note"] = "gap", f"{gap['reason']} | {gap['suggestion']}"
+                elif metric not in applicable.get(name, ()):
+                    row["status"], row["note"] = "n/a", "not applicable to this project's archetypes"
                 rows.append(row)
                 continue
             g = g.sort_values("date")
             s = g.set_index("date")["value"]
             latest = g.iloc[-1]
             row["source"] = latest["source"]
+            row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))
             if m["kind"] == "flow":
@@ -182,6 +191,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["note"] = f"last point {row['latest_date']}; last successful fetch {row['last_success'] or 'never'}"
             else:
                 row["status"] = "ok"
+            if (name, metric) in review_keys:
+                row["status"] = "review" if row["status"] == "ok" else row["status"]
+                row["note"] = (row["note"] + " | " if row["note"] else "") + "flagged in the Review Queue"
             rows.append(row)
     return pd.DataFrame(rows, columns=DATA_COLS)
 
@@ -322,7 +334,7 @@ def write_config(ws):
             ", ".join(str(a) for a in p.get("archetypes_held", [])) or "", p["materiality"],
             p.get("coingecko_id") or "", p.get("defillama_fees_slug") or "", p.get("defillama_protocol") or "", p.get("defillama_chain") or "",
             fs.get("share_to_buyback"), fs.get("source_url") or "", fs.get("source_date") or "",
-            ("yes" if fs.get("discretionary") else "no") if fs.get("discretionary") is not None else "", fs.get("status", "n/a"),
+            ("yes" if fs.get("programmed") else "no") if fs.get("programmed") is not None else "", fs.get("status", "n/a"),
             p.get("buyback_destination", ""), p.get("destination_split"), p.get("burn_execution", ""),
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
             bs.get("status", "n/a") if bs else "n/a",
@@ -336,7 +348,7 @@ def write_config(ws):
                 _style(c, "input", FMT_PCT)
             elif head == "Issuance schedule (tokens/day, current step)":
                 _style(c, "input", FMT_NUM2)
-            elif head in ("Discretionary", "Buyback status", "Buyback destination", "Burn execution", "Burn status", "Schedule status", "Materiality"):
+            elif head in ("Programmed (contract-enforced)", "Buyback status", "Buyback destination", "Burn execution", "Burn status", "Schedule status", "Materiality"):
                 _style(c, "input", FMT_TEXT)
             else:
                 _style(c, "text", FMT_TEXT)
@@ -378,8 +390,8 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
                     c.fill = FILL_STALE
                     if col == "now":
                         c.comment = Comment(f"STALE — {row.note}", "token_metrics")
-            elif col == "n_points":
-                c.value = int(v)
+            elif col in ("n_points", "tier"):
+                c.value = int(v) if str(v) not in ("", "None") else ""
                 _style(c, "text", FMT_NUM)
             else:
                 c.value = "" if v is None else str(v)
@@ -389,10 +401,12 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
                         c.fill = FILL_MANUAL
                     elif v == "stale":
                         c.fill = FILL_STALE
-                    elif v in ("missing", "unconfigured", "manual only"):
+                    elif v == "review":
+                        c.fill = FILL_REVIEW
+                    elif v in ("missing", "gap", "n/a"):
                         c.font = Font(name=FONT, size=10, color="999999")
-    _set_widths(ws, {"A": 34, "B": 14, "C": 24, "D": 30, "E": 6, "F": 7, "G": 20, "H": 11, "I": 16, "J": 16, "K": 16, "L": 16, "M": 16, "N": 16,
-                     "O": 16, "P": 7, "Q": 11, "R": 20, "S": 12, "T": 50})
+    _set_widths(ws, {"A": 34, "B": 14, "C": 24, "D": 30, "E": 6, "F": 7, "G": 22, "H": 5, "I": 11, "J": 16, "K": 16, "L": 16,
+                     "M": 16, "N": 16, "O": 16, "P": 16, "Q": 7, "R": 11, "S": 20, "T": 12, "U": 60})
     ws.freeze_panes = "B2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(DATA_COLS))}{len(data) + 1}"
 
@@ -608,7 +622,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
         ("Buyback status", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"status_fill": "fee_split"}),
-        ("Discretionary?", lambda r, p: pull(R.C(r, "Discretionary")), FMT_TEXT, "pull"),
+        ("Programmed? (contract-enforced vs revisable by governance)", lambda r, p: pull(R.C(r, "Programmed (contract-enforced)")), FMT_TEXT, "pull"),
         ("Buyback destination", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
         ("Destination split (share burned)", lambda r, p: pull(R.C(r, "Destination split (share burned, where destination = split)")), FMT_PCT, "pull"),
         ("Documented share of revenue to buyback (config)", lambda r, p: pull(share(r)), FMT_PCT, "pull", False, {"gate": "fee_split"}),
@@ -830,22 +844,116 @@ def write_charts(ws, sheets: dict):
     ws.add_chart(ch, "A108")
 
 
+
+def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
+    """The to-do list. Every metric no tier could resolve, with the reason and the fix.
+
+    Anything unresolved after all tiers appears here, not as a blank cell on Master. A silently
+    stale cell is worse than a visible gap; a blank one is worse still.
+    """
+    _title(ws, "Gap Report — the to-do list",
+           "Every metric no source tier could resolve, why it failed, and what would fix it. Most fixes are a sources.yaml edit: "
+           "find the page that publishes the figure, complete the entry, set enabled: true, re-run. "
+           "Rows marked [config] are not missing data — they are splits we have not documented, so the workbook suppresses the derived figure by design.")
+    headers = ["Project", "Metric", "Tiers attempted", "Reason unresolved", "What would fix it"]
+    _header(ws, 4, headers)
+    r = 5
+    if gaps is None or gaps.empty:
+        ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
+        _set_widths(ws, {"A": 16, "B": 26, "C": 12, "D": 62, "E": 86})
+        return
+    # config gaps first (they block derived figures), then by project, then metric
+    g = gaps.copy()
+    g["_config"] = g["metric"].astype(str).str.startswith("[config]")
+    g = g.sort_values(["_config", "project", "metric"], ascending=[False, True, True])
+    for row in g.to_dict("records"):
+        is_config = bool(row["_config"])
+        vals = [row["project"], row["metric"], row.get("tiers_attempted", ""), row["reason"], row.get("suggestion", "")]
+        for j, v in enumerate(vals, start=1):
+            c = ws.cell(row=r, column=j, value=str(v) if v is not None else "")
+            c.font = F_BASE
+            c.number_format = FMT_TEXT
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+            if is_config:
+                c.fill = FILL_UNCONFIRMED
+            elif j == 4:
+                c.font = Font(name=FONT, size=10, color="C00000")
+        ws.row_dimensions[r].height = 30
+        r += 1
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:E{r - 1}"
+    _set_widths(ws, {"A": 16, "B": 26, "C": 12, "D": 62, "E": 86})
+
+
+def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
+    """Values rejected by sanity bounds or flagged by the change threshold.
+
+    out_of_bounds     -> REJECTED, not stored. A wrong number in the sheet is worse than a gap.
+    change_threshold  -> STORED BUT FLAGGED. A genuine step change (a halving, a one-off burn)
+                         must not be silently dropped, so it is kept and surfaced here.
+    address_unverified-> a contract address read without being verified against protocol docs.
+    """
+    _title(ws, "Review Queue",
+           "Values the validation layer would not accept silently. Out-of-bounds values were REJECTED and are not in the store. "
+           "Large moves were STORED BUT FLAGGED — check them before trusting the cell. Unverified addresses were read under "
+           "TOKEN_METRICS_ALLOW_UNVERIFIED. Bounds and thresholds are set per metric in config.py and per source in sources.yaml.")
+    headers = ["Project", "Metric", "Date", "Value", "Prior value", "Change", "Reason", "Action", "Source", "Tier"]
+    _header(ws, 4, headers)
+    r = 5
+    if review is None or review.empty:
+        ws.cell(row=r, column=1, value="Nothing flagged this run.").font = F_BOLD
+        _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 18, "E": 18, "F": 11, "G": 18, "H": 15, "I": 26, "J": 6})
+        return
+    rv = review.sort_values(["reason", "project", "metric"])
+    for row in rv.to_dict("records"):
+        rejected = row.get("action") == "rejected"
+        ws.cell(row=r, column=1, value=row["project"]).font = F_BASE
+        ws.cell(row=r, column=2, value=row["metric"]).font = F_BASE
+        ws.cell(row=r, column=3, value=row.get("date") or "").font = F_BASE
+        for j, key, fmt in ((4, "value", FMT_NUM2), (5, "prior_value", FMT_NUM2)):
+            v = row.get(key)
+            c = ws.cell(row=r, column=j)
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                c.value, c.font, c.number_format = "n/a", Font(name=FONT, size=10, color="999999"), FMT_TEXT
+            else:
+                c.value, c.font, c.number_format = float(v), F_BASE, fmt
+        # change is a formula so the reader can see the arithmetic
+        c = ws.cell(row=r, column=6, value=f"=IFERROR(D{r}/E{r}-1,{NA})")
+        _style(c, "calc", FMT_PCT)
+        for j, key in ((7, "reason"), (8, "action"), (9, "source")):
+            c = ws.cell(row=r, column=j, value=str(row.get(key) or ""))
+            c.font = F_BASE
+            c.number_format = FMT_TEXT
+        t = row.get("tier")
+        ws.cell(row=r, column=10, value="" if t is None or pd.isna(t) else int(t)).font = F_BASE
+        fill = FILL_STALE if rejected else FILL_REVIEW
+        for j in range(1, 11):
+            if not ws.cell(row=r, column=j).fill.fgColor.rgb or ws.cell(row=r, column=j).fill.patternType is None:
+                ws.cell(row=r, column=j).fill = fill
+        r += 1
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:J{r - 1}"
+    _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 18, "E": 18, "F": 11, "G": 18, "H": 15, "I": 26, "J": 6})
+
+
 def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: str | None, asof: pd.Timestamp, overrides_n: int):
     _title(ws, "Run Log", f"Run {run_id or '(build only)'} — workbook built {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} — data as of {asof.date()} (UTC)")
     r = 4
     ws.cell(row=r, column=1, value="Rows fetched per source (this run)").font = F_BOLD
     r += 1
-    _header(ws, r, ["Source", "OK calls", "Rows", "Failed", "Unconfigured / manual-only"])
+    _header(ws, r, ["Source", "Tier", "OK calls", "Rows", "Failed", "Unconfigured / not applicable"])
     ws.row_dimensions[r].height = 18
     r += 1
     if runlog is not None and not runlog.empty:
         for src, g in runlog.groupby("source", sort=True):
-            vals = [src, int((g["status"] == "ok").sum()), int(g["rows"].fillna(0).sum()), int((g["status"] == "failed").sum()),
+            tiers = sorted({int(t) for t in g["tier"].dropna().unique()}) if "tier" in g else []
+            vals = [src, ", ".join(str(t) for t in tiers), int((g["status"] == "ok").sum()),
+                    int(g["rows"].fillna(0).sum()), int((g["status"] == "failed").sum()),
                     int((g["status"] == "unconfigured").sum())]
             for j, v in enumerate(vals, start=1):
                 c = ws.cell(row=r, column=j, value=v)
-                _style(c, "text", FMT_NUM if j > 1 else FMT_TEXT)
-                if j == 4 and v:
+                _style(c, "text", FMT_NUM if j > 2 else FMT_TEXT)
+                if j == 5 and v:
                     c.font = Font(name=FONT, size=10, color="C00000", bold=True)
             r += 1
     else:
@@ -914,10 +1022,12 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     long = store.load_long()
     fetch_status = store.fetch_status()
     runlog = store.run_log(run_id) if run_id else store.run_log()
+    gaps = store.gap_report(run_id) if run_id else store.gap_report()
+    review = store.review_queue(run_id) if run_id else store.review_queue()
     overrides_n = int(long["is_manual"].sum()) if not long.empty else 0
     asof = asof or pd.Timestamp.now('UTC').tz_localize(None).normalize()
 
-    data = aggregate(long, fetch_status, asof)
+    data = aggregate(long, fetch_status, asof, gaps=gaps, review=review)
     data_by_key = {r["key"]: r for r in data.to_dict("records")}
     months, monthly = monthly_table(long, asof)
     R = Refs(len(data), len(monthly), months)
@@ -931,6 +1041,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     ws_a4 = wb.create_sheet("A4 Permanent Burn")
     ws_ch = wb.create_sheet("Charts")
     ws_cfg = wb.create_sheet("Config & Sources")
+    ws_gap = wb.create_sheet("Gap Report")
+    ws_rev = wb.create_sheet("Review Queue")
     ws_log = wb.create_sheet("Run Log")
     ws_data = wb.create_sheet("Data")
     ws_mon = wb.create_sheet("Monthly")
@@ -944,6 +1056,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     a1 = write_a1(ws_a1, R, data_by_key, months)
     a2 = write_a2(ws_a2, R, data_by_key, months)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
+    write_gap_report(ws_gap, gaps, run_id)
+    write_review_queue(ws_rev, review, run_id)
     write_runlog(ws_log, runlog, fetch_status, run_id, asof, overrides_n)
 
     # legend on Master
@@ -952,7 +1066,9 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
               ("Green = pulled from another sheet", F_LINK, None), ("Yellow fill = manual override (entered_on in comment)", F_BASE, FILL_MANUAL),
               ("Grey fill = split unconfirmed, derived figure suppressed", F_BASE, FILL_UNCONFIRMED), ("Orange fill = stale (last good fetch in comment)", F_BASE, FILL_STALE),
               ("Amber fill = programme paused", F_BASE, FILL_PAUSED), ("Highlighted columns = headline figures", F_BASE, FILL_KEY),
-              ("n/a = no value in the store (never a zero)", Font(name=FONT, size=10, color="999999"), None)]
+              ("Lilac fill = flagged to the Review Queue", F_BASE, FILL_REVIEW),
+              ("n/a = no value in the store (never a zero) — see the Gap Report for why", Font(name=FONT, size=10, color="999999"), None),
+              ("Source tiers: 1 free API · 2 contract read · 3 protocol dashboard · 4 Dune backfill · 5 off-chain operational", F_SUB, None)]
     for i, (text, font, fill) in enumerate(legend):
         c = ws_master.cell(row=legend_row + i, column=1, value=text)
         c.font = font

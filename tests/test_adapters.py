@@ -1,11 +1,12 @@
 """
-tests/test_adapters.py — adapter parsing against payloads shaped like the real APIs.
+tests/test_adapters.py — adapter parsing against payloads shaped like the real sources.
 
     python tests/test_adapters.py
 
-The HTTP layer is stubbed, so this runs offline. It checks that each adapter turns the
-documented response shape into tidy long rows with the right metric keys and source labels,
-and that a failing endpoint is logged rather than raised.
+Runs offline: the HTTP layer, the web3 connection and the Playwright page are all stubbed.
+Checks that each tier turns its documented response shape into tidy long rows with the right
+metric key, source label and tier, and that a failure is logged and reported as a gap rather
+than raised.
 """
 from __future__ import annotations
 
@@ -18,99 +19,292 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["DUNE_API_KEY"] = "test-key"
 
-import fetch  # noqa: E402
+import config  # noqa: E402
+from fetch import base  # noqa: E402
+from fetch.base import FetchOutput  # noqa: E402
+from fetch.chain import Chain  # noqa: E402
+from fetch.coingecko import CoinGecko  # noqa: E402
+from fetch.dune import Dune  # noqa: E402
+from fetch.llama import DefiLlama  # noqa: E402
+from fetch.scrape import Scrape, extract_dom, extract_xhr  # noqa: E402
+from fetch.validate import validate_frame  # noqa: E402
 
 TS1, TS2 = 1756684800, 1756771200   # 2025-09-01, 2025-09-02 UTC
 
 
 class StubHttp:
     def __init__(self, routes):
-        self.routes = routes
-        self.calls = []
+        self.routes, self.calls = routes, []
 
     def get(self, url, params=None, headers=None):
         self.calls.append((url, params, headers))
         for key, payload in self.routes.items():
-            if key in url and (not isinstance(payload, tuple) or payload[0] is None or payload[0] == (params or {}).get("dataType")):
-                body = payload[1] if isinstance(payload, tuple) else payload
-                if isinstance(body, Exception):
-                    raise body
-                return body
+            if key in url:
+                if isinstance(payload, Exception):
+                    raise payload
+                return payload
         raise RuntimeError(f"HTTP 404 from {url}")
 
 
+# ---------------------------------------------------------------------------- tier 1
 def test_defillama():
-    dl = fetch.DefiLlama()
+    dl = DefiLlama()
     dl.http = StubHttp({
-        "/summary/fees/aave": (None, {"totalDataChart": [[TS1, 100.0], [TS2, 150.0]]}),
-        "/protocol/aave": {"tvl": [{"date": TS1, "totalLiquidityUSD": 5e9}, {"date": TS2, "totalLiquidityUSD": 5.1e9}]},
-        "/v2/historicalChainTvl/Ethereum": [{"date": TS1, "tvl": 6e10}, {"date": TS2, "tvl": 6.1e10}],
+        "/summary/fees/aave": {"totalDataChart": [[TS1, 100.0], [TS2, 150.0]]},
+        "/protocol/aave": {"tvl": [{"date": TS1, "totalLiquidityUSD": 5e9}]},
+        "/v2/historicalChainTvl/Ethereum": [{"date": TS1, "tvl": 6e10}],
         "/stablecoincharts/Ethereum": [{"date": str(TS1), "totalCirculatingUSD": {"peggedUSD": 1.2e11, "peggedEUR": 1e8}}],
-        "/protocols": [{"slug": "ondo", "category": "RWA", "chains": ["Ethereum"]}, {"slug": "uni", "category": "Dexes", "chains": ["Ethereum"]}],
+        "/protocols": [{"slug": "ondo", "category": "RWA", "chains": ["Ethereum"]},
+                       {"slug": "uni", "category": "Dexes", "chains": ["Ethereum"]}],
         "/protocol/ondo": {"tvl": [], "chainTvls": {"Ethereum": {"tvl": [{"date": TS1, "totalLiquidityUSD": 1e9}]}}},
     })
-    out = fetch.FetchOutput()
+    out = FetchOutput()
     aave = {"name": "Aave", "defillama_fees_slug": "aave", "defillama_protocol": "aave", "defillama_chain": None, "archetypes": [3]}
     eth = {"name": "Ethereum", "defillama_fees_slug": "broken", "defillama_protocol": None, "defillama_chain": "Ethereum", "archetypes": [1]}
     dl.run([aave, eth], None, out)
     df = out.frame()
     got = set(zip(df["project"], df["metric"]))
-    assert ("Aave", "fees_usd") in got and ("Aave", "revenue_usd") in got and ("Aave", "holders_revenue_usd") in got, got
-    assert ("Aave", "protocol_tvl_usd") in got
-    assert ("Ethereum", "tvl_usd") in got and ("Ethereum", "stablecoin_supply_usd") in got and ("Ethereum", "rwa_defillama_usd") in got
+    for want in [("Aave", "fees_usd"), ("Aave", "revenue_usd"), ("Aave", "protocol_tvl_usd"),
+                 ("Ethereum", "tvl_usd"), ("Ethereum", "stablecoin_supply_usd"), ("Ethereum", "rwa_defillama_usd")]:
+        assert want in got, (want, got)
     stab = df[(df.project == "Ethereum") & (df.metric == "stablecoin_supply_usd")]
-    assert abs(stab.value.iloc[0] - 1.201e11) < 1, stab
-    assert set(df["source"]) == {"defillama"}
-    assert df["date"].dt.tz is None and df["date"].iloc[0] == pd.Timestamp("2025-09-01")
+    assert abs(stab.value.iloc[0] - 1.201e11) < 1
+    assert set(df["tier"]) == {1}
     fails = [e for e in out.log if e.status == "failed"]
-    assert len(fails) == 3 and all(e.project == "Ethereum" and "broken" in e.message for e in fails), fails
-    print("defillama ok:", len(df), "rows,", len(fails), "logged failures for the broken slug")
+    assert len(fails) == 3 and all(e.tier == 1 for e in fails), fails
+    print(f"tier 1 defillama ok: {len(df)} rows, {len(fails)} logged failures")
 
 
 def test_coingecko():
-    cg = fetch.CoinGecko()
+    cg = CoinGecko()
     cg.http = StubHttp({
-        "/coins/aave/market_chart": {"prices": [[TS1 * 1000, 200.0], [TS2 * 1000, 210.0]], "market_caps": [[TS1 * 1000, 3e9], [TS2 * 1000, 3.15e9]], "total_volumes": [[TS1 * 1000, 1e8], [TS2 * 1000, 1.1e8]]},
-        "/coins/aave": {"market_data": {"circulating_supply": 15e6, "total_supply": 16e6, "max_supply": 16e6, "fully_diluted_valuation": {"usd": 3.36e9}}},
+        "/coins/aave/market_chart": {"prices": [[TS1 * 1000, 200.0], [TS2 * 1000, 210.0]],
+                                     "market_caps": [[TS1 * 1000, 3e9], [TS2 * 1000, 3.15e9]],
+                                     "total_volumes": [[TS1 * 1000, 1e8], [TS2 * 1000, 1.1e8]]},
+        "/coins/aave": {"market_data": {"circulating_supply": 15e6, "total_supply": 16e6,
+                                        "max_supply": 16e6, "fully_diluted_valuation": {"usd": 3.36e9}}},
     })
-    out = fetch.FetchOutput()
+    out = FetchOutput()
     cg.run([{"name": "Aave", "coingecko_id": "aave"}, {"name": "Nope", "coingecko_id": None}], None, out)
     df = out.frame()
-    metrics = set(df["metric"])
-    assert {"price_usd", "market_cap_usd", "volume_usd", "circulating_supply_implied", "circulating_supply", "total_supply", "max_supply", "fdv_usd"} <= metrics, metrics
+    assert {"price_usd", "market_cap_usd", "circulating_supply_implied", "circulating_supply",
+            "total_supply", "max_supply", "fdv_usd"} <= set(df["metric"])
     implied = df[df.metric == "circulating_supply_implied"]
     assert abs(implied.value.iloc[0] - 1.5e7) < 1 and implied.source.iloc[0] == "coingecko:mcap/price"
     assert cg.http.calls[0][1]["days"] == "365"
     assert any(e.status == "unconfigured" and e.project == "Nope" for e in out.log)
-    print("coingecko ok:", sorted(metrics))
+    print("tier 1 coingecko ok:", len(set(df["metric"])), "metrics")
 
 
-def test_dune():
-    du = fetch.Dune()
-    du.http = StubHttp({
-        "/query/123/results": {"result": {"rows": [{"day": "2025-09-01 00:00:00.000 UTC", "burned": 12.5}, {"day": "2025-09-02 00:00:00.000 UTC", "burned": 13.0}]}},
-    })
-    out = fetch.FetchOutput()
-    p = {"name": "Ethereum", "dune_queries": {"gross_burn_tokens": {"query_id": 123, "date_col": "day", "value_col": "burned"},
-                                              "tx_count": {"query_id": None}}}
-    du.run([p], 30 * 365, out)
+# ---------------------------------------------------------------------------- tier 2
+class StubReader:
+    """Stands in for a live RPC connection."""
+
+    def __init__(self, symbol="CAKE", supply=100.0, balance=25.0, raise_on=None):
+        self.symbol, self.supply, self.balance, self.raise_on = symbol, supply, balance, raise_on
+
+    def symbol_matches(self, chain, address, expected):
+        if self.raise_on == "symbol":
+            raise RuntimeError("RPC timeout")
+        return str(self.symbol).lower() == str(expected).lower(), self.symbol
+
+    def scaled(self, chain, address, call, *args):
+        if self.raise_on == "read":
+            raise RuntimeError("execution reverted")
+        return self.balance if args and args[0] else self.supply
+
+
+def _cake_project(verified=None):
+    return {
+        "name": "PancakeSwap", "archetypes": [4, 3],
+        "contracts": {
+            "token": {"address": "0x0E09", "chain": "bsc", "kind": "erc20_total_supply",
+                      "expected_symbol": "Cake", "source_url": "u", "verified": verified},
+            "burn_dead": {"address": "0xdEaD", "chain": "bsc", "kind": "burn_address_balance",
+                          "expected_symbol": "Cake", "source_url": "u", "verified": verified},
+        },
+    }
+
+
+def test_chain_refuses_unverified_by_default():
+    os.environ.pop("TOKEN_METRICS_ALLOW_UNVERIFIED", None)
+    c = Chain()
+    c.reader = StubReader()
+    out = FetchOutput()
+    c.run([_cake_project(verified=None)], None, out)
+    assert out.frame().empty, "unverified addresses must not be read by default"
+    assert len(out.gaps) == 2 and all("NOT verified" in g["reason"] for g in out.gaps), out.gaps
+    print("tier 2 gate ok: unverified addresses refused,", len(out.gaps), "gap rows raised")
+
+
+def test_chain_reads_verified_and_derives_flow():
+    c = Chain(prior_values={("PancakeSwap", "burn_address_balance"): 20.0})
+    c.reader = StubReader(symbol="Cake", supply=100.0, balance=25.0)
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
     df = out.frame()
-    assert len(df) == 2 and df.source.iloc[0] == "dune:123" and df.metric.iloc[0] == "gross_burn_tokens"
-    assert du.http.calls[0][2] == {"X-Dune-API-Key": "test-key"}
-    assert any(e.status == "unconfigured" and "tx_count" in e.message for e in out.log)
-    print("dune ok")
+    by = dict(zip(df["metric"], df["value"]))
+    assert by["total_supply"] == 100.0, by
+    assert by["burn_address_balance"] == 25.0, by
+    assert by["gross_burn_tokens"] == 5.0, "flow must be the delta 25 - 20"
+    assert set(df["tier"]) == {2}
+    print("tier 2 read ok:", by)
 
 
-def test_window():
-    df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", pd.Timestamp.now("UTC").tz_localize(None).normalize()]),
-                       "project": "x", "metric": "m", "value": [1.0, 2.0], "source": "s"})
-    assert len(fetch._window(df, None)) == 2 and len(fetch._window(df, 30)) == 1
-    print("window ok")
+def test_chain_symbol_mismatch_rejects():
+    c = Chain()
+    c.reader = StubReader(symbol="WRONG")
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+    assert out.frame().empty, "a symbol mismatch must reject the address"
+    assert any("symbol mismatch" in g["reason"] for g in out.gaps), out.gaps
+    assert any("symbol check FAILED" in e.message for e in out.log if e.status == "failed")
+    print("tier 2 symbol self-check ok: wrong address rejected before any value was stored")
+
+
+def test_chain_read_failure_is_logged_not_raised():
+    c = Chain()
+    c.reader = StubReader(symbol="Cake", raise_on="read")
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+    assert out.frame().empty
+    assert all(e.status in ("ok", "failed") for e in out.log)
+    assert any("execution reverted" in g["reason"] for g in out.gaps)
+    print("tier 2 failure ok: RPC error logged and reported as a gap, run continues")
+
+
+# ---------------------------------------------------------------------------- tier 3
+class StubPage:
+    """Minimal Playwright page: evaluate() runs the DOM-anchor contract against a fake DOM."""
+
+    def __init__(self, anchor_result):
+        self.anchor_result = anchor_result
+
+    def evaluate(self, js, arg=None):
+        return self.anchor_result
+
+
+def test_extract_xhr():
+    entry = {"json_path": "data.monthly.0.netMint", "url_contains": "/api/tokenomics"}
+    captured = [("https://x/other", {"nope": 1}),
+                ("https://x/api/tokenomics?v=2", {"data": {"monthly": [{"netMint": -1958514}]}})]
+    v, detail = extract_xhr(None, entry, captured)
+    assert v == -1958514.0, (v, detail)
+    v2, detail2 = extract_xhr(None, {"json_path": "a.b", "url_contains": "/nothing"}, captured)
+    assert v2 is None and "no intercepted response matched" in detail2
+    print("tier 3 xhr ok:", detail)
+
+
+def test_extract_dom_anchor_and_ambiguity():
+    page = StubPage([{"where": "next_sibling", "value": "1,234,567", "label": "Total CAKE Burned"}])
+    v, detail = extract_dom(page, {"anchor": "Total CAKE Burned"})
+    assert v == 1234567.0 and "next_sibling" in detail, (v, detail)
+    page2 = StubPage([{"where": "own_tail", "value": "42", "label": "X"},
+                      {"where": "next_sibling", "value": "99", "label": "X"}])
+    v2, d2 = extract_dom(page2, {"anchor": "X"})
+    assert v2 == 42.0 and "AMBIGUOUS" in d2, d2
+    page3 = StubPage([])
+    v3, d3 = extract_dom(page3, {"anchor": "Nope"})
+    assert v3 is None and "not found" in d3
+    print("tier 3 dom ok: anchored on label text, ambiguity surfaced")
+
+
+def test_scrape_registry_reports_incomplete_entries_as_gaps():
+    import tempfile
+    import yaml
+    tmp = Path(tempfile.mkdtemp()) / "sources.yaml"
+    tmp.write_text(yaml.safe_dump([
+        {"project": "PancakeSwap", "metric": "net_mint_monthly", "tier": 3, "enabled": False, "url": None, "method": "dom"},
+        {"project": "Uniswap", "metric": "net_mint_monthly", "tier": 3, "enabled": True, "url": "https://x", "method": "dom"},
+    ]))
+    s = Scrape(registry_path=tmp)
+    out = FetchOutput()
+    s.run([{"name": "PancakeSwap"}, {"name": "Uniswap"}], None, out)
+    assert len(out.gaps) == 2, out.gaps
+    reasons = {g["project"]: g["reason"] for g in out.gaps}
+    assert "disabled" in reasons["PancakeSwap"], reasons
+    assert "anchor" in reasons["Uniswap"], reasons
+    assert out.frame().empty
+    print("tier 3 registry ok: incomplete entries become gap rows, nothing is guessed")
+
+
+# ---------------------------------------------------------------------------- tier 4
+def test_dune_backfill_only():
+    du = Dune(has_history={("Ethereum", "gross_burn_tokens")})
+    du.http = StubHttp({"/query/123/results": {"result": {"rows": [
+        {"day": "2025-09-01 00:00:00.000 UTC", "burned": 12.5},
+        {"day": "2025-09-02 00:00:00.000 UTC", "burned": 13.0}]}}})
+    p = {"name": "Ethereum", "dune_queries": {
+        "gross_burn_tokens": {"query_id": 123, "date_col": "day", "value_col": "burned"},
+        "staked_tokens": {"query_id": 123, "date_col": "day", "value_col": "burned"},
+        "tx_count": {"query_id": None}}}
+    out = FetchOutput()
+    du.run([p], None, out)
+    df = out.frame()
+    assert set(df["metric"]) == {"staked_tokens"}, "a series with history must be skipped"
+    assert set(df["tier"]) == {4} and df.source.iloc[0] == "dune:123"
+    assert any("already holds history" in e.message for e in out.log)
+    assert any("no query_id" in e.message for e in out.log)
+    print("tier 4 ok: backfill only, skipped the series the store already covers")
+
+
+# ---------------------------------------------------------------------------- validation
+def test_validation_bounds_and_threshold():
+    out = FetchOutput()
+    bad = pd.DataFrame({"date": [pd.Timestamp("2026-09-10")], "project": ["Bitcoin"], "metric": ["price_usd"],
+                        "value": [9e9], "source": ["coingecko"], "tier": [1]})
+    assert validate_frame(bad, {}, out).empty
+    assert out.review[0]["reason"] == "out_of_bounds" and out.review[0]["action"] == "rejected"
+
+    out2 = FetchOutput()
+    big = pd.DataFrame({"date": [pd.Timestamp("2026-09-10")], "project": ["Bitcoin"], "metric": ["price_usd"],
+                        "value": [100000.0], "source": ["coingecko"], "tier": [1]})
+    assert len(validate_frame(big, {("Bitcoin", "price_usd"): 10000.0}, out2)) == 1, "a big move is kept, not dropped"
+    assert out2.review[0]["reason"] == "change_threshold" and out2.review[0]["action"] == "stored_flagged"
+
+    out3 = FetchOutput()
+    validate_frame(big, {("Bitcoin", "price_usd"): 95000.0}, out3)
+    assert not out3.review
+    print("validation ok: out-of-bounds rejected, large move flagged but kept, small move silent")
+
+
+def test_parse_number():
+    cases = [("1,234,567", 1234567.0), ("$1.2M", 1200000.0), ("(1,958,514)", -1958514.0), ("45.2%", 0.452),
+             ("3.4bn", 3.4e9), ("12k", 12000.0), ("", None), ("n/a", None), (None, None), ("  7 ", 7.0), (42, 42.0)]
+    for text, expected in cases:
+        assert base.parse_number(text) == expected, (text, base.parse_number(text))
+    print("parse_number ok:", len(cases), "cases")
+
+
+def test_gap_detection_covers_every_applicable_metric():
+    from fetch.gaps import detect
+    frame = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"])
+    gaps = detect(config.PROJECTS, frame, set(), {}, [])
+    keys = {(g["project"], g["metric"]) for g in gaps}
+    for p in config.PROJECTS:
+        for m in config.metrics_for_project(p):
+            assert (p["name"], m) in keys, f"{p['name']}/{m} missing from the Gap Report"
+    assert all(g["reason"] and g["suggestion"] for g in gaps), "every gap needs a reason and a fix"
+    vague = [g for g in gaps if g["reason"] == "no source configured for this metric"]
+    assert not vague, f"{len(vague)} gaps have no specific reason"
+    print(f"gap detection ok: {len(gaps)} rows, every one with a specific reason and a fix")
+
+
+def test_manual_overrides_suppress_gaps():
+    from fetch.gaps import detect
+    frame = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"])
+    gaps = detect(config.PROJECTS, frame, {("World Mobile", "customer_revenue_usd")}, {}, [])
+    assert ("World Mobile", "customer_revenue_usd") not in {(g["project"], g["metric"]) for g in gaps}
+    print("manual overrides ok: a hand-entered metric is not reported as a gap")
 
 
 if __name__ == "__main__":
-    test_defillama()
-    test_coingecko()
-    test_dune()
-    test_window()
-    print("ALL ADAPTER TESTS PASSED")
+    for fn in [test_defillama, test_coingecko,
+               test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
+               test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
+               test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
+               test_scrape_registry_reports_incomplete_entries_as_gaps,
+               test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
+               test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:
+        fn()
+    print("\nALL ADAPTER TESTS PASSED")

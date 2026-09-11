@@ -31,6 +31,8 @@ import config  # noqa: E402
 import fetch  # noqa: E402
 import store as store_mod  # noqa: E402
 from build_workbook import build_workbook  # noqa: E402
+from fetch.base import FetchOutput  # noqa: E402
+from fetch.schedule import Schedule  # noqa: E402
 
 rng = np.random.default_rng(7)
 TODAY = pd.Timestamp.now('UTC').tz_localize(None).normalize()
@@ -43,8 +45,9 @@ def series(level: float, drift: float = 0.0, noise: float = 0.05, n: int = DAYS)
     return level * np.exp(steps)
 
 
-def frame(project: str, metric: str, values, source: str, dates=DATES) -> pd.DataFrame:
-    return pd.DataFrame({"date": dates[: len(values)], "project": project, "metric": metric, "value": values, "source": f"FIXTURE:{source}"})
+def frame(project: str, metric: str, values, source: str, dates=DATES, tier: int = 1) -> pd.DataFrame:
+    return pd.DataFrame({"date": dates[: len(values)], "project": project, "metric": metric,
+                         "value": values, "source": f"FIXTURE:{source}", "tier": tier})
 
 
 def main() -> int:
@@ -59,53 +62,62 @@ def main() -> int:
         price0 = float(rng.choice([0.05, 0.4, 2.5, 30, 180, 3200, 65000]))
         price = series(price0, drift=rng.normal(0, 0.4), noise=0.5)
         supply0 = float(rng.choice([21e6, 120e6, 500e6, 1e9, 10e9]))
-        frames.append(frame(name, "price_usd", price, "coingecko"))
-        frames.append(frame(name, "market_cap_usd", price * supply0 * (1 + np.linspace(0, 0.04, DAYS)), "coingecko"))
-        frames.append(frame(name, "circulating_supply_implied", supply0 * (1 + np.linspace(0, 0.04, DAYS)), "coingecko:mcap/price"))
-        frames.append(frame(name, "volume_usd", series(price0 * supply0 * 0.02, noise=0.6), "coingecko"))
+        frames.append(frame(name, "price_usd", price, "coingecko", tier=1))
+        frames.append(frame(name, "market_cap_usd", price * supply0 * (1 + np.linspace(0, 0.04, DAYS)), "coingecko", tier=1))
+        frames.append(frame(name, "circulating_supply_implied", supply0 * (1 + np.linspace(0, 0.04, DAYS)), "coingecko:mcap/price", tier=1))
+        frames.append(frame(name, "volume_usd", series(price0 * supply0 * 0.02, noise=0.6), "coingecko", tier=1))
         today_only = pd.DatetimeIndex([TODAY])
-        frames.append(frame(name, "circulating_supply", [supply0 * 1.04], "coingecko", today_only))
-        frames.append(frame(name, "total_supply", [supply0 * 1.3], "coingecko", today_only))
-        frames.append(frame(name, "fdv_usd", [supply0 * 1.3 * price[-1]], "coingecko", today_only))
+        frames.append(frame(name, "circulating_supply", [supply0 * 1.04], "coingecko", today_only, tier=1))
+        frames.append(frame(name, "total_supply", [supply0 * 1.3], "coingecko", today_only, tier=1))
+        frames.append(frame(name, "fdv_usd", [supply0 * 1.3 * price[-1]], "coingecko", today_only, tier=1))
         if name != "World Mobile":  # manual-only project
             fees = series(price0 * supply0 * 0.0004, drift=rng.normal(0.2, 0.5), noise=0.4)
             if name == "Fluid":      # stale case: series ends 20 days ago
-                frames.append(frame(name, "fees_usd", fees[:-20], "defillama"))
+                frames.append(frame(name, "fees_usd", fees[:-20], "defillama", tier=1))
             else:
-                frames.append(frame(name, "fees_usd", fees, "defillama"))
-            frames.append(frame(name, "revenue_usd", fees * 0.6, "defillama"))
-            frames.append(frame(name, "holders_revenue_usd", fees * 0.3, "defillama"))
+                frames.append(frame(name, "fees_usd", fees, "defillama", tier=1))
+            frames.append(frame(name, "revenue_usd", fees * 0.6, "defillama", tier=1))
+            frames.append(frame(name, "holders_revenue_usd", fees * 0.3, "defillama", tier=1))
         if 1 in arch:
-            frames.append(frame(name, "tvl_usd", series(price0 * supply0 * 0.3, noise=0.3), "defillama"))
-            frames.append(frame(name, "stablecoin_supply_usd", series(price0 * supply0 * 0.1, noise=0.2), "defillama"))
-            frames.append(frame(name, "rwa_defillama_usd", series(price0 * supply0 * 0.01, drift=0.5, noise=0.2), "defillama"))
-            frames.append(frame(name, "tx_count", series(2e6, noise=0.3), "dune:1"))
-            frames.append(frame(name, "active_addresses", series(3e5, noise=0.3), "dune:2"))
-            frames.append(frame(name, "staked_tokens", series(supply0 * 0.5, noise=0.05), "dune:3"))
+            frames.append(frame(name, "tvl_usd", series(price0 * supply0 * 0.3, noise=0.3), "defillama", tier=1))
+            frames.append(frame(name, "stablecoin_supply_usd", series(price0 * supply0 * 0.1, noise=0.2), "defillama", tier=1))
+            frames.append(frame(name, "rwa_defillama_usd", series(price0 * supply0 * 0.01, drift=0.5, noise=0.2), "defillama", tier=1))
+            frames.append(frame(name, "tx_count", series(2e6, noise=0.3), "dune:1", tier=4))
+            frames.append(frame(name, "active_addresses", series(3e5, noise=0.3), "dune:2", tier=4))
+            frames.append(frame(name, "staked_tokens", series(supply0 * 0.5, noise=0.05), "dune:3", tier=4))
         if p.get("defillama_protocol"):
-            frames.append(frame(name, "protocol_tvl_usd", series(price0 * supply0 * 0.5, noise=0.3), "defillama"))
+            frames.append(frame(name, "protocol_tvl_usd", series(price0 * supply0 * 0.5, noise=0.3), "defillama", tier=1))
         if 4 in arch:
-            frames.append(frame(name, "gross_burn_tokens", series(supply0 * 0.0001, drift=rng.normal(0.3, 0.5), noise=0.5), "dune:4"))
+            frames.append(frame(name, "gross_burn_tokens", series(supply0 * 0.0001, drift=rng.normal(0.3, 0.5), noise=0.5), "dune:4", tier=4))
         if 4 in arch or 1 in arch:
             if not (p.get("issuance_schedule") or {}).get("steps"):
-                frames.append(frame(name, "gross_issuance_tokens", series(supply0 * 0.00012, drift=-0.1, noise=0.1), "dune:5"))
+                frames.append(frame(name, "gross_issuance_tokens", series(supply0 * 0.00012, drift=-0.1, noise=0.1), "dune:5", tier=4))
         if 2 in arch and name != "peaq":   # peaq left missing on purpose
-            frames.append(frame(name, "supply_units", series(rng.choice([1500, 12000, 40000]), drift=0.3, noise=0.1), "dune:6"))
-            frames.append(frame(name, "utilisation_pct", np.clip(series(0.35, noise=0.3), 0, 1), "dune:7"))
-            frames.append(frame(name, "customer_revenue_usd", series(price0 * supply0 * 0.00005, drift=rng.normal(0.4, 0.5), noise=0.5), "dune:8"))
-            frames.append(frame(name, "emissions_tokens", series(supply0 * 0.0002, drift=-0.2, noise=0.1), "dune:9"))
+            frames.append(frame(name, "supply_units", series(rng.choice([1500, 12000, 40000]), drift=0.3, noise=0.1), "dune:6", tier=4))
+            frames.append(frame(name, "utilisation_pct", np.clip(series(0.35, noise=0.3), 0, 1), "dune:7", tier=4))
+            frames.append(frame(name, "customer_revenue_usd", series(price0 * supply0 * 0.00005, drift=rng.normal(0.4, 0.5), noise=0.5), "dune:8", tier=4))
+            frames.append(frame(name, "emissions_tokens", series(supply0 * 0.0002, drift=-0.2, noise=0.1), "dune:9", tier=4))
         if 3 in arch:
-            frames.append(frame(name, "actual_buyback_usd", series(price0 * supply0 * 0.0002, noise=0.5), "dune:10"))
-            frames.append(frame(name, "actual_buyback_tokens", series(supply0 * 0.0002 / 1.0, noise=0.5), "dune:11"))
-            frames.append(frame(name, "emissions_tokens", series(supply0 * 0.00015, drift=-0.2, noise=0.1), "dune:9"))
+            frames.append(frame(name, "actual_buyback_usd", series(price0 * supply0 * 0.0002, noise=0.5), "dune:10", tier=4))
+            frames.append(frame(name, "actual_buyback_tokens", series(supply0 * 0.0002 / 1.0, noise=0.5), "dune:11", tier=4))
+            frames.append(frame(name, "emissions_tokens", series(supply0 * 0.00015, drift=-0.2, noise=0.1), "dune:9", tier=4))
             if name in ("Aerodrome", "Pendle"):
-                frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "dune:12"))
-                frames.append(frame(name, "avg_lock_duration_days", series(900, noise=0.1), "dune:13"))
+                frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "dune:12", tier=4))
+                frames.append(frame(name, "avg_lock_duration_days", series(900, noise=0.1), "dune:13", tier=4))
         if name == "OriginTrail":
-            frames.append(frame(name, "publisher_conviction_usd", series(2e6, drift=0.5, noise=0.2), "dune:14"))
+            frames.append(frame(name, "publisher_conviction_usd", series(2e6, drift=0.5, noise=0.2), "dune:14", tier=4))
+        # tier 2 (contract read) and tier 3 (protocol dashboard) point-in-time snapshots
+        if p.get("contracts"):
+            frames.append(frame(name, "total_supply", [supply0 * 1.3], "chain:erc20", today_only, tier=2))
+        if 4 in arch:
+            frames.append(frame(name, "burn_address_balance", series(supply0 * 0.01, drift=0.2, noise=0.05), "chain:burn", tier=2))
+            frames.append(frame(name, "net_mint_monthly", series(supply0 * 0.0002, noise=0.4) * -1, "scrape:dashboard", tier=3))
+        if 3 in arch and name in ("Aerodrome", "Pendle"):
+            frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "chain:ve", tier=2))
+
     # deterministic issuance schedules from config, exactly as the real run produces them
-    out = fetch.FetchOutput()
-    fetch.Schedule().run(config.PROJECTS, None, out)
+    out = FetchOutput()
+    Schedule().run(config.PROJECTS, None, out)
     frames.append(out.frame())
     allf = pd.concat(frames, ignore_index=True)
     n = st.upsert(allf)
@@ -127,7 +139,27 @@ def main() -> int:
     )
     m = st.load_overrides_csv(csv)
     st.record_fetch(run_id, "manual", None, m, "ok", f"{m} overrides loaded")
-    print(f"seeded {n} rows + {m} overrides into {DB}")
+
+    # a review row of each kind, and the real gap detection against the seeded frame
+    st.record_review(run_id, [
+        {"project": "Solana", "metric": "gross_burn_tokens", "date": str(TODAY.date()), "value": 9.9e12,
+         "prior_value": 1.2e6, "reason": "out_of_bounds", "action": "rejected", "source": "FIXTURE:scrape", "tier": 3},
+        {"project": "Uniswap", "metric": "gross_burn_tokens", "date": str(TODAY.date()), "value": 1.0e8,
+         "prior_value": 4.5e6, "reason": "change_threshold", "action": "stored_flagged", "source": "FIXTURE:scrape", "tier": 3},
+        {"project": "PancakeSwap", "metric": "total_supply", "date": str(TODAY.date()), "value": None,
+         "prior_value": None, "reason": "address_unverified", "action": "stored_flagged", "source": "FIXTURE:chain", "tier": 2},
+    ])
+    manual_keys = set(st.conn.execute("SELECT DISTINCT project, metric FROM manual_overrides").fetchall())
+    from fetch.gaps import detect as detect_gaps
+    from fetch.scrape import entry_ready, load_registry
+    registry_reasons = {}
+    for e in load_registry():
+        ok, why = entry_ready(e)
+        if not ok and e.get("project") and e.get("metric"):
+            registry_reasons[(e["project"], e["metric"])] = why
+    gaps = detect_gaps(config.PROJECTS, allf, manual_keys, registry_reasons, [])
+    st.record_gaps(run_id, gaps)
+    print(f"seeded {n} rows + {m} overrides + {len(gaps)} gaps into {DB}")
 
     build_workbook(st, XLSX, run_id=run_id)
     st.close()
