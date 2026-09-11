@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS gap_report (
     metric          TEXT NOT NULL,
     tiers_attempted TEXT,
     reason          TEXT NOT NULL,
-    suggestion      TEXT
+    suggestion      TEXT,
+    priority        INTEGER,
+    priority_label  TEXT
 );
 """
 
@@ -106,7 +108,8 @@ def utcnow() -> str:
 
 def _migrate(conn: sqlite3.Connection):
     """Add columns introduced after the first release, so an existing metrics.db keeps its history."""
-    for table, col, decl in (("metrics", "tier", "INTEGER"), ("run_log", "tier", "INTEGER")):
+    for table, col, decl in (("metrics", "tier", "INTEGER"), ("run_log", "tier", "INTEGER"),
+                             ("gap_report", "priority", "INTEGER"), ("gap_report", "priority_label", "TEXT")):
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if cols and col not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -250,9 +253,11 @@ class Store:
             return 0
         ts = utcnow()
         self.conn.executemany(
-            """INSERT INTO gap_report(run_id, ts, project, metric, tiers_attempted, reason, suggestion)
-               VALUES (?,?,?,?,?,?,?)""",
-            [(run_id, ts, i["project"], i["metric"], i.get("tiers_attempted", ""), i["reason"], i.get("suggestion", ""))
+            """INSERT INTO gap_report(run_id, ts, project, metric, tiers_attempted, reason, suggestion,
+                                     priority, priority_label)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            [(run_id, ts, i["project"], i["metric"], i.get("tiers_attempted", ""), i["reason"],
+              i.get("suggestion", ""), i.get("priority", 5), i.get("priority_label", "P5 uncovered"))
              for i in items],
         )
         self.conn.commit()
@@ -297,8 +302,10 @@ class Store:
 
     def gap_report(self, run_id: str | None = None) -> pd.DataFrame:
         if run_id:
-            return pd.read_sql_query("SELECT * FROM gap_report WHERE run_id=? ORDER BY project, metric", self.conn, params=(run_id,))
-        return pd.read_sql_query("SELECT * FROM gap_report ORDER BY ts DESC", self.conn)
+            return pd.read_sql_query(
+                "SELECT * FROM gap_report WHERE run_id=? ORDER BY COALESCE(priority,5), project, metric",
+                self.conn, params=(run_id,))
+        return pd.read_sql_query("SELECT * FROM gap_report ORDER BY ts DESC, COALESCE(priority,5)", self.conn)
 
     def close(self):
         self.conn.close()

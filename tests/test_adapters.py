@@ -152,40 +152,108 @@ def test_chain_reads_verified_and_derives_flow():
 
 
 def test_several_contracts_serving_one_metric_are_summed():
-    """Uniswap accumulates fees in three places and burns on two chains.
+    """Components on the SAME chain sum; a component with no same-chain token is refused.
 
-    If the last read won instead of the parts being summed, pending fees would report the
-    Unichain jar alone and understate the real figure by ~85%.
+    The live run failed here: token_jar_unichain resolved its token to the ETHEREUM UNI address and
+    called it over the Unichain RPC, which returns empty data. A token address is not valid across
+    chains, so the component is refused and the sum is marked PARTIAL rather than quietly dropping
+    a burn path and reporting the remainder as the whole.
     """
-    class MultiStub:
-        def __init__(self, vals):
-            self.vals = vals
+    UNI_ETH = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+
+    class ChainAwareStub:
+        DEPLOYED = {("ethereum", UNI_ETH): "UNI"}
+        CODE = {("ethereum", "0xf38521f130fcCF29dB1961597bc5d2B60F995f85"),
+                ("ethereum", "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d"),
+                ("ethereum", "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721")}
+        VALUES = {"0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
+                  "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d": 1_500_000.0,
+                  "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721": 95_000_000.0}
+
+        def has_code(self, chain, address):
+            return (chain, address) in self.CODE
+
+        def symbol_matches(self, chain, address, expected):
+            if (chain, address) not in self.DEPLOYED:
+                raise RuntimeError("Could not decode contract function call to symbol() with return data: b''")
+            sym = self.DEPLOYED[(chain, address)]
+            return sym.lower() == str(expected).lower(), sym
+
+        def scaled(self, chain, address, call, *args):
+            return self.VALUES.get(args[0], 1_000_000_000.0) if args and args[0] else 1_000_000_000.0
+
+    c = Chain()
+    c.reader = ChainAwareStub()
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Uniswap"]], None, out)
+    df = out.frame()
+    rows = dict(zip(df.metric, df.value))
+
+    assert rows["buyback_fund_balance"] == 4_500_000.0, \
+        f"the two mainnet jars must sum, got {rows['buyback_fund_balance']}"
+    for metric in ("buyback_fund_balance", "burn_address_balance"):
+        src = df[df.metric == metric].source.iloc[0]
+        assert src.endswith(":PARTIAL"), f"{metric} dropped a component and must be marked PARTIAL: {src}"
+    assert not [e for e in out.log if e.status == "failed"], \
+        "a chain-mismatched component must be refused cleanly, not fail with a decode error"
+    assert any("no ERC-20 token contract is declared on unichain" in g["reason"] for g in out.gaps), out.gaps
+
+    # symbol() must never be called on a non-token contract, on any chain
+    calls = []
+    orig = ChainAwareStub.symbol_matches
+
+    def spy(self, chain, address, expected):
+        calls.append((chain, address))
+        return orig(self, chain, address, expected)
+
+    ChainAwareStub.symbol_matches = spy
+    c2 = Chain()
+    c2.reader = ChainAwareStub()
+    c2.run([config.PROJECT_BY_NAME["Uniswap"]], None, FetchOutput())
+    ChainAwareStub.symbol_matches = orig
+    assert all(a == UNI_ETH for _c, a in calls), \
+        f"symbol() must only ever target the token, never a jar or firepit: {calls}"
+    assert all(ch == "ethereum" for ch, _a in calls), \
+        f"symbol() must only be called on the chain the token is deployed to: {calls}"
+    print("multi-contract summing ok: mainnet jars sum to 4,500,000, Unichain refused, result marked PARTIAL")
+    print("  symbol() targeted only the UNI token, only on ethereum — never a jar, never a wrong chain")
+
+
+def test_components_sum_fully_once_every_chain_has_its_token():
+    """With a same-chain token declared for every component, all of them sum."""
+    import copy
+
+    uni = copy.deepcopy(config.PROJECT_BY_NAME["Uniswap"])
+    uni["contracts"]["token_unichain"] = dict(uni["contracts"]["token"],
+                                              address="0xUNIonUnichain", chain="unichain")
+    uni["contracts"]["token_jar_unichain"]["underlying"] = "token_unichain"
+    uni["contracts"]["fire_pit_unichain"]["underlying"] = "token_unichain"
+
+    class EverywhereStub:
+        VALUES = {"0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
+                  "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d": 1_500_000.0,
+                  "0xD576BDF6b560079a4c204f7644e556DbB19140b5": 800_000.0}
+
+        def has_code(self, chain, address):
+            return True
 
         def symbol_matches(self, chain, address, expected):
             return True, expected
 
         def scaled(self, chain, address, call, *args):
-            return self.vals.get(args[0] if args and args[0] else f"supply:{chain}", 0.0)
+            return self.VALUES.get(args[0], 1_000_000.0) if args and args[0] else 1_000_000_000.0
 
-    uni = config.PROJECT_BY_NAME["Uniswap"]
-    c = Chain(prior_values={("Uniswap", "burn_address_balance"): 90_000_000.0})
-    c.reader = MultiStub({
-        "0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
-        "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d": 1_500_000.0,
-        "0xD576BDF6b560079a4c204f7644e556DbB19140b5": 800_000.0,
-        "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721": 95_000_000.0,
-        "0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB": 7_000_000.0,
-        "supply:ethereum": 1_000_000_000.0,
-    })
+    c = Chain()
+    c.reader = EverywhereStub()
     out = FetchOutput()
     c.run([uni], None, out)
-    rows = dict(zip(out.frame().metric, out.frame().value))
-    assert rows["buyback_fund_balance"] == 5_300_000.0, f"three fee jars must sum, got {rows['buyback_fund_balance']}"
-    assert rows["burn_address_balance"] == 102_000_000.0, "both fire pits must sum"
-    assert rows["gross_burn_tokens"] == 12_000_000.0, "period burn is the summed delta"
-    src = out.frame()[out.frame().metric == "buyback_fund_balance"].source.iloc[0]
-    assert src.count("+") == 2, f"the composition must name all three components: {src}"
-    print("multi-contract summing ok: 3 fee jars sum to 5,300,000 rather than the last read's 800,000")
+    df = out.frame()
+    total = dict(zip(df.metric, df.value))["buyback_fund_balance"]
+    assert total == 5_300_000.0, f"all three jars must sum once each has a same-chain token, got {total}"
+    src = df[df.metric == "buyback_fund_balance"].source.iloc[0]
+    assert not src.endswith(":PARTIAL"), "nothing was refused, so the figure is not partial"
+    assert src.count("+") == 2, src
+    print("complete-data case ok: three jars sum to 5,300,000 and the figure is not marked partial")
 
 
 def test_no_metric_is_served_by_contracts_that_would_overwrite_each_other():
@@ -473,6 +541,7 @@ if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
                test_several_contracts_serving_one_metric_are_summed,
+               test_components_sum_fully_once_every_chain_has_its_token,
                test_no_metric_is_served_by_contracts_that_would_overwrite_each_other,
                test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
                test_venft_misconfiguration_fails_loudly, test_escrow_balance_of_reads_the_underlying_not_the_nft,

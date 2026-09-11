@@ -101,6 +101,8 @@ def main() -> int:
             frames.append(frame(name, "actual_buyback_usd", series(price0 * supply0 * 0.0002, noise=0.5), "dune:10", tier=4))
             frames.append(frame(name, "actual_buyback_tokens", series(supply0 * 0.0002 / 1.0, noise=0.5), "dune:11", tier=4))
             frames.append(frame(name, "emissions_tokens", series(supply0 * 0.00015, drift=-0.2, noise=0.1), "dune:9", tier=4))
+            if name == "Sky":
+                frames.append(frame(name, "locked_tokens", series(supply0 * 0.30, noise=0.04), "chain:lssky", tier=2))
             if name in ("Aerodrome", "Pendle"):
                 frames.append(frame(name, "locked_tokens", series(supply0 * 0.45, noise=0.05), "chain:ve", tier=2))
                 frames.append(frame(name, "locked_tokens_dashboard", series(supply0 * 0.45, noise=0.05) * 1.008, "scrape:dashboard", tier=3))

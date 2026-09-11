@@ -24,7 +24,49 @@ PRO_PAYWALLED = {
     "emissions_tokens": "DefiLlama emissions/unlocks is Pro tier only ($300/mo, separate API plan)",
 }
 
-# Chains where the tier 2 web3 path does not apply at all.
+# Metrics that are the point of the exercise. A headline metric with no working route at all
+# outranks everything else in the Gap Report, because it is a hole in the answer rather than a
+# missing nicety.
+HEADLINE_METRICS = {
+    "gross_burn_tokens", "burn_address_balance", "net_mint_monthly",
+    "gross_issuance_tokens", "actual_buyback_tokens", "actual_buyback_usd",
+    "buyback_fund_balance", "circulating_supply", "revenue_usd", "fees_usd",
+}
+
+# Priority bands, ranked by WHAT CAN BE ACTED ON, lowest number first. The top of this report
+# should be a to-do list, not a census of everything that is missing.
+P_CRITICAL = 1              # an open question flagged critical: a headline figure with no route at all
+P_DECISION = 2              # every other open question — each names a specific action for a human
+P_ACTIONABLE_HEADLINE = 3   # a headline metric blocked on something fixable: an address, a read method
+P_ACTIONABLE = 4            # the same, on a non-headline metric
+P_SUPPRESSED = 5            # [config] splits deliberately suppressed. By design, informational.
+P_UNCOVERED = 6             # no source covers it yet, and none is configured to
+
+PRIORITY_LABEL = {
+    P_CRITICAL: "P1 critical",
+    P_DECISION: "P2 decision",
+    P_ACTIONABLE_HEADLINE: "P3 fixable",
+    P_ACTIONABLE: "P4 fixable",
+    P_SUPPRESSED: "P5 by design",
+    P_UNCOVERED: "P6 uncovered",
+}
+
+ACTIONABLE_SIGNALS = (
+    "not verified", "unverified", "ambiguous", "not established", "no address", "needs sourcing",
+    "symbol mismatch", "no deployed bytecode", "returned nothing this run", "no same-chain",
+    "component(s) refused", "every component was refused", "is partial",
+)
+
+
+def _priority(project_name: str, metric: str, reason: str, severity: int | None = None) -> int:
+    if metric.startswith("[open]"):
+        return P_CRITICAL if severity == 1 else P_DECISION
+    if metric.startswith("[config]"):
+        return P_SUPPRESSED
+    if any(k in reason.lower() for k in ACTIONABLE_SIGNALS):
+        return P_ACTIONABLE_HEADLINE if metric in HEADLINE_METRICS else P_ACTIONABLE
+    return P_UNCOVERED
+
 NON_EVM = {"Solana", "Tron", "Bitcoin", "Zcash", "Near", "Canton", "Bittensor", "peaq", "Render", "Injective"}
 
 # Which free API serves each tier 1 metric, and the config field it needs.
@@ -200,6 +242,7 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         rows.append({
             "project": q["project"], "metric": f"[open] {q['topic']}",
             "tiers_attempted": "-", "reason": q["reason"], "suggestion": q["suggestion"],
+            "_severity": q.get("severity"),
         })
 
     # Config gaps: a documented split we have not confirmed suppresses a derived figure by design.
@@ -215,4 +258,10 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
                     "suggestion": (spec.get("note") or "Document the split, then set status to active in config.py "
                                    f"with the source URL and date. Source on file: {spec.get('source_url') or 'none'}"),
                 })
+
+    # Rank every row so the report opens on what actually matters, not on alphabetical order.
+    for r in rows:
+        r["priority"] = _priority(r["project"], r["metric"], r.get("reason", ""), r.pop("_severity", None))
+        r["priority_label"] = PRIORITY_LABEL[r["priority"]]
+    rows.sort(key=lambda r: (r["priority"], r["project"], r["metric"]))
     return rows

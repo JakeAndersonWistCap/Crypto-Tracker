@@ -671,7 +671,7 @@ PROJECTS = [
                 None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
                 purpose="Polygon GEOD token — balanceOf is called on this for the Polygon burn."),
             "burn_polygon": _contract(
-                "0x000000000000000000000000000000000000dead", "polygon", "burn_address_balance", "GEOD",
+                "0x000000000000000000000000000000000000dEaD", "polygon", "burn_address_balance", "GEOD",
                 None, verified="2026-09-11", provenance="working Dune query supplied 2026-09-11",
                 purpose="TRANSFER BURN — Polygon burn destination. IN SCOPE for the backfill, not historical-only: "
                         "the working query unions Polygon and Solana burns into one series."),
@@ -817,7 +817,7 @@ PROJECTS = [
                                "https://venice.ai/blog",
                                purpose="VVV token contract on Base.",
                                note="UNVERIFIED — confirm against Venice's own docs."),
-            "buy_and_burn": _contract("0x35fb3b67c57849bf57eb24b061eef0b5e560dc57", "base", "buyback_fund_balance", "VVV",
+            "buy_and_burn": _contract("0x35Fb3b67C57849Bf57EB24b061EEF0B5E560dc57", "base", "buyback_fund_balance", "VVV",
                                       "https://venice.ai/blog",
                                       purpose="Buy-and-burn contract — the monthly revenue-funded repurchase.",
                                       note="UNVERIFIED — confirm against Venice's own docs."),
@@ -922,7 +922,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {
             "assistance_fund": _contract(
-                "0xfefefefefefefefefefefefefefefefefefefefe", "hyperliquid", "burn_address_balance", "HYPE",
+                "0xfefeFEFeFEFEFEFEFeFefefefefeFEfEfefefEfe", "hyperliquid", "burn_address_balance", "HYPE",
                 "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees",
                 verified="2026-09-11", provenance="protocol docs",
                 purpose="Assistance Fund — cumulative burn total, not a treasury holding. Period burn is "
@@ -1100,7 +1100,7 @@ PROJECTS = [
                                               "deployment's supply, not total supply.",
                                purpose="CAKE token on BSC. Deployed source declares CakeToken is "
                                        "BEP20('PancakeSwap Token', 'Cake') — the symbol casing is 'Cake', not 'CAKE'."),
-            "token_base": _contract("0x3055913c90Fcc1A6CE9a358911721eEb942013a1", "base", "erc20_total_supply", "Cake",
+            "token_base": _contract("0x3055913c90Fcc1A6CE9a358911721eEb942013A1", "base", "erc20_total_supply", "Cake",
                                     "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
                                     token_standard="erc20", supply_is_partial=True,
                                     partial_reason="One of several OFT deployments; the full list is not confirmed.",
@@ -1108,7 +1108,7 @@ PROJECTS = [
                                     note="UNVERIFIED. Supplied as a known further deployment; confirm against "
                                          "PancakeSwap's own docs, and see the Gap Report row asking for the "
                                          "complete OFT deployment list."),
-            "burn_dead": _contract("0x000000000000000000000000000000000000dead", "bsc", "burn_address_balance", "Cake",
+            "burn_dead": _contract("0x000000000000000000000000000000000000dEaD", "bsc", "burn_address_balance", "Cake",
                                    "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
                                    verified="2026-09-11", provenance="deployed source",
                                    purpose="TRANSFER BURN — CAKE sent to the standard BNB Chain dead address. "
@@ -1194,14 +1194,16 @@ PROJECTS = [
                 purpose="TRANSFER BURN — the Smart Burn Engine sends repurchased SKY to the zero address.",
                 note="Unblocked by the SKY token resolution: balanceOf is called on the confirmed token contract."),
             "lssky": _contract(
-                None, "ethereum", "ve_total_supply", "lssky",
+                "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C", "ethereum", "ve_total_supply", "lssky",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
-                read_method=None, token_standard=None, underlying="token",
-                purpose="Staked SKY Token (lssky) — THE lock-rate metric for Sky. This is what "
-                        "info.skyeco.com/staking reports.",
-                note="ADDRESS STILL NEEDS SOURCING from the same Sky developer docs page, AND the read method "
-                     "is not established. lssky is LIKELY a fungible ERC-20 whose totalSupply is the staked "
-                     "amount, but that is not confirmed and is not assumed. Nothing is read until both are set."),
+                verified="2026-09-11", provenance="protocol docs",
+                read_method="erc20_total_supply", token_standard="erc20", underlying="token",
+                purpose="Staked SKY Token (lssky) — THE lock-rate metric for Sky.",
+                note="RESOLVED from the same Sky developer docs page that settled the SKY token address. "
+                     "read_method is erc20_total_supply, NOT escrow_balance_of: Sky's own docs describe staking "
+                     "with no minimum, no lockup period and no exit fee, so there is no duration-weighted escrow "
+                     "here and the lssky balance IS the lock-rate figure. This gives Sky a working tier 2 path "
+                     "independent of the info.skyeco.com dashboard, which robots.txt disallows."),
         },
         "burn_read_method": "transfer",
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
@@ -1527,13 +1529,53 @@ OPEN_QUESTIONS = [
         "suggestion": "Document the earlier split and add it to Sky fee_split.history as its own period.",
     },
     {
-        "project": "Sky", "topic": "lssky address AND read method",
-        "reason": "lssky is the Sky lock-rate metric and has neither an address nor an established read method. "
-                  "It is LIKELY a fungible ERC-20 whose totalSupply is the staked amount, but that is not "
-                  "confirmed and is not assumed — an NFT-based escrow read as an ERC-20 supply returns a "
-                  "position count, wrong by orders of magnitude and plausible-looking.",
-        "suggestion": "Source the address from Sky's developer docs, establish whether it is ERC-20 or "
-                      "NFT-based, then set address, read_method and token_standard in config.py.",
+        "project": "Venice AI", "topic": "NO automated route to the burn figure at all",
+        "severity": 1,
+        "reason": "HIGHEST-PRIORITY GAP IN THE UNIVERSE. Venice publishes its burns, but venice.ai robots.txt "
+                  "disallows the page and that is not worked around. Its three on-chain addresses (token, "
+                  "buy_and_burn, burn_zero) are all still unverified, so tier 2 is refused too. The result is "
+                  "that Venice AI has NO automated route to its burn figure by any tier — and Venice is the "
+                  "clearest case in the universe for showing buyback and emissions together.",
+        "suggestion": "Either verify the three Base addresses against Venice's own docs, which unblocks tier 2 "
+                      "entirely, or establish whether Venice publishes a documented data endpoint that robots "
+                      "permits. Until one of those, the burn figure is manual entry via manual_overrides.csv.",
+    },
+    {
+        "project": "Uniswap", "topic": "UNI token address on Unichain",
+        "reason": "The Unichain TokenJar and Firepit are verified, but there is no UNI token contract declared "
+                  "on Unichain to call balanceOf against, and a token address is not valid across chains. Both "
+                  "Unichain components are refused, so Uniswap's burn and fee figures are marked PARTIAL — the "
+                  "mainnet paths only.",
+        "suggestion": "Find the bridged UNI address on Unichain and add it to contracts as a chain 'unichain' "
+                      "erc20_total_supply entry. The adapter picks the same-chain token automatically once it "
+                      "exists, and the PARTIAL marking clears.",
+    },
+    {
+        "project": "Aerodrome", "topic": "Dune query id for veAERO locked",
+        "reason": "dune.com robots.txt disallows scraping the dashboard, and it was always the wrong tier: Dune "
+                  "content belongs in tier 4 via the API. The scrape entry is disabled. LOW STAKES — the tier 2 "
+                  "read of AERO.balanceOf(escrow) is verified and working, so this is only a cross-check.",
+        "suggestion": "Open https://dune.com/0xkhmer/aerodrome, click through to the underlying query, take the "
+                      "id from its URL (dune.com/queries/<id>), and put it in config.py under Aerodrome "
+                      "dune_queries.locked_tokens with its date_col and value_col. Needs DUNE_API_KEY set.",
+    },
+    {
+        "project": "Ether.fi", "topic": "Dune query id for staked ETHFI",
+        "severity": 1,
+        "reason": "dune.com robots.txt disallows scraping and this was the wrong tier. Unlike Aerodrome this is "
+                  "NOT low stakes: Ether.fi has no contract read for staked_tokens, so tier 4 is its only "
+                  "automated route and the metric is currently empty.",
+        "suggestion": "Open https://dune.com/ether_fi/staked-ethfi, take the query id from the underlying query "
+                      "URL, and put it in config.py under Ether.fi dune_queries.staked_tokens with its date_col "
+                      "and value_col. Needs DUNE_API_KEY set.",
+    },
+    {
+        "project": "Pendle", "topic": "is there a documented data endpoint robots permits",
+        "reason": "app.pendle.finance robots.txt disallows the sPENDLE staking page, and that is not worked "
+                  "around. LOW STAKES — the tier 2 read of sPENDLE.totalSupply() is verified and working, so "
+                  "this was only ever a cross-check.",
+        "suggestion": "If Pendle publishes a documented API or data endpoint distinct from the disallowed page, "
+                      "point the sources.yaml entry at that. Otherwise leave it; nothing is lost.",
     },
     {
         "project": "Aave", "topic": "is the buyback immutable or committee-directed",
@@ -1551,23 +1593,12 @@ OPEN_QUESTIONS = [
                       "'erc20_total_supply' or 'escrow_balance_of' and token_standard in config.py.",
     },
     {
-        "project": "Aerodrome", "topic": "veAERO escrow address",
-        "reason": "The READ METHOD is now correct — veAERO is an ERC-721 veNFT, so the figure is "
-                  "AERO.balanceOf(escrow), not totalSupply() on the NFT — but the escrow ADDRESS itself has not "
-                  "been confirmed against Aerodrome's own docs.",
-        "suggestion": "Confirm the escrow address from Aerodrome's documentation and mark it verified. The AERO "
-                      "token contract is already confirmed.",
-    },
-    {
-        "project": "Pendle", "topic": "sPENDLE read method and expected symbol",
-        "reason": "ADDRESS RESOLVED: 0x999999999991E178D52Cd95AFd4b00d066664144, from the 'sPendle' key in "
-                  "Pendle's own deployments/1-core.json. The READ METHOD is still unestablished — it is not known "
-                  "whether sPENDLE is a fungible ERC-20 (totalSupply is the staked amount) or an NFT-based "
-                  "position (totalSupply is a COUNT, wrong by orders of magnitude), so nothing is read. The "
-                  "contract source could not be reached from this machine to settle it.",
-        "suggestion": "Check whether sPENDLE is ERC-20 or ERC-721, then set read_method to 'erc20_total_supply' "
-                      "or 'escrow_balance_of' and token_standard in config.py. Confirm the expected symbol at the "
-                      "same time. The sPENDLE staking page in sources.yaml covers the metric meanwhile.",
+        "project": "Pendle", "topic": "sPENDLE expected symbol",
+        "reason": "Address and read method are both settled: 0x999999999991E178D52Cd95AFd4b00d066664144, ERC-20, "
+                  "so totalSupply is the staked amount. Only the expected SYMBOL is unconfirmed. The on-chain "
+                  "check compares case-insensitively and fails CLOSED, so a mismatch rejects the address with a "
+                  "clear message rather than returning a wrong number — but it would also block a correct one.",
+        "suggestion": "Read symbol() on the contract and set expected_symbol in config.py to match.",
     },
     {
         "project": "PancakeSwap", "topic": "complete LayerZero OFT deployment list",
@@ -1601,6 +1632,7 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Hyperliquid", "topic": "HyperCore balance read",
+        "severity": 1,
         "reason": "The Assistance Fund address is CONFIRMED, but HYPE on HyperCore is not an ERC-20 on a chain the "
                   "EVM adapter covers, so the cumulative burn still cannot be fetched.",
         "suggestion": "Add a HyperCore read, or a sources.yaml entry pointing at a page that publishes the "
@@ -1686,8 +1718,37 @@ def _check_lock_contracts() -> list[str]:
     return errors
 
 
+def _check_addresses() -> list[str]:
+    """Every EVM address must be EIP-55 checksummed.
+
+    web3.py rejects a non-checksummed address, and it rejects it for CALL ARGUMENTS as well as for
+    contract addresses — which is how balanceOf(0x...dead) failed on a live run while the contract
+    address beside it was fine. The adapter normalises everything before it reaches web3, so this
+    check is about keeping the file itself correct and catching a typo that is not a valid address
+    at all. Skipped silently where web3 is not installed, so config stays importable without it.
+    """
+    try:
+        from web3 import Web3
+    except ImportError:
+        return []
+    errors = []
+    for p in PROJECTS:
+        for key, c in (p.get("contracts") or {}).items():
+            address = c.get("address")
+            if not address or not str(address).startswith("0x"):
+                continue          # a Solana address or an unfilled slot
+            try:
+                canonical = Web3.to_checksum_address(address)
+            except Exception:  # noqa: BLE001
+                errors.append(f"{p['name']}/{key}: {address!r} is not a valid EVM address")
+                continue
+            if canonical != address:
+                errors.append(f"{p['name']}/{key}: {address} is not EIP-55 checksummed, should be {canonical}")
+    return errors
+
+
 def validate_config(raise_on_error: bool = True) -> list[str]:
-    errors = _check_lock_contracts()
+    errors = _check_lock_contracts() + _check_addresses()
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

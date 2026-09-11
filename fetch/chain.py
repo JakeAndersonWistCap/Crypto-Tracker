@@ -125,9 +125,27 @@ class ChainReader:
         self._failed[chain] = f"all RPC endpoints failed for {chain}: {'; '.join(errors)}"
         raise RuntimeError(self._failed[chain])
 
-    def erc20(self, chain: str, address: str):
+    @staticmethod
+    def checksum(address: str) -> str:
+        """EIP-55 the address. web3.py rejects non-checksummed input, and it rejects it for CALL
+        ARGUMENTS too, not just contract addresses — which is how balanceOf(0x...dead) failed live
+        while the contract address beside it was fine. Everything that reaches web3 goes through here."""
         from web3 import Web3
-        return self.web3(chain).eth.contract(address=Web3.to_checksum_address(address), abi=ERC20_ABI)
+        return Web3.to_checksum_address(address)
+
+    def erc20(self, chain: str, address: str):
+        return self.web3(chain).eth.contract(address=self.checksum(address), abi=ERC20_ABI)
+
+    def has_code(self, chain: str, address: str) -> bool:
+        """Is anything deployed at this address ON THIS CHAIN?
+
+        The right existence check for a contract that is NOT a token. TokenJar and Firepit are
+        custom fee-collection contracts with no ERC-20 surface, so symbol() tells you nothing about
+        them; eth_getCode does. It also catches an address that is right for one chain and absent
+        on another.
+        """
+        code = self.web3(chain).eth.get_code(self.checksum(address))
+        return bool(code) and code not in (b"", b"0x", "0x")
 
     def symbol_matches(self, chain: str, address: str, expected: str) -> tuple[bool, str]:
         """On-chain self-check. Returns (matches, actual_symbol)."""
@@ -138,6 +156,7 @@ class ChainReader:
 
     def scaled(self, chain: str, address: str, call: str, *args) -> float:
         c = self.erc20(chain, address)
+        args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
         raw = getattr(c.functions, call)(*args).call()
         decimals = c.functions.decimals().call()
         return float(raw) / (10 ** int(decimals))
@@ -149,6 +168,24 @@ class Chain:
     def __init__(self, prior_values: dict | None = None):
         self.reader = ChainReader()
         self.prior = prior_values or {}
+
+    @staticmethod
+    def _underlying_on_chain(contracts: dict, spec: dict, chain: str) -> dict | None:
+        """The ERC-20 token to call balanceOf on, which must be deployed on `chain`.
+
+        A token address is chain-specific. Picking the single entry named "token" regardless of
+        chain is what sent an Ethereum address to a Unichain RPC. Preference order: the contract
+        named by `underlying` if it is on this chain, then any erc20_total_supply contract on this
+        chain, then nothing — and nothing means refuse, not guess.
+        """
+        named = contracts.get(spec.get("underlying") or "")
+        if named and named.get("address") and named.get("chain") == chain:
+            return named
+        for candidate in contracts.values():
+            if (candidate.get("kind") == "erc20_total_supply" and candidate.get("chain") == chain
+                    and candidate.get("address")):
+                return candidate
+        return None
 
     def _gate(self, project: dict, key: str, spec: dict, out) -> bool:
         """Every guard that must pass before an address is read. Returns True only if all do."""
@@ -237,6 +274,10 @@ class Chain:
             # source string to stay auditable.
             parts: dict[str, list[tuple[str, float]]] = defaultdict(list)
             partial_metrics: set[str] = set()
+            # A component that was REFUSED (unverified, unreachable chain, no same-chain token)
+            # makes the resulting sum partial. Dropping one burn path and reporting the rest as if
+            # it were the whole is precisely the understatement this tool exists to prevent.
+            refused: dict[str, list[str]] = defaultdict(list)
             for key, spec in contracts.items():
                 if not self._gate(p, key, spec, out):
                     continue
@@ -245,29 +286,47 @@ class Chain:
                 if metric is None:
                     out.unconfigured(SOURCE, name, f"{key}: unknown contract kind {kind!r}", TIER)
                     continue
-                # A burn-address balance is a balanceOf ON THE TOKEN, holding the burn address.
+                # A balance read is balanceOf ON THE TOKEN, with this contract as the holder. The
+                # token MUST be the deployment on the SAME CHAIN as the holder: calling an Ethereum
+                # token address over another chain's RPC returns empty data, which is what made the
+                # Unichain reads fail while the identical mainnet path worked.
                 read_address = spec["address"]
                 holder = None
-                if kind in ("burn_address_balance", "buyback_fund_balance"):
-                    if not token:
-                        out.gap(name, metric, reason=f"{key} needs the token contract to call balanceOf, none declared",
-                                tiers_attempted="2", suggestion="Add a 'token' entry to contracts in config.py")
-                        continue
-                    holder, read_address = spec["address"], token["address"]
-                # An NFT-based escrow is read as underlying.balanceOf(escrow): the symbol check and
-                # the balance call both target the UNDERLYING token, never the veNFT.
-                if spec.get("read_method") == "escrow_balance_of":
-                    under = contracts.get(spec.get("underlying") or "")
-                    if not under or not under.get("address"):
+                if kind in ("burn_address_balance", "buyback_fund_balance") or spec.get("read_method") == "escrow_balance_of":
+                    under = self._underlying_on_chain(contracts, spec, chain)
+                    if under is None:
                         out.gap(name, metric,
-                                reason=f"{key} needs its underlying token contract to call balanceOf, and "
-                                       f"{spec.get('underlying')!r} has no address",
+                                reason=f"{key} is on {chain}, and no ERC-20 token contract is declared on {chain} "
+                                       f"to call balanceOf against. The token entry on file is on a different chain, "
+                                       f"and a token address is not valid across chains.",
                                 tiers_attempted="2",
-                                suggestion="Add the underlying token address to contracts in config.py")
+                                suggestion=f"Add the {chain} deployment of the token to contracts in config.py, "
+                                           f"or set `underlying` on {key!r} to a contract that is on {chain}.")
+                        out.unconfigured(SOURCE, name, f"{key}: no same-chain token to read balanceOf against", TIER)
+                        refused[metric].append(f"{key} ({chain}): no same-chain token")
                         continue
                     holder, read_address = spec["address"], under["address"]
 
                 try:
+                    # The holder is usually NOT a token — TokenJar and Firepit are custom
+                    # fee-collection contracts with no ERC-20 surface — so its existence is checked
+                    # with eth_getCode, not symbol(). symbol() is reserved for the token being read.
+                    if holder is not None:
+                        try:
+                            if not self.reader.has_code(chain, holder):
+                                out.fail(SOURCE, name,
+                                         f"{key}: nothing deployed at {holder} on {chain} (eth_getCode is empty). "
+                                         f"Address rejected.", TIER)
+                                out.gap(name, metric,
+                                        reason=f"contract {key!r} has no deployed bytecode at {holder} on {chain} — "
+                                               f"the address is wrong for this chain",
+                                        tiers_attempted="2",
+                                        suggestion="Re-check the address, and which chain it belongs to, on the "
+                                                   "protocol's own docs.")
+                                refused[metric].append(f"{key} ({chain}): no deployed bytecode")
+                                continue
+                        except Exception as e:  # noqa: BLE001 — a node without eth_getCode must not block the read
+                            log.debug("%s: eth_getCode unavailable (%s), continuing", key, e)
                     ok, actual = self.reader.symbol_matches(chain, read_address, spec["expected_symbol"])
                     if not ok:
                         out.fail(SOURCE, name,
@@ -276,6 +335,7 @@ class Chain:
                         out.gap(name, metric, reason=f"contract {key!r} symbol mismatch: on-chain {actual!r} vs expected "
                                                      f"{spec['expected_symbol']!r} — the address is wrong or stale",
                                 tiers_attempted="2", suggestion="Re-check the address on the protocol's own docs.")
+                        refused[metric].append(f"{key} ({chain}): symbol mismatch")
                         continue
                     value = (self.reader.scaled(chain, read_address, "balanceOf", holder) if holder
                              else self.reader.scaled(chain, read_address, spec.get("call", "totalSupply")))
@@ -283,6 +343,7 @@ class Chain:
                     out.fail(SOURCE, name, f"{key} ({chain}): {e}", TIER)
                     out.gap(name, metric, reason=f"contract read failed: {e}", tiers_attempted="2",
                             suggestion="Check the RPC endpoints for this chain in .env")
+                    refused[metric].append(f"{key} ({chain}): read failed")
                     continue
                 parts[metric].append((f"{chain}:{key}", value))
                 if spec.get("supply_is_partial"):
@@ -290,9 +351,16 @@ class Chain:
                 out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                         f"{metric} component {chain}:{key}={value:,.4f}", TIER))
 
-            self._emit_parts(p, parts, partial_metrics, when, out)
+            for metric, missing in refused.items():
+                if metric not in parts:
+                    out.gap(p["name"], metric,
+                            reason=f"every component was refused: {'; '.join(missing)}",
+                            tiers_attempted="2",
+                            suggestion="Resolve the refused components in config.py; nothing was stored for "
+                                       "this metric rather than a partial figure being presented as whole.")
+            self._emit_parts(p, parts, partial_metrics, refused, when, out)
 
-    def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, when, out):
+    def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out):
         """Emit one figure per metric, summing every contract that served it."""
         name = project["name"]
         for metric, components in parts.items():
@@ -306,11 +374,14 @@ class Chain:
                 composition = " + ".join(f"{label} {v:,.4f}" for label, v in components)
                 detail = f"{metric}={total:,.4f} from {len(components)} components: {composition}"
 
-            is_partial = metric in partial_metrics or (metric == "total_supply" and project.get("supply_is_partial"))
+            missing = refused.get(metric) or []
+            is_partial = (metric in partial_metrics or bool(missing)
+                          or (metric == "total_supply" and project.get("supply_is_partial")))
             if is_partial:
                 src += ":PARTIAL"
                 detail += " [PARTIAL]"
-                reason = project.get("supply_partial_reason") or "not every component is known"
+                reason = (f"{len(missing)} component(s) refused: {'; '.join(missing)}" if missing
+                          else project.get("supply_partial_reason") or "not every component is known")
                 out.review_item(name, metric, "supply_partial", "stored_flagged", value=total,
                                 prior_value=self.prior.get((name, metric)), date=when, source=src, tier=TIER)
                 out.gap(name, metric,

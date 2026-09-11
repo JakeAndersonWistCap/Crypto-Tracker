@@ -1011,39 +1011,43 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     stale cell is worse than a visible gap; a blank one is worse still.
     """
     _title(ws, "Gap Report — the to-do list",
-           "Sorted so the decisions come first. [open] rows are questions a human must settle, listed at the top. [config] rows are splits "
-           "we have not documented, so the workbook suppresses the derived figure by design. Everything below those is a metric no tier could "
-           "resolve: most are fixed by a sources.yaml edit — find the page that publishes the figure, complete the entry, set enabled: true, re-run.")
-    headers = ["Project", "Metric", "Tiers attempted", "Reason unresolved", "What would fix it"]
+           "Ranked by priority. P1 = a headline metric with NO automated route of any kind, the holes in the answer. P2 = blocked on something "
+           "specific and fixable, usually an address or a read method. P3 = decisions a human must settle. P4 = splits deliberately suppressed "
+           "because we have not documented them. P5 = no source covers it yet. Work top down.")
+    headers = ["Priority", "Project", "Metric", "Tiers attempted", "Reason unresolved", "What would fix it"]
     _header(ws, 4, headers)
     r = 5
     if gaps is None or gaps.empty:
         ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
-        _set_widths(ws, {"A": 16, "B": 26, "C": 12, "D": 62, "E": 86})
+        _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
         return
     # config gaps first (they block derived figures), then by project, then metric
     g = gaps.copy()
     g["_open"] = g["metric"].astype(str).str.startswith("[open]")
     g["_config"] = g["metric"].astype(str).str.startswith("[config]")
-    g["_rank"] = (~g["_open"]).astype(int) * 2 + (~g["_config"]).astype(int)
-    g = g.sort_values(["_rank", "project", "metric"])
+    if "priority" not in g.columns:
+        g["priority"], g["priority_label"] = 5, "P5 uncovered"
+    g = g.sort_values(["priority", "project", "metric"])
     for row in g.to_dict("records"):
         is_config = bool(row["_config"]) or bool(row["_open"])
-        vals = [row["project"], row["metric"], row.get("tiers_attempted", ""), row["reason"], row.get("suggestion", "")]
+        vals = [row.get("priority_label", ""), row["project"], row["metric"], row.get("tiers_attempted", ""),
+                row["reason"], row.get("suggestion", "")]
         for j, v in enumerate(vals, start=1):
             c = ws.cell(row=r, column=j, value=str(v) if v is not None else "")
             c.font = F_BASE
             c.number_format = FMT_TEXT
             c.alignment = Alignment(wrap_text=True, vertical="top")
-            if is_config:
+            if str(row.get("priority_label", "")).startswith("P1"):
+                c.fill = FILL_STALE          # highest priority: no automated route at all
+            elif is_config:
                 c.fill = FILL_UNCONFIRMED
-            elif j == 4:
+            if j == 5 and not is_config:
                 c.font = Font(name=FONT, size=10, color="C00000")
         ws.row_dimensions[r].height = 30
         r += 1
     ws.freeze_panes = "A5"
-    ws.auto_filter.ref = f"A4:E{r - 1}"
-    _set_widths(ws, {"A": 16, "B": 26, "C": 12, "D": 62, "E": 86})
+    ws.auto_filter.ref = f"A4:F{r - 1}"
+    _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
 
 
 def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):

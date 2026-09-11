@@ -620,7 +620,7 @@
 - project: Aerodrome
   metric: locked_tokens_dashboard
   tier: 4
-  enabled: true
+  enabled: false            # WRONG TIER — see note. Convert to a tier 4 Dune API query.
   url: https://dune.com/0xkhmer/aerodrome
   method: xhr
   url_contains: /api/
@@ -631,7 +631,7 @@
   sanity_max: 2000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "veAERO locked. CROSS-CHECK ONLY: the tier 2 contract read (AERO.balanceOf(escrow)) is authoritative and this page is compared against it, so a scrape can never overwrite a verified contract figure. Prefer the Dune API with this dashboard's query id over scraping the page."
+  note: "DISABLED: dune.com robots.txt disallows scraping, and this was always the wrong tier — Dune content belongs in tier 4 via the API. To enable: open this dashboard, take the query id from the query URL (dune.com/queries/<id>), and put it in config.py under Aerodrome dune_queries.locked_tokens with its date_col and value_col. The tier 2 contract read (AERO.balanceOf(escrow)) is verified and working, so this is a cross-check, not the primary."
 
 - project: Pendle
   metric: locked_tokens_dashboard
@@ -647,12 +647,12 @@
   sanity_max: 300000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "sPENDLE total staked. CROSS-CHECK ONLY: sPENDLE IS the lock source now (vePENDLE is deprecated), and the tier 2 contract read of sPENDLE.totalSupply() is authoritative. This page is compared against it."
+  note: "BLOCKED BY robots.txt on app.pendle.finance as of the first live run. Left enabled so the Gap Report keeps reporting the accurate reason; the check runs before any page load, so it costs nothing. NOT worked around — respecting robots.txt is a design requirement. Low stakes: the tier 2 read of sPENDLE.totalSupply() is verified and working, so this was only ever a cross-check. If Pendle publishes a documented data endpoint distinct from this page, point this entry at that instead."
 
 - project: Sky
   metric: locked_tokens_dashboard
   tier: 3
-  enabled: true
+  enabled: false            # SUPERSEDED by the verified lssky contract read — see note.
   url: https://info.skyeco.com/staking
   method: xhr
   url_contains: /api/
@@ -663,12 +663,12 @@
   sanity_max: 30000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "This page reports lssky, the Staked SKY Token, which IS the Sky lock-rate metric. CROSS-CHECK slot: once the lssky contract address and read method are set, the tier 2 read becomes authoritative and this page is compared against it. Until then this is the only source, and the cross-check simply has nothing to compare. Tokens paid to stakers re-enter float, so that leg stays separate and is NEVER netted against the burn."
+  note: "DISABLED: info.skyeco.com robots.txt disallows scraping, AND this is now superseded. The lssky contract address is verified (0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C, erc20_total_supply), so Sky has a working tier 2 lock read that does not depend on this page at all. Re-enable only if a cross-check becomes worthwhile and robots permits it."
 
 - project: Ether.fi
   metric: staked_tokens
   tier: 4
-  enabled: true
+  enabled: false            # WRONG TIER — see note. Convert to a tier 4 Dune API query.
   url: https://dune.com/ether_fi/staked-ethfi
   method: xhr
   url_contains: /api/
@@ -679,7 +679,7 @@
   sanity_max: 2000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "Staked ETHFI. Prefer the Dune API with this dashboard's query id over scraping the page."
+  note: "DISABLED: dune.com robots.txt disallows scraping, and this was always the wrong tier. To enable: take the query id from the dashboard query URL and put it in config.py under Ether.fi dune_queries.staked_tokens with its date_col and value_col. Ether.fi has NO contract read for this, so tier 4 is the only automated route."
 
 # ---- Aave: the two pages are NOT parallel. This was a correction, verified against Aave's docs.
 #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
@@ -759,7 +759,7 @@
   sanity_max: 100000000
   change_threshold_pct: 40
   added: 2026-09-11
-  note: "Venice publishes burns directly — self-reported, preferred over any derived figure. CONFIGURED AS A RUNNING TOTAL: the value is stored as burn_address_balance and the period burn is derived by differencing. If the page actually shows per-period burns rather than a cumulative total, change metric to gross_burn_tokens and delete the cumulative and derive_flow_metric lines. Check this on the first run."
+  note: "BLOCKED BY robots.txt on venice.ai as of the first live run, and NOT worked around. THIS IS THE HIGHEST-PRIORITY GAP IN THE UNIVERSE: Venice AI has no other automated route to its burn figure, because its three on-chain addresses (token, buy_and_burn, burn_zero) are all still unverified. Until either robots permits a documented endpoint or those addresses are verified, Venice burn is manual entry only. Configured as a running total; if the page shows per-period burns instead, change metric to gross_burn_tokens and drop the cumulative and derive_flow_metric lines."
 
 # ---- Chainlink Reserve: the dashboard figure sits ALONGSIDE the tier 2 contract read, as a
 # cross-check. The contract read is preferred; a divergence beyond the configured tolerance is
@@ -779,4 +779,4 @@
   sanity_max: 100000000
   change_threshold_pct: 40
   added: 2026-09-11
-  note: "Chainlink Reserve balance as published. Cross-check against the tier 2 read of LINK.balanceOf(reserve); the contract read wins where both return a value. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026) — a rising series, so a large upward move is expected and the threshold is set accordingly."
+  note: "BLOCKED BY robots.txt on metrics.chain.link as of the first live run, and NOT worked around. LOW STAKES: this was only ever a cross-check for the tier 2 read of LINK.balanceOf(reserve), which is verified and working, so nothing is lost but the second opinion. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026)."
