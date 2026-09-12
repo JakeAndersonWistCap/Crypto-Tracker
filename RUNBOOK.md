@@ -307,6 +307,12 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**`none available` is not `n/a`.** `n/a` means no value in the store — possibly not yet sourced,
+possibly broken. `none available` in grey italics means somebody chased it, there is no route,
+and the cell is empty on purpose. Hover it for what was tried, or read the **Closed** block at
+the bottom of Config & Sources. Nothing in that block belongs in the Gap Report, and nothing in
+it should be re-attempted without new information.
+
 ### 10.5 Staging — captured, used by nothing
 
 Figures a source returned that no metric in the library takes: Ether.fi's `agg_14` and `agg_30`,

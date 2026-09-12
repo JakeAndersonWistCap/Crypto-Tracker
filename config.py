@@ -1155,27 +1155,13 @@ PROJECTS = [
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
-        "dune_queries": {
-            "locked_tokens_dashboard": {
-                "query_id": 2986047,
-                # COLUMNS NOT SUPPLIED, and the SQL was not visible. The adapter runs the query and
-                # reports the columns it actually returns rather than guessing which holds the figure.
-                "date_col": None,
-                "value_col": None,
-                "source_url": "https://dune.com/queries/2986047",
-                "note": "veAERO locked, as a CROSS-CHECK of the tier 2 read of AERO.balanceOf(escrow), which is "
-                        "verified and working. It writes locked_tokens_dashboard, never locked_tokens, so it can "
-                        "never overwrite the contract figure. Low stakes if it stays unmapped.",
-            },
-            **_dune("avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
-        },
-                "cross_checks": [
-            {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
-             "secondary": "locked_tokens_dashboard", "secondary_source": "https://dune.com/0xkhmer/aerodrome",
-             "tolerance": 0.03, "prefer": "primary",
-             "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
-                     "tolerance is flagged rather than one figure silently replacing the other."},
-        ],
+        # NO locked_tokens_dashboard ENTRY, AND NO CROSS-CHECK. Query 2986047 was the only candidate
+        # source for the second opinion on veAERO and it is unusable — see UNAVAILABLE below for
+        # what was tried. A query_id left in place here would fail on every run forever; a
+        # cross_checks entry naming a secondary that can never arrive would report a permanent
+        # divergence-unavailable. Both are removed rather than left to generate noise.
+        "dune_queries": _dune("avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd",
+                              "actual_buyback_tokens"),
         "materiality": "high",
         "notes": "veAERO — lock rate and average lock duration are required inputs.",
     },
@@ -1692,6 +1678,88 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
         else:
             out.append((product, f"{value:.0%}", float(value)))
     return out
+
+
+# =======================================================================================
+# UNAVAILABLE — figures that were CHASED AND CLOSED. Not gaps, and not silent absences.
+#
+# There are three different states a missing figure can be in, and collapsing them is how a
+# team re-litigates the same dead end every few months:
+#
+#   a GAP          nobody has sourced it yet. It belongs on the to-do list.
+#   UNAVAILABLE    somebody tried, the attempts are recorded, and there is no route. It does
+#                  NOT belong on the to-do list — a permanent entry there trains the reader
+#                  to skim past the list.
+#   silent         the worst of the three: the cell is blank and nobody knows whether that is
+#                  a gap, a closure, or a bug.
+#
+# An entry here SUPPRESSES the Gap Report row for that (project, metric), renders as a closed
+# item on Config & Sources, and makes the dependent workbook cells say "none available" rather
+# than "n/a" — so an absent second opinion never reads as missing data. `what_was_tried` is the
+# load-bearing field: it is what stops the next person repeating the work.
+# =======================================================================================
+UNAVAILABLE = [
+    {
+        "project": "Aerodrome", "metric": "locked_tokens_dashboard",
+        "closed_on": "2026-09-12",
+        "summary": "No second opinion on veAERO locked. The tier 2 contract read is unaffected.",
+        "what_was_tried": (
+            "Dune query 2986047 was the only candidate. (1) API: the results endpoint returned HTTP 404. "
+            "(2) API control comparison: the same query and a control id that certainly does not exist "
+            "(999999999) returned the IDENTICAL response — 404 'not found: Query not found or private' — "
+            "so the API cannot distinguish deleted from private. (3) Browser, signed in, 2026-09-12: "
+            "'This query is private or doesn't exist'. Private and deleted remain indistinguishable and "
+            "either way it is unusable."),
+        "impact": (
+            "NONE on the figure itself. locked_tokens for Aerodrome comes from the tier 2 read of "
+            "AERO.balanceOf(escrow) at 0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4 on Base, which is "
+            "verified and working. What is lost is the second opinion on it, not the number."),
+        "reopen_if": (
+            "Somebody publishes a veAERO locked figure on a page we may scrape, or writes a Dune query we "
+            "own. Do NOT re-attempt 2986047 itself: three independent checks have closed it."),
+    },
+    {
+        "project": "Aerodrome", "metric": "locked_tokens",
+        "kind": "history",          # the figure is fine; its HISTORY is what is unavailable
+        "closed_on": "2026-09-12",
+        "summary": "Current state only — no lock-rate history, so the 3/6/9-month trajectory accumulates "
+                   "forward from today rather than backfilling.",
+        "what_was_tried": (
+            "A contract read returns present state and nothing else; that is what a contract read is. The "
+            "backfill would have come from Dune 2986047, which is closed as unusable (above)."),
+        "impact": (
+            "The Aerodrome lock-rate trajectory columns fill one run at a time from 2026-09-12. The CURRENT "
+            "lock rate is correct from day one. This is a known limitation, deliberately NOT a gap: there is "
+            "nothing to chase and nothing is broken."),
+        "reopen_if": (
+            "Somebody wants the history badly enough to write it: a Dune query aggregating AERO transfers "
+            "into the escrow at 0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4 on Base would reconstruct it. "
+            "A nice-to-have, not a blocker."),
+    },
+]
+
+# Two kinds, kept strictly apart. "figure" means the number itself has no route, so the Gap
+# Report row is suppressed and dependent cells read "none available". "history" means the
+# CURRENT number is fine and only its past is missing — suppressing that metric's gap row would
+# hide a real failure if the live read ever broke, so it never does.
+UNAVAILABLE_BY_KEY = {(u["project"], u["metric"]): u for u in UNAVAILABLE
+                      if u.get("kind", "figure") == "figure"}
+LIMITATION_BY_KEY = {(u["project"], u["metric"]): u for u in UNAVAILABLE
+                     if u.get("kind") == "history"}
+
+
+def unavailable_for(project_name: str, metric: str) -> dict | None:
+    """The closure record for a FIGURE that was chased and has no route, or None.
+
+    Never returns a history-only limitation: that metric still has a live value, and treating it
+    as unavailable would suppress a gap row that must appear if the live read ever fails.
+    """
+    return UNAVAILABLE_BY_KEY.get((project_name, metric))
+
+
+def limitation_for(project_name: str, metric: str) -> dict | None:
+    """A recorded limitation on a figure that IS available — today's value is fine, its past is not."""
+    return LIMITATION_BY_KEY.get((project_name, metric))
 
 
 # =======================================================================================

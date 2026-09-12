@@ -74,6 +74,10 @@ UNIT_FMT = {"usd": FMT_USD, "tokens": FMT_NUM, "count": FMT_NUM, "pct": FMT_PCT,
 CFG = "'Config & Sources'"
 _WINDOWS: dict[str, tuple[str, str]] = {}   # window key -> (start, end) ISO dates, set per build
 NA = '"n/a"'
+# A figure that was chased and closed reads DIFFERENTLY from one that is merely absent. "n/a"
+# means no value in the store — possibly a bug, possibly not yet sourced. This means somebody
+# looked, there is no route, and the cell is empty on purpose.
+CLOSED_TEXT = "none available"
 
 # Data sheet layout (column letters)
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
@@ -446,8 +450,42 @@ def write_config(ws, asof: pd.Timestamp):
                 c.fill = FILL_KEY
             if head in ("Notes", "Status changes"):
                 c.alignment = Alignment(wrap_text=False)
+    _write_closed_records(ws, CFG_R1 + 3)
     _set_widths(ws, {get_column_letter(i + 1): w for i, (_, w) in enumerate(CFG_COLS)})
     ws.freeze_panes = ws.cell(row=CFG_R0, column=3)
+
+
+def _write_closed_records(ws, start_row: int) -> int:
+    """Figures that were chased and closed, and limitations on figures that work.
+
+    Neither belongs in the Gap Report — a permanent entry on a to-do list teaches the reader to
+    skim the list. They belong here, with what was tried, so the next person does not repeat the
+    work or mistake a deliberately empty cell for a broken one.
+    """
+    records = getattr(config, "UNAVAILABLE", [])
+    r = start_row
+    ws.cell(row=r, column=1, value="Closed — chased, no route available (NOT gaps, and not to be re-attempted)").font = F_BOLD
+    r += 1
+    if not records:
+        ws.cell(row=r, column=1, value="none").font = F_SUB
+        return r + 1
+    _header(ws, r, ["Project", "Figure", "Kind", "Closed on", "Summary", "What was tried", "Impact", "Reopen if"])
+    ws.row_dimensions[r].height = 18
+    r += 1
+    for u in records:
+        kind = u.get("kind", "figure")
+        vals = [u["project"], u["metric"],
+                "no route to the figure" if kind == "figure" else "figure works; HISTORY unavailable",
+                u["closed_on"], u["summary"], u["what_was_tried"], u["impact"], u["reopen_if"]]
+        for j, v in enumerate(vals, start=1):
+            c = ws.cell(row=r, column=j, value=v)
+            c.font = F_SUB if j > 4 else F_BASE
+            c.number_format = FMT_TEXT
+            c.alignment = Alignment(wrap_text=False)
+            if j <= 4:
+                c.fill = FILL_UNCONFIRMED
+        r += 1
+    return r
 
 
 def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
@@ -567,6 +605,21 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 c.fill = FILL_KEY
             # visual flags from the underlying data / config
             meta = spec[5] if len(spec) > 5 else {}
+            # A cell whose figure — or whose only input — was chased and closed says so, instead
+            # of showing "n/a" next to twenty real ones and reading as missing data.
+            dep = meta.get("closed_with") or meta.get("metric")
+            closed = config.unavailable_for(p["name"], dep) if dep else None
+            if closed:
+                c.value = CLOSED_TEXT
+                c.font = Font(name=FONT, size=10, color="999999", italic=True)
+                c.number_format = FMT_TEXT
+                c.comment = Comment(
+                    f"CLOSED, not missing. {closed['summary']}\n\n"
+                    f"What was tried: {closed['what_was_tried']}\n\n"
+                    f"Impact: {closed['impact']}\n\n"
+                    f"Reopen if: {closed['reopen_if']}\n\n"
+                    f"Closed on {closed['closed_on']}. Recorded in config.py UNAVAILABLE.", "token_metrics")
+                continue
             metric = meta.get("metric")
             if metric:
                 st = data_by_key.get(f"{p['name']}|{metric}")
@@ -781,8 +834,11 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Lock rate = locked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
         ("Tokens locked — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "locked_tokens_dashboard", "now")),
          FMT_NUM, "pull", False, {"metric": "locked_tokens_dashboard"}),
+        # The divergence is meaningless without the cross-check, so it inherits the cross-check's
+        # closed state rather than showing its own "n/a" beside it.
         ("Lock: contract vs dashboard divergence (flagged beyond tolerance)",
-         lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{R.D(r, 'locked_tokens_dashboard', 'now')}-1"), FMT_PCT, "calc"),
+         lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{R.D(r, 'locked_tokens_dashboard', 'now')}-1"),
+         FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         ("Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)",
          lambda r, p: calc(
@@ -1320,6 +1376,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
               ("Amber fill = programme paused", F_BASE, FILL_PAUSED), ("Highlighted columns = headline figures", F_BASE, FILL_KEY),
               ("Lilac fill = flagged to the Review Queue", F_BASE, FILL_REVIEW),
               ("n/a = no value in the store (never a zero) — see the Gap Report for why", Font(name=FONT, size=10, color="999999"), None),
+              ("\"none available\" = chased and CLOSED, not missing — the cell is empty on purpose. "
+               "Hover it, or see Closed on Config & Sources", Font(name=FONT, size=10, color="999999", italic=True), None),
               ("Source tiers: 1 free API · 2 contract read · 3 protocol dashboard · 4 Dune backfill · 5 off-chain operational", F_SUB, None)]
     for i, (text, font, fill) in enumerate(legend):
         c = ws_master.cell(row=legend_row + i, column=1, value=text)

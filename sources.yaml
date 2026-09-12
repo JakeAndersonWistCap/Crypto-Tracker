@@ -617,21 +617,13 @@
 # dune_queries. Do that when you have a moment and delete the scrape entry.
 # =====================================================================================
 
-- project: Aerodrome
-  metric: locked_tokens_dashboard
-  tier: 4
-  enabled: false            # WRONG TIER — see note. Convert to a tier 4 Dune API query.
-  url: https://dune.com/0xkhmer/aerodrome
-  method: xhr
-  url_contains: /api/
-  json_path: result.rows.0.locked_aero
-  anchor: "veAERO"
-  needs_first_run_check: true
-  sanity_min: 1000000
-  sanity_max: 2000000000
-  change_threshold_pct: 25
-  added: 2026-09-11
-  note: "DISABLED: dune.com robots.txt disallows scraping, and this was always the wrong tier — Dune content belongs in tier 4 via the API. To enable: open this dashboard, take the query id from the query URL (dune.com/queries/<id>), and put it in config.py under Aerodrome dune_queries.locked_tokens with its date_col and value_col. The tier 2 contract read (AERO.balanceOf(escrow)) is verified and working, so this is a cross-check, not the primary."
+# Aerodrome locked_tokens_dashboard — CLOSED 2026-09-12, entry REMOVED rather than left disabled.
+# The cross-check on veAERO locked has no route: dune.com robots.txt disallows scraping this
+# dashboard, and the underlying query 2986047 is unusable (API 404 indistinguishable from a
+# control id that does not exist; browser, signed in: "This query is private or doesn't exist").
+# Recorded in config.py UNAVAILABLE with everything that was tried. Do NOT re-add an entry here
+# for it — the tier 2 read of AERO.balanceOf(escrow) is verified and working, and what is missing
+# is the second opinion, not the figure.
 
 - project: Pendle
   metric: locked_tokens_dashboard

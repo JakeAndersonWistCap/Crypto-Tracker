@@ -227,10 +227,16 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     already = {(g["project"], g["metric"]) for g in existing_gaps}
 
     rows = list(existing_gaps)
+    # A figure that was chased and closed is not a to-do item. Leaving it on the list forever
+    # trains the reader to skim past the list, which costs more than the row is worth. The
+    # closure itself is recorded in config.UNAVAILABLE and rendered on Config & Sources, so it
+    # is suppressed here rather than lost.
+    closed = {k for k in getattr(config, "UNAVAILABLE_BY_KEY", {})}
+    rows = [g for g in rows if (g["project"], g["metric"]) not in closed]
     for p in projects:
         name = p["name"]
         for metric in config.metrics_for_project(p):
-            if (name, metric) in have or (name, metric) in already:
+            if (name, metric) in have or (name, metric) in already or (name, metric) in closed:
                 continue
             reason, suggestion = _tier_note(p, metric, scrape_entries)
             rows.append({

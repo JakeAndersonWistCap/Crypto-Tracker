@@ -691,10 +691,13 @@ def test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query():
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
+    # a synthetic project: no query in config is unmapped today, and this tests the ADAPTER
+    unmapped = {"name": "Ethereum", "dune_queries": {"locked_tokens_dashboard": {
+        "query_id": 4242, "date_col": None, "value_col": None}}}
     d = Dune()
     d.http = _Rows([{"day": "2026-09-01", "ve_locked": 1.0, "usd_value": 2.0}])
     out = FetchOutput()
-    d.run([config.PROJECT_BY_NAME["Aerodrome"]], None, out)
+    d.run([unmapped], None, out)
     assert out.frame().empty, "an unmapped query must store nothing rather than guess a column"
     gap = next(g for g in out.gaps if g["metric"] == "locked_tokens_dashboard")
     for col in ("day", "ve_locked", "usd_value"):
@@ -951,13 +954,64 @@ def test_parse_number():
     print("parse_number ok:", len(cases), "cases")
 
 
+def test_a_closed_figure_is_not_a_gap_and_its_history_limit_is_not_a_closure():
+    """Three states that must stay apart: a gap, a closed figure, and a working figure's missing past.
+
+    Aerodrome's cross-check was chased to a dead end (API 404 indistinguishable from a control id
+    that does not exist; browser, signed in, says private-or-gone). A permanent row on the to-do
+    list teaches the reader to skim the list, so it is suppressed and recorded instead.
+
+    The history limitation is the opposite trap: locked_tokens WORKS, only its past is missing.
+    Suppressing its gap row would hide a real failure if the contract read ever broke.
+    """
+    from fetch.gaps import detect
+
+    rows = detect(config.PROJECTS, pd.DataFrame(columns=["project", "metric"]), set(), {}, [])
+    keys = {(r["project"], r["metric"]) for r in rows}
+    assert ("Aerodrome", "locked_tokens_dashboard") not in keys, "a closed figure must not sit on the to-do list"
+    assert ("Aerodrome", "locked_tokens") in keys, \
+        "a history limitation must NEVER suppress the figure's own gap row — the live read could break"
+
+    # an adapter-raised gap for a closed figure is suppressed too, not just a generated one
+    rows = detect(config.PROJECTS, pd.DataFrame(columns=["project", "metric"]), set(), {},
+                  [{"project": "Aerodrome", "metric": "locked_tokens_dashboard",
+                    "reason": "query 2986047 returned 404", "tiers_attempted": "4", "suggestion": "-"}])
+    assert not [r for r in rows if (r["project"], r["metric"]) == ("Aerodrome", "locked_tokens_dashboard")]
+    # and only Aerodrome's is closed — other projects' cross-checks stay on the list
+    assert [r for r in rows if r["metric"] == "locked_tokens_dashboard"], \
+        "closing one project's cross-check must not close every project's"
+
+    closed = config.unavailable_for("Aerodrome", "locked_tokens_dashboard")
+    assert closed and "2986047" in closed["what_was_tried"], "the closure must record what was tried"
+    assert config.unavailable_for("Aerodrome", "locked_tokens") is None
+    assert config.limitation_for("Aerodrome", "locked_tokens") is not None
+    print("closure ok: cross-check closed and off the to-do list, locked_tokens still gap-checked")
+
+
+def test_aerodrome_still_reads_locked_tokens_from_the_escrow_with_no_cross_check():
+    """Removing the dead cross-check must not disturb the figure it was checking."""
+    a = config.PROJECT_BY_NAME["Aerodrome"]
+    ve = a["contracts"]["ve"]
+    assert ve["read_method"] == "escrow_balance_of" and ve["chain"] == "base" and ve.get("verified")
+    assert ve["address"] == "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"
+    assert not a.get("cross_checks"), "a cross-check naming a secondary that can never arrive is noise"
+    assert "locked_tokens_dashboard" not in a["dune_queries"], \
+        "a dead query id left in config fails on every run forever"
+    print("aerodrome ok: tier 2 escrow read intact, no cross-check, no dead query id")
+
+
 def test_gap_detection_covers_every_applicable_metric():
     from fetch.gaps import detect
     frame = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"])
     gaps = detect(config.PROJECTS, frame, set(), {}, [])
     keys = {(g["project"], g["metric"]) for g in gaps}
+    # A figure chased to a dead end is the ONE exemption, and it is explicit: it is recorded in
+    # config.UNAVAILABLE with what was tried, and rendered on Config & Sources instead.
     for p in config.PROJECTS:
         for m in config.metrics_for_project(p):
+            if config.unavailable_for(p["name"], m):
+                assert (p["name"], m) not in keys, f"{p['name']}/{m} is closed and must not be a gap"
+                continue
             assert (p["name"], m) in keys, f"{p['name']}/{m} missing from the Gap Report"
     assert all(g["reason"] and g["suggestion"] for g in gaps), "every gap needs a reason and a fix"
     vague = [g for g in gaps if g["reason"] == "no source configured for this metric"]
@@ -1001,6 +1055,8 @@ if __name__ == "__main__":
                test_forced_repull_takes_the_full_history_not_the_trailing_window,
                test_geodnet_sql_addresses_match_config_exactly,
                test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
+               test_a_closed_figure_is_not_a_gap_and_its_history_limit_is_not_a_closure,
+               test_aerodrome_still_reads_locked_tokens_from_the_escrow_with_no_cross_check,
                test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:
         fn()
     print("\nALL ADAPTER TESTS PASSED")

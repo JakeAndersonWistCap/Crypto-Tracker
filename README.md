@@ -164,6 +164,7 @@ reaches the sheet.
 7. **Config & Sources** — every parameter with its URL, date, tier, `programmed` flag and status. This tab is what makes the numbers defensible.
 8. **Gap Report** — the to-do list. Every unresolved metric, tiers attempted, reason, and the fix.
 9. **Review Queue** — values rejected by sanity bounds or flagged by the change threshold, with old and new values.
+9a. **Config & Sources → Closed** — figures chased to a dead end, with what was tried, plus limitations on figures that work (current state only, no history). Deliberately NOT in the Gap Report: a permanent entry on a to-do list teaches the reader to skim it. Cells depending on a closed figure read `none available`, not `n/a`.
 10. **Staging** — figures a source returned that no metric takes. Captured so they are not lost or re-discovered; **read by nothing**. Promoting one is a deliberate edit to `config.py`.
 11. **Run Log** — rows per source and tier, failures, last successful fetch per source/project.
 
