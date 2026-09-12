@@ -630,6 +630,16 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     elif st["status"] == "stale":
                         c.fill = FILL_STALE
                         c.comment = Comment(f"STALE — {st['note']}", "token_metrics")
+                    # A review flag was reaching the Data tab and stopping there, so a figure the
+                    # validator would not accept silently still rendered as a plain number on the
+                    # tab people actually read. A flagged ZERO is the worst case of that: it looks
+                    # exactly like a measured zero.
+                    elif st["status"] == "review":
+                        c.fill = FILL_REVIEW
+                        c.comment = Comment(
+                            f"FLAGGED — do not read this as a measured figure. {st['note']}\n\n"
+                            f"See the Review Queue tab for the reason, and the Gap Report for what "
+                            f"would settle it.", "token_metrics")
             gw = meta.get("gate_window")
             if gw:
                 from datetime import timedelta as _td
@@ -1374,7 +1384,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
               ("Green = pulled from another sheet", F_LINK, None), ("Yellow fill = manual override (entered_on in comment)", F_BASE, FILL_MANUAL),
               ("Grey fill = split unconfirmed, derived figure suppressed", F_BASE, FILL_UNCONFIRMED), ("Orange fill = stale (last good fetch in comment)", F_BASE, FILL_STALE),
               ("Amber fill = programme paused", F_BASE, FILL_PAUSED), ("Highlighted columns = headline figures", F_BASE, FILL_KEY),
-              ("Lilac fill = flagged to the Review Queue", F_BASE, FILL_REVIEW),
+              ("Lilac fill = flagged to the Review Queue — NOT a measured figure. A lilac 0 in a burn "
+               "column may mean no burn, or that the burn did not route to the address we watch", F_BASE, FILL_REVIEW),
               ("n/a = no value in the store (never a zero) — see the Gap Report for why", Font(name=FONT, size=10, color="999999"), None),
               ("\"none available\" = chased and CLOSED, not missing — the cell is empty on purpose. "
                "Hover it, or see Closed on Config & Sources", Font(name=FONT, size=10, color="999999", italic=True), None),

@@ -151,6 +151,80 @@ def test_chain_reads_verified_and_derives_flow():
     print("tier 2 read ok:", by)
 
 
+def test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured():
+    """An unchanged burn balance is not evidence that nothing burned.
+
+    A balance answers "how much is sitting there", never "did anything move and from whom", so
+    0 is consistent with no burn, with a burn that routed somewhere else, and with too short an
+    observation history. All three render as the same 0. This is the skipped-vs-succeeded
+    failure in a different place: no error, no gap, and a figure that reads as measured.
+    """
+    c = Chain(prior_values={("PancakeSwap", "burn_address_balance"): 25.0})
+    c.reader = StubReader(symbol="Cake", supply=100.0, balance=25.0)      # balance UNCHANGED
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+    df = out.frame()
+    by = dict(zip(df["metric"], df["value"]))
+    assert by["gross_burn_tokens"] == 0.0, "the zero is still stored — it is flagged, not withheld"
+
+    flagged = [r for r in out.review if r["reason"] == "unattributable_zero"]
+    assert len(flagged) == 1 and flagged[0]["metric"] == "gross_burn_tokens", \
+        "a zero delta must reach the Review Queue, which is what turns the cell lilac"
+    assert flagged[0]["action"] == "stored_flagged"
+
+    gap = next(g for g in out.gaps if g["metric"].startswith("[data] gross_burn_tokens is ZERO"))
+    for hypothesis in ("(a) no burn occurred", "did not route to the", "too few observations"):
+        assert hypothesis in gap["reason"], f"the gap must state every hypothesis, missing {hypothesis!r}"
+    assert "OVERSTATE" in gap["reason"], "anyone can send to a dead address — that asymmetry matters"
+    assert "eth_getLogs" in gap["suggestion"] and "Dune" in gap["suggestion"], \
+        "the fix must name both routes, because they answer different questions"
+    print("ambiguous zero ok: stored, flagged, and every hypothesis named")
+
+
+def test_a_real_burn_is_not_flagged():
+    """The flag must fire on ambiguity, not on every burn read, or it stops meaning anything."""
+    c = Chain(prior_values={("PancakeSwap", "burn_address_balance"): 20.0})
+    c.reader = StubReader(symbol="Cake", supply=100.0, balance=25.0)
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+    assert not [r for r in out.review if r["reason"] == "unattributable_zero"]
+    assert not [g for g in out.gaps if g["metric"].startswith("[data] gross_burn_tokens is ZERO")]
+    print("no false flag ok: a non-zero delta is reported plainly")
+
+
+def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
+    """A known-but-undocumented change inside a period must keep it unconfirmed.
+
+    Nothing is wrong today — the span is unconfirmed and suppressed. The trap is the day somebody
+    documents ONE number for a span that contained two regimes: the suppression would lift on a
+    figure that looks entirely reasonable.
+    """
+    windows = {
+        ("2026-02-01", "2026-03-31"): "pre-overhaul, undocumented",
+        ("2026-05-01", "2026-07-31"): "post-overhaul, undocumented",
+        ("2026-06-15", "2026-09-12"): "spans the Executive Proposal",
+    }
+    for (a, b), why in windows.items():
+        r = config.split_for_window("Sky", a, b)
+        assert r["status"] == "unconfirmed" and r["share_to_buyback"] is None, f"{why}: {r}"
+    live = config.split_for_window("Sky", "2026-08-20", "2026-09-12")
+    assert live["status"] == "active" and live["share_to_buyback"] == 0.55, "the documented period still resolves"
+
+    # filling in a share does NOT lift the suppression while the change is unresolved
+    period = next(h for h in config.PROJECT_BY_NAME["Sky"]["fee_split"]["history"] if h.get("known_change"))
+    period["share_to_buyback"] = 0.30
+    try:
+        r = config.split_for_window("Sky", "2026-05-01", "2026-07-31")
+        assert r["share_to_buyback"] is None and r["status"] == "unconfirmed", \
+            "a share on an unresolved period must not resolve the window"
+        errs = config.validate_config(raise_on_error=False)
+        assert any("known_change" in e for e in errs), "config must reject the share outright, not just suppress it"
+    finally:
+        period["share_to_buyback"] = None
+    assert not config.validate_config(raise_on_error=False)
+    print("sky split ok: April overhaul keeps its period unconfirmed, and a filled-in share is rejected")
+
+
 def test_several_contracts_serving_one_metric_are_summed():
     """Components on the SAME chain sum; a component with no same-chain token is refused.
 
@@ -1030,6 +1104,8 @@ def test_manual_overrides_suppress_gaps():
 if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
+               test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
+               test_a_real_burn_is_not_flagged, test_sky_split_history_cannot_resolve_across_the_april_overhaul,
                test_several_contracts_serving_one_metric_are_summed,
                test_components_sum_fully_once_every_chain_has_its_token,
                test_no_metric_is_served_by_contracts_that_would_overwrite_each_other,

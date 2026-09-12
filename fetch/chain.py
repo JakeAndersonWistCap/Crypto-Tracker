@@ -422,4 +422,50 @@ class Chain:
                                                    flow_metric, f"{src}:delta", TIER, when)
                 if not flow.empty:
                     out.add(flow, SOURCE, name, f"{flow_metric} derived from the summed {metric} delta", TIER)
+                    if float(flow["value"].iloc[0]) == 0.0:
+                        self._flag_unattributable_zero(project, flow_metric, metric, when, out)
+
+    def _flag_unattributable_zero(self, project: dict, flow_metric: str, stock_metric: str, when, out):
+        """A zero differenced out of a balance read is not a measured zero.
+
+        A balance answers "how much is sitting there now". It cannot answer "did anything move,
+        and where did it come from" — so an unchanged balance is consistent with at least three
+        different worlds, and the number 0 in the burn column looks identical in all of them.
+        Rendering that as a plain zero is the same failure as reporting a skipped backfill as a
+        success: no error, no gap, and a figure that reads as measured when it is not.
+
+        The cure is not a better balance read, it is a different kind of read: transfer events
+        INTO the burn address, which say what moved, when, and from where.
+        """
+        name = project["name"]
+        burn = {k: v for k, v in (project.get("contracts") or {}).items()
+                if v.get("kind") in ("burn_address_balance", "spl_token_account")}
+        token = (project.get("contracts") or {}).get("token", {})
+        where = "; ".join(f"{k} {v.get('address')} on {v.get('chain')}" for k, v in burn.items()) or "(no address on file)"
+
+        out.review_item(name, flow_metric, "unattributable_zero", "stored_flagged", value=0.0,
+                        prior_value=self.prior.get((name, flow_metric)), date=when,
+                        source=f"{SOURCE}:balance delta — a zero here is ambiguous, not measured", tier=TIER)
+        out.gap(name, f"[data] {flow_metric} is ZERO and a balance read cannot say why",
+                reason=(
+                    f"{flow_metric} came out at 0 by differencing {stock_metric}, a BALANCE read of "
+                    f"{where}. A balance cannot distinguish three different situations, and all three "
+                    f"present as 0: (a) no burn occurred; (b) a burn occurred but did not route to the "
+                    f"address being watched — where a protocol splits buybacks between burning and "
+                    f"distribution, a cycle can run entirely to distribution and leave this balance "
+                    f"untouched; (c) the store holds too few observations for the window, because a "
+                    f"differenced series only measures the period it has actually been observing — check "
+                    f"n_points for {stock_metric} on the Data tab before reading the window at face value. "
+                    f"Note also that the balance can only ever OVERSTATE a protocol burn: anyone may send "
+                    f"tokens to a dead address, and the read cannot attribute them."),
+                tiers_attempted="2",
+                suggestion=(
+                    f"Only a TRANSFER HISTORY settles this: Transfer events with `to` = the burn address "
+                    f"for token {token.get('address') or '(token address not on file)'} on "
+                    f"{token.get('chain') or '?'} over the window. Two routes, and they answer different "
+                    f"questions. (1) Diagnostic, cheap: eth_getLogs over the last ~30 days says whether "
+                    f"ANYTHING moved, which separates (a) from (b) immediately. (2) History: a Dune query "
+                    f"on the decoded transfer table, following the GEODNET pattern in "
+                    f"dune_queries.gross_burn_tokens — that is what fills the trajectory columns. Until "
+                    f"one exists, the zero stays flagged rather than being read as a measured zero."))
 

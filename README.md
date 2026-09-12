@@ -132,6 +132,9 @@ where the selector still matches but now points at a different number. Three def
 - **Change threshold.** A value moving more than the configured percentage is **stored but
   flagged** to the Review Queue. A genuine step change (a halving, a one-off 100m burn) must
   not be silently dropped.
+- A **zero burn derived from a balance delta** is stored but flagged too: a balance cannot
+  distinguish "nothing burned" from "the burn did not route to the address we watch", and a 0
+  that means the second must not render like a 0 that means the first.
 
 Tier 3 is polite: one run a day, responses cached per day, `robots.txt` respected, and an
 honest user agent naming the tool.

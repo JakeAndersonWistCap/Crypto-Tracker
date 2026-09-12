@@ -307,6 +307,13 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**A lilac zero is not a measured zero.** Where a burn is read as a *balance* and differenced into
+a flow, an unchanged balance produces 0 — and that 0 is consistent with no burn, with a burn that
+routed somewhere other than the address being watched, and with the store simply not having
+watched for long enough. All three look identical. Those zeros are stored, flagged to the Review
+Queue, filled lilac and given a hover comment; only a transfer history settles which one it is.
+Projects affected: Sky, Venice AI, PancakeSwap, Uniswap, GEODNET.
+
 **`none available` is not `n/a`.** `n/a` means no value in the store — possibly not yet sourced,
 possibly broken. `none available` in grey italics means somebody chased it, there is no route,
 and the cell is empty on purpose. Hover it for what was tried, or read the **Closed** block at

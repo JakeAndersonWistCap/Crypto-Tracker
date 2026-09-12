@@ -363,12 +363,20 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
 
 
 def _split_period(from_date, to_date, share, status, source_url=None, source_date=None,
-                  destination_split=None, note=""):
-    """One period of a fee split. from_date None means "everything before to_date"."""
+                  destination_split=None, note="", known_change=None):
+    """One period of a fee split. from_date None means "everything before to_date".
+
+    known_change records a change we KNOW happened inside this period but cannot date or size.
+    A period carrying one can never resolve to a single share, even if somebody later fills one
+    in — see split_for_window. That guard exists because the dangerous moment is not today, when
+    the period is unconfirmed and suppressed anyway; it is the day someone documents one number
+    for a span that actually contained two regimes, and the suppression lifts on a wrong figure.
+    """
     return {
         "from": from_date, "to": to_date, "share_to_buyback": share,
         "destination_split": destination_split, "status": status,
         "source_url": source_url, "source_date": source_date, "note": note,
+        "known_change": known_change,
     }
 
 
@@ -1261,10 +1269,28 @@ PROJECTS = [
             "status": "active",
             "destination_split": 0.55,
             "history": [
-                _split_period(None, "2026-08-12", None, "unconfirmed",
-                              note="Split before the 2026-08-13 Executive Proposal is NOT documented. "
-                                   "Do not assume 0.55 applied — the derived figure is suppressed for "
-                                   "any period ending before 2026-08-13."),
+                # TWO periods before the Executive Proposal, not one. The April 2026 treasury
+                # overhaul cut buybacks by a reported ~87% to rebuild stablecoin reserves,
+                # explicitly prioritising a $150m solvency buffer over buybacks and staking
+                # rewards. Lumping the regimes either side of that into a single undocumented
+                # period is safe ONLY while it stays undocumented: the moment somebody fills in
+                # one pre-August number, it would be applied across an ~87% cut and the
+                # suppression would lift on a figure that looks entirely reasonable.
+                _split_period(None, "2026-04-30", None, "unconfirmed",
+                              note="Pre-overhaul regime. NOT documented — the Smart Burn Engine ran at a "
+                                   "reported order of $1m/day before April 2026. Do not assume 0.55 "
+                                   "applied. THE 2026-04-30 BOUNDARY IS A PLACEHOLDER, not a known event "
+                                   "date: the overhaul is reported as April 2026 with no day established. "
+                                   "Both periods either side are unconfirmed, so no figure depends on "
+                                   "where the boundary sits — but it must be corrected before either is."),
+                _split_period("2026-05-01", "2026-08-12", None, "unconfirmed",
+                              known_change="April 2026 treasury overhaul cut buybacks by a reported ~87% "
+                                           "to rebuild stablecoin reserves. Neither the exact date nor the "
+                                           "resulting split is documented.",
+                              note="Post-overhaul, pre-Executive-Proposal regime. Materially different from "
+                                   "the period before it and from the 55/45 after it, so it is its own "
+                                   "period. known_change keeps it unconfirmed even if a share is later "
+                                   "filled in, until the change itself is documented."),
                 _split_period("2026-08-13", None, 0.55, "active", source_url=None, source_date="2026-08-13",
                               destination_split=0.55,
                               note="Executive Proposal approved 2026-08-13: 55% of each Smart Burn Engine "
@@ -1309,7 +1335,34 @@ PROJECTS = [
         "burn_read_method": "transfer",
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
         "destination_effect": "mixed",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "staked_tokens"),
+        "dune_queries": {
+            # The slot that resolves the ambiguous zero. Tier 2 reads balanceOf(0x0) and
+            # differences it, which cannot tell "nothing burned" from "the burn went somewhere
+            # else" — only a TRANSFER HISTORY can. Same shape as GEODNET 8683175:
+            #
+            #   SELECT date_trunc('month', evt_block_time) AS month,
+            #          SUM(value / 1e18)                   AS tokens_burned
+            #   FROM   erc20_ethereum.evt_Transfer
+            #   WHERE  contract_address = 0x56072C95FAA701256059aa122697B133aDEd9279   -- SKY
+            #     AND  "to"             = 0x0000000000000000000000000000000000000000
+            #   GROUP  BY 1 ORDER BY 1
+            #
+            # Then set query_id, date_col "month", value_col "tokens_burned", granularity
+            # "monthly", drop_current_period True — and `python dune_probe.py <id> --map
+            # month:tokens_burned --drop-current` shows the series before it is committed.
+            # NOTE: this measures transfers TO the dead address, which is every discard, not only
+            # the protocol's. It answers "did anything move" definitively; attributing what moved
+            # to the Smart Burn Engine needs the `from` address as well.
+            "gross_burn_tokens": {
+                "query_id": None, "date_col": "month", "value_col": "tokens_burned",
+                "granularity": "monthly", "drop_current_period": True,
+                "source_url": "https://dune.com/queries/8683175",
+                "note": "NOT YET AUTHORED. SQL sketched above, following the GEODNET pattern. Until this "
+                        "exists, Sky's burn is a balance delta and a zero cannot be attributed.",
+            },
+            **_dune("actual_buyback_usd", "actual_buyback_tokens", "gross_issuance_tokens",
+                    "emissions_tokens", "staked_tokens"),
+        },
                 "cross_checks": [
             {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
              "secondary": "locked_tokens_dashboard", "secondary_source": "https://info.skyeco.com/staking",
@@ -1648,6 +1701,13 @@ def split_for_window(project_name: str, start, end) -> dict:
                 "why": f"window spans {len(overlapping)} different splits — no single share applies"}
 
     period = overlapping[0]
+    # A period with a KNOWN but undocumented change inside it cannot resolve to one share, even
+    # if a share has been filled in. Without this, documenting a single number for a span that
+    # really contained two regimes would lift the suppression on a wrong figure.
+    if period.get("known_change"):
+        return {**base, "share_to_buyback": None, "status": "unconfirmed",
+                "why": f"a documented change happened inside this period and has not been resolved: "
+                       f"{period['known_change']}"}
     return {
         "share_to_buyback": period.get("share_to_buyback"),
         "destination_split": period.get("destination_split"),
@@ -1771,6 +1831,52 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # =======================================================================================
 OPEN_QUESTIONS = [
     {
+        "project": "Sky", "topic": "the zero burn — no burn, or the wrong address? A balance cannot say",
+        "severity": 1,
+        "reason": "Sky's gross_burn_tokens comes from differencing balanceOf(0x0000...0000) on SKY "
+                  "0x56072C95FAA701256059aa122697B133aDEd9279. A balance answers 'how much is sitting "
+                  "there', never 'did anything move, and from whom', so the zero is consistent with three "
+                  "different worlds and looks identical in all of them. (a) NO BURN: plausible on the "
+                  "public record — the April 2026 treasury overhaul cut buybacks by a reported ~87% to "
+                  "rebuild stablecoin reserves, explicitly prioritising a $150m solvency buffer over "
+                  "buybacks and staking rewards, so the Smart Burn Engine has been running far below its "
+                  "historical ~$1m/day for months. (b) BURN OCCURRED BUT DID NOT ROUTE HERE: the 55/45 "
+                  "split sends 45% to LSSKY stakers, and Sky has not publicly specified the exact "
+                  "disposition of repurchased tokens — the burn-versus-distribute ambiguity is Sky's, not "
+                  "just ours — so a cycle can run entirely to distribution and leave this balance "
+                  "untouched. (c) TOO FEW OBSERVATIONS: a differenced series only measures the period it "
+                  "has actually been watching, so a 30-day window is only a 30-day burn if there are 30 "
+                  "days of readings behind it. NOTHING HERE IS RESOLVED BY ASSUMPTION: the zero is stored, "
+                  "flagged to the Review Queue, and rendered lilac so it cannot be read as measured.",
+        "suggestion": "Transfer events settle it, and only transfer events: Transfer with `to` = "
+                      "0x0000000000000000000000000000000000000000 for SKY over the window. The Dune slot "
+                      "is wired and waiting at Sky dune_queries.gross_burn_tokens with the SQL sketched in "
+                      "config — author the query, set query_id, and `python dune_probe.py <id> --map "
+                      "month:tokens_burned --drop-current` shows the series before it is committed. Check "
+                      "(c) first though: it is free. Look at n_points for burn_address_balance on the Data "
+                      "tab — a handful of observations means the window is measuring the tool's own "
+                      "lifetime, not Sky's.",
+    },
+    {
+        "project": "Sky", "topic": "the April 2026 buyback reduction is not in the fee-split history",
+        "severity": 1,
+        "reason": "The history had ONE undocumented period covering everything before 2026-08-13. The "
+                  "public record says that span contained at least two materially different regimes: the "
+                  "pre-April state, and the post-April state after buybacks were cut by a reported ~87%. "
+                  "No figure is wrong TODAY — every window touching that span is already suppressed as "
+                  "unconfirmed. The risk is the day somebody documents a single pre-August number: it "
+                  "would be applied across the cut and the suppression would lift on a figure that looks "
+                  "entirely reasonable. The period is therefore now SPLIT IN TWO, both unconfirmed, and "
+                  "the later one carries known_change so it stays unconfirmed even if a share is filled "
+                  "in. NO NUMBER HAS BEEN INVENTED, and the 2026-04-30 boundary is a month-end "
+                  "placeholder, not an established event date.",
+        "suggestion": "Two things to document, from Sky's own governance record: the DATE the April 2026 "
+                      "overhaul took effect (replacing the placeholder boundary), and the burn/distribute "
+                      "split that applied between then and the 2026-08-13 Executive Proposal. With both, "
+                      "clear known_change on that period and set its share. config.validate_config() "
+                      "rejects a period that carries a share while known_change is still unresolved.",
+    },
+    {
         "project": "Sky", "topic": "fee-split primary source URL",
         "reason": "The 55/45 split is recorded from a Sky governance Executive Proposal approved 2026-08-13, "
                   "but the PRIMARY governance forum post URL has not been captured, so fee_split.source_url "
@@ -1782,8 +1888,11 @@ OPEN_QUESTIONS = [
         "project": "Sky", "topic": "pre-2026-08-13 split",
         "reason": "The split that applied BEFORE 2026-08-13 is not documented, so every window ending before "
                   "that date, and every window spanning it, is unconfirmed and its derived figure suppressed. "
-                  "The current 55% is deliberately NOT applied retroactively.",
-        "suggestion": "Document the earlier split and add it to Sky fee_split.history as its own period.",
+                  "The current 55% is deliberately NOT applied retroactively. NOTE: that span is now TWO "
+                  "periods, not one — see the April 2026 buyback reduction question, which is the harder "
+                  "half of this and must be settled first. One number for the whole span would be wrong.",
+        "suggestion": "Document each period separately in Sky fee_split.history: pre-overhaul, and "
+                      "post-overhaul to 2026-08-12. Do not collapse them into one.",
     },
     {
         "project": "Venice AI", "topic": "burn methodology — does the burn route to the zero address",
@@ -2037,8 +2146,29 @@ def _check_addresses() -> list[str]:
     return errors
 
 
+def _check_split_periods() -> list[str]:
+    """A period with a known-but-unresolved change inside it must not also carry a share.
+
+    The combination is not a typo, it is a category error: one share cannot describe a span that
+    is known to contain two regimes. split_for_window suppresses it at runtime either way, but a
+    number sitting in config that nothing uses is a trap for the next reader, who will reasonably
+    assume it applies. Splitting the period into two is the fix.
+    """
+    errors = []
+    for p in PROJECTS:
+        for period in ((p.get("fee_split") or {}).get("history") or []):
+            if period.get("known_change") and period.get("share_to_buyback") is not None:
+                errors.append(
+                    f"{p['name']}: the fee-split period {period.get('from')}..{period.get('to')} carries a "
+                    f"share of {period['share_to_buyback']} AND an unresolved known_change "
+                    f"({period['known_change'][:80]}...). One share cannot describe a span known to contain "
+                    f"two regimes. Split the period at the change date and document each side, or drop the "
+                    f"share and leave it unconfirmed.")
+    return errors
+
+
 def validate_config(raise_on_error: bool = True) -> list[str]:
-    errors = _check_lock_contracts() + _check_addresses()
+    errors = _check_lock_contracts() + _check_addresses() + _check_split_periods()
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors
