@@ -457,7 +457,7 @@ UNI_ETH_ADDR = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 
 
 class _UniStub:
-    """Only the mainnet UNI token resolves, so the Unichain path refuses and the sum stays PARTIAL."""
+    """Mainnet only, which is now the whole of Uniswap's config — see the test below."""
 
     def __init__(self, balance):
         self.balance = balance
@@ -489,13 +489,30 @@ def test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_b
     assert len(burn) == 1 and burn.value.iloc[0] == 105_000_000.0
     assert "burn_dead" in burn.source.iloc[0], f"the DESTINATION must be the source, got {burn.source.iloc[0]}"
     assert "fire_pit" not in burn.source.iloc[0], "the executing contract must not serve the burn metric"
-    assert ":PARTIAL" in burn.source.iloc[0], "Unichain's burn path is separate and still unknown"
 
-    # the executors are kept, and read nothing
+    # NOT PARTIAL ANY MORE, AND THAT IS THE POINT OF THE 2026-09-14 CHANGE.
+    # This assertion used to require ":PARTIAL", on the belief that Unichain's burn path was a
+    # separate figure we were missing. Uniswap's own OptimismBridgedResourceFirepit.sol says
+    # otherwise: L2 burns bridge to L1 and the UNI lands at mainnet 0xdead after the OP Stack
+    # challenge period. So the mainnet dead-address balance is the WHOLE figure, not a slice, and
+    # labelling it partial would tell the reader to expect a larger number that does not exist.
+    assert ":PARTIAL" not in burn.source.iloc[0], (
+        "mainnet 0xdead is the WHOLE burn — OP Stack L2 burns bridge here after the challenge "
+        f"period, so nothing is missing. Got {burn.source.iloc[0]}")
+
+    # ONE executor now, not two: the Unichain Firepit was removed with the rest of the Unichain
+    # entries. Reading both sides of the bridge would count every L2 burn twice, a week apart.
     reference = [e.message for e in out.log if "reference only" in e.message]
-    assert len(reference) == 2 and all("burn_executor" in m for m in reference), \
-        "both Firepits stay in config for the mechanism, and serve no metric"
-    print("uniswap ok: dead address read, executors kept as reference, figure marked PARTIAL")
+    assert len(reference) == 1 and all("burn_executor" in m for m in reference), \
+        f"the mainnet Firepit stays as reference and serves no metric; got {reference}"
+
+    # AND THE UNICHAIN ENTRIES ARE GONE, asserted directly so a re-add fails here rather than
+    # silently double-counting in a live run.
+    keys = set(config.PROJECT_BY_NAME["Uniswap"]["contracts"])
+    assert not any("unichain" in k for k in keys), (
+        f"Uniswap is MAINNET ONLY by explicit decision — a Unichain read double-counts every burn "
+        f"across the 7-day bridge delay. Found {sorted(keys)}")
+    print("uniswap ok: dead address read as the WHOLE burn, one executor, no Unichain entries")
 
 
 def test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config():
@@ -604,29 +621,41 @@ def _a3_formula(project_name: str, header_starts: str) -> str:
 
 
 def test_fluid_buyback_is_suppressed_because_it_is_a_SWITCH_not_a_rate():
-    """Below the threshold there is no small buyback — there is no buyback."""
+    """Below the threshold there is no small buyback — there is no buyback.
+
+    THE LIVE STATE FLIPPED on 2026-09-14: Fluid crossed the $10m revenue threshold in October 2025
+    and launched The Fluid Reserve, so status is now "active" and the figure MUST compute. This
+    test used to assert the opposite, because the config used to say the opposite.
+
+    Both branches are still exercised — the suppressed one is now the forced counterfactual rather
+    than the live state — so the switch cannot rot in either direction.
+    """
     thr = config.PROJECT_BY_NAME["Fluid"]["buyback_threshold"]
     assert thr["threshold_usd_annualised"] == 10_000_000
-    assert thr["status"] != "active", "unconfirmed or below-threshold must suppress"
+    assert thr["status"] == "active", (
+        "Fluid crossed the threshold in October 2025 and launched The Fluid Reserve — the buyback "
+        f"is ACTIVE, not gated. Got {thr['status']!r}")
 
-    formula, cell = _a3_formula("Fluid", "BUYBACK AS % OF SUPPLY")
-    assert "threshold" in formula or "below threshold" in formula, \
-        f"the derived buyback must be suppressed, got {formula[:90]}"
-    assert "Data!" not in formula, "a suppressed figure must not still compute from the data"
-    assert cell.comment and "SWITCH" in cell.comment.text
+    formula, _ = _a3_formula("Fluid", "BUYBACK AS % OF SUPPLY")
+    assert "Data!" in formula, f"confirmed-active must produce the real formula, got {formula[:90]}"
 
-    # FORCE THE OTHER BRANCH: with governance confirming the switch is on, it must compute
-    thr["status"] = "active"
+    # FORCE THE OTHER BRANCH: if governance ever put it back below the threshold, it must suppress
+    # again rather than keep computing off stale revenue.
+    live = thr["status"]
+    thr["status"] = "below_threshold"
     try:
-        formula, _ = _a3_formula("Fluid", "BUYBACK AS % OF SUPPLY")
-        assert "Data!" in formula, "confirmed-active must produce the real formula, not a label"
+        formula, cell = _a3_formula("Fluid", "BUYBACK AS % OF SUPPLY")
+        assert "threshold" in formula or "below threshold" in formula, \
+            f"the derived buyback must be suppressed below the threshold, got {formula[:90]}"
+        assert "Data!" not in formula, "a suppressed figure must not still compute from the data"
+        assert cell.comment and "SWITCH" in cell.comment.text
     finally:
-        thr["status"] = "unconfirmed_which_side"
+        thr["status"] = live      # restore the LIVE value, not a hardcoded stale one
 
     # and a project with no threshold block is untouched by any of this
     other, _ = _a3_formula("Aave", "BUYBACK AS % OF SUPPLY")
     assert "threshold" not in other
-    print("fluid ok: suppressed while the switch is unconfirmed, computes when governance says active")
+    print("fluid ok: computes now the switch is ACTIVE, suppresses again if it goes below threshold")
 
 
 def test_a_supply_additive_buyback_increases_net_issuance_never_decreases_it():
@@ -921,12 +950,12 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
 
 
 def test_several_contracts_serving_one_metric_are_summed():
-    """Components on the SAME chain sum; a component with no same-chain token is refused.
+    """Components on the SAME chain sum into one figure.
 
-    The live run failed here: token_jar_unichain resolved its token to the ETHEREUM UNI address and
-    called it over the Unichain RPC, which returns empty data. A token address is not valid across
-    chains, so the component is refused and the sum is marked PARTIAL rather than quietly dropping
-    a burn path and reporting the remainder as the whole.
+    Uniswap is MAINNET ONLY since 2026-09-14, so this now tests the summing behaviour alone: the
+    TokenJar and the V3FeeAdapter both serve buyback_fund_balance and must add up rather than the
+    last read winning. The cross-chain REFUSAL half of this behaviour moved to the GEODNET test
+    below, which still has genuinely uncovered chains.
     """
     UNI_ETH = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
 
@@ -960,12 +989,18 @@ def test_several_contracts_serving_one_metric_are_summed():
 
     assert rows["buyback_fund_balance"] == 4_500_000.0, \
         f"the two mainnet jars must sum, got {rows['buyback_fund_balance']}"
+    # NOTHING IS PARTIAL ANY MORE. Every Uniswap component is on mainnet, nothing is refused, and
+    # the mainnet dead address is the whole burn — so a PARTIAL marker here would be a lie that
+    # tells the reader to expect a bigger number.
     for metric in ("buyback_fund_balance", "burn_address_balance"):
-        src = df[df.metric == metric].source.iloc[0]
-        assert src.endswith(":PARTIAL"), f"{metric} dropped a component and must be marked PARTIAL: {src}"
+        s = df[df.metric == metric].source.iloc[0]
+        assert not s.endswith(":PARTIAL"), f"{metric} is mainnet-complete and must not be PARTIAL: {s}"
+    assert "token_jar" in df[df.metric == "buyback_fund_balance"].source.iloc[0]
+    assert "v3_fee_adapter" in df[df.metric == "buyback_fund_balance"].source.iloc[0]
     assert not [e for e in out.log if e.status == "failed"], \
-        "a chain-mismatched component must be refused cleanly, not fail with a decode error"
-    assert any("no ERC-20 token contract is declared on unichain" in g["reason"] for g in out.gaps), out.gaps
+        "every component is on mainnet, so nothing should fail"
+    assert not any("unichain" in str(g.get("reason", "")) for g in out.gaps), \
+        f"no Unichain gap should be raised now the entries are gone: {out.gaps}"
 
     # symbol() must never be called on a non-token contract, on any chain
     calls = []
@@ -984,19 +1019,71 @@ def test_several_contracts_serving_one_metric_are_summed():
         f"symbol() must only ever target the token, never a jar or firepit: {calls}"
     assert all(ch == "ethereum" for ch, _a in calls), \
         f"symbol() must only be called on the chain the token is deployed to: {calls}"
-    print("multi-contract summing ok: mainnet jars sum to 4,500,000, Unichain refused, result marked PARTIAL")
+    print("multi-contract summing ok: mainnet jars sum to 4,500,000, nothing refused, nothing PARTIAL")
     print("  symbol() targeted only the UNI token, only on ethereum — never a jar, never a wrong chain")
 
 
+def test_a_component_on_an_uncovered_chain_is_refused_and_makes_the_sum_PARTIAL():
+    """The other half of the behaviour above, on a project that still spans chains.
+
+    GEODNET declares GEOD on Polygon, Solana and IoTeX. The EVM adapter covers Polygon; solana and
+    iotex have no RPC in DEFAULT_RPC. Those components must be REFUSED at the chain-coverage gate
+    and the resulting supply marked PARTIAL — never silently dropped and the remainder reported as
+    the whole. This matters more for GEODNET than for a missing endpoint: the Wormhole NTT bridge
+    model is unresolved, so summing the chains could be a double-count even if every read worked.
+    """
+    geod = config.PROJECT_BY_NAME["GEODNET"]
+    POLY_GEOD = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+
+    class PolygonOnlyStub:
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            ok = (chain, address) == ("polygon", POLY_GEOD)
+            return ok, "GEOD" if ok else ""
+
+        def scaled(self, chain, address, call, *args):
+            return 5_000.0 if call == "balanceOf" else 1_000_000_000.0
+
+    c = Chain()
+    c.reader = PolygonOnlyStub()
+    out = FetchOutput()
+    c.run([geod], None, out)
+    df = out.frame()
+
+    supply = df[df.metric == "total_supply"]
+    assert len(supply) == 1, f"one supply figure, summed from what could be read: {supply.to_dict()}"
+    assert supply.source.iloc[0].endswith(":PARTIAL"), \
+        f"Solana and IoTeX were refused — the figure must say so: {supply.source.iloc[0]}"
+    assert "polygon:token_polygon" in supply.source.iloc[0]
+
+    reasons = " ".join(str(g.get("reason", "")) for g in out.gaps)
+    assert "'solana'" in reasons and "'iotex'" in reasons, \
+        f"both uncovered chains must be named specifically, not lumped together: {reasons}"
+    print("uncovered-chain refusal ok: GEOD supply is Polygon-only and marked PARTIAL, "
+          "with solana and iotex each named")
+
+
 def test_components_sum_fully_once_every_chain_has_its_token():
-    """With a same-chain token declared for every component, all of them sum."""
+    """With a same-chain token declared for every component, all of them sum.
+
+    SYNTHETIC BY NECESSITY. Uniswap is mainnet-only in config now, so this builds the cross-chain
+    case on a deep COPY rather than asserting config still contains one. The behaviour under test —
+    a second-chain jar summing once its own token is declared on that chain — is real and is what
+    would be needed if any project's bridge model is ever settled in favour of summing.
+    """
     import copy
 
     uni = copy.deepcopy(config.PROJECT_BY_NAME["Uniswap"])
     uni["contracts"]["token_unichain"] = dict(uni["contracts"]["token"],
                                               address="0xUNIonUnichain", chain="unichain")
-    uni["contracts"]["token_jar_unichain"]["underlying"] = "token_unichain"
-    uni["contracts"]["fire_pit_unichain"]["underlying"] = "token_unichain"
+    uni["contracts"]["token_jar_unichain"] = dict(uni["contracts"]["token_jar"],
+                                                 address="0xD576BDF6b560079a4c204f7644e556DbB19140b5",
+                                                 chain="unichain", underlying="token_unichain")
+    uni["contracts"]["fire_pit_unichain"] = dict(uni["contracts"]["fire_pit"],
+                                                 address="0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB",
+                                                 chain="unichain", underlying="token_unichain")
 
     class EverywhereStub:
         VALUES = {"0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
@@ -1677,8 +1764,20 @@ def test_geodnet_sql_addresses_match_config_exactly():
         else:
             # base58 is case-SENSITIVE, so a Solana address must match exactly
             assert sql_address == stored, f"{key}: base58 mismatch, {sql_address} vs {stored}"
-    assert len(contracts) == 5, "the query documents four addresses; no new ones were added"
-    print("geodnet addresses ok: all four match, Solana exactly, EVM modulo EIP-55 casing")
+    # SIX ENTRIES NOW, and the count is asserted so an address cannot be slipped in unnoticed.
+    # Four come from the query, plus the historical Polygon buyback wallet (unverified, refused)
+    # and the IoTeX deployment added 2026-09-14 from GEODNET's own token docs. The IoTeX entry is
+    # on a chain with no RPC, so it is refused at the coverage gate and cannot contribute a number
+    # — which is the intended outcome while the Wormhole NTT bridge model is unresolved.
+    assert set(contracts) == set(from_sql) | {"buyback_wallet_polygon_historical", "token_iotex"}, \
+        f"unexpected contract keys on GEODNET: {sorted(contracts)}"
+    assert contracts["token_iotex"]["chain"] == "iotex"
+    assert contracts["token_iotex"]["chain"] not in config.EVM_CHAINS, \
+        "iotex has no RPC, so the IoTeX deployment must stay unreadable until one is added"
+    assert contracts["token_polygon"]["supply_is_partial"], \
+        "Polygon is read alone while the bridge model is open — the figure must say it is partial"
+    print("geodnet addresses ok: all four match, Solana exactly, EVM modulo EIP-55 casing; "
+          "IoTeX recorded but unreadable, Polygon marked partial")
 
 
 def test_dune_backfill_only():

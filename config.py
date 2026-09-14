@@ -770,27 +770,195 @@ PROJECTS = [
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
         "archetypes": [1, 3, 4], "archetypes_held": [],
-        "fee_split": dict(_NO_SPLIT),
-        "burn_split": {"share_of_fees_burned": None, "source_url": "https://docs.near.org/protocol/gas", "source_date": BRIEF_DATE, "status": "unconfirmed",
-                       "note": "Protocol docs describe a 70% burn / 30% contract-developer split of gas. CONFIRM before enabling."},
+        # TWO REVENUE STREAMS THAT MUST NOT BE CONFLATED.
+        #   (4) GAS BURN — protocol-level, unrelated to Intents. 70% of every transaction fee is
+        #       destroyed with no transfer; 30% goes to the contract developer.
+        #   (3) INTENTS BUYBACK — off-chain-ish market buying funded by Intents fees, landing in a
+        #       treasury. It DOES NOT BURN. See destination_decision.
+        # They have different sources, different destinations and different signs on float.
+        "fee_split": {
+            "share_to_buyback": None,
+            "source_url": "https://docs.near-intents.org/resources/fees",
+            "source_date": "2026-09-14",
+            "programmed": True,
+            "status": "active",
+            # THE RETAINED SLICE. Partner fees are set via `appFees` in BASIS POINTS, and the
+            # protocol splits each fee 50/50: half routes automatically to the 1Click protocol
+            # address, half to the partner's own recipient. ONLY THE 1CLICK HALF IS DURABLE BUY
+            # PRESSURE — the partner half is theirs and can be resold immediately. Treating the
+            # whole fee as buyback funding would overstate absorption by 2x.
+            "retained_slice": {
+                "share_retained": 0.50,
+                "to": "the 1Click protocol address",
+                "remainder_to": "the partner's own recipient, which can be resold — not durable buy pressure",
+                "set_by": "appFees, in basis points, per partner",
+                "source_url": "https://docs.near-intents.org/resources/fees",
+                "source_date": "2026-09-14",
+            },
+            "note": "NEAR Intents partner fees split 50/50 between the 1Click protocol address and the "
+                    "partner recipient. Only the 1Click half funds the buyback. The share of TOTAL "
+                    "protocol revenue reaching the buyback is not a single documented number, so "
+                    "share_to_buyback stays None.",
+        },
+        "burn_split": {"share_of_fees_burned": 0.70, "source_url": "https://docs.near.org/protocol/gas", "source_date": "2026-09-14", "status": "active",
+                       "note": "GAS BURN ONLY, and nothing to do with Intents: 70% of every transaction fee is "
+                               "burned at the protocol level, 30% goes to the contract developer. Do not "
+                               "apply this share to Intents revenue — that stream is bought back, not burned."},
+        # ISSUANCE: 2.5% MAX ANNUAL, halved from 5% on 2025-10-30 (~32.2m NEAR/yr).
+        #
+        # NOT DECLARED AS A tokens_per_day STEP, and the reason is the same one that blocks World
+        # Mobile: 2.5% is a RATE ON TOTAL SUPPLY, and issuance_schedule takes a fixed daily token
+        # count. The ~32.2m/yr figure is that rate applied to a supply base at a moment in time, so
+        # hardcoding it would freeze a moving denominator. Recorded here as a declared rate instead.
         "issuance_schedule": None,
-        "contracts": {},
+        "issuance_rate_declared": {
+            "annual_rate_max": 0.025,
+            "effective_from": "2025-10-30",
+            "supersedes": {"annual_rate_max": 0.05, "note": "halved on 2025-10-30"},
+            "approx_tokens_per_year": 32_200_000,
+            "approx_note": "~32.2m NEAR/yr is the rate applied to the supply base at the time of the "
+                           "change. It is NOT declared as a schedule step because the base moves; a "
+                           "fixed tokens_per_day would drift from the rule it came from.",
+            "source_url": "https://docs.near.org/protocol/gas",
+            "source_date": "2026-09-14",
+            # THE SPLIT IS THE UNCERTAIN PART, AND THE UNCERTAINTY IS SPECIFIC.
+            # Secondary sources say 90% validators / 10% protocol treasury. Our own LIVE ON-CHAIN
+            # READ of protocol_reward_rate returned [0, 1] — exactly ZERO. That is ALSO exactly
+            # nearcore's serde default (core/chain-configs/src/genesis_config.rs:168,
+            # `#[default(Rational32::from_integer(0))]`), so the reading is consistent with TWO
+            # different worlds: a genuine on-chain zero, or a read that fell through to the struct
+            # default without ever seeing chain state. Nearcore does NOT vendor mainnet genesis —
+            # every path under core/chain-configs/res/ 404s, and the only [1, 10] values in the
+            # repo are inside test fixtures using `test.near` with epoch_length 60 — so this
+            # cannot be settled from source.
+            # THE LIVE READ IS USED, because it is the only direct chain evidence we hold, and it
+            # is flagged uncertain rather than quietly overridden by secondary sources.
+            "treasury_share": {
+                "value": 0.0,
+                "source": "live on-chain read of protocol_reward_rate = [0, 1]",
+                "source_date": "2026-09-14",
+                "status": "uncertain",
+                "conflicts_with": "secondary sources stating 90% validators / 10% protocol treasury",
+                "why_uncertain": "[0, 1] is byte-identical to nearcore's serde DEFAULT for this field, so a "
+                                 "genuine zero and a read that never reached chain state are "
+                                 "indistinguishable from the value alone. Mainnet genesis is not vendored "
+                                 "in nearcore, so source inspection cannot separate them.",
+                "would_settle_it": "a mainnet genesis_config from a NEAR-operated endpoint or archive, or a "
+                                   "second independent RPC returning the same field",
+            },
+        },
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
         "burn_mechanism": {
-            "model": "protocol_level_destruction", "status": "assumed",
-            "source_url": None, "source_date": None,
-            "note": "ASSUMED. NEAR burns a share of gas at the protocol level alongside a fixed inflation schedule. "
-                    "No NEAR document on file.",
+            "model": "protocol_level_destruction", "status": "confirmed",
+            "source_url": "https://docs.near.org/protocol/gas", "source_date": "2026-09-14",
+            "note": "CONFIRMED for the GAS BURN: 70% of each transaction fee is destroyed at the protocol "
+                    "level and 30% is paid to the contract developer. No address is involved. This "
+                    "mechanism describes the gas stream ONLY — the Intents stream is a market buyback "
+                    "that does not burn at all.",
         },
         "burn_read_method": "protocol_level",
-        "burn_read_note": "Execution fee burn at the protocol level, historically c.70% and moving toward 100%. CONFIRM the current share from docs.near.org. No address to read.",
-        "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
-        "destination_effect": "removed_from_supply",
+        "burn_read_note": "Gas burn at the protocol level, 70% of each transaction fee (30% to the contract "
+                          "developer). No address to read; needs a chain-data or dashboard source.",
+        # ============ DESTINATION DECISION, APPLIED 2026-09-14 ============
+        # THE INTENTS BUYBACK DOES NOT BURN.
+        #
+        # DefiLlama's own metric definition for near-intents states it explicitly: "Since
+        # 2026-02-23, NEAR's captured Intents revenue is used to buy back $NEAR on the open market
+        # (NOT BURNED), returning value to holders."
+        #
+        # NEAR's own dashboard says the buyback "permanently remove[s] NEAR from circulation".
+        # THE TWO CONFLICT, and DefiLlama is treated as authoritative here — not because it is a
+        # better source in general, but because of WHAT KIND OF CLAIM each is making. DefiLlama's
+        # is a precise technical statement about mechanism, written to define a metric. The
+        # dashboard's is marketing phrasing that is ALSO true of a treasury hold: tokens bought and
+        # held are "removed from circulation" in the loose sense while remaining entirely
+        # redeployable. A burn and a hold have opposite signs on permanent supply, so the
+        # imprecise phrasing cannot be allowed to decide it.
+        #
+        # The conflicting wording is recorded so this is not re-litigated without NEW evidence.
+        # ==================================================================
+        "destination_decision": {
+            "decided": "distribute/hold — NOT burn",
+            "decided_on": "2026-09-14",
+            "authoritative_source": "https://defillama.com/protocol/near-intents",
+            "authoritative_quote": "Since 2026-02-23, NEAR's captured Intents revenue is used to buy back "
+                                   "$NEAR on the open market (NOT BURNED), returning value to holders.",
+            "conflicting_source": "NEAR's own Intents dashboard",
+            "conflicting_wording": "permanently remove NEAR from circulation",
+            "why_defillama_wins": "a precise technical claim about mechanism beats marketing phrasing that "
+                                  "is equally true of a treasury hold. A burn and a hold have opposite "
+                                  "signs on permanent supply.",
+            "reopen_if": "NEAR publishes a burn transaction or a contract that destroys the repurchased "
+                         "NEAR. Do not reopen on dashboard wording alone.",
+        },
+        "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "treasury_redeployable",
+        "destination_source_url": "https://defillama.com/protocol/near-intents",
+        "destination_confirmed_date": "2026-09-14",
+        # NEAR IS NOT AN EVM CHAIN, BUT THE INTENTS TREASURY IS EVM-READABLE.
+        # The buyback destination is a Base address, labelled "NEAR Intents: Treasury" on BaseScan,
+        # holding ~$43.4m across six chains as of June 2026. Only the Base leg is read: the other
+        # five are separate addresses not on file, so the figure is PARTIAL by construction.
+        "contracts": {
+            "intents_treasury_base": _contract(
+                "0x2CfF890f0378a11913B6129B2E97417a2c302680", "base", "treasury_holding", "NEAR",
+                "https://basescan.org/address/0x2cff890f0378a11913b6129b2e97417a2c302680",
+                verified="2026-09-14", provenance="BaseScan contract label 'NEAR Intents: Treasury'",
+                holder_has_code=True, token_standard="erc20", underlying=None,
+                purpose="NEAR Intents Treasury on Base — the destination of the Intents buyback. Read as a "
+                        "TREASURY HOLDING, never as a burn: the decision above establishes the repurchased "
+                        "NEAR is held, not destroyed.",
+                note="NO SAME-CHAIN TOKEN IS DECLARED, so this read will be REFUSED by the adapter's "
+                     "same-chain guard and will appear in the Gap Report saying exactly that. That is the "
+                     "correct outcome and not an oversight: bridged NEAR on Base is a wrapped "
+                     "representation whose address is not on file, and pointing balanceOf at a guessed "
+                     "wrapper would return a number with no defensible meaning. The address is recorded so "
+                     "the gap names something specific. PARTIAL REGARDLESS: the treasury spans six chains "
+                     "(~$43.4m total, June 2026) and only the Base leg is on file."),
+        },
+        # ** MAKES THE protocol_reward_rate UNCERTAINTY VISIBLE ON THE SHEET, not only in the Gap
+        # Report. ** emissions_tokens is issuance reaching SUPPLIERS, and how much of NEAR's 2.5%
+        # reaches validators rather than the protocol treasury is exactly the number our live read
+        # and the secondary sources disagree about. That is a COMPOSITION problem — the right
+        # mechanism, a correct total, and an unknown split inside it — which is what non_comparable
+        # is for. It forces AMBER with the reason attached, so nobody reads the emissions figure as
+        # settled while the split is not.
+        "non_comparable": {
+            "emissions_tokens": {
+                "why": "the validator/treasury SPLIT of NEAR's 2.5% issuance is unresolved. Our live "
+                       "on-chain read of protocol_reward_rate returned [0, 1] — zero treasury share, so "
+                       "100% to validators — while every secondary source says 90/10. [0, 1] is "
+                       "byte-identical to nearcore's serde DEFAULT for that field, so a genuine zero and "
+                       "a read that never reached chain state are indistinguishable. The TOTAL issuance "
+                       "is unaffected; what is unknown is how much of it is emissions to suppliers.",
+                "use_instead": "gross_issuance_tokens, which is the same under either split. Treat "
+                               "emissions_tokens as an upper bound until a second independent endpoint "
+                               "confirms the rate — see OPEN_QUESTIONS",
+            },
+        },
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
+        "revenue_reference": {
+            "source": "DefiLlama", "as_of": "2026-09-14",
+            "fees_30d_usd": 4_050_000, "revenue_30d_usd": 911_826,
+            "fees_annualised_usd": 44_220_000, "revenue_annualised_usd": 5_770_000,
+            "capture_rate": 0.22,
+            "note": "NEAR Intents operates across 26 chains; NEAR itself holds 43.8% share. These are "
+                    "SANITY BOUNDS for the archetype 3 figures, not stored metrics.",
+        },
         "materiality": "medium",
-        "notes": "Confirm burn share.",
+        "notes": "THREE archetypes, TWO revenue streams that must never be conflated. (4) GAS BURN: 70% of "
+                 "every transaction fee destroyed at the protocol level, 30% to the contract developer — no "
+                 "address, needs a chain-data source. (3) INTENTS BUYBACK: funded by Intents fees and "
+                 "DOES NOT BURN — DefiLlama's own metric definition says so explicitly, and it is treated "
+                 "as authoritative over NEAR's dashboard wording because a precise mechanism claim beats "
+                 "marketing phrasing that is equally true of a treasury hold. Destination is the Base "
+                 "Intents Treasury, read as treasury_redeployable. Fees split 50/50 between the 1Click "
+                 "protocol address and the partner recipient; only the 1Click half is durable buy pressure. "
+                 "ISSUANCE 2.5% max annual (halved from 5% on 2025-10-30); the treasury share is taken from "
+                 "our live read of 0% and FLAGGED UNCERTAIN, because [0, 1] is byte-identical to nearcore's "
+                 "serde default and mainnet genesis is not vendored anywhere we can read.",
     },
     {
         "name": "Canton", "symbol": "CC",
@@ -865,17 +1033,98 @@ PROJECTS = [
         "name": "Plume", "symbol": "PLUME",
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",
-        "archetypes": [1, 3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://docs.plume.org/", "source_date": BRIEF_DATE, "programmed": None, "status": "unconfirmed",
-                      "note": "Staking yield; no documented revenue-to-buyback split."},
+        # ARCHETYPE 1 ONLY. ARCHETYPE 3 REMOVED 2026-09-14.
+        # Plume's own staking docs list "earn a share of ecosystem revenue" as a benefit BEING
+        # EXPLORED, not a live mechanism. The staking reward that IS live is EMISSIONS-FUNDED, and
+        # Plume has zero fee revenue on DefiLlama — so there is no revenue to share even if the
+        # mechanism existed. This is the SAME FAILURE MODE AS BITTENSOR: a yield that looks like
+        # revenue capture and is actually inflation paid to stakers. Counting it as archetype 3
+        # would report dilution as value accrual.
+        "archetypes": [1], "archetypes_held": [],
+        "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.plume.org/",
+                      "source_date": "2026-09-14", "programmed": True, "status": "n/a",
+                      "note": "ZERO. Plume's own staking docs describe revenue sharing as BEING EXPLORED, "
+                              "not live, and DefiLlama shows zero fee revenue for the chain. The live "
+                              "staking reward is EMISSIONS-funded — the Bittensor failure mode. Do not "
+                              "re-add archetype 3 without a documented, live revenue-to-staker route."},
         "burn_split": None,
+        # ============ PLUME IS A NATIVE GAS TOKEN. THERE IS NO ERC-20 CONTRACT. ============
+        # Plume's own contract-addresses page (docs.plume.org/plume/developers/contract-addresses)
+        # lists PLUME as 0x0000000000000000000000000000000000000000 — the zero address — because
+        # PLUME is the NATIVE GAS TOKEN of its own chain, exactly as ETH is on Ethereum.
+        #
+        # THE ZERO ADDRESS IS CORRECT, NOT MISSING DATA. And it must NOT be wired as a contract:
+        # totalSupply() or balanceOf() against 0x0 will fail or return nothing meaningful, and a
+        # zero landing in the supply column would look like a read that worked. `contracts` is
+        # therefore deliberately EMPTY and supply comes from CoinGecko, which handles native-asset
+        # supply correctly and is already the tier 1 source.
+        #
+        # WRAPPED PLUME (WPLUME) is a real ERC-20 at 0xEa237441c92CAe6FC17Caaf9a7acB3f953be4bd1 on
+        # Plume Mainnet. IT IS NOT A SUPPLY PROXY: its totalSupply is only the WRAPPED float, which
+        # is a fraction of native circulating supply, and the gap between them is unmeasured. It is
+        # recorded here and given no read slot. (Plume Mainnet also has no RPC in DEFAULT_RPC, so
+        # a read would be refused at the chain-coverage guard regardless.)
+        # ====================================================================================
+        "native_gas_token": {
+            "address": "0x0000000000000000000000000000000000000000",
+            "why": "PLUME is the native gas token of Plume Mainnet, like ETH on Ethereum — there is no "
+                   "ERC-20 contract to read",
+            "source_url": "https://docs.plume.org/plume/developers/contract-addresses",
+            "source_date": "2026-09-14",
+            "supply_from": "CoinGecko (tier 1), which reports native-asset supply correctly",
+            "never": "do not attempt totalSupply()/balanceOf() on the zero address — it fails or returns "
+                     "nothing meaningful, and a zero in the supply column reads as a successful read",
+            "wrapped": {"symbol": "WPLUME", "address": "0xEa237441c92CAe6FC17Caaf9a7acB3f953be4bd1",
+                        "chain": "plume", "is_supply_proxy": False,
+                        "why_not": "captures WRAPPED supply only, not total native circulating; the gap is "
+                                   "unmeasured"},
+        },
         "issuance_schedule": None,
+        # VESTING, NOT INFLATION — and the distinction is the whole point of this tool.
+        # 10,000,000,000 PLUME total, 2,000,000,000 (20%) at TGE, 33.45% released in Year 1 and the
+        # remaining 66.55% over the following three years. ~6,181,909,938 (61.8%) unlocked today.
+        #
+        # TOTAL SUPPLY STAYS ~FLAT while CIRCULATING expands. So gross_issuance_tokens derived from
+        # delta-total-supply will read near zero and be RIGHT — the sell pressure is entirely in the
+        # circulating series, and reading the total-supply line alone would miss it completely.
+        "vesting_schedule": {
+            "total": 10_000_000_000,
+            "tge_unlocked": 2_000_000_000, "tge_pct": 0.20,
+            "year_1_released_pct": 0.3345,
+            "remainder_pct": 0.6655, "remainder_years": 3,
+            "unlocked_now": 6_181_909_938, "unlocked_now_pct": 0.618, "unlocked_as_of": "2026-09-14",
+            "source_url": "https://docs.plume.org/",
+            "is_inflation": False,
+            "note": "VESTING, NOT INFLATION. Total supply stays ~flat; circulating expands. Any issuance "
+                    "figure derived from delta-total-supply will correctly read ~zero — the supply "
+                    "pressure lives in the CIRCULATING series and must be read there.",
+        },
         "contracts": {},
-        "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "yield_payout",
+        "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
         "dune_queries": _dune("gross_issuance_tokens", "staked_tokens", "emissions_tokens", "tx_count", "active_addresses"),
+        # ARCHETYPE 1 IS PLUME'S REAL STRENGTH — keep these prominent rather than burying them
+        # under a supply story the chain does not have.
+        "operating_reference": [
+            {"metric": "rwa_xyz_usd", "value": 645_000_000, "as_of": "2026-02",
+             "what": "tokenized assets on Plume", "source": "app.rwa.xyz/networks/plume"},
+            {"metric": "active_addresses", "value": 280_000, "as_of": "2026-02",
+             "what": "RWA wallet holders (280,000+) — largest chain by RWA participants",
+             "source": "app.rwa.xyz/networks/plume"},
+        ],
         "materiality": "medium",
-        "notes": "RWA-on-chain is the key demand metric. Pull RWA.xyz and the DefiLlama RWA category and show the divergence.",
+        "notes": "ARCHETYPE 1 ONLY — archetype 3 removed 2026-09-14: Plume's own staking docs describe "
+                 "revenue sharing as BEING EXPLORED, not live, and the live staking reward is "
+                 "emissions-funded against zero fee revenue (the Bittensor failure mode). "
+                 "PLUME IS A NATIVE GAS TOKEN: its address really is 0x0, there is no ERC-20, and no "
+                 "contract read is attempted — supply comes from CoinGecko. WPLUME "
+                 "(0xEa237441c92CAe6FC17Caaf9a7acB3f953be4bd1) is a real ERC-20 but captures wrapped "
+                 "supply only and is NOT a supply proxy. "
+                 "SUPPLY PRESSURE IS VESTING, NOT INFLATION: 10bn total, 2bn at TGE, ~6.18bn (61.8%) "
+                 "unlocked — total supply stays flat while circulating expands, so read the circulating "
+                 "series, not the delta-total-supply line. "
+                 "RWA is the real story: 280,000+ RWA wallet holders and $645m tokenized (Feb 2026), the "
+                 "largest chain by RWA participants.",
     },
     {
         "name": "Injective", "symbol": "INJ",
@@ -952,7 +1201,48 @@ PROJECTS = [
                         "token contract, is the archetype 3 revenue input; without it the block had none at all.",
                 note="Balance read is LINK.balanceOf(reserve). Cross-checked against the published dashboard at "
                      "https://metrics.chain.link/reserve — see cross_checks below; a divergence is flagged, never "
-                     "silently resolved."),
+                     "silently resolved. FUNDING: 50% of SVR fees (Smart Value Recapture — oracle MEV, e.g. the "
+                     "MEV on an Aave liquidation) plus other Payment Abstraction revenue."),
+            # THE SECOND DESTINATION, AND IT MUST NOT SHARE A CELL WITH THE FIRST.
+            # Chainlink routes revenue to TWO places with OPPOSITE effects on float: the Reserve
+            # HOLDS LINK (locked supply) and the staking pools DISTRIBUTE it (yield payout). Summing
+            # them answers neither question. They are kept apart by giving them different METRICS,
+            # not merely different keys: the Reserve is buyback_fund_balance, the pools are
+            # locked_tokens. The adapter sums within a metric, so anything sharing
+            # buyback_fund_balance with the Reserve would be silently merged into it.
+            #
+            # v0.2 pool size is 45,000,000 LINK (~8% of circulating at launch), split across the two
+            # pools below. The LOCK RATE is the sum of both pools' LINK balances — which is what
+            # these two entries produce, since both serve locked_tokens.
+            "staking_community": _contract(
+                "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e", "ethereum", "ve_total_supply", "LINK",
+                "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
+                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide",
+                read_method="escrow_balance_of", token_standard="erc20", underlying="token",
+                purpose="Staking v0.2 COMMUNITY pool. Read as LINK.balanceOf(pool) — the LINK actually "
+                        "staked, not any share-token supply. Summed with the node operator pool to give "
+                        "Chainlink's lock rate."),
+            "staking_node_operator": _contract(
+                "0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5", "ethereum", "ve_total_supply", "LINK",
+                "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
+                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide",
+                read_method="escrow_balance_of", token_standard="erc20", underlying="token",
+                purpose="Staking v0.2 NODE OPERATOR pool. Read as LINK.balanceOf(pool). Summed with the "
+                        "community pool: together they are the 45,000,000 LINK v0.2 programme."),
+            # TWO ADDRESSES DELIBERATELY NOT GIVEN READ SLOTS, each for its own reason.
+            #
+            # STAKING REWARD VAULT  0x996913c8c08472f584ab8834e925b06D0eb1D813
+            #   The DISTRIBUTE destination — where rewards accrue before being paid to stakers.
+            #   It has no read slot because every kind available to it is wrong: buyback_fund_balance
+            #   would SUM IT INTO THE RESERVE, which is exactly the merge this project must not make,
+            #   and treasury_holding would label a distribution vault a treasury. Recorded here with
+            #   its source rather than mislabelled. Source: smartcontractkit/
+            #   chainlink-staking-v0.2-public-guide.
+            #
+            # LEGACY STAKING v0.1  0x3feB1e09b4bb0E7f0387CeE092a52e85797ab889
+            #   Superseded by v0.2. NOT read, and deliberately not summed: v0.1 balances alongside
+            #   v0.2 would overstate the current lock rate by whatever has not been migrated out.
+            #   Recorded so nobody re-adds it as a "missing pool". Source: as above.
         },
         # HOLD, not burn and not distribute. The Reserve has a multi-day withdrawal timelock and
         # Chainlink states no withdrawals are expected for multiple years, so accumulated LINK is
@@ -962,6 +1252,22 @@ PROJECTS = [
         "destination_effect": "locked_supply",
         "destination_source_url": "https://blog.chain.link/chainlink-reserve-strategic-link-reserve/",
         "destination_confirmed_date": TODAY_VERIFIED,
+        # TWO DESTINATIONS, RECORDED AS TWO. Collapsing them into one "revenue to holders" figure
+        # would average a hold against a payout, which is an average of opposite signs.
+        "destination_routes": [
+            {"route": "Chainlink Reserve", "address": "0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6",
+             "effect": "locked_supply", "metric": "buyback_fund_balance",
+             "funded_by": "50% of SVR (Smart Value Recapture) fees plus other Payment Abstraction revenue",
+             "why_locked": "multi-day withdrawal timelock; Chainlink states no withdrawals are expected "
+                           "for multiple years",
+             "source_url": "https://blog.chain.link/chainlink-reserve-strategic-link-reserve/"},
+            {"route": "Staking v0.2 rewards", "address": "0x996913c8c08472f584ab8834e925b06D0eb1D813",
+             "effect": "distribute", "metric": None,
+             "funded_by": "Payment Abstraction revenue routed to the staking reward vault",
+             "why_no_metric": "no kind fits: buyback_fund_balance would merge it into the Reserve, "
+                              "treasury_holding would mislabel a distribution vault",
+             "source_url": "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide"},
+        ],
         "cross_checks": [
             {"primary": "buyback_fund_balance", "primary_source": "tier 2 contract read",
              "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://metrics.chain.link/reserve",
@@ -980,7 +1286,12 @@ PROJECTS = [
         "notes": "The Reserve, not the LINK token contract, is the archetype 3 revenue input. Destination is HOLD: "
                  "a multi-day withdrawal timelock with no withdrawals expected for years, so accumulated LINK is "
                  "locked supply rather than a payout. Reference points for the series: c.2.17m LINK (Feb 2026), "
-                 "c.5.2m LINK (Jul 2026).",
+                 "c.5.2m LINK (Jul 2026). "
+                 "TWO DESTINATIONS, NEVER MERGED: the Reserve HOLDS (locked supply) and the staking v0.2 pools "
+                 "DISTRIBUTE (yield payout). They are separated by metric, not just by key — the Reserve is "
+                 "buyback_fund_balance, the two staking pools are locked_tokens — because the adapter sums "
+                 "within a metric and would otherwise merge them. v0.2 programme size is 45,000,000 LINK "
+                 "(~8% of circulating at launch); the lock rate is the SUM of both pools.",
     },
     # ------------------------------------------------------------------ Archetype 2 (+3/+4)
     {
@@ -988,46 +1299,122 @@ PROJECTS = [
         "coingecko_id": "world-mobile-token",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://worldmobile.io/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Programmatic revenue buyback. Their metrics page is being rebuilt — Token Terminal or manual meanwhile."},
+        # MECHANISM CONFIRMED, DESTINATION NOT. Fiat telecom revenue buys WMTx on exchanges — that
+        # much is stated. WHERE the bought tokens go is stated NOWHERE: not burned, not locked, not
+        # distributed, as far as any World Mobile material on file says. Those are three opposite
+        # signs on effective float, so the implied figure is all that can be computed and the
+        # ACTUAL buyback metrics are suppressed rather than guessed. See UNAVAILABLE.
+        "fee_split": {"share_to_buyback": None, "source_url": "https://worldmobile.io/", "source_date": "2026-09-14",
+                      "programmed": False, "status": "unconfirmed",
+                      "note": "Revenue buyback CONFIRMED as a mechanism (fiat telecom revenue buys WMTx on "
+                              "exchanges). The SHARE is undocumented and so is the DESTINATION — see "
+                              "destination_undocumented below. Implied buyback only."},
         "burn_split": None,
-        # STILL None, and the reason is that a RATE cannot be written into a tokens_per_day
-        # schedule without a base and two dates. What is sourced (The Block, Sep 2026) and what
-        # is missing, stated plainly so this is not mistaken for an unchased gap:
+        # DESTINATION UNDOCUMENTED — not indeterminate (Maple's SSF, where the uses ARE stated and
+        # conflict), not disputed (Sky, where a claim was refuted). Simply: nobody has said. The
+        # three possibilities — burn, treasury hold, distribute — have opposite signs, so no
+        # default is safe and none is chosen.
+        "destination_undocumented": {
+            "what": "WMTx repurchased on exchanges with fiat telecom revenue",
+            "why": "no World Mobile material on file states whether repurchased WMTx is burned, held "
+                   "by the treasury, or redistributed",
+            "effect": "actual_buyback_tokens and actual_buyback_usd are suppressed; the implied figure "
+                      "from the revenue side is the only one computed",
+        },
+        # A RATE, NOT A TOKEN COUNT — and declaring it needs a base the sources do not give.
         #
-        #   CONFIRMED  2,000,000,000 WMTX fixed max supply.
-        #   CONFIRMED  29% to Node Operators / Staking IS THE ENTIRE INFLATIONARY EMISSION, so
-        #              cumulative gross issuance is capped at 0.29 x 2bn = 580,000,000 WMTX ever.
-        #   CONFIRMED  11.41% initial ANNUAL INFLATION at the start of the emission.
-        #   CONFIRMED  the rate declines to ZERO.
+        #   CONFIRMED  2,000,000,000 WMTx hard cap, enforced IN THE CONTRACT ITSELF:
+        #              ERC20Capped(2_000_000_000 * 10**decimals()). Not a docs claim — bytecode.
+        #   CONFIRMED  29% to Node Operators / Staking IS THE ENTIRE inflationary emission, so
+        #              cumulative gross issuance is capped at 0.29 x 2bn = 580,000,000 WMTx ever.
+        #   CONFIRMED  11.41% initial ANNUAL inflation (The Block, theblock.co/price/257077/
+        #              world-mobile-token), declining to ZERO by ~2030.
+        #   ASSUMPTION the DECAY SHAPE. Linear is NOT confirmed from World Mobile's own materials.
         #
-        #   MISSING 1  WHAT THE 11.41% IS A PERCENTAGE OF. Not max supply: 11.41% of 2bn is
-        #              228,200,000 in year one, and any declining curve from there to zero blows
-        #              through the 580,000,000 cap several times over. So the base is circulating
-        #              (or some other) supply, and it is not on file. Back-solving it from the cap
-        #              and an assumed shape would be CONSTRUCTING the number, not sourcing it.
-        #   MISSING 2  THE START DATE. "Initial" annual inflation has no calendar position here;
-        #              WMT migrated to WMTX and it is not established which event starts the clock.
-        #   MISSING 3  THE DECAY SHAPE (linear or otherwise), which the brief already flags as an
-        #              assumption to be confirmed from World Mobile's own docs.
+        #   STILL MISSING, and why no step is declared: WHAT THE 11.41% IS A PERCENTAGE OF. Not
+        #   max supply — 11.41% of 2bn is 228,200,000 in year one, and any declining curve from
+        #   there to zero blows through the 580,000,000 ceiling several times over. Ethplorer
+        #   reports Ethereum total supply at 1,020,252,845 WMTx (~51% of cap), which is consistent
+        #   with the schedule but is a MEASURED stock, not the declared base. Back-solving the
+        #   base from the ceiling and an assumed shape would be CONSTRUCTING the number.
+        #   Also missing: the emission START DATE (WMT migrated to WMTx; which event starts the
+        #   clock is not established).
         #
-        #   INCONSISTENT  "zero by year 20 (~2030)". Year 20 ending in 2030 puts year 1 in 2010,
-        #                 which predates the token. Either the horizon is ~2041 (twenty years from
-        #                 a 2021-ish start) or it is ~9 years (from now to a 2030 end) — the two
-        #                 halves of that phrase cannot both hold, and the daily rate differs by
-        #                 more than 2x depending on which is true.
-        #
-        # Three unknowns and a contradiction cannot be reduced to one tokens_per_day figure. The
-        # schedule stays silent; the Gap Report carries the row.
+        #   AND INCONSISTENT: "zero by year 20 (~2030)" puts year one in 2010, before the token
+        #   existed. Either the horizon is ~2041 or it is ~9 years; the daily rate differs by more
+        #   than 2x depending on which. Three unknowns and a contradiction do not reduce to one
+        #   tokens_per_day, so the schedule stays silent and the Gap Report carries the row.
         "issuance_schedule": None,
-        "contracts": {},
-        "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "yield_payout",
+        "max_supply_declared": {
+            "value": 2_000_000_000,
+            "source_url": "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
+            "source_date": "2026-09-14",
+            "note": "ERC20Capped(2_000_000_000 * 10**decimals()) read off the deployed source. The cap is "
+                    "enforced by the contract, not merely documented, which is a stronger fact than a "
+                    "tokenomics page.",
+        },
+        # FOUR DEPLOYMENTS, THREE DISTINCT ADDRESSES, ONE READ.
+        #
+        # Only Ethereum is wired as a metric-bearing contract, and that is deliberate: the adapter
+        # SUMS every contract serving the same metric (fetch/chain.py _emit_parts), and summing four
+        # deployments is correct ONLY under burn-and-mint bridging. Under lock-and-mint it
+        # double-counts the locked float on every remote chain. The bridge model is NOT established
+        # — the same open question as GEOD — so the other three addresses are recorded here with
+        # their sources and NOT given read slots. They cannot be summed by accident, and they are
+        # not lost.
+        #
+        #   Arbitrum  0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7  (same address as Ethereum)
+        #   BSC       0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7  (same address as Ethereum)
+        #   Base      0x3e31966d4f81C72D2a55310A6365A56A4393E98D  (DIFFERENT address)
+        #
+        # All four confirmed by direct source-code inspection on Etherscan / Arbiscan / BscScan /
+        # BaseScan, 2026-09-14. The contract declares MINTER_ROLE and BURNER_ROLE with real
+        # mint/burn/burnFrom functions, so remote supply CAN be minted independently — which is
+        # exactly why the bridge model has to be settled before summing.
+        "contracts": {
+            "token": _contract(
+                "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "ethereum", "erc20_total_supply", "WMTX",
+                "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
+                verified="2026-09-14", provenance="deployed source code, inspected directly on Etherscan",
+                token_standard="erc20", supply_is_partial=True,
+                partial_reason="ETHEREUM ONLY. WMTx is deployed on four chains (Ethereum, Arbitrum and BSC "
+                               "all at 0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7; Base at "
+                               "0x3e31966d4f81C72D2a55310A6365A56A4393E98D). The BRIDGE MODEL is not "
+                               "established — lock-and-mint would make summing a double-count, "
+                               "burn-and-mint would make summing correct — so only Ethereum is read and "
+                               "the figure is labelled partial. Same open question as GEOD.",
+                purpose="WMTx on Ethereum — the PRIMARY supply read. ERC20Capped at 2,000,000,000."),
+        },
+        "buyback_destination": "undocumented", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "unresolved",
         "dune_queries": {},
-        # Until World Mobile's own page returns. 100,000+ AirNodes as of Feb 2026.
-        "manual_quarterly": ["supply_units"],
+        # ARCHETYPE 2 OPERATING METRICS, World Mobile's own reporting as of Feb 2026.
+        #
+        # SUPPLIER PAYOUTS ARE NOT ALL EMISSIONS. AirNode operator earnings are frequently FIAT OR
+        # STABLECOIN denominated rather than WMTx, so modelling total supplier earnings as token
+        # emissions would overstate issuance by whatever share settles off-token. The 29% Node
+        # Operators/Staking allocation is the token leg and the only inflationary one.
+        "operating_reference": [
+            {"metric": "supply_units", "value": 100_000, "as_of": "2026-02",
+             "what": "AirNodes deployed (100,000+)", "source": "World Mobile's own reporting"},
+            {"metric": "active_addresses", "value": 3_000_000, "as_of": "2026-02",
+             "what": "daily active users", "source": "World Mobile's own reporting"},
+            {"metric": "utilisation_pct", "value": None, "as_of": "2026-02",
+             "what": "600+ TB/day processed — a THROUGHPUT figure, not a percentage. Recorded in words "
+                     "rather than stored because utilisation_pct is a FRACTION and 600 would render as "
+                     "60,000%. It needs a denominator (network capacity) before it can be a metric.",
+             "source": "World Mobile's own reporting"},
+        ],
+        "manual_quarterly": ["supply_units", "utilisation_pct"],
         "materiality": "low",
-        "notes": "Page being rebuilt. Everything routes through manual_overrides.csv until it returns; all gaps listed in the Gap Report. ISSUANCE IS SOURCED BUT NOT DECLARABLE: 2bn max supply and a 29% (580,000,000 WMTX) lifetime inflationary cap are confirmed, and so is an 11.41% starting annual rate decaying to zero — but the base the 11.41% applies to, the start date and the decay shape are all missing, and the stated horizon (zero by year 20, ~2030) is self-contradictory. See the comment on the issuance_schedule.",
+        "notes": "Archetype 2 + 3. SUPPLY IS PARTIAL (Ethereum only) until the bridge model is settled. "
+                 "ISSUANCE IS SOURCED BUT NOT DECLARABLE: the 2bn contract-enforced cap and the 29% "
+                 "(580,000,000 WMTx) lifetime inflationary ceiling are confirmed, and so is an 11.41% "
+                 "starting annual rate decaying to zero — but the base the 11.41% applies to, the start "
+                 "date and the decay shape are all missing, and the stated horizon (zero by year 20, "
+                 "~2030) is self-contradictory. BUYBACK DESTINATION IS UNDOCUMENTED, so the actual "
+                 "buyback figures are suppressed and only the implied one is computed. Operator payouts "
+                 "are often fiat/stablecoin — do not model all supplier earnings as emissions.",
     },
     {
         "name": "GEODNET", "symbol": "GEOD",
@@ -1043,11 +1430,38 @@ PROJECTS = [
         # The query UNIONs both chains, which settles the open question: Polygon-era burns DO belong in
         # the series alongside the Solana ones, so both paths are read and summed.
         "contracts": {
+            # POLYGON IS THE HOME CHAIN AND IS NOT DEPRECATED. GIP-7, which would make Solana
+            # primary, is PROPOSED and not enacted — treating it as done would move the primary
+            # read on the strength of a proposal.
+            #
+            # SUPPLY IS PARTIAL, and for a reason that is not "we could not read the others".
+            # The adapter SUMS every contract serving total_supply. GEODNET bridges Polygon <-> Solana
+            # with WORMHOLE NTT, which supports BOTH lock-and-mint and burn-and-mint. Under
+            # lock-and-mint, Polygon supply stays outstanding while Solana supply is minted against
+            # it and summing DOUBLE-COUNTS; under burn-and-mint, summing is correct. Which one GEODNET
+            # runs is NOT established. Until it is, Polygon alone is the supply figure and it is
+            # labelled partial. See OPEN_QUESTIONS.
             "token_polygon": _contract(
                 "0xAC0F66379A6d7801D7726d5a943356A172549Adb", "polygon", "erc20_total_supply", "GEOD",
-                GEODNET_BURN_QUERY, verified="2026-09-11",
-                provenance="Dune query 8683175 — the original documented source of this address",
-                purpose="Polygon GEOD token — balanceOf is called on this for the Polygon burn."),
+                "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-11",
+                provenance="GEODNET's own token docs; originally sourced from Dune query 8683175",
+                token_standard="erc20", supply_is_partial=True,
+                partial_reason="POLYGON ONLY, and deliberately not summed with Solana or IoTeX: the Wormhole "
+                               "NTT bridge model (lock-and-mint vs burn-and-mint) is not established, and "
+                               "the two answers differ by a double-count of the entire remote float.",
+                purpose="Polygon GEOD token — the PRIMARY supply read, and the token balanceOf is called "
+                        "on for the Polygon burn. Polygon remains the home chain: GIP-7 (Solana primary) "
+                        "is PROPOSED, not enacted."),
+            # PREVIOUSLY UNTRACKED. Recorded with its own chain so the coverage guard names it
+            # precisely in the Gap Report rather than it being invisible. iotex has no RPC endpoint
+            # in DEFAULT_RPC, so nothing is read and nothing can be silently summed — which is the
+            # correct outcome while the bridge model is open.
+            "token_iotex": _contract(
+                "0x8E33229206f726993E4A7bF7dA2347F3743Bf8b4", "iotex", "erc20_total_supply", "GEOD",
+                "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-14",
+                provenance="GEODNET's own token docs", token_standard="erc20",
+                purpose="IoTeX GEOD deployment, named in GEODNET's own token documentation. Recorded for "
+                        "completeness; not summed into supply while the bridge model is unresolved."),
             "burn_polygon": _contract(
                 "0x000000000000000000000000000000000000dEaD", "polygon", "burn_address_balance", "GEOD",
                 GEODNET_BURN_QUERY, verified="2026-09-11",
@@ -1056,9 +1470,11 @@ PROJECTS = [
                         "the working query unions Polygon and Solana burns into one series."),
             "mint_solana": _contract(
                 "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu", "solana", "spl_mint", "GEOD",
-                GEODNET_BURN_QUERY, verified="2026-09-11",
-                provenance="Dune query 8683175 — the original documented source of this address",
-                purpose="Solana GEOD mint."),
+                "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-14",
+                provenance="GEODNET's own token docs; originally sourced from Dune query 8683175",
+                purpose="Solana GEOD mint. NOT summed into supply while the Wormhole NTT bridge model "
+                        "is unresolved — the Solana adapter does not exist, which coincidentally gives "
+                        "the correct outcome, but the reason it must not be summed is the bridge model."),
             "burn_solana_token_account": _contract(
                 "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED", "solana", "spl_token_account", "GEOD",
                 GEODNET_BURN_QUERY, verified="2026-09-11",
@@ -1069,8 +1485,10 @@ PROJECTS = [
                 "0xc327C048d75398Da9DB5254679bb84a4a9e42010", "polygon", "buyback_fund_balance", "GEOD",
                 "https://geodnet.com/tokenomics",
                 purpose="Polygon-era buyback wallet, pre-migration.",
-                note="UNVERIFIED, and NOT referenced by the working burn query. Left in place but refused; "
-                     "confirm whether it is still relevant before enabling."),
+                note="STILL RELEVANT — do NOT remove this on migration grounds: Polygon is the home "
+                     "chain and GIP-7 is only proposed. It stays UNVERIFIED for a DIFFERENT reason: "
+                     "no GEODNET-authored source on file names this address, and it is not referenced "
+                     "by the working burn query. Read is refused until a GEODNET source confirms it."),
         },
         "burn_mechanism": {
             "model": "transfer_to_dead_address", "status": "assumed",
@@ -1213,11 +1631,21 @@ PROJECTS = [
         "name": "Aethir", "symbol": "ATH",
         "coingecko_id": "aethir",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
-        "archetypes": [2], "archetypes_held": [3],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://docs.aethir.com/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Sources conflict: a stated plan to use compute revenue for buybacks against a June 2026 review stating "
-                              "no fee distribution, no buy-and-burn and no revenue sharing. The Checker Node buyback is an NFT "
-                              "repurchase, not a token buyback."},
+        # ARCHETYPE 2 ONLY. ARCHETYPE 3 IS REFUTED, NOT HELD — and the distinction matters because
+        # "held" means "pending evidence" and the evidence is in. There is NO revenue-to-token
+        # conversion anywhere in Aethir's design: ATH pays for compute DIRECTLY to GPU providers,
+        # so revenue never becomes buy pressure on ATH. The only thing resembling a buyback is the
+        # Checker Node NFT repurchase, which is paid in eATH and is SUPPLY-ADDITIVE — the opposite
+        # sign. archetypes_held is emptied accordingly.
+        "archetypes": [2], "archetypes_held": [],
+        "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.aethir.com/aethir-tokenomics/token-overview",
+                      "source_date": "2026-09-14", "programmed": True, "status": "n/a",
+                      "note": "ZERO, AND THAT IS A FINDING. ATH pays for compute directly to GPU providers — "
+                              "there is no revenue-to-token conversion step anywhere in the design, so no "
+                              "revenue reaches ATH holders. A June 2026 review independently states no fee "
+                              "distribution, no buy-and-burn and no revenue sharing. The Checker Node "
+                              "'buyback' is an NFT repurchase paid in eATH, not a token buyback, and it "
+                              "INCREASES circulating ATH — see buyback_is_supply_additive."},
         "burn_split": None,
         # TWO emission streams, declared separately below in this note and summed into one
         # tokens_per_day step because the schedule loop assigns one rate per day rather than
@@ -1252,16 +1680,77 @@ PROJECTS = [
                 # rather than carrying the rate forward into a pool that has been exhausted.
                 {"from": "2024-06-12", "tokens_per_day": 4_200_000_000 / 1461, "until": "2028-06-11"},
             ],
-            "source_url": "https://docs.aethir.com/", "source_date": "2026-09-14", "status": "active",
+            # PHASE 2, DECLARED AS A BOUND NOT A STEP. Aethir's own token overview puts 55% of total
+            # supply (~23.1bn ATH) to Checker Nodes & Compute Providers, with Phase 1 frontloaded
+            # and PHASE 2 RUNNING 2028-06-12 to 2032-06-12, monthly and DECAYING. Phases 1+2
+            # together are stated as 16.8bn over ~8 years. A decaying monthly curve cannot be
+            # expressed as one tokens_per_day and the per-month figures are not on file, so no
+            # Phase 2 step is declared — the schedule goes silent after 2028-06-11 and the Gap
+            # Report says SCHEDULE EXPIRED rather than projecting a rate nobody published.
+            "phase_2": {"from": "2028-06-12", "until": "2032-06-12", "cadence": "monthly",
+                        "shape": "decaying", "tokens_per_day": None,
+                        "note": "NOT DECLARED. The per-month figures are not on file and a decaying curve "
+                                "cannot be guessed from its endpoints."},
+            "allocation_reference": {
+                "checker_nodes_and_compute_providers_pct": 0.55,
+                "checker_nodes_and_compute_providers_tokens": 23_100_000_000,
+                "phases_1_and_2_total": 16_800_000_000, "phases_1_and_2_years": 8,
+                "source_url": "https://docs.aethir.com/aethir-tokenomics/token-overview"},
+            # DEFILLAMA'S OWN CAVEAT, recorded because it points the wrong way from the usual one.
+            # Its published unlock figure tracks ATH WITHDRAWN AFTER VESTING, and therefore EXCLUDES
+            # rewards that have been earned but not yet claimed. So even DefiLlama's number
+            # UNDERSTATES accrued supply — the error is not conservatism in our favour.
+            "external_figure_caveat": {
+                "source": "DefiLlama unlocks",
+                "measures": "ATH withdrawn after vesting",
+                "excludes": "rewards earned but not yet claimed",
+                "direction": "UNDERSTATES accrued supply",
+            },
+            "source_url": "https://docs.aethir.com/aethir-tokenomics/token-overview", "source_date": "2026-09-14", "status": "active",
             "note": "Checker Node base rewards ONLY: 10% of 42bn max supply over four years from TGE "
                     "2024-06-12, 2,874,743.33 ATH/day. The staking-pool stream (2,000,000 ATH/week "
                     "across two pools, promo ended) is NOT included because neither its start nor its "
                     "end date is on file — see the comment above the block. GROSS ISSUANCE IS "
                     "THEREFORE UNDERSTATED for any window that overlapped that promo.",
         },
-        "contracts": {},
-        "buyback_destination": "disputed", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "unresolved",
+        # THREE CHAINS WITH DIFFERENT PURPOSES — and the purposes decide which one is read for what.
+        # Aethir's own token overview (docs.aethir.com/aethir-tokenomics/token-overview) assigns:
+        #   Ethereum  CANONICAL — Airdrop, Staking, and the default chain for CEX deposits
+        #   Arbitrum  INTERCHAIN — Checker Node rewards AND compute rewards
+        #   Solana    a third deployment
+        #
+        # ** THE CHECKER NODE MECHANISM LIVES ON ARBITRUM, NOT ETHEREUM. ** The supply-additive
+        # NFT-repurchase-for-eATH programme runs there; Ethereum is airdrop/staking/CEX only. Any
+        # read of the Checker Node mechanism must point at Arbitrum.
+        #
+        # ONLY ARBITRUM IS GIVEN THE SUPPLY READ, and the 42,000,000,000 total supply is confirmed
+        # directly on the Arbitrum contract (Arbiscan). Ethereum and Solana are recorded WITHOUT
+        # read slots for the same reason as WMTx and GEOD: the adapter sums contracts serving one
+        # metric, and summing three deployments is correct only under burn-and-mint bridging, which
+        # is not established here either.
+        "contracts": {
+            "token_arbitrum": _contract(
+                "0xc87B37a581ec3257B734886d9d3a581F5A9d056c", "arbitrum", "erc20_total_supply", "ATH",
+                "https://docs.aethir.com/aethir-tokenomics/token-overview",
+                verified="2026-09-14", provenance="Aethir's own token overview; total supply confirmed "
+                                                  "directly on the Arbitrum contract via Arbiscan",
+                token_standard="erc20", supply_is_partial=True,
+                partial_reason="ARBITRUM ONLY. ATH is also deployed on Ethereum "
+                               "(0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B, canonical: airdrop/staking/CEX) "
+                               "and Solana (Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7). The bridge model "
+                               "is not established, so they are not summed.",
+                purpose="ATH on ARBITRUM — the INTERCHAIN deployment carrying Checker Node rewards and "
+                        "compute rewards. THE supply read: 42,000,000,000 total supply confirmed here. "
+                        "Read this one, not Ethereum, for anything touching the Checker Node mechanism."),
+            # RECORDED WITHOUT READ SLOTS, to avoid a cross-chain sum under an unestablished bridge:
+            #   Ethereum (CANONICAL — airdrop, staking, default CEX chain)
+            #     0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B
+            #   Solana
+            #     Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7
+            # Both from docs.aethir.com/aethir-tokenomics/token-overview, 2026-09-14.
+        },
+        "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
         "dune_queries": _dune("emissions_tokens", "staked_tokens"),
         # Move annually, and cost more to automate than to type. A quarterly hand-entry is the
         # right answer for these, not a failure to automate one.
@@ -1274,11 +1763,31 @@ PROJECTS = [
         # EigenLayer AVS with a Pendle route for early exit, which ACCELERATES the supply effect.
         "buyback_is_supply_additive": {
             "what": "Checker Node NFT repurchase paid in eATH, 1-year lock, 30-day vest from 2026-06-13",
+            "chain": "Arbitrum — the mechanism does NOT run on Ethereum",
             "effect": "increases circulating ATH — eATH keeps earning ATH during the lockup",
             "never": "do not count as a buyback, do not net against emissions",
+            # NO LIVE EFFECT TODAY, and that is worth stating so nobody assumes the guard is
+            # working. net_absorption() in build_workbook.py reads this flag to FLIP THE SIGN of a
+            # buyback term — but Aethir is archetype [2] only, so the net-absorption formula never
+            # reaches it and there is no buyback term to flip. The flag is armed for the day
+            # archetype 3 is ever added in error, and inert until then.
+            "currently_inert": "Aethir is archetype [2] only, so net_absorption() never evaluates a "
+                               "buyback term for it. The guard is armed, not active.",
         },
         "materiality": "medium",
-        "notes": "HOLD archetype 3 until documented.",
+        "notes": "ARCHETYPE 2 ONLY, and archetype 3 is REFUTED rather than held: ATH pays for compute "
+                 "directly to GPU providers, so no revenue-to-token conversion exists and share_to_buyback "
+                 "is 0.0 as a finding. THREE CHAINS WITH DIFFERENT PURPOSES — Ethereum is canonical "
+                 "(airdrop/staking/CEX), ARBITRUM is interchain and carries BOTH Checker Node and compute "
+                 "rewards, Solana is a third deployment. The supply read is ARBITRUM, where the "
+                 "42,000,000,000 total is confirmed on-chain; Ethereum and Solana are recorded without read "
+                 "slots because the bridge model is unestablished and summing would double-count. "
+                 "The Checker Node 'buyback' is an NFT repurchase paid in eATH that KEEPS EARNING ATH "
+                 "through its lockup — net effect on circulating ATH is POSITIVE. ISSUANCE: Phase 1 is "
+                 "declared (4.2bn over 1461 days from TGE, expiring 2028-06-11); Phase 2 (2028-06-12 to "
+                 "2032-06-12, monthly, decaying) is NOT declared because the per-month figures are not on "
+                 "file. DefiLlama's unlock figure tracks ATH withdrawn after vesting and EXCLUDES rewards "
+                 "earned but unclaimed, so even that number understates accrued supply.",
     },
     {
         "name": "Venice AI", "symbol": "VVV",
@@ -1443,23 +1952,139 @@ PROJECTS = [
         "coingecko_id": "syrup",
         "defillama_fees_slug": "maple", "defillama_protocol": "maple", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://maple.finance/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Buyback programme exists; the share of revenue is not documented."},
+        # TIERED, NOT FLAT — the 25% on file was STALE. MIP-019 set a flat 25% effective Q4 2025;
+        # a later 2026 framework replaced it with a tier schedule on MONTHLY NET REVENUE. Two of
+        # the three tiers are sourced; the third is not, and it is left None rather than guessed.
+        # A single share_to_buyback cannot express a tiered rule, so the top-level share is None
+        # and the schedule lives in fee_tiers. Anything derived from a share stays suppressed
+        # while the top tier is unknown, which is the correct outcome: the top tier is where the
+        # money is.
+        "fee_split": {
+            "share_to_buyback": None,
+            "source_url": "https://securities.io/",
+            "source_date": "2026-09-14",
+            "programmed": False,
+            "status": "tiered",
+            "history": [
+                _split_period(None, "2025-09-30", None, "unconfirmed",
+                              note="Pre-MIP-019. No documented buyback share."),
+                _split_period("2025-10-01", None, None, "unconfirmed",
+                              known_change="MIP-019's flat 25% of net revenue (effective Q4 2025) was "
+                                           "SUPERSEDED during 2026 by a TIERED framework. The exact MIP "
+                                           "number and effective date have NOT been found — a search of "
+                                           "community.maple.finance did not produce one, and securities.io "
+                                           "(citing Maple's own materials) is the only source on file. So "
+                                           "the period from Q4 2025 onward contains at least two regimes "
+                                           "with no established boundary between them.",
+                              note="DO NOT split this into a 25% period and a tiered period until the "
+                                   "changeover date is sourced. Dating it wrongly would apply the wrong "
+                                   "share across real months, and known_change keeps the whole span "
+                                   "unconfirmed even if somebody later fills in a number."),
+            ],
+            "note": "TIERED on monthly net revenue. The flat 25% is stale. Top tier unconfirmed — see "
+                    "fee_tiers. Interim source is securities.io citing Maple's own materials; the "
+                    "primary MIP has not been located.",
+        },
+        # The tier schedule itself, recorded as data so the unconfirmed top tier is visible rather
+        # than rounded away. A revenue month above $2m cannot be converted to a buyback figure at
+        # all until that row has a number.
+        "fee_tiers": {
+            "basis": "monthly net revenue",
+            "tiers": [
+                {"from_usd": 0, "to_usd": 1_500_000, "share_to_buyback": 0.10, "status": "sourced"},
+                {"from_usd": 1_500_000, "to_usd": 2_000_000, "share_to_buyback": 0.20, "status": "sourced"},
+                {"from_usd": 2_000_000, "to_usd": None, "share_to_buyback": None, "status": "unconfirmed",
+                 "note": "A FURTHER TIER EXISTS above $2m and its rate is not captured in any source on "
+                         "file. Left None deliberately: extrapolating the 10 -> 20 step to 30% would be "
+                         "inventing the most material number in the schedule."},
+            ],
+            "source_url": "https://securities.io/",
+            "source_date": "2026-09-14",
+            "supersedes": "MIP-019 flat 25% of net revenue, effective Q4 2025",
+        },
         "burn_split": {"share_of_fees_burned": 0.0, "source_url": "https://maple.finance/", "source_date": BRIEF_DATE, "status": "active", "note": "No burn — confirmed."},
+        # STAKING REWARDS ENDED. MIP-019 ended stSYRUP staking rewards in November 2025. Deposited
+        # SYRUP remains WITHDRAWABLE but earns nothing further absent a new governance decision.
+        # So there is no ongoing staking yield to model, and a rising stSYRUP balance is migration
+        # or inertia, not accruing yield.
+        "staking_sunset": {
+            "what": "stSYRUP staking rewards",
+            "ended": "2025-11", "source": "MIP-019",
+            "still_true": "deposited SYRUP remains withdrawable; it simply earns nothing further",
+            "effect": "do not model ongoing staking yield for Maple",
+        },
         "issuance_schedule": None,
-        "contracts": {},
-        "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "yield_payout",
+        "contracts": {
+            "token": _contract(
+                "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66", "ethereum", "erc20_total_supply", "SYRUP",
+                "https://syrup.gitbook.io/syrup/syrup-token/syrup_token_faq",
+                verified="2026-09-14", provenance="Maple's own SYRUP token FAQ; corroborated by "
+                                                  "maple-labs/address-registry (syrupProxy)",
+                token_standard="erc20",
+                purpose="SYRUP token (MapleTokenProxy). The ticker is SYRUP, not MPL."),
+            # ** ERC-4626 VAULT, NOT A RECEIPT TOKEN. ** stSYRUP is "Staked Syrup" with asset =
+            # SYRUP and precision 18, per its decoded constructor, and it INCREASES IN VALUE against
+            # SYRUP as rewards accrue (Maple's own docs). So totalSupply() on stSYRUP is a count of
+            # SHARES, not the SYRUP staked, and the two diverge by the accrued exchange rate — a
+            # figure that is wrong by a growing multiple and looks entirely plausible in a cell.
+            #
+            # This is the SAME CLASS OF ERROR as veAERO (totalSupply counts NFT positions) and the
+            # Uniswap TokenJar (a multi-asset sink read as a single-asset fund), on a vault share
+            # token instead. The correct read is the vault's assets: escrow_balance_of does exactly
+            # SYRUP.balanceOf(stSYRUP), which equals totalAssets() for a vault that custodies its
+            # own asset, and needs no new read method.
+            "stsyrup": _contract(
+                "0xc7E8b36E0766D9B04c93De68A9D47dD11f260B45", "ethereum", "ve_total_supply", "SYRUP",
+                "https://syrup.gitbook.io/syrup/syrup-token/syrup_token_faq",
+                verified="2026-09-14", provenance="Maple's own SYRUP token FAQ; corroborated by "
+                                                  "maple-labs/address-registry (syrupStSyrup)",
+                read_method="escrow_balance_of", token_standard="erc20", underlying="token",
+                purpose="stSYRUP — the lock-rate input. Read as SYRUP.balanceOf(stSYRUP), NOT "
+                        "stSYRUP.totalSupply().",
+                note="ERC-4626. Decoded constructor: name 'Staked Syrup', asset = the SYRUP address, "
+                     "precision 18. Share price RISES against SYRUP as rewards accrue, so totalSupply() "
+                     "is shares outstanding and understates SYRUP staked by the accrued rate. "
+                     "escrow_balance_of reads the vault's SYRUP holdings, which is totalAssets() for a "
+                     "vault custodying its own asset. Do not 'simplify' this to erc20_total_supply."),
+            # THE DESTINATION. The SSF HAS NO SEPARATE ADDRESS — Maple's own transparency page states
+            # the Syrup Strategic Fund is "part of the Treasury". Searching for a standalone SSF
+            # wallet is closed, not pending.
+            "treasury": _contract(
+                "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19", "ethereum", "treasury_holding", "SYRUP",
+                "https://maple.finance/transparency",
+                verified="2026-09-14", provenance="maple-labs/address-registry, MapleAddressRegistryETH.sol; "
+                                                  "role confirmed by Maple's own transparency page",
+                holder_has_code=True, token_standard="erc20", underlying="token",
+                purpose="Maple Treasury (INCLUDES the Syrup Strategic Fund). The SSF is an accounting "
+                        "label inside this treasury, not a separate wallet — Maple's transparency page "
+                        "says so directly. Read as SYRUP.balanceOf(treasury).",
+                note="treasury_redeployable, NOT locked and NOT burned: MIP-019 has the treasury holding "
+                     "SYRUP, BTC and stablecoins, and 'token liquidity' is among the stated uses, so "
+                     "repurchased SYRUP CAN return to float. Cross-check against the live SSF holding "
+                     "published on maple.finance/transparency (75.78m SYRUP at last check)."),
+            # REFERENCE ONLY, no read slot: syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA
+            # (maple-labs/address-registry). It is the emissions distributor; with staking rewards
+            # ended in Nov 2025 there is no ongoing stream to read from it, and giving it a
+            # balance kind would sum it into the treasury figure.
+        },
+        "metric_labels": {
+            "treasury_holding_tokens": "Maple Treasury SYRUP (includes SSF)",
+        },
+        "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "treasury_redeployable",
+        "destination_source_url": "https://maple.finance/transparency",
+        "destination_confirmed_date": "2026-09-14",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
         # DESTINATION INDETERMINATE — a sixth type, and it is neither of the two it resembles.
-        # MIP-021 replaces MIP-019 with a rules-based framework scaling with gross monthly revenue,
-        # executed at month end. But the purchased SYRUP goes to the SYRUP Strategic Fund, whose
-        # stated uses include working capital, TOKEN LIQUIDITY, capital reserves and further
-        # buybacks. "Token liquidity" means bought tokens CAN RETURN TO FLOAT.
-        # So it must NOT be netted against emissions like a burn, and must NOT be counted as locked
-        # supply like Chainlink's Reserve. Those are opposite signs, and the truth is neither.
+        # The purchased SYRUP goes to the SYRUP Strategic Fund, whose stated uses include working
+        # capital, TOKEN LIQUIDITY, capital reserves and further buybacks. "Token liquidity" means
+        # bought tokens CAN RETURN TO FLOAT. So it must NOT be netted against emissions like a
+        # burn, and must NOT be counted as locked supply like Chainlink's Reserve. Those are
+        # opposite signs, and the truth is neither.
+        # RESOLVED SINCE: the fund has no separate address. It is inside the Treasury, which is now
+        # read directly — so the BALANCE is measurable even though its MEANING stays indeterminate.
         "destination_indeterminate": {
-            "fund": "SYRUP Strategic Fund",
+            "fund": "SYRUP Strategic Fund (an accounting label inside the Maple Treasury, not a separate wallet)",
             "stated_uses": ["working capital", "token liquidity", "capital reserves", "further buybacks"],
             "why_indeterminate": "'token liquidity' allows repurchased tokens to return to float",
             # LABELLED AS A JUDGEMENT, not recorded as a finding: it is an analyst's framing and a
@@ -1469,24 +2094,98 @@ PROJECTS = [
                                  "a view, not an observation.",
             "confirm": "the ticker is SYRUP, not MPL — verify before any figure is quoted",
         },
+        "cross_checks": [
+            {"primary": "treasury_holding_tokens", "primary_source": "tier 2 contract read",
+             "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://maple.finance/transparency",
+             "tolerance": 0.05, "prefer": "primary",
+             "note": "Maple publishes live SSF SYRUP holdings and monthly protocol revenue on its "
+                     "transparency page. The contract read is authoritative; the page is the second "
+                     "opinion. Tolerance is wider than Chainlink's because the page reports the SSF "
+                     "label while the read is the whole Treasury — a persistent gap between them is "
+                     "expected and informative, a sudden one is not."},
+        ],
         "materiality": "medium",
-        "notes": "No burn — confirmed.",
+        "notes": "Archetype 3. No burn — confirmed. SPLIT IS TIERED, not the stale flat 25%: 10% below "
+                 "$1.5m monthly net revenue, 20% from $1.5m-$2m, and a further tier above $2m whose rate "
+                 "is NOT sourced and is left None. stSYRUP is an ERC-4626 VAULT — read "
+                 "SYRUP.balanceOf(stSYRUP), never stSYRUP.totalSupply(), which counts shares whose price "
+                 "rises with accrued rewards. The SSF has no separate address: it is an accounting label "
+                 "inside the Treasury (0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19), which is read "
+                 "directly and cross-checked against maple.finance/transparency. stSYRUP staking rewards "
+                 "ENDED November 2025 (MIP-019) — do not model ongoing staking yield.",
     },
     {
         "name": "Morpho", "symbol": "MORPHO",
         "coingecko_id": "morpho",
         "defillama_fees_slug": "morpho", "defillama_protocol": "morpho", "defillama_chain": None,
-        "archetypes": [2], "archetypes_held": [3],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://docs.morpho.org/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Fee switch status needs confirming before the archetype 3 block is enabled."},
+        # ARCHETYPE 2 ONLY. The fee switch is OFF, so there is no revenue reaching the token and
+        # nothing for an archetype 3 block to measure. archetypes_held is EMPTY, not [3]: holding
+        # the archetype implies it is pending evidence, and the evidence is already in — the switch
+        # is off, and it is off for legal/tax structuring reasons, not because Morpho decided
+        # against paying holders. See reopen_condition.
+        "archetypes": [2], "archetypes_held": [],
+        "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.morpho.org/", "source_date": "2026-09-14",
+                      "programmed": True, "status": "off",
+                      "note": "FEE SWITCH IS OFF. 0.0 is the correct share, not a missing one — no protocol "
+                              "revenue reaches MORPHO holders today. See reopen_condition for what would "
+                              "change it."},
         "burn_split": None,
         "issuance_schedule": None,
-        "contracts": {},
-        "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "locked_supply",
-        "dune_queries": _dune("emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
+        # ONE SUPPLY READ, and the choice between the two MORPHO tokens matters.
+        # The NEW (wrapped) token is the transferable one: 1,000,000,000 minted to the Wrapper at
+        # initialization, with legacy holders migrating 1:1. Reading BOTH would double-count the
+        # same billion tokens under two contracts, which is why legacy has no read slot.
+        "contracts": {
+            "token": _contract(
+                "0x58D97B57BB95320F9a05dC918Aef65434969c2B2", "ethereum", "erc20_total_supply", "MORPHO",
+                "https://docs.morpho.org/developers/contracts/addresses",
+                verified="2026-09-14", provenance="Morpho's own contract addresses page",
+                token_standard="erc20",
+                purpose="MORPHO (new, TRANSFERABLE) — THE supply read. 1,000,000,000 minted to the Wrapper "
+                        "at initialization; legacy holders migrate 1:1."),
+            # NOT SUMMED, AND NOT A GAP. Three addresses recorded without read slots:
+            #
+            #   WRAPPER  0x9D03bb2092270648d7480049d0E58d2FcF0E5123
+            #     Holds the minted supply pending migration. Its balance is a SUBSET of the new
+            #     token's totalSupply, so reading it as a second supply component would double-count.
+            #
+            #   LEGACY MORPHO  0x9994E35Db50125E0DF82e4c2dde62496CE330999
+            #     NON-TRANSFERABLE and immutable. Its holders are migrating 1:1 into the new token,
+            #     so its supply and the new token's supply describe the SAME billion tokens. Summing
+            #     them would report two billion.
+            #
+            #   BASE DEPLOYMENT  0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842
+            #     Recorded for completeness. Not summed: the bridge model is not established here
+            #     either, and the same lock-and-mint double-count risk applies as for WMTx and GEOD.
+            #
+            # All three from docs.morpho.org/developers/contracts/addresses, 2026-09-14.
+        },
+        "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
+        # WHY THE SWITCH IS OFF, recorded because the reason changes what it would take to turn it
+        # on. This is NOT "Morpho decided holders should not be paid" — it is unresolved legal and
+        # tax structuring, per Morpho's own February 2025 governance proposal. The evidence that the
+        # revenue exists: a Berachain licensing fee was routed to the Morpho Association (a French
+        # nonprofit) rather than to the DAO treasury, explicitly because direct DAO fee receipt is
+        # not legally resolved. Revenue is real and is landing somewhere that is not the token.
+        "reopen_condition": {
+            "what": "fee switch activation",
+            "blocked_on": "legal/tax structuring of DAO fee receipt, per Morpho's own Feb 2025 governance proposal",
+            "not_blocked_on": "a value judgement about paying holders",
+            "evidence_revenue_exists": "a Berachain licensing fee was routed to the Morpho Association, a "
+                                       "French nonprofit, rather than the DAO treasury — explicitly because "
+                                       "direct DAO fee receipt is not legally resolved yet",
+            "then": "add archetype 3 with a real destination; until then there is nothing to accrue value to",
+            "source_url": "https://docs.morpho.org/",
+        },
+        "dune_queries": _dune("emissions_tokens"),
         "materiality": "high",
-        "notes": "Fee switch status needs confirming before the 3 block is enabled.",
+        "notes": "ARCHETYPE 2 ONLY — the fee switch is OFF and share_to_buyback is 0.0, which is a fact, not "
+                 "a gap. Do not add archetype 3 until the switch flips. Supply is read from the NEW "
+                 "(wrapped, transferable) MORPHO at 0x58D97B57BB95320F9a05dC918Aef65434969c2B2; the "
+                 "Wrapper, the non-transferable legacy token and the Base deployment are recorded in the "
+                 "contracts comment WITHOUT read slots, because each would double-count the same billion "
+                 "tokens. The switch is blocked on legal/tax structuring, not on a decision about holders.",
     },
     {
         "name": "Hyperliquid", "symbol": "HYPE",
@@ -1611,26 +2310,33 @@ PROJECTS = [
             "burn_dead": _contract(BURN_ADDRESSES["dead"], "ethereum", "burn_address_balance", "UNI",
                                    "https://vote.uniswapfoundation.org/proposals/93",
                                    verified="2026-09-14", provenance="protocol governance",
-                                   supply_is_partial=True,
-                                   partial_reason="Mainnet only. Unichain's burn path is separate and its bridged "
-                                                  "UNI token address is still unknown, so this UNDERSTATES the "
-                                                  "total. See the open question on the Unichain UNI address.",
                                    purpose="TRANSFER BURN destination — burned UNI is sent here and permanently "
-                                           "removed from circulation, per the UNIfication proposal."),
+                                           "removed from circulation, per the UNIfication proposal. THIS IS THE "
+                                           "WHOLE FIGURE, not a mainnet slice: OP Stack L2 burns (Unichain and "
+                                           "the rest) bridge to L1 and land HERE after the challenge period, so "
+                                           "no supply_is_partial flag is set and nothing is understated."),
             "v3_fee_adapter": _contract("0x5E74C9f42EEd283bFf3744fBD1889d398d40867d", "ethereum", "buyback_fund_balance", "UNI",
                                         UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                         purpose="V3FeeAdapter, mainnet."),
-            # SECOND BURN PATH. Unichain has its own TokenJar and releaser, and Unichain sequencer
-            # revenue routes into the UNI burn. Omitting this UNDERSTATES the total, so both paths
-            # are read and summed into one burn figure.
-            "token_jar_unichain": _contract("0xD576BDF6b560079a4c204f7644e556DbB19140b5", "unichain", "buyback_fund_balance", "UNI",
-                                            UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
-                                            purpose="TokenJar, Unichain — the second fee accumulation path."),
-            "fire_pit_unichain": _contract("0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB", "unichain", "burn_executor", "UNI",
-                                           UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
-                                           holder_has_code=True,   # OptimismBridgedResourceFirepit is a real contract
-                                           purpose="OptimismBridgedResourceFirepit, Unichain — the second TRANSFER BURN path. "
-                                                   "Summed with the mainnet fire pit; omitting it understates total burn."),
+            # ================= MAINNET ONLY, BY EXPLICIT DECISION =================
+            # THE UNICHAIN ENTRIES WERE REMOVED 2026-09-14. They are recorded here so nobody
+            # re-adds them casually:
+            #
+            #   TokenJar, Unichain                      0xD576BDF6b560079a4c204f7644e556DbB19140b5
+            #   Releaser (OptimismBridgedResourceFirepit) 0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB
+            #
+            # WHY, from Uniswap's own contracts rather than inference. src/releasers/
+            # OptimismBridgedResourceFirepit.sol implements a TWO-STAGE burn: the searcher's bridged
+            # UNI is burned on Unichain immediately via the L2StandardBridge, a cross-domain message
+            # is queued, and only AFTER THE OP STACK 7-DAY CHALLENGE PERIOD is the L1 UNI transferred
+            # to 0xdead. A Unichain burn and its mainnet 0xdead arrival are THE SAME BURN, a week
+            # apart. Reading both would count every Unichain burn twice, once on each side of the
+            # bridge, with a seven-day offset that makes the duplicate look like fresh activity.
+            #
+            # The mainnet burn_dead balance below already captures Unichain burns — that is what the
+            # bridge withdrawal delivers into it. Adding Unichain does not complete the picture; it
+            # double-counts it.
+            # ======================================================================
         },
         "burn_mechanism": {
             "model": "transfer_to_dead_address", "status": "confirmed",
@@ -1644,7 +2350,13 @@ PROJECTS = [
                     "docs.uniswap.org/contracts/protocol-fee/guides/best-practices, which describes "
                     "release() and its nonce mechanism. UNLIKE SKY, the dead-address model is right here — "
                     "what was wrong was WHICH ADDRESS we read: the executing contract rather than the "
-                    "destination. See the contracts block.",
+                    "destination. See the contracts block. "
+                    "NOW CONFIRMED IN THE SOURCE ITSELF, not only in the proposal: Firepit.sol is an "
+                    "ExchangeReleaser constructed with recipient address(0xdead), and "
+                    "ExchangeReleaser.release() executes "
+                    "`RESOURCE.safeTransferFrom(msg.sender, RESOURCE_RECIPIENT, threshold)` — the "
+                    "caller's UNI goes STRAIGHT to 0xdead and never sits in the Firepit. That is why "
+                    "fire_pit is burn_executor (reference only) and burn_dead is the destination.",
         },
         # A burn of this size cannot come back near zero. The December 2025 retroactive burn alone
         # was 100,000,000 UNI, before ~4-5m/yr of ongoing burns, and burns are publicly reported at
@@ -1665,8 +2377,16 @@ PROJECTS = [
                 "controller": "Uniswap Governance Timelock (holds thresholdSetter, and can appoint a different setter)",
                 "source_url": UNISWAP_FEE_DEPLOYMENTS,
                 "source_date": None,
-                "note": "The UNI-burn threshold that must be met before release() can be called. Governance-movable, "
-                        "so it is never hardcoded. Leaving value None keeps any figure derived from it suppressed.",
+                "note": "The UNI-burn threshold that must be met before release() can be called. "
+                        "CONFIRMED MUTABLE FROM SOURCE: src/base/ResourceManager.sol declares "
+                        "`uint256 public threshold;` with `setThreshold()` gated on onlyThresholdSetter — "
+                        "it is governance STORAGE, not a constant, so there is no fixed value to record. "
+                        "THE ONLY NUMBER PUBLISHED ANYWHERE IS 2000 UNI, and that figure appears in "
+                        "Uniswap/protocol-fees README.md under 'Cross-Chain UNI Burn (OP Stack L2s)' — it "
+                        "is the BRIDGED-FIREPIT configuration, NOT mainnet's. Do not hardcode it here. "
+                        "Getting mainnet's value requires a live threshold() read on "
+                        "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721. Leaving value None keeps any figure "
+                        "derived from it suppressed.",
             },
         },
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "holder_elected",
@@ -1684,6 +2404,9 @@ PROJECTS = [
         # price feed per fee token and would make this one cell non-comparable with the rest of
         # its column, so the label is corrected instead and the fuller version left as deliberate
         # future work.
+        # SOURCE-CONFIRMED, not inferred. TokenJar.sol's release() iterates `Currency[] assets` and
+        # sweeps `asset.balanceOfSelf()` for each — it is a MULTI-ASSET sink by construction, so its
+        # UNI balance is one asset among many and is not the fund's value.
         "metric_labels": {
             "buyback_fund_balance": "UNI balance of TokenJar (not the fund total)",
         },
@@ -1691,7 +2414,8 @@ PROJECTS = [
             "buyback_fund_balance": {
                 "why": "the TokenJar accumulates FEE TOKENS (USDC, WETH, whatever the pools earned), "
                        "not UNI. This reads its UNI balance, which is legitimately near zero and is "
-                       "NOT the value of the fund.",
+                       "NOT the value of the fund. CONFIRMED FROM SOURCE: TokenJar.sol release() "
+                       "iterates Currency[] assets and sweeps balanceOfSelf() on each.",
                 "use_instead": "nothing yet — no metric holds the fund's multi-asset total. Summing it "
                                "needs a price feed per fee token; until then treat this as a floor, "
                                "not a total",
@@ -1704,19 +2428,99 @@ PROJECTS = [
             },
         },
         "materiality": "high",
-        "notes": "Archetype 4 only — no distribution leg, no staking yield. Implied and actual burn diverge for reasons unrelated "
-                 "to revenue, because the burn is holder-elected. TWO burn paths: mainnet and Unichain, summed. "
-                 "The release() threshold is a governance-settable parameter, not a constant.",
+        "notes": "Archetype 4 only — no distribution leg, no staking yield. Implied and actual burn diverge for "
+                 "reasons unrelated to revenue, because the burn is holder-elected. "
+                 "MAINNET ONLY, BY EXPLICIT DECISION: the Unichain TokenJar and Releaser were REMOVED "
+                 "2026-09-14. OptimismBridgedResourceFirepit.sol burns bridged UNI on L2 and then bridges to "
+                 "L1, where the UNI lands at 0xdead only after the 7-day OP Stack challenge period — so a "
+                 "Unichain burn and its mainnet arrival are the SAME burn a week apart, and reading both "
+                 "double-counts every one of them. burn_dead is therefore the WHOLE figure, not a slice. "
+                 "The release() threshold is governance STORAGE (ResourceManager.setThreshold), not a "
+                 "constant; the published 2000 UNI figure is the OP-Stack bridged configuration, not "
+                 "mainnet's.",
     },
     {
         "name": "Aerodrome", "symbol": "AERO",
         "coingecko_id": "aerodrome-finance",
         "defillama_fees_slug": "aerodrome", "defillama_protocol": "aerodrome", "defillama_chain": None,
+        # ARCHETYPE 3 ONLY, AND ARCHETYPE 4 IS REFUTED RATHER THAN MERELY ABSENT.
+        # Aerodrome's own SPECIFICATION.md describes the complete supply mechanics — Minter,
+        # emissions, veAERO locking, gauges, rebases — and contains NO BURN OF ANY KIND. There is
+        # no burn contract, no dead address, and no market buyback of AERO itself. This is a
+        # positive finding from the primary source, not an empty slot waiting to be filled.
         "archetypes": [3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": 1.0, "source_url": "https://aerodrome.finance/docs", "source_date": BRIEF_DATE, "programmed": True, "status": "active",
-                      "note": "100% of trading fees to veAERO voters — DISTRIBUTE, not buyback-and-burn. Yield destination tracked separately."},
-        "burn_split": None,
+        # NOT A BUYBACK PATTERN AT ALL, and share_to_buyback=1.0 must not be read as one. 100% of
+        # swap fees route through gauges to the veAERO holders WHO VOTED FOR THAT SPECIFIC POOL,
+        # and they are paid IN THE SWAP PAIR'S OWN TOKENS — never converted to AERO. So there is no
+        # buy-then-distribute step anywhere: nobody ever buys AERO with the fees. Structurally this
+        # is the opposite of Aave's or Hyperliquid's mechanism, and modelling it as buy-pressure
+        # would invent demand for AERO that the design does not create.
+        "fee_split": {"share_to_buyback": 1.0, "source_url": "https://github.com/aerodrome-finance/contracts",
+                      "source_date": "2026-09-14", "programmed": True, "status": "active",
+                      "destination_model": "distribute_to_voters",
+                      "note": "100% of trading fees to veAERO voters, per-pool, PAID IN THE PAIR'S OWN TOKENS "
+                              "and never converted to AERO. There is NO buy-then-distribute step — do not "
+                              "model this as buy pressure on AERO. DISTRIBUTE, not buyback."},
+        "burn_split": {"share_of_fees_burned": 0.0,
+                       "source_url": "https://github.com/aerodrome-finance/contracts",
+                       "source_date": "2026-09-14", "status": "n/a",
+                       "note": "ZERO, AND CONFIRMED FROM THE PRIMARY SOURCE: Aerodrome's own "
+                               "SPECIFICATION.md documents the full supply mechanics and NO BURN EXISTS "
+                               "anywhere in the design. 0.0 is a finding, not a missing value."},
+        "burn_mechanism": {
+            "model": "no_burn", "status": "confirmed",
+            "source_url": "https://github.com/aerodrome-finance/contracts",
+            "source_date": "2026-09-14",
+            "note": "CONFIRMED NO BURN. SPECIFICATION.md covers Minter, Voter, Gauge, VotingEscrow, "
+                    "RewardsDistributor, EpochGovernor and the fee routing, and describes no burn "
+                    "mechanism of any kind. Supply mechanics are emissions (inflationary) and locking "
+                    "(veAERO). Do not add archetype 4.",
+        },
+        # ============ TWO EMISSION STREAMS, MODELLED AS TWO LINES ============
+        # They answer different questions and netting them into one hides both.
+        #
+        #   (a) POOL EMISSIONS — 15,000,000 AERO per epoch at start, DECAYING 1% PER EPOCH. These
+        #       go through the Voter to gauges and are genuine new supply to liquidity providers.
+        #
+        #   (b) veAERO REBASE — a SEPARATE weekly stream paid ONLY to veAERO holders, whose entire
+        #       purpose is to offset the dilution that (a) causes them. Calculated on locked and
+        #       unlocked AERO one second before the epoch flip. It is still new supply, but it is
+        #       an anti-dilution transfer to lockers, not a payment for liquidity.
+        #
+        # TAIL-EMISSION MODE ("Aero Fed") activates once (a) falls below 6,000,000 AERO/epoch —
+        # ~92 EPOCHS BY DESIGN. The spec gives no date for this and the earlier "epoch 67" figure
+        # was never confirmed anywhere; it is DROPPED, not reconciled. In tail mode, weekly
+        # emissions become a PERCENTAGE OF CIRCULATING SUPPLY starting at 30 bps (0.003),
+        # adjustable by ±1 bp per epoch on an EpochGovernor veNFT plurality vote with no quorum and
+        # no proposal threshold.
+        #
+        # NOT DECLARED AS A tokens_per_day SCHEDULE. Both the decay and the tail mode are
+        # EPOCH-INDEXED, not date-indexed, and tail mode is a percentage of a moving supply that
+        # governance moves again every epoch. A fixed daily rate cannot express any of that, and
+        # the epoch-to-date mapping is not on file. Declared as a rule instead.
+        # =====================================================================
         "issuance_schedule": None,
+        "emission_streams": [
+            {"stream": "pool emissions", "start_per_epoch": 15_000_000, "decay_per_epoch": 0.01,
+             "paid_to": "gauges, by veAERO vote", "is_new_supply": True,
+             "tail_trigger_per_epoch": 6_000_000, "tail_trigger_epoch_approx": 92,
+             "tail_rule": "weekly emissions become a percentage of circulating supply, starting at "
+                          "30 bps (0.003), adjustable +/-1 bp per epoch by EpochGovernor plurality vote "
+                          "(no quorum, no proposal threshold)",
+             "source_url": "https://github.com/aerodrome-finance/contracts",
+             "source_file": "SPECIFICATION.md:119-130, 251-266",
+             "note": "EPOCH-INDEXED, not date-indexed, and the epoch-to-date mapping is not on file. The "
+                     "'~92 epochs' figure is the spec's own and is UNDATED. The previously circulating "
+                     "'epoch 67' figure was never confirmed and is dropped rather than reconciled."},
+            {"stream": "veAERO rebase", "start_per_epoch": None, "decay_per_epoch": None,
+             "paid_to": "veAERO holders only", "is_new_supply": True,
+             "purpose": "offsets the dilution that pool emissions cause lockers",
+             "calculated_on": "locked and unlocked AERO one second prior to epoch flip",
+             "source_url": "https://github.com/aerodrome-finance/contracts",
+             "source_file": "SPECIFICATION.md:132-138",
+             "note": "A SEPARATE LINE, never netted into pool emissions. Its size is not a declared "
+                     "constant — it is computed per epoch from the lock ratio — so no rate is recorded."},
+        ],
         "contracts": {
             "token": _contract("0x940181a94A35A4569E4529A3CDfB74e38FD98631", "base", "erc20_total_supply", "AERO",
                                "https://aerodrome.finance/docs", verified="2026-09-11", provenance="deployed source",
@@ -1751,7 +2555,31 @@ PROJECTS = [
         "dune_queries": _dune("avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd",
                               "actual_buyback_tokens"),
         "materiality": "high",
-        "notes": "veAERO — lock rate and average lock duration are required inputs.",
+        # THE MERGER HAS NOT SHIPPED. Checked against the primary repository 2026-09-14: no mention
+        # of Velodrome, a merge, Ethereum mainnet or Arc in README.md, SPECIFICATION.md,
+        # script/README.md or the slipstream README, and script/constants/ contains only Base.json
+        # — no Ethereum.json, Mainnet.json or Arc.json. Recorded as a NEGATIVE FINDING so it is not
+        # re-checked casually and so no cross-chain or merged structure is modelled on reporting
+        # alone.
+        "reported_not_shipped": {
+            "what": "Dromos Labs merger of Aerodrome and Velodrome into a unified protocol, targeted "
+                    "Q2 2026, expanding to Ethereum mainnet and Circle's Arc chain",
+            "checked": "aerodrome-finance/contracts README.md, SPECIFICATION.md, script/README.md, "
+                       "script/constants/ (only Base.json), and aerodrome-finance/slipstream README.md",
+            "checked_on": "2026-09-14",
+            "finding": "no reference to Velodrome, a merge, Ethereum or Arc anywhere",
+            "effect": "do not model any cross-chain or merged structure; Base remains the only chain",
+        },
+        "notes": "ARCHETYPE 3 ONLY. NO BURN EXISTS — confirmed from Aerodrome's own SPECIFICATION.md, which "
+                 "documents the complete supply mechanics and contains no burn of any kind. Archetype 4 must "
+                 "not be added. FEES ARE NOT A BUYBACK: 100% of swap fees go to the veAERO holders who voted "
+                 "for each specific pool, paid in the PAIR'S OWN TOKENS and never converted to AERO, so there "
+                 "is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled "
+                 "as two lines: pool emissions (15m AERO/epoch decaying 1%/epoch, entering tail mode below "
+                 "6m/epoch at ~epoch 92, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor "
+                 "vote) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so neither is "
+                 "declared as a tokens_per_day schedule. veAERO lock rate is read as AERO.balanceOf(escrow). "
+                 "The reported Velodrome merger has NOT shipped into the public contracts.",
     },
     {
         "name": "PancakeSwap", "symbol": "CAKE",
@@ -1848,12 +2676,12 @@ PROJECTS = [
         "archetypes": [3], "archetypes_held": [],
         "fee_split": {
             "share_to_buyback": 0.55,
-            # PRIMARY SOURCE STILL NEEDED. The change is a Sky governance Executive Proposal
-            # approved 2026-08-13 directing 55% of each Smart Burn Engine cycle to SKY buybacks
-            # and 45% to LSSKY stakers. The build instruction was to cite the primary governance
-            # forum post rather than a secondary article; that URL has not been captured yet, so
-            # it is left None and raised in the Gap Report rather than filled with a guess.
-            "source_url": None,
+            # SOURCE: Messari, citing the Sky governance Executive Proposal approved 2026-08-13
+            # directly. The proposal directs 55% of each Smart Burn Engine cycle to SKY buybacks and
+            # 45% to LSSKY stakers. The primary governance forum URL is still not captured — Messari
+            # is a secondary source that quotes the primary, which is better than nothing and worse
+            # than the vote itself, so it is recorded as such rather than promoted.
+            "source_url": "https://messari.io/",
             "source_date": "2026-08-13",
             "programmed": False,   # explicitly governance-set and revisable
             "status": "active",
@@ -1881,10 +2709,13 @@ PROJECTS = [
                                    "the period before it and from the 55/45 after it, so it is its own "
                                    "period. known_change keeps it unconfirmed even if a share is later "
                                    "filled in, until the change itself is documented."),
-                _split_period("2026-08-13", None, 0.55, "active", source_url=None, source_date="2026-08-13",
-                              destination_split=0.55,
+                _split_period("2026-08-13", None, 0.55, "active", source_url="https://messari.io/",
+                              source_date="2026-08-13", destination_split=0.55,
                               note="Executive Proposal approved 2026-08-13: 55% of each Smart Burn Engine "
-                                   "cycle to SKY buybacks, 45% to LSSKY stakers. Primary forum URL still needed."),
+                                   "cycle to SKY buybacks, 45% to LSSKY stakers. Messari cites the Executive "
+                                   "Proposal directly; the primary forum URL is still not captured. THE "
+                                   "PRE-2026-08-13 SPLIT REMAINS UNDOCUMENTED and is deliberately NOT "
+                                   "backfilled with this figure."),
             ],
             "note": "This split has moved before and will move again. Each historical period is treated as "
                     "potentially different from the current one; undocumented periods are suppressed, never "
@@ -1893,7 +2724,26 @@ PROJECTS = [
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://docs.sky.money/", "source_date": BRIEF_DATE, "status": "active",
                        "note": "Repurchased SKY is burned OR redistributed to LSSKY stakers per a GOVERNANCE PARAMETER, "
                                "currently 55% burn / 45% stakers. Never net staking rewards against burn."},
-        "issuance_schedule": None,
+        # THE SAME 13 AUGUST 2026 PROPOSAL that set the 55/45 split also normalised LSSKY-to-SKY
+        # rewards: a 96,903,706 SKY stream vesting over 90 DAYS. That is 1,076,707.84 SKY/day, and
+        # it is EMISSIONS — SKY newly distributed to stakers — so also_emissions is set and the same
+        # figure feeds both gross issuance and emissions rather than counting the buyback alone.
+        #
+        # THE EXPIRY IS SET NOW, NOT LATER. 2026-08-13 + 90 days inclusive ends 2026-11-10. Without
+        # `until` the final step would carry 1.08m SKY/day forward for ever, reporting a finished
+        # 90-day stream as a permanent emission — exactly the failure the Render schedule was fixed
+        # for. Past the expiry the schedule goes silent and the Gap Report says SCHEDULE EXPIRED.
+        "issuance_schedule": {
+            "steps": [
+                {"from": "2026-08-13", "tokens_per_day": 96_903_706 / 90, "until": "2026-11-10"},
+            ],
+            "source_url": "https://messari.io/", "source_date": "2026-08-13", "status": "active",
+            "also_emissions": True,
+            "note": "LSSKY-to-SKY reward normalisation from the 2026-08-13 Executive Proposal: 96,903,706 "
+                    "SKY vesting over 90 days = 1,076,707.84 SKY/day, expiring 2026-11-10. This is the "
+                    "ONLY declared SKY issuance — it is a governance-directed stream, not a perpetual "
+                    "inflation schedule, so nothing is projected past the expiry.",
+        },
         "contracts": {
             "token": _contract(
                 "0x56072C95FAA701256059aa122697B133aDEd9279", "ethereum", "erc20_total_supply", "SKY",
@@ -1949,6 +2799,94 @@ PROJECTS = [
                      "with no minimum, no lockup period and no exit fee, so there is no duration-weighted escrow "
                      "here and the lssky balance IS the lock-rate figure. This gives Sky a working tier 2 path "
                      "independent of the info.skyeco.com dashboard, which robots.txt disallows."),
+            # THE SMART BURN ENGINE MACHINERY, all sourced from Sky's own repositories rather than
+            # from an aggregator: sky-ecosystem/spells-mainnet src/test/addresses_mainnet.sol (627
+            # ChainLog keys), sky-ecosystem/dss-flappers, sky-ecosystem/dss-chain-log.
+            #
+            # NONE OF THESE IS GIVEN A METRIC-BEARING KIND, and that is deliberate. The Splitter and
+            # the Flapper are EXECUTORS — surplus passes THROUGH them, it does not accumulate in
+            # them — so a balance read on either would be the Uniswap Firepit mistake again. The
+            # SBE BEAM is a rate controller and holds nothing. Only the Pause Proxy, which actually
+            # RECEIVES, has a balance worth reading, and it already does.
+            "splitter": _contract(
+                "0xBF7111F13386d23cb2Fba5A538107A73f6872bCF", "ethereum", "burn_executor", "SKY",
+                "https://github.com/sky-ecosystem/spells-mainnet", verified="2026-09-14",
+                provenance="ChainLog key MCD_SPLIT, from Sky's own spells-mainnet "
+                           "src/test/addresses_mainnet.sol; corroborated by dss-flappers "
+                           "deploy/FlapperInit.sol, which reads chainlog.getAddress(\"MCD_SPLIT\") as the splitter",
+                holder_has_code=True,
+                purpose="Splitter (ChainLog MCD_SPLIT) — withdraws USDS from the Vow and divides it "
+                        "between the Flapper (burn engine) and the reward farm. Reference only: "
+                        "surplus passes through, it does not accumulate here.",
+                note="Configurable parameters, per dss-flappers src/Splitter.sol: `burn` (WAD, the share "
+                     "sent to the flapper), `hop` (seconds between kicks, initialised to 1 hours), "
+                     "`flapper`, `farm`. kick() computes lot = tot * burn / RAD."),
+            "flapper": _contract(
+                "0x374D9c3d5134052Bc558F432Afa1df6575f07407", "ethereum", "burn_executor", "SKY",
+                "https://github.com/sky-ecosystem/dss-flappers", verified="2026-09-14",
+                provenance="ChainLog key MCD_FLAP, from Sky's own spells-mainnet addresses_mainnet.sol",
+                holder_has_code=True,
+                purpose="Flapper (ChainLog MCD_FLAP) — trades USDS for SKY on UniswapV2 and sends the "
+                        "proceeds to its receiver. Reference only: it is the executor, not the "
+                        "destination. THE RECEIVER IS ENFORCED — see destination_enforced_by_code."),
+            "sbe_beam": _contract(
+                "0xc8b61d211D3D03A630Fb09199E17953a8c9749a9", "ethereum", "burn_executor", "SKY",
+                "https://github.com/sky-ecosystem/spells-mainnet", verified="2026-09-14",
+                provenance="ChainLog key MCD_SBEBEAM, from Sky's own spells-mainnet addresses_mainnet.sol",
+                holder_has_code=True,
+                purpose="SBE BEAM (ChainLog MCD_SBEBEAM) — lets facilitators reconfigure the Smart Burn "
+                        "Engine's rate within governance bounds. Holds no tokens; reference only. This "
+                        "is why the 2024 flapper/want/pip values are recorded as point_in_time."),
+            "lockstake_engine": _contract(
+                "0xCe01C90dE7FD1bcFa39e237FE6D8D9F569e8A6a3", "ethereum", "burn_executor", "SKY",
+                "https://github.com/sky-ecosystem/spells-mainnet", verified="2026-09-14",
+                provenance="ChainLog key LOCKSTAKE_ENGINE, from Sky's own spells-mainnet addresses_mainnet.sol",
+                holder_has_code=True,
+                purpose="Lockstake Engine — the staking entry point that mints LSSKY. Reference only: the "
+                        "LOCK-RATE FIGURE IS LSSKY's OWN SUPPLY, already read above. Reading the engine's "
+                        "SKY balance as well would double-count the same staked SKY."),
+        },
+        # THE CHAINLOG, recorded as the lookup route rather than as a contract. Every Sky address
+        # above is a ChainLog key, and the registry resolves keys to addresses on-chain, so a
+        # governance redeploy changes the address the key points at without changing the key. Future
+        # lookups should go through this rather than hardcoding a fresh address.
+        "registry": {
+            "address": "0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F",
+            "what": "MCD ChainLog — getAddress(bytes32) resolves a key to the live address; list() "
+                    "returns every key; count() the number of them",
+            "source_url": "https://github.com/sky-ecosystem/dss-chain-log",
+            "source_date": "2026-09-14",
+            "key_list_file": "sky-ecosystem/spells-mainnet src/test/addresses_mainnet.sol (627 entries)",
+            "keys_used_here": ["MCD_SPLIT", "MCD_FLAP", "MCD_SBEBEAM", "LOCKSTAKE_SKY",
+                               "LOCKSTAKE_ENGINE", "MCD_PAUSE_PROXY", "SKY", "FLAP_SKY_ORACLE"],
+        },
+        # ============ THE STRONGEST DESTINATION EVIDENCE IN THE WHOLE CONFIG ============
+        # Not a document, not a poll, not an inference: the DEPLOY CODE REFUSES TO RUN OTHERWISE.
+        # sky-ecosystem/dss-flappers deploy/FlapperInit.sol line 164:
+        #
+        #   require(flapper.receiver() == dss.chainlog.getAddress("MCD_PAUSE_PROXY"),
+        #           "Flapper receiver mismatch");
+        #
+        # So the Smart Burn Engine's proceeds go to the Pause Proxy — Sky's governance-controlled
+        # treasury — and governance cannot silently route them elsewhere without redeploying the
+        # initialiser. destination_effect = treasury_redeployable is therefore not a judgement call.
+        # ================================================================================
+        "destination_enforced_by_code": {
+            "requirement": 'require(flapper.receiver() == chainlog.getAddress("MCD_PAUSE_PROXY"), "Flapper receiver mismatch")',
+            "file": "sky-ecosystem/dss-flappers deploy/FlapperInit.sol:164",
+            "source_date": "2026-09-14",
+            "means": "the deployment itself enforces the receiver; governance cannot re-route the Smart "
+                     "Burn Engine's proceeds without redeploying",
+            "effect": "treasury_redeployable — the SKY is HELD by a treasury that can spend it, not destroyed",
+        },
+        # THE SBE'S DEPLOYMENT CAP. A ceiling on the rate, not a rate.
+        "buyback_max_usd_annual": {
+            "value": 350_000_000,
+            "currency": "USDS",
+            "what": "maximum annual rate on the Smart Burn Engine's deployment",
+            "source_date": "2026-09-14",
+            "note": "A CAP IS NOT A SPEND. Any figure that traces to this ceiling rather than to an "
+                    "executed cycle must be labelled 'authorized, not confirmed executed'.",
         },
         # NOT "transfer" — that was the assumption the Dss Flappers audit refuted. Nothing is read
         # until the Flapper variant question is settled, which is exactly what "undetermined" means.
@@ -1997,7 +2935,8 @@ PROJECTS = [
             },
         },
         "burn_read_method": "undetermined",
-        "burn_read_note": "Splitter -> Flapper -> UniswapV2 -> configurable receiver. No dead address is "
+        "burn_read_note": "Splitter -> Flapper -> UniswapV2 -> receiver ENFORCED as MCD_PAUSE_PROXY by "
+                          "FlapperInit.sol:164. No dead address is "
                           "involved, so no address balance models it. Which variant is active determines "
                           "whether the gem is even removed from supply: FlapperUniV2SwapOnly converts and "
                           "sends to a receiver, FlapperUniV2 deposits back into the pool as LP tokens.",
@@ -2077,10 +3016,55 @@ PROJECTS = [
         "coingecko_id": "pendle",
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": 1.0, "source_url": "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/vePENDLE", "source_date": BRIEF_DATE, "programmed": True, "status": "active",
-                      "note": "Protocol revenue distributed to vePENDLE holders — DISTRIBUTE, not burn."},
+        # TOKENOMICS CHANGED APRIL 2026, and the change supersedes the old emissions model
+        # entirely. The buyback is now REVENUE-FUNDED and distributed to sPENDLE holders, replacing
+        # gauge-voting emissions. The SHARE of revenue is NOT documented, so programmed=False and
+        # share_to_buyback stays None — estimating it from the ~2m PENDLE repurchased in six months
+        # would be reverse-engineering a rule from an outcome.
+        "fee_split": {"share_to_buyback": None,
+                      "source_url": "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/Tokenomics",
+                      "source_date": "2026-09-14", "programmed": False, "status": "active",
+                      "note": "APRIL 2026 TOKENOMICS: revenue-funded buyback distributed to sPENDLE holders, "
+                              "replacing gauge-voting emissions. DISTRIBUTE, not burn. The revenue SHARE is "
+                              "not documented — do not estimate it. Sanity bounds only: ~2m PENDLE "
+                              "repurchased in the first six months, ~$653,702 of fees over 30 days."},
         "burn_split": None,
+        # THE HARD SUPPLY CAP IS GONE. It was 258,446,028 and most trackers still show it, which is
+        # stale. April 2026 replaced it with TERMINAL INFLATION OF 2%/YEAR.
+        #
+        # NOT DECLARED AS A tokens_per_day STEP, for the same reason as NEAR: 2% is a RATE on a
+        # moving supply base, and issuance_schedule takes a fixed daily token count. Freezing today's
+        # 2% as a constant would drift from the rule the moment supply moves.
         "issuance_schedule": None,
+        "issuance_rate_declared": {
+            "annual_rate": 0.02,
+            "kind": "terminal inflation",
+            "effective_from": "2026-04",
+            "supersedes": {"max_supply": 258_446_028,
+                           "note": "the hard cap was REMOVED in April 2026. Most trackers still display "
+                                   "258,446,028 — that figure is stale and must not be used as max_supply."},
+            "source_url": "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/Tokenomics",
+            "source_date": "2026-09-14",
+            "note": "A RATE, not a token count. Not declared as a schedule step because tokens_per_day "
+                    "would freeze a moving base.",
+        },
+        # HISTORICAL, DO NOT APPLY TO CURRENT ISSUANCE. Pendle's own deployments/1-core.json carries
+        # `initialPendlePerSec: 826719576719576719` (0.8267 PENDLE/sec). That file describes the
+        # PRE-APRIL-2026 gauge-emission model, which the new tokenomics replaced. Applying it now
+        # would report a superseded emission schedule as current.
+        "historical_parameters": {
+            "initialPendlePerSec": {
+                "value": 826719576719576719,
+                "scaled": 0.826719576719576719,
+                "unit": "PENDLE per second",
+                "source_url": PENDLE_DEPLOYMENTS_1_CORE,
+                "status": "historical",
+                "why": "from Pendle's deployments/1-core.json, which describes the pre-April-2026 "
+                       "gauge-voting emission model. The April 2026 tokenomics replaced that model with "
+                       "terminal 2% inflation. DO NOT apply this to current issuance without confirming "
+                       "it was not superseded — every indication is that it was.",
+            },
+        },
         "contracts": {
             "token": _contract("0x808507121B80c02388fAd14726482e061B8da827", "ethereum", "erc20_total_supply", "PENDLE",
                                PENDLE_DEPLOYMENTS_1_CORE,
@@ -2100,12 +3084,42 @@ PROJECTS = [
                 note="ADDRESS RESOLVED from Pendle's own deployments/1-core.json, key 'sPendle'. The same file "
                      "lists vePendle under a 'deprecated' block, independently confirming that vePENDLE is not "
                      "the lock source. READ METHOD CONFIRMED ERC-20, so totalSupply() is the correct read. The "
-                     "expected symbol is still unconfirmed: the on-chain symbol check compares case-insensitively "
-                     "and fails CLOSED, so a mismatch rejects the address with a clear message rather than "
-                     "returning a wrong number."),
+                     "expected symbol is CONFIRMED sPENDLE. "
+                     "** OPEN RISK ON THE FIGURE ITSELF, NOT ON THE ADDRESS — see boost_risk below. ** "
+                     "vePENDLE holders converting received a BOOSTED sPENDLE balance of up to 4x, decaying "
+                     "over ~2 years, and Pendle's docs describe a 'virtual sPENDLE balance' for voting "
+                     "power. If virtual or boosted balances are included in totalSupply(), this figure "
+                     "OVERSTATES real PENDLE staked by up to 4x. The address is right and the read "
+                     "succeeds; what is unresolved is what the number means."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
+        "destination_source_url": "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/Tokenomics",
+        "destination_confirmed_date": "2026-09-14",
+        # ** FORCED AMBER ON locked_tokens. ** The read works and the address is Pendle's own; what
+        # is unresolved is whether totalSupply() counts REAL staked PENDLE or includes the migration
+        # boost and the virtual balance. Up to 4x is not a rounding question — it is the difference
+        # between a lock rate that supports the thesis and one that does not. Settling it needs
+        # direct contract inspection (does totalSupply include virtual balances?), which is not a
+        # documentary question and is NOT guessed at here.
+        "non_comparable": {
+            "locked_tokens": {
+                "why": "vePENDLE holders converting to sPENDLE received a BOOSTED balance of up to 4x, "
+                       "decaying over ~2 years, and Pendle's docs describe a separate 'virtual sPENDLE "
+                       "balance' used for voting power. If either is included in totalSupply(), this "
+                       "figure OVERSTATES real PENDLE staked by as much as 4x. NOT RESOLVED — it needs "
+                       "direct contract inspection, not a docs reading.",
+                "use_instead": "nothing yet. Treat the figure as an UPPER BOUND on PENDLE staked. The "
+                               "dashboard cross-check below would catch a large divergence if "
+                               "app.pendle.finance ever becomes fetchable.",
+            },
+        },
+        "cooldown": {
+            "unstaking_days": 14,
+            "readable_via": "cooldownDuration() on the sPENDLE contract",
+            "note": "Recorded, not read. Matters only if the lock-rate figure is ever converted into an "
+                    "exit-pressure estimate.",
+        },
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
                 "cross_checks": [
             {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
@@ -2115,42 +3129,155 @@ PROJECTS = [
                      "tolerance is flagged rather than one figure silently replacing the other."},
         ],
         "materiality": "high",
-        "notes": "LOCK SOURCE MIGRATED: vePENDLE is deprecated — Pendle's own deployments/1-core.json lists it "
-                 "under a 'deprecated' block, alongside feeDistributor, feeDistributorV2 and votingController, "
-                 "which independently confirms the tokenomics docs. "
-                 "and users are moving to sPENDLE. A vePENDLE read would show a falling figure that reflects "
-                 "MIGRATION rather than falling lock-in — a false negative on the metric this tool exists to "
-                 "measure — so it has been removed rather than kept as a fallback. sPENDLE address still to be "
-                 "sourced; the staking page covers the metric meanwhile. "
-                 "Source: https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/Tokenomics",
+        "notes": "LOCK SOURCE MIGRATED: vePENDLE is deprecated — Pendle's own deployments/1-core.json lists "
+                 "it under a 'deprecated' block alongside feeDistributor, feeDistributorV2 and "
+                 "votingController, independently confirming the tokenomics docs. A vePENDLE read would show "
+                 "a falling figure reflecting MIGRATION rather than falling lock-in, so it was removed rather "
+                 "than kept as a fallback. sPENDLE (0x9999...4144) is the current source and its address is "
+                 "resolved. "
+                 "OPEN RISK, UNRESOLVED: sPENDLE's totalSupply() may include the up-to-4x migration BOOST and "
+                 "the 'virtual sPENDLE balance' used for voting power, which would overstate real PENDLE "
+                 "staked by up to 4x. locked_tokens is forced AMBER for this reason. "
+                 "TOKENOMICS CHANGED APRIL 2026: the 258,446,028 hard cap is GONE (still shown stale on most "
+                 "trackers), replaced by terminal 2%/yr inflation; the buyback is now revenue-funded and "
+                 "distributed to sPENDLE holders, with the share undocumented. The initialPendlePerSec figure "
+                 "in deployments/1-core.json is the OLD emission model — historical, not current.",
     },
     {
         "name": "Fluid", "symbol": "FLUID",
         "coingecko_id": "instadapp",
         "defillama_fees_slug": "fluid", "defillama_protocol": "fluid", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://docs.fluid.io/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Governance-approved buyback programme; the revenue share is not documented here."},
+        "fee_split": {"share_to_buyback": None, "source_url": "https://docs.fluid.io/",
+                      "source_date": "2026-09-14", "programmed": False, "status": "active",
+                      "note": "BUYBACK IS ACTIVE, not pending. It triggered in October 2025 on surpassing "
+                              "$10m revenue, launching 'The Fluid Reserve'. The revenue SHARE is not a "
+                              "single documented number — the first month was 100% of Ethereum mainnet "
+                              "revenue (~$1.7m), which is a launch condition, not a standing rule."},
         "burn_split": None,
         "issuance_schedule": None,
-        "contracts": {},
-        "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "locked_supply",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
-        # A THRESHOLD, NOT A RATE. Fluid's buyback ACTIVATES at $10m annualised protocol revenue;
-        # below it there is no buyback at all, so a share applied continuously would invent one.
-        # Our own Q0 fees annualise well above it, which suggests ACTIVE — but our figure is not
-        # the trigger. Fluid's governance is, and that is what must confirm it.
+        "contracts": {
+            "token": _contract(
+                "0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb", "ethereum", "erc20_total_supply", "FLUID",
+                "https://etherscan.io/address/0x6f40d4a6237c257fff2db00fa0510deeecd303eb",
+                verified="2026-09-14", provenance="Etherscan only — NOT repo-confirmed",
+                token_standard="erc20",
+                purpose="FLUID token — the supply read.",
+                note="PROVENANCE IS ETHERSCAN ONLY, and that is deliberately recorded rather than rounded "
+                     "up to 'verified against protocol docs'. Instadapp/fluid-contracts-public's own "
+                     "technical docs (docs/docs.md) never mention this address — the only addresses in "
+                     "that file are the native-ETH sentinel 0xEeee...EEeE. Usable, but do NOT upgrade its "
+                     "confidence without a second independent source."),
+        },
+        # BUYBACK IS ACTIVE — CORRECTED 2026-09-14. It was previously recorded as
+        # threshold-gated-and-unconfirmed, which is now wrong: the threshold was CROSSED in October
+        # 2025 and the programme launched. Status moves to "active" and the threshold becomes
+        # history rather than a live gate.
         "buyback_threshold": {
             "threshold_usd_annualised": 10_000_000,
-            "status": "unconfirmed_which_side",
-            "note": "Do NOT infer the switch from our own revenue figure — that is circular, and the "
-                    "protocol may measure revenue differently from DefiLlama. Confirm from Fluid's "
-                    "governance which side it currently sits on, then set status to 'active' or "
-                    "'below_threshold'. Until then the derived buyback stays suppressed.",
+            "status": "active",
+            "crossed_on": "2025-10",
+            "launched": "The Fluid Reserve",
+            "first_month": {"share": 1.0, "of": "Ethereum mainnet revenue", "approx_usd": 1_700_000},
+            "spent_to_date_usd": 3_200_000, "spent_through": "2025-12",
+            "note": "CROSSED AND LAUNCHED. ~$1.7m in the first month (100% of Ethereum mainnet revenue) "
+                    "and ~$3.2m total through December 2025. The 100% first-month figure is a LAUNCH "
+                    "CONDITION, not a standing share — do not apply it forward.",
+        },
+        # ============ THE RESERVE ADDRESS IS NEVER PUBLISHED. PERMANENT GAP. ============
+        # Checked and closed, not pending: Fluid's own blog announcement, Messari's report, the
+        # official X announcement, and BOTH Instadapp/fluid-contracts-public and
+        # Instadapp/fluid-governance (README and docs.md) — no address in any of them.
+        #
+        # So actual_buyback_tokens and actual_buyback_usd are SUPPRESSED (see UNAVAILABLE), and the
+        # IMPLIED buyback stays computable from the revenue side. Do not search again this round.
+        # ==============================================================================
+        "destination_undocumented": {
+            "what": "The Fluid Reserve — the destination of repurchased FLUID",
+            "why": "the Reserve address is not published in any Fluid-authored source",
+            "checked": ["Fluid's own blog announcement", "Messari's report", "the official X announcement",
+                        "Instadapp/fluid-contracts-public (README, docs/docs.md)",
+                        "Instadapp/fluid-governance (README, docs)"],
+            "checked_on": "2026-09-14",
+            "effect": "actual_buyback_tokens and actual_buyback_usd are suppressed; the implied figure from "
+                      "the revenue side remains computable",
+        },
+        # TWO REVENUE ROUTES WITH DIFFERENT DESTINATIONS, per DefiLlama's own metric definitions.
+        # They are NOT the same mechanism and must not be summed into one buyback figure: one
+        # accumulates in a reserve, the other is paid straight out.
+        "destination_routes": [
+            {"route": "Fluid Lending", "defillama_definition": "Token buyback from the treasury",
+             "destination": "The Fluid Reserve", "effect": "hold / treasury-style",
+             "address": None, "why_no_address": "never published — see destination_undocumented"},
+            {"route": "Fluid DEX / DEX Lite",
+             "defillama_definition": "Money going to governance token holders",
+             "destination": "FLUID holders directly", "effect": "distribute",
+             "address": None,
+             "note": "A DIFFERENT DESTINATION ENTIRELY from the Lending route. Track separately where "
+                     "the data allows; never merge into a single buyback number."},
+        ],
+        "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "locked_supply",
+        # STAKING: FLAGGED, NOT REMOVED. Fluid's own technical docs (docs/docs.md) contain ZERO
+        # mentions of stake, lock, veFLUID, governance or emission — consistent with no mechanism
+        # existing. But that document SCOPES ITSELF to the Liquidity layer and the Vault protocol,
+        # so a staking contract could simply be outside its scope. Absence of evidence is not
+        # evidence of absence, and deleting a metric on it would be the stronger claim.
+        "metric_unconfirmed": {
+            "locked_tokens": {
+                "status": "unconfirmed — absence of evidence, not evidence of absence",
+                "checked": "Instadapp/fluid-contracts-public docs/docs.md — zero mentions of "
+                           "stake / lock / veFLUID / governance / emission",
+                "why_weak": "that document scopes itself to the Liquidity layer and Vault protocol, so a "
+                            "staking contract could be out of scope rather than nonexistent",
+                "would_settle_it": "a positive statement in Fluid's own tokenomics material, or a "
+                                   "registry-style contract listing",
+                "do_not": "do not remove the metric on this evidence",
+            },
+        },
+        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
+        # SUPPLY FIGURES CONTRADICT EACH OTHER ON THEIR FACE. Flagged, NOT resolved by picking one:
+        # three different circulating figures circulate (77.95m / 78.7m / 83.7m in our own store)
+        # ALONGSIDE claims that the unlock schedule "ended in 2025" and the token is "fully
+        # unlocked". Fully unlocked against a confirmed 100m max supply cannot coexist with a
+        # circulating figure in the high 70s or low 80s — one of those claims is wrong, and
+        # choosing between them without a source would be inventing the answer.
+        "supply_conflict": {
+            "max_supply_confirmed": 100_000_000,
+            "circulating_reported": [
+                {"value": 77_950_000, "source": "reported"},
+                {"value": 78_700_000, "source": "reported"},
+                {"value": 83_700_000, "source": "our own store"},
+            ],
+            "conflicting_claim": "the unlock schedule 'ended in 2025' and the token is 'fully unlocked'",
+            "why_contradictory": "fully unlocked against a 100m max supply cannot coexist with a "
+                                 "circulating figure of 78-84m",
+            "resolution": "NONE — flagged, not resolved. Do not pick one.",
+        },
+        "scale_reference": {
+            "revenue_annualised_usd": 15_000_000, "tvl_usd": 977_790_000, "tvl_change_30d": 0.201,
+            "chains": ["Ethereum", "Arbitrum", "Plasma", "Base", "Polygon", "+1"],
+            "as_of": "2026-09-14",
+            "note": "Sanity bounds for the archetype 3 figures, not stored metrics.",
         },
         "materiality": "medium",
-        "notes": "CoinGecko id is still instadapp after the rebrand — verify.",
+        "notes": "BUYBACK IS ACTIVE — corrected from threshold-gated-and-unconfirmed. The $10m revenue "
+                 "threshold was CROSSED in October 2025, launching The Fluid Reserve: ~$1.7m in month one "
+                 "(100% of Ethereum mainnet revenue, a launch condition rather than a standing share) and "
+                 "~$3.2m through December 2025. "
+                 "THE RESERVE ADDRESS IS NEVER PUBLISHED — checked across Fluid's blog, Messari, the "
+                 "official X announcement and both Instadapp repos. Accepted as a PERMANENT gap: the actual "
+                 "buyback metrics are suppressed and the implied figure stays computable. "
+                 "TWO REVENUE ROUTES with DIFFERENT destinations per DefiLlama's own definitions — Lending "
+                 "buys back to the Reserve (hold), DEX/DEX Lite pays holders directly (distribute). Never "
+                 "merge them. "
+                 "STAKING is FLAGGED UNCONFIRMED, not removed: Fluid's technical docs never mention "
+                 "staking, but they scope themselves to the Liquidity and Vault layers, so that is absence "
+                 "of evidence. "
+                 "TOKEN ADDRESS provenance is Etherscan only, NOT repo-confirmed. "
+                 "SUPPLY FIGURES CONTRADICT: 77.95m / 78.7m / 83.7m circulating alongside 'fully unlocked' "
+                 "against a 100m cap. Flagged, not resolved. "
+                 "CoinGecko id is still instadapp after the rebrand — verify.",
     },
     {
         "name": "Aave", "symbol": "AAVE",
@@ -2233,13 +3360,101 @@ PROJECTS = [
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": None, "source_url": "https://etherfi.gitbook.io/etherfi", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Buyback confirmed as a governance-approved programme; the revenue share is not documented here."},
-        "burn_split": None,
+        # TWO BUYBACK STREAMS, BOTH TO sETHFI HOLDERS, NEVER COLLAPSED INTO ONE.
+        # They have different bases, different cadences and different confidence, and a single
+        # share_to_buyback cannot express either honestly — so the top-level share stays None and
+        # the streams are declared separately.
+        "fee_split": {
+            "share_to_buyback": None,
+            "source_url": "https://etherfi.gitbook.io/etherfi",
+            "source_date": "2026-09-14",
+            "programmed": False,
+            "status": "active",
+            "streams": [
+                {"stream": "eETH withdrawal fee revenue", "share": 1.0, "of": "eETH withdrawal fees",
+                 "cadence": "weekly", "status": "active",
+                 "components": ["implicit delayed-exit fee", "explicit instant-exit fee"],
+                 "source": "Ether.fi governance gitbook, proposal #11",
+                 "source_url": "https://etherfi.gitbook.io/etherfi"},
+                {"stream": "share of total protocol revenue", "share": None, "of": "total protocol revenue",
+                 "cadence": None, "status": "target_not_commitment",
+                 "actual_fy2024": 0.05, "target_fy2025": 0.25,
+                 "conditional_on": "profitability — Ether.fi's own wording",
+                 "source": "Ether.fi's own Medium post",
+                 "note": "5% was ACTUAL in FY2024; 25% is a TARGET for FY2025 explicitly conditioned on "
+                         "profitability. Do not use 25% as though it were the operative share — a "
+                         "conditional target is not a rule."},
+            ],
+            "note": "TWO streams to sETHFI holders: 100% of eETH withdrawal fee revenue (weekly), plus a "
+                    "share of total protocol revenue (5% actual FY2024, 25% TARGET FY2025 conditional on "
+                    "profitability). Do not collapse them; do not treat the target as the rule.",
+        },
+        "burn_split": {"share_of_fees_burned": 0.0, "source_url": "https://etherfi.gitbook.io/etherfi",
+                       "source_date": "2026-09-14", "status": "n/a",
+                       "note": "ERC20Burnable IS in ETHFI's inheritance (EtherFiGovernanceToken is ERC20, "
+                               "Burnable, Permit, Votes), but NO EXECUTED BURN is evidenced anywhere. An "
+                               "available function is not a mechanism — destination stays DISTRIBUTE."},
         "issuance_schedule": None,
-        "contracts": {},
+        "contracts": {
+            "token": _contract(
+                "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB", "ethereum", "erc20_total_supply", "ETHFI",
+                "https://etherscan.io/address/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb#code",
+                verified="2026-09-14", provenance="deployed source: EtherFiGovernanceToken (ERC20, Burnable, Permit, Votes)",
+                token_standard="erc20",
+                purpose="ETHFI governance token — the supply read."),
+            # THE DESTINATION: sETHFI, where buybacks are distributed to stakers.
+            # PARTIAL BY CONSTRUCTION. sETHFI also exists on Scroll (~$1.35m), Arbitrum (~$717k) and
+            # Base (~$128k). Those deployments' addresses are not on file, so the mainnet figure
+            # UNDERSTATES total staked — flagged rather than silently presented as the whole.
+            "sethfi": _contract(
+                "0x86B5780b606940Eb59A062aA85a07959518c0161", "ethereum", "ve_total_supply", "ETHFI",
+                "https://etherscan.io/address/0x86B5780b606940Eb59A062aA85a07959518c0161",
+                verified="2026-09-14", provenance="Ether.fi staking contract, cross-referenced with the "
+                                                  "Dune 8683038 sETHFI series already wired below",
+                read_method="escrow_balance_of", token_standard="erc20", underlying="token",
+                supply_is_partial=True,
+                partial_reason="MAINNET ONLY. sETHFI also exists on Scroll (~$1.35m), Arbitrum (~$717k) and "
+                               "Base (~$128k); those addresses are not on file, so this understates total "
+                               "staked ETHFI.",
+                purpose="sETHFI — the buyback DESTINATION and the lock-rate input. Read as "
+                        "ETHFI.balanceOf(sETHFI), not sETHFI.totalSupply(): the same ERC-4626-shaped "
+                        "hazard as Maple's stSYRUP, and the assets read is correct either way."),
+            # THE HUB. Ether.fi resolves its own contracts by NAME through an on-chain registry,
+            # the same pattern as Sky's ChainLog and OriginTrail's Hub. If a buyback EXECUTOR is
+            # ever needed, query this for a registered name — do not hardcode a found address.
+            # Confirmed inside `if (forkEnum == MAINNET_FORK)` in etherfi-protocol/smart-contracts
+            # test/TestSetup.sol:410, which resolves EtherFiNode, WithdrawRequestNFT, Liquifier,
+            # EtherFiTimelock, EtherFiAdmin, EtherFiOracle and RoleRegistry through it.
+            "address_provider": _contract(
+                "0x8487c5F8550E3C3e7734Fe7DCF77DB2B72E4A848", "ethereum", "burn_executor", "ETHFI",
+                "https://github.com/etherfi-protocol/smart-contracts", verified="2026-09-14",
+                provenance="etherfi-protocol/smart-contracts test/TestSetup.sol:410, inside the "
+                           "MAINNET_FORK branch",
+                holder_has_code=True,
+                purpose="AddressProvider — the mainnet registry exposing getContractAddress(string). "
+                        "Reference only, no metric: it holds no tokens. THE ROUTE to any other Ether.fi "
+                        "contract, including a buyback executor if one is registered."),
+            # ** DELIBERATELY ABSENT: buybackWallet 0x2f5301a3D59388c509C65f8698f521377D41Fd0F. **
+            # It appears EXACTLY ONCE in Ether.fi's repository — a contract-scope field in
+            # test/TestSetup.sol:294 — and NOTHING references it. No Ether.fi source states what it
+            # buys back. It is an unverified LEAD, not an address, and wiring it would put a number
+            # in the sheet with no defensible meaning. If a buyback executor is genuinely needed,
+            # query the AddressProvider above for a registered name first.
+        },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
+        "destination_source_url": "https://etherfi.gitbook.io/etherfi",
+        "destination_confirmed_date": "2026-09-14",
+        # A CAP IS NOT A SPEND. Applies here and generally: a stated "$50m authorized" is a CEILING
+        # granted by governance, not a transaction that happened. Any stored figure that traces to
+        # an authorisation amount rather than to a confirmed executed buyback must be labelled
+        # "authorized, not confirmed executed" — otherwise a permission reads as a purchase.
+        "authorization_is_not_execution": {
+            "rule": "an authorized programme CAP is not proof of executed spend",
+            "effect": "any figure traced to an authorisation is labelled 'authorized, not confirmed "
+                      "executed' rather than treated as realised",
+            "applies_to": ["actual_buyback_usd", "actual_buyback_tokens"],
+        },
         "dune_queries": {
             # Mapped from the probe of query 8683038: THIRTEEN columns, 794 rows, dated by `day`
             # ("2026-09-10 00:00:00.000 UTC"). It is a DAILY HISTORY like any other backfill —
@@ -2467,6 +3682,64 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
 # load-bearing field: it is what stops the next person repeating the work.
 # =======================================================================================
 UNAVAILABLE = [
+    # ---------------------------------------------------------------- World Mobile
+    # SUPPRESSED FOR A DESTINATION REASON, NOT A DATA REASON. The mechanism is confirmed; where
+    # the tokens GO is not, and the three candidates have opposite signs on float.
+    {
+        "project": "World Mobile", "metric": "actual_buyback_tokens",
+        "closed_on": "2026-09-14",
+        "summary": "Buyback destination is undocumented, so a token figure cannot be given a meaning.",
+        "what_was_tried": (
+            "The MECHANISM is confirmed: fiat telecom revenue buys WMTx on exchanges. No World Mobile "
+            "material on file states what happens to the bought tokens — burned, held by the treasury, or "
+            "redistributed. Their own metrics page is being rebuilt and does not cover it."),
+        "impact": (
+            "The IMPLIED buyback from the revenue side is unaffected and still computes. What is suppressed "
+            "is the actual figure, because storing a token count without its destination would let it be "
+            "netted against emissions like a burn (removes supply), counted as locked (reduces float), or "
+            "ignored (returns to float) — three answers with three different signs."),
+        "reopen_if": (
+            "World Mobile publishes what happens to repurchased WMTx, or an on-chain destination address "
+            "appears. A single sentence naming the destination closes this."),
+    },
+    {
+        "project": "World Mobile", "metric": "actual_buyback_usd",
+        "closed_on": "2026-09-14",
+        "summary": "Same as actual_buyback_tokens: the destination is undocumented.",
+        "what_was_tried": "See the actual_buyback_tokens entry — the same single missing fact blocks both.",
+        "impact": "Implied buyback still computes from revenue. The actual USD figure is suppressed.",
+        "reopen_if": "World Mobile states the destination of repurchased WMTx.",
+    },
+    # ---------------------------------------------------------------- Fluid
+    # A PERMANENT GAP, ACCEPTED. Five independent sources checked, none publishes the address.
+    {
+        "project": "Fluid", "metric": "actual_buyback_tokens",
+        "closed_on": "2026-09-14",
+        "summary": "The Fluid Reserve address has never been disclosed by Fluid, in any source.",
+        "what_was_tried": (
+            "Five sources, all checked 2026-09-14 and none carrying an address: (1) Fluid's own blog "
+            "announcement of The Fluid Reserve; (2) Messari's report on it; (3) the official X "
+            "announcement; (4) Instadapp/fluid-contracts-public — README.md and docs/docs.md, whose only "
+            "addresses are the native-ETH sentinel 0xEeee...EEeE; (5) Instadapp/fluid-governance — README "
+            "and docs. The buyback is real and ACTIVE (~$3.2m spent Oct-Dec 2025); the destination address "
+            "simply is not public."),
+        "impact": (
+            "NONE on whether the buyback exists or its size — both are known from Fluid's own reporting. "
+            "What is lost is the on-chain confirmation of it. The IMPLIED buyback from the revenue side is "
+            "unaffected and remains the figure used."),
+        "reopen_if": (
+            "Fluid publishes the Reserve address, or a governance proposal names it. Do NOT re-run the "
+            "five sources above — they are closed."),
+    },
+    {
+        "project": "Fluid", "metric": "actual_buyback_usd",
+        "closed_on": "2026-09-14",
+        "summary": "Same as actual_buyback_tokens: the Reserve address was never disclosed.",
+        "what_was_tried": "See the actual_buyback_tokens entry — five sources, none carrying an address.",
+        "impact": "Implied buyback still computes. ~$3.2m spent Oct-Dec 2025 is known from Fluid's own "
+                  "reporting but cannot be confirmed on-chain.",
+        "reopen_if": "Fluid publishes the Reserve address.",
+    },
     {
         "project": "Aerodrome", "metric": "locked_tokens_dashboard",
         "closed_on": "2026-09-12",
@@ -2565,6 +3838,92 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # and the corresponding config change is made.
 # =======================================================================================
 OPEN_QUESTIONS = [
+    # ---------------------------------------------------------------- GEODNET
+    {
+        "project": "GEODNET", "topic": "WORMHOLE NTT BRIDGE MODEL — lock-and-mint or burn-and-mint?",
+        "severity": 1,
+        "reason": "GEODNET bridges between Polygon and Solana using WORMHOLE NTT, which supports BOTH "
+                  "models, and which one is in use decides whether summing chain supplies is correct or a "
+                  "double-count of the entire remote float. Under LOCK-AND-MINT the Polygon tokens stay "
+                  "outstanding while Solana tokens are minted against them, so Polygon + Solana + IoTeX "
+                  "counts the same tokens two or three times. Under BURN-AND-MINT the tokens are destroyed "
+                  "on the source chain and summing is correct. "
+                  "This is not a small error either way: it is the difference between the right supply "
+                  "figure and one inflated by a multiple. Until it is settled, only Polygon is read and "
+                  "total_supply is labelled PARTIAL — which understates, but understates KNOWABLY.",
+        "suggestion": "Check docs.geodnet.com for the NTT configuration, or read the NTT manager contract "
+                      "directly — the mode is on-chain state. Then either add the Solana and IoTeX "
+                      "deployments as summed components (burn-and-mint) or keep Polygon as the sole read "
+                      "and record why (lock-and-mint). The same question applies to WMTx and to Aethir.",
+    },
+    {
+        "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
+        "severity": 2,
+        "reason": "A secondary source (Solana Compass) states that 80% of network DATA revenue funds "
+                  "buyback-and-burn. If true that is an archetype 3 block with a real revenue share. It is "
+                  "NOT ADDED, because it is SINGLE-SOURCED and is not corroborated by GEODNET's own docs or "
+                  "by any GIP. The existing burn_split on file carries the same 80% figure against "
+                  "docs.geodnet.com, so the two may be the same claim reaching us twice rather than two "
+                  "independent confirmations — which is exactly the kind of apparent corroboration that "
+                  "should not be treated as evidence.",
+        "suggestion": "Confirm from docs.geodnet.com or vote.geodnet.com. If a GEODNET-authored source "
+                      "states the revenue share and the buyback-and-burn route, add archetype 3 with that "
+                      "source. Do not add it on Solana Compass alone.",
+    },
+    # ---------------------------------------------------------------- Pendle
+    {
+        "project": "Pendle", "topic": "does sPENDLE.totalSupply() include boosted and virtual balances?",
+        "severity": 1,
+        "reason": "THE ADDRESS IS RIGHT AND THE READ SUCCEEDS — what is unresolved is what the number "
+                  "means. vePENDLE holders who converted received a BOOSTED sPENDLE balance of up to 4x, "
+                  "decaying over roughly two years, and Pendle's docs separately describe a 'virtual "
+                  "sPENDLE balance' used for voting power. If either is inside totalSupply(), the lock rate "
+                  "OVERSTATES real PENDLE staked by as much as 4x. "
+                  "A 4x error on the lock rate is not a rounding question: it is the difference between a "
+                  "lock rate that supports the thesis and one that does not. locked_tokens is forced AMBER "
+                  "until this is settled, and the figure should be read as an UPPER BOUND.",
+        "suggestion": "Direct contract inspection — read sPENDLE's totalSupply() implementation and check "
+                      "whether it includes boosted or virtual balances, or compare totalSupply() against "
+                      "PENDLE.balanceOf(sPENDLE). If the two diverge materially, the balanceOf figure is "
+                      "the real staked amount and the read should switch to escrow_balance_of. Do NOT "
+                      "guess at this from the docs.",
+    },
+    # ---------------------------------------------------------------- Near
+    {
+        "project": "Near", "topic": "protocol_reward_rate reads [0, 1] — genuine zero, or a fallback?",
+        "severity": 1,
+        "reason": "Our live on-chain read of NEAR's protocol_reward_rate returned [0, 1] — exactly zero, "
+                  "against secondary sources that all say 90% validators / 10% protocol treasury. "
+                  "THE PROBLEM IS THAT [0, 1] IS BYTE-IDENTICAL TO NEARCORE'S SERDE DEFAULT for that field "
+                  "(core/chain-configs/src/genesis_config.rs:168, "
+                  "`#[default(Rational32::from_integer(0))]`), so a genuine on-chain zero and a read that "
+                  "never reached chain state produce the SAME VALUE and cannot be told apart from the value "
+                  "alone. Source inspection cannot settle it either: nearcore does not vendor mainnet "
+                  "genesis — every path under core/chain-configs/res/ 404s — and the only [1, 10] values in "
+                  "the repository are inside TEST FIXTURES using `test.near` with epoch_length 60. "
+                  "THE LIVE READ IS USED, because it is the only direct chain evidence we hold. It is "
+                  "flagged uncertain rather than quietly overridden by secondary sources, which would be "
+                  "preferring a story to a measurement.",
+        "suggestion": "Fetch genesis_config from a NEAR-operated RPC or archive and read the field, or "
+                      "repeat the read against a SECOND independent endpoint. Two independent endpoints "
+                      "returning zero settles it; one returning [1, 10] means our read was falling through "
+                      "to the default and the treasury share is 10%.",
+    },
+    # ---------------------------------------------------------------- Fluid
+    {
+        "project": "Fluid", "topic": "does a FLUID staking or lock mechanism exist at all?",
+        "severity": 2,
+        "reason": "Instadapp/fluid-contracts-public's own technical docs (docs/docs.md) contain ZERO "
+                  "mentions of stake, lock, veFLUID, governance or emission — consistent with no mechanism "
+                  "existing. But this is ABSENCE OF EVIDENCE, NOT EVIDENCE OF ABSENCE: that document scopes "
+                  "itself to the Liquidity layer and the Vault protocol, so a staking contract could simply "
+                  "be outside its scope. Removing the locked_tokens metric on this basis would be making "
+                  "the STRONGER claim on the WEAKER evidence, so the metric stays and is flagged instead.",
+        "suggestion": "Look for a positive statement in Fluid's own tokenomics material, or a "
+                      "registry-style contract listing. Either a confirmation that staking exists (wire it) "
+                      "or a Fluid-authored statement that it does not (then remove the metric and record "
+                      "the closure). Do not remove it on the docs' silence.",
+    },
     {
         "project": "Sky", "topic": "FOR REVIEW — do BOTH legs of Sky's 55/45 split return value to the protocol?",
         "severity": 1,
@@ -2718,14 +4077,21 @@ OPEN_QUESTIONS = [
                       "entry rather than being folded into Venice AI's VVV figures.",
     },
     {
-        "project": "Uniswap", "topic": "UNI token address on Unichain",
-        "reason": "The Unichain TokenJar and Firepit are verified, but there is no UNI token contract declared "
-                  "on Unichain to call balanceOf against, and a token address is not valid across chains. Both "
-                  "Unichain components are refused, so Uniswap's burn and fee figures are marked PARTIAL — the "
-                  "mainnet paths only.",
-        "suggestion": "Find the bridged UNI address on Unichain and add it to contracts as a chain 'unichain' "
-                      "erc20_total_supply entry. The adapter picks the same-chain token automatically once it "
-                      "exists, and the PARTIAL marking clears.",
+        "project": "Uniswap", "topic": "CLOSED 2026-09-14 — the Unichain UNI address is no longer wanted",
+        "severity": 3,
+        "reason": "THIS QUESTION DISSOLVED RATHER THAN BEING ANSWERED, and the reason is worth keeping so it is "
+                  "not reopened as a to-do. The ask was for the bridged UNI address on Unichain, so the Unichain "
+                  "TokenJar and Firepit could read and the PARTIAL marking could clear. Uniswap's own source says "
+                  "that would have been WRONG: src/releasers/OptimismBridgedResourceFirepit.sol burns bridged UNI "
+                  "on L2 and bridges a withdrawal to L1, where the UNI reaches 0xdead only after the OP Stack "
+                  "7-day challenge period. A Unichain burn and its mainnet arrival are THE SAME BURN a week "
+                  "apart, so reading both would have double-counted every one of them with a seven-day offset "
+                  "that looks like fresh activity. "
+                  "The Unichain entries were REMOVED, the mainnet dead-address balance is the WHOLE figure, and "
+                  "the PARTIAL marking was cleared because nothing is missing.",
+        "suggestion": "NO ACTION. Do not add Unichain contracts to Uniswap. If a per-chain burn breakdown is ever "
+                      "wanted, it needs a model that nets the bridge transit rather than summing both sides — "
+                      "that is a new figure, not a completion of this one.",
     },
     {
         "project": "Pendle", "topic": "is there a documented data endpoint robots permits",
@@ -2751,12 +4117,13 @@ OPEN_QUESTIONS = [
                       "'erc20_total_supply' or 'escrow_balance_of' and token_standard in config.py.",
     },
     {
-        "project": "Pendle", "topic": "sPENDLE expected symbol",
-        "reason": "Address and read method are both settled: 0x999999999991E178D52Cd95AFd4b00d066664144, ERC-20, "
-                  "so totalSupply is the staked amount. Only the expected SYMBOL is unconfirmed. The on-chain "
-                  "check compares case-insensitively and fails CLOSED, so a mismatch rejects the address with a "
-                  "clear message rather than returning a wrong number — but it would also block a correct one.",
-        "suggestion": "Read symbol() on the contract and set expected_symbol in config.py to match.",
+        "project": "Pendle", "topic": "CLOSED 2026-09-14 — sPENDLE symbol confirmed; the OPEN risk moved",
+        "severity": 3,
+        "reason": "The expected symbol is CONFIRMED sPENDLE, so the symbol gate will no longer block a correct "
+                  "address. THE REAL RISK MOVED RATHER THAN CLEARING: the address, the read method and now the "
+                  "symbol are all settled, and what is unresolved is what the NUMBER MEANS — see the open "
+                  "question on boosted and virtual balances, which forces locked_tokens AMBER.",
+        "suggestion": "NO ACTION on the symbol. Work the boost question instead.",
     },
     {
         "project": "PancakeSwap", "topic": "complete LayerZero OFT deployment list",
@@ -2765,13 +4132,6 @@ OPEN_QUESTIONS = [
                   "self-reported figure remains the source of record.",
         "suggestion": "Get the full OFT deployment list from PancakeSwap's own docs and add each as a contract "
                       "entry. Until then the on-chain figure stays marked partial rather than looking complete.",
-    },
-    {
-        "project": "Fluid", "topic": "does FLUID staking exist at all",
-        "reason": "NOT RESOLVED. This machine has no network access and could not open docs.fluid.io. The metric "
-                  "was left in place rather than removed on a guess, so the column may be permanently empty.",
-        "suggestion": "Check docs.fluid.io. If there is no staking or lock mechanism, remove locked_tokens from "
-                      "Fluid's archetype 3 block. If there is one, complete the disabled sources.yaml entry.",
     },
     {
         "project": "Hyperliquid", "topic": "AQAv2 revenue accruing but not yet paid",
@@ -2790,11 +4150,19 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Uniswap", "topic": "release() burn threshold value",
-        "reason": "The UNI-burn threshold required to call release() is GOVERNANCE-SETTABLE: the Uniswap "
-                  "Governance Timelock holds thresholdSetter and can appoint a different setter. No number is "
-                  "hardcoded, so anything derived from it stays suppressed.",
-        "suggestion": "Read the current threshold on-chain, or record it from governance with its source URL and "
-                      "date, under Uniswap governance_parameters.release_threshold_uni.",
+        "severity": 3,
+        "reason": "NARROWED 2026-09-14, and confirmed from Uniswap's own source rather than inferred. "
+                  "src/base/ResourceManager.sol declares `uint256 public threshold;` with `setThreshold()` gated "
+                  "on onlyThresholdSetter — it is governance STORAGE, not a constant, so there is no published "
+                  "number to record and anything derived from it stays suppressed. "
+                  "ONE NUMBER DOES EXIST AND IT IS NOT MAINNET'S: the 2000 UNI figure in "
+                  "Uniswap/protocol-fees README.md sits under 'Cross-Chain UNI Burn (OP Stack L2s)' and is the "
+                  "BRIDGED-FIREPIT configuration. Hardcoding it as mainnet's threshold would be a plausible "
+                  "wrong number, which is the failure this project exists to avoid.",
+        "suggestion": "A LIVE threshold() READ on the mainnet Firepit, 0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721 "
+                      "— not a documentary search, which has been done. Record the result with its date under "
+                      "Uniswap governance_parameters.release_threshold_uni, and re-read it periodically: "
+                      "governance can move it at any time.",
     },
     {
         "project": "GEODNET", "topic": "the burn backfill has NEVER RUN — it was skipped, not successful",

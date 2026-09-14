@@ -264,6 +264,45 @@
   note: "RWA.xyz has no API on our tier."
 
 # ---- Chainlink (LINK) — archetypes 1, 3
+# ---- Maple (SYRUP) — archetype 3
+# Maple publishes live SSF SYRUP holdings and monthly protocol revenue on its own transparency
+# page. This is a CROSS-CHECK on the tier 2 Treasury read, not a replacement for it: the contract
+# read is authoritative (cross_checks prefers primary), and a divergence beyond 5% is flagged to
+# the Review Queue rather than one figure silently replacing the other.
+# Tolerance is deliberately wider than Chainlink's because the page reports the SSF ACCOUNTING
+# LABEL while the contract read is the WHOLE Treasury — a persistent gap between them is expected
+# and informative; a sudden one is not.
+# enabled: false until the selector is filled in and robots.txt is confirmed permissive for this
+# path. The scraper checks robots.txt on every fetch and refuses if disallowed.
+- project: Maple
+  metric: buyback_fund_balance_dashboard
+  tier: 3
+  enabled: false
+  url: https://maple.finance/transparency
+  method: dom
+  anchor: null                                      # TODO the label text beside the SSF SYRUP holdings figure
+  sanity_min: 0
+  sanity_max: 500000000
+  change_threshold_pct: 30
+  added: 2026-09-14
+  note: "Live SSF SYRUP holdings (75.78m at last check). CROSS-CHECK ONLY on the tier 2 read of
+    SYRUP.balanceOf(0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19). The SSF has NO separate address —
+    Maple's own transparency page states it is part of the Treasury — so this page and the contract
+    read measure overlapping but not identical things. Confirm robots.txt allows /transparency
+    before enabling."
+- project: Maple
+  metric: revenue_usd
+  tier: 3
+  enabled: false
+  url: https://maple.finance/transparency
+  method: dom
+  anchor: null                                      # TODO the label text beside monthly protocol revenue
+  added: 2026-09-14
+  note: "Monthly protocol revenue, published on the same page. Matters more than usual for Maple
+    because the buyback share is TIERED on monthly net revenue (10% below $1.5m, 20% from $1.5m-$2m,
+    and an UNCONFIRMED tier above $2m) — the revenue figure decides which tier applies, so a month
+    above $2m cannot be converted to a buyback figure at all until that tier is sourced."
+
 - project: Chainlink
   metric: rwa_xyz_usd
   tier: 3
