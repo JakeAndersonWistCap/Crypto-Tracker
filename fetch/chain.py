@@ -233,7 +233,27 @@ class Chain:
             out.unconfigured(SOURCE, name, f"{key}: ambiguous address, read refused", TIER)
             return False
 
-        # 2. BURN MECHANISM. A protocol-level burn has no address to read at all.
+        # 2. BURN MECHANISM. Two separate questions, and conflating them is what produced a wrong
+        # model of Sky that survived every address check this adapter makes.
+        #
+        # 2a. Is the MODEL itself refuted? An address can be perfectly correct and still be the
+        # wrong thing to read, if the protocol does not burn the way we assumed. Sky's zero
+        # address was a real address, verified against real docs, and entirely beside the point:
+        # Sky burns through a Splitter and an AMM Flapper, never through a dead address.
+        mech = config.burn_mechanism(project)
+        if spec["kind"] == "burn_address_balance" and mech.get("status") == "refuted":
+            out.gap(name, metric,
+                    reason=f"the burn MECHANISM is refuted, not merely the address: this project does not "
+                           f"burn by {mech.get('model')!r} in the way an address balance could measure. "
+                           f"{mech.get('note', '')}".strip(),
+                    tiers_attempted="2",
+                    suggestion=f"Do not substitute another address — no balance read models this. Establish "
+                               f"the real mechanism first; see {mech.get('source_url') or 'the protocol docs'} "
+                               f"and OPEN_QUESTIONS for this project.")
+            out.unconfigured(SOURCE, name, f"{key}: burn mechanism refuted, address read refused", TIER)
+            return False
+
+        # 2b. Is the READ METHOD one this adapter can serve? A protocol-level burn has no address.
         method = project.get("burn_read_method")
         if spec["kind"] == "burn_address_balance" and method not in READABLE_BURN_METHODS:
             out.gap(name, metric,
@@ -449,6 +469,8 @@ class Chain:
                                    "self-reported figure. The sheet labels this figure partial either way.")
 
             out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
+            if metric == "burn_address_balance":
+                self._flag_assumed_burn_mechanism(project, out, when)
             if metric == "burn_address_balance" and total == 0.0:
                 self._flag_burn_address_never_received(project, components, out, when)
 
@@ -462,6 +484,39 @@ class Chain:
                     out.add(flow, SOURCE, name, f"{flow_metric} derived from the summed {metric} delta", TIER)
                     if float(flow["value"].iloc[0]) == 0.0:
                         self._flag_unattributable_zero(project, flow_metric, metric, when, out)
+
+    def _flag_assumed_burn_mechanism(self, project: dict, out, when):
+        """The figure is reported, but the model behind it is not sourced — so say so on the figure.
+
+        Deliberately a flag and not a refusal. Sky's model was refuted by a document, which is a
+        fact; the others are merely undocumented, which is a question. Withdrawing four working
+        burn figures because one turned out wrong would be its own kind of error, and the sheet
+        would lose real numbers to a suspicion. Flagged, and the gap names the specific document
+        that would settle it.
+        """
+        mech = config.burn_mechanism(project)
+        if mech.get("status") != "assumed":
+            return
+        name = project["name"]
+        out.review_item(name, "burn_address_balance", "burn_mechanism_assumed", "stored_flagged",
+                        value=None, prior_value=None, date=when,
+                        source=f"model {mech.get('model')!r} is assumed, not sourced", tier=TIER)
+        out.gap(name, "[data] the burn MECHANISM is assumed, not documented",
+                reason=(
+                    f"This project's burn is read as {mech.get('model')!r}, and that model is ASSUMED "
+                    f"rather than sourced to the protocol's own documentation. The figure is still "
+                    f"reported — it may well be right — but it is flagged, because an address can be "
+                    f"perfectly correct while the claim attached to it is false. That is exactly what "
+                    f"happened to Sky: verified address, verified docs, wrong model, and a zero that "
+                    f"looked like a finding. {mech.get('note', '')}").strip(),
+                tiers_attempted="2",
+                suggestion=(
+                    f"Read the protocol's own documentation on what happens to repurchased or burned "
+                    f"tokens and record it in burn_mechanism, then set status to 'confirmed' with the "
+                    f"source URL. Source currently on file: {mech.get('source_url') or 'NONE'}. Two "
+                    f"questions settle it: does the protocol TRANSFER tokens to an address nobody "
+                    f"controls, and is that address a dead address rather than a contract that merely "
+                    f"HOLDS them? A contract balance read as 'cumulative burned' assumes destruction."))
 
     def _flag_burn_address_never_received(self, project: dict, components, out, when):
         """A burn address holding EXACTLY zero is evidence about the address, not about the burn.

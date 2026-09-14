@@ -284,6 +284,53 @@ LOCK_READ_METHODS = {
 # Pairing erc721 with erc20_total_supply is a hard config error and is rejected at load time.
 TOKEN_STANDARDS = {"erc20", "erc721"}
 
+# =======================================================================================
+# BURN MECHANISM — what the protocol ACTUALLY DOES with the tokens, as distinct from the
+# address the tokens go to. This distinction is not academic; missing it produced a wrong
+# model of Sky that survived careful address verification.
+#
+# Sky's addresses were checked against protocol docs and were correct. What was never checked
+# was the CLAIM ATTACHED to them: that Sky burns by transferring to a dead address. It does
+# not. Per the ChainSecurity Dss Flappers audit (July 2026), a Splitter divides surplus
+# between a Flapper and a reward farm; the Flapper trades USDS for the gem on UniswapV2 and
+# sends the proceeds to a configurable RECEIVER — and in the FlapperUniV2 variant deposits the
+# gem back into the pool as LP tokens. No dead address anywhere. A zero balance at 0x0 was
+# therefore the CORRECT reading of a question nobody should have been asking.
+#
+# The lesson generalises: "burn = transfer to dead address" is an ASSUMPTION, and every
+# project carrying it needs that assumption sourced to the protocol's own documentation, not
+# inherited from the shape of the config. So burn_mechanism is now REQUIRED on any project
+# whose burn_read_method is "transfer" (enforced in validate_config), and its status drives
+# what the adapter is willing to report:
+#
+#   confirmed  the protocol's own docs describe this mechanism. Read and report normally.
+#   assumed    plausible, not sourced. Read, but every figure is FLAGGED and a gap names the
+#              specific document that would settle it. NOT refused: withdrawing a working
+#              figure on a suspicion is its own kind of wrong.
+#   refuted    the docs describe something else. Nothing is read; the burn figure does not exist.
+BURN_MECHANISM_STATUSES = {"confirmed", "assumed", "refuted"}
+
+BURN_MECHANISM_MODELS = {
+    "transfer_to_dead_address": "Tokens are sent to an address nobody controls. Cumulative burn is that "
+                                "address's balance; it only ever rises.",
+    "protocol_level_destruction": "Supply is destroyed with no transfer (a burn() call, a fee sink). No "
+                                  "address holds the burned tokens.",
+    "amm_swap_to_receiver": "Surplus is swapped for the token on an AMM and the proceeds are sent to a "
+                            "CONFIGURABLE receiver. Whether that is destruction, a treasury holding or an "
+                            "LP position depends on the receiver and the variant — it is NOT a burn until "
+                            "established. A balance read cannot model it.",
+    "undetermined": "Not established. Nothing is read.",
+}
+
+
+def burn_mechanism(project: dict) -> dict:
+    """The project's burn mechanism block, defaulting to an explicit 'assumed' rather than silence."""
+    return project.get("burn_mechanism") or {
+        "model": "undetermined", "status": "assumed", "source_url": None, "source_date": None,
+        "note": "No burn_mechanism block in config — the model has never been established.",
+    }
+
+
 BURN_READ_METHODS = {
     "transfer": "Tokens move to an address no one controls. Readable as a balance on the token contract.",
     "protocol_level": "Supply destroyed at the protocol level with no transfer. NOT readable as an address "
@@ -733,6 +780,15 @@ PROJECTS = [
                 note="UNVERIFIED, and NOT referenced by the working burn query. Left in place but refused; "
                      "confirm whether it is still relevant before enabling."),
         },
+        "burn_mechanism": {
+            "model": "transfer_to_dead_address", "status": "assumed",
+            "source_url": "https://dune.com/queries/8683175", "source_date": None,
+            "note": "ASSUMED, but the best-evidenced of the four. The Dune query aggregates real ERC-20 "
+                    "transfers to 0x...dEaD on Polygon and a Solana burn token account, so transfers to a "
+                    "dead address are OBSERVED rather than inferred — that is mechanism evidence, not just "
+                    "address evidence. Still not 'confirmed': the query is our own construction, and no "
+                    "GEODNET document on file states the mechanism.",
+        },
         "burn_read_method": "transfer",
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -924,6 +980,15 @@ PROJECTS = [
                                            "verification; what remains open is whether Venice's burn actually "
                                            "routes here, which is the burn-methodology question, not an address one."),
         },
+        "burn_mechanism": {
+            "model": "transfer_to_dead_address", "status": "assumed",
+            "source_url": None, "source_date": None,
+            "note": "ASSUMED, and the weakest of the five. The source on the burn_zero entry is the EIP-20 "
+                    "SPECIFICATION — which documents what the zero address is, not that Venice burns to it. "
+                    "There is no Venice document on file describing the mechanism at all. The buy_and_burn "
+                    "address is separately uncorroborated. Flagged rather than refused: the figure may well "
+                    "be right, and withdrawing it on a suspicion is its own kind of wrong.",
+        },
         "burn_read_method": "transfer",
         "self_reported_burn": True,
         "self_reported_source": {
@@ -1112,6 +1177,18 @@ PROJECTS = [
                                            purpose="OptimismBridgedResourceFirepit, Unichain — the second TRANSFER BURN path. "
                                                    "Summed with the mainnet fire pit; omitting it understates total burn."),
         },
+        "burn_mechanism": {
+            "model": "transfer_to_dead_address", "status": "assumed",
+            "source_url": "https://docs.uniswap.org/contracts/protocol-fee/deployments",
+            "source_date": None,
+            "note": "ASSUMED, and worth looking at closely — this is the closest structural match to Sky. "
+                    "The source on file is a DEPLOYMENTS LIST, which evidences addresses and nothing else. "
+                    "More to the point, the Firepit is a DEPLOYED CONTRACT, not a dead address: tokens sit "
+                    "in it. Whether it destroys them (a burn() call, an unrecoverable sink) or merely HOLDS "
+                    "them is precisely the question Sky's architecture turned out to answer the wrong way. "
+                    "A contract balance read as 'cumulative burned' assumes destruction. Both fire pits "
+                    "currently read zero, which settles nothing either way.",
+        },
         "burn_read_method": "transfer",
         # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
         # constant: the Uniswap Governance Timelock holds thresholdSetter and can appoint a different
@@ -1230,6 +1307,16 @@ PROJECTS = [
                                    purpose="TRANSFER BURN — CAKE sent to the standard BNB Chain dead address. "
                                            "balanceOf is called on the confirmed CAKE token holding this address."),
         },
+        "burn_mechanism": {
+            "model": "transfer_to_dead_address", "status": "assumed",
+            "source_url": "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
+            "source_date": None,
+            "note": "ASSUMED. The tokenomics page is on file as the address source and is the likeliest "
+                    "place the mechanism is also described — but nobody has confirmed that it says CAKE is "
+                    "transferred to the dead address rather than destroyed some other way. The monthly CAKE "
+                    "Burn Report series would corroborate it. Marked assumed rather than confirmed because "
+                    "nothing in this repo records anyone having read it for that purpose.",
+        },
         "burn_read_method": "transfer",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
@@ -1321,28 +1408,27 @@ PROJECTS = [
                      "'SKY Governance Token', symbol 'SKY'. Codebase: https://github.com/sky-ecosystem/sky. "
                      "The other address that was circulating is WRONG and has been deleted "
                      "entirely rather than kept as a fallback."),
-            # VERIFICATION RE-OPENED 2026-09-14. The address is correct as an address and the read
-            # works; what is disputed is the CLAIM that Sky's burn routes here. The balance is
-            # EXACTLY 0 on the first observation, while every peer read the same way is non-zero
-            # on a single observation (PancakeSwap 4.93bn, GEODNET 38.2m, Venice 33.9m). A burn
-            # address is one-way, so a zero means nothing has EVER arrived — not that nothing
-            # arrived recently. The April 2026 buyback cut does NOT explain it: a reduction in
-            # burning cannot produce a zero cumulative balance where burning previously occurred.
-            # Treated as an address/destination error of the same class as a transposed address,
-            # not as a data gap.
-            "burn_zero": _contract(
-                "0x0000000000000000000000000000000000000000", "ethereum", "burn_address_balance", "SKY",
-                "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
-                verified="2026-09-11", provenance="protocol docs",
-                purpose="CLAIMED transfer-burn destination — that the Smart Burn Engine sends repurchased "
-                        "SKY to the zero address. THE CLAIM IS DISPUTED; the address itself is not.",
-                destination_status="disputed",
-                destination_note="Balance is exactly 0 while peers on the identical read are non-zero. "
-                                 "See OPEN_QUESTIONS: where does Sky's burn actually go?",
-                note="The read is correct and kept as EVIDENCE on the Staging sheet. It is NOT stored as "
-                     "burn_address_balance, because labelling a zero 'cumulative burned' would assert that "
-                     "Sky has never burned, which the zero does not establish — it establishes only that "
-                     "nothing ever reached THIS address."),
+            # NO burn_zero ENTRY, AND NOT BECAUSE THE ADDRESS WAS WRONG.
+            # It was removed 2026-09-14 after the ChainSecurity Dss Flappers audit (July 2026)
+            # and Sky's own dss-flappers repo established that Sky's burn is NOT a
+            # transfer-to-dead-address mechanism at all. A Splitter divides protocol surplus
+            # between a Flapper and a reward farm (the 55/45 split already in fee_split); the
+            # Flapper trades USDS for the gem on UniswapV2 and sends the proceeds to a
+            # CONFIGURABLE RECEIVER — and in the FlapperUniV2 variant deposits the gem back into
+            # the pool, minting LP tokens to that receiver. A documented Splitter transaction
+            # shows the allocation going to "Burn — MCD Pause Proxy" and "Sky Rewards".
+            #
+            # So the zero balance at 0x0 was CORRECT AND EXPECTED. It was never evidence of a
+            # missing burn, and never evidence of a wrong address — it was the right answer to a
+            # question that should not have been asked.
+            #
+            # DO NOT RE-ADD THIS, AND DO NOT SUBSTITUTE ANOTHER ADDRESS FOR IT. No balance read of
+            # any address models this: the receiver is configurable, and it may hold LP tokens
+            # rather than SKY. The MCD Pause Proxy is the lead worth following, but the audit
+            # warns that if the Pause Proxy is the receiver and governance does not control it,
+            # LP tokens can be lost or seized — a warning that only makes sense if the receiver
+            # HOLDS tokens rather than destroying them. A Pause Proxy balance may therefore be a
+            # TREASURY HOLDING, not a burn. See UNAVAILABLE and OPEN_QUESTIONS.
             "lssky": _contract(
                 "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C", "ethereum", "ve_total_supply", "lssky",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
@@ -1355,36 +1441,58 @@ PROJECTS = [
                      "here and the lssky balance IS the lock-rate figure. This gives Sky a working tier 2 path "
                      "independent of the info.skyeco.com dashboard, which robots.txt disallows."),
         },
-        "burn_read_method": "transfer",
+        # NOT "transfer" — that was the assumption the Dss Flappers audit refuted. Nothing is read
+        # until the Flapper variant question is settled, which is exactly what "undetermined" means.
+        "burn_read_method": "undetermined",
+        "burn_read_note": "Splitter -> Flapper -> UniswapV2 -> configurable receiver. No dead address is "
+                          "involved, so no address balance models it. Which variant is active determines "
+                          "whether the gem is even removed from supply: FlapperUniV2SwapOnly converts and "
+                          "sends to a receiver, FlapperUniV2 deposits back into the pool as LP tokens.",
+        "burn_mechanism": {
+            "model": "amm_swap_to_receiver", "status": "refuted",
+            "source_url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+            "source_date": "2026-09-14",
+            "note": "REFUTED, not merely unconfirmed: the transfer-to-dead-address model is positively "
+                    "contradicted by the protocol's own code and audit (ChainSecurity Dss Flappers, July "
+                    "2026, 20260710-ChainSecurity_Sky_Dss_Flappers_audit.pdf; "
+                    "https://github.com/sky-ecosystem/dss-flappers). Surplus is split by a Splitter between "
+                    "a Flapper and a reward farm; the Flapper trades USDS for the gem on UniswapV2 and "
+                    "sends proceeds to a configurable receiver, with the FlapperUniV2 variant depositing "
+                    "the gem back into the pool as LP tokens. Newer components — SBEBeam, letting "
+                    "facilitators configure splitter, kicker and farms within governance bounds, and a "
+                    "Kicker entrypoint for surplus processing — make the destination MORE configurable, "
+                    "not less. Until the active variant is established, Sky has no burn figure, and that "
+                    "is the correct state.",
+        },
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
-        "destination_effect": "mixed",
+        # "mixed" understated it: whether the burn LEG removes supply at all is unresolved. If the
+        # active variant is FlapperUniV2, part of what was called burn is SKY in an LP position —
+        # not destroyed, not removed from supply, and recoverable.
+        "destination_effect": "unconfirmed",
         "dune_queries": {
-            # PURPOSE CHANGED 2026-09-14. This was "distinguish no-burn from wrong-address"; the
-            # zero cumulative balance has largely answered that, so it is now "find where the burn
-            # actually goes". The destination is the thing in doubt, so query transfers FROM the
-            # Smart Burn Engine, not TO an address we are no longer confident about:
+            # RE-SCOPED 2026-09-14, AND BLOCKED. Twice now this slot has been aimed at the wrong
+            # question. It was "did anything burn"; then "where does the engine send it"; both
+            # assumed a model the Dss Flappers audit has since refuted. DO NOT AUTHOR IT YET.
             #
-            #   SELECT date_trunc('month', evt_block_time) AS month,
-            #          "to"                                AS destination,
-            #          SUM(value / 1e18)                   AS tokens
-            #   FROM   erc20_ethereum.evt_Transfer
-            #   WHERE  contract_address = 0x56072C95FAA701256059aa122697B133aDEd9279   -- SKY
-            #     AND  "from"           = <SMART BURN ENGINE ADDRESS — NOT ON FILE, get it from
-            #                              Sky's own docs; do not guess it>
-            #   GROUP  BY 1, 2 ORDER BY 1
-            #
-            # Read the `destination` column FIRST, by hand, before wiring anything: that column is
-            # the answer to the open question. Only once the burn destination is established does
-            # a burn SERIES make sense, and it should then be filtered to that destination and
-            # mapped as date_col "month", value_col "tokens", monthly, drop_current_period True.
-            # `python dune_probe.py <id>` prints the shape without touching the store.
+            # The real question is: what does the Splitter do with the burn leg — where does the
+            # SKY end up, and is it DESTROYED or HELD? And that cannot be turned into SQL until
+            # the Flapper variant is known, because the variant changes what the query should even
+            # look for:
+            #   FlapperUniV2SwapOnly -> follow the gem to the receiver, and ask what the receiver
+            #                           does with it (destroy, hold, redeploy)
+            #   FlapperUniV2         -> follow LP TOKENS, not SKY. The SKY is in a pool. A query
+            #                           counting SKY transfers would miss it entirely, or
+            #                           double-count the pool's own rebalancing as burn.
+            # Writing one query that assumes either variant risks a plausible wrong number, which
+            # is the failure this whole tool is built against. See OPEN_QUESTIONS: "WHICH FLAPPER
+            # VARIANT IS ACTIVE?" — that is the blocker, and it is a governance question, not a
+            # data one.
             "gross_burn_tokens": {
                 "query_id": None, "date_col": "month", "value_col": "tokens",
                 "granularity": "monthly", "drop_current_period": True,
-                "source_url": "https://dune.com/queries/8683175",
-                "note": "NOT YET AUTHORED, and it answers a DESTINATION question before it answers a "
-                        "volume one. Until the destination is established, Sky has no burn figure at "
-                        "all — the zero-address balance is evidence on the Staging sheet, not a burn.",
+                "source_url": "https://github.com/sky-ecosystem/dss-flappers",
+                "note": "BLOCKED, not merely unauthored. The variant question must be settled first; until "
+                        "then Sky has no burn figure at all, which is the correct state.",
             },
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "gross_issuance_tokens",
                     "emissions_tokens", "staked_tokens"),
@@ -1822,6 +1930,33 @@ UNAVAILABLE = [
             "into the escrow at 0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4 on Base would reconstruct it. "
             "A nice-to-have, not a blocker."),
     },
+    {
+        "project": "Sky", "metric": "burn_address_balance",
+        "closed_on": "2026-09-14",
+        "summary": "Sky has no burn ADDRESS to read. Not a wrong address — the wrong kind of question.",
+        "what_was_tried": (
+            "balanceOf(0x0000...0000) on SKY, from an address verified against Sky's own docs. It read "
+            "exactly 0 while every peer on the identical read was non-zero, which looked like evidence of "
+            "a wrong destination. It was not. The ChainSecurity Dss Flappers audit (July 2026) and Sky's "
+            "dss-flappers repo establish that Sky's burn leg is a Splitter feeding a Flapper that trades "
+            "USDS for the gem on UniswapV2 and sends proceeds to a CONFIGURABLE RECEIVER — and in the "
+            "FlapperUniV2 variant deposits the gem back into the pool as LP tokens. No dead address is "
+            "involved anywhere. The zero was correct and expected."),
+        "impact": (
+            "Sky has no burn figure, and that is the correct state — better than a zero that looks "
+            "measured. It is NOT a permanent loss: a real figure becomes possible once the active Flapper "
+            "variant is known, which is an OPEN QUESTION rather than a closed one. Note that the earlier "
+            "April-2026 buyback-cut theory never explained this zero and should not be revived: a "
+            "reduction in burning cannot produce a zero CUMULATIVE balance where burning once occurred."),
+        "reopen_if": (
+            "NEVER by substituting another address — no balance read of any address models this. The "
+            "receiver is configurable and may hold LP tokens rather than SKY. The MCD Pause Proxy is the "
+            "lead worth following (a documented Splitter transaction shows the allocation going to 'Burn — "
+            "MCD Pause Proxy' and 'Sky Rewards'), but the audit warns that if the Pause Proxy is the "
+            "receiver and governance does not control it, LP tokens can be lost or seized — a warning that "
+            "only makes sense if the receiver HOLDS tokens rather than destroying them. So a Pause Proxy "
+            "balance may be a TREASURY HOLDING, not a burn, and it is not added here on that basis."),
+    },
 ]
 
 # Two kinds, kept strictly apart. "figure" means the number itself has no route, so the Gap
@@ -1857,35 +1992,46 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # =======================================================================================
 OPEN_QUESTIONS = [
     {
-        "project": "Sky", "topic": "WHERE DOES SKY'S BURN ACTUALLY GO? The zero address has never received any",
+        "project": "Sky", "topic": "WHICH FLAPPER VARIANT IS ACTIVE? Sky has no burn figure until this is answered",
         "severity": 1,
-        "reason": "RESOLVED FROM AMBIGUOUS TO STRONGLY ONE-SIDED, and the earlier framing was wrong. "
-                  "balanceOf(0x0000...0000) on SKY reads EXACTLY 0. That is a STOCK, not a differenced "
-                  "flow: it needs no observation history to mean something, because a burn address is "
-                  "one-way — nothing is ever withdrawn. So if Sky had burned SKY here at any point since "
-                  "the token was deployed, the balance would be non-zero today. Every peer read the same "
-                  "way is non-zero on a SINGLE observation: PancakeSwap 4,931,229,998, GEODNET 38,166,932, "
-                  "Venice AI 33,872,423. Sky alone is exactly zero. "
-                  "THE APRIL 2026 BUYBACK CUT IS NOT THE EXPLANATION, and nobody should re-derive it as "
-                  "one: the ~87% reduction is real and well sourced, but a reduction in burning cannot "
-                  "produce a zero CUMULATIVE balance where burning previously occurred — it would produce "
-                  "a flat non-zero one. The reduction explains a small recent flow; it cannot explain "
-                  "nothing ever having arrived. "
-                  "The likelier reading is therefore that SKY'S BURN DOES NOT ROUTE TO THE ZERO ADDRESS, "
-                  "which makes this a VERIFICATION ERROR of the same class as a transposed or stale "
-                  "address, not a data gap. It is not proof: a protocol that has genuinely never burned "
-                  "produces the same zero. So the destination claim is marked disputed rather than "
-                  "corrected on a guess, the balance is captured to Staging as evidence, and "
-                  "burn_address_balance renders n/a with this reason rather than asserting a burn figure.",
-        "suggestion": "Find the real destination, then correct config. The Dune query is still worth "
-                      "authoring but its PURPOSE HAS CHANGED: it is no longer 'did anything burn' — the "
-                      "zero balance has largely answered that — it is 'where does the Smart Burn Engine "
-                      "send what it buys'. So query transfers FROM the Smart Burn Engine contract rather "
-                      "than TO the zero address, because the destination assumption is the thing in "
-                      "doubt. Sky's own docs on the disposition of repurchased tokens are the primary "
-                      "source and are reportedly unspecific, which is Sky's ambiguity and not ours. When "
-                      "the destination is established: point burn_zero at the real address (or add the "
-                      "right one), clear destination_status, and re-date verified.",
+        "reason": "THE SUBSTANTIVE QUESTION, and it decides whether Sky belongs in archetype 4 at all. Per "
+                  "the ChainSecurity Dss Flappers audit (July 2026) the Flapper comes in two variants that "
+                  "do MATERIALLY DIFFERENT THINGS to supply. FlapperUniV2SwapOnly fully converts USDS to "
+                  "the gem and sends it to a predefined receiver. FlapperUniV2 buys the gem AND DEPOSITS "
+                  "IT BACK INTO THE LIQUIDITY POOL, minting LP tokens to a receiver. If the active variant "
+                  "is FlapperUniV2, then a portion of what this model has been calling Sky's BURN is SKY "
+                  "SITTING IN A UNISWAP LP POSITION — not destroyed, not removed from supply, and "
+                  "recoverable. That is not a burn in any sense this tool means it, and Sky's archetype 4 "
+                  "block would be partly wrong. Until it is established, Sky HAS NO BURN FIGURE and no "
+                  "figure should be presented as one. destination_effect is set to 'unconfirmed' rather "
+                  "than 'mixed' for the same reason: whether the burn leg removes supply at all is open.",
+        "suggestion": "Establish from SKY GOVERNANCE which Flapper the Splitter currently points at, and "
+                      "whether SBEBeam has since changed it — SBEBeam lets facilitators reconfigure "
+                      "splitter, kicker and farms within governance bounds, so this is a question about the "
+                      "CURRENT configuration, not a one-off fact. Sources: "
+                      "https://github.com/sky-ecosystem/dss-flappers and the audit PDF "
+                      "20260710-ChainSecurity_Sky_Dss_Flappers_audit.pdf. Then, and only then, re-examine "
+                      "whether Sky is an archetype 4 name, and scope the Dune query — the variant "
+                      "determines what the query should even look for.",
+    },
+    {
+        "project": "Sky", "topic": "is the MCD Pause Proxy a burn destination or a treasury holding?",
+        "severity": 1,
+        "reason": "A LEAD, DELIBERATELY NOT ADDED AS A BURN ADDRESS. A documented Splitter transaction "
+                  "shows the allocation going to 'Burn — MCD Pause Proxy' and 'Sky Rewards', which makes "
+                  "the Pause Proxy the obvious next place to look. But the audit warns that if the Pause "
+                  "Proxy is the receiver and governance does not control it, LP TOKENS CAN BE LOST OR "
+                  "SEIZED — and that warning only makes sense if the receiver HOLDS tokens rather than "
+                  "destroying them. A balance at the Pause Proxy may therefore be a TREASURY HOLDING, "
+                  "which belongs nowhere near a burn column: a holding can come back to float, a burn "
+                  "cannot. Adding it as a burn address would repeat the exact error just corrected — "
+                  "attaching a burn claim to an address because the label near it says 'Burn'.",
+        "suggestion": "Answer the Flapper-variant question first; it changes what the Pause Proxy would "
+                      "even be receiving (gem tokens, or LP tokens). Then establish from Sky governance "
+                      "whether tokens reaching the Pause Proxy are destroyed, held, or redeployed. If they "
+                      "are held, this is a treasury balance and should be modelled as one — it reduces "
+                      "float like Chainlink's Reserve does, under destination_effect 'locked_supply', not "
+                      "as a burn.",
     },
     {
         "project": "Uniswap", "topic": "the Fire Pit has also never received a token — same check, weaker case",
@@ -1900,10 +2046,15 @@ OPEN_QUESTIONS = [
                   "destination is NOT marked disputed and its zero IS still stored — it is flagged, not "
                   "withheld. Treating the two identically would be an assumption in the opposite "
                   "direction, on materially different evidence.",
-        "suggestion": "Confirm from Uniswap's own documentation whether any holder-elected burn has ever "
-                      "executed. If one has, the Fire Pit address is wrong and this becomes the same "
-                      "verification error as Sky's. If none has, record that and the zero is simply "
-                      "correct — at which point this question closes rather than staying open.",
+        "suggestion": "TWO questions now, and the second was added by the Sky finding. (1) Confirm from "
+                      "Uniswap's own documentation whether any holder-elected burn has ever executed; if "
+                      "none has, the zero is simply correct and this closes. (2) Confirm what the Firepit "
+                      "DOES with what it receives. It is a DEPLOYED CONTRACT, not a dead address — the "
+                      "source on file is a deployments list, which evidences the address and nothing about "
+                      "the mechanism. A contract balance read as 'cumulative burned' assumes destruction, "
+                      "and Sky is the case where that assumption was false while every address was right. "
+                      "If the Firepit holds rather than destroys, this is a treasury-style holding and "
+                      "does not belong in a burn column.",
     },
     {
         "project": "Sky", "topic": "the April 2026 buyback reduction is not in the fee-split history",
@@ -1943,18 +2094,27 @@ OPEN_QUESTIONS = [
                       "post-overhaul to 2026-08-12. Do not collapse them into one.",
     },
     {
-        "project": "Venice AI", "topic": "burn methodology — does the burn route to the zero address",
-        "reason": "NARROWED, no longer a total blackout. The VVV token and the staking contract are now verified "
-                  "from Venice's own developer docs, so Venice has a working lock-rate metric (VVV staked) and a "
-                  "readable zero-address balance. What remains open is METHODOLOGY: it is not established that "
-                  "Venice's Buy and Burn actually routes tokens to the zero address, and the claimed "
-                  "buy_and_burn contract could not be corroborated in any Venice-authored source — the programme "
-                  "is described as a revenue-funded behaviour, so there may be no contract to read. The "
-                  "zero-address figure may therefore understate or miss the burn entirely.",
-        "suggestion": "Establish from Venice's own material where burned VVV actually goes. If it is the zero "
-                      "address, the existing read is complete. If it is a different sink, add that address. If "
-                      "the burn is executed as supply reduction rather than a transfer, set burn_read_method to "
-                      "protocol_level and delete the buy_and_burn entry.",
+        "project": "Venice AI", "topic": "burn methodology — the SAME question Sky's answer got wrong",
+        "severity": 1,
+        "reason": "RAISED TO P1 BY THE SKY FINDING. The VVV token and the staking contract are verified "
+                  "from Venice's own developer docs, so the lock-rate metric is sound. What is NOT "
+                  "established is the burn MECHANISM, and Venice is the weakest case in the whole config: "
+                  "the source recorded against its zero-address entry is the EIP-20 SPECIFICATION, which "
+                  "documents what the zero address IS and says nothing whatever about Venice. There is no "
+                  "Venice document on file describing where burned VVV goes. The claimed buy_and_burn "
+                  "contract is separately uncorroborated. Sky is the cautionary case: its address was "
+                  "verified against real protocol docs and was genuinely correct, and the MODEL attached "
+                  "to it was still false — Sky does not burn to a dead address at all. The same could be "
+                  "true here and nothing currently on file would reveal it. The figure is reported and "
+                  "FLAGGED rather than withdrawn: it may be right, and withdrawing it on the strength of "
+                  "another project's error would be its own mistake.",
+        "suggestion": "Read Venice's own material on what happens to bought-back VVV and record it in "
+                      "burn_mechanism with its URL, then set status to 'confirmed'. Two questions settle "
+                      "it, and they are the questions Sky failed: does Venice TRANSFER tokens to an "
+                      "address nobody controls, or destroy supply some other way; and if it transfers, is "
+                      "the destination a dead address rather than a contract that merely HOLDS them? If it "
+                      "is protocol-level destruction, set burn_read_method to protocol_level and delete "
+                      "the address entry rather than re-pointing it — as was done for Sky.",
     },
     {
         "project": "Venice AI", "topic": "DIEM is a second Venice asset, not tracked",
@@ -2215,8 +2375,42 @@ def _check_split_periods() -> list[str]:
     return errors
 
 
+def _check_burn_mechanisms() -> list[str]:
+    """A transfer burn must SAY where that model came from. The Sky lesson, enforced.
+
+    Sky's addresses passed every check this file makes, because every check was about the
+    address. Nothing checked the claim attached to it — that the protocol burns by transferring
+    to a dead address — and that claim turned out to be false. A project can no longer inherit
+    that assumption by being shaped like the others: declaring burn_read_method "transfer"
+    now requires declaring where the model is documented, even if the answer is "not yet".
+    """
+    errors = []
+    for p in PROJECTS:
+        if p.get("burn_read_method") != "transfer":
+            continue
+        block = p.get("burn_mechanism")
+        if not block:
+            errors.append(
+                f"{p['name']}: burn_read_method is 'transfer' but there is no burn_mechanism block. "
+                f"'Burn means a transfer to a dead address' is an ASSUMPTION and must be declared as "
+                f"one — see BURN_MECHANISM_MODELS. Add the block with status 'assumed' if it is not "
+                f"yet sourced; that is a legitimate answer, silence is not.")
+            continue
+        if block.get("status") not in BURN_MECHANISM_STATUSES:
+            errors.append(f"{p['name']}: burn_mechanism status {block.get('status')!r} is not one of "
+                          f"{sorted(BURN_MECHANISM_STATUSES)}")
+        if block.get("model") not in BURN_MECHANISM_MODELS:
+            errors.append(f"{p['name']}: burn_mechanism model {block.get('model')!r} is not one of "
+                          f"{sorted(BURN_MECHANISM_MODELS)}")
+        if block.get("status") == "confirmed" and not block.get("source_url"):
+            errors.append(f"{p['name']}: burn_mechanism is 'confirmed' with no source_url. Confirmed "
+                          f"means a document says so — name it, or mark it 'assumed'.")
+    return errors
+
+
 def validate_config(raise_on_error: bool = True) -> list[str]:
-    errors = _check_lock_contracts() + _check_addresses() + _check_split_periods()
+    errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
+              + _check_burn_mechanisms())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

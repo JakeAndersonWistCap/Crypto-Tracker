@@ -246,34 +246,73 @@ def test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_ad
     print("zero balance ok: flagged as address evidence, and silent on a working burn address")
 
 
-def test_sky_disputed_burn_destination_is_evidence_not_a_metric():
-    """Sky's zero-address read is kept, but never labelled 'cumulative burned'.
+def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
+    """Sky's zero was correct and beside the point: it does not burn to a dead address at all.
 
-    The address is right and the read works; the CLAIM that Sky's burn routes there is what is
-    disputed. Storing the balance under burn_address_balance would assert Sky has never burned,
-    which the zero does not establish — it establishes only that nothing reached THIS address.
+    The Dss Flappers audit describes a Splitter feeding an AMM Flapper that sends proceeds to a
+    configurable receiver — LP tokens, in one variant. No balance read models that, so the entry
+    is REMOVED rather than re-pointed, and the mechanism is marked refuted so nothing re-adds one.
     """
-    spec = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_zero"]
-    assert spec["destination_status"] == "disputed"
-    assert spec["address"] == "0x0000000000000000000000000000000000000000", "the ADDRESS is not what changed"
+    sky = config.PROJECT_BY_NAME["Sky"]
+    assert "burn_zero" not in sky["contracts"], "re-pointing or re-adding a burn address models this wrongly"
+    assert sky["burn_read_method"] == "undetermined", "'transfer' was the refuted assumption"
+    mech = config.burn_mechanism(sky)
+    assert mech["status"] == "refuted" and mech["model"] == "amm_swap_to_receiver"
+    assert "chainsecurity" in (mech["source_url"] or "").lower()
 
+    # even if somebody re-added a burn address, a refuted mechanism refuses the read
+    probe = dict(sky)
+    probe["contracts"] = dict(sky["contracts"])
+    probe["contracts"]["burn_zero"] = config._contract(
+        "0x0000000000000000000000000000000000000000", "ethereum", "burn_address_balance", "SKY",
+        "https://example.invalid", verified="2026-09-14")
+    probe["burn_read_method"] = "transfer"          # the old, refuted assumption
     c = Chain(prior_values={}, prior_dates={})
     c.reader = StubReader(symbol="SKY", supply=1e10, balance=0.0)
     out = FetchOutput()
-    c.run([config.PROJECT_BY_NAME["Sky"]], None, out)
-
+    c.run([probe], None, out)
     assert "burn_address_balance" not in set(out.frame().metric), \
-        "a disputed destination must not be stored as a burn metric"
-    assert any("disputed destination" in st["name"] for st in out.staged), \
-        "the observation must survive as evidence on the Staging sheet"
+        "a refuted mechanism must refuse the read whatever the address says"
     gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
-    assert "destination is disputed" in gap["reason"] and "OPEN VERIFICATION QUESTION" in gap["reason"]
+    assert "MECHANISM is refuted" in gap["reason"]
+    assert "Do not substitute another address" in gap["suggestion"]
+    print("sky ok: burn address removed, refuted mechanism refuses any replacement")
 
-    # Uniswap is NOT disputed — weaker evidence, so its zero is flagged but still stored
-    uni = config.PROJECT_BY_NAME["Uniswap"]["contracts"]
-    assert all(v.get("destination_status") != "disputed" for v in uni.values()), \
-        "holder-elected burn plus a PARTIAL read is weaker evidence and must not be treated the same"
-    print("sky ok: disputed destination staged as evidence, not asserted as a burn figure")
+
+def test_every_transfer_burn_declares_where_its_model_came_from():
+    """The Sky lesson, enforced: a project cannot inherit the dead-address assumption silently."""
+    for p in config.PROJECTS:
+        if p.get("burn_read_method") != "transfer":
+            continue
+        block = p.get("burn_mechanism")
+        assert block, f"{p['name']} claims a transfer burn with no burn_mechanism block"
+        assert block["status"] in config.BURN_MECHANISM_STATUSES
+        if block["status"] == "confirmed":
+            assert block.get("source_url"), f"{p['name']}: 'confirmed' needs a document, not a belief"
+
+    saved = config.PROJECT_BY_NAME["GEODNET"].pop("burn_mechanism")
+    try:
+        errs = config.validate_config(raise_on_error=False)
+        assert any("no burn_mechanism block" in e for e in errs), "config must reject the silent assumption"
+    finally:
+        config.PROJECT_BY_NAME["GEODNET"]["burn_mechanism"] = saved
+    assert not config.validate_config(raise_on_error=False)
+    print("mechanism audit ok: every transfer burn declares its model, and config enforces it")
+
+
+def test_an_assumed_mechanism_flags_the_figure_without_withdrawing_it():
+    """Flag, do not refuse. One refuted model is not grounds to withdraw four working figures."""
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = StubReader(symbol="Cake", supply=100.0, balance=4_931_229_998.0)
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+    rows = dict(zip(out.frame().metric, out.frame().value))
+    assert rows["burn_address_balance"] == 4_931_229_998.0, "an assumed model is still reported"
+    flagged = [r for r in out.review if r["reason"] == "burn_mechanism_assumed"]
+    assert len(flagged) == 1, "and it is flagged exactly once, not per component"
+    gap = next(g for g in out.gaps if g["metric"].startswith("[data] the burn MECHANISM is assumed"))
+    assert "a contract that merely" in gap["suggestion"].replace("\n", " ") or "HOLDS" in gap["suggestion"]
+    print("assumed mechanism ok: reported, flagged once, with the document that would settle it named")
 
 
 def test_a_real_burn_is_not_flagged():
@@ -471,7 +510,9 @@ def test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code(
         def scaled(self, chain, address, call, *args):
             return 1_234_567.0
 
-    for project_name, entry in (("Sky", "burn_zero"), ("PancakeSwap", "burn_dead"), ("GEODNET", "burn_polygon")):
+    # Sky was one of these until its dead-address model was refuted and the entry removed —
+    # Venice AI takes its place, and is the remaining zero-address holder.
+    for project_name, entry in (("Venice AI", "burn_zero"), ("PancakeSwap", "burn_dead"), ("GEODNET", "burn_polygon")):
         spec = config.PROJECT_BY_NAME[project_name]["contracts"][entry]
         assert not holder_should_have_code(spec), \
             f"{project_name}/{entry} is a burn address and must be exempt from the bytecode check"
@@ -481,13 +522,12 @@ def test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code(
         out = FetchOutput()
         c.run([config.PROJECT_BY_NAME[project_name]], None, out)
         rows = dict(zip(out.frame().metric, out.frame().value))
-        staged = {st["value"] for st in out.staged}
-        # Sky's burn destination is DISPUTED, so its read lands in staging as evidence rather than
-        # in the metrics table. Either way the point stands: the read happened despite empty
-        # bytecode, which is what this test exists to prove.
-        assert rows.get("burn_address_balance") == 1_234_567.0 or 1_234_567.0 in staged, \
-            f"{project_name}/{entry} must read despite empty bytecode, got {rows} / staged {staged}"
-        assert not any("eth_getCode is empty" in e.message for e in out.log if e.status == "failed"), \
+        assert rows.get("burn_address_balance") == 1_234_567.0, \
+            f"{project_name}/{entry} must read despite empty bytecode, got {rows}"
+        # scoped to THIS entry: a project can hold other contracts that genuinely must have code
+        # (Venice's staking contract does), and the stub denies bytecode to everything.
+        assert not any("eth_getCode is empty" in e.message and entry in e.message
+                       for e in out.log if e.status == "failed"), \
             f"{project_name}/{entry} was wrongly rejected for having no code"
         assert spec["address"] not in c.reader.code_checks, \
             f"{project_name}/{entry} should not even be code-checked"
@@ -1206,7 +1246,9 @@ if __name__ == "__main__":
                test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
                test_a_single_observation_never_produces_a_zero_flow,
                test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_address,
-               test_sky_disputed_burn_destination_is_evidence_not_a_metric,
+               test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism,
+               test_every_transfer_burn_declares_where_its_model_came_from,
+               test_an_assumed_mechanism_flags_the_figure_without_withdrawing_it,
                test_a_real_burn_is_not_flagged, test_sky_split_history_cannot_resolve_across_the_april_overhaul,
                test_several_contracts_serving_one_metric_are_summed,
                test_components_sum_fully_once_every_chain_has_its_token,
