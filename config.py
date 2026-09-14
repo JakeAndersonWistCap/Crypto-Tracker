@@ -189,6 +189,14 @@ METRICS = {
     # overwrite a verified tier 2 contract figure, it cross-checks it.
     "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
+    # THE PROTOCOL'S OWN ACCOUNTING OF THE SAME THING, stored ALONGSIDE locked_tokens rather than
+    # instead of it. locked_tokens is read as TOKEN.balanceOf(pool), which counts every token at
+    # the pool address — staked principal plus anything stray or in transit — and is therefore an
+    # UPPER BOUND. A pool that exposes its own getTotalPrincipal() can be asked directly, and the
+    # two figures are then a real cross-check on each other: agreement confirms the read,
+    # divergence says the balance contains something that is not staked principal.
+    # only_projects because most escrows expose no such call; the rest keep the single figure.
+    "locked_tokens_principal":    {"label": "Tokens locked (protocol's own principal accounting)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Chainlink"]},
     # Published lock rate, stored AS PUBLISHED. Deliberately not derived from locked_tokens /
     # supply: where a protocol publishes its own lock rate the published figure is the citable
     # one, and a derived percentage sitting next to it would invite the two being confused.
@@ -551,7 +559,7 @@ UNVERIFIED = None
 
 def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERIFIED, note="",
               purpose="", provenance="model-knowledge", candidates=None, ambiguous=False,
-              read_method=None, token_standard=None, underlying=None,
+              read_method=None, token_standard=None, underlying=None, call=None,
               supply_is_partial=False, partial_reason="", holder_has_code=None,
               destination_status=None, destination_note=""):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
@@ -576,6 +584,10 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         # read_method / token_standard: see LOCK_READ_METHODS above. read_method None on a lock
         # contract means NOT ESTABLISHED, and the adapter refuses rather than assuming.
         "read_method": read_method,
+        # The function to call on this contract. None means the default for the kind
+        # (totalSupply, or balanceOf where a holder is involved). Named explicitly only where the
+        # figure lives behind a non-ERC-20 call, e.g. getTotalPrincipal() on a staking pool.
+        "call": call,
         "token_standard": token_standard,
         "underlying": underlying,          # contract key whose balanceOf is called, for escrow_balance_of
         "supply_is_partial": bool(supply_is_partial),
@@ -1250,6 +1262,35 @@ PROJECTS = [
                 read_method="escrow_balance_of", token_standard="erc20", underlying="token",
                 purpose="Staking v0.2 NODE OPERATOR pool. Read as LINK.balanceOf(pool). Summed with the "
                         "community pool: together they are the 45,000,000 LINK v0.2 programme."),
+            # THE SAME TWO POOLS, ASKED THEIR OWN QUESTION. These call getTotalPrincipal() ON THE
+            # POOL rather than reading LINK's balance of it, and land in a SEPARATE metric so
+            # nothing is replaced: locked_tokens stays the balanceOf sum (the upper bound) and
+            # locked_tokens_principal is the protocol's own accounting. The cross_checks entry
+            # below compares them and flags a divergence beyond 1% to the Review Queue, which
+            # carries AMBER onto locked_tokens.
+            #
+            # The call is made on the pool; symbol() and decimals() come from LINK via
+            # `underlying`, because a staking pool is not an ERC-20 and has neither. Taking 18 on
+            # faith instead would be exactly the kind of assumption that produced Maple's 0.51.
+            "staking_community_principal": _contract(
+                "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e", "ethereum", "stake_principal", "LINK",
+                "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
+                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide — address "
+                                                  "listed explicitly in instructions.txt; the call is the "
+                                                  "pool-wide twin of getStakerPrincipal, which that file "
+                                                  "points individual stakers at",
+                call="getTotalPrincipal", token_standard="erc20", underlying="token",
+                holder_has_code=True,
+                purpose="Community pool's OWN accounting of staked principal. Summed with the node "
+                        "operator pool and compared against the balanceOf sum."),
+            "staking_node_operator_principal": _contract(
+                "0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5", "ethereum", "stake_principal", "LINK",
+                "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
+                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide — address "
+                                                  "listed explicitly in instructions.txt",
+                call="getTotalPrincipal", token_standard="erc20", underlying="token",
+                holder_has_code=True,
+                purpose="Node operator pool's OWN accounting of staked principal."),
             # TWO ADDRESSES DELIBERATELY NOT GIVEN READ SLOTS, each for its own reason.
             #
             # STAKING REWARD VAULT  0x996913c8c08472f584ab8834e925b06D0eb1D813
@@ -1290,6 +1331,22 @@ PROJECTS = [
              "source_url": "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide"},
         ],
         "cross_checks": [
+            # TWO READS OF THE SAME POOLS, ON THE SAME CHAIN, IN THE SAME RUN — so any divergence
+            # is a fact about what the pool balance contains, not about two sources disagreeing.
+            # The tolerance is tight (1%) precisely because both come from the same block: unlike
+            # a contract-versus-dashboard comparison there is no timing skew to absorb.
+            # Flagged on locked_tokens, which is where the headline lock rate is read.
+            {"primary": "locked_tokens", "primary_source": "tier 2 LINK.balanceOf(pool), summed — UPPER BOUND",
+             "secondary": "locked_tokens_principal", "secondary_source": "tier 2 pool.getTotalPrincipal(), summed",
+             "tolerance": 0.01, "prefer": "secondary",
+             "note": "PREFER THE SECONDARY, unusually — and that is the point of keeping both. "
+                     "locked_tokens is LINK.balanceOf(pool) summed over both v0.2 pools, which counts "
+                     "every LINK at those addresses including anything stray or in transit, so it can "
+                     "only bound staked principal from above. getTotalPrincipal() is the pool's own "
+                     "accounting of what is actually staked. Neither replaces the other: agreement "
+                     "confirms the read, and a persistent gap says the pool holds LINK that is not "
+                     "principal — which is a finding, not an error. The 42,536,190.83 LINK read of "
+                     "2026-09-14 was the balanceOf figure with no second opinion at all."},
             {"primary": "buyback_fund_balance", "primary_source": "tier 2 contract read",
              "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://metrics.chain.link/reserve",
              "tolerance": 0.02, "prefer": "primary",
@@ -1300,6 +1357,11 @@ PROJECTS = [
             # Rising series: c.2.17m LINK (Feb 2026) -> c.5.2m LINK (Jul 2026). Bounded generously above
             # so continued growth is not rejected, but a wild value still is.
             "buyback_fund_balance": {"min": 0, "max": 100_000_000, "change_threshold_pct": 40},
+            # The v0.2 programme is 45,000,000 LINK. A principal figure above that is impossible
+            # rather than surprising, so it is rejected rather than flagged; the small headroom
+            # absorbs a programme resize without waving through an order-of-magnitude error.
+            "locked_tokens_principal": {"min": 0, "max": 60_000_000},
+            "locked_tokens": {"min": 0, "max": 60_000_000},
             "buyback_fund_balance_dashboard": {"min": 0, "max": 100_000_000, "change_threshold_pct": 40},
         },
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "staked_tokens", "emissions_tokens"),
@@ -4007,16 +4069,46 @@ OPEN_QUESTIONS = [
                   "would have looked broken; this would have flowed into every Maple archetype 3 "
                   "destination figure without tripping a guard. The contract is now marked "
                   "destination_status 'disputed' so it is read as evidence and stored as nothing.",
-        "suggestion": "Find a MAPLE-AUTHORED statement of the address — the transparency page's own "
-                      "source data, a MIP naming the custody wallet, or a governance post. Candidates "
-                      "visible in maple-labs/address-registry that were NOT chosen and must not be "
-                      "guessed at: syrupRecapitalizationModule 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D "
-                      "and governorTimelock 0x2eFFf88747EB5a3FF00d4d8d0f0800E306C0426b. Do not pick one "
-                      "on a name match — that is precisely how 0.51 got here. A SYRUP holder list showing "
-                      "a ~75.78m holder would identify it directly. "
-                      "SECOND, AND INDEPENDENTLY WORTH DOING: complete the maple.finance/transparency "
-                      "selector in sources.yaml and set enabled:true. The cross-check that would have "
-                      "caught this on run one exists and is disarmed, because its secondary is disabled.",
+        # TWO ROUTES ATTEMPTED 2026-09-14 AND BOTH CLOSED. Recorded so nobody re-walks them.
+        #
+        # (1) THE REGISTRY'S OWN COMMENTS AND SECTION HEADERS — closed by construction.
+        #     MapleAddressRegistryETH.sol opens with "WARNING: File generated automatically, do not
+        #     edit manually" and is generated from address-registry.json, which holds only
+        #     {name, address} pairs with NO descriptions of any kind. The word "buyback" appears
+        #     ZERO times across every maple-labs source reachable; "treasury" appears only as the
+        #     bare name in the Singletons section. The registry can say what `treasury` is NOT —
+        #     it is not in the syrupToken section — but it cannot say where buybacks land, and it
+        #     never will, because it carries no prose at all.
+        #     Also checked and carrying nothing: maple-labs/syrup-utils (SyrupDrip, a Merkle
+        #     airdrop distributor; SyrupUserActions; SyrupRouter; SyrupRateProvider — no treasury
+        #     contract among them) and maple-labs/maple-docs.
+        #
+        # (2) THE GOVERNANCE FORUM, for the MIP-019 execution transaction — UNREACHABLE, not
+        #     closed. community.maple.finance, maple.finance and syrup.gitbook.io all return
+        #     HTTP 000 through this environment's proxy; only raw.githubusercontent.com resolves.
+        #     This route is still the most likely to work and should be tried from a normal
+        #     network. An execution transaction would name the destination directly, which is the
+        #     strongest form of answer available.
+        "routes_closed": ["maple-labs/address-registry comments and section headers — file is "
+                          "auto-generated with no prose, and its JSON source has no descriptions"],
+        "routes_blocked": ["community.maple.finance — unreachable from this environment, not "
+                           "exhausted. Try it from a normal network."],
+        "suggestion": "THE GOVERNANCE FORUM IS THE ROUTE THAT REMAINS: find the MIP-019 execution "
+                      "transaction on community.maple.finance, which names the destination directly. "
+                      "A SYRUP holder list showing a ~75.78m holder would identify it just as well. "
+                      "FOUR CANDIDATES ARE VISIBLE IN THE REGISTRY AND NONE MAY BE CHOSEN ON A NAME "
+                      "MATCH — that is precisely how 0.51 got here: daoMultisig "
+                      "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196 (Actors section, newly surfaced and "
+                      "arguably the most plausible, which is exactly why it is not being picked), "
+                      "syrupRecapitalizationModule 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D, "
+                      "governorTimelock 0x2eFFf88747EB5a3FF00d4d8d0f0800E306C0426b, and syrupDrip "
+                      "0x509712F368255E92410893Ba2E488f40f7E986EA. Whichever is chosen, confirm it "
+                      "by reading SYRUP.balanceOf on it FIRST and checking the answer is in the tens "
+                      "of millions before wiring it. "
+                      "SECOND, AND INDEPENDENTLY WORTH DOING: the maple.finance/transparency entry in "
+                      "sources.yaml is now enabled:true but still needs its `anchor` — one label "
+                      "string from the page. Until it has one the cross-check cannot fire, and the "
+                      "next address would be trusted on plausibility alone.",
     },
     # ---------------------------------------------------------------- Pendle
     {

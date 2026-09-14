@@ -1750,6 +1750,94 @@ def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
     print("etherfi ok: dated history, so no snapshot exemption to the tier 4 backfill skip")
 
 
+def test_chainlink_stores_BOTH_the_balance_and_the_pools_own_principal():
+    """balanceOf(pool) is an UPPER BOUND; getTotalPrincipal() is the protocol's own accounting.
+
+    The live run of 2026-09-14 gave 42,536,190.83 LINK from the balanceOf sum with no second
+    opinion at all, and its plausibility against the 45m programme size was the only thing
+    supporting it. Maple's 0.51 in the same run showed what plausibility is worth.
+
+    Both figures are stored. Neither replaces the other: agreement confirms the read, and a
+    persistent gap says the pools hold LINK that is not staked principal, which is a finding.
+    """
+    import pandas as pd
+    import build_workbook as bw
+    from fetch.validate import check_cross_checks
+
+    LINK = config.PROJECT_BY_NAME["Chainlink"]["contracts"]["token"]["address"]
+    POOLS = {"0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e",
+             "0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5"}
+    seen = []
+
+    class PoolStub:
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            seen.append(("symbol", address, None))
+            # A STAKING POOL HAS NO symbol(). If the gate ever targets one, this raises rather
+            # than letting the read fail later for an unrelated-looking reason.
+            if address != LINK:
+                raise RuntimeError(f"symbol() must only ever be called on the token, got {address}")
+            return True, "LINK"
+
+        def scaled(self, chain, address, call, *args, decimals_from=None):
+            seen.append((call, address, decimals_from))
+            if call == "getTotalPrincipal":
+                assert address in POOLS, f"principal must be read ON THE POOL, got {address}"
+                # A POOL HAS NO decimals() EITHER. Defaulting to 18 would be exactly the kind of
+                # assumption that produced Maple's 0.51, so the token must supply it.
+                assert decimals_from == LINK, f"decimals must come from LINK, got {decimals_from}"
+                return 21_000_000.0
+            if call == "balanceOf":
+                return 21_268_095.415        # half the live 42,536,190.83
+            return 1_000_000_000.0
+
+    c = Chain()
+    c.reader = PoolStub()
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], None, out)
+    df = out.frame()
+
+    rows = dict(zip(df.metric, df.value))
+    assert abs(rows["locked_tokens"] - 42_536_190.83) < 1e-6, \
+        f"the balanceOf sum must still be stored unchanged, got {rows.get('locked_tokens')}"
+    assert abs(rows["locked_tokens_principal"] - 42_000_000.0) < 1e-6, \
+        f"the principal sum must be stored ALONGSIDE it, got {rows.get('locked_tokens_principal')}"
+    assert not [e for e in out.log if e.status == "failed"], \
+        f"neither read should fail: {[e.message for e in out.log if e.status == 'failed']}"
+    assert {a for k, a, _ in seen if k == "symbol"} == {LINK}, \
+        "symbol() must only ever target LINK, never a pool"
+    assert sorted(a for k, a, _ in seen if k == "getTotalPrincipal") == sorted(POOLS), \
+        "both pools must be asked their own principal"
+
+    # DIVERGENCE IS FLAGGED, AND ON THE HEADLINE METRIC. 1.26% apart, tolerance 1%.
+    def review_for(principal):
+        frame = pd.DataFrame([
+            {"date": "2026-09-14", "project": "Chainlink", "metric": "locked_tokens",
+             "value": 42_536_190.83, "source": "a", "tier": 2},
+            {"date": "2026-09-14", "project": "Chainlink", "metric": "locked_tokens_principal",
+             "value": principal, "source": "b", "tier": 2}])
+        o = FetchOutput()
+        check_cross_checks(frame, o)
+        return o.review
+
+    flagged = review_for(42_000_000.0)
+    assert len(flagged) == 1 and flagged[0]["metric"] == "locked_tokens", \
+        f"a 1.26% gap must flag, and on locked_tokens where the lock rate is read: {flagged}"
+    assert not review_for(42_400_000.0), "a 0.32% gap is inside tolerance and must stay silent"
+
+    # and a flagged row carries AMBER, which is the whole point of flagging it
+    source = "chain:sum(ethereum:staking_community+ethereum:staking_node_operator)"
+    band, why = bw.confidence_for(
+        "Chainlink", "locked_tokens",
+        {"status": "review", "source": source, "n_points": 9, "entered_on": "",
+         "measuring_points": (source,)}, pd.Timestamp("2026-09-14"))
+    assert band == "AMBER" and "Review Queue" in why, f"{band}: {why}"
+    print("chainlink principal ok: both figures stored, symbol/decimals from LINK not the pools, "
+          "1.26% divergence flags AMBER on locked_tokens, 0.32% stays silent")
+
+
 def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figure():
     """0.51 SYRUP against ~75.78m reported: the read was right, the ADDRESS was wrong.
 

@@ -45,6 +45,10 @@ ERC20_ABI = [
     {"constant": True, "inputs": [{"name": "owner", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
     {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+    # NOT an ERC-20 function. Chainlink's v0.2 staking pools expose the protocol's OWN accounting
+    # of staked principal, which is the figure balanceOf can only bound from above. Adding the
+    # fragment here is harmless for every other contract: it is only encoded when it is called.
+    {"constant": True, "inputs": [], "name": "getTotalPrincipal", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
 ]
 
 # Metrics a contract read can produce, by contract kind.
@@ -56,6 +60,12 @@ KIND_METRIC = {
     # A governance-controlled treasury that RECEIVES a buyback. Read as a balance like any other
     # holder, and deliberately its own metric: it is neither burned nor locked.
     "treasury_holding": "treasury_holding_tokens",
+    # THE PROTOCOL'S OWN NUMBER FOR THE SAME THING, kept as a SECOND metric rather than replacing
+    # the first. balanceOf(pool) counts every token sitting at the pool address — staked principal
+    # plus anything stray or in transit — so it is an UPPER BOUND. getTotalPrincipal() is the
+    # pool's own accounting. Storing both and comparing them is the point: agreement is
+    # confirmation, and divergence is a finding about what the balance actually contains.
+    "stake_principal": "locked_tokens_principal",
     # Solana kinds. Declared so the gap report can name them precisely; the EVM adapter refuses
     # them at the chain-coverage guard rather than failing obscurely.
     "spl_mint": "total_supply",
@@ -68,6 +78,10 @@ KIND_METRIC = {
 # day was being burned to the dead address. Declaring the kind keeps the entry in config without
 # letting it be mistaken for a destination again.
 REFERENCE_ONLY_KINDS = {"burn_executor"}
+
+# Kinds whose figure is read by calling the CONTRACT ITSELF rather than a token balance, and
+# which therefore need a separate token for symbol() and decimals().
+PRINCIPAL_KINDS = {"stake_principal"}
 
 # A cumulative stock that also yields a flow once differenced against the prior observation.
 CUMULATIVE_FLOW = {
@@ -187,11 +201,20 @@ class ChainReader:
             actual = actual.rstrip(b"\x00").decode("utf-8", "replace")
         return str(actual).strip().lower() == str(expected).strip().lower(), str(actual)
 
-    def scaled(self, chain: str, address: str, call: str, *args) -> float:
+    def scaled(self, chain: str, address: str, call: str, *args, decimals_from: str | None = None) -> float:
+        """Call `call` on `address`, scaled by decimals().
+
+        decimals_from names a DIFFERENT contract to take decimals() from, for the case where the
+        contract holding the figure is not a token. Chainlink's staking pools report
+        getTotalPrincipal() in LINK wei and have no decimals() of their own; taking 18 on faith
+        would be the same class of assumption this file exists to refuse, so the LINK contract is
+        asked instead.
+        """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
         raw = getattr(c.functions, call)(*args).call()
-        decimals = c.functions.decimals().call()
+        dec_source = self.erc20(chain, decimals_from) if decimals_from else c
+        decimals = dec_source.functions.decimals().call()
         return float(raw) / (10 ** int(decimals))
 
 
@@ -360,7 +383,29 @@ class Chain:
                 # Unichain reads fail while the identical mainnet path worked.
                 read_address = spec["address"]
                 holder = None
-                if kind in ("burn_address_balance", "buyback_fund_balance", "treasury_holding") \
+                # Symbol and decimals normally come from the address being called. For a
+                # PRINCIPAL read they cannot: the call is made on the STAKING POOL, which is not
+                # an ERC-20 and has neither symbol() nor decimals(). Calling either on it would
+                # revert and the read would fail for a reason that has nothing to do with the
+                # figure. So the pool is called and the TOKEN is what polices the result.
+                # Deliberately NOT initialised to read_address here: the holder branch below
+                # REASSIGNS read_address to the token, and capturing it beforehand would pin the
+                # symbol check to the holder. It is resolved at the call site instead.
+                symbol_address = None
+                decimals_address = None
+                if kind in PRINCIPAL_KINDS:
+                    under = self._underlying_on_chain(contracts, spec, chain)
+                    if under is None:
+                        out.gap(name, metric,
+                                reason=f"{key} is on {chain}, and no ERC-20 token contract is declared on "
+                                       f"{chain} to take decimals from. A principal read is scaled by the "
+                                       f"TOKEN's decimals because the pool has none.",
+                                tiers_attempted="2",
+                                suggestion=f"Set `underlying` on {key!r} to a token contract on {chain}.")
+                        refused[metric].append(f"{key} ({chain}): no same-chain token for decimals")
+                        continue
+                    symbol_address = decimals_address = under["address"]
+                elif kind in ("burn_address_balance", "buyback_fund_balance", "treasury_holding") \
                         or spec.get("read_method") == "escrow_balance_of":
                     under = self._underlying_on_chain(contracts, spec, chain)
                     if under is None:
@@ -397,7 +442,8 @@ class Chain:
                                 continue
                         except Exception as e:  # noqa: BLE001 — a node without eth_getCode must not block the read
                             log.debug("%s: eth_getCode unavailable (%s), continuing", key, e)
-                    ok, actual = self.reader.symbol_matches(chain, read_address, spec["expected_symbol"])
+                    ok, actual = self.reader.symbol_matches(chain, symbol_address or read_address,
+                                                            spec["expected_symbol"])
                     if not ok:
                         out.fail(SOURCE, name,
                                  f"{key}: symbol check FAILED — {read_address} reports {actual!r}, "
@@ -407,8 +453,17 @@ class Chain:
                                 tiers_attempted="2", suggestion="Re-check the address on the protocol's own docs.")
                         refused[metric].append(f"{key} ({chain}): symbol mismatch")
                         continue
-                    value = (self.reader.scaled(chain, read_address, "balanceOf", holder) if holder
-                             else self.reader.scaled(chain, read_address, spec.get("call", "totalSupply")))
+                    if holder:
+                        value = self.reader.scaled(chain, read_address, "balanceOf", holder)
+                    elif decimals_address:
+                        # Only the principal path needs a separate decimals source, and the kwarg
+                        # is passed ONLY there. Every ordinary read keeps the original signature,
+                        # so a reader that has never heard of decimals_from still works.
+                        value = self.reader.scaled(chain, read_address,
+                                                   spec.get("call") or "totalSupply",
+                                                   decimals_from=decimals_address)
+                    else:
+                        value = self.reader.scaled(chain, read_address, spec.get("call") or "totalSupply")
                 except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                     out.fail(SOURCE, name, f"{key} ({chain}): {e}", TIER)
                     out.gap(name, metric, reason=f"contract read failed: {e}", tiers_attempted="2",

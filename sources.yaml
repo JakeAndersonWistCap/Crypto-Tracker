@@ -277,19 +277,28 @@
 - project: Maple
   metric: buyback_fund_balance_dashboard
   tier: 3
-  enabled: false
+  enabled: true                                     # armed 2026-09-14 — see the note; ONE field still missing
   url: https://maple.finance/transparency
   method: dom
-  anchor: null                                      # TODO the label text beside the SSF SYRUP holdings figure
+  anchor: null                                      # <-- THE ONLY MISSING FIELD. Label text beside the SSF SYRUP holdings figure.
   sanity_min: 0
   sanity_max: 500000000
   change_threshold_pct: 30
   added: 2026-09-14
-  note: "Live SSF SYRUP holdings (75.78m at last check). CROSS-CHECK ONLY on the tier 2 read of
-    SYRUP.balanceOf(0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19). The SSF has NO separate address —
-    Maple's own transparency page states it is part of the Treasury — so this page and the contract
-    read measure overlapping but not identical things. Confirm robots.txt allows /transparency
-    before enabling."
+  note: "THE GUARD THAT WOULD HAVE CAUGHT 0.51 SYRUP AGAINST ~75.78m ON RUN ONE, and it is still
+    not firing. enabled is now true, which changes the Gap Report reason from 'entry disabled in
+    sources.yaml' — reading like a deliberate choice — to 'method dom needs anchor (the label text
+    to anchor on)', which names the one field missing. entry_ready() rejects it before any fetch is
+    attempted, so nothing is requested and no politeness budget is spent; the row is simply louder.
+    TO ACTUALLY ARM IT: open maple.finance/transparency, find the label beside the SSF SYRUP
+    holdings figure, and put that text in `anchor`. That is the whole job. robots.txt needs no
+    pre-clearing — the scraper checks it on every fetch and refuses with its own gap row if
+    /transparency is disallowed.
+    WHY IT MATTERS MORE THAN AN ORDINARY CROSS-CHECK: the tier 2 treasury read is currently
+    destination_status 'disputed' and stores nothing, because the address it used is Maple's v2
+    protocol FEE treasury. When a correct address is found, this page is the only independent
+    figure available to confirm it. Without it the next address would be trusted on plausibility —
+    which is exactly what let 0.51 through."
 - project: Maple
   metric: revenue_usd
   tier: 3
