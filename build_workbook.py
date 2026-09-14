@@ -182,6 +182,14 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     nc = config.is_non_comparable(project, metric)
     if nc:
         why.append(f"NOT COMPARABLE: {nc['why']} Use {nc['use_instead']}")
+    # A buyback whose destination is indeterminate cannot be read as retiring supply OR as
+    # locking it — those are opposite signs, and the truth is neither. Same band as PARTIAL and
+    # single-observation, decided here rather than by a separate check somewhere else.
+    ind = config.destination_indeterminate(project, metric)
+    if ind:
+        why.append(f"DESTINATION INDETERMINATE: repurchased tokens go to {ind['fund']}, whose stated "
+                   f"uses include {', '.join(ind['stated_uses'])} — so {ind['why_indeterminate']}. "
+                   f"Do not net it against emissions like a burn, or count it as locked supply")
     if ":PARTIAL" in str(row.get("source") or ""):
         why.append("PARTIAL — summed over known components only, so it understates")
     if int(row.get("n_points") or 0) < 2:
@@ -344,6 +352,43 @@ def gated(status_expr: str, expr: str, share_expr: str | None = None) -> str:
     if share_expr:
         inner = f"IF(ISNUMBER({share_expr}),{inner},{NA})"
     return f'=IF({status_expr}="unconfirmed","unconfirmed",{inner})'
+
+
+def threshold_gated(project: dict, expr: str) -> str:
+    """Suppress a derived buyback where the buyback is a SWITCH rather than a rate.
+
+    Fluid's buyback activates at $10m annualised protocol revenue. Below that there is no
+    buyback at all, so applying a share to revenue does not produce a small buyback — it
+    produces one that does not exist. The switch is decided by the protocol's governance, not by
+    our revenue figure: inferring it from our own number is circular, and the protocol may not
+    measure revenue the way DefiLlama does.
+    """
+    t = project.get("buyback_threshold")
+    if not t:
+        return expr
+    if t.get("status") == "active":
+        return expr
+    label = ("below threshold" if t.get("status") == "below_threshold"
+             else "threshold unconfirmed")
+    return f'="{label}"'
+
+
+def supply_additive(project: dict) -> bool:
+    """Is this project's 'buyback' actually an issuance event?"""
+    return bool(project.get("buyback_is_supply_additive"))
+
+
+def net_absorption(project: dict, buyback_expr: str, emissions_expr: str) -> str:
+    """Buyback minus emissions — with the sign of the buyback term decided by config.
+
+    Aethir's 'Checker Node Buyback' repurchases NFTs by paying in eATH that KEEPS EARNING ATH
+    through its lockup, so it ADDS circulating supply. Subtracting it as though it retired supply
+    gets the sign wrong on the one figure this whole tool exists to produce. Where a buyback is
+    supply-additive it is added to the issuance side instead: net absorption falls, net issuance
+    rises, and the figure says what actually happened.
+    """
+    sign = "-" if supply_additive(project) else ""
+    return f"{sign}{buyback_expr}-{emissions_expr}"
 
 
 def delta(a: str, b: str) -> str:
@@ -747,6 +792,23 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     c.comment = Comment(f"Split unconfirmed — derived figure suppressed until documented in config.py ({gate}).", "token_metrics")
                 elif status == "paused" and meta.get("paused_fill"):
                     c.fill = FILL_PAUSED
+            if meta.get("threshold") and p.get("buyback_threshold"):
+                t = p["buyback_threshold"]
+                if t.get("status") != "active":
+                    c.fill = FILL_UNCONFIRMED
+                    c.comment = Comment(
+                        f"SUPPRESSED — this buyback is a SWITCH, not a rate. It activates at "
+                        f"${t['threshold_usd_annualised']:,.0f} annualised protocol revenue, and which "
+                        f"side of that line the protocol currently sits on is {t.get('status')}. "
+                        f"Applying a share to revenue below the threshold does not produce a small "
+                        f"buyback — it produces one that does not exist.\n\n{t.get('note', '')}",
+                        "token_metrics")
+            if meta.get("supply_additive") and supply_additive(p):
+                c.fill = FILL_STALE
+                c.comment = Comment(
+                    "SIGN FLIPPED — this project's 'buyback' ADDS circulating supply, so it is added to "
+                    "the issuance side rather than subtracted from it. "
+                    f"{(p.get('buyback_is_supply_additive') or {}).get('effect', '')}", "token_metrics")
             sf = meta.get("status_fill")
             if sf:
                 status = (p.get(sf) or {}).get("status", "n/a")
@@ -919,14 +981,24 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Circulating supply", lambda r, p: pull(circ(r)), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
-        ("BUYBACK AS % OF SUPPLY (annualised, implied)", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)), FMT_PCT, "calc", True, {"gate": "fee_split"}),
+        ("BUYBACK AS % OF SUPPLY (annualised, implied)",
+         lambda r, p: threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r))),
+         FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "actual_buyback_tokens"}),
         ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}*{ann}/{circ(r)}"), FMT_PCT, "calc", True),
-        ("Implied − actual ($)", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r)), FMT_USD, "calc", False, {"gate": "fee_split"}),
+        ("Implied − actual ($)",
+         lambda r, p: threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))),
+         FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True}),
         ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
-        ("Net absorption Q0 (tokens) = actual buyback − emissions", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}-{R.D(r, 'emissions_tokens', 'q0')}"), FMT_NUM, "calc", True),
-        ("Net absorption, implied basis (tokens)", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}-{R.D(r, 'emissions_tokens', 'q0')}", share(r)), FMT_NUM, "calc", False, {"gate": "fee_split"}),
+        ("Net absorption Q0 (tokens) = actual buyback − emissions",
+         lambda r, p: calc(net_absorption(p, R.D(r, "actual_buyback_tokens", "q0"),
+                                          R.D(r, "emissions_tokens", "q0"))),
+         FMT_NUM, "calc", True, {"supply_additive": True}),
+        ("Net absorption, implied basis (tokens)",
+         lambda r, p: threshold_gated(p, gated(st(r), net_absorption(
+             p, f"{rev(r)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")), share(r))),
+         FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True}),
         ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r)}"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Tokens locked (ve)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),

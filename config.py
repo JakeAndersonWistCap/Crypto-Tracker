@@ -411,6 +411,19 @@ def is_non_comparable(project_name: str, metric: str) -> dict | None:
     return (p.get("non_comparable") or {}).get(metric)
 
 
+# Metrics that describe where a buyback's tokens END UP. Only these are affected by a
+# destination being indeterminate — the project's revenue and supply figures are unaffected.
+DESTINATION_METRICS = ("actual_buyback_tokens", "actual_buyback_usd", "buyback_fund_balance")
+
+
+def destination_indeterminate(project_name: str, metric: str) -> dict | None:
+    """The buyback happens; where the tokens come to rest does not resolve to burn OR to hold."""
+    if metric not in DESTINATION_METRICS:
+        return None
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return p.get("destination_indeterminate")
+
+
 def is_manual_quarterly(project_name: str, metric: str) -> bool:
     p = PROJECT_BY_NAME.get(project_name) or {}
     return metric in (p.get("manual_quarterly") or ())
@@ -2901,6 +2914,25 @@ def _check_declared_shapes() -> list[str]:
             if missing:
                 errors.append(f"{name}/{metric}: non_comparable is missing {sorted(missing)}. The "
                               f"confidence band reads both to explain an AMBER cell.")
+        ind = p.get("destination_indeterminate")
+        if ind:
+            missing = {"fund", "stated_uses", "why_indeterminate"} - set(ind)
+            if missing:
+                errors.append(f"{name}: destination_indeterminate is missing {sorted(missing)}, which "
+                              f"the confidence band reads to explain the AMBER cell.")
+        thr = p.get("buyback_threshold")
+        if thr:
+            missing = {"threshold_usd_annualised", "status"} - set(thr)
+            if missing:
+                errors.append(f"{name}: buyback_threshold is missing {sorted(missing)}, which the "
+                              f"workbook reads to decide whether the buyback exists at all.")
+            if thr.get("status") not in ("active", "below_threshold", "unconfirmed_which_side"):
+                errors.append(f"{name}: buyback_threshold status {thr.get('status')!r} is not one of "
+                              f"active / below_threshold / unconfirmed_which_side.")
+        add = p.get("buyback_is_supply_additive")
+        if add and "effect" not in add:
+            errors.append(f"{name}: buyback_is_supply_additive is missing 'effect', which the workbook "
+                          f"reads to explain the flipped sign.")
         for cc in (p.get("cross_checks") or []):
             missing = {"primary", "secondary", "tolerance"} - set(cc)
             if missing:

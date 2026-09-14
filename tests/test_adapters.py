@@ -395,6 +395,121 @@ def _derive(project_name: str, model: str, supply_now: float, supply_prior: floa
     return (None if got.empty else float(got.value.iloc[0])), out
 
 
+# ---------------------------------------------- the three blocks that were declared but inert
+def _a3_formula(project_name: str, header_starts: str) -> str:
+    """The formula the REAL A3 writer produces for one project, pulled out of a built workbook.
+
+    Deliberately not a re-implementation of the formula in the test. The crash this round came
+    from a fixture that agreed with the code by construction; asserting against a rebuilt copy of
+    the expression would repeat exactly that mistake. This reads what the builder actually wrote.
+    """
+    import openpyxl
+    from openpyxl import Workbook
+
+    import build_workbook as bw
+
+    wb = Workbook()
+    ws = wb.active
+    # the period windows are module state that build_workbook() fills in; the writers read it
+    asof = pd.Timestamp("2026-09-14")
+    bw._WINDOWS.clear()
+    for label, start, end in bw._period_windows(asof):
+        bw._WINDOWS[label.lower()] = (start.date().isoformat(), end.date().isoformat())
+    data_by_key = {}
+    for pr in config.PROJECTS:
+        for metric in config.metrics_for_project(pr):
+            data_by_key[f"{pr['name']}|{metric}"] = {
+                "status": "ok", "source": "test", "n_points": 9, "entered_on": "",
+                "confidence": "GREEN", "why_amber": ""}
+    R = bw.Refs(len(data_by_key), 0, [])
+    projects, _ = bw.write_a3(ws, R, data_by_key)
+    heads = [c.value for c in ws[4]]
+    col = next(i + 1 for i, h in enumerate(heads) if h and h.startswith(header_starts))
+    row = next(r for r in range(5, ws.max_row + 1) if ws.cell(row=r, column=1).value == project_name)
+    return str(ws.cell(row=row, column=col).value or ""), ws.cell(row=row, column=col)
+
+
+def test_fluid_buyback_is_suppressed_because_it_is_a_SWITCH_not_a_rate():
+    """Below the threshold there is no small buyback — there is no buyback."""
+    thr = config.PROJECT_BY_NAME["Fluid"]["buyback_threshold"]
+    assert thr["threshold_usd_annualised"] == 10_000_000
+    assert thr["status"] != "active", "unconfirmed or below-threshold must suppress"
+
+    formula, cell = _a3_formula("Fluid", "BUYBACK AS % OF SUPPLY")
+    assert "threshold" in formula or "below threshold" in formula, \
+        f"the derived buyback must be suppressed, got {formula[:90]}"
+    assert "Data!" not in formula, "a suppressed figure must not still compute from the data"
+    assert cell.comment and "SWITCH" in cell.comment.text
+
+    # FORCE THE OTHER BRANCH: with governance confirming the switch is on, it must compute
+    thr["status"] = "active"
+    try:
+        formula, _ = _a3_formula("Fluid", "BUYBACK AS % OF SUPPLY")
+        assert "Data!" in formula, "confirmed-active must produce the real formula, not a label"
+    finally:
+        thr["status"] = "unconfirmed_which_side"
+
+    # and a project with no threshold block is untouched by any of this
+    other, _ = _a3_formula("Aave", "BUYBACK AS % OF SUPPLY")
+    assert "threshold" not in other
+    print("fluid ok: suppressed while the switch is unconfirmed, computes when governance says active")
+
+
+def test_a_supply_additive_buyback_increases_net_issuance_never_decreases_it():
+    """Aethir's 'buyback' pays in eATH that keeps earning ATH, so it ADDS circulating supply.
+
+    Subtracting it as though it retired supply gets the sign wrong on the headline figure. The
+    test is the one the rule implies: the same value must move net absorption DOWN, not up.
+    """
+    from build_workbook import net_absorption, supply_additive
+
+    normal = net_absorption({}, "BUYBACK", "EMISSIONS")
+    additive = net_absorption({"buyback_is_supply_additive": {"effect": "adds supply"}},
+                              "BUYBACK", "EMISSIONS")
+    assert normal == "BUYBACK-EMISSIONS"
+    assert additive == "-BUYBACK-EMISSIONS", f"the buyback term must flip sign, got {additive}"
+
+    # arithmetic, on the actual expressions: absorption falls, so net issuance rises
+    buyback, emissions = 100.0, 40.0
+    assert eval(normal, {}, {"BUYBACK": buyback, "EMISSIONS": emissions}) == 60.0
+    assert eval(additive, {}, {"BUYBACK": buyback, "EMISSIONS": emissions}) == -140.0
+    assert eval(additive, {}, {"BUYBACK": buyback, "EMISSIONS": emissions}) < \
+        eval(normal, {}, {"BUYBACK": buyback, "EMISSIONS": emissions}), \
+        "a supply-additive buyback must INCREASE net issuance, never reduce it"
+
+    assert supply_additive(config.PROJECT_BY_NAME["Aethir"]), "Aethir declares the flag"
+    assert not supply_additive(config.PROJECT_BY_NAME["Aave"]), "and it must not leak to others"
+    print("aethir ok: supply-additive buyback flips sign — absorption 60 becomes -140")
+
+
+def test_maple_indeterminate_destination_lands_in_the_AMBER_band_automatically():
+    """Not by a separate hand check — by the same derivation that handles PARTIAL and n_points."""
+    from build_workbook import confidence_for
+
+    asof = pd.Timestamp("2026-09-14")
+    clean = {"status": "ok", "source": "chain:maple", "n_points": 9, "entered_on": ""}
+
+    band, why = confidence_for("Maple", "actual_buyback_tokens", dict(clean), asof)
+    assert band == "AMBER", f"an indeterminate destination must not read as GREEN, got {band}"
+    assert "DESTINATION INDETERMINATE" in why and "SYRUP Strategic Fund" in why
+    assert "token liquidity" in why, "the reason the destination is indeterminate must be named"
+
+    # it applies ONLY to destination metrics — revenue and supply are unaffected
+    for unaffected in ("revenue_usd", "fees_usd", "circulating_supply"):
+        assert confidence_for("Maple", unaffected, dict(clean), asof)[0] == "GREEN", unaffected
+
+    # and only to Maple
+    assert confidence_for("Aave", "actual_buyback_tokens", dict(clean), asof)[0] == "GREEN"
+
+    # FORCE THE OTHER BRANCH: remove the block and the band goes green
+    saved = config.PROJECT_BY_NAME["Maple"].pop("destination_indeterminate")
+    try:
+        assert confidence_for("Maple", "actual_buyback_tokens", dict(clean), asof)[0] == "GREEN"
+    finally:
+        config.PROJECT_BY_NAME["Maple"]["destination_indeterminate"] = saved
+    print("maple ok: AMBER on destination metrics only, from the shared derivation")
+
+
 def test_validation_survives_a_REAL_fetch_all_frame():
     """Run the validators against what fetch_all actually produces, not a frame shaped to suit them.
 
@@ -1521,6 +1636,9 @@ if __name__ == "__main__":
                test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn,
                test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config,
                test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected,
+               test_fluid_buyback_is_suppressed_because_it_is_a_SWITCH_not_a_rate,
+               test_a_supply_additive_buyback_increases_net_issuance_never_decreases_it,
+               test_maple_indeterminate_destination_lands_in_the_AMBER_band_automatically,
                test_validation_survives_a_REAL_fetch_all_frame,
                test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs,
                test_issuance_refuses_rather_than_guessing,
