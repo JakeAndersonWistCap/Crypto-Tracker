@@ -417,6 +417,20 @@ MANUAL_QUARTERLY_STALE_DAYS = 120
 # NON-COMPARABLE (failure mode 4): the figure is correct and still must not be quoted in the
 # column it sits in, because it answers a different question. No validation can catch this —
 # nothing is wrong with the number. Only composition reveals it, so it is DECLARED.
+def metric_label(project_name: str, metric: str) -> str:
+    """The label a metric carries FOR THIS PROJECT.
+
+    Almost always the library's label — a metric means the same thing everywhere, which is what
+    makes a column comparable. The exception is where a read is correct but narrower than the
+    metric's name claims: Uniswap's buyback_fund_balance is the UNI balance of the TokenJar, and
+    the TokenJar holds FEE TOKENS, so calling it the fund balance overstates what was measured.
+    Relabelling says what was actually read without redefining the metric for everyone else.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    override = (p.get("metric_labels") or {}).get(metric)
+    return override or (METRICS.get(metric) or {}).get("label", metric)
+
+
 def is_non_comparable(project_name: str, metric: str) -> dict | None:
     p = PROJECT_BY_NAME.get(project_name) or {}
     return (p.get("non_comparable") or {}).get(metric)
@@ -1595,7 +1609,26 @@ PROJECTS = [
         # retroactive burn was 100,000,000 UNI in one event; ongoing revenue-driven burns run at
         # 100k-134k UNI a day. Both sit in the same cumulative column, and the one-off dominates
         # it, so the column cannot be read as the run-rate of the ongoing programme.
+        # RELABELLED, not redefined. buyback_fund_balance means "the project's own token held by
+        # the buyback contract" everywhere else, and that definition is what makes the column
+        # comparable. For Uniswap the honest reading is narrower: the TokenJar accumulates FEE
+        # TOKENS — whatever the pools earned — so its UNI balance is legitimately near zero
+        # almost always, and is not the fund's value. Summing the actual holdings would need a
+        # price feed per fee token and would make this one cell non-comparable with the rest of
+        # its column, so the label is corrected instead and the fuller version left as deliberate
+        # future work.
+        "metric_labels": {
+            "buyback_fund_balance": "UNI balance of TokenJar (not the fund total)",
+        },
         "non_comparable": {
+            "buyback_fund_balance": {
+                "why": "the TokenJar accumulates FEE TOKENS (USDC, WETH, whatever the pools earned), "
+                       "not UNI. This reads its UNI balance, which is legitimately near zero and is "
+                       "NOT the value of the fund.",
+                "use_instead": "nothing yet — no metric holds the fund's multi-asset total. Summing it "
+                               "needs a price feed per fee token; until then treat this as a floor, "
+                               "not a total",
+            },
             "burn_address_balance": {
                 "why": "dominated by the 100,000,000 UNI RETROACTIVE treasury burn of December 2025. "
                        "That is a one-off supply event, not the ongoing revenue-driven programme "

@@ -307,6 +307,15 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**Deleting a bad FLOW row does not make it recompute.** A flow is the difference between two
+stored STOCK readings, so the stock rows are what determine it. If a flow row is wrong because
+the stock row beside it is wrong, deleting the flow alone leaves the next run differencing from
+the bad stock — and the real move is never recovered. PancakeSwap's 59,857,159.01 burn is the
+case: with the 09-14 stock row still holding the post-jump balance, the next run computes a delta
+of 43, not 59.86m. **Delete the STOCK row for that date as well**, and the next run differences
+from the last good earlier date and recovers the magnitude — dated to the run day rather than the
+day it happened, which is the best the store can do after the fact.
+
 **Removing a source from config does NOT remove what it already wrote.** The store upserts and
 never deletes, so a contract taken out of `config.py` stops producing NEW rows while every row it
 already wrote stays exactly where it is — with its old source string, and reading as current until

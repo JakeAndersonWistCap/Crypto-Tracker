@@ -209,6 +209,33 @@ def test_impossible_relations_have_NO_tolerance():
     print("impossible-relation ok: 0.087% breach caught, sane pair silent")
 
 
+def test_uniswap_buyback_fund_is_relabelled_not_redefined():
+    """The TokenJar holds FEE TOKENS, so its UNI balance is not the fund's value.
+
+    Relabelled rather than redefined: buyback_fund_balance means the same thing for every other
+    project, and that sameness is what makes the column comparable. Correcting the label says what
+    was actually read without making one cell mean something different from the rest of its column.
+    """
+    assert config.metric_label("Uniswap", "buyback_fund_balance") == \
+        "UNI balance of TokenJar (not the fund total)"
+    # every other project keeps the library label — the metric itself is unchanged
+    for other in ("Chainlink", "Aave", "Maple"):
+        assert config.metric_label(other, "buyback_fund_balance") == \
+            config.METRICS["buyback_fund_balance"]["label"], other
+    # and an un-overridden metric on Uniswap is untouched
+    assert config.metric_label("Uniswap", "total_supply") == config.METRICS["total_supply"]["label"]
+
+    from build_workbook import confidence_for
+
+    row = {"status": "ok", "n_points": 9, "entered_on": "",
+           "source": "chain:sum(ethereum:token_jar+ethereum:v3_fee_adapter):PARTIAL",
+           "measuring_points": ("chain:sum(ethereum:token_jar+ethereum:v3_fee_adapter)",)}
+    band, why = confidence_for("Uniswap", "buyback_fund_balance", row, pd.Timestamp("2026-09-14"))
+    assert band == "AMBER" and "FEE TOKENS" in why, f"{band}: {why[:80]}"
+    assert "not the value of the fund" in why.replace("NOT", "not")
+    print("uniswap relabel ok: narrower label for Uniswap only, AMBER with the reason")
+
+
 def test_a_same_day_rerun_recomputes_the_SAME_flow_instead_of_destroying_it():
     """PancakeSwap's 59,857,159.01 burn became 0.0123, and the store keyed the overwrite.
 
@@ -1783,6 +1810,7 @@ if __name__ == "__main__":
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
                test_an_orphaned_row_and_a_changed_measuring_point_are_RED_not_amber,
                test_impossible_relations_have_NO_tolerance,
+               test_uniswap_buyback_fund_is_relabelled_not_redefined,
                test_a_same_day_rerun_recomputes_the_SAME_flow_instead_of_destroying_it,
                test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow,
                test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,

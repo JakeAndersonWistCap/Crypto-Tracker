@@ -258,7 +258,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         name = p["name"]
         for metric, m in METRICS.items():
             g = groups.get((name, metric))
-            row = {"key": f"{name}|{metric}", "project": name, "metric": metric, "label": m["label"],
+            row = {"key": f"{name}|{metric}", "project": name, "metric": metric,
+                   "label": config.metric_label(name, metric),
                    "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
