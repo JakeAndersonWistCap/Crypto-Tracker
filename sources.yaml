@@ -277,28 +277,47 @@
 - project: Maple
   metric: buyback_fund_balance_dashboard
   tier: 3
-  enabled: true                                     # armed 2026-09-14 — see the note; ONE field still missing
+  enabled: true                                     # ARMED 2026-09-14
   url: https://maple.finance/transparency
   method: dom
-  anchor: null                                      # <-- THE ONLY MISSING FIELD. Label text beside the SSF SYRUP holdings figure.
+  anchor: "SYRUP Holdings"                          # read off the page by Jake, 2026-09-14
+  # NOT READ BY ANYTHING — see the note. The bounds that actually fire live in config.py under
+  # Maple's "sanity" block, because validate_frame calls config.sanity_bounds(), not the registry.
+  # Left in place only to match the convention the other eight entries follow.
   sanity_min: 0
   sanity_max: 500000000
   change_threshold_pct: 30
   added: 2026-09-14
-  note: "THE GUARD THAT WOULD HAVE CAUGHT 0.51 SYRUP AGAINST ~75.78m ON RUN ONE, and it is still
-    not firing. enabled is now true, which changes the Gap Report reason from 'entry disabled in
-    sources.yaml' — reading like a deliberate choice — to 'method dom needs anchor (the label text
-    to anchor on)', which names the one field missing. entry_ready() rejects it before any fetch is
-    attempted, so nothing is requested and no politeness budget is spent; the row is simply louder.
-    TO ACTUALLY ARM IT: open maple.finance/transparency, find the label beside the SSF SYRUP
-    holdings figure, and put that text in `anchor`. That is the whole job. robots.txt needs no
-    pre-clearing — the scraper checks it on every fetch and refuses with its own gap row if
-    /transparency is disallowed.
-    WHY IT MATTERS MORE THAN AN ORDINARY CROSS-CHECK: the tier 2 treasury read is currently
+  note: "ARMED. The guard that would have caught 0.51 SYRUP against ~75.78m on run one.
+    anchor is 'SYRUP Holdings', read off the page directly. entry_ready() now passes; no live fetch
+    has been made from here, because this sandbox cannot reach maple.finance — the first real read
+    happens on the next normal run.
+    NO `scale` FIELD, DELIBERATELY. The page renders the figure as '77.66M' and parse_number()
+    already handles the M suffix natively (77.66M -> 77,660,000, verified). Adding scale: 1000000
+    would multiply a correctly-parsed figure by a further million.
+    THE FAILURE MODE THAT REMAINS is the mirror of the Maple 0.51: if the page ever renders the
+    number WITHOUT its suffix — '77.66' with the unit in a separate element — parse_number returns
+    77.66 and that is a small, precise, plausible-looking number. The defence is the sanity FLOOR of
+    1,000,000 in config.py, which rejects it to the Review Queue instead of storing it. That floor is
+    load-bearing; do not lower it.
+    REFERENCE POINT: 77.66M SYRUP on 2026-09-14, against ~75.78M several rounds earlier. That is a
+    +2.5% move consistent with ongoing SSF buybacks, NOT a discrepancy to resolve — the SSF holding
+    is a rising stock. It is recorded here rather than in config.reference_values on purpose:
+    check_reference_values SUMS every row inside a calendar month and compares at 0.5%, which suits a
+    monthly FLOW like PancakeSwap's net mint and would turn a daily stock into a guaranteed false
+    alarm (thirty daily readings of ~77M summing to ~2.3bn).
+    ALSO ON THE PAGE, NOT SCRAPED: 'Liquid Assets' $4.63M — stablecoins and BTC held by the SSF, per
+    Maple's own description, which corroborates the MIP-019 composition (SYRUP + BTC + stablecoins).
+    The anchor pattern DOES support two labels on one page: one entry per label, same url, exactly as
+    the revenue_usd entry below already does. What is missing is a METRIC to hold it — there is no
+    USD-denominated treasury key in config.METRICS, and buyback_fund_balance_dashboard is taken by
+    this entry. Adding one is a deliberate choice, not a side effect of arming the cross-check.
+    WHY THIS MATTERS MORE THAN AN ORDINARY CROSS-CHECK: the tier 2 treasury read is
     destination_status 'disputed' and stores nothing, because the address it used is Maple's v2
-    protocol FEE treasury. When a correct address is found, this page is the only independent
-    figure available to confirm it. Without it the next address would be trusted on plausibility —
-    which is exactly what let 0.51 through."
+    protocol FEE treasury. This page is the only independent figure available to confirm WHICHEVER
+    address is eventually established. It does not resolve the address question itself.
+    robots.txt needs no pre-clearing — the scraper checks it on every fetch and refuses with its own
+    gap row if /transparency is disallowed."
 - project: Maple
   metric: revenue_usd
   tier: 3

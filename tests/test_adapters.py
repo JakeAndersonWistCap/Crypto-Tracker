@@ -1838,6 +1838,59 @@ def test_chainlink_stores_BOTH_the_balance_and_the_pools_own_principal():
           "1.26% divergence flags AMBER on locked_tokens, 0.32% stays silent")
 
 
+def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure():
+    """The guard that would have caught 0.51 against ~75.78m, and the one way it could still fail.
+
+    Being "enabled" is not being armed: entry_ready() rejects a dom entry with no anchor, and a
+    cross-check whose secondary never arrives is skipped silently by check_cross_checks. Both
+    halves are asserted, because for several rounds the entry was enabled and still inert.
+
+    The remaining failure mode is the MIRROR of the 0.51: Maple renders "77.66M" and parse_number
+    handles the suffix, but if the page ever drops it, parse_number returns 77.66 — small, precise
+    and entirely plausible. The sanity floor is what stands between that and the sheet.
+    """
+    import yaml
+    from fetch.base import parse_number
+    from fetch.scrape import entry_ready
+
+    entries = yaml.safe_load(open("sources.yaml", encoding="utf-8"))
+    entry = next(e for e in entries
+                 if e["project"] == "Maple" and e["metric"] == "buyback_fund_balance_dashboard")
+
+    ready, why = entry_ready(entry)
+    assert ready, f"the Maple cross-check secondary must be usable, got: {why}"
+    assert entry["anchor"] == "SYRUP Holdings", f"anchor is the whole job here, got {entry['anchor']!r}"
+
+    # NO scale FIELD. parse_number already expands the suffix; a scale would multiply again.
+    assert "scale" not in entry or entry.get("scale") in (None, 1), \
+        "parse_number handles 'M' natively — a scale of 1e6 on top would be a million-fold error"
+    assert parse_number("77.66M") == 77_660_000.0
+    assert parse_number("$4.63M") == 4_630_000.0
+
+    # THE FLOOR, read from where validate_frame actually reads it. The registry's own
+    # sanity_min/sanity_max are not consulted by anything, so asserting those would prove nothing.
+    lo, hi = config.sanity_bounds("Maple", "buyback_fund_balance_dashboard")
+    unscaled = parse_number("77.66")          # what a dropped suffix would yield
+    assert unscaled == 77.66
+    assert lo is not None and unscaled < lo, \
+        f"an unscaled 77.66 must be REJECTED, not stored — floor is {lo}"
+    assert lo <= 77_660_000.0 <= (hi or float("inf")), \
+        f"and the correct figure must pass, bounds were ({lo}, {hi})"
+
+    # The cross-check itself exists and points at the right pair.
+    checks = config.PROJECT_BY_NAME["Maple"]["cross_checks"]
+    pair = next(c for c in checks if c["secondary"] == "buyback_fund_balance_dashboard")
+    assert pair["primary"] == "treasury_holding_tokens"
+    # It still cannot fire, and for a reason worth asserting: the primary stores nothing while the
+    # destination is disputed. This assertion should FAIL once an address is confirmed — that is
+    # the signal to revisit this test, not a defect in it.
+    assert config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]["destination_status"] == "disputed", \
+        ("the address question is resolved — re-read this test: the cross-check can now fire and "
+         "the comment above is out of date")
+    print("maple cross-check ok: armed (anchor 'SYRUP Holdings', entry_ready passes), "
+          "77.66M parses, an unscaled 77.66 is rejected by the floor")
+
+
 def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figure():
     """0.51 SYRUP against ~75.78m reported: the read was right, the ADDRESS was wrong.
 

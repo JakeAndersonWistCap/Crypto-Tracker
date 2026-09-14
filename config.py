@@ -2198,6 +2198,16 @@ PROJECTS = [
         # caught the same class of error.
         "sanity": {
             "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000},
+            # THE FLOOR IS THE REAL GUARD ON THE SCRAPE, and it is here rather than in sources.yaml
+            # because validate_frame calls config.sanity_bounds() — the registry's own sanity_min /
+            # sanity_max fields are read by nothing (nine entries declare them; see the note on the
+            # Maple entry).
+            # Maple renders the figure as "77.66M" and parse_number handles the suffix, so the
+            # correct value is ~77,660,000. If the page ever drops the suffix, parse_number returns
+            # 77.66 — small, precise and entirely plausible, which is the exact shape of the 0.51
+            # that started all this. 1,000,000 rejects it to the Review Queue instead.
+            "buyback_fund_balance_dashboard": {"min": 1_000_000, "max": 500_000_000,
+                                               "change_threshold_pct": 30},
         },
         "metric_labels": {
             "treasury_holding_tokens": "SYRUP held by the disputed Maple fee treasury (NOT the SSF)",
@@ -2220,6 +2230,19 @@ PROJECTS = [
         "destination_indeterminate": {
             "fund": "SYRUP Strategic Fund (an accounting label inside the Maple Treasury, not a separate wallet)",
             "stated_uses": ["working capital", "token liquidity", "capital reserves", "further buybacks"],
+            # OBSERVED ON MAPLE'S OWN TRANSPARENCY PAGE, 2026-09-14, and corroborating the MIP-019
+            # composition directly: alongside "SYRUP Holdings" 77.66M the page reports "Liquid
+            # Assets" $4.63M, described as stablecoins and BTC held by the SSF. Not scraped —
+            # config.METRICS has no USD-denominated treasury key to hold it, and inventing one is a
+            # deliberate choice rather than a side effect of arming the cross-check.
+            "observed_composition": {
+                "as_of": "2026-09-14",
+                "syrup_holdings": 77_660_000,
+                "liquid_assets_usd": 4_630_000,
+                "source": "https://maple.finance/transparency",
+                "note": "The SYRUP figure is the cross-check's reference point. The USD figure is "
+                        "recorded as evidence of composition only.",
+            },
             "why_indeterminate": "'token liquidity' allows repurchased tokens to return to float",
             "address": None,
             "why_no_address": "NOT RESOLVED, and an earlier claim that it was has been RETRACTED. The "
@@ -2237,14 +2260,19 @@ PROJECTS = [
             {"primary": "treasury_holding_tokens", "primary_source": "tier 2 contract read",
              "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://maple.finance/transparency",
              "tolerance": 0.05, "prefer": "primary",
-             "note": "NOT ARMED, AND THIS IS WHY THE 0.51 REACHED THE SHEET. Maple publishes live SSF "
-                     "SYRUP holdings on its transparency page and this entry names it as the second "
-                     "opinion — but the sources.yaml entry is enabled:false, so the secondary never "
-                     "arrives and check_cross_checks skips silently when either side is missing. A "
-                     "cross-check whose secondary is disabled is documentation, not a guard: had it "
-                     "been armed, 0.51 against ~75.78m would have tripped it on the first run. "
-                     "Complete the sources.yaml selector to arm it. Tolerance stays wide because the "
-                     "page reports the SSF label and the contract read is one wallet."},
+             "note": "ARMED 2026-09-14 — the sources.yaml entry now carries anchor 'SYRUP Holdings' "
+                     "and entry_ready() passes. It was previously enabled:false, which is why 0.51 "
+                     "against ~75.78m reached the sheet unchallenged: check_cross_checks skips "
+                     "silently when either side is missing, so a cross-check with a disabled "
+                     "secondary is documentation, not a guard. "
+                     "IT STILL CANNOT FIRE YET, and for a different reason: the PRIMARY is "
+                     "destination_status 'disputed' and stores nothing, because the address it used "
+                     "is Maple's v2 protocol FEE treasury. The secondary will start arriving on the "
+                     "next live run and will sit alone until an address is established — at which "
+                     "point this comparison is what confirms it. Reference point for the secondary: "
+                     "77.66M SYRUP on 2026-09-14 (~75.78M several rounds earlier; a rising stock, "
+                     "not a discrepancy). Tolerance stays wide because the page reports the SSF "
+                     "label while a contract read is one wallet."},
         ],
         "materiality": "medium",
         "notes": "Archetype 3. No burn — confirmed. SPLIT IS TIERED, not the stale flat 25%: 10% below "
@@ -4105,10 +4133,11 @@ OPEN_QUESTIONS = [
                       "0x509712F368255E92410893Ba2E488f40f7E986EA. Whichever is chosen, confirm it "
                       "by reading SYRUP.balanceOf on it FIRST and checking the answer is in the tens "
                       "of millions before wiring it. "
-                      "SECOND, AND INDEPENDENTLY WORTH DOING: the maple.finance/transparency entry in "
-                      "sources.yaml is now enabled:true but still needs its `anchor` — one label "
-                      "string from the page. Until it has one the cross-check cannot fire, and the "
-                      "next address would be trusted on plausibility alone.",
+                      "THE SECOND HALF OF THIS IS NOW DONE: the maple.finance/transparency entry is "
+                      "armed (anchor 'SYRUP Holdings', entry_ready passes), so from the next live run "
+                      "there IS an independent figure — 77.66M SYRUP as at 2026-09-14 — to check a "
+                      "candidate against. Read SYRUP.balanceOf on any candidate and compare it to "
+                      "that. Nothing should be wired on a name match alone.",
     },
     # ---------------------------------------------------------------- Pendle
     {
