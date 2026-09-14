@@ -163,9 +163,14 @@ def _resolve_period_overlaps(out: FetchOutput) -> None:
 #       d(totalSupply) = issuance           =>   issuance = d(totalSupply)
 #   Adding burn here would invent issuance that never happened. The dead-address balance is
 #   subtracted separately, where effective/economic float is what is wanted.
+#   NO BURN at all: nothing is destroyed, so the supply change is issuance outright.
+#       d(totalSupply) = issuance
+#   Declared, never inferred. A project with no burn address in config might have no burn, or
+#   might have one nobody has found yet — and those produce the same empty config.
 ISSUANCE_FROM_SUPPLY_DELTA = {
     "protocol_level_destruction": "add_burn",
     "transfer_to_dead_address": "delta_only",
+    "no_burn": "delta_only",
 }
 
 

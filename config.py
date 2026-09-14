@@ -366,6 +366,10 @@ BURN_MECHANISM_MODELS = {
                             "CONFIGURABLE receiver. Whether that is destruction, a treasury holding or an "
                             "LP position depends on the receiver and the variant — it is NOT a burn until "
                             "established. A balance read cannot model it.",
+    "no_burn": "The project does not destroy or sequester supply at all. Issuance is then the supply "
+               "change exactly, with no burn term — the easiest case, and it still has to be DECLARED "
+               "rather than inferred from the absence of a burn address, because 'we found no burn' and "
+               "'there is no burn' are different statements.",
     "undetermined": "Not established. Nothing is read.",
 }
 
