@@ -200,7 +200,7 @@ def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:
 def derive_flow_from_cumulative(cumulative_value: float, prior_cumulative: float | None,
                                 project: str, metric: str, source: str, tier: int,
                                 when=None, prior_date=None, stock_metric: str | None = None,
-                                out=None) -> pd.DataFrame:
+                                out=None, prior_source: str | None = None, source_base: str | None = None) -> pd.DataFrame:
     """Turn a running total into the flow since the last observation.
 
     A dashboard that publishes "total burned to date" is a stock. The archetype 4 tab needs a
@@ -227,9 +227,32 @@ def derive_flow_from_cumulative(cumulative_value: float, prior_cumulative: float
                  f"one, so the store holds a SINGLE observation and there is no interval to "
                  f"difference over")
         return pd.DataFrame(columns=LONG_COLUMNS)
+    # A DELTA IS ONLY A FLOW IF BOTH READINGS MEASURED THE SAME THING.
+    # Uniswap's burn address was re-pointed from the Firepit contract (which holds UNI awaiting
+    # release) to the dead address (which holds every UNI ever burned). The next run differenced
+    # 4,000 against 111,341,581 and reported 111,337,581 UNI burned in a month, against a real
+    # rate of 100-134k a day. Nothing about that figure looked wrong: it was in range, it had a
+    # plausible source, and it was thirty times the truth.
+    if prior_source and source_base and _measuring_point(prior_source) != _measuring_point(source_base):
+        _no_flow(out, project, metric, stock_metric,
+                 f"the measuring point CHANGED between observations — the prior reading came from "
+                 f"{_measuring_point(prior_source)!r} and this one from {_measuring_point(source_base)!r}. "
+                 f"Differencing across that reports the change of address as though it were a flow")
+        return pd.DataFrame(columns=LONG_COLUMNS)
     if cumulative_value < prior_cumulative:
         return pd.DataFrame(columns=LONG_COLUMNS)
     return point(project, metric, cumulative_value - prior_cumulative, source, tier, when)
+
+
+def _measuring_point(source: str) -> str:
+    """The part of a source string that says WHAT was read, ignoring how it was labelled.
+
+    'chain:ethereum:burn_dead:PARTIAL' and 'chain:ethereum:burn_dead' measure the same address;
+    'chain:ethereum:fire_pit' does not. Trailing markers are stripped so a figure becoming PARTIAL
+    does not read as a change of address.
+    """
+    parts = [p for p in str(source).split(":") if p not in ("PARTIAL", "delta")]
+    return ":".join(parts)
 
 
 def _no_flow(out, project: str, metric: str, stock_metric: str | None, why: str):

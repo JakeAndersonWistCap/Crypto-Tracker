@@ -53,6 +53,9 @@ KIND_METRIC = {
     "burn_address_balance": "burn_address_balance",
     "ve_total_supply": "locked_tokens",
     "buyback_fund_balance": "buyback_fund_balance",
+    # A governance-controlled treasury that RECEIVES a buyback. Read as a balance like any other
+    # holder, and deliberately its own metric: it is neither burned nor locked.
+    "treasury_holding": "treasury_holding_tokens",
     # Solana kinds. Declared so the gap report can name them precisely; the EVM adapter refuses
     # them at the chain-coverage guard rather than failing obscurely.
     "spl_mint": "total_supply",
@@ -82,7 +85,7 @@ READABLE_BURN_METHODS = {"transfer", None}
 # address is wrong. A burn or dead address is deliberately NOT in this set: it is an EOA nobody
 # controls, empty bytecode is exactly what correct looks like there, and the read is balanceOf on
 # the TOKEN with the burn address only ever used as the holder argument.
-HOLDER_MUST_HAVE_CODE = {"buyback_fund_balance", "ve_total_supply"}
+HOLDER_MUST_HAVE_CODE = {"buyback_fund_balance", "ve_total_supply", "treasury_holding"}
 
 
 def holder_should_have_code(spec: dict) -> bool:
@@ -195,12 +198,15 @@ class ChainReader:
 class Chain:
     """Tier 2 adapter. prior_values supplies the last stored figure for cumulative differencing."""
 
-    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None):
+    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
+                 prior_sources: dict | None = None):
         self.reader = ChainReader()
         self.prior = prior_values or {}
         # When each prior figure was observed. A delta needs an interval, not just a number to
         # subtract — see derive_flow_from_cumulative.
         self.prior_dates = prior_dates or {}
+        # What the prior figure MEASURED. A delta across two different addresses is not a flow.
+        self.prior_sources = prior_sources or {}
 
     @staticmethod
     def _underlying_on_chain(contracts: dict, spec: dict, chain: str) -> dict | None:
@@ -352,7 +358,8 @@ class Chain:
                 # Unichain reads fail while the identical mainnet path worked.
                 read_address = spec["address"]
                 holder = None
-                if kind in ("burn_address_balance", "buyback_fund_balance") or spec.get("read_method") == "escrow_balance_of":
+                if kind in ("burn_address_balance", "buyback_fund_balance", "treasury_holding") \
+                        or spec.get("read_method") == "escrow_balance_of":
                     under = self._underlying_on_chain(contracts, spec, chain)
                     if under is None:
                         out.gap(name, metric,
@@ -492,7 +499,9 @@ class Chain:
                 flow = derive_flow_from_cumulative(total, self.prior.get((name, metric)), name,
                                                    flow_metric, f"{src}:delta", TIER, when,
                                                    prior_date=self.prior_dates.get((name, metric)),
-                                                   stock_metric=metric, out=out)
+                                                   stock_metric=metric, out=out,
+                                                   prior_source=self.prior_sources.get((name, metric)),
+                                                   source_base=src)
                 if not flow.empty:
                     out.add(flow, SOURCE, name, f"{flow_metric} derived from the summed {metric} delta", TIER)
                     # Where the cumulative is contaminated by a one-off but the FLOW is not, the

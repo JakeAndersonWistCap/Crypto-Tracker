@@ -3,3 +3,5 @@ date,project,metric,value,source_note,entered_on
 # Loaded last on every run; overrides the fetched value for the matching (date, project, metric).
 # Cells fed by these rows render with a yellow fill and the entered_on date in a cell comment.
 # Lines beginning with # are ignored. Delete the example rows below once real data is entered.
+2026-09-01,Canton,burn_mint_ratio,0.72,Canton's published weekly burn/mint ratio — early Sep 2026. Above 1.0 means burns outpace issuance.,2026-09-14
+2026-01-01,Canton,burn_mint_ratio,0.16,Canton's published weekly burn/mint ratio — Jan 2026. The 0.16 -> 0.72 move over eight months is the trajectory.,2026-09-14

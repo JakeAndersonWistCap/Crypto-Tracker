@@ -307,6 +307,22 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**Removing a source from config does NOT remove what it already wrote.** The store upserts and
+never deletes, so a contract taken out of `config.py` stops producing NEW rows while every row it
+already wrote stays exactly where it is — with its old source string, and reading as current until
+it passes the 7-day stale threshold. Two real cases: Sky's `burn_zero` rows survived the removal of
+the contract and rendered as a measured zero on a refuted mechanism, and Uniswap's burn switching
+from the Firepit to the dead address produced a **111m UNI "burn"** that was simply the gap between
+two different addresses. Clear orphans deliberately:
+
+```bash
+sqlite3 metrics.db "SELECT project, metric, source, COUNT(*), MIN(date), MAX(date)
+                    FROM metrics GROUP BY project, metric, source ORDER BY project"
+```
+
+Any source naming a contract that is no longer in `config.py` is an orphan. Delete those rows by
+source before trusting the metric.
+
 **Supply history does not exist before your first run, and never will.** CoinGecko serves
 `total_supply` as a current value only. `/coins/{id}/history` was checked on a live call
 (2026-09-14) and returns `current_price`, `market_cap` and `total_volume` — no supply field. So
@@ -412,6 +428,21 @@ python token_metrics.py
 **After editing `sources.yaml` or `config.py`,** just re-run. Validate config changes first with
 `python -c "import config; config.validate_config(); print('ok')"` — it rejects mistakes that
 would produce plausible-looking wrong numbers.
+
+---
+
+## 11c. Checking numbers without Excel
+
+Every derived column in the workbook is a formula with no cached result — Excel computes on open,
+and nothing else can read it. `headline.py` prints the same aggregation straight from the store:
+
+```bash
+python headline.py                        the headline figures, with confidence bands
+python headline.py --project Uniswap      one project in full
+python headline.py --band GREEN           only what is safe to act on today
+```
+
+It writes nothing, needs no LibreOffice, and computes the windows exactly as the workbook does.
 
 ---
 

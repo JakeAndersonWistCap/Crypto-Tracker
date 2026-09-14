@@ -151,6 +151,41 @@ def test_chain_reads_verified_and_derives_flow():
     print("tier 2 read ok:", by)
 
 
+def test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow():
+    """The Uniswap 111m fake burn, in a test.
+
+    The burn address was re-pointed from the Firepit contract (4,000 UNI awaiting release) to the
+    dead address (111,341,581 UNI ever burned). The next run differenced them and reported
+    111,337,581 UNI burned in a month, against a real rate of 100-134k a day. Nothing about it
+    looked wrong — in range, plausible source, thirty times the truth.
+    """
+    from fetch.base import derive_flow_from_cumulative, today
+
+    yesterday = str((today() - pd.Timedelta(days=1)).date())
+    out = FetchOutput()
+    flow = derive_flow_from_cumulative(
+        111_341_581.0, 4_000.0, "Uniswap", "gross_burn_tokens",
+        "chain:ethereum:burn_dead:delta", 2, today(), prior_date=yesterday,
+        stock_metric="burn_address_balance", out=out,
+        prior_source="chain:ethereum:fire_pit", source_base="chain:ethereum:burn_dead:PARTIAL")
+    assert flow.empty, "a delta across two different addresses must not be reported as a burn"
+    gap = next(g for g in out.gaps if g["metric"] == "gross_burn_tokens")
+    assert "measuring point CHANGED" in gap["reason"]
+    assert "fire_pit" in gap["reason"] and "burn_dead" in gap["reason"], \
+        "the gap must name both addresses, or nobody can tell what happened"
+
+    # the SAME address still differences normally, and a PARTIAL marker appearing is not a change
+    out = FetchOutput()
+    flow = derive_flow_from_cumulative(
+        111_341_581.0, 111_237_581.0, "Uniswap", "gross_burn_tokens",
+        "chain:ethereum:burn_dead:delta", 2, today(), prior_date=yesterday,
+        stock_metric="burn_address_balance", out=out,
+        prior_source="chain:ethereum:burn_dead", source_base="chain:ethereum:burn_dead:PARTIAL")
+    assert not flow.empty and float(flow["value"].iloc[0]) == 104_000.0, \
+        "an ordinary day's burn must still be reported"
+    print("measuring-point guard ok: 111m fake burn refused, 104k real burn kept")
+
+
 def test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured():
     """An unchanged burn balance is not evidence that nothing burned.
 
@@ -592,8 +627,11 @@ def test_issuance_refuses_rather_than_guessing():
     gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
     assert "understating it by exactly the burn" in gap["reason"]
 
-    # 3. a mechanism with no established supply effect -> no formula applies (Sky)
-    value, out = _derive("Sky", "amm_swap_to_receiver", 1_000_100.0, 1_000_000.0, None, status="refuted")
+    # 3. a mechanism with no established supply effect -> no formula applies. Sky was the type
+    # case until its receiver was found to be the treasury and it left archetype 4; the rule is
+    # about the MECHANISM, so it is exercised on a project the metric still applies to.
+    value, out = _derive("Ethereum", "amm_swap_to_receiver", 1_000_100.0, 1_000_000.0, None,
+                         status="refuted")
     assert value is None
     gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
     assert "not established" in gap["reason"]
@@ -1629,6 +1667,7 @@ def test_manual_overrides_suppress_gaps():
 if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
+               test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow,
                test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
                test_a_single_observation_never_produces_a_zero_flow,
                test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_address,

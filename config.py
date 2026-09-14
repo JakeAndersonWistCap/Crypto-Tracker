@@ -159,6 +159,13 @@ METRICS = {
     # and supply is shrinking. Stored as a SOURCED figure and kept separate from anything derived,
     # so the two can be compared: a divergence means our derivation is wrong somewhere, and that is
     # the point of having both.
+    # A buyback that lands in a governance-controlled treasury. NOT a burn — the tokens exist and
+    # governance can move them — and NOT locked supply like Chainlink's Reserve, which has a
+    # timelock and a stated intention not to withdraw. Its own metric so it can never be summed
+    # into either: those two have opposite signs and this is neither.
+    "treasury_holding_tokens":    {"label": "Treasury holding (governance-controlled, redeployable)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
+                                   "tiers": [2, 3], "sanity_min": 0, "sanity_max": 1e15},
     "burn_mint_ratio":            {"label": "Burn ÷ mint ratio (as published by the protocol)",
                                    "kind": "stock", "unit": "count", "archetypes": [1, 4],
                                    "tiers": [3, 4], "sanity_min": 0, "sanity_max": 100,
@@ -798,7 +805,12 @@ PROJECTS = [
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "fees_usd", "tx_count", "active_addresses"),
-        "manual_quarterly": ["supply_units", "utilisation_pct"],
+        # burn_mint_ratio joins the hand-entered list rather than waiting on a scraper. Canton
+        # publishes it weekly; typing it in gets the single most directly relevant published figure
+        # in this universe into the sheet now, instead of after a round of scraper work. The
+        # reference_values above validate whatever is typed: a hand-entry that disagrees with
+        # 0.16/0.72 at those dates is a typo, and will be flagged as one.
+        "manual_quarterly": ["supply_units", "utilisation_pct", "burn_mint_ratio"],
         "materiality": "medium",
         "notes": "Not on DefiLlama. Own dashboard (tier 3) + Dune page (tier 4). Verify the CoinGecko id.",
     },
@@ -1700,7 +1712,7 @@ PROJECTS = [
         "name": "Sky", "symbol": "SKY",
         "coingecko_id": "sky",
         "defillama_fees_slug": "sky", "defillama_protocol": "sky", "defillama_chain": None,
-        "archetypes": [3, 4], "archetypes_held": [],
+        "archetypes": [3], "archetypes_held": [],
         "fee_split": {
             "share_to_buyback": 0.55,
             # PRIMARY SOURCE STILL NEEDED. The change is a Sky governance Executive Proposal
@@ -1780,6 +1792,19 @@ PROJECTS = [
             # LP tokens can be lost or seized — a warning that only makes sense if the receiver
             # HOLDS tokens rather than destroying them. A Pause Proxy balance may therefore be a
             # TREASURY HOLDING, not a burn. See UNAVAILABLE and OPEN_QUESTIONS.
+            # THE RECEIVER, read as a TREASURY HOLDING and never as a burn.
+            "pause_proxy": _contract(
+                "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB", "ethereum", "treasury_holding", "SKY",
+                "https://vote.makerdao.com/", verified="2026-09-14", provenance="protocol governance",
+                holder_has_code=True,
+                purpose="MCD Pause Proxy — the Smart Burn Engine's RECEIVER, and Sky's "
+                        "governance-controlled treasury. Named as the receiver by the 26 June 2023 "
+                        "Smart Burn Engine launch poll and labelled 'Sky: MCD Pause Proxy' on "
+                        "Etherscan. Holds ~$130m across SPK/SKY/MKR, with governance votes moving SKY "
+                        "OUT of it — which is the proof that it is redeployable, not retired.",
+                note="NEVER gross_burn_tokens and never burn_address_balance. Tokens here still exist "
+                     "and governance can spend them, so counting this as burned would overstate "
+                     "permanent supply destruction by the entire balance."),
             "lssky": _contract(
                 "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C", "ethereum", "ve_total_supply", "lssky",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
@@ -1813,20 +1838,29 @@ PROJECTS = [
             },
             "want": {"value": 0.98, "what": "0.98 * WAD", "source_url": "https://github.com/sky-ecosystem/community",
                      "as_of": "2024-09-27", "status": "point_in_time"},
-            "pip": {"value": "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437",
-                    "what": "SWAP_ONLY_FLAP_SKY_ORACLE",
-                    "source_url": "https://github.com/sky-ecosystem/community",
-                    "as_of": "2024-09-27", "status": "point_in_time"},
+            # RECONFIGURED SINCE THE VOTE, and this is the proof that point_in_time was the right
+            # label: the live pip is NOT the one the 2024 executive set. pair() still matches, so
+            # the reconfiguration was partial rather than a wholesale redeploy.
+            "pip": {"value": "0xc2ffbbdccf1466eb8968a846179191cb881ecdff",
+                    "what": "live oracle, read on-chain",
+                    "source_url": None, "source": "read on-chain 2026-09-14",
+                    "as_of": "2026-09-14", "status": "confirmed_current",
+                    "superseded": {"value": "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437",
+                                   "what": "SWAP_ONLY_FLAP_SKY_ORACLE, per the 2024-09-27 executive vote",
+                                   "note": "superseded — the vote no longer describes what is deployed"}},
+            # CONFIRMED unchanged on-chain, so this one is current rather than point-in-time.
             "pair": {"value": "0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c", "what": "PAIR_USDS_SKY",
                      "source_url": "https://github.com/sky-ecosystem/community",
-                     "as_of": "2024-09-27", "status": "point_in_time"},
+                     "source": "2024 vote, re-read on-chain 2026-09-14 and unchanged",
+                     "as_of": "2026-09-14", "status": "confirmed_current"},
             "receiver": {
-                "value": None,
-                "what": "WHERE THE BOUGHT SKY ACTUALLY GOES — the archetype 4 question, still open. "
-                        "SwapOnly sends proceeds to a predefined receiver; that address is not in the "
-                        "material on file and is NOT guessed here. Whether SKY is destroyed or held "
-                        "depends entirely on it.",
-                "source_url": None, "as_of": None, "status": "unknown",
+                "value": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
+                "what": "ANSWERED — the MCD Pause Proxy, Sky's governance-controlled treasury. The "
+                        "26 June 2023 Smart Burn Engine launch poll names MCD_Pause_Proxy as the "
+                        "destination of what the engine buys. So the bought SKY is HELD, not "
+                        "destroyed, which is why archetype 4 was removed and archetype 3 kept.",
+                "source_url": "https://vote.makerdao.com/", "as_of": "2026-09-14",
+                "status": "confirmed_current",
             },
         },
         "burn_read_method": "undetermined",
@@ -1854,7 +1888,16 @@ PROJECTS = [
         # "mixed" understated it: whether the burn LEG removes supply at all is unresolved. If the
         # active variant is FlapperUniV2, part of what was called burn is SKY in an LP position —
         # not destroyed, not removed from supply, and recoverable.
-        "destination_effect": "unconfirmed",
+        # ARCHETYPE 4 REMOVED 2026-09-14 — THE RECEIVER IS THE TREASURY.
+        # The Smart Burn Engine's receiver is Sky's MCD Pause Proxy, confirmed three ways: Etherscan
+        # labels it "Sky: MCD Pause Proxy"; the 26 June 2023 Smart Burn Engine launch poll sets the
+        # receiver to MCD_Pause_Proxy as "the destination address of the LP tokens purchased by the
+        # Smart Burn Engine"; and the address holds ~$130m (SPK 80.97%, SKY 18.96%, MKR 0.07%) with
+        # governance votes moving SKY OUT of it.
+        # A mechanism named "Smart Burn Engine" that sends its purchases to a governance-controlled
+        # treasury is not a permanent burn. ARCHETYPE 3 STAYS — a revenue-funded buyback
+        # demonstrably happens, and only its destination was wrong.
+        "destination_effect": "treasury_redeployable",
         "dune_queries": {
             # RE-SCOPED 2026-09-14, AND BLOCKED. Twice now this slot has been aimed at the wrong
             # question. It was "did anything burn"; then "where does the engine send it"; both
@@ -2390,25 +2433,25 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # =======================================================================================
 OPEN_QUESTIONS = [
     {
-        "project": "Sky", "topic": "WHERE IS THE RECEIVER? SwapOnly sends the bought SKY somewhere",
+        "project": "Sky", "topic": "FOR REVIEW — do BOTH legs of Sky's 55/45 split return value to the protocol?",
         "severity": 1,
-        "reason": "THE VARIANT QUESTION IS ANSWERED AND THE LP CONCERN IS RETIRED. A Sky governance "
-                  "executive vote initialises FlapperUniV2SwapOnly (flapper "
-                  "0x374D9c3d5134052Bc558F432Afa1df6575f07407), and the 2023 ChainSecurity audit of that "
-                  "variant states it sends proceeds to a predefined RECEIVER rather than depositing into "
-                  "the pair as liquidity. So SKY is NOT being parked in a Uniswap LP position, and Sky's "
-                  "archetype 4 block is not wrong for that reason — that P1 is closed, not lapsed. "
-                  "WHAT REPLACES IT IS NARROWER AND SHARPER: SwapOnly sends the SKY to a receiver, and "
-                  "that address is not in the material on file. It is the whole archetype 4 question — a "
-                  "receiver that destroys is a burn, a receiver that holds is a treasury position that "
-                  "can come back to float. Sky still has no burn figure, and will not until this is "
-                  "answered. The address is NOT guessed here.",
-        "suggestion": "Two routes. (1) Read it off the flapper contract at "
-                      "0x374D9c3d5134052Bc558F432Afa1df6575f07407 — SwapOnly exposes its receiver, and "
-                      "one eth_call settles it. (2) Find it in github.com/sky-ecosystem/community "
-                      "alongside the executive vote that set the flapper. Then establish whether that "
-                      "address destroys or holds, and set burn_mechanism accordingly — if it holds, this "
-                      "is destination_effect 'locked_supply' like Chainlink's Reserve, NOT a burn.",
+        "reason": "THE RECEIVER QUESTION IS ANSWERED and this is what it leaves behind. The Smart Burn "
+                  "Engine's receiver is the MCD Pause Proxy, Sky's governance-controlled treasury — so "
+                  "the 55% 'buyback' leg does not retire supply, it moves SKY into a treasury that "
+                  "governance can and does spend from (there are votes moving SKY back out of it). The "
+                  "45% leg goes to LSSKY stakers, which IS a return to holders. "
+                  "SO THE TWO LEGS ARE NOT WHAT THEY LOOK LIKE: one returns value to holders, the other "
+                  "returns it to the protocol. Sky's archetype 3 number — revenue times the buyback "
+                  "share — measures money routed to the treasury, not money returned to holders, and "
+                  "comparing it against protocols that burn or distribute compares different things. "
+                  "This is a JUDGEMENT about what the figure means, not a data error, so it is raised "
+                  "for review rather than resolved in config.",
+        "suggestion": "Decide whether Sky's archetype 3 figure should be presented as a buyback at all, "
+                      "or relabelled as treasury accumulation. If the latter, the 55% share stops being "
+                      "comparable with Uniswap's or Venice's buyback and should be excluded from any "
+                      "cross-project buyback ranking. destination_effect is already "
+                      "treasury_redeployable, so the workbook will not net it against emissions — what "
+                      "is open is how the archetype 3 number is LABELLED.",
     },
     {
         "project": "Sky", "topic": "the flapper address is 2024 configuration, not confirmed current state",
@@ -2420,10 +2463,14 @@ OPEN_QUESTIONS = [
                   "Treating a two-year-old vote as current state is the same error as treating a "
                   "verified address as a verified mechanism: the document was accurate and may no longer "
                   "describe what is deployed.",
-        "suggestion": "Read the Splitter's current flapper address on-chain and confirm it still equals "
-                      "0x374D9c3d5134052Bc558F432Afa1df6575f07407. If it does, re-date the entries and "
-                      "set status to 'confirmed_current'. If it does not, the variant question reopens "
-                      "and the LP concern with it — a different flapper may well be FlapperUniV2.",
+        "suggestion": "PARTIALLY ANSWERED by the 2026-09-14 on-chain read, and the answer is that "
+                      "reconfiguration HAS happened: pair() still matches the vote, but pip() reads "
+                      "0xc2ffbbdccf1466eb8968a846179191cb881ecdff where the vote set "
+                      "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437. Both are updated with their real "
+                      "status. STILL OUTSTANDING: want() and spotter() returned RPC 525 and must be "
+                      "retried, and the flapper address itself is still only the 2024 vote's — read the "
+                      "SPLITTER's flapper() to confirm it is still 0x374D9c3d..., because a different "
+                      "flapper could be FlapperUniV2 and would reopen the LP question.",
     },
     {
         "project": "Venice AI", "topic": "the 20% protocol take on locked sVVV yield is not captured",
@@ -2451,25 +2498,6 @@ OPEN_QUESTIONS = [
         "suggestion": "Confirm from Venice's docs that sVVV is 1:1 with VVV deposited. If it is not, the "
                       "read needs the underlying balance rather than the receipt's supply — see "
                       "LOCK_READ_METHODS and the escrow_balance_of pattern used for veAERO.",
-    },
-    {
-        "project": "Sky", "topic": "is the MCD Pause Proxy a burn destination or a treasury holding?",
-        "severity": 1,
-        "reason": "A LEAD, DELIBERATELY NOT ADDED AS A BURN ADDRESS. A documented Splitter transaction "
-                  "shows the allocation going to 'Burn — MCD Pause Proxy' and 'Sky Rewards', which makes "
-                  "the Pause Proxy the obvious next place to look. But the audit warns that if the Pause "
-                  "Proxy is the receiver and governance does not control it, LP TOKENS CAN BE LOST OR "
-                  "SEIZED — and that warning only makes sense if the receiver HOLDS tokens rather than "
-                  "destroying them. A balance at the Pause Proxy may therefore be a TREASURY HOLDING, "
-                  "which belongs nowhere near a burn column: a holding can come back to float, a burn "
-                  "cannot. Adding it as a burn address would repeat the exact error just corrected — "
-                  "attaching a burn claim to an address because the label near it says 'Burn'.",
-        "suggestion": "Answer the Flapper-variant question first; it changes what the Pause Proxy would "
-                      "even be receiving (gem tokens, or LP tokens). Then establish from Sky governance "
-                      "whether tokens reaching the Pause Proxy are destroyed, held, or redeployed. If they "
-                      "are held, this is a treasury balance and should be modelled as one — it reduces "
-                      "float like Chainlink's Reserve does, under destination_effect 'locked_supply', not "
-                      "as a burn.",
     },
     {
         "project": "Uniswap", "topic": "RESOLVED — the zero was the wrong address, not a genuine absence of burn",

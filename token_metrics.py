@@ -70,12 +70,14 @@ def main() -> int:
 
     prior_values = st.latest_values()
     prior_dates = st.last_dates()
+    prior_sources = st.last_sources()
     has_history = {k for k, _ in prior_values.items()}
 
     out = fetch.fetch_all(
         config.PROJECTS, window,
         prior_values=prior_values,
         prior_dates=prior_dates,
+        prior_sources=prior_sources,
         has_history=has_history,
         manual_keys=manual_keys,
     )

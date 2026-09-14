@@ -41,7 +41,8 @@ TIER_ORDER = [
     ("defillama", 1, lambda ctx: DefiLlama()),
     ("coingecko", 1, lambda ctx: CoinGecko()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
-    ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
+    ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
+                                   prior_sources=ctx["prior_sources"])),
     ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
@@ -288,6 +289,7 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
               prior_dates: dict | None = None,
+              prior_sources: dict | None = None,
               has_history: set | None = None,
               manual_keys: set | None = None,
               sources: list[str] | None = None) -> FetchOutput:
@@ -304,6 +306,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
                   does not list something Jake has already entered by hand.
     """
     ctx = {"prior_values": prior_values or {}, "prior_dates": prior_dates or {},
+           "prior_sources": prior_sources or {},
            "has_history": has_history or set()}
     out = FetchOutput()
 

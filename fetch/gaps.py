@@ -227,6 +227,29 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     already = {(g["project"], g["metric"]) for g in existing_gaps}
 
     rows = list(existing_gaps)
+    # A DECLARED SCHEDULE THAT HAS RUN OUT is not the same as no source. Render's curve is
+    # published a year at a time; the 2025 step ends 2025-12-31 and the Year 3 RNP is not out, so
+    # the trailing window sits past the end of everything declared. That is the right outcome —
+    # far better than projecting a declining rate forward — but "no source configured" describes
+    # a different problem and sends the reader somewhere useless.
+    expired = {}
+    for p in projects:
+        sched = p.get("issuance_schedule") or {}
+        steps = sorted(sched.get("steps") or [], key=lambda st: st["from"])
+        if steps and steps[-1].get("until"):
+            expired[(p["name"], "gross_issuance_tokens")] = steps[-1]["until"]
+    for g in rows:
+        key = (g["project"], g["metric"])
+        if key in expired:
+            g["reason"] = (f"SCHEDULE EXPIRED on {expired[key]} — not a missing source. The issuance "
+                           f"curve is declared in config and correct up to that date; the next period's "
+                           f"figure has not been published, so nothing is projected past it. "
+                           f"Deliberately silent rather than carrying the last rate forward, which on a "
+                           f"declining curve would report the previous period's higher rate as this one's.")
+            g["suggestion"] = (f"Publish-watch: add the next step to issuance_schedule when the figure "
+                               f"appears, with its own 'from'. Until then this metric is correctly empty "
+                               f"and needs no source hunting.")
+    already_expired = set(expired)
     # A figure that was chased and closed is not a to-do item. Leaving it on the list forever
     # trains the reader to skim past the list, which costs more than the row is worth. The
     # closure itself is recorded in config.UNAVAILABLE and rendered on Config & Sources, so it
@@ -242,6 +265,16 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         name = p["name"]
         for metric in config.metrics_for_project(p):
             if (name, metric) in have or (name, metric) in already or (name, metric) in closed:
+                continue
+            if (name, metric) in already_expired:
+                rows.append({
+                    "project": name, "metric": metric, "tiers_attempted": "1",
+                    "reason": (f"SCHEDULE EXPIRED on {already_expired and expired[(name, metric)]} — not a "
+                               f"missing source. The curve is declared and correct up to that date; the "
+                               f"next period's figure has not been published, so nothing is projected "
+                               f"past it."),
+                    "suggestion": "Add the next step to issuance_schedule when the figure is published.",
+                })
                 continue
             reason, suggestion = _tier_note(p, metric, scrape_entries)
             rows.append({

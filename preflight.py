@@ -73,6 +73,7 @@ def tier2_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]
         for key, c in (p.get("contracts") or {}).items():
             metric = {"erc20_total_supply": "total_supply", "burn_address_balance": "burn_address_balance",
                       "ve_total_supply": "locked_tokens", "buyback_fund_balance": "buyback_fund_balance",
+                      "treasury_holding": "treasury_holding_tokens",
                       "spl_mint": "total_supply", "spl_token_account": "burn_address_balance"}.get(c["kind"], key)
             where = f"{key} on {c['chain']}"
             # Reference-only entries are kept in config for the mechanism (and for eth_getCode),
@@ -103,7 +104,8 @@ def tier2_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]
                 skipped.append((name, metric, f"{where}: no address on file"))
                 continue
             how = ("underlying.balanceOf(escrow)" if c.get("read_method") == "escrow_balance_of"
-                   else "balanceOf(holder)" if c["kind"] in ("burn_address_balance", "buyback_fund_balance")
+                   else "balanceOf(holder)" if c["kind"] in ("burn_address_balance", "buyback_fund_balance",
+                                                             "treasury_holding")
                    else "totalSupply()")
             attempted.append((name, metric, f"{where} via {how}"))
     return attempted, skipped

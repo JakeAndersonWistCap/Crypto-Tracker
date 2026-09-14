@@ -180,6 +180,19 @@ class Store:
             "SELECT project, metric, MAX(date) FROM metrics GROUP BY project, metric").fetchall()
         return {(p, k): d for p, k, d in rows if d}
 
+    def last_sources(self) -> dict[tuple[str, str], str]:
+        """All (project, metric) -> the source string of the most recent stored row.
+
+        A delta is only a flow if BOTH readings measured the same thing. When a contract is
+        re-pointed — Uniswap's burn moving from the Firepit executor to the dead address — the
+        change of measuring point shows up as an enormous one-day move that is not a burn.
+        """
+        rows = self.conn.execute(
+            """SELECT m.project, m.metric, m.source FROM metrics m
+               JOIN (SELECT project, metric, MAX(date) AS d FROM metrics GROUP BY project, metric) t
+                 ON m.project=t.project AND m.metric=t.metric AND m.date=t.d""").fetchall()
+        return {(p, k): src for p, k, src in rows if src}
+
     def observation_counts(self) -> dict[tuple[str, str], int]:
         """All (project, metric) -> number of stored observations."""
         rows = self.conn.execute(
