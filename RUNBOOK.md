@@ -307,6 +307,18 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**Supply history does not exist before your first run, and never will.** CoinGecko serves
+`total_supply` as a current value only. `/coins/{id}/history` was checked on a live call
+(2026-09-14) and returns `current_price`, `market_cap` and `total_volume` — no supply field. So
+issuance derived from the supply change is **forward-only**: it begins accumulating the day the
+tool first runs, and no amount of work will backfill it.
+
+Historical issuance therefore exists only where one of two things provides it: a **config-declared
+schedule** (Bitcoin, Zcash, Canton, Render) or a **live issuance endpoint** (Solana's
+`getInflationRate`, Injective's mint module, NEAR's protocol config, beaconcha.in for Ethereum).
+For every other project, a 3/6/9-month issuance trajectory will be blank until enough runs have
+accumulated — and that is a permanent property of the data, not an unresolved gap.
+
 **An address can be right and still be the wrong thing to read.** Verifying an address answers
 "does this address exist and hold what we think" — not "does this protocol burn the way we
 assumed". Sky passed every address check and its model was still wrong: it burns through a

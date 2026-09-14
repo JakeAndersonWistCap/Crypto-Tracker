@@ -236,9 +236,13 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                             ". A delta needs two dated readings. Deliberately not reported as 0, which on "
                             "a chain that mints every block would be a plausible and entirely wrong number."),
                     tiers_attempted="1, 2",
-                    suggestion="It resolves itself on the next run on a later day. CoinGecko serves "
-                               "total_supply as a CURRENT value only, not a history, so this cannot be "
-                               "backfilled — the series accumulates from first run.")
+                    suggestion="It resolves itself on the next run on a later day. AND IT WILL NEVER "
+                               "BACKFILL: CoinGecko serves total_supply as a current value only, and "
+                               "/coins/{id}/history was confirmed on a live call (2026-09-14) to return "
+                               "current_price, market_cap and total_volume and NO supply at all. So the "
+                               "series accumulates from first run and there is no route to history for "
+                               "any project without a live issuance endpoint or a declared schedule. "
+                               "Settled — see RUNBOOK, not a question to re-ask.")
             continue
 
         delta = value - prior

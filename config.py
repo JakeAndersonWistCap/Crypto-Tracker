@@ -50,6 +50,8 @@ Where a split's status is "unconfirmed" the workbook greys the cell and SUPPRESS
 derived figure. Never estimate a split we have not documented.
 """
 
+import re
+
 BRIEF_DATE = "2026-09-11"
 GEODNET_BURN_QUERY = "https://dune.com/queries/8683175"
 TODAY_VERIFIED = "2026-09-11"
@@ -756,11 +758,15 @@ PROJECTS = [
         # Sep 2026, against cumulative burns of 5.01bn CC. Above 1.0 would mean burns outpacing
         # issuance. These are REFERENCE POINTS, not a series: they validate whatever a source
         # eventually returns, and a scraped figure that disagrees with them is a scraper bug.
+        # KEYS ARE A CONTRACT: metric / period / value / source, matching what
+        # check_reference_values reads. Written with "when" and "source_url" first time round,
+        # which crashed the live run — see _check_reference_values() below, which now rejects
+        # that at import rather than at tier 4 of a nine-minute run.
         "reference_values": [
-            {"metric": "burn_mint_ratio", "when": "2026-01", "value": 0.16,
-             "source_url": None, "note": "weekly ratio, as published"},
-            {"metric": "burn_mint_ratio", "when": "2026-09", "value": 0.72,
-             "source_url": None, "note": "weekly ratio, early Sep 2026"},
+            {"metric": "burn_mint_ratio", "period": "2026-01", "value": 0.16,
+             "source": "Canton's published weekly burn/mint ratio"},
+            {"metric": "burn_mint_ratio", "period": "2026-09", "value": 0.72,
+             "source": "Canton's published weekly burn/mint ratio, early Sep 2026"},
         ],
         "burn_mechanism": {
             "model": "protocol_level_destruction", "status": "confirmed",
@@ -2866,9 +2872,46 @@ def _check_burn_destinations() -> list[str]:
     return errors
 
 
+def _check_declared_shapes() -> list[str]:
+    """Config blocks that CODE READS BY KEY must carry the keys that code reads.
+
+    This exists because of a live crash. Canton's reference_values were written with "when" and
+    "source_url" while check_reference_values reads "period" and "source" — a plain typo, invisible
+    to every test, and it took down a nine-minute run at tier 4 with a KeyError. The synthetic
+    fixture could not catch it: the fixture builds its own reference values, so it agreed with the
+    code by construction rather than by checking what config actually holds.
+
+    A dict consumed by key is an interface. These are the interfaces, checked at import.
+    """
+    errors = []
+    for p in PROJECTS:
+        name = p["name"]
+        for ref in (p.get("reference_values") or []):
+            missing = {"metric", "period", "value"} - set(ref)
+            if missing:
+                errors.append(
+                    f"{name}: a reference_values entry is missing {sorted(missing)}. "
+                    f"check_reference_values reads metric/period/value/source — 'period' is a "
+                    f"YYYY-MM string. Got keys {sorted(ref)}.")
+            if "period" in ref and not re.fullmatch(r"\d{4}-\d{2}", str(ref["period"])):
+                errors.append(f"{name}: reference_values period {ref['period']!r} is not YYYY-MM, "
+                              f"which is what it is compared against.")
+        for metric, nc in (p.get("non_comparable") or {}).items():
+            missing = {"why", "use_instead"} - set(nc)
+            if missing:
+                errors.append(f"{name}/{metric}: non_comparable is missing {sorted(missing)}. The "
+                              f"confidence band reads both to explain an AMBER cell.")
+        for cc in (p.get("cross_checks") or []):
+            missing = {"primary", "secondary", "tolerance"} - set(cc)
+            if missing:
+                errors.append(f"{name}: a cross_checks entry is missing {sorted(missing)}, which "
+                              f"check_cross_checks reads.")
+    return errors
+
+
 def validate_config(raise_on_error: bool = True) -> list[str]:
     errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
-              + _check_burn_mechanisms() + _check_burn_destinations())
+              + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

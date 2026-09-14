@@ -395,6 +395,52 @@ def _derive(project_name: str, model: str, supply_now: float, supply_prior: floa
     return (None if got.empty else float(got.value.iloc[0])), out
 
 
+def test_validation_survives_a_REAL_fetch_all_frame():
+    """Run the validators against what fetch_all actually produces, not a frame shaped to suit them.
+
+    THIS TEST EXISTS BECAUSE OF A LIVE CRASH. Canton's reference_values were written with the key
+    "when" while check_reference_values reads "period"; it took down a nine-minute run at tier 4
+    with a KeyError. Every existing test passed, because every existing test built its own
+    reference values — so the fixtures agreed with the code BY CONSTRUCTION rather than by
+    checking what config actually holds.
+
+    The fix for that class of bug is not another hand-built fixture. It is to drive the real
+    pipeline: fetch_all restricted to the schedule source needs no network, and the frame it
+    returns has the exact columns, dtypes and config interaction a live run has.
+    """
+    import fetch as fetch_pkg
+    from fetch.base import LONG_COLUMNS
+    from fetch.validate import check_cross_checks, check_reference_values
+
+    out = fetch_pkg.fetch_all(config.PROJECTS, None, sources=["schedule:config"])
+    frame = out.frame()
+    assert not frame.empty, "the schedule source must produce rows, or this test proves nothing"
+    assert list(frame.columns) == LONG_COLUMNS, f"the real frame's columns are {list(frame.columns)}"
+
+    # the validators must survive the REAL shape — this is the call that crashed
+    check_reference_values(frame, out)
+    check_cross_checks(frame, out)
+
+    # and the comparison branch must actually EXECUTE, not just the no-match path: a frame that
+    # matches nothing would pass even with the original bug
+    matched = []
+    for p in config.PROJECTS:
+        for ref in (p.get("reference_values") or []):
+            matched.append((p["name"], ref["metric"], ref["period"], float(ref["value"])))
+    assert matched, "no reference values in config — this test would be vacuous"
+
+    forced = pd.DataFrame([{"date": pd.Timestamp(f"{period}-15"), "project": project,
+                            "metric": metric, "value": value * 5, "source": "test", "tier": 3}
+                           for project, metric, period, value in matched])
+    probe = FetchOutput()
+    check_reference_values(pd.concat([frame, forced], ignore_index=True), probe)
+    flagged = [r for r in probe.review if r["reason"] == "disagrees_with_published_reference"]
+    assert len(flagged) == len(matched), \
+        f"every reference value must be compared; {len(flagged)} of {len(matched)} were"
+    print(f"real-frame validation ok: {len(frame)} rows through fetch_all, "
+          f"{len(matched)} reference value(s) all compared")
+
+
 def test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs():
     """The whole reason issuance is keyed on the mechanism. Same numbers in, different answers out.
 
@@ -1475,6 +1521,7 @@ if __name__ == "__main__":
                test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn,
                test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config,
                test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected,
+               test_validation_survives_a_REAL_fetch_all_frame,
                test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs,
                test_issuance_refuses_rather_than_guessing,
                test_a_measured_issuance_is_never_overwritten_by_a_derivation,

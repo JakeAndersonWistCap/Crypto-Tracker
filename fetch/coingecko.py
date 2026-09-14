@@ -5,6 +5,14 @@ Price, market cap, volume, circulating/total/max supply and FDV. The public tier
 days of daily history, which covers the 30-day and 3/6/9-month trajectory columns; the store
 accumulates beyond it from run to run.
 
+SUPPLY IS A SNAPSHOT, AND THERE IS NO BACKFILL. market_chart gives 365 days of price, market cap
+and volume; the supply figures come from /coins/{id}, which returns TODAY only. /coins/{id}/history
+does not close the gap — confirmed on a live call (2026-09-14), its market_data carries
+current_price, market_cap and total_volume and no supply field at all. So every supply series
+starts the day the tool first runs, and issuance derived from a supply delta is FORWARD-ONLY.
+Historical issuance exists only where a live endpoint or a declared schedule provides it. This is
+settled, not an open question.
+
 circulating_supply_implied is market cap / price. It is a derivation, not a reported figure,
 so it carries the source coingecko:mcap/price and is used only as a cross-check against the
 reported supply on the archetype 4 tab.
