@@ -209,6 +209,60 @@ def test_impossible_relations_have_NO_tolerance():
     print("impossible-relation ok: 0.087% breach caught, sane pair silent")
 
 
+def test_a_same_day_rerun_recomputes_the_SAME_flow_instead_of_destroying_it():
+    """PancakeSwap's 59,857,159.01 burn became 0.0123, and the store keyed the overwrite.
+
+    The arithmetic, from the real stored values: the 09-14 run should have differenced against
+    09-12's 4,931,229,997.70303. It differenced against 4,991,087,156.70303 instead — a fourth
+    observation, written by an EARLIER RUN THE SAME DAY — giving 0.0122690201. Because the store
+    keys on (date, project, metric), that dust delta then overwrote the correct flow on the same
+    key, and the real burn vanished.
+
+    Anchoring the differencing input on the last EARLIER-DATED row makes a same-day re-run
+    idempotent: it recomputes the same answer from the same starting point.
+    """
+    import os
+
+    import store as store_mod
+
+    path = "/tmp/claude-0/-home-user-Crypto-Tracker/e84ff2c6-8546-5133-82ff-472643596bbf-t.db"
+    if os.path.exists(path):
+        os.remove(path)
+    st = store_mod.Store(path)
+    try:
+        def put(date, value):
+            st.upsert(pd.DataFrame([{"date": pd.Timestamp(date), "project": "PancakeSwap",
+                                     "metric": "burn_address_balance", "value": value,
+                                     "source": "chain:bsc:burn_dead", "tier": 2}]))
+
+        put("2026-09-11", 4_931_229_997.70303)
+        put("2026-09-12", 4_931_229_997.70303)
+        key = ("PancakeSwap", "burn_address_balance")
+
+        first = st.values_before("2026-09-14")[key]
+        assert first[1] == "2026-09-12", f"the prior must come from an earlier day, got {first[1]}"
+        put("2026-09-14", 4_991_087_156.70303)          # run A writes a same-day row
+
+        second = st.values_before("2026-09-14")[key]
+        assert second[0] == first[0] and second[1] == "2026-09-12", \
+            "a same-day row must NOT become the differencing input — that is the whole bug"
+
+        flow_a = 4_991_087_156.70303 - first[0]
+        flow_b = 4_991_087_156.715299 - second[0]
+        assert round(flow_b, 2) == 59_857_159.01, f"run B must still see the real burn, got {flow_b}"
+        assert abs(flow_b - flow_a) < 1.0, "two runs on one day must not disagree by a burn"
+        assert flow_b != 0.0122690201, "the old behaviour produced dust; this must not reproduce it"
+
+        # latest_values, which feeds the CHANGE-THRESHOLD check, still sees today's row —
+        # the two questions need different answers and must not be collapsed
+        assert st.latest_values()[key] == 4_991_087_156.70303
+    finally:
+        st.close()
+        if os.path.exists(path):
+            os.remove(path)
+    print("same-day re-run ok: 59,857,159.01 recomputed identically, not overwritten with dust")
+
+
 def test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow():
     """The Uniswap 111m fake burn, in a test.
 
@@ -1729,6 +1783,7 @@ if __name__ == "__main__":
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
                test_an_orphaned_row_and_a_changed_measuring_point_are_RED_not_amber,
                test_impossible_relations_have_NO_tolerance,
+               test_a_same_day_rerun_recomputes_the_SAME_flow_instead_of_destroying_it,
                test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow,
                test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
                test_a_single_observation_never_produces_a_zero_flow,

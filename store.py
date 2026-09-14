@@ -180,6 +180,26 @@ class Store:
             "SELECT project, metric, MAX(date) FROM metrics GROUP BY project, metric").fetchall()
         return {(p, k): d for p, k, d in rows if d}
 
+    def values_before(self, date: str) -> dict[tuple[str, str], tuple[float, str, str]]:
+        """(project, metric) -> (value, date, source) of the last row STRICTLY BEFORE `date`.
+
+        The differencing inputs must come from an EARLIER DAY, never from today. Differencing
+        against a same-day reading is what turned PancakeSwap's real 59,857,159.01 burn into
+        0.0123: an earlier run that day had already written a 09-14 row, the next run differenced
+        against THAT instead of against 09-12, and — because the store keys on
+        (date, project, metric) — the dust delta overwrote the correct flow on the same key.
+
+        Anchoring on the last earlier-dated row makes a same-day re-run IDEMPOTENT: it recomputes
+        the identical delta from the identical starting point, so re-running is free rather than
+        destructive.
+        """
+        rows = self.conn.execute(
+            """SELECT m.project, m.metric, m.value, m.date, m.source FROM metrics m
+               JOIN (SELECT project, metric, MAX(date) AS d FROM metrics
+                     WHERE date < ? GROUP BY project, metric) t
+                 ON m.project=t.project AND m.metric=t.metric AND m.date=t.d""", (date,)).fetchall()
+        return {(p, k): (float(v), d, src) for p, k, v, d, src in rows if v is not None}
+
     def last_sources(self) -> dict[tuple[str, str], str]:
         """All (project, metric) -> the source string of the most recent stored row.
 

@@ -22,7 +22,17 @@ TIMEOUT = 25
 # Sky's Splitter/Flapper. The 2024 executive vote set this flapper; SBEBeam has allowed
 # reconfiguration since, so the point is to check whether it is STILL this one.
 SKY_FLAPPER = "0x374D9c3d5134052Bc558F432Afa1df6575f07407"
-ETH_RPCS = ["https://eth.llamarpc.com", "https://ethereum-rpc.publicnode.com", "https://rpc.ankr.com/eth"]
+# ORDER MATTERS. llamarpc returned 525 for want() and spotter() on two separate days while
+# publicnode answered every other call in the same script, so that is not a transient and
+# llamarpc is no longer tried first.
+ETH_RPCS = ["https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com",
+            "https://rpc.ankr.com/eth", "https://cloudflare-eth.com", "https://eth.drpc.org"]
+
+# Sky's canonical on-chain registry. It exists precisely so integrators never hardcode an address
+# governance might change — which is the failure mode that produced a superseded pip in config.
+SKY_CHAINLOG = "0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F"
+CHAINLOG_LIST = "0x63b0c6b0"       # keccak("list()")[:4]
+CHAINLOG_GET = "0x21f8a721"        # keccak("getAddress(bytes32)")[:4]
 # keccak("receiver()")[:4] — SwapOnly exposes the address it sends bought SKY to.
 SELECTORS = {"receiver()": "0xf7260d3e", "pair()": "0xa8aa1b31", "want()": "0x1f1c827f",
              "pip()": "0xd741e2f9", "spotter()": "0xf3701da2"}
@@ -60,6 +70,57 @@ def as_address(word: str | None) -> str | None:
         return None
     body = word[2:] if word.startswith("0x") else word
     return "0x" + body[-40:]
+
+
+def _decode_bytes32_array(word: str) -> list[str]:
+    """ABI-decode a bytes32[] return value into readable key names."""
+    raw = word[2:] if word.startswith("0x") else word
+    if len(raw) < 128:
+        return []
+    count = int(raw[64:128], 16)
+    keys = []
+    for i in range(count):
+        chunk = raw[128 + i * 64: 128 + (i + 1) * 64]
+        if len(chunk) < 64:
+            break
+        keys.append(bytes.fromhex(chunk).rstrip(b"\x00").decode("utf-8", "replace"))
+    return keys
+
+
+def sky_chainlog():
+    """Resolve Sky's live contracts from the registry rather than from a historical vote.
+
+    The registry is the answer to the whole class of problem that has bitten this project twice:
+    an address read from a 2024 executive vote was superseded (pip), and the Splitter's current
+    flapper could not be checked at all because nothing on file named the Splitter. list() is
+    called FIRST and printed in full, because guessing the registered key blind is the same
+    mistake one level up — it may not be "MCD_SPLIT".
+    """
+    head("SKY CHAINLOG — the canonical registry. Every live Sky address, from Sky itself.")
+    word, src = eth_call(SKY_CHAINLOG, CHAINLOG_LIST)
+    if word is None:
+        print(f"  list() UNREACHABLE  {src[:150]}")
+        return
+    keys = _decode_bytes32_array(word)
+    print(f"  list() returned {len(keys)} registered key(s):\n")
+    for i in range(0, len(keys), 4):
+        print("    " + "  ".join(k.ljust(26) for k in keys[i:i + 4]))
+
+    # Anything that could plausibly BE the splitter or the flapper. Printed, never auto-chosen.
+    interesting = [k for k in keys
+                   if any(t in k.upper() for t in ("SPLIT", "FLAP", "BURN", "VOW", "PAUSE", "SKY"))]
+    print(f"\n  Candidates worth resolving ({len(interesting)}):")
+    for key in interesting:
+        padded = key.encode("utf-8").ljust(32, b"\x00").hex()
+        got, _ = eth_call(SKY_CHAINLOG, CHAINLOG_GET + padded)
+        addr = as_address(got)
+        flag = ""
+        if addr and addr.lower() == SKY_FLAPPER.lower():
+            flag = "   <-- MATCHES the 2024 vote's flapper"
+        print(f"    {key.ljust(26)} {addr}{flag}")
+    print("\n  PASTE BACK the whole list. The key naming the Splitter tells us which flapper is")
+    print("  live; if its flapper is not 0x374D9c3d..., the LP question reopens and every Sky")
+    print("  check needs re-running against the new one.")
 
 
 def sky_splitter(splitter: str | None):
@@ -188,7 +249,8 @@ def main():
 
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
-    for fn in (sky, lambda: sky_splitter(args.splitter), solana, injective, near, beaconchain):
+    for fn in (sky_chainlog, sky, lambda: sky_splitter(args.splitter),
+               solana, injective, near, beaconchain):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest

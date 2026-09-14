@@ -43,7 +43,8 @@ TIER_ORDER = [
     ("coingecko", 1, lambda ctx: CoinGecko()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
-                                   prior_sources=ctx["prior_sources"])),
+                                   prior_sources=ctx["prior_sources"],
+                                   prior_delta=ctx["prior_delta"])),
     ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
@@ -289,6 +290,7 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
 
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
+              prior_values_for_delta: dict | None = None,
               prior_dates: dict | None = None,
               prior_sources: dict | None = None,
               has_history: set | None = None,
@@ -306,7 +308,12 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     manual_keys   (project, metric) pairs covered by manual_overrides.csv, so the Gap Report
                   does not list something Jake has already entered by hand.
     """
-    ctx = {"prior_values": prior_values or {}, "prior_dates": prior_dates or {},
+    # prior_values is the newest figure of ANY date, for the change-threshold check.
+    # prior_values_for_delta is the last EARLIER-DATED figure, for differencing — see
+    # store.values_before. Defaulting the second to the first keeps older callers working.
+    ctx = {"prior_values": prior_values or {},
+           "prior_delta": prior_values_for_delta if prior_values_for_delta is not None else (prior_values or {}),
+           "prior_dates": prior_dates or {},
            "prior_sources": prior_sources or {},
            "has_history": has_history or set()}
     out = FetchOutput()

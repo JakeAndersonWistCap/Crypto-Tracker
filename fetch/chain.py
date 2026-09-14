@@ -199,7 +199,7 @@ class Chain:
     """Tier 2 adapter. prior_values supplies the last stored figure for cumulative differencing."""
 
     def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
-                 prior_sources: dict | None = None):
+                 prior_sources: dict | None = None, prior_delta: dict | None = None):
         self.reader = ChainReader()
         self.prior = prior_values or {}
         # When each prior figure was observed. A delta needs an interval, not just a number to
@@ -207,6 +207,8 @@ class Chain:
         self.prior_dates = prior_dates or {}
         # What the prior figure MEASURED. A delta across two different addresses is not a flow.
         self.prior_sources = prior_sources or {}
+        # The figure to DIFFERENCE against: the last one from an EARLIER DAY, never today's.
+        self.prior_delta = prior_delta if prior_delta is not None else (prior_values or {})
 
     @staticmethod
     def _underlying_on_chain(contracts: dict, spec: dict, chain: str) -> dict | None:
@@ -496,7 +498,7 @@ class Chain:
 
             flow_metric = CUMULATIVE_FLOW.get(metric)
             if flow_metric:
-                flow = derive_flow_from_cumulative(total, self.prior.get((name, metric)), name,
+                flow = derive_flow_from_cumulative(total, self.prior_delta.get((name, metric)), name,
                                                    flow_metric, f"{src}:delta", TIER, when,
                                                    prior_date=self.prior_dates.get((name, metric)),
                                                    stock_metric=metric, out=out,

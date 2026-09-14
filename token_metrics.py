@@ -68,14 +68,24 @@ def main() -> int:
         st.record_fetch(run_id, "manual", None, 0, "failed", f"{OVERRIDES_CSV.name}: {e}")
         log.error("manual overrides failed: %s", e)
 
+    # The change-threshold check compares against the newest figure of any date.
     prior_values = st.latest_values()
-    prior_dates = st.last_dates()
-    prior_sources = st.last_sources()
+    # DIFFERENCING is different: its inputs must come from an EARLIER DAY. Two runs on one day
+    # write to the same (date, project, metric) key, so a same-day prior makes the second run
+    # overwrite the first's correct flow with a dust delta — which is exactly what happened to
+    # PancakeSwap's 59,857,159.01 burn. Anchoring on the last earlier-dated row makes a same-day
+    # re-run recompute the identical answer instead of destroying it.
+    today_key = fetch.today().date().isoformat()
+    before = st.values_before(today_key)
+    prior_values_for_delta = {k: v[0] for k, v in before.items()}
+    prior_dates = {k: v[1] for k, v in before.items()}
+    prior_sources = {k: v[2] for k, v in before.items()}
     has_history = {k for k, _ in prior_values.items()}
 
     out = fetch.fetch_all(
         config.PROJECTS, window,
         prior_values=prior_values,
+        prior_values_for_delta=prior_values_for_delta,
         prior_dates=prior_dates,
         prior_sources=prior_sources,
         has_history=has_history,
