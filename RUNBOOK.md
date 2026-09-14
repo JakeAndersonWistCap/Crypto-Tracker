@@ -307,6 +307,15 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**An address can be right and still be the wrong thing to read.** Verifying an address answers
+"does this address exist and hold what we think" — not "does this protocol burn the way we
+assumed". Sky passed every address check and its model was still wrong: it burns through a
+Splitter and an AMM Flapper, never through a dead address. So every project claiming a transfer
+burn now declares a `burn_mechanism` block saying where that model is documented. Where it says
+`assumed`, the figure is still reported but flagged, and a Gap Report row names the document that
+would settle it. `python -c "import config; config.validate_config()"` rejects a transfer burn
+with no block at all.
+
 **A differenced flow needs two observations on two different dates.** Burn flows are derived by
 differencing a cumulative balance, so on the first reading — and on a second reading the same day,
 which upserts onto the same row — there is no interval to difference and no flow is produced. The
