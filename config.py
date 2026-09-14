@@ -991,6 +991,34 @@ PROJECTS = [
         "fee_split": {"share_to_buyback": None, "source_url": "https://worldmobile.io/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
                       "note": "Programmatic revenue buyback. Their metrics page is being rebuilt — Token Terminal or manual meanwhile."},
         "burn_split": None,
+        # STILL None, and the reason is that a RATE cannot be written into a tokens_per_day
+        # schedule without a base and two dates. What is sourced (The Block, Sep 2026) and what
+        # is missing, stated plainly so this is not mistaken for an unchased gap:
+        #
+        #   CONFIRMED  2,000,000,000 WMTX fixed max supply.
+        #   CONFIRMED  29% to Node Operators / Staking IS THE ENTIRE INFLATIONARY EMISSION, so
+        #              cumulative gross issuance is capped at 0.29 x 2bn = 580,000,000 WMTX ever.
+        #   CONFIRMED  11.41% initial ANNUAL INFLATION at the start of the emission.
+        #   CONFIRMED  the rate declines to ZERO.
+        #
+        #   MISSING 1  WHAT THE 11.41% IS A PERCENTAGE OF. Not max supply: 11.41% of 2bn is
+        #              228,200,000 in year one, and any declining curve from there to zero blows
+        #              through the 580,000,000 cap several times over. So the base is circulating
+        #              (or some other) supply, and it is not on file. Back-solving it from the cap
+        #              and an assumed shape would be CONSTRUCTING the number, not sourcing it.
+        #   MISSING 2  THE START DATE. "Initial" annual inflation has no calendar position here;
+        #              WMT migrated to WMTX and it is not established which event starts the clock.
+        #   MISSING 3  THE DECAY SHAPE (linear or otherwise), which the brief already flags as an
+        #              assumption to be confirmed from World Mobile's own docs.
+        #
+        #   INCONSISTENT  "zero by year 20 (~2030)". Year 20 ending in 2030 puts year 1 in 2010,
+        #                 which predates the token. Either the horizon is ~2041 (twenty years from
+        #                 a 2021-ish start) or it is ~9 years (from now to a 2030 end) — the two
+        #                 halves of that phrase cannot both hold, and the daily rate differs by
+        #                 more than 2x depending on which is true.
+        #
+        # Three unknowns and a contradiction cannot be reduced to one tokens_per_day figure. The
+        # schedule stays silent; the Gap Report carries the row.
         "issuance_schedule": None,
         "contracts": {},
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
@@ -999,7 +1027,7 @@ PROJECTS = [
         # Until World Mobile's own page returns. 100,000+ AirNodes as of Feb 2026.
         "manual_quarterly": ["supply_units"],
         "materiality": "low",
-        "notes": "Page being rebuilt. Everything routes through manual_overrides.csv until it returns; all gaps listed in the Gap Report.",
+        "notes": "Page being rebuilt. Everything routes through manual_overrides.csv until it returns; all gaps listed in the Gap Report. ISSUANCE IS SOURCED BUT NOT DECLARABLE: 2bn max supply and a 29% (580,000,000 WMTX) lifetime inflationary cap are confirmed, and so is an 11.41% starting annual rate decaying to zero — but the base the 11.41% applies to, the start date and the decay shape are all missing, and the stated horizon (zero by year 20, ~2030) is self-contradictory. See the comment on the issuance_schedule.",
     },
     {
         "name": "GEODNET", "symbol": "GEOD",
@@ -1191,7 +1219,46 @@ PROJECTS = [
                               "no fee distribution, no buy-and-burn and no revenue sharing. The Checker Node buyback is an NFT "
                               "repurchase, not a token buyback."},
         "burn_split": None,
-        "issuance_schedule": None,
+        # TWO emission streams, declared separately below in this note and summed into one
+        # tokens_per_day step because the schedule loop assigns one rate per day rather than
+        # accumulating concurrent streams. Only ONE of the two can currently be placed on a
+        # calendar, so only that one emits.
+        #
+        # (a) STAKING POOLS — 1,000,000 ATH/week per pool x 2 pools = 2,000,000/week
+        #     = 285,714.29 ATH/day = 104,285,714 ATH/yr (the widely quoted "~104,000,000/yr"
+        #     is 2,000,000 x 52 weeks; by 365 days it is 104,285,714). THE PROMO HAS ENDED and
+        #     NEITHER ITS START NOR ITS END DATE IS ON FILE, so it CANNOT be placed on the
+        #     calendar and is deliberately NOT emitted — a schedule step needs two dates and
+        #     inventing them would inject ~104m ATH/yr into whichever window was guessed.
+        #     Add {"from": ..., "tokens_per_day": 2_000_000 / 7, "until": ...} once both dates
+        #     are sourced. Also confirm no SUCCESSOR promo is currently running.
+        #
+        # (b) CHECKER NODE BASE REWARDS — the step below. 10% of the 42,000,000,000 max supply
+        #     = 4,200,000,000 ATH, emitted daily from TGE 2024-06-12 over four years.
+        #     4,200,000,000 / 1461 days = 2,874,743.33 ATH/day (1,049,281,314 ATH/yr).
+        #
+        #     THE BRIEF'S OWN DAILY FIGURE OF 1,150,684.93 ATH/day IS NOT USED, and the reason is
+        #     arithmetic rather than judgement: 4,200,000,000 / 1,150,684.93 = 3,650 — a TEN-year
+        #     divisor. Over the four-year window that rate totals 1,681,150,683 ATH, which is
+        #     4.00% of supply, not the stated 10%. The three stated quantities (4.2bn total,
+        #     four-year window, 1,150,684.93/day) cannot all be true; the total is anchored twice
+        #     (10% AND 42bn) and the four-year window is anchored by the instructed 2028 expiry,
+        #     so the derived daily rate is the one that goes. IF THE TEN-YEAR WINDOW IS THE TRUTH
+        #     INSTEAD, the fix is one line: divisor 3652, "until" 2034-06-11.
+        "issuance_schedule": {
+            "steps": [
+                # 2024-06-12 .. 2028-06-11 inclusive is exactly 1461 days, so the step emits
+                # the full 4,200,000,000 and not a day more. Past it the schedule goes silent
+                # rather than carrying the rate forward into a pool that has been exhausted.
+                {"from": "2024-06-12", "tokens_per_day": 4_200_000_000 / 1461, "until": "2028-06-11"},
+            ],
+            "source_url": "https://docs.aethir.com/", "source_date": "2026-09-14", "status": "active",
+            "note": "Checker Node base rewards ONLY: 10% of 42bn max supply over four years from TGE "
+                    "2024-06-12, 2,874,743.33 ATH/day. The staking-pool stream (2,000,000 ATH/week "
+                    "across two pools, promo ended) is NOT included because neither its start nor its "
+                    "end date is on file — see the comment above the block. GROSS ISSUANCE IS "
+                    "THEREFORE UNDERSTATED for any window that overlapped that promo.",
+        },
         "contracts": {},
         "buyback_destination": "disputed", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "unresolved",
