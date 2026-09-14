@@ -279,6 +279,116 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     print("sky ok: burn address removed, refuted mechanism refuses any replacement")
 
 
+UNI_ETH_ADDR = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+
+
+class _UniStub:
+    """Only the mainnet UNI token resolves, so the Unichain path refuses and the sum stays PARTIAL."""
+
+    def __init__(self, balance):
+        self.balance = balance
+
+    def has_code(self, chain, address):
+        return True
+
+    def symbol_matches(self, chain, address, expected):
+        ok = (chain, address) == ("ethereum", UNI_ETH_ADDR)
+        return ok, "UNI" if ok else ""
+
+    def scaled(self, chain, address, call, *args):
+        return self.balance if call == "balanceOf" else 1_000_000_000.0
+
+
+def test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn():
+    """The Firepit is what release() is CALLED ON. The UNI goes to 0x...dEaD.
+
+    Reading the executor returned 0 forever while Uniswap was demonstrably burning 100k+ UNI a
+    day — a permanent zero on an archetype 4 name, with a plausible story attached to it.
+    """
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = _UniStub(105_000_000.0)
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Uniswap"]], None, out)
+    df = out.frame()
+
+    burn = df[df.metric == "burn_address_balance"]
+    assert len(burn) == 1 and burn.value.iloc[0] == 105_000_000.0
+    assert "burn_dead" in burn.source.iloc[0], f"the DESTINATION must be the source, got {burn.source.iloc[0]}"
+    assert "fire_pit" not in burn.source.iloc[0], "the executing contract must not serve the burn metric"
+    assert ":PARTIAL" in burn.source.iloc[0], "Unichain's burn path is separate and still unknown"
+
+    # the executors are kept, and read nothing
+    reference = [e.message for e in out.log if "reference only" in e.message]
+    assert len(reference) == 2 and all("burn_executor" in m for m in reference), \
+        "both Firepits stay in config for the mechanism, and serve no metric"
+    print("uniswap ok: dead address read, executors kept as reference, figure marked PARTIAL")
+
+
+def test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config():
+    """The check that would have caught the Firepit error on its own, independent of any read."""
+    uni = config.PROJECT_BY_NAME["Uniswap"]["contracts"]
+    assert uni["fire_pit"]["kind"] == "burn_executor"
+    assert uni["burn_dead"]["address"] == config.BURN_ADDRESSES["dead"]
+
+    uni["fire_pit"]["kind"] = "burn_address_balance"          # exactly the old, wrong config
+    try:
+        errs = config.validate_config(raise_on_error=False)
+        assert any("not a canonical dead address" in e and "fire_pit" in e for e in errs), \
+            f"config must reject an executor read as a destination, got {errs}"
+    finally:
+        uni["fire_pit"]["kind"] = "burn_executor"
+    assert not config.validate_config(raise_on_error=False)
+
+    # GEODNET's Solana sink is a legitimate destination that is not a dead address, and must NOT
+    # trip the check: it carries its own kind, and the check only inspects EVM burn_address_balance.
+    geo = config.PROJECT_BY_NAME["GEODNET"]["contracts"]["burn_solana_token_account"]
+    assert geo["kind"] == "spl_token_account" and not geo["address"].startswith("0x")
+    assert not config.validate_config(raise_on_error=False), "the Solana sink must not be flagged"
+    print("destination check ok: executor rejected, non-EVM sink exempt")
+
+
+def test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected():
+    """100m UNI was burned in December 2025 alone, so a cumulative under that is a broken read.
+
+    This is the backstop for the Firepit class of error: the old config would have produced 0,
+    and a 0 that is REJECTED to the Review Queue is recoverable in a way a stored 0 is not.
+    """
+    from fetch.validate import validate_frame
+
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = _UniStub(0.0)                       # what the old fire_pit read produced
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Uniswap"]], None, out)
+    kept = validate_frame(out.frame(), {}, out)
+    assert "burn_address_balance" not in set(kept.metric), "a sub-100m cumulative must not be stored"
+    assert any(r["metric"] == "burn_address_balance" and r["reason"] == "out_of_bounds"
+               and r["action"] == "rejected" for r in out.review)
+    lo, _ = config.sanity_bounds("Uniswap", "burn_address_balance")
+    assert lo == 100_000_000, "the floor is the December 2025 retroactive burn, not a guess"
+    print("uniswap floor ok: a zero is rejected to the Review Queue, not stored")
+
+
+def test_the_three_burn_failure_modes_stay_distinct():
+    """Sky, Uniswap and Venice failed in three different ways. Collapsing them loses the fixes."""
+    sky = config.burn_mechanism(config.PROJECT_BY_NAME["Sky"])
+    uni = config.burn_mechanism(config.PROJECT_BY_NAME["Uniswap"])
+    ven = config.burn_mechanism(config.PROJECT_BY_NAME["Venice AI"])
+
+    # 1. wrong mechanism: no address can model it, so there is no burn contract at all
+    assert sky["status"] == "refuted" and sky["model"] == "amm_swap_to_receiver"
+    assert not [v for v in config.PROJECT_BY_NAME["Sky"]["contracts"].values()
+                if v["kind"] == "burn_address_balance"]
+
+    # 2. right mechanism, wrong address: mechanism confirmed, and the fix was the destination
+    assert uni["status"] == "confirmed" and uni["model"] == "transfer_to_dead_address"
+    assert config.PROJECT_BY_NAME["Uniswap"]["contracts"]["burn_dead"]["kind"] == "burn_address_balance"
+
+    # 3. undocumented: neither confirmed nor refuted, and it must not inherit either answer
+    assert ven["status"] == "assumed", "Venice is unresolved and resembles neither of the others"
+    assert ven["source_url"] is None, "its only recorded source was the EIP-20 spec, which evidences nothing"
+    print("taxonomy ok: refuted / confirmed-but-misread / undocumented stay three different problems")
+
+
 def test_every_transfer_burn_declares_where_its_model_came_from():
     """The Sky lesson, enforced: a project cannot inherit the dead-address assumption silently."""
     for p in config.PROJECTS:
@@ -1247,6 +1357,10 @@ if __name__ == "__main__":
                test_a_single_observation_never_produces_a_zero_flow,
                test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_address,
                test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism,
+               test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn,
+               test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config,
+               test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected,
+               test_the_three_burn_failure_modes_stay_distinct,
                test_every_transfer_burn_declares_where_its_model_came_from,
                test_an_assumed_mechanism_flags_the_figure_without_withdrawing_it,
                test_a_real_burn_is_not_flagged, test_sky_split_history_cannot_resolve_across_the_april_overhaul,

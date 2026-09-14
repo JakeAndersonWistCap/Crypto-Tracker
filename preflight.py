@@ -27,7 +27,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import config  # noqa: E402
-from fetch.chain import METHOD_REQUIRED_KINDS, READABLE_BURN_METHODS, allow_unverified, rpc_endpoints  # noqa: E402
+from fetch.chain import (METHOD_REQUIRED_KINDS, READABLE_BURN_METHODS, REFERENCE_ONLY_KINDS,  # noqa: E402
+                         allow_unverified, rpc_endpoints)
 from fetch.scrape import entry_ready, load_registry  # noqa: E402
 
 RULE = "=" * 100
@@ -74,8 +75,17 @@ def tier2_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]
                       "ve_total_supply": "locked_tokens", "buyback_fund_balance": "buyback_fund_balance",
                       "spl_mint": "total_supply", "spl_token_account": "burn_address_balance"}.get(c["kind"], key)
             where = f"{key} on {c['chain']}"
+            # Reference-only entries are kept in config for the mechanism (and for eth_getCode),
+            # and no metric is read from them. The plan must say that, or a Firepit reads as a
+            # totalSupply call that never happens.
+            if c["kind"] in REFERENCE_ONLY_KINDS:
+                skipped.append((name, c["kind"], f"{where}: reference only, no metric read from it"))
+                continue
             if c.get("ambiguous"):
                 skipped.append((name, metric, f"{where}: address AMBIGUOUS, none chosen"))
+                continue
+            if c["kind"] == "burn_address_balance" and config.burn_mechanism(p).get("status") == "refuted":
+                skipped.append((name, metric, f"{where}: burn MECHANISM refuted — no address balance models it"))
                 continue
             if c["kind"] == "burn_address_balance" and p.get("burn_read_method") not in READABLE_BURN_METHODS:
                 skipped.append((name, metric, f"{where}: burn is {p.get('burn_read_method')}, not a transfer"))

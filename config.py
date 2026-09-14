@@ -308,6 +308,33 @@ TOKEN_STANDARDS = {"erc20", "erc721"}
 #              specific document that would settle it. NOT refused: withdrawing a working
 #              figure on a suspicion is its own kind of wrong.
 #   refuted    the docs describe something else. Nothing is read; the burn figure does not exist.
+# THREE DISTINCT FAILURE MODES, all found within two days, all of which produced a burn figure
+# that was wrong in a way nothing in the sheet revealed. They are NOT variations of one problem
+# and must not be collapsed into a single "burn is unreliable" caveat — each has a different
+# symptom, a different check and a different fix:
+#
+#   1. WRONG MECHANISM          Sky. The protocol does not burn by transferring to a dead address
+#                               at all — it swaps on an AMM and sends proceeds to a configurable
+#                               receiver. No address balance can model it. SYMPTOM: a zero that
+#                               is genuinely correct and completely beside the point. FIX: remove
+#                               the address entirely; do not substitute another.
+#                               CHECK: _check_burn_mechanisms (status refuted -> read refused).
+#
+#   2. RIGHT MECHANISM, WRONG ADDRESS   Uniswap. Tokens really do go to a dead address, and the
+#                               config read the balance of the contract that EXECUTES the burn
+#                               instead of the destination. SYMPTOM: a permanent zero on a
+#                               protocol demonstrably burning 100k+ tokens a day. FIX: read the
+#                               destination; keep the executor as kind 'burn_executor'.
+#                               CHECK: _check_burn_destinations.
+#
+#   3. UNDOCUMENTED MECHANISM   Venice AI. Neither confirmed nor refuted, and the address is
+#                               uncorroborated too. SYMPTOM: nothing — the figure looks fine and
+#                               may be fine. FIX: read the protocol's own material.
+#                               CHECK: none possible; it needs a human. Status stays 'assumed'
+#                               and every figure it produces is flagged.
+#
+# Mode 3 is not a milder version of 1 or 2. It is the state the other two were in before anyone
+# looked, and its resolution could turn out to be either of them — or nothing at all.
 BURN_MECHANISM_STATUSES = {"confirmed", "assumed", "refuted"}
 
 BURN_MECHANISM_MODELS = {
@@ -1158,10 +1185,35 @@ PROJECTS = [
             "token_jar": _contract("0xf38521f130fcCF29dB1961597bc5d2B60F995f85", "ethereum", "buyback_fund_balance", "UNI",
                                    UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                    purpose="TokenJar (AssetSink), mainnet — where fees accumulate before holders elect to burn."),
-            "fire_pit": _contract("0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721", "ethereum", "burn_address_balance", "UNI",
+            # THE EXECUTING CONTRACT IS NOT THE DESTINATION. This entry used to be kind
+            # "burn_address_balance", which read the balance of the contract you CALL rather than
+            # the address the UNI ends up at — so it returned 0 while 100k+ UNI a day was
+            # demonstrably being burned. The zero was a BUG, not a finding.
+            #
+            # Recording the wrong inference too, because it was nearly believed: the zero was read
+            # as "plausible, since Uniswap's burn is holder-elected and perhaps nobody elected".
+            # That reasoning was WRONG. Burns are publicly reported — 134,000 UNI on 2026-06-05, a
+            # record; 106,000 UNI on an ordinary day in July 2026 — on top of the December 2025
+            # retroactive burn of 100,000,000 UNI. Holder-election explains a SMALL figure; it can
+            # never explain a zero against reported burns. "A plausible story for a suspicious
+            # number" is how a wrong address survives.
+            "fire_pit": _contract("0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721", "ethereum", "burn_executor", "UNI",
                                   UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                   holder_has_code=True,   # the Releaser is a real contract, unlike a dead address
-                                  purpose="Releaser (Firepit), mainnet — TRANSFER BURN destination for holder-elected burns."),
+                                  purpose="Releaser (Firepit), mainnet — the contract release() is CALLED ON. "
+                                          "Reference only: no metric is read from it. Claiming TokenJar fees "
+                                          "requires burning an equivalent value of UNI through here, and the UNI "
+                                          "goes to the dead address, not into this contract."),
+            # THE ACTUAL DESTINATION.
+            "burn_dead": _contract(BURN_ADDRESSES["dead"], "ethereum", "burn_address_balance", "UNI",
+                                   "https://vote.uniswapfoundation.org/proposals/93",
+                                   verified="2026-09-14", provenance="protocol governance",
+                                   supply_is_partial=True,
+                                   partial_reason="Mainnet only. Unichain's burn path is separate and its bridged "
+                                                  "UNI token address is still unknown, so this UNDERSTATES the "
+                                                  "total. See the open question on the Unichain UNI address.",
+                                   purpose="TRANSFER BURN destination — burned UNI is sent here and permanently "
+                                           "removed from circulation, per the UNIfication proposal."),
             "v3_fee_adapter": _contract("0x5E74C9f42EEd283bFf3744fBD1889d398d40867d", "ethereum", "buyback_fund_balance", "UNI",
                                         UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                         purpose="V3FeeAdapter, mainnet."),
@@ -1171,23 +1223,33 @@ PROJECTS = [
             "token_jar_unichain": _contract("0xD576BDF6b560079a4c204f7644e556DbB19140b5", "unichain", "buyback_fund_balance", "UNI",
                                             UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                             purpose="TokenJar, Unichain — the second fee accumulation path."),
-            "fire_pit_unichain": _contract("0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB", "unichain", "burn_address_balance", "UNI",
+            "fire_pit_unichain": _contract("0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB", "unichain", "burn_executor", "UNI",
                                            UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                            holder_has_code=True,   # OptimismBridgedResourceFirepit is a real contract
                                            purpose="OptimismBridgedResourceFirepit, Unichain — the second TRANSFER BURN path. "
                                                    "Summed with the mainnet fire pit; omitting it understates total burn."),
         },
         "burn_mechanism": {
-            "model": "transfer_to_dead_address", "status": "assumed",
-            "source_url": "https://docs.uniswap.org/contracts/protocol-fee/deployments",
-            "source_date": None,
-            "note": "ASSUMED, and worth looking at closely — this is the closest structural match to Sky. "
-                    "The source on file is a DEPLOYMENTS LIST, which evidences addresses and nothing else. "
-                    "More to the point, the Firepit is a DEPLOYED CONTRACT, not a dead address: tokens sit "
-                    "in it. Whether it destroys them (a burn() call, an unrecoverable sink) or merely HOLDS "
-                    "them is precisely the question Sky's architecture turned out to answer the wrong way. "
-                    "A contract balance read as 'cumulative burned' assumes destruction. Both fire pits "
-                    "currently read zero, which settles nothing either way.",
+            "model": "transfer_to_dead_address", "status": "confirmed",
+            "source_url": "https://vote.uniswapfoundation.org/proposals/93",
+            "source_date": "2026-09-14",
+            "note": "CONFIRMED. Fees accumulate in TokenJar contracts; claiming them requires burning an "
+                    "equivalent value of UNI through Firepit.release(), and the burned UNI is sent to "
+                    "Ethereum's 0x...dEaD address, permanently removing it from circulation. The December "
+                    "2025 retroactive burn sent 100,000,000 UNI to a dead address. Mechanism documented in "
+                    "the UNIfication proposal (vote.uniswapfoundation.org/proposals/93) and in "
+                    "docs.uniswap.org/contracts/protocol-fee/guides/best-practices, which describes "
+                    "release() and its nonce mechanism. UNLIKE SKY, the dead-address model is right here — "
+                    "what was wrong was WHICH ADDRESS we read: the executing contract rather than the "
+                    "destination. See the contracts block.",
+        },
+        # A burn of this size cannot come back near zero. The December 2025 retroactive burn alone
+        # was 100,000,000 UNI, before ~4-5m/yr of ongoing burns, and burns are publicly reported at
+        # 100k+ UNI on ordinary days. So a cumulative under 100m means the read is pointing at the
+        # wrong thing AGAIN, and the figure is REJECTED to the Review Queue rather than stored —
+        # which is exactly what the old fire_pit read would have produced.
+        "sanity": {
+            "burn_address_balance": {"min": 100_000_000, "max": 1_000_000_000},
         },
         "burn_read_method": "transfer",
         # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
@@ -2034,27 +2096,23 @@ OPEN_QUESTIONS = [
                       "as a burn.",
     },
     {
-        "project": "Uniswap", "topic": "the Fire Pit has also never received a token — same check, weaker case",
-        "severity": 1,
-        "reason": "Raised here so it is not left implicit in Sky's question: Uniswap's fire_pit balance is "
-                  "also EXACTLY 0, on a single observation, and the same one-way-address argument applies "
-                  "— nothing has ever arrived. TWO DIFFERENCES FROM SKY, both pointing the other way. "
-                  "First, Uniswap's burn is HOLDER-ELECTED, so a genuine zero is entirely plausible: if "
-                  "no holder has elected to burn, nothing has been sent, and 0 is the correct cumulative "
-                  "figure rather than a symptom. Second, the Uniswap read is already marked PARTIAL, so "
-                  "its components are not all known. That is weaker evidence than Sky's, so Uniswap's "
-                  "destination is NOT marked disputed and its zero IS still stored — it is flagged, not "
-                  "withheld. Treating the two identically would be an assumption in the opposite "
-                  "direction, on materially different evidence.",
-        "suggestion": "TWO questions now, and the second was added by the Sky finding. (1) Confirm from "
-                      "Uniswap's own documentation whether any holder-elected burn has ever executed; if "
-                      "none has, the zero is simply correct and this closes. (2) Confirm what the Firepit "
-                      "DOES with what it receives. It is a DEPLOYED CONTRACT, not a dead address — the "
-                      "source on file is a deployments list, which evidences the address and nothing about "
-                      "the mechanism. A contract balance read as 'cumulative burned' assumes destruction, "
-                      "and Sky is the case where that assumption was false while every address was right. "
-                      "If the Firepit holds rather than destroys, this is a treasury-style holding and "
-                      "does not belong in a burn column.",
+        "project": "Uniswap", "topic": "RESOLVED — the zero was the wrong address, not a genuine absence of burn",
+        "severity": 2,
+        "reason": "KEPT AS A CORRECTION RATHER THAN DELETED, because the wrong reasoning was nearly "
+                  "believed and would otherwise be re-derived. The Fire Pit balance read 0 and that was "
+                  "explained as 'plausible, since Uniswap's burn is holder-elected and perhaps nobody "
+                  "elected'. THAT REASONING WAS WRONG. The burns are publicly reported — 134,000 UNI on "
+                  "2026-06-05, a record; 106,000 UNI on an ordinary day in July 2026 — on top of the "
+                  "December 2025 retroactive burn of 100,000,000 UNI. Holder-election explains a SMALL "
+                  "figure. It can never explain a zero against reported burns, and reaching for a story "
+                  "that makes a suspicious number acceptable is how a wrong address survives. The actual "
+                  "cause: balanceOf was called on the Firepit, the contract release() is CALLED ON, "
+                  "rather than on 0x...dEaD where the UNI lands. Fixed; the mechanism is now confirmed "
+                  "and a config check (_check_burn_destinations) rejects the same mistake anywhere else.",
+        "suggestion": "Nothing to do on the mainnet figure. What remains open is UNICHAIN: its burn path "
+                      "is separate, its bridged UNI token address is still unknown, and the mainnet "
+                      "dead-address figure therefore UNDERSTATES the total and is marked PARTIAL. See the "
+                      "open question on the Unichain UNI address — that, not this, is the live item.",
     },
     {
         "project": "Sky", "topic": "the April 2026 buyback reduction is not in the fee-split history",
@@ -2408,9 +2466,48 @@ def _check_burn_mechanisms() -> list[str]:
     return errors
 
 
+def _check_burn_destinations() -> list[str]:
+    """Under a dead-address model, the address we READ must be a dead address.
+
+    The SECOND axis of the burn problem, and it needs its own check because it is independent of
+    the first. Uniswap's mechanism was right — fees are claimed by burning UNI through
+    Firepit.release(), and the UNI goes to 0x...dEaD — and the config still read the balance of
+    the Firepit, which is the contract you CALL, not the address the tokens land at. A confirmed
+    mechanism attached to an executing contract returns zero forever and looks like a protocol
+    that never burns.
+
+    So: on a transfer_to_dead_address model, an EVM burn_address_balance entry must point at a
+    canonical dead address. Non-EVM sinks (GEODNET's Solana burn token account) are a different
+    shape and are skipped; anything else needs destination_confirmed with a source saying why
+    this particular address is where tokens come to rest.
+    """
+    errors = []
+    dead = {a.lower() for a in BURN_ADDRESSES.values()}
+    for p in PROJECTS:
+        if burn_mechanism(p).get("model") != "transfer_to_dead_address":
+            continue
+        for key, spec in (p.get("contracts") or {}).items():
+            if spec.get("kind") != "burn_address_balance":
+                continue
+            address = str(spec.get("address") or "")
+            if not address.startswith("0x"):
+                continue                      # a non-EVM sink is not a dead address by construction
+            if address.lower() in dead or spec.get("destination_confirmed"):
+                continue
+            errors.append(
+                f"{p['name']}: contract {key!r} is read as burn_address_balance under a "
+                f"transfer_to_dead_address model, but {address} is not a canonical dead address. It is "
+                f"likely the contract that EXECUTES the burn rather than the address tokens land at — "
+                f"the Uniswap Firepit error, which returns 0 forever and reads as a protocol that never "
+                f"burns. Point it at the dead address and keep the executing contract as kind "
+                f"'burn_executor', or set destination_confirmed with a source if this address really is "
+                f"where the tokens come to rest.")
+    return errors
+
+
 def validate_config(raise_on_error: bool = True) -> list[str]:
     errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
-              + _check_burn_mechanisms())
+              + _check_burn_mechanisms() + _check_burn_destinations())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

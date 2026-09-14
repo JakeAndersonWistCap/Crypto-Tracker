@@ -59,6 +59,13 @@ KIND_METRIC = {
     "spl_token_account": "burn_address_balance",
 }
 
+# Contracts kept for reference, that serve NO metric. A burn executor is the contract release()
+# is called on — real, needed for the mechanism and for eth_getCode, and NOT where the tokens end
+# up. Reading its balance as "cumulative burned" is what returned 0 for Uniswap while 100k+ UNI a
+# day was being burned to the dead address. Declaring the kind keeps the entry in config without
+# letting it be mistaken for a destination again.
+REFERENCE_ONLY_KINDS = {"burn_executor"}
+
 # A cumulative stock that also yields a flow once differenced against the prior observation.
 CUMULATIVE_FLOW = {
     "burn_address_balance": "gross_burn_tokens",
@@ -331,6 +338,10 @@ class Chain:
                 if not self._gate(p, key, spec, out):
                     continue
                 chain, kind = spec["chain"], spec["kind"]
+                if kind in REFERENCE_ONLY_KINDS:
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                            f"{key}: {kind}, reference only — no metric read from it", TIER))
+                    continue
                 metric = KIND_METRIC.get(kind)
                 if metric is None:
                     out.unconfigured(SOURCE, name, f"{key}: unknown contract kind {kind!r}", TIER)
