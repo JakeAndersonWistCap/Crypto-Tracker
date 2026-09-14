@@ -151,6 +151,64 @@ def test_chain_reads_verified_and_derives_flow():
     print("tier 2 read ok:", by)
 
 
+def test_an_orphaned_row_and_a_changed_measuring_point_are_RED_not_amber():
+    """Both were asserting false figures at full confidence. Neither is low-confidence — both are
+    known-false, and age and status say nothing about either."""
+    from build_workbook import confidence_for
+
+    asof = pd.Timestamp("2026-09-14")
+    orphan = {"status": "ok", "source": "chain:ethereum:burn_zero:delta", "n_points": 2,
+              "entered_on": "", "measuring_points": ("chain:ethereum:burn_zero",)}
+    band, why = confidence_for("Sky", "gross_burn_tokens", orphan, asof)
+    assert band == "RED", f"a row from a removed contract must not read as usable, got {band}"
+    assert "ORPHANED" in why and "burn_zero" in why
+
+    switched = {"status": "ok", "source": "chain:ethereum:burn_dead:PARTIAL:delta", "n_points": 3,
+                "entered_on": "",
+                "measuring_points": ("chain:ethereum:fire_pit", "chain:ethereum:burn_dead")}
+    band, why = confidence_for("Uniswap", "gross_burn_tokens", switched, asof)
+    assert band == "RED", f"a series read from two addresses must not read as usable, got {band}"
+    assert "MEASURING POINT CHANGED" in why
+    assert "PARTIAL" not in why, \
+        "the PARTIAL note says it UNDERSTATES; this figure is ~30x overstated, so it must not lead"
+
+    clean = {"status": "ok", "source": "chain:ethereum:burn_dead:PARTIAL", "n_points": 9,
+             "entered_on": "", "measuring_points": ("chain:ethereum:burn_dead",)}
+    assert confidence_for("Uniswap", "burn_address_balance", clean, asof)[0] == "AMBER", \
+        "one consistent measuring point is not RED — PARTIAL and composition still qualify it"
+    print("orphan/switch guard ok: both forced RED, a clean single-source read is not")
+
+
+def test_impossible_relations_have_NO_tolerance():
+    """Aerodrome: locked 989,654,626.93 against circulating 988,795,723.09 — a 0.087% breach.
+
+    The first version of this check had a half-percent buffer and silently passed it. These are
+    identities, not estimates: a buffer is not caution, it is a licence for a contradiction to
+    sit in the sheet as long as it stays small, and a small contradiction is the unnoticed one.
+    """
+    from fetch.validate import check_impossible_relations
+
+    rows = [("Aerodrome", "locked_tokens", 989_654_626.93, "chain:base:ve"),
+            ("Aerodrome", "circulating_supply", 988_795_723.09, "coingecko"),
+            ("Uniswap", "locked_tokens", 100.0, "chain:x"),
+            ("Uniswap", "circulating_supply", 1_000.0, "coingecko")]
+    df = pd.DataFrame([{"date": pd.Timestamp("2026-09-14"), "project": pr, "metric": m,
+                        "value": v, "source": src, "tier": 2} for pr, m, v, src in rows])
+    out = FetchOutput()
+    check_impossible_relations(df, out)
+
+    flagged = [r for r in out.review if r["reason"] == "impossible_relation"]
+    assert len(flagged) == 1 and flagged[0]["project"] == "Aerodrome", \
+        f"a 0.087% breach of an identity must flag, got {len(flagged)}"
+    assert "989,654,626.93" in flagged[0]["source"] and "988,795,723.09" in flagged[0]["source"], \
+        "both figures and both sources must be named, or it cannot be investigated"
+    assert not [r for r in flagged if r["project"] == "Uniswap"], "a sane pair must stay silent"
+
+    # the check must not need to know anything about Aerodrome to catch it
+    assert any("impossible" in g["metric"] for g in out.gaps)
+    print("impossible-relation ok: 0.087% breach caught, sane pair silent")
+
+
 def test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow():
     """The Uniswap 111m fake burn, in a test.
 
@@ -522,7 +580,9 @@ def test_maple_indeterminate_destination_lands_in_the_AMBER_band_automatically()
     from build_workbook import confidence_for
 
     asof = pd.Timestamp("2026-09-14")
-    clean = {"status": "ok", "source": "chain:maple", "n_points": 9, "entered_on": ""}
+    # a source with no contract behind it, so the orphan check is not what is under test here
+    clean = {"status": "ok", "source": "dune:4242", "n_points": 9, "entered_on": "",
+             "measuring_points": ("dune:4242",)}
 
     band, why = confidence_for("Maple", "actual_buyback_tokens", dict(clean), asof)
     assert band == "AMBER", f"an indeterminate destination must not read as GREEN, got {band}"
@@ -1667,6 +1727,8 @@ def test_manual_overrides_suppress_gaps():
 if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
+               test_an_orphaned_row_and_a_changed_measuring_point_are_RED_not_amber,
+               test_impossible_relations_have_NO_tolerance,
                test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow,
                test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
                test_a_single_observation_never_produces_a_zero_flow,

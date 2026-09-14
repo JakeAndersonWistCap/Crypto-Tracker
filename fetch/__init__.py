@@ -32,7 +32,8 @@ from .llama import DefiLlama
 from .schedule import Schedule
 from .tron import TronNode
 from .scrape import Scrape, entry_ready, load_registry
-from .validate import check_cross_checks, check_reference_values, validate_frame
+from .validate import (check_cross_checks, check_impossible_relations, check_reference_values,
+                       validate_frame)
 
 log = logging.getLogger("token_metrics.fetch")
 
@@ -331,6 +332,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"])
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
+    check_impossible_relations(out.frame(), out)
 
     registry_reasons = {}
     for e in load_registry():

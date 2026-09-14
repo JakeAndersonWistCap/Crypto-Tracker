@@ -197,7 +197,11 @@ METRICS = {
     # 8683038 publishes the same measure twice, as perc_staked (0.17452) and perc_staked_cnt
     # (17.452), and mapping the wrong one would put a plausible-looking figure 100x too large in
     # the sheet. At this bound the x100 column is REJECTED to the Review Queue instead.
-    "lock_rate_pct":              {"label": "Lock rate (share staked, as published)",
+    # NOT the same measure as locked_tokens / circulating_supply, and the two must not be read as
+    # one. This is Ether.fi's own perc_staked from Dune 8683038, over ITS denominator (17.45%);
+    # dividing our locked_tokens by CoinGecko's circulating gives 14.65%. Neither is wrong — they
+    # count different things as circulating — so the label says which this is.
+    "lock_rate_pct":              {"label": "Lock rate, as PUBLISHED by the protocol (own denominator)",
                                    "kind": "stock", "unit": "pct", "archetypes": [3], "tiers": [3, 4],
                                    "sanity_min": 0, "sanity_max": 1.0, "only_projects": ["Ether.fi"]},
     # Holder count. only_projects because Ether.fi is the one project with a source for it today,
@@ -434,6 +438,35 @@ def destination_indeterminate(project_name: str, metric: str) -> dict | None:
 def is_manual_quarterly(project_name: str, metric: str) -> bool:
     p = PROJECT_BY_NAME.get(project_name) or {}
     return metric in (p.get("manual_quarterly") or ())
+
+
+def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
+    """Contract keys named in a stored row's source that no longer exist in config.
+
+    THE STORE UPSERTS AND NEVER DELETES, so removing a contract stops new rows and leaves every
+    old one in place — with its original source string, and reading as current until it ages past
+    the stale threshold. Sky's burn_zero rows outlived the contract's removal by days and showed
+    as a measured zero on a refuted mechanism, at full confidence.
+
+    A source naming a contract config no longer has is, by definition, measuring something this
+    tool has decided not to measure. That is not a low-confidence figure; it is not a figure.
+    """
+    src = str(source or "")
+    if not src.startswith("chain:"):
+        return []                       # coingecko, dune, schedule, derived — no contract behind it
+    body = ":".join(part for part in src.split(":")[1:] if part not in ("PARTIAL", "delta"))
+    if body.startswith("sum(") and body.endswith(")"):
+        pieces = body[4:-1].split("+")
+    else:
+        pieces = [body]
+    contracts = (PROJECT_BY_NAME.get(project_name) or {}).get("contracts") or {}
+    missing = []
+    for piece in pieces:
+        bits = piece.split(":")
+        key = bits[-1] if bits else ""
+        if key and key not in contracts:
+            missing.append(key)
+    return missing
 
 
 def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:

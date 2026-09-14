@@ -28,6 +28,7 @@ from openpyxl.utils import get_column_letter
 
 import config
 from config import GLOBALS, METRICS, PROJECTS
+from fetch.base import _measuring_point
 
 # ---------------------------------------------------------------------------------------
 # Styles
@@ -177,6 +178,22 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                        "gap": "unresolved — see the Gap Report",
                        "n/a": "not applicable to this project"}[row["status"]]
 
+    # RED, not AMBER: these two are not low-confidence figures, they are known-false ones. Age and
+    # status say nothing about either, which is how both reached the sheet at full confidence.
+    orphans = config.orphaned_contract_keys(project, row.get("source") or "")
+    if orphans:
+        return "RED", (f"ORPHANED — this row was written by contract(s) {', '.join(orphans)}, which are "
+                       f"no longer in config. The store upserts and never deletes, so it survived their "
+                       f"removal. It measures something this tool has decided not to measure, and its "
+                       f"age says nothing about that. Clear it from the store; see RUNBOOK.")
+    points = row.get("measuring_points") or ()
+    if len(points) > 1:
+        return "RED", (f"MEASURING POINT CHANGED — this series was read from {len(points)} different "
+                       f"places over its history ({', '.join(sorted(points))}). A window spanning the "
+                       f"change reports the move between two different addresses as though it were a "
+                       f"flow. The figure is not understated or overstated by a little; it is the gap "
+                       f"between two unrelated measurements. Clear the superseded rows.")
+
     why = []
     # correct, and answering a different question from the column it sits in (failure mode 4)
     nc = config.is_non_comparable(project, metric)
@@ -244,7 +261,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             row = {"key": f"{name}|{metric}", "project": name, "metric": metric, "label": m["label"],
                    "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
-                   "status": "missing", "last_success": "", "entered_on": "", "note": ""}
+                   "status": "missing", "last_success": "", "entered_on": "", "note": "",
+                   "measuring_points": ()}
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
                 if gap is not None:
@@ -258,6 +276,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             s = g.set_index("date")["value"]
             latest = g.iloc[-1]
             row["source"] = latest["source"]
+            # Every distinct place this series was read from. More than one means the window can
+            # span a change of address, and the delta across it is not a flow.
+            row["measuring_points"] = tuple({_measuring_point(v) for v in g["source"].dropna().unique()})
             row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))

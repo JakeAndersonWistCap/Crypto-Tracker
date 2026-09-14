@@ -100,6 +100,71 @@ def check_reference_values(df: pd.DataFrame, out, tolerance: float = 0.005) -> N
                                 source=ref.get("source", ""), tier=None)
 
 
+REASON_IMPOSSIBLE = "impossible_relation"
+
+# Relations between two metrics that CANNOT both be right. Each is an identity, not a heuristic:
+# no tolerance, no judgement about the project, and true of every token ever issued.
+#
+# This class of check did not exist. Every validation until now looked at ONE figure — its bounds,
+# its movement, its source — so two figures that were each individually plausible could contradict
+# each other and both pass. Aerodrome's locked supply exceeded its circulating supply and both
+# read GREEN, because nothing ever compared them.
+IMPOSSIBLE_RELATIONS = [
+    ("locked_tokens", "circulating_supply",
+     "tokens cannot be locked that are not in circulation"),
+    ("burn_address_balance", "total_supply",
+     "more tokens cannot have been burned than were ever issued"),
+    ("circulating_supply", "total_supply",
+     "circulating supply cannot exceed total supply"),
+    ("treasury_holding_tokens", "total_supply",
+     "a treasury cannot hold more tokens than exist"),
+]
+
+
+def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) -> None:
+    """Flag pairs of figures that contradict each other, whatever each looks like alone.
+
+    THE TOLERANCE IS ZERO, and that is the whole point. The first version of this had half a
+    percent, to absorb the two figures being read at slightly different moments from different
+    sources — and it silently passed the case it was written for: Aerodrome's locked supply
+    exceeds its circulating supply by 0.087%, comfortably inside the buffer.
+
+    These are identities, not estimates. Tokens cannot be locked that are not in circulation, by
+    any margin, ever. A buffer here is not caution, it is a licence for the contradiction to sit
+    in the sheet as long as it stays small — and a small contradiction is the one nobody notices.
+    The float epsilon below guards floating-point equality and nothing else.
+    """
+    epsilon = 1e-9
+    if df is None or df.empty:
+        return
+    latest = (df.sort_values("date").groupby(["project", "metric"], as_index=False).tail(1))
+    by_key = {(r.project, r.metric): (r.value, r.date, r.source)
+              for r in latest.itertuples(index=False)}
+    for project in {p for p, _ in by_key}:
+        for greater, lesser, why in IMPOSSIBLE_RELATIONS:
+            a, b = by_key.get((project, greater)), by_key.get((project, lesser))
+            if a is None or b is None or not b[0]:
+                continue
+            if a[0] <= b[0] * (1 + max(tolerance, epsilon)):
+                continue
+            out.review_item(project, greater, REASON_IMPOSSIBLE, ACTION_FLAGGED,
+                            value=a[0], prior_value=b[0], date=a[1],
+                            source=f"{greater} ({a[0]:,.2f} from {a[2]}) EXCEEDS {lesser} "
+                                   f"({b[0]:,.2f} from {b[2]}) — {why}", tier=None)
+            out.gap(project, f"[data] {greater} exceeds {lesser}, which is impossible",
+                    reason=(f"{greater} reads {a[0]:,.2f} against {lesser} at {b[0]:,.2f}, and {why}. "
+                            f"Both figures passed every check that looks at one number at a time — "
+                            f"their bounds, their movement, their source — because nothing compared "
+                            f"them to each other. One of the two is measuring something other than "
+                            f"what its label says. Sources: {a[2]} and {b[2]}."),
+                    tiers_attempted="-",
+                    suggestion=(f"Establish which. The usual cause is a denominator mismatch: the two "
+                                f"figures come from different providers who count different things — an "
+                                f"escrow balance that includes tokens the price feed does not treat as "
+                                f"circulating, for instance. Fix the label or the read; do not widen "
+                                f"the tolerance, which would only hide it."))
+
+
 def check_cross_checks(df: pd.DataFrame, out) -> None:
     """Compare two independent sources for the same figure and FLAG any divergence.
 
