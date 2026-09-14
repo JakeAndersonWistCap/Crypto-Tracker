@@ -232,6 +232,11 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     # closure itself is recorded in config.UNAVAILABLE and rendered on Config & Sources, so it
     # is suppressed here rather than lost.
     closed = {k for k in getattr(config, "UNAVAILABLE_BY_KEY", {})}
+    # Figures that move annually and are HAND-ENTERED once a quarter are not unresolved gaps.
+    # Reporting them as such every run trains the reader to skim the list, and the fix — automate
+    # a number that changes once a year — costs more than typing it. They render in their own
+    # "Manual — review quarterly" block on the Gap Report tab instead.
+    closed |= {(p["name"], m) for p in projects for m in (p.get("manual_quarterly") or ())}
     rows = [g for g in rows if (g["project"], g["metric"]) not in closed]
     for p in projects:
         name = p["name"]

@@ -1446,6 +1446,10 @@ def test_gap_detection_covers_every_applicable_metric():
             if config.unavailable_for(p["name"], m):
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} is closed and must not be a gap"
                 continue
+            # hand-entered quarterly figures are not unresolved gaps — they have their own block
+            if config.is_manual_quarterly(p["name"], m):
+                assert (p["name"], m) not in keys, f"{p['name']}/{m} is manual and must not be a gap"
+                continue
             assert (p["name"], m) in keys, f"{p['name']}/{m} missing from the Gap Report"
     assert all(g["reason"] and g["suggestion"] for g in gaps), "every gap needs a reason and a fix"
     vague = [g for g in gaps if g["reason"] == "no source configured for this metric"]

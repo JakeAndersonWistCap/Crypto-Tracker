@@ -29,9 +29,20 @@ class Schedule:
             if start > now:
                 continue
             dates = pd.date_range(start, now, freq="D")
+            # Each step covers from its own date until whichever comes first: its declared
+            # "until", the next step, or today. The "until" matters for a DECLINING curve — without
+            # it the final rate is carried forward for ever, reporting last year's higher issuance
+            # as this year's. Past a final "until" the schedule has nothing to say and says nothing.
             per_day = pd.Series(index=dates, dtype=float)
-            for s in steps:
-                per_day[per_day.index >= pd.Timestamp(s["from"])] = float(s["tokens_per_day"])
+            for idx, step in enumerate(steps):
+                begins = pd.Timestamp(step["from"])
+                if step.get("until"):
+                    ends = pd.Timestamp(step["until"])
+                elif idx + 1 < len(steps):
+                    ends = pd.Timestamp(steps[idx + 1]["from"]) - pd.Timedelta(days=1)
+                else:
+                    ends = dates[-1]
+                per_day[(per_day.index >= begins) & (per_day.index <= ends)] = float(step["tokens_per_day"])
             per_day = per_day.dropna()
             if per_day.empty:
                 continue

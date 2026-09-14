@@ -153,6 +153,14 @@ METRICS = {
     # This metric is the RECURRING half, and it is the flow — the airdrop predates every
     # observation we hold, so the differenced flow contains only revenue-funded burns.
     # It is what belongs in archetype 3 buyback comparisons; the cumulative does not.
+    # THE HEADLINE RATIO, where a protocol publishes it itself. Above 1.0, burns outpace issuance
+    # and supply is shrinking. Stored as a SOURCED figure and kept separate from anything derived,
+    # so the two can be compared: a divergence means our derivation is wrong somewhere, and that is
+    # the point of having both.
+    "burn_mint_ratio":            {"label": "Burn ÷ mint ratio (as published by the protocol)",
+                                   "kind": "stock", "unit": "count", "archetypes": [1, 4],
+                                   "tiers": [3, 4], "sanity_min": 0, "sanity_max": 100,
+                                   "only_projects": ["Canton"]},
     "burn_revenue_funded":        {"label": "Revenue-funded burn (recurring programme only)",
                                    "kind": "flow", "unit": "tokens", "archetypes": [3, 4],
                                    "tiers": [2, 3, 4], "sanity_min": 0, "sanity_max": 1e12,
@@ -372,6 +380,56 @@ BURN_MECHANISM_MODELS = {
                "'there is no burn' are different statements.",
     "undetermined": "Not established. Nothing is read.",
 }
+
+
+# =======================================================================================
+# CONFIDENCE — what a reader can ACT on, which is a different question from what is missing.
+#
+# The Gap Report says what is absent. It says nothing about whether the numbers that ARE there
+# can be trusted, and that is the question someone reading the sheet actually has. Three bands,
+# derived mechanically from state already held — never hand-assigned, because a hand-assigned
+# confidence is an opinion that goes stale the moment the data changes:
+#
+#   GREEN  verified source, mechanism confirmed, no PARTIAL marker, read succeeded, more than
+#          one observation. Use it.
+#   AMBER  a real number, qualified. Directionally useful; read the note before quoting it.
+#   RED    not a number at all — suppressed, refused or gapped.
+#
+# MANUAL_QUARTERLY: some figures move annually and cost four rounds of engineering to automate.
+# A number typed in once a quarter is the right answer for those, not a failure to automate. A
+# metric carrying this flag leaves the Gap Report for a separate manual list, and goes stale
+# after 120 days rather than being reported as unresolved every single run.
+MANUAL_QUARTERLY_STALE_DAYS = 120
+
+# NON-COMPARABLE (failure mode 4): the figure is correct and still must not be quoted in the
+# column it sits in, because it answers a different question. No validation can catch this —
+# nothing is wrong with the number. Only composition reveals it, so it is DECLARED.
+def is_non_comparable(project_name: str, metric: str) -> dict | None:
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return (p.get("non_comparable") or {}).get(metric)
+
+
+def is_manual_quarterly(project_name: str, metric: str) -> bool:
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return metric in (p.get("manual_quarterly") or ())
+
+
+def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:
+    """Contract entries serving this metric that were never checked against protocol docs."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    kinds = {"burn_address_balance": ("burn_address_balance", "spl_token_account"),
+             "gross_burn_tokens": ("burn_address_balance", "spl_token_account"),
+             "burn_revenue_funded": ("burn_address_balance", "spl_token_account"),
+             "total_supply": ("erc20_total_supply", "spl_mint"),
+             "locked_tokens": ("ve_total_supply",),
+             "buyback_fund_balance": ("buyback_fund_balance",)}.get(metric)
+    if not kinds:
+        return []
+    return [k for k, v in (p.get("contracts") or {}).items()
+            if v.get("kind") in kinds and not v.get("verified")]
+
+
+BURN_METRICS = ("burn_address_balance", "gross_burn_tokens", "burn_revenue_funded")
 
 
 def burn_mechanism(project: dict) -> dict:
@@ -642,7 +700,7 @@ PROJECTS = [
         "name": "Near", "symbol": "NEAR",
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
-        "archetypes": [1, 4], "archetypes_held": [],
+        "archetypes": [1, 3, 4], "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://docs.near.org/protocol/gas", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "Protocol docs describe a 70% burn / 30% contract-developer split of gas. CONFIRM before enabling."},
@@ -673,23 +731,55 @@ PROJECTS = [
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://www.canton.network/", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "Traffic fees are burned. Has both its own dashboard and a Dune page. Document the share."},
-        "issuance_schedule": None,
+        # Pre-set curve, HALVED at the start of 2026: 20bn -> 10bn CC/yr. Long-run equilibrium is
+        # ~2.5bn/yr, so this declines again and the current step must not be carried forward for
+        # ever once the next reduction is dated.
+        # THE HALVING DATE IS APPROXIMATE — "~Jan 2026" is all the source gives, so 2026-01-01 is
+        # a placeholder. It sits inside a month either way, and no derived figure turns on the day.
+        "issuance_schedule": {
+            "steps": [
+                {"from": "2025-01-01", "tokens_per_day": 20_000_000_000 / 365},
+                {"from": "2026-01-01", "tokens_per_day": 10_000_000_000 / 365},
+            ],
+            "source_url": None, "source_date": "2026-09-14", "status": "active",
+            "note": "20bn CC/yr halving to 10bn/yr at ~Jan 2026 (date approximate). Long-run "
+                    "equilibrium ~2.5bn/yr — add that step when it is dated. SV share fell 80% -> 20%, "
+                    "to 5% after year ten; Apps rising to 62% until mid-2029; 5% of emissions to the "
+                    "Dev Fund. CIP-0096 ended passive liveness rewards on 2026-04-30.",
+        },
         "contracts": {},
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
+        # Canton publishes its own burn/mint ratio, which is precisely the figure this tool
+        # exists to produce — and the trajectory is the story: 0.16 in Jan 2026 to 0.72 in early
+        # Sep 2026, against cumulative burns of 5.01bn CC. Above 1.0 would mean burns outpacing
+        # issuance. These are REFERENCE POINTS, not a series: they validate whatever a source
+        # eventually returns, and a scraped figure that disagrees with them is a scraper bug.
+        "reference_values": [
+            {"metric": "burn_mint_ratio", "when": "2026-01", "value": 0.16,
+             "source_url": None, "note": "weekly ratio, as published"},
+            {"metric": "burn_mint_ratio", "when": "2026-09", "value": 0.72,
+             "source_url": None, "note": "weekly ratio, early Sep 2026"},
+        ],
         "burn_mechanism": {
-            "model": "protocol_level_destruction", "status": "assumed",
-            "source_url": None, "source_date": None,
-            "note": "ASSUMED, and the least evidenced of the six — Canton is the thinnest-covered project in the "
-                    "config generally. Nothing on file describes its burn at all; the model is inherited "
-                    "from burn_read_method rather than documented.",
+            "model": "protocol_level_destruction", "status": "confirmed",
+            "source_url": None, "source_date": "2026-09-14",
+            "source_note": "Confirmed in the 2026-09-14 build brief. A PRIMARY URL IS STILL NEEDED — "
+                           "this is the one 'confirmed' mechanism in the config with no linkable "
+                           "document behind it.",
+            "note": "CONFIRMED protocol-level destruction, and the pricing is what makes it so: fees are "
+                    "DENOMINATED IN USD, per MB, but PAID BY BURNING CC at the on-chain conversion rate. "
+                    "No address receives the CC; supply falls. Canton publishing its own burn/mint ratio "
+                    "is further evidence — a transfer burn would not need one, because the dead address "
+                    "would be the record.",
         },
         "burn_read_method": "protocol_level",
         "burn_read_note": "Burn-mint equilibrium: CC is burned when Global Synchroniser traffic is purchased, priced in USD. Destroyed at the protocol level, no transfer. Needs the Canton dashboard or a Dune source.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "fees_usd", "tx_count", "active_addresses"),
+        "manual_quarterly": ["supply_units", "utilisation_pct"],
         "materiality": "medium",
         "notes": "Not on DefiLlama. Own dashboard (tier 3) + Dune page (tier 4). Verify the CoinGecko id.",
     },
@@ -828,6 +918,8 @@ PROJECTS = [
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": {},
+        # Until World Mobile's own page returns. 100,000+ AirNodes as of Feb 2026.
+        "manual_quarterly": ["supply_units"],
         "materiality": "low",
         "notes": "Page being rebuilt. Everything routes through manual_overrides.csv until it returns; all gaps listed in the Gap Report.",
     },
@@ -936,6 +1028,7 @@ PROJECTS = [
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
         "dune_queries": _dune("emissions_tokens", "tx_count", "active_addresses"),
+        "manual_quarterly": ["supply_units"],
         "materiality": "low",
         "notes": "Own dashboard (machine counts) + Dune page. Verify the CoinGecko id (peaq-2).",
     },
@@ -943,11 +1036,25 @@ PROJECTS = [
         "name": "Render", "symbol": "RENDER",
         "coingecko_id": "render-token",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
-        "archetypes": [2, 4], "archetypes_held": [],
+        "archetypes": [2, 3, 4], "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://know.rendernetwork.com/basics/burn-and-mint-equilibrium", "source_date": BRIEF_DATE, "status": "active",
                        "note": "Burn-and-mint equilibrium: customer payments burned, node rewards minted. Render publishes burn/mint per epoch (tier 3)."},
-        "issuance_schedule": None,
+        # Declining published schedule, 107.38m RENDER over ten years. ONLY TWO YEARS ARE ON FILE,
+        # so the final step carries "until" and the schedule goes silent after it rather than
+        # reporting 2025's higher rate as 2026's. Max supply rose 536.87m -> 644.25m at migration.
+        "issuance_schedule": {
+            "steps": [
+                {"from": "2024-01-01", "tokens_per_day": 9_126_804 / 366, "until": "2024-12-31"},
+                {"from": "2025-01-01", "tokens_per_day": 5_900_000 / 365, "until": "2025-12-31"},
+            ],
+            "source_url": None, "source_date": "2026-09-14", "status": "active",
+            "note": "Y1 2024 ~9,126,804 and Y2 2025 ~5.90m. THE 2026 RATE IS NOT ON FILE and is not "
+                    "extrapolated — a declining curve cannot be guessed from two points. Verify all "
+                    "of it against RNP-001/006/013/015 and add the 2026 step. Y2 split was Foundation "
+                    "49.15% / Node Operators 25.42%, which is the archetype 2 emissions-to-suppliers "
+                    "decomposition.",
+        },
         "contracts": {},   # migrated to Solana SPL — no EVM read
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
@@ -1011,6 +1118,20 @@ PROJECTS = [
         "buyback_destination": "disputed", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "unresolved",
         "dune_queries": _dune("emissions_tokens", "staked_tokens"),
+        # Move annually, and cost more to automate than to type. A quarterly hand-entry is the
+        # right answer for these, not a failure to automate one.
+        "manual_quarterly": ["supply_units", "utilisation_pct"],
+        # NOT A BUYBACK — AN ISSUANCE ITEM, and recorded as one. The "Checker Node Buyback" is an
+        # NFT repurchase paid in eATH, locked for one year, with redemption opened 2026-06-13 and a
+        # 30-day vest once initiated. eATH CONTINUES EARNING ATH throughout the lockup, so the net
+        # effect on circulating ATH is POSITIVE. Netting it against emissions like a burn would get
+        # the sign wrong on the one figure this tool exists to produce. eATH also ties to an
+        # EigenLayer AVS with a Pendle route for early exit, which ACCELERATES the supply effect.
+        "buyback_is_supply_additive": {
+            "what": "Checker Node NFT repurchase paid in eATH, 1-year lock, 30-day vest from 2026-06-13",
+            "effect": "increases circulating ATH — eATH keeps earning ATH during the lockup",
+            "never": "do not count as a buyback, do not net against emissions",
+        },
         "materiality": "medium",
         "notes": "HOLD archetype 3 until documented.",
     },
@@ -1129,6 +1250,15 @@ PROJECTS = [
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "emissions_tokens", "staked_tokens"),
+        # FAILURE MODE 4 — correct, and not comparable. ~99.5% of the cumulative is a one-off
+        # March 2025 airdrop burn. The number is right; quoting it as buyback scale is not.
+        "non_comparable": {
+            "burn_address_balance": {
+                "why": "~99.5% is a ONE-OFF March 2025 airdrop burn, not the revenue-funded programme. "
+                       "Quoting it as the scale of the buyback overstates by roughly 200x.",
+                "use_instead": "burn_revenue_funded",
+            },
+        },
         "materiality": "medium",
         "notes": "100% of emissions to stakers AND a revenue-funded buy-and-burn. Even at 3m VVV/yr, issuance runs several multiples "
                  "of what stated revenue could fund. The clearest case in the universe for showing buyback and emissions together.",
@@ -1138,7 +1268,17 @@ PROJECTS = [
         "name": "Virtuals", "symbol": "VIRTUAL",
         "coingecko_id": "virtual-protocol",
         "defillama_fees_slug": "virtuals-protocol", "defillama_protocol": "virtuals-protocol", "defillama_chain": None,
-        "archetypes": [3], "archetypes_held": [],
+        # ARCHETYPE 3 REMOVED 2026-09-14 — A SKY-CLASS ERROR, and the same shape exactly: a real
+        # buyback-and-burn, correctly observed, attached to the WRONG TOKEN. Virtuals' mechanism
+        # burns AGENT TOKENS from agent revenue. VIRTUAL ITSELF HAS NO BURN MECHANISM. The ~13m
+        # VIRTUAL figure that put this project in archetype 3 is the amount ROUTED THROUGH the
+        # mechanism — it bought and retired 25 agent tokens; not one VIRTUAL was destroyed.
+        # So there is no burn, no buyback and no destination for VIRTUAL, and the entries are
+        # deleted rather than set to zero: a zero would assert a mechanism that produced nothing,
+        # when the truth is that no such mechanism exists for this token.
+        "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "none",
+        "archetypes": [2], "archetypes_held": [],
         "fee_split": {"share_to_buyback": None, "source_url": None, "source_date": None,
                       "programmed": False, "status": "unconfirmed",
                       "note": "Agent launch and trading fees route to buyback — the split needs documenting. "
@@ -1146,11 +1286,10 @@ PROJECTS = [
         "burn_split": None,
         "issuance_schedule": None,
         "contracts": {},
-        "buyback_destination": "unconfirmed", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "unresolved",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
+        # The buyback slots are gone with the archetype: they measured agent tokens, not VIRTUAL.
+        "dune_queries": _dune("emissions_tokens", "staked_tokens"),
         "materiality": "medium",
-        "notes": "Agent launch and trading fees route to buyback — split needs documenting. "
+        "notes": "Agent launch and trading fees fund a buyback-and-burn OF AGENT TOKENS, not of VIRTUAL. "
                  "defillama_fees_slug is assumed to match defillama_protocol; confirm on DefiLlama, "
                  "a wrong slug shows up as a 404 in the Run Log.",
     },
@@ -1167,6 +1306,24 @@ PROJECTS = [
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
+        # DESTINATION INDETERMINATE — a sixth type, and it is neither of the two it resembles.
+        # MIP-021 replaces MIP-019 with a rules-based framework scaling with gross monthly revenue,
+        # executed at month end. But the purchased SYRUP goes to the SYRUP Strategic Fund, whose
+        # stated uses include working capital, TOKEN LIQUIDITY, capital reserves and further
+        # buybacks. "Token liquidity" means bought tokens CAN RETURN TO FLOAT.
+        # So it must NOT be netted against emissions like a burn, and must NOT be counted as locked
+        # supply like Chainlink's Reserve. Those are opposite signs, and the truth is neither.
+        "destination_indeterminate": {
+            "fund": "SYRUP Strategic Fund",
+            "stated_uses": ["working capital", "token liquidity", "capital reserves", "further buybacks"],
+            "why_indeterminate": "'token liquidity' allows repurchased tokens to return to float",
+            # LABELLED AS A JUDGEMENT, not recorded as a finding: it is an analyst's framing and a
+            # reader is entitled to disagree with it.
+            "analyst_judgement": "Most buybacks do one of three things: distribute profits, retire "
+                                 "supply, or reduce float. Maple's does none of them reliably. That is "
+                                 "a view, not an observation.",
+            "confirm": "the ticker is SYRUP, not MPL — verify before any figure is quoted",
+        },
         "materiality": "medium",
         "notes": "No burn — confirmed.",
     },
@@ -1370,6 +1527,18 @@ PROJECTS = [
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "holder_elected",
         "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens"),
+        # FAILURE MODE 4 — the same shape as Venice, from the other direction. The December 2025
+        # retroactive burn was 100,000,000 UNI in one event; ongoing revenue-driven burns run at
+        # 100k-134k UNI a day. Both sit in the same cumulative column, and the one-off dominates
+        # it, so the column cannot be read as the run-rate of the ongoing programme.
+        "non_comparable": {
+            "burn_address_balance": {
+                "why": "dominated by the 100,000,000 UNI RETROACTIVE treasury burn of December 2025. "
+                       "That is a one-off supply event, not the ongoing revenue-driven programme "
+                       "(which runs at roughly 100k-134k UNI/day).",
+                "use_instead": "gross_burn_tokens (the flow, which is the ongoing programme)",
+            },
+        },
         "materiality": "high",
         "notes": "Archetype 4 only — no distribution leg, no staking yield. Implied and actual burn diverge for reasons unrelated "
                  "to revenue, because the burn is holder-elected. TWO burn paths: mainnet and Unichain, summed. "
@@ -1773,6 +1942,18 @@ PROJECTS = [
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "locked_supply",
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
+        # A THRESHOLD, NOT A RATE. Fluid's buyback ACTIVATES at $10m annualised protocol revenue;
+        # below it there is no buyback at all, so a share applied continuously would invent one.
+        # Our own Q0 fees annualise well above it, which suggests ACTIVE — but our figure is not
+        # the trigger. Fluid's governance is, and that is what must confirm it.
+        "buyback_threshold": {
+            "threshold_usd_annualised": 10_000_000,
+            "status": "unconfirmed_which_side",
+            "note": "Do NOT infer the switch from our own revenue figure — that is circular, and the "
+                    "protocol may measure revenue differently from DefiLlama. Confirm from Fluid's "
+                    "governance which side it currently sits on, then set status to 'active' or "
+                    "'below_threshold'. Until then the derived buyback stays suppressed.",
+        },
         "materiality": "medium",
         "notes": "CoinGecko id is still instadapp after the rebrand — verify.",
     },
@@ -2638,9 +2819,11 @@ def _check_burn_mechanisms() -> list[str]:
         if block.get("model") not in BURN_MECHANISM_MODELS:
             errors.append(f"{p['name']}: burn_mechanism model {block.get('model')!r} is not one of "
                           f"{sorted(BURN_MECHANISM_MODELS)}")
-        if block.get("status") == "confirmed" and not block.get("source_url"):
-            errors.append(f"{p['name']}: burn_mechanism is 'confirmed' with no source_url. Confirmed "
-                          f"means a document says so — name it, or mark it 'assumed'.")
+        if block.get("status") == "confirmed" and not (block.get("source_url") or block.get("source_note")):
+            errors.append(f"{p['name']}: burn_mechanism is 'confirmed' with neither a source_url nor a "
+                          f"source_note. Confirmed means somebody can say WHERE it came from — a URL "
+                          f"normally, or a named non-URL provenance where there is no linkable "
+                          f"document. Name one, or mark it 'assumed'.")
     return errors
 
 

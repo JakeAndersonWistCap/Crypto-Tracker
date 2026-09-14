@@ -51,6 +51,11 @@ FILL_UNCONFIRMED = PatternFill("solid", fgColor="D9D9D9")
 FILL_STALE = PatternFill("solid", fgColor="FCE4D6")
 FILL_PAUSED = PatternFill("solid", fgColor="FFE699")
 FILL_REVIEW = PatternFill("solid", fgColor="E4DFEC")      # flagged to the Review Queue
+# Confidence bands. These answer "what can I act on", which the Gap Report does not.
+FILL_GREEN = PatternFill("solid", fgColor="D6E9CE")
+FILL_AMBER = PatternFill("solid", fgColor="FDE9D0")
+FILL_RED = PatternFill("solid", fgColor="F4CCCC")
+CONFIDENCE_FILL = {"GREEN": FILL_GREEN, "AMBER": FILL_AMBER, "RED": FILL_RED}
 FILL_GAP = PatternFill("solid", fgColor="F2F2F2")         # unresolved — see the Gap Report
 FILL_SECTION = PatternFill("solid", fgColor="EDEDED")
 FILL_KEY = PatternFill("solid", fgColor="FFF2CC")           # headline figure cells
@@ -81,11 +86,13 @@ CLOSED_TEXT = "none available"
 
 # Data sheet layout (column letters)
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
-             "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "last_success", "entered_on", "note"]
+             "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
+             "last_success", "entered_on", "note"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
-             "Y1 (flow: 365d sum · stock: 365d avg)", "Points", "Status", "Last successful fetch", "Entered on (manual)", "Note"]
+             "Y1 (flow: 365d sum · stock: 365d avg)", "Points", "Status", "Confidence", "Why not green",
+             "Last successful fetch", "Entered on (manual)", "Note"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 
 # Config table layout
@@ -156,6 +163,54 @@ def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
     return float(w.iloc[-1]) if len(w) else None
 
 
+def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> tuple[str, str]:
+    """GREEN / AMBER / RED, derived mechanically. Returns (band, why).
+
+    Every input is state already held — status, point count, the PARTIAL marker in the source
+    string, the verified flag on the contracts serving the metric, the burn mechanism's status,
+    and the two declared cases (manual-quarterly age, and non-comparable composition). Nothing
+    here is a judgement typed in by hand, because a hand-assigned confidence is an opinion that
+    goes stale the moment the underlying data moves.
+    """
+    if row["status"] in ("missing", "gap", "n/a"):
+        return "RED", {"missing": "no value in the store",
+                       "gap": "unresolved — see the Gap Report",
+                       "n/a": "not applicable to this project"}[row["status"]]
+
+    why = []
+    # correct, and answering a different question from the column it sits in (failure mode 4)
+    nc = config.is_non_comparable(project, metric)
+    if nc:
+        why.append(f"NOT COMPARABLE: {nc['why']} Use {nc['use_instead']}")
+    if ":PARTIAL" in str(row.get("source") or ""):
+        why.append("PARTIAL — summed over known components only, so it understates")
+    if int(row.get("n_points") or 0) < 2:
+        why.append("a single observation — no trend, and nothing to validate it against")
+    if row["status"] == "review":
+        why.append("flagged to the Review Queue")
+    if row["status"] == "stale":
+        limit = (config.MANUAL_QUARTERLY_STALE_DAYS if config.is_manual_quarterly(project, metric)
+                 else GLOBALS["stale_after_days"])
+        why.append(f"stale — no fresh value in {limit} days")
+    if row["status"] == "manual" and config.is_manual_quarterly(project, metric):
+        entered = str(row.get("entered_on") or "")[:10]
+        try:
+            age = (asof - pd.Timestamp(entered)).days
+            if age > config.MANUAL_QUARTERLY_STALE_DAYS:
+                why.append(f"hand-entered {age} days ago — due for a quarterly refresh")
+        except (ValueError, TypeError):
+            why.append("hand-entered, with no entry date recorded")
+    if metric in config.BURN_METRICS:
+        mech = config.burn_mechanism(config.PROJECT_BY_NAME.get(project) or {})
+        if mech.get("status") == "assumed":
+            why.append("the burn MECHANISM is assumed, not documented")
+    unverified = config.metric_addresses_unverified(project, metric)
+    if unverified:
+        why.append(f"read from address(es) never verified against protocol docs: {', '.join(unverified)}")
+
+    return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
+
+
 def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp,
               gaps: pd.DataFrame | None = None, review: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every project x every metric in the library — so every INDEX/MATCH key resolves."""
@@ -188,6 +243,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row["status"], row["note"] = "gap", f"{gap['reason']} | {gap['suggestion']}"
                 elif metric not in applicable.get(name, ()):
                     row["status"], row["note"] = "n/a", "not applicable to this project's archetypes"
+                row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
                 continue
             g = g.sort_values("date")
@@ -224,6 +280,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if (name, metric) in review_keys:
                 row["status"] = "review" if row["status"] == "ok" else row["status"]
                 row["note"] = (row["note"] + " | " if row["note"] else "") + "flagged in the Review Queue"
+            row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
             rows.append(row)
     return pd.DataFrame(rows, columns=DATA_COLS)
 
@@ -589,6 +646,31 @@ def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:
     return "; ".join(out)
 
 
+def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], data_by_key: dict) -> int:
+    """How much of THIS tab can be acted on today. The headline the Gap Report cannot give."""
+    counts = {"GREEN": 0, "AMBER": 0, "RED": 0}
+    for p in projects:
+        for spec in specs:
+            metric = (spec[5] if len(spec) > 5 else {}).get("metric")
+            if not metric:
+                continue
+            st = data_by_key.get(f"{p['name']}|{metric}")
+            if st and st.get("confidence") in counts:
+                counts[st["confidence"]] += 1
+    total = sum(counts.values()) or 1
+    ws.cell(row=row, column=1, value="Confidence on this tab").font = F_BOLD
+    for i, band in enumerate(("GREEN", "AMBER", "RED")):
+        c = ws.cell(row=row + 1 + i, column=1,
+                    value=f"{band}  {counts[band]} of {sum(counts.values())}  ({counts[band] / total:.0%})")
+        c.font = F_BASE
+        c.fill = CONFIDENCE_FILL[band]
+    legend = ("GREEN = verified source, mechanism confirmed, no PARTIAL marker, more than one observation. Use it.   "
+              "AMBER = a real number, qualified — hover the cell for why.   "
+              "RED = not a number: suppressed, refused or gapped.")
+    ws.cell(row=row + 4, column=1, value=legend).font = F_SUB
+    return row + 6
+
+
 def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_key: dict, flag_metrics: list[str],
                  start_row: int = 4, key_cols: set[int] | None = None) -> int:
     headers = [s[0] for s in specs] + ["Data flags (stale / manual / missing)"]
@@ -624,6 +706,12 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             if metric:
                 st = data_by_key.get(f"{p['name']}|{metric}")
                 if st is not None:
+                    band = st.get("confidence")
+                    if band in CONFIDENCE_FILL:
+                        c.fill = CONFIDENCE_FILL[band]
+                        if band == "AMBER" and st.get("why_amber"):
+                            c.comment = Comment(f"AMBER — a real number, qualified:\n\n{st['why_amber']}",
+                                                "token_metrics")
                     if st["status"] == "manual":
                         c.fill = FILL_MANUAL
                         c.comment = Comment(f"MANUAL OVERRIDE entered_on {st['entered_on']}. {st['note']}", "manual_overrides.csv")
@@ -794,6 +882,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["fees_usd", "price_usd", "gross_burn_tokens", "gross_issuance_tokens", "circulating_supply"],
                        key_cols={8, 10, 12, 14})
+    _confidence_tally(ws, end + 2, PROJECTS, specs, data_by_key)
     _set_widths(ws, {"A": 16, "B": 8, "C": 12, "D": 11, "E": 11, **{get_column_letter(i): 14 for i in range(6, 34)}, "AH": 60, "AI": 60})
     return projects, end
 
@@ -882,6 +971,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],
                        key_cols={15, 18, 21})
+    _confidence_tally(ws, end + 2, projects, specs, data_by_key)
     _set_widths(ws, {"A": 16, "B": 8, "C": 10, "D": 11, "E": 10, "F": 11, "G": 11, **{get_column_letter(i): 14 for i in range(8, 38)}, "AL": 60, "AM": 60})
     return projects, end
 
@@ -928,9 +1018,10 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["tx_count", "fees_usd", "tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd", "rwa_xyz_usd", "gross_issuance_tokens", "price_usd", "staked_tokens", "circulating_supply"],
                        key_cols={8, 21})
+    _confidence_tally(ws, end + 2, projects, specs, data_by_key)
     _set_widths(ws, {"A": 16, "B": 8, **{get_column_letter(i): 14 for i in range(3, 38)}, "AK": 60, "AL": 60})
     # Monthly block for the time chart: fees ÷ issuance by month
-    block = _monthly_block(ws, R, projects, end + 2, months, "Fees ÷ issuance by month (x) — fees ÷ (issuance tokens × monthly average price)",
+    block = _monthly_block(ws, R, projects, end + 9, months, "Fees ÷ issuance by month (x) — fees ÷ (issuance tokens × monthly average price)",
                            lambda r, mc: calc(f"{R.M(r, 'fees_usd', mc)}/({R.M(r, 'gross_issuance_tokens', mc)}*{R.M(r, 'price_usd', mc)})"), FMT_X)
     return projects, end, block
 
@@ -970,8 +1061,9 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["supply_units", "utilisation_pct", "customer_revenue_usd", "emissions_tokens", "price_usd", "publisher_conviction_usd"],
                        key_cols={10, 11})
+    _confidence_tally(ws, end + 2, projects, specs, data_by_key)
     _set_widths(ws, {"A": 16, "B": 8, "C": 10, **{get_column_letter(i): 14 for i in range(4, 34)}, "AG": 60, "AH": 60})
-    block = _monthly_block(ws, R, projects, end + 2, months, "Customer revenue per token emitted by month ($/token)",
+    block = _monthly_block(ws, R, projects, end + 9, months, "Customer revenue per token emitted by month ($/token)",
                            lambda r, mc: calc(f"{R.M(r, 'customer_revenue_usd', mc)}/{R.M(r, 'emissions_tokens', mc)}"), FMT_USD4)
     return projects, end, block
 
@@ -1088,7 +1180,7 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     if gaps is None or gaps.empty:
         ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
         _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
-        return
+        return r
     # config gaps first (they block derived figures), then by project, then metric
     g = gaps.copy()
     g["_open"] = g["metric"].astype(str).str.startswith("[open]")
@@ -1116,6 +1208,7 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     ws.freeze_panes = "A5"
     ws.auto_filter.ref = f"A4:F{r - 1}"
     _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
+    return r
 
 
 def write_staging(ws, staged: pd.DataFrame, run_id: str | None):
@@ -1168,6 +1261,52 @@ def write_staging(ws, staged: pd.DataFrame, run_id: str | None):
         c.number_format = FMT_TEXT
         r += 1
     _set_widths(ws, {"A": 16, "B": 20, "C": 11, "D": 18, "E": 20, "F": 6, "G": 80})
+
+
+def _write_manual_quarterly(ws, row: int, long: pd.DataFrame) -> int:
+    """Figures that are typed in, not fetched — with when each was last entered.
+
+    Deliberately NOT in the gap list above. A number that changes once a year is not an
+    unresolved gap, and a permanent entry on a to-do list is how the to-do list stops being read.
+    """
+    entries = [(p["name"], m) for p in PROJECTS for m in (p.get("manual_quarterly") or ())]
+    ws.cell(row=row, column=1,
+            value=f"Manual — review quarterly ({len(entries)}). Hand-entered by design, not gaps. "
+                  f"Stale after {config.MANUAL_QUARTERLY_STALE_DAYS} days.").font = F_BOLD
+    row += 1
+    _header(ws, row, ["Project", "Metric", "Last entered", "Age (days)", "Value", "Status"])
+    ws.row_dimensions[row].height = 18
+    row += 1
+    if not entries:
+        ws.cell(row=row, column=1, value="none").font = F_SUB
+        return row + 1
+    asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    for project, metric in sorted(entries):
+        g = long[(long["project"] == project) & (long["metric"] == metric)] if not long.empty else long
+        entered, age, value = "never", None, None
+        if g is not None and not g.empty:
+            last = g.sort_values("date").iloc[-1]
+            entered = str(last.get("entered_on") or last["date"])[:10]
+            value = float(last["value"])
+            try:
+                age = (asof - pd.Timestamp(entered)).days
+            except (ValueError, TypeError):
+                age = None
+        overdue = age is None or age > config.MANUAL_QUARTERLY_STALE_DAYS
+        vals = [project, metric, entered, age, value,
+                "DUE — enter a fresh figure" if overdue else "current"]
+        for j, v in enumerate(vals, start=1):
+            c = ws.cell(row=row, column=j)
+            if v is None:
+                c.value, c.font, c.number_format = "n/a", Font(name=FONT, size=10, color="999999"), FMT_TEXT
+            else:
+                c.value = v
+                c.font = F_BASE
+                c.number_format = FMT_NUM if isinstance(v, (int, float)) else FMT_TEXT
+            if overdue:
+                c.fill = FILL_AMBER
+        row += 1
+    return row + 1
 
 
 def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
@@ -1373,7 +1512,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     a1 = write_a1(ws_a1, R, data_by_key, months)
     a2 = write_a2(ws_a2, R, data_by_key, months)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
-    write_gap_report(ws_gap, gaps, run_id)
+    gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
+    _write_manual_quarterly(ws_gap, gap_end + 2, long)
     write_review_queue(ws_rev, review, run_id)
     write_staging(ws_stg, staged, run_id)
     write_runlog(ws_log, runlog, fetch_status, run_id, asof, overrides_n)
@@ -1384,6 +1524,13 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
               ("Green = pulled from another sheet", F_LINK, None), ("Yellow fill = manual override (entered_on in comment)", F_BASE, FILL_MANUAL),
               ("Grey fill = split unconfirmed, derived figure suppressed", F_BASE, FILL_UNCONFIRMED), ("Orange fill = stale (last good fetch in comment)", F_BASE, FILL_STALE),
               ("Amber fill = programme paused", F_BASE, FILL_PAUSED), ("Highlighted columns = headline figures", F_BASE, FILL_KEY),
+              ("CONFIDENCE BANDS — what can be acted on today:", F_BOLD, None),
+              ("  GREEN = verified source, mechanism confirmed, no PARTIAL marker, more than one "
+               "observation. Use it.", F_BASE, FILL_GREEN),
+              ("  AMBER = a real number, qualified — PARTIAL, single observation, assumed mechanism, "
+               "unverified address, a stale hand-entry, or correct-but-not-comparable. Hover the cell.",
+               F_BASE, FILL_AMBER),
+              ("  RED = not a number: suppressed by design, refused, or gapped.", F_BASE, FILL_RED),
               ("Lilac fill = flagged to the Review Queue — NOT a measured figure. A lilac 0 in a burn "
                "column may mean no burn, or that the burn did not route to the address we watch", F_BASE, FILL_REVIEW),
               ("n/a = no value in the store (never a zero) — see the Gap Report for why", Font(name=FONT, size=10, color="999999"), None),
