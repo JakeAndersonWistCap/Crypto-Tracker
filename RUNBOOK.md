@@ -403,6 +403,27 @@ would produce plausible-looking wrong numbers.
 
 ---
 
+## 11b. Triaging a run — what changed, and was it supposed to?
+
+A summary line ("41 review items") is a number without a cause, and after a round that adds new
+checks the only question that matters is which half of the jump was the new checks firing as
+designed and which half is something that went wrong. `run_triage.py` reads that out of the
+store. It writes nothing.
+
+```bash
+python run_triage.py --compare-previous      # start here: the delta, split into expected vs not
+python run_triage.py                         # this run in full: review by reason, failures, skips, gaps
+python run_triage.py --metric Uniswap/burn_address_balance
+                                             # one figure: what was stored, flagged, logged and gapped
+python run_triage.py --runs                  # recent run ids
+```
+
+`--compare-previous` splits every changed reason code into **EXPECTED** (a check introduced by a
+recent round, with the commit that added it) and **NOT EXPLAINED BY THIS ROUND'S NEW CHECKS**.
+The second list is the one to read.
+
+---
+
 ## 11a. Working on ONE Dune query, without a full run
 
 Mapping a Dune query is iterative — look at the columns, try a mapping, look at the series it
