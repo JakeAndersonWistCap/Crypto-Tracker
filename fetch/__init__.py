@@ -22,7 +22,7 @@ import pandas as pd
 
 import config
 
-from .base import FetchOutput, LogEntry, new_run_id, today  # noqa: F401
+from .base import FetchOutput, LogEntry, new_run_id, point, today  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
 from .dune import Dune
@@ -150,6 +150,132 @@ def _resolve_period_overlaps(out: FetchOutput) -> None:
         out.frames = [frame.drop(index=drop)]
 
 
+# How a burn mechanism relates issuance to the change in total supply. This is the whole reason
+# issuance is derived per-model rather than with one formula: the two models give DIFFERENT
+# answers from identical inputs, and picking the wrong one is not a small error — it is the burn
+# counted twice, or not at all.
+#
+#   PROTOCOL BURN destroys supply, so totalSupply falls by the burn:
+#       d(totalSupply) = issuance - burn    =>   issuance = d(totalSupply) + burn
+#
+#   TRANSFER BURN moves tokens to an address nobody controls. They still EXIST, and ERC-20
+#   totalSupply still counts them, so the burn never appears in the supply change at all:
+#       d(totalSupply) = issuance           =>   issuance = d(totalSupply)
+#   Adding burn here would invent issuance that never happened. The dead-address balance is
+#   subtracted separately, where effective/economic float is what is wanted.
+ISSUANCE_FROM_SUPPLY_DELTA = {
+    "protocol_level_destruction": "add_burn",
+    "transfer_to_dead_address": "delta_only",
+}
+
+
+def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict, prior_dates: dict) -> None:
+    """Derive gross_issuance_tokens from the supply change, keyed on the burn mechanism.
+
+    Issuance is DERIVED, not fetched, wherever the store already holds what it needs. Every
+    project has total_supply from tier 1, so this costs no call and no paid query — where a burn
+    figure is also needed, it is the one already computed this run.
+
+    Three things it refuses to do, each of which would produce a plausible wrong number:
+      * derive from a single observation. A supply delta needs two dated readings, exactly like
+        a burn flow — see derive_flow_from_cumulative. One reading gives 0, which reads as "no
+        issuance" on a chain that mints every block.
+      * derive under an unestablished mechanism. Sky swaps on an AMM and sends proceeds to a
+        configurable receiver: until the receiver's behaviour is known, its supply effect is
+        unknown, so no formula applies and none is guessed.
+      * overwrite a measured figure. A real source beats a derivation, always.
+    """
+    frame = out.frame()
+    have = set()
+    if not frame.empty:
+        have = {(r.project, r.metric) for r in frame[["project", "metric"]].itertuples(index=False)}
+
+    supply = {}
+    burn = {}
+    if not frame.empty:
+        for row in frame[frame["metric"].isin(("total_supply", "gross_burn_tokens"))].itertuples(index=False):
+            (supply if row.metric == "total_supply" else burn)[row.project] = (row.value, row.date)
+
+    for p in projects:
+        name = p["name"]
+        if (name, "gross_issuance_tokens") in have:
+            continue                       # a measured figure is already here; never overwrite it
+        if "gross_issuance_tokens" not in config.metrics_for_project(p):
+            continue
+
+        mech = config.burn_mechanism(p)
+        rule = ISSUANCE_FROM_SUPPLY_DELTA.get(mech.get("model"))
+        if rule is None or mech.get("status") == "refuted":
+            out.gap(name, "gross_issuance_tokens",
+                    reason=f"cannot be derived: the burn mechanism is {mech.get('model')!r} "
+                           f"(status {mech.get('status')!r}), and how that mechanism affects total supply "
+                           f"is not established. A protocol burn reduces totalSupply and a transfer burn "
+                           f"does not, so the two need different arithmetic — and a mechanism that is "
+                           f"neither has no formula at all until its supply effect is known.",
+                    tiers_attempted="1, 2",
+                    suggestion="Settle the mechanism (see this project's OPEN_QUESTIONS), then declare "
+                               "burn_mechanism.model in config.py. The derivation follows automatically.")
+            continue
+
+        now = supply.get(name)
+        if now is None:
+            continue                       # no supply read this run; the metric's own gap covers it
+        value, when = now
+        prior = prior_values.get((name, "total_supply"))
+        prior_date = prior_dates.get((name, "total_supply"))
+        if prior is None or (prior_date and str(prior_date)[:10] >= str(when)[:10]):
+            out.gap(name, "gross_issuance_tokens",
+                    reason=("cannot be derived yet: it is the CHANGE in total supply, and the store holds "
+                            "only one observation of total supply" + (f" (dated {str(prior_date)[:10]})"
+                                                                      if prior_date else "") +
+                            ". A delta needs two dated readings. Deliberately not reported as 0, which on "
+                            "a chain that mints every block would be a plausible and entirely wrong number."),
+                    tiers_attempted="1, 2",
+                    suggestion="It resolves itself on the next run on a later day. CoinGecko serves "
+                               "total_supply as a CURRENT value only, not a history, so this cannot be "
+                               "backfilled — the series accumulates from first run.")
+            continue
+
+        delta = value - prior
+        if rule == "add_burn":
+            got = burn.get(name)
+            if got is None:
+                out.gap(name, "gross_issuance_tokens",
+                        reason=("cannot be derived: this project's burn DESTROYS supply, so issuance is "
+                                "the supply change PLUS the burn — and no burn figure was produced this "
+                                "run. Deriving from the supply delta alone would report issuance NET of "
+                                "burn while labelling it gross, understating it by exactly the burn."),
+                        tiers_attempted="1, 2",
+                        suggestion="Source gross_burn_tokens for this project first; issuance follows from "
+                                   "it automatically. Until then neither figure exists, which is correct.")
+                continue
+            issued, how = delta + got[0], f"d(total_supply)={delta:,.4f} + burn={got[0]:,.4f}"
+        else:
+            issued, how = delta, f"d(total_supply)={delta:,.4f} (transfer burn does not reduce supply)"
+
+        if issued < 0:
+            out.review_item(name, "gross_issuance_tokens", "negative_derived_issuance", "rejected",
+                            value=issued, prior_value=prior, date=when,
+                            source=f"derived:{mech.get('model')}", tier=2)
+            out.gap(name, "gross_issuance_tokens",
+                    reason=f"the derivation came out NEGATIVE ({issued:,.4f}) and was rejected. Issuance "
+                           f"cannot be below zero, so one of its inputs is wrong: {how}. The likeliest "
+                           f"causes are a supply figure that was restated between observations, or a burn "
+                           f"that belongs to a different period than the supply delta.",
+                    tiers_attempted="1, 2",
+                    suggestion="Check total_supply's last two observations on the Data tab, and whether "
+                               "the burn figure covers the same interval.")
+            continue
+
+        src = f"derived:{'d_supply+burn' if rule == 'add_burn' else 'd_supply'}"
+        if mech.get("status") == "assumed":
+            src += ":MECHANISM_ASSUMED"
+            out.review_item(name, "gross_issuance_tokens", "derived_on_assumed_mechanism", "stored_flagged",
+                            value=issued, prior_value=None, date=when, source=src, tier=2)
+        out.add(point(name, "gross_issuance_tokens", issued, src, 2, when), "derive", name,
+                f"gross_issuance_tokens={issued:,.4f} from {how}", 2)
+
+
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
               prior_dates: dict | None = None,
@@ -188,6 +314,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 
     _resolve_tier_collisions(out)
     _resolve_period_overlaps(out)
+    # AFTER the collision guards, so a derivation can never displace a measured figure, and so the
+    # burn it consumes is the deduped one rather than a double-counted month.
+    _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"])
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
 

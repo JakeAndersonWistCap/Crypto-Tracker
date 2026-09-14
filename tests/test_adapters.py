@@ -368,6 +368,107 @@ def test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected():
     print("uniswap floor ok: a zero is rejected to the Review Queue, not stored")
 
 
+# ------------------------------------------------------------------ derived issuance
+def _issuance_frame(project: str, supply_now: float, burn: float | None):
+    rows = [{"date": pd.Timestamp("2026-09-14"), "project": project, "metric": "total_supply",
+             "value": supply_now, "source": "coingecko", "tier": 1}]
+    if burn is not None:
+        rows.append({"date": pd.Timestamp("2026-09-14"), "project": project, "metric": "gross_burn_tokens",
+                     "value": burn, "source": "chain:delta", "tier": 2})
+    out = FetchOutput()
+    out.frames = [pd.DataFrame(rows)]
+    return out
+
+
+def _derive(project_name: str, model: str, supply_now: float, supply_prior: float, burn: float | None,
+            status: str = "confirmed", prior_date: str = "2026-09-13"):
+    from fetch import _derive_issuance
+
+    p = dict(config.PROJECT_BY_NAME[project_name])
+    p["burn_mechanism"] = {"model": model, "status": status, "source_url": "x", "source_date": None, "note": ""}
+    out = _issuance_frame(p["name"], supply_now, burn)
+    _derive_issuance(out, [p],
+                     {(p["name"], "total_supply"): supply_prior},
+                     {(p["name"], "total_supply"): prior_date})
+    df = out.frame()
+    got = df[df.metric == "gross_issuance_tokens"]
+    return (None if got.empty else float(got.value.iloc[0])), out
+
+
+def test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs():
+    """The whole reason issuance is keyed on the mechanism. Same numbers in, different answers out.
+
+    A protocol burn destroys supply, so the supply delta is already NET of it and the burn must be
+    added back. A transfer burn leaves totalSupply untouched, so adding it would invent issuance
+    that never happened. If these two ever agree, the derivation has collapsed into one formula
+    and one of the two families of projects is silently wrong.
+    """
+    SUPPLY_NOW, SUPPLY_PRIOR, BURN = 1_000_100.0, 1_000_000.0, 30.0   # delta = +100, burn = 30
+
+    protocol, _ = _derive("Ethereum", "protocol_level_destruction", SUPPLY_NOW, SUPPLY_PRIOR, BURN)
+    transfer, _ = _derive("PancakeSwap", "transfer_to_dead_address", SUPPLY_NOW, SUPPLY_PRIOR, BURN)
+
+    assert protocol == 130.0, f"protocol burn: issuance = delta + burn = 130, got {protocol}"
+    assert transfer == 100.0, f"transfer burn: issuance = delta = 100, got {transfer}"
+    assert protocol != transfer, "IDENTICAL INPUTS MUST NOT GIVE THE SAME ANSWER — the keying is broken"
+    assert protocol - transfer == BURN, "the difference between the models is exactly the burn"
+    print(f"issuance models ok: protocol {protocol:,.0f} vs transfer {transfer:,.0f}, "
+          f"differing by the burn ({BURN:,.0f})")
+
+
+def test_issuance_refuses_rather_than_guessing():
+    """Three refusals, each of which would otherwise be a plausible wrong number."""
+    # 1. one observation of total supply -> a delta of 0 would read as "nothing was issued"
+    value, out = _derive("Ethereum", "protocol_level_destruction", 1_000_100.0, 1_000_000.0, 30.0,
+                         prior_date="2026-09-14")     # prior dated the SAME day
+    assert value is None
+    assert any("only one observation" in g["reason"] for g in out.gaps
+               if g["metric"] == "gross_issuance_tokens")
+
+    # 2. protocol burn with no burn figure -> the delta alone is issuance NET of burn
+    value, out = _derive("Ethereum", "protocol_level_destruction", 1_000_100.0, 1_000_000.0, None)
+    assert value is None
+    gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+    assert "understating it by exactly the burn" in gap["reason"]
+
+    # 3. a mechanism with no established supply effect -> no formula applies (Sky)
+    value, out = _derive("Sky", "amm_swap_to_receiver", 1_000_100.0, 1_000_000.0, None, status="refuted")
+    assert value is None
+    gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+    assert "not established" in gap["reason"]
+
+    # a transfer burn needs NO burn figure, and derives fine without one
+    value, _ = _derive("PancakeSwap", "transfer_to_dead_address", 1_000_100.0, 1_000_000.0, None)
+    assert value == 100.0, "a transfer burn does not touch supply, so no burn term is needed"
+    print("issuance refusals ok: single observation, missing burn, and unestablished mechanism")
+
+
+def test_a_measured_issuance_is_never_overwritten_by_a_derivation():
+    """A real source beats a derivation. Always."""
+    from fetch import _derive_issuance
+
+    p = dict(config.PROJECT_BY_NAME["Ethereum"])
+    out = _issuance_frame("Ethereum", 1_000_100.0, 30.0)
+    out.frames[0] = pd.concat([out.frames[0], pd.DataFrame([
+        {"date": pd.Timestamp("2026-09-14"), "project": "Ethereum", "metric": "gross_issuance_tokens",
+         "value": 777.0, "source": "dune:123", "tier": 4}])], ignore_index=True)
+    _derive_issuance(out, [p], {("Ethereum", "total_supply"): 1_000_000.0},
+                     {("Ethereum", "total_supply"): "2026-09-13"})
+    got = out.frame()
+    got = got[got.metric == "gross_issuance_tokens"]
+    assert len(got) == 1 and got.value.iloc[0] == 777.0, "the measured figure must survive untouched"
+    print("issuance precedence ok: a Dune figure is not displaced by the derivation")
+
+
+def test_a_negative_derived_issuance_is_rejected():
+    """Issuance cannot be below zero. A negative means an input is wrong, not that supply shrank."""
+    value, out = _derive("PancakeSwap", "transfer_to_dead_address", 999_000.0, 1_000_000.0, None)
+    assert value is None, "a negative derivation must not be stored"
+    assert any(r["reason"] == "negative_derived_issuance" and r["action"] == "rejected"
+               for r in out.review)
+    print("negative issuance ok: rejected to the Review Queue with its inputs named")
+
+
 def test_the_three_burn_failure_modes_stay_distinct():
     """Sky, Uniswap and Venice failed in three different ways. Collapsing them loses the fixes."""
     sky = config.burn_mechanism(config.PROJECT_BY_NAME["Sky"])
@@ -384,9 +485,19 @@ def test_the_three_burn_failure_modes_stay_distinct():
     assert config.PROJECT_BY_NAME["Uniswap"]["contracts"]["burn_dead"]["kind"] == "burn_address_balance"
 
     # 3. undocumented: neither confirmed nor refuted, and it must not inherit either answer
-    assert ven["status"] == "assumed", "Venice is unresolved and resembles neither of the others"
-    assert ven["source_url"] is None, "its only recorded source was the EIP-20 spec, which evidences nothing"
-    print("taxonomy ok: refuted / confirmed-but-misread / undocumented stay three different problems")
+    for still_open in ("PancakeSwap", "GEODNET"):
+        assert config.burn_mechanism(config.PROJECT_BY_NAME[still_open])["status"] == "assumed", \
+            f"{still_open} is unresolved and resembles none of the others"
+
+    # 4. right mechanism, right address, wrong COMPOSITION — the one no check can catch, because
+    # the figure is correct. Venice moved here from mode 3 when its mechanism was confirmed.
+    assert ven["status"] == "confirmed" and ven["model"] == "transfer_to_dead_address"
+    comp = config.PROJECT_BY_NAME["Venice AI"]["burn_composition"]
+    assert comp["status"] == "contaminated" and comp["flow_is_recurring_only"] is True
+    assert comp["one_off"]["recurring"] is False
+    assert comp["one_off"]["tokens_approx"] is None, \
+        "the one-off cannot be sized from a balance, and an approximation must not be stored as one"
+    print("taxonomy ok: refuted / misread / undocumented / miscomposed stay four different problems")
 
 
 def test_every_transfer_burn_declares_where_its_model_came_from():
@@ -1360,6 +1471,10 @@ if __name__ == "__main__":
                test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn,
                test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config,
                test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected,
+               test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs,
+               test_issuance_refuses_rather_than_guessing,
+               test_a_measured_issuance_is_never_overwritten_by_a_derivation,
+               test_a_negative_derived_issuance_is_rejected,
                test_the_three_burn_failure_modes_stay_distinct,
                test_every_transfer_burn_declares_where_its_model_came_from,
                test_an_assumed_mechanism_flags_the_figure_without_withdrawing_it,

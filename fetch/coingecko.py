@@ -24,10 +24,24 @@ API = "https://api.coingecko.com/api/v3"
 
 
 class CoinGecko:
+    # Inter-call floor, and it is NOT the same question as "how fast may we go".
+    #
+    # The run makes 2 calls per project, 60 in all. At the old hardcoded 2.2s that is 132 seconds
+    # of deliberate waiting — nowhere near the 16 minutes observed. The other ~14 minutes were
+    # 429 backoff: 2.2s is 27 calls/min, which the Demo tier allows and the KEYLESS public tier
+    # does not, so without a key the run spent most of its time being rate-limited and retrying.
+    #
+    # Which makes the polite setting also the fast one. Going slower without a key finishes
+    # sooner than going fast and being throttled, because a 429 costs a documented Retry-After
+    # plus exponential backoff, and it costs it on every call rather than once.
+    WITH_KEY = 2.0      # Demo plan: 30 calls/min documented. 60 calls -> ~2 minutes.
+    NO_KEY = 6.0        # public tier is variable and lower (roughly 5-15/min); 10/min sits inside
+                        # that band. 60 calls -> ~6 minutes, and no 429 storm on top.
+
     def __init__(self):
         key = os.environ.get("COINGECKO_API_KEY", "").strip()
         self.headers = {"x-cg-demo-api-key": key} if key else {}
-        self.http = Http(min_interval=2.2)   # public tier is ~30 calls/min
+        self.http = Http(min_interval=self.WITH_KEY if key else self.NO_KEY)
 
     @staticmethod
     def _ms_rows(pairs):

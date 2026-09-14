@@ -480,6 +480,8 @@ class Chain:
                                    "self-reported figure. The sheet labels this figure partial either way.")
 
             out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
+            if metric == "burn_address_balance" and (project.get("burn_composition") or {}).get("status") == "contaminated":
+                self._flag_contaminated_cumulative(project, total, out, when)
             if metric == "burn_address_balance":
                 self._flag_assumed_burn_mechanism(project, out, when)
             if metric == "burn_address_balance" and total == 0.0:
@@ -493,8 +495,53 @@ class Chain:
                                                    stock_metric=metric, out=out)
                 if not flow.empty:
                     out.add(flow, SOURCE, name, f"{flow_metric} derived from the summed {metric} delta", TIER)
+                    # Where the cumulative is contaminated by a one-off but the FLOW is not, the
+                    # flow is also the recurring-programme series. Emitting it under its own name
+                    # keeps the demand signal out of a cumulative that is 99.5% a supply event.
+                    comp = project.get("burn_composition") or {}
+                    if comp.get("flow_is_recurring_only") and flow_metric == "gross_burn_tokens":
+                        clean = flow.copy()
+                        clean["metric"] = "burn_revenue_funded"
+                        clean["source"] = f"{src}:delta:recurring-only"
+                        out.add(clean, SOURCE, name,
+                                "burn_revenue_funded = the flow, which excludes the one-off by "
+                                "construction: it predates every observation held", TIER)
                     if float(flow["value"].iloc[0]) == 0.0:
                         self._flag_unattributable_zero(project, flow_metric, metric, when, out)
+
+    def _flag_contaminated_cumulative(self, project: dict, total: float, out, when):
+        """A cumulative burn that is mostly a one-off is not evidence of a recurring programme.
+
+        The number is correct. What is wrong is the use it invites: sitting in a column headed
+        "cumulative burned" next to a revenue figure, it reads as the scale of a buyback. For
+        Venice that overstates the revenue-funded programme by roughly 200x, because ~99.5% of it
+        is a single airdrop burn that will never happen again. Flagged every run rather than
+        silently corrected, because the correction is a judgement about what belongs in a ratio.
+        """
+        name = project["name"]
+        comp = project["burn_composition"]
+        rec = comp.get("recurring") or {}
+        one = comp.get("one_off") or {}
+        out.review_item(name, "burn_address_balance", "cumulative_is_mostly_one_off", "stored_flagged",
+                        value=total, prior_value=rec.get("tokens_to_date_approx"), date=when,
+                        source=f"{SOURCE}: cumulative includes a non-recurring {one.get('what')} "
+                               f"({one.get('when')})", tier=TIER)
+        out.gap(name, "[data] the cumulative burn is mostly a ONE-OFF, not a recurring programme",
+                reason=(f"burn_address_balance reads {total:,.0f}, and that figure is correct — but it is "
+                        f"dominated by a NON-RECURRING event: {one.get('what')} burned once in "
+                        f"{one.get('when')}. The recurring, revenue-funded programme is about "
+                        f"{rec.get('tokens_to_date_approx', 0):,.0f} tokens since {rec.get('since')}. "
+                        f"Reading the cumulative as the scale of the buyback overstates it by roughly "
+                        f"{total / max(rec.get('tokens_to_date_approx') or 1, 1):,.0f}x. The one-off is a "
+                        f"SUPPLY event; only the recurring programme is a demand signal, and it is "
+                        f"published separately as burn_revenue_funded. {comp.get('reconciliation', '')}"),
+                tiers_attempted="2",
+                suggestion=("Use burn_revenue_funded, not the cumulative, in any buyback comparison or "
+                            "annualised burn-as-%-of-supply figure. The cumulative cannot be decomposed "
+                            "from the address balance alone — a balance carries no history of what "
+                            "funded it — so the split comes from the flow, which is clean because the "
+                            "one-off predates every observation held. Watch whether the balance actually "
+                            "rises: that is what settles the reconciliation question above."))
 
     def _flag_assumed_burn_mechanism(self, project: dict, out, when):
         """The figure is reported, but the model behind it is not sourced — so say so on the figure.

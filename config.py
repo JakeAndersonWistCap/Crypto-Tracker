@@ -147,6 +147,16 @@ METRICS = {
     "active_addresses":           {"label": "Active addresses (low weight)",   "kind": "stock", "unit": "count",  "archetypes": [1],          "tiers": [3, 4], "sanity_min": 0,    "sanity_max": 1e9},
     "gross_issuance_tokens":      {"label": "Gross issuance",                  "kind": "flow",  "unit": "tokens", "archetypes": [1, 4],       "tiers": [1, 2, 3, 4], "sanity_min": 0, "sanity_max": 1e12},
     "gross_burn_tokens":          {"label": "Gross burn",                      "kind": "flow",  "unit": "tokens", "archetypes": [1, 4],       "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
+    # THE SPLIT SERIES. Where a cumulative burn is mostly a one-off supply event, the cumulative
+    # and the recurring programme are two different figures and only the second is a demand
+    # signal. Venice is the case: ~99.5% of its cumulative is a single March 2025 airdrop burn.
+    # This metric is the RECURRING half, and it is the flow — the airdrop predates every
+    # observation we hold, so the differenced flow contains only revenue-funded burns.
+    # It is what belongs in archetype 3 buyback comparisons; the cumulative does not.
+    "burn_revenue_funded":        {"label": "Revenue-funded burn (recurring programme only)",
+                                   "kind": "flow", "unit": "tokens", "archetypes": [3, 4],
+                                   "tiers": [2, 3, 4], "sanity_min": 0, "sanity_max": 1e12,
+                                   "only_projects": ["Venice AI"]},
     "burn_address_balance":       {"label": "Cumulative burned (burn address)", "kind": "stock", "unit": "tokens", "archetypes": [4],         "tiers": [2],    "sanity_min": 0,    "sanity_max": 1e15},
     "staked_tokens":              {"label": "Staked tokens",                   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3],    "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     "emissions_tokens":           {"label": "Emissions to suppliers/stakers",  "kind": "flow",  "unit": "tokens", "archetypes": [2, 3],       "tiers": [1, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
@@ -327,14 +337,24 @@ TOKEN_STANDARDS = {"erc20", "erc721"}
 #                               destination; keep the executor as kind 'burn_executor'.
 #                               CHECK: _check_burn_destinations.
 #
-#   3. UNDOCUMENTED MECHANISM   Venice AI. Neither confirmed nor refuted, and the address is
-#                               uncorroborated too. SYMPTOM: nothing — the figure looks fine and
-#                               may be fine. FIX: read the protocol's own material.
-#                               CHECK: none possible; it needs a human. Status stays 'assumed'
-#                               and every figure it produces is flagged.
+#   3. UNDOCUMENTED MECHANISM   PancakeSwap, GEODNET. Neither confirmed nor refuted. SYMPTOM:
+#                               nothing — the figure looks fine and may be fine. FIX: read the
+#                               protocol's own material. CHECK: none possible; it needs a human.
+#                               Status stays 'assumed' and every figure it produces is flagged.
 #
-# Mode 3 is not a milder version of 1 or 2. It is the state the other two were in before anyone
-# looked, and its resolution could turn out to be either of them — or nothing at all.
+#   4. RIGHT MECHANISM, RIGHT ADDRESS, WRONG COMPOSITION   Venice AI, found 2026-09-14 and the
+#                               subtlest of the four. The mechanism is confirmed, the address
+#                               receives, the number is arithmetically CORRECT — and it still
+#                               misleads, because ~99.5% of it is a one-off airdrop burn answering
+#                               a different question from the one the column asks. Read as the
+#                               scale of a revenue-funded buyback it overstates by ~200x.
+#                               SYMPTOM: none at all. Nothing is broken. Every check above passes.
+#                               FIX: split the series — the cumulative is a supply event, the flow
+#                               is the demand signal. CHECK: burn_composition, declared per project.
+#
+# Modes 3 and 4 are not milder versions of 1 and 2. Mode 3 is the state the others were in before
+# anyone looked. Mode 4 is the one no validation can catch, because nothing is wrong with the
+# figure — only with the use it invites.
 BURN_MECHANISM_STATUSES = {"confirmed", "assumed", "refuted"}
 
 BURN_MECHANISM_MODELS = {
@@ -520,6 +540,14 @@ PROJECTS = [
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
+        "burn_mechanism": {
+            "model": "protocol_level_destruction", "status": "assumed",
+            "source_url": "https://eips.ethereum.org/EIPS/eip-1559", "source_date": None,
+            "note": "ASSUMED, and the easiest of the six to promote: EIP-1559 burns the base fee at the protocol "
+                    "level, which is why totalSupply falls rather than a dead address filling up. The EIP "
+                    "is the primary source and is linked here; it is marked assumed only because nothing "
+                    "in this repo records anyone having read it to settle this question.",
+        },
         "burn_read_method": "protocol_level",
         "burn_read_note": "EIP-1559 destroys the base fee at the protocol level. No transfer occurs, so there is NO burn address to read. Needs a chain-data or dashboard source (ultrasound.money publishes it).",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -542,6 +570,14 @@ PROJECTS = [
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
+        "burn_mechanism": {
+            "model": "protocol_level_destruction", "status": "assumed",
+            "source_url": None, "source_date": None,
+            "note": "ASSUMED. Solana burns 50% of each transaction fee at the protocol level. No Solana document is "
+                    "on file stating it, and the burn/issuance split matters here more than most: SOL "
+                    "issues by inflation schedule AND burns fees, so the supply delta nets two large "
+                    "opposing flows.",
+        },
         "burn_read_method": "protocol_level",
         "burn_read_note": "Partial fee burn via the SPL burn instruction — supply is destroyed, not sent to a wallet. There is no burn address to read. Needs a chain-data or dashboard source.",   # not EVM — tier 2 web3 path does not apply
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -565,6 +601,13 @@ PROJECTS = [
         # so burns could be counted flexibly. A balance read on T9yD14... does NOT return the fee burn.
         "contracts": {},
         "burn_address": None,
+        "burn_mechanism": {
+            "model": "protocol_level_destruction", "status": "assumed",
+            "source_url": None, "source_date": None,
+            "note": "ASSUMED. TRX is burned at the protocol level (energy/bandwidth and account creation), which the "
+                    "BURN_TRX node read reflects — that read returns a protocol counter, not an address "
+                    "balance, which is itself evidence for this model. No Tron document on file.",
+        },
         "burn_read_method": "protocol_level",
         "node_api": {
             "kind": "tron_burn_trx",
@@ -604,6 +647,12 @@ PROJECTS = [
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
+        "burn_mechanism": {
+            "model": "protocol_level_destruction", "status": "assumed",
+            "source_url": None, "source_date": None,
+            "note": "ASSUMED. NEAR burns a share of gas at the protocol level alongside a fixed inflation schedule. "
+                    "No NEAR document on file.",
+        },
         "burn_read_method": "protocol_level",
         "burn_read_note": "Execution fee burn at the protocol level, historically c.70% and moving toward 100%. CONFIRM the current share from docs.near.org. No address to read.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -625,6 +674,13 @@ PROJECTS = [
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
+        "burn_mechanism": {
+            "model": "protocol_level_destruction", "status": "assumed",
+            "source_url": None, "source_date": None,
+            "note": "ASSUMED, and the least evidenced of the six — Canton is the thinnest-covered project in the "
+                    "config generally. Nothing on file describes its burn at all; the model is inherited "
+                    "from burn_read_method rather than documented.",
+        },
         "burn_read_method": "protocol_level",
         "burn_read_note": "Burn-mint equilibrium: CC is burned when Global Synchroniser traffic is purchased, priced in USD. Destroyed at the protocol level, no transfer. Needs the Canton dashboard or a Dune source.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -663,6 +719,13 @@ PROJECTS = [
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
+        "burn_mechanism": {
+            "model": "protocol_level_destruction", "status": "assumed",
+            "source_url": None, "source_date": None,
+            "note": "ASSUMED. Injective runs a weekly burn auction that destroys INJ at the protocol level. No "
+                    "Injective document on file, and the auction cadence means the burn is lumpy — worth "
+                    "knowing before reading any single period's issuance derivation.",
+        },
         "burn_read_method": "protocol_level",
         "burn_read_note": "The auction and Community BuyBack modules destroy INJ on-chain with no transfer. DO NOT USE the 0x1111...1111 address that circulates publicly — it is a contribution subaccount, NOT a burn destination, and reading it would return the wrong number entirely.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -1008,13 +1071,47 @@ PROJECTS = [
                                            "routes here, which is the burn-methodology question, not an address one."),
         },
         "burn_mechanism": {
-            "model": "transfer_to_dead_address", "status": "assumed",
-            "source_url": None, "source_date": None,
-            "note": "ASSUMED, and the weakest of the five. The source on the burn_zero entry is the EIP-20 "
-                    "SPECIFICATION — which documents what the zero address is, not that Venice burns to it. "
-                    "There is no Venice document on file describing the mechanism at all. The buy_and_burn "
-                    "address is separately uncorroborated. Flagged rather than refused: the figure may well "
-                    "be right, and withdrawing it on a suspicion is its own kind of wrong.",
+            "model": "transfer_to_dead_address", "status": "confirmed",
+            "source_url": "https://venice.ai/blog/programmatic-vvv-buy-and-burn",
+            "source_date": "2026-09-14",
+            "note": "CONFIRMED — a dead-address transfer, like Uniswap and unlike Sky. TWO PARALLEL "
+                    "CHANNELS, both on-chain. (1) DISCRETIONARY, monthly, running since Nov 2025: Venice "
+                    "ops funds a Safe with USDC and CoW Protocol's TWAP engine spends it hourly over ~30 "
+                    "days buying VVV on Aerodrome, sending it to the burn address, ~$100k/month. "
+                    "(2) PROGRAMMATIC, per-event, since 2026-04-26: each new subscription triggers a "
+                    "tier-scaled buy-and-burn — Pro ~$2, Pro+ ~$5, Max ~$10 — and Venice intends to "
+                    "migrate most discretionary burns into this engine over time. Second source: "
+                    "https://docs.venice.ai/overview/vvv-diem",
+        },
+        # THE CUMULATIVE BALANCE IS NOT A BUYBACK SIGNAL, and reading it as one overstates Venice's
+        # revenue-funded burn by roughly 200x. ~99.5% of it is a single March 2025 event: unclaimed
+        # AIRDROP tokens, burned once, not revenue-funded and not repeatable. That is a SUPPLY
+        # event. The revenue-funded programme is ~180,000 VVV since Nov 2025 — the demand signal,
+        # and about 0.5% of the cumulative figure sitting next to it.
+        "burn_composition": {
+            "status": "contaminated",
+            "one_off": {
+                "what": "unclaimed airdrop tokens", "when": "2025-03", "recurring": False,
+                "tokens_approx": None,      # see reconciliation below — NOT recorded as a number
+            },
+            "recurring": {"what": "revenue-funded buy-and-burn", "since": "2025-11",
+                          "tokens_to_date_approx": 180_000, "usd_to_date_approx": 1_350_000},
+            # The flow measured from our FIRST observation contains only recurring burns, because
+            # the airdrop burn predates every observation we hold. So gross_burn_tokens is the clean
+            # series and the cumulative is the contaminated one — the opposite of the usual case.
+            "flow_is_recurring_only": True,
+            "reconciliation": "THE STATED COMPONENTS DO NOT SUM TO THE STORED BALANCE, and the gap is "
+                              "informative rather than sloppy. Stored 33,872,423; one-off stated ~33.87m; "
+                              "recurring stated ~180,000. Those components sum to 34,050,000 — an "
+                              "overshoot of 177,577, which is the recurring figure to within rounding. "
+                              "Two readings. (a) '~33.87m' is a rounded statement of the TOTAL, the "
+                              "one-off is really ~33,692,423, and the recurring burns ARE arriving here: "
+                              "33,692,423 + 180,000 = 33,872,423 exactly. (b) 33.87m IS the one-off "
+                              "alone and the recurring burns are NOT reaching this address — the Uniswap "
+                              "error again, a confirmed mechanism pointed at the wrong destination. "
+                              "NEITHER IS ASSUMED, and the discriminator is free: watch the flow. At "
+                              "~$100k/month plus per-subscription burns the balance must visibly rise. "
+                              "If it never moves, reading (b) holds and the destination is wrong.",
         },
         "burn_read_method": "transfer",
         "self_reported_burn": True,
@@ -1505,6 +1602,41 @@ PROJECTS = [
         },
         # NOT "transfer" — that was the assumption the Dss Flappers audit refuted. Nothing is read
         # until the Flapper variant question is settled, which is exactly what "undetermined" means.
+        # THE FLAPPER VARIANT, ANSWERED — with a shelf life. A Sky governance executive vote
+        # initialises FlapperUniV2SwapOnly, and the 2023 ChainSecurity audit of that variant states
+        # it sends proceeds to a predefined RECEIVER rather than depositing into the pair as
+        # liquidity. So the LP-position concern is RETIRED: SKY is not being parked in a Uniswap
+        # pool, and Sky's archetype 4 block is not wrong for that reason.
+        #
+        # RECORDED AS CONFIGURATION AT THAT TIME, NOT AS CURRENT STATE. The vote is from
+        # 2024-09-27, and SBEBeam now lets facilitators reconfigure the splitter within governance
+        # bounds — so this says what was set then, not what is set now. Confirming it still holds
+        # is an on-chain read, not a documentary question. See OPEN_QUESTIONS.
+        "governance_parameters": {
+            "flapper": {
+                "value": "0x374D9c3d5134052Bc558F432Afa1df6575f07407",
+                "what": "FlapperUniV2SwapOnly — converts USDS to the gem and sends it to a receiver",
+                "source_url": "https://github.com/sky-ecosystem/community",
+                "as_of": "2024-09-27", "status": "point_in_time",
+            },
+            "want": {"value": 0.98, "what": "0.98 * WAD", "source_url": "https://github.com/sky-ecosystem/community",
+                     "as_of": "2024-09-27", "status": "point_in_time"},
+            "pip": {"value": "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437",
+                    "what": "SWAP_ONLY_FLAP_SKY_ORACLE",
+                    "source_url": "https://github.com/sky-ecosystem/community",
+                    "as_of": "2024-09-27", "status": "point_in_time"},
+            "pair": {"value": "0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c", "what": "PAIR_USDS_SKY",
+                     "source_url": "https://github.com/sky-ecosystem/community",
+                     "as_of": "2024-09-27", "status": "point_in_time"},
+            "receiver": {
+                "value": None,
+                "what": "WHERE THE BOUGHT SKY ACTUALLY GOES — the archetype 4 question, still open. "
+                        "SwapOnly sends proceeds to a predefined receiver; that address is not in the "
+                        "material on file and is NOT guessed here. Whether SKY is destroyed or held "
+                        "depends entirely on it.",
+                "source_url": None, "as_of": None, "status": "unknown",
+            },
+        },
         "burn_read_method": "undetermined",
         "burn_read_note": "Splitter -> Flapper -> UniswapV2 -> configurable receiver. No dead address is "
                           "involved, so no address balance models it. Which variant is active determines "
@@ -2054,27 +2186,67 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # =======================================================================================
 OPEN_QUESTIONS = [
     {
-        "project": "Sky", "topic": "WHICH FLAPPER VARIANT IS ACTIVE? Sky has no burn figure until this is answered",
+        "project": "Sky", "topic": "WHERE IS THE RECEIVER? SwapOnly sends the bought SKY somewhere",
         "severity": 1,
-        "reason": "THE SUBSTANTIVE QUESTION, and it decides whether Sky belongs in archetype 4 at all. Per "
-                  "the ChainSecurity Dss Flappers audit (July 2026) the Flapper comes in two variants that "
-                  "do MATERIALLY DIFFERENT THINGS to supply. FlapperUniV2SwapOnly fully converts USDS to "
-                  "the gem and sends it to a predefined receiver. FlapperUniV2 buys the gem AND DEPOSITS "
-                  "IT BACK INTO THE LIQUIDITY POOL, minting LP tokens to a receiver. If the active variant "
-                  "is FlapperUniV2, then a portion of what this model has been calling Sky's BURN is SKY "
-                  "SITTING IN A UNISWAP LP POSITION — not destroyed, not removed from supply, and "
-                  "recoverable. That is not a burn in any sense this tool means it, and Sky's archetype 4 "
-                  "block would be partly wrong. Until it is established, Sky HAS NO BURN FIGURE and no "
-                  "figure should be presented as one. destination_effect is set to 'unconfirmed' rather "
-                  "than 'mixed' for the same reason: whether the burn leg removes supply at all is open.",
-        "suggestion": "Establish from SKY GOVERNANCE which Flapper the Splitter currently points at, and "
-                      "whether SBEBeam has since changed it — SBEBeam lets facilitators reconfigure "
-                      "splitter, kicker and farms within governance bounds, so this is a question about the "
-                      "CURRENT configuration, not a one-off fact. Sources: "
-                      "https://github.com/sky-ecosystem/dss-flappers and the audit PDF "
-                      "20260710-ChainSecurity_Sky_Dss_Flappers_audit.pdf. Then, and only then, re-examine "
-                      "whether Sky is an archetype 4 name, and scope the Dune query — the variant "
-                      "determines what the query should even look for.",
+        "reason": "THE VARIANT QUESTION IS ANSWERED AND THE LP CONCERN IS RETIRED. A Sky governance "
+                  "executive vote initialises FlapperUniV2SwapOnly (flapper "
+                  "0x374D9c3d5134052Bc558F432Afa1df6575f07407), and the 2023 ChainSecurity audit of that "
+                  "variant states it sends proceeds to a predefined RECEIVER rather than depositing into "
+                  "the pair as liquidity. So SKY is NOT being parked in a Uniswap LP position, and Sky's "
+                  "archetype 4 block is not wrong for that reason — that P1 is closed, not lapsed. "
+                  "WHAT REPLACES IT IS NARROWER AND SHARPER: SwapOnly sends the SKY to a receiver, and "
+                  "that address is not in the material on file. It is the whole archetype 4 question — a "
+                  "receiver that destroys is a burn, a receiver that holds is a treasury position that "
+                  "can come back to float. Sky still has no burn figure, and will not until this is "
+                  "answered. The address is NOT guessed here.",
+        "suggestion": "Two routes. (1) Read it off the flapper contract at "
+                      "0x374D9c3d5134052Bc558F432Afa1df6575f07407 — SwapOnly exposes its receiver, and "
+                      "one eth_call settles it. (2) Find it in github.com/sky-ecosystem/community "
+                      "alongside the executive vote that set the flapper. Then establish whether that "
+                      "address destroys or holds, and set burn_mechanism accordingly — if it holds, this "
+                      "is destination_effect 'locked_supply' like Chainlink's Reserve, NOT a burn.",
+    },
+    {
+        "project": "Sky", "topic": "the flapper address is 2024 configuration, not confirmed current state",
+        "severity": 1,
+        "reason": "The vote that set FlapperUniV2SwapOnly is dated 2024-09-27, and SBEBeam now lets "
+                  "facilitators reconfigure the splitter within governance bounds. So the recorded "
+                  "flapper, want, pip and pair are CONFIGURATION AT THAT TIME and are stored in "
+                  "governance_parameters with status 'point_in_time' rather than as current facts. "
+                  "Treating a two-year-old vote as current state is the same error as treating a "
+                  "verified address as a verified mechanism: the document was accurate and may no longer "
+                  "describe what is deployed.",
+        "suggestion": "Read the Splitter's current flapper address on-chain and confirm it still equals "
+                      "0x374D9c3d5134052Bc558F432Afa1df6575f07407. If it does, re-date the entries and "
+                      "set status to 'confirmed_current'. If it does not, the variant question reopens "
+                      "and the LP concern with it — a different flapper may well be FlapperUniV2.",
+    },
+    {
+        "project": "Venice AI", "topic": "the 20% protocol take on locked sVVV yield is not captured",
+        "severity": 2,
+        "reason": "Locked sVVV earns 80% of the normal emission yield and Venice retains the remaining "
+                  "20% as protocol revenue. That is a revenue line this model does not capture at all, "
+                  "and it is structurally different from the fee revenue already tracked: it accrues in "
+                  "VVV rather than dollars, and it scales with the locked share rather than with usage. "
+                  "Understating revenue understates every derived buyback figure computed from it.",
+        "suggestion": "Establish the size of the 20% take from Venice's own material and add it to "
+                      "revenue_sources with booked=True only if it is actually realised rather than "
+                      "merely accrued. Related figures worth recording at the same time: ~70% of "
+                      "circulating VVV is staked, ~25% of that locked for DIEM, and unstaking has a "
+                      "7-day cooldown — which belongs in effective float, since tokens in cooldown are "
+                      "neither liquid nor locked.",
+    },
+    {
+        "project": "Venice AI", "topic": "is sVVV 1:1 with deposited VVV?",
+        "severity": 2,
+        "reason": "The lock-rate read assumes the staking contract's balance maps 1:1 to VVV deposited. "
+                  "If sVVV is a yield-bearing receipt that accrues — a share price rather than a "
+                  "receipt — then its supply overstates the VVV actually locked, and the lock rate with "
+                  "it. This is the same class of error as reading a veNFT's totalSupply as tokens "
+                  "locked: a plausible number, wrong by a drifting factor.",
+        "suggestion": "Confirm from Venice's docs that sVVV is 1:1 with VVV deposited. If it is not, the "
+                      "read needs the underlying balance rather than the receipt's supply — see "
+                      "LOCK_READ_METHODS and the escrow_balance_of pattern used for veAERO.",
     },
     {
         "project": "Sky", "topic": "is the MCD Pause Proxy a burn destination or a treasury holding?",
@@ -2152,27 +2324,24 @@ OPEN_QUESTIONS = [
                       "post-overhaul to 2026-08-12. Do not collapse them into one.",
     },
     {
-        "project": "Venice AI", "topic": "burn methodology — the SAME question Sky's answer got wrong",
-        "severity": 1,
-        "reason": "RAISED TO P1 BY THE SKY FINDING. The VVV token and the staking contract are verified "
-                  "from Venice's own developer docs, so the lock-rate metric is sound. What is NOT "
-                  "established is the burn MECHANISM, and Venice is the weakest case in the whole config: "
-                  "the source recorded against its zero-address entry is the EIP-20 SPECIFICATION, which "
-                  "documents what the zero address IS and says nothing whatever about Venice. There is no "
-                  "Venice document on file describing where burned VVV goes. The claimed buy_and_burn "
-                  "contract is separately uncorroborated. Sky is the cautionary case: its address was "
-                  "verified against real protocol docs and was genuinely correct, and the MODEL attached "
-                  "to it was still false — Sky does not burn to a dead address at all. The same could be "
-                  "true here and nothing currently on file would reveal it. The figure is reported and "
-                  "FLAGGED rather than withdrawn: it may be right, and withdrawing it on the strength of "
-                  "another project's error would be its own mistake.",
-        "suggestion": "Read Venice's own material on what happens to bought-back VVV and record it in "
-                      "burn_mechanism with its URL, then set status to 'confirmed'. Two questions settle "
-                      "it, and they are the questions Sky failed: does Venice TRANSFER tokens to an "
-                      "address nobody controls, or destroy supply some other way; and if it transfers, is "
-                      "the destination a dead address rather than a contract that merely HOLDS them? If it "
-                      "is protocol-level destruction, set burn_read_method to protocol_level and delete "
-                      "the address entry rather than re-pointing it — as was done for Sky.",
+        "project": "Venice AI", "topic": "RESOLVED — mechanism confirmed; what is left is the burn ADDRESS",
+        "severity": 2,
+        "reason": "THE MECHANISM QUESTION IS CLOSED. Venice burns by dead-address transfer, confirmed from "
+                  "Venice's own material: a discretionary monthly channel (a Safe funded with USDC, spent "
+                  "hourly by CoW Protocol's TWAP engine buying VVV on Aerodrome, ~$100k/month since Nov "
+                  "2025) and a programmatic per-subscription channel since 2026-04-26. Venice is therefore "
+                  "like Uniswap, not like Sky. "
+                  "WHAT REMAINS is the address: buy_and_burn (0x35fb3b...) stays UNCORROBORATED, and none "
+                  "of the confirming sources names a contract. The Safe-plus-CoW-TWAP architecture "
+                  "suggests there may be no single stable burn contract to point at — the buying is done "
+                  "by an off-the-shelf execution engine, not by a Venice contract. That is a different "
+                  "shape of problem from a wrong address and should not be treated as one.",
+        "suggestion": "Two things settle it, and the second is free. (1) Ask Venice, or find in their "
+                      "material, which address the TWAP engine sends VVV to. (2) Watch the balance: at "
+                      "~$100k/month plus per-subscription burns, the address we already read must "
+                      "visibly rise. If it does, it IS the destination and the reconciliation question "
+                      "in burn_composition resolves to reading (a). If it never moves, the burns are "
+                      "landing somewhere else — the Uniswap error — and the address is wrong.",
     },
     {
         "project": "Venice AI", "topic": "DIEM is a second Venice asset, not tracked",
@@ -2444,12 +2613,17 @@ def _check_burn_mechanisms() -> list[str]:
     """
     errors = []
     for p in PROJECTS:
-        if p.get("burn_read_method") != "transfer":
+        # Both burn models now drive a DERIVED figure — issuance is the supply delta plus the burn
+        # under a protocol burn and the delta alone under a transfer burn — so both must declare
+        # where their model came from. An undeclared model silently picks a formula.
+        if p.get("burn_read_method") not in ("transfer", "protocol_level"):
             continue
         block = p.get("burn_mechanism")
         if not block:
             errors.append(
-                f"{p['name']}: burn_read_method is 'transfer' but there is no burn_mechanism block. "
+                f"{p['name']}: burn_read_method is {p.get('burn_read_method')!r} but there is no "
+                f"burn_mechanism block. Issuance is DERIVED from it — supply delta plus burn, or delta "
+                f"alone — so an undeclared model silently picks a formula. "
                 f"'Burn means a transfer to a dead address' is an ASSUMPTION and must be declared as "
                 f"one — see BURN_MECHANISM_MODELS. Add the block with status 'assumed' if it is not "
                 f"yet sourced; that is a legitimate answer, silence is not.")
