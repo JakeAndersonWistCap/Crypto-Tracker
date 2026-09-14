@@ -59,3 +59,24 @@ GROUP  BY project, metric;
 -- ---------------------------------------------------------------------------------------------
 -- SELECT project, metric, source, COUNT(*), MIN(date), MAX(date) FROM metrics
 --  WHERE project IN ('Sky','Uniswap') GROUP BY project, metric, source ORDER BY project, metric;
+
+-- ---------------------------------------------------------------------------------------
+-- 2026-09-14 — MAPLE treasury_holding_tokens: 0.51253570332391 SYRUP
+--
+-- NOT AN ORPHAN. The contract key `treasury` is still in config; what changed is that its
+-- ROLE is now marked destination_status "disputed", so future runs stage the observation as
+-- evidence and store no metric. But THE STORE UPSERTS AND NEVER DELETES, so the 0.51 row
+-- already written stays as the latest value for this metric and keeps rendering.
+--
+-- The read was correct and the address was wrong: 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19
+-- is Maple's v2 PROTOCOL FEE treasury, which takes fees in pool assets, not the wallet holding
+-- repurchased SYRUP. Delete the row rather than leaving a real-but-meaningless figure in place.
+--
+-- Check first:
+--   SELECT date, value, source FROM metrics
+--    WHERE project='Maple' AND metric='treasury_holding_tokens' ORDER BY date;
+--
+-- Then delete:
+DELETE FROM metrics
+ WHERE project = 'Maple'
+   AND metric  = 'treasury_holding_tokens';

@@ -1750,6 +1750,60 @@ def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
     print("etherfi ok: dated history, so no snapshot exemption to the tier 4 backfill skip")
 
 
+def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figure():
+    """0.51 SYRUP against ~75.78m reported: the read was right, the ADDRESS was wrong.
+
+    The live run of 2026-09-14 returned 0.51253570332391 SYRUP from the address taken to be the
+    Syrup Strategic Fund. Decimals were excluded arithmetically — 75,780,000 / 0.51253570332391
+    has a log10 of 8.1698, and a decimals mismatch is always an exact power of ten — so the
+    balance was genuine and the address was the v2 PROTOCOL FEE treasury, which holds pool assets
+    rather than SYRUP.
+
+    What makes this worth a permanent test is the SHAPE of the number. A zero looks broken and
+    gets investigated. 0.51 is small, precise, non-zero and would have flowed into every Maple
+    archetype 3 destination figure untouched.
+    """
+    spec = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    assert spec["destination_status"] == "disputed", (
+        "the address is real and its role is not — it must be read as evidence and stored as "
+        f"nothing, got {spec.get('destination_status')!r}")
+
+    SYRUP = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+
+    class DustStub:
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            ok = (chain, address) == ("ethereum", SYRUP)
+            return ok, "SYRUP" if ok else ""
+
+        def scaled(self, chain, address, call, *args):
+            # the real reading: a genuine dust balance of the right token
+            return 0.51253570332391 if call == "balanceOf" else 1_000_000_000.0
+
+    c = Chain()
+    c.reader = DustStub()
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Maple"]], None, out)
+    df = out.frame()
+
+    assert "treasury_holding_tokens" not in set(df.metric), \
+        "a disputed destination must not reach the sheet as a figure"
+    staged = [s for s in out.staged if "treasury_holding_tokens" in str(s.get("name", ""))]
+    assert staged and abs(float(staged[0]["value"]) - 0.51253570332391) < 1e-9, \
+        f"the observation must survive as EVIDENCE, not vanish: {out.staged}"
+    assert any("disputed" in str(g.get("reason", "")) for g in out.gaps), \
+        f"and the gap must say why, not just leave the cell empty: {out.gaps}"
+
+    # THE GUARD FOR THE FIX: if the dispute is ever cleared against a still-wrong address, the
+    # floor must reject the dust rather than let it back in quietly.
+    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
+    assert lo is not None and 0.51253570332391 < lo <= 75_780_000 <= (hi or float("inf")), \
+        f"the floor must exclude dust and admit the reported ~75.78m, got ({lo}, {hi})"
+    print("maple treasury ok: dust NOT stored, staged as evidence, gap explains it, floor guards the fix")
+
+
 def test_the_burn_mechanism_flag_fires_only_where_a_burn_is_ACTUALLY_CLAIMED():
     """Two bugs, one shape: a default that means "unknown" applied where nothing was asked.
 
@@ -1972,59 +2026,25 @@ def test_manual_overrides_suppress_gaps():
 
 
 if __name__ == "__main__":
-    for fn in [test_defillama, test_coingecko,
-               test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
-               test_an_orphaned_row_and_a_changed_measuring_point_are_RED_not_amber,
-               test_impossible_relations_have_NO_tolerance,
-               test_uniswap_buyback_fund_is_relabelled_not_redefined,
-               test_a_same_day_rerun_recomputes_the_SAME_flow_instead_of_destroying_it,
-               test_a_delta_across_a_CHANGED_MEASURING_POINT_is_not_a_flow,
-               test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
-               test_a_single_observation_never_produces_a_zero_flow,
-               test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_address,
-               test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism,
-               test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn,
-               test_a_burn_destination_that_is_not_a_dead_address_is_rejected_by_config,
-               test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected,
-               test_fluid_buyback_is_suppressed_because_it_is_a_SWITCH_not_a_rate,
-               test_a_supply_additive_buyback_increases_net_issuance_never_decreases_it,
-               test_maple_indeterminate_destination_lands_in_the_AMBER_band_automatically,
-               test_validation_survives_a_REAL_fetch_all_frame,
-               test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs,
-               test_issuance_refuses_rather_than_guessing,
-               test_a_measured_issuance_is_never_overwritten_by_a_derivation,
-               test_a_negative_derived_issuance_is_rejected,
-               test_the_three_burn_failure_modes_stay_distinct,
-               test_every_transfer_burn_declares_where_its_model_came_from,
-               test_an_assumed_mechanism_flags_the_figure_without_withdrawing_it,
-               test_a_real_burn_is_not_flagged, test_sky_split_history_cannot_resolve_across_the_april_overhaul,
-               test_several_contracts_serving_one_metric_are_summed,
-               test_components_sum_fully_once_every_chain_has_its_token,
-               test_no_metric_is_served_by_contracts_that_would_overwrite_each_other,
-               test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code,
-               test_contract_holders_still_get_the_bytecode_check,
-               test_chain_symbol_mismatch_rejects, test_chain_read_failure_is_logged_not_raised,
-               test_venft_misconfiguration_fails_loudly, test_escrow_balance_of_reads_the_underlying_not_the_nft,
-               test_unestablished_lock_read_method_is_refused,
-               test_hypercore_info_reads_the_assistance_fund_without_any_chain,
-               test_hypercore_reports_a_response_shape_change_rather_than_guessing,
-               test_venice_buy_and_burn_stays_refused_as_uncorroborated,
-               test_extract_xhr, test_extract_dom_anchor_and_ambiguity,
-               test_scrape_registry_reports_incomplete_entries_as_gaps,
-               test_later_tier_never_overwrites_an_earlier_one, test_cross_check_metrics_do_not_collide_with_their_primary,
-               test_a_monthly_backfill_does_not_double_count_a_month_the_live_read_covers,
-               test_dune_sums_split_columns_and_drops_the_incomplete_current_period,
-               test_dune_reports_real_columns_rather_than_guessing_an_unmapped_query,
-               test_snapshot_query_is_dated_now_and_stages_the_columns_nobody_chose,
-               test_snapshot_declaration_is_checked_not_trusted,
-               test_a_snapshot_query_is_never_skipped_as_already_backfilled,
-               test_etherfi_reads_the_fraction_column_not_its_x100_twin,
-               test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read,
-               test_forced_repull_takes_the_full_history_not_the_trailing_window,
-               test_geodnet_sql_addresses_match_config_exactly,
-               test_dune_backfill_only, test_validation_bounds_and_threshold, test_parse_number,
-               test_a_closed_figure_is_not_a_gap_and_its_history_limit_is_not_a_closure,
-               test_aerodrome_still_reads_locked_tokens_from_the_escrow_with_no_cross_check,
-               test_gap_detection_covers_every_applicable_metric, test_manual_overrides_suppress_gaps]:
-        fn()
-    print("\nALL ADAPTER TESTS PASSED")
+    # EVERY test_* IN THIS MODULE, IN DEFINITION ORDER — discovered, not hand-listed.
+    #
+    # This used to be an explicit list of function objects, and three tests written in September
+    # 2026 were defined and NEVER RUN because nobody added them to it: the burn-mechanism flag
+    # test, the Maple disputed-treasury test, and the uncovered-chain refusal test. The suite
+    # printed "ALL ADAPTER TESTS PASSED" the whole time, which is the worst possible failure for a
+    # test runner — it reported success for work it had not done.
+    #
+    # A hand-maintained registry of tests has the same defect as a hand-assigned confidence band:
+    # it is a second copy of the truth that goes stale silently. Discovery cannot go stale.
+    import inspect as _inspect
+    import sys as _sys
+
+    _module = _sys.modules[__name__]
+    _tests = [(name, obj) for name, obj in vars(_module).items()
+              if name.startswith("test_") and _inspect.isfunction(obj)
+              and obj.__module__ == _module.__name__]
+    # definition order, so a failure reads in the same sequence the file does
+    _tests.sort(key=lambda kv: kv[1].__code__.co_firstlineno)
+    for _name, _fn in _tests:
+        _fn()
+    print(f"\nALL ADAPTER TESTS PASSED ({len(_tests)} tests)")

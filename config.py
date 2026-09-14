@@ -1214,10 +1214,30 @@ PROJECTS = [
             # v0.2 pool size is 45,000,000 LINK (~8% of circulating at launch), split across the two
             # pools below. The LOCK RATE is the sum of both pools' LINK balances — which is what
             # these two entries produce, since both serve locked_tokens.
+            # ADDRESSES INDEPENDENTLY CORROBORATED 2026-09-14 against Chainlink's own
+            # instructions.txt in that repo, which lists the official addresses explicitly:
+            # the LINK token, the v0.1 legacy protocol, both v0.2 pools, the reward vault and the
+            # price-feed alerts controller. All four we use match exactly, and the two we
+            # deliberately do NOT read (v0.1 legacy, reward vault) are confirmed as the separate
+            # things we took them for.
+            #
+            # THE TOTAL IS NOT CORROBORATED, AND THAT IS A DIFFERENT CLAIM. Neither that file nor
+            # the repo README states a pool size or a staked total, so the 42,536,190.83 LINK read
+            # of 2026-09-14 rests on ONE source. Its plausibility against the 45,000,000 programme
+            # size (~94% full) is not confirmation — a wrong address can be plausible too, which is
+            # exactly what Maple's 0.51 demonstrated in the same run.
+            #
+            # AND OUR READ IS AN UPPER BOUND ON STAKED PRINCIPAL. LINK.balanceOf(pool) counts every
+            # LINK sitting at the pool address, including anything in transit or stray. The pools'
+            # own accounting figure is getTotalPrincipal(); Chainlink's instructions.txt points
+            # stakers at getStakerPrincipal for the per-staker equivalent. Reading
+            # getTotalPrincipal() on both pools is the second opinion worth having, and it needs a
+            # call this adapter does not make today.
             "staking_community": _contract(
                 "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e", "ethereum", "ve_total_supply", "LINK",
                 "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
-                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide",
+                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide — address "
+                                                  "listed explicitly in instructions.txt",
                 read_method="escrow_balance_of", token_standard="erc20", underlying="token",
                 purpose="Staking v0.2 COMMUNITY pool. Read as LINK.balanceOf(pool) — the LINK actually "
                         "staked, not any share-token supply. Summed with the node operator pool to give "
@@ -1225,7 +1245,8 @@ PROJECTS = [
             "staking_node_operator": _contract(
                 "0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5", "ethereum", "ve_total_supply", "LINK",
                 "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
-                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide",
+                verified="2026-09-14", provenance="Chainlink's own staking v0.2 public guide — address "
+                                                  "listed explicitly in instructions.txt",
                 read_method="escrow_balance_of", token_standard="erc20", underlying="token",
                 purpose="Staking v0.2 NODE OPERATOR pool. Read as LINK.balanceOf(pool). Summed with the "
                         "community pool: together they are the 45,000,000 LINK v0.2 programme."),
@@ -1291,7 +1312,12 @@ PROJECTS = [
                  "DISTRIBUTE (yield payout). They are separated by metric, not just by key — the Reserve is "
                  "buyback_fund_balance, the two staking pools are locked_tokens — because the adapter sums "
                  "within a metric and would otherwise merge them. v0.2 programme size is 45,000,000 LINK "
-                 "(~8% of circulating at launch); the lock rate is the SUM of both pools.",
+                 "(~8% of circulating at launch); the lock rate is the SUM of both pools. "
+                 "ADDRESSES CORROBORATED, TOTAL NOT: Chainlink's own instructions.txt lists all four "
+                 "addresses explicitly and they match, but no Chainlink source on file states a staked "
+                 "total, so the 42,536,190.83 LINK read of 2026-09-14 has ONE source. It is also an UPPER "
+                 "BOUND on staked principal — balanceOf counts stray or in-transit LINK, where the pools' "
+                 "own getTotalPrincipal() would not.",
     },
     # ------------------------------------------------------------------ Archetype 2 (+3/+4)
     {
@@ -2049,26 +2075,70 @@ PROJECTS = [
             # THE DESTINATION. The SSF HAS NO SEPARATE ADDRESS — Maple's own transparency page states
             # the Syrup Strategic Fund is "part of the Treasury". Searching for a standalone SSF
             # wallet is closed, not pending.
+            # ============ ROLE DISPUTED 2026-09-14 — THE ADDRESS IS REAL, THE CLAIM WAS MINE ============
+            # The live read returned 0.51253570332391 SYRUP against ~75,780,000 reported by Maple's
+            # own transparency page. THE READ IS CORRECT AND THE ADDRESS IS WRONG FOR THIS QUESTION.
+            #
+            # Decimals are ruled out arithmetically, not by inspection: 75,780,000 / 0.51253570332391
+            # = 1.4785e8, and log10 of that is 8.1698 — NOT AN INTEGER. A decimals mismatch is always
+            # an exact power of ten. It is also ruled out structurally: ChainReader.scaled() reads
+            # decimals() live from the same token contract the balance came from, with no hardcoded
+            # 18 and no fallback, and the identical path returned correct figures for Sky, Uniswap
+            # and Pendle in the same run.
+            #
+            # And the token is right: the symbol gate passed, so the chain confirmed this really is
+            # SYRUP. 0.51 SYRUP is therefore the GENUINE balance of this address.
+            #
+            # WHAT WENT WRONG WAS THE INFERENCE. Maple's transparency page says the SSF is "part of
+            # the Treasury". I read "the Treasury" as a contract and took the one entry in
+            # maple-labs/address-registry literally named `treasury` — which sits under SINGLETONS,
+            # beside globals, feeManager and poolDeployer. That is the PROTOCOL FEE treasury, and
+            # Maple's protocol fees are denominated in the POOL ASSET (USDC/USDT/USDG), not SYRUP.
+            # It is NOT in the registry's own "SyrupToken" section. A dust SYRUP balance there is
+            # exactly what that contract should hold. "The Treasury" on a transparency page means
+            # the DAO's holdings in the ACCOUNTING sense, which need not be one address at all.
+            #
+            # THE SAME ERROR AS THE UNISWAP TOKENJAR, and more dangerous: a name matched, the read
+            # worked, and the answer was small, precise and non-zero. A zero would have looked
+            # broken. 0.51 would have flowed into every Maple archetype 3 figure untouched.
+            #
+            # destination_status "disputed" is the mechanism built for exactly this: the adapter
+            # READS it, stages the 0.51 as evidence, and REFUSES to store it as a metric, with a gap
+            # saying why. Better a gap than a wrong number. Do NOT substitute another address until
+            # one is sourced — see OPEN_QUESTIONS.
+            # ==========================================================================================
             "treasury": _contract(
                 "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19", "ethereum", "treasury_holding", "SYRUP",
                 "https://maple.finance/transparency",
-                verified="2026-09-14", provenance="maple-labs/address-registry, MapleAddressRegistryETH.sol; "
-                                                  "role confirmed by Maple's own transparency page",
+                verified="2026-09-14", provenance="maple-labs/address-registry, MapleAddressRegistryETH.sol, "
+                                                  "SINGLETONS section — the protocol fee treasury",
                 holder_has_code=True, token_standard="erc20", underlying="token",
-                purpose="Maple Treasury (INCLUDES the Syrup Strategic Fund). The SSF is an accounting "
-                        "label inside this treasury, not a separate wallet — Maple's transparency page "
-                        "says so directly. Read as SYRUP.balanceOf(treasury).",
-                note="treasury_redeployable, NOT locked and NOT burned: MIP-019 has the treasury holding "
-                     "SYRUP, BTC and stablecoins, and 'token liquidity' is among the stated uses, so "
-                     "repurchased SYRUP CAN return to float. Cross-check against the live SSF holding "
-                     "published on maple.finance/transparency (75.78m SYRUP at last check)."),
+                destination_status="disputed",
+                destination_note="Read correctly at 0.51253570332391 SYRUP on 2026-09-14 against ~75.78m "
+                                 "reported by Maple. This is the v2 PROTOCOL FEE treasury, which "
+                                 "receives fees in pool assets (USDC/USDT/USDG), not the wallet holding "
+                                 "repurchased SYRUP. Evidence, not a figure.",
+                purpose="Maple v2 protocol fee treasury. RECORDED AS EVIDENCE ONLY — its role as the "
+                        "destination of repurchased SYRUP is DISPUTED and no metric is stored from it.",
+                note="Do not delete: the address is real and its near-zero SYRUP balance is itself the "
+                     "evidence that repurchased SYRUP is held somewhere else. Do not substitute another "
+                     "address on a name match — that is how this happened."),
             # REFERENCE ONLY, no read slot: syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA
             # (maple-labs/address-registry). It is the emissions distributor; with staking rewards
             # ended in Nov 2025 there is no ongoing stream to read from it, and giving it a
             # balance kind would sum it into the treasury figure.
         },
+        # THE GUARD FOR THE FIX. While destination_status is "disputed" nothing is stored, so this
+        # floor does nothing today. It exists for the day somebody clears the dispute or points the
+        # entry at a new address: Maple reports the SSF holding in the tens of millions, so anything
+        # under a million SYRUP means the address is wrong AGAIN and must be rejected to the Review
+        # Queue rather than stored. The Uniswap 100m burn floor exists for the same reason and
+        # caught the same class of error.
+        "sanity": {
+            "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000},
+        },
         "metric_labels": {
-            "treasury_holding_tokens": "Maple Treasury SYRUP (includes SSF)",
+            "treasury_holding_tokens": "SYRUP held by the disputed Maple fee treasury (NOT the SSF)",
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
@@ -2081,12 +2151,19 @@ PROJECTS = [
         # bought tokens CAN RETURN TO FLOAT. So it must NOT be netted against emissions like a
         # burn, and must NOT be counted as locked supply like Chainlink's Reserve. Those are
         # opposite signs, and the truth is neither.
-        # RESOLVED SINCE: the fund has no separate address. It is inside the Treasury, which is now
-        # read directly — so the BALANCE is measurable even though its MEANING stays indeterminate.
+        # NOT RESOLVED — AND A PREVIOUS NOTE HERE CLAIMING IT WAS IS WITHDRAWN. That note said the
+        # fund sits inside the Treasury "which is now read directly, so the BALANCE is measurable
+        # even though its MEANING stays indeterminate". The balance is NOT measurable: the address
+        # read holds 0.51 SYRUP. Both the meaning AND the location are open.
         "destination_indeterminate": {
             "fund": "SYRUP Strategic Fund (an accounting label inside the Maple Treasury, not a separate wallet)",
             "stated_uses": ["working capital", "token liquidity", "capital reserves", "further buybacks"],
             "why_indeterminate": "'token liquidity' allows repurchased tokens to return to float",
+            "address": None,
+            "why_no_address": "NOT RESOLVED, and an earlier claim that it was has been RETRACTED. The "
+                              "transparency page's 'part of the Treasury' was read as naming a contract; "
+                              "the address taken from it holds 0.51 SYRUP and is the v2 protocol FEE "
+                              "treasury. Where repurchased SYRUP actually sits is unsourced.",
             # LABELLED AS A JUDGEMENT, not recorded as a finding: it is an analyst's framing and a
             # reader is entitled to disagree with it.
             "analyst_judgement": "Most buybacks do one of three things: distribute profits, retire "
@@ -2098,21 +2175,28 @@ PROJECTS = [
             {"primary": "treasury_holding_tokens", "primary_source": "tier 2 contract read",
              "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://maple.finance/transparency",
              "tolerance": 0.05, "prefer": "primary",
-             "note": "Maple publishes live SSF SYRUP holdings and monthly protocol revenue on its "
-                     "transparency page. The contract read is authoritative; the page is the second "
-                     "opinion. Tolerance is wider than Chainlink's because the page reports the SSF "
-                     "label while the read is the whole Treasury — a persistent gap between them is "
-                     "expected and informative, a sudden one is not."},
+             "note": "NOT ARMED, AND THIS IS WHY THE 0.51 REACHED THE SHEET. Maple publishes live SSF "
+                     "SYRUP holdings on its transparency page and this entry names it as the second "
+                     "opinion — but the sources.yaml entry is enabled:false, so the secondary never "
+                     "arrives and check_cross_checks skips silently when either side is missing. A "
+                     "cross-check whose secondary is disabled is documentation, not a guard: had it "
+                     "been armed, 0.51 against ~75.78m would have tripped it on the first run. "
+                     "Complete the sources.yaml selector to arm it. Tolerance stays wide because the "
+                     "page reports the SSF label and the contract read is one wallet."},
         ],
         "materiality": "medium",
         "notes": "Archetype 3. No burn — confirmed. SPLIT IS TIERED, not the stale flat 25%: 10% below "
                  "$1.5m monthly net revenue, 20% from $1.5m-$2m, and a further tier above $2m whose rate "
                  "is NOT sourced and is left None. stSYRUP is an ERC-4626 VAULT — read "
                  "SYRUP.balanceOf(stSYRUP), never stSYRUP.totalSupply(), which counts shares whose price "
-                 "rises with accrued rewards. The SSF has no separate address: it is an accounting label "
-                 "inside the Treasury (0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19), which is read "
-                 "directly and cross-checked against maple.finance/transparency. stSYRUP staking rewards "
-                 "ENDED November 2025 (MIP-019) — do not model ongoing staking yield.",
+                 "rises with accrued rewards. "
+                 "THE DESTINATION ADDRESS IS NOT ESTABLISHED, and an earlier claim that it was is "
+                 "RETRACTED: 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19 is the v2 PROTOCOL FEE treasury "
+                 "(registry SINGLETONS section, fees paid in pool assets) and holds 0.51 SYRUP against "
+                 "the ~75.78m Maple reports. Its role is marked DISPUTED, so it is read as evidence and "
+                 "no treasury figure is stored. Do NOT derive any archetype 3 destination figure until "
+                 "an address is sourced. stSYRUP staking rewards ENDED November 2025 (MIP-019) — do not "
+                 "model ongoing staking yield.",
     },
     {
         "name": "Morpho", "symbol": "MORPHO",
@@ -3900,6 +3984,39 @@ OPEN_QUESTIONS = [
         "suggestion": "Confirm from docs.geodnet.com or vote.geodnet.com. If a GEODNET-authored source "
                       "states the revenue share and the buyback-and-burn route, add archetype 3 with that "
                       "source. Do not add it on Solana Compass alone.",
+    },
+    # ---------------------------------------------------------------- Maple
+    {
+        "project": "Maple", "topic": "WHERE is repurchased SYRUP actually held? The address on file was wrong.",
+        "severity": 1,
+        "reason": "The live read of 2026-09-14 returned 0.51253570332391 SYRUP from "
+                  "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19, against ~75,780,000 SYRUP that Maple's own "
+                  "transparency page reports for the Syrup Strategic Fund. "
+                  "THE READ WAS CORRECT AND THE ADDRESS WAS WRONG. Decimals are excluded arithmetically — "
+                  "75,780,000 / 0.51253570332391 = 1.4785e8, whose log10 is 8.1698 and therefore not an "
+                  "integer, while a decimals mismatch is always an exact power of ten — and structurally, "
+                  "since scaled() reads decimals() from the same contract as the balance. The symbol gate "
+                  "passed, so the token really is SYRUP. 0.51 is the genuine balance of that address. "
+                  "IT IS THE WRONG ADDRESS BECAUSE OF AN INFERENCE, NOT A TYPO: Maple's transparency page "
+                  "says the SSF is 'part of the Treasury', which was read as naming a contract, and the "
+                  "only registry entry called `treasury` sits under SINGLETONS beside globals and "
+                  "feeManager — the v2 PROTOCOL FEE treasury, which takes fees in pool assets "
+                  "(USDC/USDT/USDG), not SYRUP. 'The Treasury' on a transparency page means the DAO's "
+                  "holdings in the accounting sense and need not be a single address. "
+                  "THE DANGER WAS THE SHAPE OF THE NUMBER: 0.51 is small, precise and non-zero. A zero "
+                  "would have looked broken; this would have flowed into every Maple archetype 3 "
+                  "destination figure without tripping a guard. The contract is now marked "
+                  "destination_status 'disputed' so it is read as evidence and stored as nothing.",
+        "suggestion": "Find a MAPLE-AUTHORED statement of the address — the transparency page's own "
+                      "source data, a MIP naming the custody wallet, or a governance post. Candidates "
+                      "visible in maple-labs/address-registry that were NOT chosen and must not be "
+                      "guessed at: syrupRecapitalizationModule 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D "
+                      "and governorTimelock 0x2eFFf88747EB5a3FF00d4d8d0f0800E306C0426b. Do not pick one "
+                      "on a name match — that is precisely how 0.51 got here. A SYRUP holder list showing "
+                      "a ~75.78m holder would identify it directly. "
+                      "SECOND, AND INDEPENDENTLY WORTH DOING: complete the maple.finance/transparency "
+                      "selector in sources.yaml and set enabled:true. The cross-check that would have "
+                      "caught this on run one exists and is disarmed, because its secondary is disabled.",
     },
     # ---------------------------------------------------------------- Pendle
     {
