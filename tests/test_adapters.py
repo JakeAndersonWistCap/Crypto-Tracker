@@ -1750,6 +1750,73 @@ def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
     print("etherfi ok: dated history, so no snapshot exemption to the tier 4 backfill skip")
 
 
+def test_the_burn_mechanism_flag_fires_only_where_a_burn_is_ACTUALLY_CLAIMED():
+    """Two bugs, one shape: a default that means "unknown" applied where nothing was asked.
+
+    config.burn_mechanism() returns status 'assumed' for any project with no block. That is right
+    for a project that burns and has not said how, and WRONG twice over:
+
+    1. PLUME held archetype [1] with no burn_split, no burn_read_method and no mechanism block —
+       no burn anywhere in its design — and still carried "the burn MECHANISM is assumed, not
+       documented" on gross_burn_tokens, which every archetype 1 chain gets from the metric
+       library. An AMBER pointing at something that does not exist spends the reader's attention
+       for nothing.
+
+    2. HYPERLIQUID's destination was confirmed by two independent primary sources in December 2025
+       and its mechanism STILL read 'assumed', because the check that requires a declared mechanism
+       gated on burn_read_method in ("transfer", "protocol_level") and Hyperliquid's is
+       "protocol_api" — so it was never asked for one.
+
+    Both directions are asserted here so neither can come back.
+    """
+    import pandas as pd
+    import build_workbook as bw
+    asof = pd.Timestamp("2026-09-14")
+    row = {"status": "ok", "source": "tier1", "n_points": 9, "entered_on": "",
+           "measuring_points": ("tier1",)}
+
+    # (1) a project with NO burn claimed anywhere must not carry a mechanism flag
+    plume = config.PROJECT_BY_NAME["Plume"]
+    assert 4 not in plume["archetypes"] and plume.get("burn_split") is None \
+        and plume.get("burn_read_method") is None and plume.get("burn_mechanism") is None, \
+        "Plume claims no burn by any of the four signals — if that changes, this test must change"
+    assert "gross_burn_tokens" in config.metrics_for_project(plume), \
+        "the metric IS in scope for archetype 1, which is why the flag could reach it"
+    band, why = bw.confidence_for("Plume", "gross_burn_tokens", row, asof)
+    assert "MECHANISM" not in why, f"no burn is claimed, so no mechanism flag: {why}"
+
+    # (2) Hyperliquid's mechanism is CONFIRMED, from two independent primaries
+    mech = config.burn_mechanism(config.PROJECT_BY_NAME["Hyperliquid"])
+    assert mech["status"] == "confirmed", f"confirmed December 2025, got {mech['status']!r}"
+    assert mech["model"] == "transfer_to_dead_address", (
+        "HYPE is TRANSFERRED to a keyless address and total supply does not fall, so issuance is "
+        "the supply delta ALONE. protocol_level_destruction would add the burn back on top and "
+        f"overstate issuance by the whole cumulative burn. Got {mech['model']!r}")
+    assert mech.get("source_url") or mech.get("source_note"), "confirmed needs a provenance"
+    _, why = bw.confidence_for("Hyperliquid", "gross_burn_tokens", row, asof)
+    assert "MECHANISM" not in why, f"a confirmed mechanism must not read as assumed: {why}"
+
+    # (3) THE NARROWING MUST NOT SUPPRESS A REAL ONE. Ethereum genuinely burns (archetype 4) and
+    # its mechanism is genuinely assumed — the flag must still fire.
+    _, why = bw.confidence_for("Ethereum", "gross_burn_tokens", row, asof)
+    assert "MECHANISM is assumed" in why, f"a real assumed mechanism must still flag: {why}"
+
+    # (4) THE ROOT CAUSE: the config check must now demand a block for a protocol_api burn too,
+    # so no future project can be silent the way Hyperliquid was.
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    saved = hl.pop("burn_mechanism")
+    try:
+        errs = config.validate_config(raise_on_error=False)
+        assert any("Hyperliquid" in e and "burn_mechanism" in e for e in errs), (
+            "burn_read_method 'protocol_api' must REQUIRE a declared mechanism — that gate missing "
+            f"it is how this went unnoticed for months. Errors: {errs}")
+    finally:
+        hl["burn_mechanism"] = saved
+    assert not config.validate_config(raise_on_error=False)
+    print("burn-mechanism flag ok: silent for Plume (no burn claimed), clear for Hyperliquid "
+          "(confirmed), still firing for Ethereum (really assumed), and protocol_api now gated")
+
+
 def test_geodnet_sql_addresses_match_config_exactly():
     """The four addresses in query 8683175 are the four already in config, not new ones."""
     from_sql = {"token_polygon": "0xAC0F66379A6d7801D7726d5a943356A172549Adb",

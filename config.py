@@ -2218,6 +2218,37 @@ PROJECTS = [
         # RPC, no key and no chain field. See node_api below.
         "contracts": {},
         "burn_address": "0xfefeFEFeFEFEFEFEFeFefefefefeFEfEfefefEfe",
+        # DECLARED 2026-09-14, AND IT SHOULD HAVE BEEN DECLARED LONG AGO.
+        # The destination was resolved in December 2025 and destination_confirmed_date has said so
+        # since. But destination_confirmed_date and burn_mechanism.status are DIFFERENT FIELDS
+        # answering different questions, and the confidence band reads the second one — so a fact
+        # confirmed by two independent primary sources was rendering AMBER as "the burn MECHANISM
+        # is assumed, not documented". It was never assumed. It was never written down.
+        #
+        # MODEL IS transfer_to_dead_address, AND THE CHOICE CHANGES A NUMBER. HYPE is BOUGHT on the
+        # market with protocol fees and TRANSFERRED to the Assistance Fund at 0xfefe...fEfe, an
+        # address that has never had a private key. Total supply does NOT fall — the tokens still
+        # exist, at an address nobody can spend from. So issuance is the supply delta ALONE
+        # (ISSUANCE_FROM_SUPPLY_DELTA maps transfer_to_dead_address -> delta_only). Declaring
+        # protocol_level_destruction instead would add the burn back on top of the delta and
+        # OVERSTATE issuance by the entire cumulative burn — 48.42m HYPE as of 6 Sep 2026.
+        "burn_mechanism": {
+            "model": "transfer_to_dead_address", "status": "confirmed",
+            "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/assistance-fund",
+            "source_date": "2025-12-27",
+            "source_note": "TWO INDEPENDENT PRIMARY SOURCES. (1) The validator vote of 27 December 2025, "
+                           "85% of staked weight in favour, formally recognising all Assistance Fund "
+                           "HYPE — past and future — as permanently burned. (2) An SEC-filed exhibit "
+                           "from Hyperliquid Strategies Inc dated 7 May 2026, corroborating it and filed "
+                           "independently of Hyperliquid itself. Independent corroboration by a filing "
+                           "made under a different legal obligation is stronger evidence than a second "
+                           "protocol-authored page, which would only be the same claim reaching us twice.",
+            "note": "The Assistance Fund address has never had a private key, so nothing can leave it. "
+                    "The BALANCE is therefore the cumulative burn, read from Hyperliquid's own info "
+                    "endpoint rather than a chain RPC — see burn_read_method 'protocol_api'. "
+                    "NOT protocol_level_destruction: total supply does not fall, so issuance must be "
+                    "the supply delta alone.",
+        },
         "burn_read_method": "protocol_api",
         "burn_read_note": "The Assistance Fund balance IS the cumulative burn: since the December 2025 validator "
                           "vote HYPE held there is recognised as permanently burned, and the address has never had "
@@ -4349,7 +4380,13 @@ def _check_burn_mechanisms() -> list[str]:
         # Both burn models now drive a DERIVED figure — issuance is the supply delta plus the burn
         # under a protocol burn and the delta alone under a transfer burn — so both must declare
         # where their model came from. An undeclared model silently picks a formula.
-        if p.get("burn_read_method") not in ("transfer", "protocol_level"):
+        # "protocol_api" WAS MISSING FROM THIS GATE UNTIL 2026-09-14, and that omission is how
+        # Hyperliquid went months with a destination confirmed by two independent primary sources
+        # while its mechanism silently read 'assumed'. A burn read through a protocol's own API is
+        # still a burn with a model behind it; the READ ROUTE has nothing to do with whether the
+        # MODEL is known. Any project reading a burn by any route must declare what it believes
+        # the protocol does.
+        if p.get("burn_read_method") not in ("transfer", "protocol_level", "protocol_api"):
             continue
         block = p.get("burn_mechanism")
         if not block:

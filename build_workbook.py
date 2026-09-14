@@ -225,9 +225,27 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                 why.append(f"hand-entered {age} days ago — due for a quarterly refresh")
         except (ValueError, TypeError):
             why.append("hand-entered, with no entry date recorded")
+    # THE MECHANISM FLAG APPLIES ONLY WHERE A BURN IS ACTUALLY CLAIMED.
+    # config.burn_mechanism() returns model 'undetermined' / status 'assumed' for any project
+    # with no block, which is right for a project that burns and has not said how — and WRONG for
+    # one that does not burn at all. gross_burn_tokens is in the metric library for every
+    # archetype 1 chain, so Plume (archetype [1], no burn_split, no burn_read_method, no
+    # burn_mechanism block, no burn anywhere in its design) was carrying "the burn MECHANISM is
+    # assumed, not documented" on a burn it has never claimed to have. That is an AMBER that tells
+    # the reader to go and check something that does not exist, which is worse than silence
+    # because it spends attention.
+    #
+    # A project claims a burn if it holds archetype 4, or declares a share of fees burned, or
+    # declares a read route for one, or declares a mechanism block at all. Absent all four there
+    # is nothing to flag. This NARROWS the flag; it never suppresses one on a project that does
+    # burn, because any of those four is enough to keep it firing.
     if metric in config.BURN_METRICS:
-        mech = config.burn_mechanism(config.PROJECT_BY_NAME.get(project) or {})
-        if mech.get("status") == "assumed":
+        p = config.PROJECT_BY_NAME.get(project) or {}
+        claims_a_burn = (4 in (p.get("archetypes") or ())
+                         or p.get("burn_split") is not None
+                         or p.get("burn_read_method") is not None
+                         or p.get("burn_mechanism") is not None)
+        if claims_a_burn and config.burn_mechanism(p).get("status") == "assumed":
             why.append("the burn MECHANISM is assumed, not documented")
     unverified = config.metric_addresses_unverified(project, metric)
     if unverified:
