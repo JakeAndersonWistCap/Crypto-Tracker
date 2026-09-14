@@ -26,6 +26,8 @@ ETH_RPCS = ["https://eth.llamarpc.com", "https://ethereum-rpc.publicnode.com", "
 # keccak("receiver()")[:4] — SwapOnly exposes the address it sends bought SKY to.
 SELECTORS = {"receiver()": "0xf7260d3e", "pair()": "0xa8aa1b31", "want()": "0x1f1c827f",
              "pip()": "0xd741e2f9", "spotter()": "0xf3701da2"}
+# keccak("flapper()")[:4] — on the SPLITTER, not on the flapper itself.
+SELECTORS_SPLITTER = {"flapper()": "0x5c94e4d2"}
 
 
 def head(title: str):
@@ -58,6 +60,38 @@ def as_address(word: str | None) -> str | None:
         return None
     body = word[2:] if word.startswith("0x") else word
     return "0x" + body[-40:]
+
+
+def sky_splitter(splitter: str | None):
+    """Which flapper is the SPLITTER actually pointing at RIGHT NOW?
+
+    Reading the flapper's own parameters says what THAT contract is configured to do. It does not
+    say the Splitter still uses it — SBEBeam lets facilitators re-point the splitter, and if it now
+    points at FlapperUniV2 rather than FlapperUniV2SwapOnly, the LP-position question reopens.
+    """
+    head("SKY — which flapper is the SPLITTER pointing at? (the question the flapper read cannot answer)")
+    if not splitter:
+        print("  SKIPPED — the Splitter's address is not on file and is NOT guessed here.")
+        print("  Supply it and re-run:  python check_offline_items.py --splitter 0x...")
+        print("  It is the contract the Smart Burn Engine's surplus flows through; Sky's own")
+        print("  governance material or the dss-flappers deployment list names it.")
+        return
+    word, src = eth_call(splitter, SELECTORS_SPLITTER["flapper()"])
+    if word is None:
+        print(f"  flapper()   UNREACHABLE  {src[:110]}")
+        return
+    live = as_address(word)
+    print(f"  splitter    {splitter}")
+    print(f"  flapper()   {live}")
+    expected = SKY_FLAPPER.lower()
+    if live and live.lower() == expected:
+        print("  MATCHES the 2024 executive vote — FlapperUniV2SwapOnly is still active, and the")
+        print("  retired LP-position concern stays retired.")
+    else:
+        print("  *** DOES NOT MATCH the 2024 vote's 0x374D9c3d... ***")
+        print("  The splitter has been re-pointed. Report this back: if the live flapper is a")
+        print("  FlapperUniV2 rather than SwapOnly, the LP question reopens and Sky's archetype")
+        print("  needs looking at again.")
 
 
 def sky():
@@ -146,13 +180,19 @@ def beaconchain():
 
 
 def main():
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--splitter", help="Sky's Splitter address, to confirm which flapper is live")
+    args = ap.parse_args()
+
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
-    for fn in (sky, solana, injective, near, beaconchain):
+    for fn in (sky, lambda: sky_splitter(args.splitter), solana, injective, near, beaconchain):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest
-            print(f"\n  {fn.__name__} FAILED: {e}")
+            print(f"\n  {getattr(fn, '__name__', 'check')} FAILED: {e}")
     print("\nDone.")
     return 0
 
