@@ -35,9 +35,10 @@ KIND = "hypercore_info"
 class HyperCoreInfo:
     """Reads a balance from Hyperliquid's info endpoint for any project declaring this kind."""
 
-    def __init__(self, prior_values: dict | None = None):
+    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None):
         self.http = Http(min_interval=0.5)
         self.prior = prior_values or {}
+        self.prior_dates = prior_dates or {}
 
     @staticmethod
     def _pick_balance(payload, api: dict) -> tuple[float | None, str]:
@@ -106,6 +107,8 @@ class HyperCoreInfo:
             flow_metric = api.get("derive_flow_metric")
             if flow_metric:
                 flow = derive_flow_from_cumulative(value, self.prior.get((name, metric)), name,
-                                                   flow_metric, f"{src}:delta", TIER, when)
+                                                   flow_metric, f"{src}:delta", TIER, when,
+                                                   prior_date=self.prior_dates.get((name, metric)),
+                                                   stock_metric=metric, out=out)
                 if not flow.empty:
                     out.add(flow, SOURCE, name, f"{flow_metric} derived from the {metric} delta", TIER)

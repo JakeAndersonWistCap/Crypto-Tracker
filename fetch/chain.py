@@ -188,9 +188,12 @@ class ChainReader:
 class Chain:
     """Tier 2 adapter. prior_values supplies the last stored figure for cumulative differencing."""
 
-    def __init__(self, prior_values: dict | None = None):
+    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None):
         self.reader = ChainReader()
         self.prior = prior_values or {}
+        # When each prior figure was observed. A delta needs an interval, not just a number to
+        # subtract — see derive_flow_from_cumulative.
+        self.prior_dates = prior_dates or {}
 
     @staticmethod
     def _underlying_on_chain(contracts: dict, spec: dict, chain: str) -> dict | None:
@@ -297,6 +300,9 @@ class Chain:
             # source string to stay auditable.
             parts: dict[str, list[tuple[str, float]]] = defaultdict(list)
             partial_metrics: set[str] = set()
+            # Contracts whose ADDRESS is right but whose role is in doubt — a burn sink we are no
+            # longer confident the protocol actually burns to. Read, but never stored as a metric.
+            disputed: dict[str, list[str]] = defaultdict(list)
             # A component that was REFUSED (unverified, unreachable chain, no same-chain token)
             # makes the resulting sum partial. Dropping one burn path and reporting the rest as if
             # it were the whole is precisely the understatement this tool exists to prevent.
@@ -372,6 +378,8 @@ class Chain:
                 parts[metric].append((f"{chain}:{key}", value))
                 if spec.get("supply_is_partial"):
                     partial_metrics.add(metric)
+                if spec.get("destination_status") == "disputed":
+                    disputed[metric].append(key)
                 out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                         f"{metric} component {chain}:{key}={value:,.4f}", TIER))
 
@@ -382,9 +390,10 @@ class Chain:
                             tiers_attempted="2",
                             suggestion="Resolve the refused components in config.py; nothing was stored for "
                                        "this metric rather than a partial figure being presented as whole.")
-            self._emit_parts(p, parts, partial_metrics, refused, when, out)
+            self._emit_parts(p, parts, partial_metrics, refused, when, out, disputed)
 
-    def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out):
+    def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out,
+                    disputed: dict | None = None):
         """Emit one figure per metric, summing every contract that served it."""
         name = project["name"]
         for metric, components in parts.items():
@@ -397,6 +406,31 @@ class Chain:
                 src = f"{SOURCE}:sum(" + "+".join(label for label, _ in components) + ")"
                 composition = " + ".join(f"{label} {v:,.4f}" for label, v in components)
                 detail = f"{metric}={total:,.4f} from {len(components)} components: {composition}"
+
+            # A DISPUTED destination is not a value problem, it is a meaning problem. The read is
+            # correct — that address really does hold that much — but the LABEL on it may not be.
+            # Storing it as "cumulative burned" would assert something we no longer believe, and a
+            # wrong number in the sheet is worse than a gap. So the observation is captured to
+            # staging, where it stays available as evidence, and the metric renders n/a with a
+            # reason instead of asserting a burn figure we cannot stand behind.
+            if disputed and metric in disputed:
+                keys = ", ".join(disputed[metric])
+                out.stage(name, f"{metric} (disputed destination: {keys})", total, date=when,
+                          source=src, tier=TIER,
+                          note="Read correctly, but NOT stored as a metric: the contract's role as this "
+                               "project's burn destination is disputed. Evidence, not a figure.")
+                out.gap(name, metric,
+                        reason=f"NOT REPORTED, and deliberately not reported as {total:,.0f}: the "
+                               f"destination is disputed. {keys} was read successfully and holds "
+                               f"{total:,.4f}, but whether this project's burn actually routes there is "
+                               f"an OPEN VERIFICATION QUESTION, not a data gap. Labelling this balance "
+                               f"'{metric}' would assert something no longer supported. The observation "
+                               f"is on the Staging sheet as evidence.",
+                        tiers_attempted="2",
+                        suggestion="Settle the destination — see OPEN_QUESTIONS for this project — then "
+                                   "either clear destination_status on the contract in config.py, or "
+                                   "point the entry at the address the burn really uses.")
+                continue
 
             missing = refused.get(metric) or []
             is_partial = (metric in partial_metrics or bool(missing)
@@ -415,15 +449,58 @@ class Chain:
                                    "self-reported figure. The sheet labels this figure partial either way.")
 
             out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
+            if metric == "burn_address_balance" and total == 0.0:
+                self._flag_burn_address_never_received(project, components, out, when)
 
             flow_metric = CUMULATIVE_FLOW.get(metric)
             if flow_metric:
                 flow = derive_flow_from_cumulative(total, self.prior.get((name, metric)), name,
-                                                   flow_metric, f"{src}:delta", TIER, when)
+                                                   flow_metric, f"{src}:delta", TIER, when,
+                                                   prior_date=self.prior_dates.get((name, metric)),
+                                                   stock_metric=metric, out=out)
                 if not flow.empty:
                     out.add(flow, SOURCE, name, f"{flow_metric} derived from the summed {metric} delta", TIER)
                     if float(flow["value"].iloc[0]) == 0.0:
                         self._flag_unattributable_zero(project, flow_metric, metric, when, out)
+
+    def _flag_burn_address_never_received(self, project: dict, components, out, when):
+        """A burn address holding EXACTLY zero is evidence about the address, not about the burn.
+
+        This is a stock, not a difference: it needs no history to be meaningful. If a single token
+        had ever been burned to this address, at any point since the token was deployed, the
+        balance would be non-zero today — burn addresses are one-way, nobody withdraws from them.
+
+        So an exact zero says the address has NEVER received anything. For a protocol whose burn
+        is a transfer and which is understood to have burned, the likelier reading is that the
+        burn does not route here — a wrong destination in config — rather than that the protocol
+        has never burned. It is only evidence, not proof: a burn programme that has genuinely
+        never fired, or a holder-elected burn nobody has elected, produces the same zero. Which is
+        why this is flagged for a human rather than resolved here.
+        """
+        name = project["name"]
+        where = ", ".join(label for label, _ in components)
+        out.review_item(name, "burn_address_balance", "burn_address_never_received", "stored_flagged",
+                        value=0.0, prior_value=self.prior.get((name, "burn_address_balance")),
+                        date=when, source=f"{SOURCE}:{where} holds exactly zero", tier=TIER)
+        out.gap(name, "[data] the burn address has NEVER received a single token",
+                reason=(
+                    f"{where} holds EXACTLY 0. This is a stock, not a differenced flow, so it needs no "
+                    f"observation history to mean something: if this project had ever burned to this "
+                    f"address, the balance would be non-zero today, because burn addresses are one-way "
+                    f"and nobody withdraws from them. Two readings, and the first is the likelier one "
+                    f"for a protocol understood to have burned: (b) THE BURN DOES NOT ROUTE HERE — the "
+                    f"destination in config is wrong, which is a verification error, not a data gap; "
+                    f"(a) the protocol has genuinely never burned to it — which is entirely possible "
+                    f"where a burn is holder-elected and nobody has elected, or a programme has not "
+                    f"fired. Compare against peers on the same read: a non-zero balance on a single "
+                    f"observation is what a working burn destination looks like."),
+                tiers_attempted="2",
+                suggestion=(
+                    "Do not resolve this by assumption in either direction. Check the protocol's own "
+                    "documentation for where repurchased or burned tokens are sent, and check the "
+                    "token's transfer history for any inbound transfer to this address. If the address "
+                    "is wrong, correct it in config.py and re-open its verification — this is the same "
+                    "class of error as a transposed or stale address, not a missing feed."))
 
     def _flag_unattributable_zero(self, project: dict, flow_metric: str, stock_metric: str, when, out):
         """A zero differenced out of a balance read is not a measured zero.

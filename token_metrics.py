@@ -69,11 +69,13 @@ def main() -> int:
         log.error("manual overrides failed: %s", e)
 
     prior_values = st.latest_values()
+    prior_dates = st.last_dates()
     has_history = {k for k, _ in prior_values.items()}
 
     out = fetch.fetch_all(
         config.PROJECTS, window,
         prior_values=prior_values,
+        prior_dates=prior_dates,
         has_history=has_history,
         manual_keys=manual_keys,
     )

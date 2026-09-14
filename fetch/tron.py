@@ -32,9 +32,10 @@ KIND = "tron_burn_trx"
 class TronNode:
     """Reads BURN_TRX from a TRON node for any project declaring a tron_burn_trx node_api block."""
 
-    def __init__(self, prior_values: dict | None = None):
+    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None):
         self.http = Http(min_interval=0.5)
         self.prior = prior_values or {}
+        self.prior_dates = prior_dates or {}
 
     def _read(self, api: dict) -> tuple[float | None, str]:
         """Try each configured endpoint in turn. Returns (value, detail)."""
@@ -82,6 +83,8 @@ class TronNode:
             out.add(point(name, metric, value, src, TIER, when), SOURCE, name,
                     f"{metric}={value:,.4f} via {detail}", TIER)
             flow = derive_flow_from_cumulative(value, self.prior.get((name, metric)), name,
-                                               "gross_burn_tokens", f"{src}:delta", TIER, when)
+                                               "gross_burn_tokens", f"{src}:delta", TIER, when,
+                                               prior_date=self.prior_dates.get((name, metric)),
+                                               stock_metric=metric, out=out)
             if not flow.empty:
                 out.add(flow, SOURCE, name, "gross_burn_tokens derived from the BURN_TRX delta", TIER)

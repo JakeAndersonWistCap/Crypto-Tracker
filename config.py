@@ -327,7 +327,8 @@ UNVERIFIED = None
 def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERIFIED, note="",
               purpose="", provenance="model-knowledge", candidates=None, ambiguous=False,
               read_method=None, token_standard=None, underlying=None,
-              supply_is_partial=False, partial_reason="", holder_has_code=None):
+              supply_is_partial=False, partial_reason="", holder_has_code=None,
+              destination_status=None, destination_note=""):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -358,6 +359,12 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         # and the address". A burn or dead address is an EOA nobody controls, so empty bytecode is
         # what CORRECT looks like there — checking for code would reject a perfectly good address.
         "holder_has_code": holder_has_code,
+        # destination_status "disputed": the ADDRESS is right and the read works, but the
+        # contract's ROLE for this project is in doubt. The adapter reads it, captures the value
+        # to staging as evidence, and does NOT store it as a metric — labelling a balance
+        # "cumulative burned" asserts a destination we are no longer confident about.
+        "destination_status": destination_status,
+        "destination_note": destination_note,
         "note": note,
     }
 
@@ -1314,12 +1321,28 @@ PROJECTS = [
                      "'SKY Governance Token', symbol 'SKY'. Codebase: https://github.com/sky-ecosystem/sky. "
                      "The other address that was circulating is WRONG and has been deleted "
                      "entirely rather than kept as a fallback."),
+            # VERIFICATION RE-OPENED 2026-09-14. The address is correct as an address and the read
+            # works; what is disputed is the CLAIM that Sky's burn routes here. The balance is
+            # EXACTLY 0 on the first observation, while every peer read the same way is non-zero
+            # on a single observation (PancakeSwap 4.93bn, GEODNET 38.2m, Venice 33.9m). A burn
+            # address is one-way, so a zero means nothing has EVER arrived — not that nothing
+            # arrived recently. The April 2026 buyback cut does NOT explain it: a reduction in
+            # burning cannot produce a zero cumulative balance where burning previously occurred.
+            # Treated as an address/destination error of the same class as a transposed address,
+            # not as a data gap.
             "burn_zero": _contract(
                 "0x0000000000000000000000000000000000000000", "ethereum", "burn_address_balance", "SKY",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
                 verified="2026-09-11", provenance="protocol docs",
-                purpose="TRANSFER BURN — the Smart Burn Engine sends repurchased SKY to the zero address.",
-                note="Unblocked by the SKY token resolution: balanceOf is called on the confirmed token contract."),
+                purpose="CLAIMED transfer-burn destination — that the Smart Burn Engine sends repurchased "
+                        "SKY to the zero address. THE CLAIM IS DISPUTED; the address itself is not.",
+                destination_status="disputed",
+                destination_note="Balance is exactly 0 while peers on the identical read are non-zero. "
+                                 "See OPEN_QUESTIONS: where does Sky's burn actually go?",
+                note="The read is correct and kept as EVIDENCE on the Staging sheet. It is NOT stored as "
+                     "burn_address_balance, because labelling a zero 'cumulative burned' would assert that "
+                     "Sky has never burned, which the zero does not establish — it establishes only that "
+                     "nothing ever reached THIS address."),
             "lssky": _contract(
                 "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C", "ethereum", "ve_total_supply", "lssky",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
@@ -1336,29 +1359,32 @@ PROJECTS = [
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
         "destination_effect": "mixed",
         "dune_queries": {
-            # The slot that resolves the ambiguous zero. Tier 2 reads balanceOf(0x0) and
-            # differences it, which cannot tell "nothing burned" from "the burn went somewhere
-            # else" — only a TRANSFER HISTORY can. Same shape as GEODNET 8683175:
+            # PURPOSE CHANGED 2026-09-14. This was "distinguish no-burn from wrong-address"; the
+            # zero cumulative balance has largely answered that, so it is now "find where the burn
+            # actually goes". The destination is the thing in doubt, so query transfers FROM the
+            # Smart Burn Engine, not TO an address we are no longer confident about:
             #
             #   SELECT date_trunc('month', evt_block_time) AS month,
-            #          SUM(value / 1e18)                   AS tokens_burned
+            #          "to"                                AS destination,
+            #          SUM(value / 1e18)                   AS tokens
             #   FROM   erc20_ethereum.evt_Transfer
             #   WHERE  contract_address = 0x56072C95FAA701256059aa122697B133aDEd9279   -- SKY
-            #     AND  "to"             = 0x0000000000000000000000000000000000000000
-            #   GROUP  BY 1 ORDER BY 1
+            #     AND  "from"           = <SMART BURN ENGINE ADDRESS — NOT ON FILE, get it from
+            #                              Sky's own docs; do not guess it>
+            #   GROUP  BY 1, 2 ORDER BY 1
             #
-            # Then set query_id, date_col "month", value_col "tokens_burned", granularity
-            # "monthly", drop_current_period True — and `python dune_probe.py <id> --map
-            # month:tokens_burned --drop-current` shows the series before it is committed.
-            # NOTE: this measures transfers TO the dead address, which is every discard, not only
-            # the protocol's. It answers "did anything move" definitively; attributing what moved
-            # to the Smart Burn Engine needs the `from` address as well.
+            # Read the `destination` column FIRST, by hand, before wiring anything: that column is
+            # the answer to the open question. Only once the burn destination is established does
+            # a burn SERIES make sense, and it should then be filtered to that destination and
+            # mapped as date_col "month", value_col "tokens", monthly, drop_current_period True.
+            # `python dune_probe.py <id>` prints the shape without touching the store.
             "gross_burn_tokens": {
-                "query_id": None, "date_col": "month", "value_col": "tokens_burned",
+                "query_id": None, "date_col": "month", "value_col": "tokens",
                 "granularity": "monthly", "drop_current_period": True,
                 "source_url": "https://dune.com/queries/8683175",
-                "note": "NOT YET AUTHORED. SQL sketched above, following the GEODNET pattern. Until this "
-                        "exists, Sky's burn is a balance delta and a zero cannot be attributed.",
+                "note": "NOT YET AUTHORED, and it answers a DESTINATION question before it answers a "
+                        "volume one. Until the destination is established, Sky has no burn figure at "
+                        "all — the zero-address balance is evidence on the Staging sheet, not a burn.",
             },
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "gross_issuance_tokens",
                     "emissions_tokens", "staked_tokens"),
@@ -1831,31 +1857,53 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # =======================================================================================
 OPEN_QUESTIONS = [
     {
-        "project": "Sky", "topic": "the zero burn — no burn, or the wrong address? A balance cannot say",
+        "project": "Sky", "topic": "WHERE DOES SKY'S BURN ACTUALLY GO? The zero address has never received any",
         "severity": 1,
-        "reason": "Sky's gross_burn_tokens comes from differencing balanceOf(0x0000...0000) on SKY "
-                  "0x56072C95FAA701256059aa122697B133aDEd9279. A balance answers 'how much is sitting "
-                  "there', never 'did anything move, and from whom', so the zero is consistent with three "
-                  "different worlds and looks identical in all of them. (a) NO BURN: plausible on the "
-                  "public record — the April 2026 treasury overhaul cut buybacks by a reported ~87% to "
-                  "rebuild stablecoin reserves, explicitly prioritising a $150m solvency buffer over "
-                  "buybacks and staking rewards, so the Smart Burn Engine has been running far below its "
-                  "historical ~$1m/day for months. (b) BURN OCCURRED BUT DID NOT ROUTE HERE: the 55/45 "
-                  "split sends 45% to LSSKY stakers, and Sky has not publicly specified the exact "
-                  "disposition of repurchased tokens — the burn-versus-distribute ambiguity is Sky's, not "
-                  "just ours — so a cycle can run entirely to distribution and leave this balance "
-                  "untouched. (c) TOO FEW OBSERVATIONS: a differenced series only measures the period it "
-                  "has actually been watching, so a 30-day window is only a 30-day burn if there are 30 "
-                  "days of readings behind it. NOTHING HERE IS RESOLVED BY ASSUMPTION: the zero is stored, "
-                  "flagged to the Review Queue, and rendered lilac so it cannot be read as measured.",
-        "suggestion": "Transfer events settle it, and only transfer events: Transfer with `to` = "
-                      "0x0000000000000000000000000000000000000000 for SKY over the window. The Dune slot "
-                      "is wired and waiting at Sky dune_queries.gross_burn_tokens with the SQL sketched in "
-                      "config — author the query, set query_id, and `python dune_probe.py <id> --map "
-                      "month:tokens_burned --drop-current` shows the series before it is committed. Check "
-                      "(c) first though: it is free. Look at n_points for burn_address_balance on the Data "
-                      "tab — a handful of observations means the window is measuring the tool's own "
-                      "lifetime, not Sky's.",
+        "reason": "RESOLVED FROM AMBIGUOUS TO STRONGLY ONE-SIDED, and the earlier framing was wrong. "
+                  "balanceOf(0x0000...0000) on SKY reads EXACTLY 0. That is a STOCK, not a differenced "
+                  "flow: it needs no observation history to mean something, because a burn address is "
+                  "one-way — nothing is ever withdrawn. So if Sky had burned SKY here at any point since "
+                  "the token was deployed, the balance would be non-zero today. Every peer read the same "
+                  "way is non-zero on a SINGLE observation: PancakeSwap 4,931,229,998, GEODNET 38,166,932, "
+                  "Venice AI 33,872,423. Sky alone is exactly zero. "
+                  "THE APRIL 2026 BUYBACK CUT IS NOT THE EXPLANATION, and nobody should re-derive it as "
+                  "one: the ~87% reduction is real and well sourced, but a reduction in burning cannot "
+                  "produce a zero CUMULATIVE balance where burning previously occurred — it would produce "
+                  "a flat non-zero one. The reduction explains a small recent flow; it cannot explain "
+                  "nothing ever having arrived. "
+                  "The likelier reading is therefore that SKY'S BURN DOES NOT ROUTE TO THE ZERO ADDRESS, "
+                  "which makes this a VERIFICATION ERROR of the same class as a transposed or stale "
+                  "address, not a data gap. It is not proof: a protocol that has genuinely never burned "
+                  "produces the same zero. So the destination claim is marked disputed rather than "
+                  "corrected on a guess, the balance is captured to Staging as evidence, and "
+                  "burn_address_balance renders n/a with this reason rather than asserting a burn figure.",
+        "suggestion": "Find the real destination, then correct config. The Dune query is still worth "
+                      "authoring but its PURPOSE HAS CHANGED: it is no longer 'did anything burn' — the "
+                      "zero balance has largely answered that — it is 'where does the Smart Burn Engine "
+                      "send what it buys'. So query transfers FROM the Smart Burn Engine contract rather "
+                      "than TO the zero address, because the destination assumption is the thing in "
+                      "doubt. Sky's own docs on the disposition of repurchased tokens are the primary "
+                      "source and are reportedly unspecific, which is Sky's ambiguity and not ours. When "
+                      "the destination is established: point burn_zero at the real address (or add the "
+                      "right one), clear destination_status, and re-date verified.",
+    },
+    {
+        "project": "Uniswap", "topic": "the Fire Pit has also never received a token — same check, weaker case",
+        "severity": 1,
+        "reason": "Raised here so it is not left implicit in Sky's question: Uniswap's fire_pit balance is "
+                  "also EXACTLY 0, on a single observation, and the same one-way-address argument applies "
+                  "— nothing has ever arrived. TWO DIFFERENCES FROM SKY, both pointing the other way. "
+                  "First, Uniswap's burn is HOLDER-ELECTED, so a genuine zero is entirely plausible: if "
+                  "no holder has elected to burn, nothing has been sent, and 0 is the correct cumulative "
+                  "figure rather than a symptom. Second, the Uniswap read is already marked PARTIAL, so "
+                  "its components are not all known. That is weaker evidence than Sky's, so Uniswap's "
+                  "destination is NOT marked disputed and its zero IS still stored — it is flagged, not "
+                  "withheld. Treating the two identically would be an assumption in the opposite "
+                  "direction, on materially different evidence.",
+        "suggestion": "Confirm from Uniswap's own documentation whether any holder-elected burn has ever "
+                      "executed. If one has, the Fire Pit address is wrong and this becomes the same "
+                      "verification error as Sky's. If none has, record that and the zero is simply "
+                      "correct — at which point this question closes rather than staying open.",
     },
     {
         "project": "Sky", "topic": "the April 2026 buyback reduction is not in the fee-split history",

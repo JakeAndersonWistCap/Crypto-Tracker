@@ -132,6 +132,13 @@ where the selector still matches but now points at a different number. Three def
 - **Change threshold.** A value moving more than the configured percentage is **stored but
   flagged** to the Review Queue. A genuine step change (a halving, a one-off 100m burn) must
   not be silently dropped.
+- A **differenced flow with fewer than two dated observations** is not reported at all. With one
+  reading there is no interval, and the difference is 0 whatever the truth is — a 0 in the burn
+  column of an archetype 4 name is the most misleading cell this tool can produce. It renders
+  `n/a` with a reason instead.
+- A **burn address holding exactly zero** is flagged as evidence about the ADDRESS. A burn address
+  is one-way, so an exact zero means nothing has ever arrived — which, for a protocol understood
+  to have burned, more likely means the burn does not route there than that it never burned.
 - A **zero burn derived from a balance delta** is stored but flagged too: a balance cannot
   distinguish "nothing burned" from "the burn did not route to the address we watch", and a 0
   that means the second must not render like a 0 that means the first.

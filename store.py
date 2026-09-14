@@ -169,6 +169,23 @@ class Store:
         ).fetchall()
         return {(p, k): float(v) for p, k, v in rows if v is not None}
 
+    def last_dates(self) -> dict[tuple[str, str], str]:
+        """All (project, metric) -> most recent stored DATE.
+
+        The companion to latest_values. A differenced flow needs both: the prior value to
+        subtract, and the date it was observed on — because a delta between two readings that
+        land on the same date spans no interval the store can represent.
+        """
+        rows = self.conn.execute(
+            "SELECT project, metric, MAX(date) FROM metrics GROUP BY project, metric").fetchall()
+        return {(p, k): d for p, k, d in rows if d}
+
+    def observation_counts(self) -> dict[tuple[str, str], int]:
+        """All (project, metric) -> number of stored observations."""
+        rows = self.conn.execute(
+            "SELECT project, metric, COUNT(*) FROM metrics GROUP BY project, metric").fetchall()
+        return {(p, k): int(n) for p, k, n in rows}
+
     # ---------------------------------------------------------------- writes
     def upsert(self, df: pd.DataFrame) -> int:
         """Upsert a tidy long frame (date, project, metric, value, source, tier)."""

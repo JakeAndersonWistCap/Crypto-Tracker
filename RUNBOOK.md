@@ -307,6 +307,21 @@ produces no error, no failure and no gap — it looks exactly like a source that
 nothing to add. Tier 4 skips any series the store already holds a row for, so a single tier 2
 row is enough to stop a backfill that has never run. `TOKEN_METRICS_DUNE_ALWAYS=1` forces it.
 
+**A differenced flow needs two observations on two different dates.** Burn flows are derived by
+differencing a cumulative balance, so on the first reading — and on a second reading the same day,
+which upserts onto the same row — there is no interval to difference and no flow is produced. The
+cell reads `n/a` with a reason in the Gap Report, never `0`. It resolves itself on the next day's
+run; nothing to fix.
+
+If your store already holds zeros written before this rule existed, they will not clear
+themselves, because the store upserts and never deletes:
+
+```bash
+sqlite3 metrics.db "DELETE FROM metrics WHERE metric='gross_burn_tokens' AND value=0 AND source LIKE '%:delta'"
+```
+
+That removes only differenced zeros, leaving genuine measured burn figures untouched.
+
 **A lilac zero is not a measured zero.** Where a burn is read as a *balance* and differenced into
 a flow, an unchanged balance produces 0 — and that 0 is consistent with no burn, with a burn that
 routed somewhere other than the address being watched, and with the store simply not having

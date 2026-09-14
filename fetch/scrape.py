@@ -248,8 +248,10 @@ def extract_adapter(page, entry: dict) -> tuple[float | None, str]:
 class Scrape:
     """Tier 3 adapter. One browser for the whole run; one page per entry."""
 
-    def __init__(self, prior_values: dict | None = None, registry_path: Path | str = REGISTRY):
+    def __init__(self, prior_values: dict | None = None, registry_path: Path | str = REGISTRY,
+                 prior_dates: dict | None = None):
         self.prior = prior_values or {}
+        self.prior_dates = prior_dates or {}
         self.registry_path = registry_path
         self.entries = load_registry(registry_path)
 
@@ -380,6 +382,8 @@ class Scrape:
         flow_metric = entry.get("derive_flow_metric")
         if entry.get("cumulative") and flow_metric:
             flow = derive_flow_from_cumulative(value, self.prior.get((proj, metric)), proj, flow_metric,
-                                               f"{source}:delta", tier, when)
+                                               f"{source}:delta", tier, when,
+                                               prior_date=self.prior_dates.get((proj, metric)),
+                                               stock_metric=metric, out=out)
             if not flow.empty:
                 out.add(flow, SOURCE, proj, f"{flow_metric} derived from {metric} delta", TIER)

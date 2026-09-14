@@ -199,16 +199,54 @@ def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:
 
 def derive_flow_from_cumulative(cumulative_value: float, prior_cumulative: float | None,
                                 project: str, metric: str, source: str, tier: int,
-                                when=None) -> pd.DataFrame:
+                                when=None, prior_date=None, stock_metric: str | None = None,
+                                out=None) -> pd.DataFrame:
     """Turn a running total into the flow since the last observation.
 
     A dashboard that publishes "total burned to date" is a stock. The archetype 4 tab needs a
     flow. Differencing against the previously stored cumulative gives that; a decrease means
     the source rebased, so no flow row is emitted (the Review Queue picks it up separately).
+
+    A DELTA REQUIRES AN INTERVAL, and that is not the same thing as having a prior number to
+    subtract. Two readings that land on the same date collapse to one row in the store, so the
+    difference between them spans nothing the series can represent — and it comes out at 0
+    whatever the truth is. A zero in a burn column is the most misleading cell this tool can
+    produce: it is indistinguishable from a measured "nothing was burned this period", and it
+    appears on exactly the archetype-4 names where burn is the whole point. So a flow is emitted
+    only when there is a prior observation ON AN EARLIER DATE; otherwise nothing is stored and
+    the reason is reported, which renders as n/a rather than as a confident zero.
     """
-    if prior_cumulative is None or cumulative_value < prior_cumulative:
+    if prior_cumulative is None:
+        _no_flow(out, project, metric, stock_metric,
+                 "there is no prior observation to difference against — this is the first reading "
+                 "of the cumulative figure")
+        return pd.DataFrame(columns=LONG_COLUMNS)
+    if prior_date is not None and when is not None and str(prior_date)[:10] >= str(when)[:10]:
+        _no_flow(out, project, metric, stock_metric,
+                 f"the only prior observation is dated {str(prior_date)[:10]}, the same date as this "
+                 f"one, so the store holds a SINGLE observation and there is no interval to "
+                 f"difference over")
+        return pd.DataFrame(columns=LONG_COLUMNS)
+    if cumulative_value < prior_cumulative:
         return pd.DataFrame(columns=LONG_COLUMNS)
     return point(project, metric, cumulative_value - prior_cumulative, source, tier, when)
+
+
+def _no_flow(out, project: str, metric: str, stock_metric: str | None, why: str):
+    """Say why a differenced flow could not be computed, instead of storing a 0 that means nothing."""
+    if out is None:
+        return
+    stock = stock_metric or "the cumulative figure"
+    out.gap(project, metric,
+            reason=f"{metric} is NOT AVAILABLE, and is deliberately not reported as 0: {why}. A "
+                   f"differenced flow measures the change between two dated readings, so with fewer "
+                   f"than two it has no value — not a value of zero.",
+            tiers_attempted="2, 3",
+            suggestion=f"It resolves itself: run again on a later day and {stock} will have two "
+                       f"observations to difference. Nothing to fix. If the period figure is needed "
+                       f"sooner, or for history before the tool started watching, that needs a "
+                       f"transfer-history source (a Dune query on the decoded transfer table), not a "
+                       f"balance read.")
 
 
 NUMERIC_SUFFIX = {"k": 1e3, "m": 1e6, "bn": 1e9, "b": 1e9, "t": 1e12}

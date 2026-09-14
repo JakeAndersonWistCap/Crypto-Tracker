@@ -181,6 +181,101 @@ def test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured():
     print("ambiguous zero ok: stored, flagged, and every hypothesis named")
 
 
+def test_a_single_observation_never_produces_a_zero_flow():
+    """A delta needs an INTERVAL, not just a prior number to subtract.
+
+    Two readings that land on the same date collapse to one row in the store, so their difference
+    spans nothing the series can represent — and it comes out 0 whatever the truth is. That zero
+    lands in the burn column of an archetype-4 name, where it is indistinguishable from a measured
+    "nothing was burned". It must be n/a with a reason instead.
+    """
+    from fetch.base import today
+
+    td = str(today().date())
+    yd = str((today() - pd.Timedelta(days=1)).date())
+
+    def run(prior, prior_date):
+        c = Chain(prior_values={("PancakeSwap", "burn_address_balance"): prior} if prior is not None else {},
+                  prior_dates={("PancakeSwap", "burn_address_balance"): prior_date} if prior_date else {})
+        c.reader = StubReader(symbol="Cake", supply=100.0, balance=4_931_229_998.0)
+        out = FetchOutput()
+        c.run([_cake_project(verified="2026-09-11")], None, out)
+        return out
+
+    first = run(None, None)
+    assert "gross_burn_tokens" not in set(first.frame().metric), "the first ever reading has nothing to difference"
+    assert any("no prior observation" in g["reason"] for g in first.gaps if g["metric"] == "gross_burn_tokens")
+
+    same_day = run(4_931_229_998.0, td)
+    assert "gross_burn_tokens" not in set(same_day.frame().metric), \
+        "a prior from the SAME DATE is one observation, not two — it must not yield a 0"
+    gap = next(g for g in same_day.gaps if g["metric"] == "gross_burn_tokens")
+    assert "SINGLE observation" in gap["reason"] and "not a value of zero" in gap["reason"]
+    assert gap["suggestion"], "n/a is only honest if it comes with a reason"
+
+    two_days = run(4_931_229_998.0, yd)
+    assert "gross_burn_tokens" in set(two_days.frame().metric), \
+        "two observations on different dates is a real interval and must still difference"
+    print("single observation ok: n/a with a reason on one reading, a real delta on two")
+
+
+def test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_address():
+    """A burn address is one-way, so an exact zero means nothing has EVER arrived.
+
+    That is a statement about the address, not about the burn — and unlike a differenced flow it
+    needs no history to mean it. Peers read identically are non-zero on a single observation.
+    """
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = StubReader(symbol="Cake", supply=100.0, balance=0.0)
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+
+    flagged = [r for r in out.review if r["reason"] == "burn_address_never_received"]
+    assert len(flagged) == 1 and flagged[0]["metric"] == "burn_address_balance"
+    gap = next(g for g in out.gaps if g["metric"].startswith("[data] the burn address has NEVER"))
+    assert "one-way" in gap["reason"] and "(b) THE BURN DOES NOT ROUTE HERE" in gap["reason"]
+    assert "holder-elected" in gap["reason"], "a genuine zero is possible too and must be named"
+    assert "verification error, not a data gap" in gap["reason"]
+
+    # and it does NOT fire on a non-zero balance
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = StubReader(symbol="Cake", supply=100.0, balance=4_931_229_998.0)
+    out = FetchOutput()
+    c.run([_cake_project(verified="2026-09-11")], None, out)
+    assert not [r for r in out.review if r["reason"] == "burn_address_never_received"]
+    print("zero balance ok: flagged as address evidence, and silent on a working burn address")
+
+
+def test_sky_disputed_burn_destination_is_evidence_not_a_metric():
+    """Sky's zero-address read is kept, but never labelled 'cumulative burned'.
+
+    The address is right and the read works; the CLAIM that Sky's burn routes there is what is
+    disputed. Storing the balance under burn_address_balance would assert Sky has never burned,
+    which the zero does not establish — it establishes only that nothing reached THIS address.
+    """
+    spec = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_zero"]
+    assert spec["destination_status"] == "disputed"
+    assert spec["address"] == "0x0000000000000000000000000000000000000000", "the ADDRESS is not what changed"
+
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = StubReader(symbol="SKY", supply=1e10, balance=0.0)
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Sky"]], None, out)
+
+    assert "burn_address_balance" not in set(out.frame().metric), \
+        "a disputed destination must not be stored as a burn metric"
+    assert any("disputed destination" in st["name"] for st in out.staged), \
+        "the observation must survive as evidence on the Staging sheet"
+    gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
+    assert "destination is disputed" in gap["reason"] and "OPEN VERIFICATION QUESTION" in gap["reason"]
+
+    # Uniswap is NOT disputed — weaker evidence, so its zero is flagged but still stored
+    uni = config.PROJECT_BY_NAME["Uniswap"]["contracts"]
+    assert all(v.get("destination_status") != "disputed" for v in uni.values()), \
+        "holder-elected burn plus a PARTIAL read is weaker evidence and must not be treated the same"
+    print("sky ok: disputed destination staged as evidence, not asserted as a burn figure")
+
+
 def test_a_real_burn_is_not_flagged():
     """The flag must fire on ambiguity, not on every burn read, or it stops meaning anything."""
     c = Chain(prior_values={("PancakeSwap", "burn_address_balance"): 20.0})
@@ -386,8 +481,12 @@ def test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code(
         out = FetchOutput()
         c.run([config.PROJECT_BY_NAME[project_name]], None, out)
         rows = dict(zip(out.frame().metric, out.frame().value))
-        assert rows.get("burn_address_balance") == 1_234_567.0, \
-            f"{project_name}/{entry} must read despite empty bytecode, got {rows}"
+        staged = {st["value"] for st in out.staged}
+        # Sky's burn destination is DISPUTED, so its read lands in staging as evidence rather than
+        # in the metrics table. Either way the point stands: the read happened despite empty
+        # bytecode, which is what this test exists to prove.
+        assert rows.get("burn_address_balance") == 1_234_567.0 or 1_234_567.0 in staged, \
+            f"{project_name}/{entry} must read despite empty bytecode, got {rows} / staged {staged}"
         assert not any("eth_getCode is empty" in e.message for e in out.log if e.status == "failed"), \
             f"{project_name}/{entry} was wrongly rejected for having no code"
         assert spec["address"] not in c.reader.code_checks, \
@@ -1105,6 +1204,9 @@ if __name__ == "__main__":
     for fn in [test_defillama, test_coingecko,
                test_chain_refuses_unverified_by_default, test_chain_reads_verified_and_derives_flow,
                test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured,
+               test_a_single_observation_never_produces_a_zero_flow,
+               test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_address,
+               test_sky_disputed_burn_destination_is_evidence_not_a_metric,
                test_a_real_burn_is_not_flagged, test_sky_split_history_cannot_resolve_across_the_april_overhaul,
                test_several_contracts_serving_one_metric_are_summed,
                test_components_sum_fully_once_every_chain_has_its_token,

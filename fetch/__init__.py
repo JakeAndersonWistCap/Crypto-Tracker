@@ -40,10 +40,10 @@ TIER_ORDER = [
     ("schedule:config", 1, lambda ctx: Schedule()),
     ("defillama", 1, lambda ctx: DefiLlama()),
     ("coingecko", 1, lambda ctx: CoinGecko()),
-    ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"])),
-    ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"])),
-    ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"])),
-    ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"])),
+    ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
+    ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
+    ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
+    ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
 ]
 
@@ -152,6 +152,7 @@ def _resolve_period_overlaps(out: FetchOutput) -> None:
 
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
+              prior_dates: dict | None = None,
               has_history: set | None = None,
               manual_keys: set | None = None,
               sources: list[str] | None = None) -> FetchOutput:
@@ -159,12 +160,16 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 
     prior_values  (project, metric) -> last stored value. Feeds the change-threshold check and
                   the cumulative-to-flow differencing in tiers 2 and 3.
+    prior_dates   (project, metric) -> the DATE that value was observed on. A differenced flow
+                  needs an interval, not just a number to subtract: two readings on one date are
+                  a single observation, and their difference is 0 whatever the truth is.
     has_history   (project, metric) pairs the store already has history for. Tier 4 skips these,
                   because Dune is a backfill dependency, not an ongoing one.
     manual_keys   (project, metric) pairs covered by manual_overrides.csv, so the Gap Report
                   does not list something Jake has already entered by hand.
     """
-    ctx = {"prior_values": prior_values or {}, "has_history": has_history or set()}
+    ctx = {"prior_values": prior_values or {}, "prior_dates": prior_dates or {},
+           "has_history": has_history or set()}
     out = FetchOutput()
 
     for name, tier, build in TIER_ORDER:
