@@ -131,15 +131,71 @@
   anchor: null                                      # TODO the label text beside the figure
   added: 2026-09-11
   note: "RWA.xyz has no API on our tier."
+
+# =====================================================================================
+# ULTRASOUND.MONEY — the only end-to-end cross-check this tool has for ANY chain.
+#
+# It publishes issuance, burn AND net supply change for Ethereum: the exact three
+# figures this tool otherwise DERIVES. Every other project gives us one side and we
+# compute the rest; here the whole derivation can be checked against a published
+# answer. That is why these three entries are grouped and commented together rather
+# than left among the per-project stubs.
+#
+# STATUS: NOT ENABLED, and deliberately so. Two things are missing and neither can be
+# invented from this sandbox, where every outbound host except raw.githubusercontent.com
+# is blocked (ultrasound.money/robots.txt returns CONNECT tunnel 403, checked
+# 2026-09-15):
+#   1. robots.txt has NOT been read. The scraper enforces it at runtime regardless, so
+#      enabling these blind would be polite — but it would also be unverified, and
+#      respecting robots.txt is an explicit design requirement, not a runtime detail.
+#   2. The extraction target is unknown. The site is a React app that fetches its
+#      figures from an API; neither the endpoint substring nor the on-page label text
+#      is on file. Guessing a json_path would produce an entry that either extracts
+#      nothing or — worse — extracts the wrong number and stores it as ok.
+#
+# TO FINISH, in a browser, once: open the page, confirm robots.txt permits it, then
+# DevTools -> Network -> Fetch/XHR and record the endpoint substring and the dotted
+# path to each of the three figures. Fill in url_contains/json_path, set enabled: true.
+# If no clean endpoint exists, switch method to dom and record the LABEL TEXT.
+#
+# NOTE THE UNITS TRAP when filling these in: ultrasound.money presents figures both per
+# period and annualised, and both in ETH and in USD. gross_issuance_tokens and
+# gross_burn_tokens are TOKEN flows. Take the ETH figure, not the dollar one.
+# =====================================================================================
+- project: Ethereum
+  metric: gross_issuance_tokens
+  tier: 3
+  enabled: false
+  url: "https://ultrasound.money/"
+  method: xhr
+  url_contains: null                                # TODO the API endpoint substring (DevTools -> Fetch/XHR)
+  json_path: null                                   # TODO dotted path to ETH issued in the period
+  added: 2026-09-15
+  note: "Publishes issuance directly. Cross-checks our derived d(total_supply) figure — the only
+    project where the derivation can be checked against a published answer. Take ETH, not USD."
+- project: Ethereum
+  metric: gross_burn_tokens
+  tier: 3
+  enabled: false
+  url: "https://ultrasound.money/"
+  method: xhr
+  url_contains: null                                # TODO the API endpoint substring
+  json_path: null                                   # TODO dotted path to ETH burned in the period
+  added: 2026-09-15
+  note: "EIP-1559 burns at the protocol level, so there is NO burn address to read and no
+    contract read can produce this. A published figure is the only route below tier 4."
 - project: Ethereum
   metric: net_mint_monthly
   tier: 3
   enabled: false
-  url: null                                         # TODO the protocol's tokenomics page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
+  url: "https://ultrasound.money/"                  # was: TODO the protocol's tokenomics page
+  method: xhr
+  url_contains: null                                # TODO the API endpoint substring
+  json_path: null                                   # TODO dotted path to net supply change
   added: 2026-09-11
-  note: "Self-reported net mint — take it as published."
+  note: "Self-reported net mint — take it as published. Completes the set: with issuance and burn
+    above, net supply change arrives as a published figure AND as our own sum, and the two
+    should agree. A divergence is a finding about our arithmetic, not about Ethereum."
 
 # ---- Solana (SOL) — archetypes 1, 4
 - project: Solana

@@ -762,7 +762,77 @@ PROJECTS = [
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://eips.ethereum.org/EIPS/eip-1559", "source_date": BRIEF_DATE, "status": "active",
                        "note": "EIP-1559 destroys the base fee — it is not sent to an address, so there is no burn-address "
                                "balance to read. Gross burn needs tier 3 (ultrasound.money publishes it) or tier 4."},
+        # ISSUANCE IS VARIABLE BY DESIGN, SO NO SCHEDULE STEP IS DECLARED.
+        # ~2,800 ETH/day at current validator counts (~1,022,000 ETH/year) is NOT a fixed rate: it
+        # scales with total ETH staked at a DIMINISHING MARGINAL rate, capped at ~1.5%/yr by
+        # protocol design. A tokens_per_day step would freeze one point on a curve whose input
+        # moves every epoch. Recorded as an observed rate with its own base, never as a schedule.
         "issuance_schedule": None,
+        "issuance_rate_observed": {
+            "tokens_per_day": 2_800,
+            "tokens_per_year": 1_022_000,
+            "shape": "f(total ETH staked), diminishing marginal rate",
+            "protocol_cap_annual_pct": 0.015,
+            "source_date": "2026-09-15",
+            "note": "OBSERVED AT CURRENT VALIDATOR COUNTS, not a rule. Issuance rises with total stake at "
+                    "a diminishing rate and is capped at ~1.5%/yr by design. Do not carry this forward as "
+                    "a constant.",
+            # THE 4x CONFLATION TRAP, recorded because both figures are correct and both are
+            # published as "Ethereum's issuance". VALIDATOR YIELD is a return on STAKED ETH
+            # (~2.75-4.5%); NETWORK ISSUANCE is growth in TOTAL supply (~0.8%). They differ by
+            # roughly 4x because only ~32% of supply is staked. Reading a yield figure as an
+            # issuance rate overstates supply growth fourfold.
+            "do_not_conflate": {
+                "validator_yield_pct": [0.0275, 0.045],
+                "network_issuance_pct": 0.008,
+                "why_they_differ": "yield is a return on STAKED ETH; issuance is growth in TOTAL supply. "
+                                   "~32% of supply is staked, so the two differ by roughly 4x.",
+            },
+        },
+        # ** THE SIGN FLIPS. THIS IS THE POINT. **
+        # ETH IS MILDLY INFLATIONARY at current activity: +0.83% to +0.85% annual supply growth.
+        # The deflationary "ultrasound money" period ENDED and supply has crossed back above Merge
+        # levels. Burn collapsed to ~50-70 ETH/day after Dencun and Pectra moved activity to L2s.
+        # One documented 7-day sample: 94,525 ETH issued against 324 ETH burned — a 292x ratio.
+        #
+        # Net deflation resumes ONLY above ~16 gwei average gas. So the sign of Ethereum's net
+        # supply change is a function of network activity and must be MODELLED AS VARIABLE. A
+        # config that hardcoded either sign would be wrong half the time.
+        "net_supply_regime": {
+            "current": "mildly inflationary",
+            "annual_supply_growth_pct": [0.0083, 0.0085],
+            "burn_tokens_per_day": [50, 70],
+            "burn_collapsed_after": "Dencun and Pectra — activity moved to L2s",
+            "deflationary_above_avg_gas_gwei": 16,
+            "sample_7d": {"issued_eth": 94_525, "burned_eth": 324,
+                          "note": "one documented 7-day sample; the ratio is ~292x, not a rounding gap"},
+            "source_date": "2026-09-15",
+            "note": "THE SIGN IS NOT A CONSTANT. It flips with activity around ~16 gwei average gas. Model "
+                    "as variable; never declare ETH as deflationary or inflationary in the abstract.",
+        },
+        # A FLOAT CONSTRAINT WE DO NOT CAPTURE FOR ETHEREUM AT ALL — recorded so the absence is
+        # visible rather than silent. ~39m ETH staked, ~32% of supply (May 2026), flat over six
+        # months. There is no staked_tokens source configured for Ethereum.
+        "staked_reference": {
+            "staked_eth": 39_000_000, "share_of_supply": 0.32, "as_of": "2026-05",
+            "trend": "flat over six months",
+            "source_date": "2026-09-15",
+            "status": "reference_only — NOT a stored metric, no source configured",
+        },
+        # WATCH ITEM, NOT CONFIG. Glamsterdam (H2 2026) changes how staking rewards are
+        # distributed, and a "Minimum Viable Issuance" debate is live. Ethereum's issuance formula
+        # may CHANGE. Recorded here so that a future step-change in the issuance series is read as
+        # a protocol change and not as a data error — the failure mode this flag exists to prevent
+        # is someone chasing a bug that is actually a hard fork.
+        "watch_items": [
+            {"name": "Glamsterdam", "when": "H2 2026", "affects": "staking reward distribution",
+             "source_date": "2026-09-15",
+             "note": "may change the issuance formula. A step-change in the issuance series after this "
+                     "lands is a PROTOCOL CHANGE, not a data error."},
+            {"name": "Minimum Viable Issuance debate", "when": "live", "affects": "issuance formula",
+             "source_date": "2026-09-15",
+             "note": "an active proposal to reduce issuance. Same treatment as Glamsterdam."},
+        ],
         "contracts": {},
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
@@ -781,7 +851,9 @@ PROJECTS = [
         "destination_effect": "removed_from_supply",
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
-        "notes": "EIP-1559 base fee burn. Net issuance = validator issuance - base fee burn.",
+        "notes": "EIP-1559 base fee burn. Net issuance = validator issuance - base fee burn, and the "
+                 "SIGN OF THAT SUBTRACTION VARIES — see net_supply_regime. Currently positive "
+                 "(+0.83% to +0.85%/yr).",
     },
     {
         "name": "Solana", "symbol": "SOL",
@@ -917,32 +989,110 @@ PROJECTS = [
                            "fixed tokens_per_day would drift from the rule it came from.",
             "source_url": "https://docs.near.org/protocol/gas",
             "source_date": "2026-09-14",
-            # THE SPLIT IS THE UNCERTAIN PART, AND THE UNCERTAINTY IS SPECIFIC.
-            # Secondary sources say 90% validators / 10% protocol treasury. Our own LIVE ON-CHAIN
-            # READ of protocol_reward_rate returned [0, 1] — exactly ZERO. That is ALSO exactly
-            # nearcore's serde default (core/chain-configs/src/genesis_config.rs:168,
-            # `#[default(Rational32::from_integer(0))]`), so the reading is consistent with TWO
-            # different worlds: a genuine on-chain zero, or a read that fell through to the struct
-            # default without ever seeing chain state. Nearcore does NOT vendor mainnet genesis —
-            # every path under core/chain-configs/res/ 404s, and the only [1, 10] values in the
-            # repo are inside test fixtures using `test.near` with epoch_length 60 — so this
-            # cannot be settled from source.
-            # THE LIVE READ IS USED, because it is the only direct chain evidence we hold, and it
-            # is flagged uncertain rather than quietly overridden by secondary sources.
+            # THE SPLIT IS SETTLED. THE UNCERTAINTY WAS IN OUR READ, NOT IN THE SPLIT.
+            # RESOLVED 2026-09-15 — this entry previously said the opposite, and the correction
+            # matters because it moves an AMBER's reason rather than merely its wording.
+            #
+            # 90% validators and delegators / 10% protocol treasury, confirmed by multiple current
+            # sources and applied to the POST-CUT 2.5% ceiling, so 2.25% / 0.25%. Figment gives the
+            # same ratio under the original 5%: 4.5% / 0.5%. Two different rate regimes producing
+            # one ratio is what makes it a RATIO and not a coincidence of one era's arithmetic.
+            #
+            # OUR LIVE READ OF protocol_reward_rate = [0, 1] IS NOW READ AS THE STRUCT DEFAULT, NOT
+            # AS CHAIN STATE. It is byte-identical to nearcore's serde default at
+            # core/chain-configs/src/genesis_config.rs:168, `#[default(Rational32::from_integer(0))]`,
+            # and nearcore does NOT vendor mainnet genesis — every path under
+            # core/chain-configs/res/ 404s, and the only [1, 10] values in the repo sit in test
+            # fixtures using `test.near` with epoch_length 60. A zero that exactly equals the
+            # default, against a documented non-zero share, is a read that never reached chain
+            # state. The previous entry kept the zero because it was "the only direct chain
+            # evidence we hold"; direct evidence that is indistinguishable from an uninitialised
+            # struct is not evidence of the value, it is evidence the read failed.
             "treasury_share": {
-                "value": 0.0,
-                "source": "live on-chain read of protocol_reward_rate = [0, 1]",
-                "source_date": "2026-09-14",
-                "status": "uncertain",
-                "conflicts_with": "secondary sources stating 90% validators / 10% protocol treasury",
-                "why_uncertain": "[0, 1] is byte-identical to nearcore's serde DEFAULT for this field, so a "
-                                 "genuine zero and a read that never reached chain state are "
-                                 "indistinguishable from the value alone. Mainnet genesis is not vendored "
-                                 "in nearcore, so source inspection cannot separate them.",
-                "would_settle_it": "a mainnet genesis_config from a NEAR-operated endpoint or archive, or a "
-                                   "second independent RPC returning the same field",
+                "value": 0.10,
+                "validator_share": 0.90,
+                "source": "documented 90/10 split, confirmed by multiple current sources 2026-09-15",
+                "source_date": "2026-09-15",
+                "status": "declared",
+                "applied_to": {"annual_rate_max": 0.025,
+                               "validators_pct_of_supply": 0.0225,
+                               "treasury_pct_of_supply": 0.0025},
+                "ratio_holds_under_prior_rate": {"annual_rate_max": 0.05,
+                                                 "validators_pct_of_supply": 0.045,
+                                                 "treasury_pct_of_supply": 0.005,
+                                                 "attributed_to": "Figment, giving the original arithmetic under 5%"},
+                "supersedes": {
+                    "value": 0.0,
+                    "source": "live on-chain read of protocol_reward_rate = [0, 1]",
+                    "source_date": "2026-09-14",
+                    "why_discarded": "byte-identical to nearcore's serde default for this field "
+                                     "(genesis_config.rs:168). Against a documented non-zero share, a zero "
+                                     "that exactly equals the uninitialised default is a read that never "
+                                     "reached chain state — not a chain value of zero.",
+                },
+                "would_confirm_the_read": "a mainnet genesis_config from a NEAR-operated endpoint or "
+                                          "archive, or a second independent RPC returning the same field "
+                                          "non-zero. That would confirm OUR READ; it is not needed to "
+                                          "establish the split.",
             },
         },
+        # ===================== THE NUMBER THAT DECIDES NEAR'S NET SUPPLY SIGN =====================
+        # Analysts place NEAR's deflationary threshold at ~$177m DAILY INTENTS VOLUME. Above it,
+        # Intents-funded buying exceeds issuance and NEAR goes net deflationary; below it, it does
+        # not. Same class as Fluid's $10m buyback trigger: a single published number that flips the
+        # sign of the thing this whole tool measures, so it belongs on the sheet next to the
+        # current figure rather than in a footnote.
+        #
+        # WHY IT IS INTENTS AND NOT GAS. Base-layer gas burn alone annualises to only ~$7.85m.
+        # Intents is roughly the entire lever, which is why the threshold is expressed in Intents
+        # volume and not in total network activity.
+        #
+        # A THRESHOLD, NOT A METRIC. Nothing here is fetched. It is the reference line the current
+        # Intents volume is read against, and current Intents volume is itself not yet sourced —
+        # see the gap it raises below.
+        "deflationary_threshold": {
+            "metric": "intents_volume_usd_daily",
+            "threshold_usd_daily": 177_000_000,
+            "above_threshold": "net deflationary",
+            "below_threshold": "net inflationary",
+            "attributed_to": "analyst estimates, 2026-09-15",
+            "status": "reference_line",
+            "gas_burn_annualised_usd": 7_850_000,
+            "gas_burn_note": "base-layer gas burn annualises to ~$7.85m — an order of magnitude below the "
+                             "Intents stream, so the threshold is set by Intents volume alone.",
+            "current_value_source": None,
+            "current_value_note": "NOT SOURCED. Daily Intents volume has no configured source, so the "
+                                  "threshold currently has nothing to compare against. Sourcing it is the "
+                                  "single highest-value addition for NEAR.",
+        },
+        # STALE-SOURCE WARNING — recorded because the stale figure is not absurd, it is merely old.
+        # Several 2026-dated sources still state 5% annual inflation without mentioning the
+        # 2025-10-30 cut to 2.5%. A 5% figure is therefore a DATING signal: any source quoting it
+        # is pre-October-2025 regardless of its own publication date, and its other NEAR figures
+        # should be treated as the same vintage.
+        "stale_source_marker": {
+            "field": "annual inflation rate",
+            "stale_value": 0.05,
+            "current_value": 0.025,
+            "changed_on": "2025-10-30",
+            "changed_by": "nearcore v2.9.0",
+            "note": "A source stating 5% is pre-October-2025, whatever date it carries. Use it to date the "
+                    "source, not to correct the rate.",
+        },
+        # No supply cap, and no slashing. Both are supply-side facts that would otherwise be
+        # inferred wrongly: FDV must compute against CURRENT total supply because there is no
+        # terminal supply to compute against, and no slashing means no burn-adjacent supply sink
+        # beyond gas.
+        "no_max_supply": {
+            "value": True,
+            "why": "NEAR mints every epoch (~12 hours) with no hard cap, so total supply grows "
+                   "indefinitely. FDV must be computed against current total supply — there is no "
+                   "terminal supply. Confirm max_supply stays absent rather than being filled with "
+                   "a circulating or total figure.",
+            "source_date": "2026-09-15",
+        },
+        "slashing": {"enabled": False, "source_date": "2026-09-15",
+                     "note": "Slashing is currently DISABLED on NEAR — no validator-penalty supply sink."},
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
@@ -1023,15 +1173,16 @@ PROJECTS = [
         # settled while the split is not.
         "non_comparable": {
             "emissions_tokens": {
-                "why": "the validator/treasury SPLIT of NEAR's 2.5% issuance is unresolved. Our live "
-                       "on-chain read of protocol_reward_rate returned [0, 1] — zero treasury share, so "
-                       "100% to validators — while every secondary source says 90/10. [0, 1] is "
-                       "byte-identical to nearcore's serde DEFAULT for that field, so a genuine zero and "
-                       "a read that never reached chain state are indistinguishable. The TOTAL issuance "
-                       "is unaffected; what is unknown is how much of it is emissions to suppliers.",
-                "use_instead": "gross_issuance_tokens, which is the same under either split. Treat "
-                               "emissions_tokens as an upper bound until a second independent endpoint "
-                               "confirms the rate — see OPEN_QUESTIONS",
+                "why": "THE SPLIT IS KNOWN — 90% validators and delegators / 10% protocol treasury, so "
+                       "2.25% / 0.25% of the 2.5% ceiling — and it is config-declared. What is unresolved "
+                       "is OUR READ: protocol_reward_rate returns [0, 1], nearcore's serde struct default "
+                       "for that field, not chain state. So the declared split is used and the live read "
+                       "is not. AMBER because emissions_tokens rests on a documented figure rather than "
+                       "on a value this tool read for itself — a weaker footing than a contract read, "
+                       "and a different complaint from 'the split is uncertain', which it no longer is.",
+                "use_instead": "gross_issuance_tokens, which is the same under either split and does not "
+                               "depend on the declared share at all. emissions_tokens applies the declared "
+                               "90% — see issuance_rate_declared.treasury_share",
             },
         },
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
@@ -1052,9 +1203,15 @@ PROJECTS = [
                  "marketing phrasing that is equally true of a treasury hold. Destination is the Base "
                  "Intents Treasury, read as treasury_redeployable. Fees split 50/50 between the 1Click "
                  "protocol address and the partner recipient; only the 1Click half is durable buy pressure. "
-                 "ISSUANCE 2.5% max annual (halved from 5% on 2025-10-30); the treasury share is taken from "
-                 "our live read of 0% and FLAGGED UNCERTAIN, because [0, 1] is byte-identical to nearcore's "
-                 "serde default and mainnet genesis is not vendored anywhere we can read.",
+                 "ISSUANCE 2.5% max annual, halved from 5% on 2025-10-30 (~32.2m NEAR/yr), minted every "
+                 "epoch (~12h) with NO HARD CAP — FDV must compute against current total supply. The "
+                 "90/10 validator/treasury SPLIT IS DECLARED (2.25%/0.25%), confirmed by multiple current "
+                 "sources; our live read of protocol_reward_rate = [0, 1] is now treated as nearcore's "
+                 "serde STRUCT DEFAULT rather than as chain state, so the AMBER on emissions_tokens is "
+                 "about OUR READ, not about the split. THE NUMBER TO WATCH is daily Intents volume "
+                 "against the ~$177m deflationary threshold — base-layer gas is only ~$7.85m annualised, "
+                 "so Intents decides NEAR's net supply sign — and it is NOT YET SOURCED. Slashing is "
+                 "disabled. Any source quoting 5% inflation is pre-October-2025, whatever date it carries.",
     },
     {
         "name": "Canton", "symbol": "CC",
@@ -1194,6 +1351,76 @@ PROJECTS = [
             "note": "VESTING, NOT INFLATION. Total supply stays ~flat; circulating expands. Any issuance "
                     "figure derived from delta-total-supply will correctly read ~zero — the supply "
                     "pressure lives in the CIRCULATING series and must be read there.",
+            # PRECISE SCHEDULE, added 2026-09-15. Four years total, running into 2028.
+            "emission_years": 4,
+            "runs_into": "2028",
+            "tge_split": "Community and Foundation",
+            "allocations": {
+                "community_pct": 0.46,
+                "community_breakdown": {"ecosystem_pct": 0.39, "airdrop_pct": 0.07},
+                "foundation": {"pct": 0.115, "at_tge": True, "then": "36-month linear"},
+                "early_backers": {"at_tge_pct": 0.0, "cliff_months": 12, "unlock_at_cliff_pct": 0.33,
+                                  "then": "24-month linear"},
+                "core_contributors": {"structure": "same as early_backers",
+                                      "at_tge_pct": 0.0, "cliff_months": 12,
+                                      "unlock_at_cliff_pct": 0.33, "then": "24-month linear"},
+            },
+            "source_date": "2026-09-15",
+            "allocations_note": "Early Backers and Core Contributors both open at ZERO with a 12-month "
+                                "cliff, then 33% at once, then 24 months linear. A third of two "
+                                "allocations landing in one month is a CIRCULATING-supply event with no "
+                                "total-supply signature at all — which is exactly why this project is "
+                                "read on the circulating series.",
+        },
+        # ============ ARCHETYPE 3 REMOVAL: CONFIRMED FROM PLUME'S OWN DOCS, 2026-09-15 ============
+        # The removal of 2026-09-14 was made on the strength of the emissions-funded reading plus
+        # zero DefiLlama fee revenue. It is now confirmed by the protocol's own documentation,
+        # which is a stronger footing than the inference it replaces.
+        #
+        # docs.plume.org/plume/plume-portal/stake states: "Staking APY: The reward Plume gives to
+        # stakers" — PLUME GIVES IT, which is issuance, not revenue captured and passed through.
+        # The same page lists "Earn a share of ecosystem revenue" among benefits BEING EXPLORED,
+        # i.e. a thing that does not exist yet. A benefit under exploration is not a mechanism.
+        "archetype_3_removal": {
+            "removed_on": "2026-09-14",
+            "confirmed_on": "2026-09-15",
+            "confirmed_by": "https://docs.plume.org/plume/plume-portal/stake",
+            "quote_reward_is_issuance": "Staking APY: The reward Plume gives to stakers",
+            "quote_revenue_share_not_live": "Earn a share of ecosystem revenue — listed among benefits "
+                                            "BEING EXPLORED",
+            "terms": {"apy_pct": 0.082, "validator_commission_pct": 0.005, "commission_phase": "Phase 1",
+                      "unstaking_cooldown_days": 21},
+            "funded_by": "emissions",
+            "same_failure_mode_as": "Bittensor — a yield that looks like revenue capture and is actually "
+                                    "inflation paid to stakers. Counting it as archetype 3 reports "
+                                    "dilution as value accrual.",
+            "reopen_if": "Plume documents a LIVE revenue-to-staker route. 'Being explored' is not it.",
+        },
+        # ============ CONTESTED CIRCULATING SUPPLY — RECORDED, NOT RESOLVED ============
+        # Same pattern as Fluid. THE TWO CONFLICTING FIGURES COME FROM THE SAME SOURCE, on two of
+        # its own pages, about 1bn apart — which rules out the usual explanations. It is not a
+        # timing difference between vendors and not a definitional difference between vendors,
+        # because there is only one vendor. Something inside tokenomist.ai is inconsistent.
+        #
+        # ALL THREE ARE RECORDED AND NONE IS PICKED. Our stored figure stays CoinGecko's, which is
+        # what the tier ordering already does; this block exists so the spread is visible rather
+        # than for anything to read.
+        "contested_circulating_supply": {
+            "figures": [
+                {"value": 6_181_909_938, "pct_of_total": 0.6182, "source": "tokenomist.ai"},
+                {"value": 5_121_329_365, "pct_of_total": 0.5121, "source": "tokenomist.ai — a DIFFERENT page"},
+                {"value": 6_394_026_052, "source": "CoinGecko — our stored figure"},
+            ],
+            "spread": 1_272_696_687,
+            "spread_pct_of_total": 0.127,
+            "why_it_matters": "12.7% of total supply. Circulating is the denominator of the float story "
+                              "for a project whose entire supply pressure is vesting, so a 1.27bn "
+                              "disagreement is not a rounding question.",
+            "self_contradiction": "the two tokenomist.ai figures conflict with EACH OTHER on the same "
+                                  "site. Not a vendor-definition difference — there is one vendor.",
+            "resolution": "NONE. Recorded, not resolved. The stored figure remains CoinGecko's by tier "
+                          "order; nothing here overrides it.",
+            "source_date": "2026-09-15",
         },
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
@@ -1493,30 +1720,209 @@ PROJECTS = [
             "effect": "actual_buyback_tokens and actual_buyback_usd are suppressed; the implied figure "
                       "from the revenue side is the only one computed",
         },
-        # A RATE, NOT A TOKEN COUNT — and declaring it needs a base the sources do not give.
+        # ================ THE MECHANISM IS FOUND. THE BUDGET IS CERTAIN. ================
+        # Source: World Mobile's OWN MiCA whitepaper (worldmobiletoken.com/mica_whitepaper_wmtx.pdf)
+        # and the token metrics page at faq.worldmobiletoken.com. Read 2026-09-15.
         #
-        #   CONFIRMED  2,000,000,000 WMTx hard cap, enforced IN THE CONTRACT ITSELF:
-        #              ERC20Capped(2_000_000_000 * 10**decimals()). Not a docs claim — bytecode.
-        #   CONFIRMED  29% to Node Operators / Staking IS THE ENTIRE inflationary emission, so
-        #              cumulative gross issuance is capped at 0.29 x 2bn = 580,000,000 WMTx ever.
-        #   CONFIRMED  11.41% initial ANNUAL inflation (The Block, theblock.co/price/257077/
-        #              world-mobile-token), declining to ZERO by ~2030.
-        #   ASSUMPTION the DECAY SHAPE. Linear is NOT confirmed from World Mobile's own materials.
+        # ** 29% OF TOTAL SUPPLY IS THE INFLATION BUDGET: 580,000,000 WMTX OVER 20 YEARS,
+        #    FRONT-LOADED, REACHING NIL INFLATION IN YEAR 20. **
         #
-        #   STILL MISSING, and why no step is declared: WHAT THE 11.41% IS A PERCENTAGE OF. Not
-        #   max supply — 11.41% of 2bn is 228,200,000 in year one, and any declining curve from
-        #   there to zero blows through the 580,000,000 ceiling several times over. Ethplorer
-        #   reports Ethereum total supply at 1,020,252,845 WMTx (~51% of cap), which is consistent
-        #   with the schedule but is a MEASURED stock, not the declared base. Back-solving the
-        #   base from the ceiling and an assumed shape would be CONSTRUCTING the number.
-        #   Also missing: the emission START DATE (WMT migrated to WMTx; which event starts the
-        #   clock is not established).
+        # THIS RESOLVES THE CONTRADICTION THIS BLOCK USED TO CARRY. "Fixed 2bn supply" and "11.41%
+        # inflation" are both true and were never in conflict: the 29% allocation IS the inflation
+        # budget, MINTED OUT OF the capped supply rather than beyond it. The old entry treated the
+        # 11.41% as needing a base nobody had published; the base is simply whatever circulating
+        # was when the clock started, and the budget bounds the whole curve regardless.
         #
-        #   AND INCONSISTENT: "zero by year 20 (~2030)" puts year one in 2010, before the token
-        #   existed. Either the horizon is ~2041 or it is ~9 years; the daily rate differs by more
-        #   than 2x depending on which. Three unknowns and a contradiction do not reduce to one
-        #   tokens_per_day, so the schedule stays silent and the Gap Report carries the row.
+        # IT ALSO SETTLES THE HORIZON. The old note flagged "zero by year 20 (~2030)" as
+        # self-contradictory, since year one would then be 2010, before the token existed. TWENTY
+        # YEARS IS THE HORIZON and ~2030 was the error: a 20-year run ending ~2041 puts year one
+        # at ~2022, which is consistent with the token's existence. The ~9-year reading is dropped.
+        #
+        # ---------------------------------------------------------------------------------------
+        # ** THE PER-YEAR TABLE DOES NOT CLOSE, AND IT IS RECORDED UNRECONCILED RATHER THAN
+        #    SMOOTHED. ** The budget is certain; the annual figures depend on a sampling convention
+        #    nobody has stated, and the three readings differ materially.
+        #
+        # The continuous fact is solid. A linear ramp from a rate of 2 x 580,000,000 / 20 =
+        # 58,000,000 WMTX/yr at t=0 down to zero at t=20 has area exactly 580,000,000. That is
+        # where the 58,000,000 comes from and it is not in doubt.
+        #
+        # DISCRETISING IT IS WHERE THE 5% GOES MISSING:
+        #   A  year-START sampling, Y_n = 58,000,000 - (n-1) x 2,900,000
+        #      Y1 58,000,000 | Y2 55,100,000 | Y19 5,800,000 | Y20 2,900,000 | zero in year 21
+        #      SUM 609,000,000 — OVER BUDGET BY 29,000,000 (+5.00%)
+        #   B  MIDPOINT sampling of the same triangle, Y_n = 58,000,000 x (41 - 2n) / 40
+        #      Y1 56,550,000 | Y2 53,650,000 | Y19 4,350,000 | Y20 1,450,000
+        #      SUM 580,000,000 — EXACT
+        #   C  year-START sampling rescaled to the budget, Y1 55,238,095, step -2,761,905
+        #      SUM 580,000,000 — EXACT, but Y1 no longer equals the triangle height
+        #
+        # SEPARATELY, THE SUPPLIED TABLE'S TAIL IS OFF BY ONE YEAR against its own stated step:
+        # it gives "Y19 2,900,000, Y20 0", but 58,000,000 - 18 x 2,900,000 = 5,800,000 for Y19 and
+        # 2,900,000 for Y20, reaching zero in year 21. Variant A above uses the stated step and
+        # carries the consequence; the "Y20 0" reading is not reproducible from it.
+        #
+        # ** AND THE VALIDATION TEST'S ANSWER DEPENDS ON WHICH VARIANT IS RIGHT. ** The test is:
+        # if year one is 11.41% inflation, the base is year_one / 0.1141, and a TGE circulating
+        # supply matching it confirms linear decay. But:
+        #      A -> 508,326,030      B -> 495,617,879      C -> 484,120,028
+        # Those are ~5% apart, so a TGE figure known only to the nearest 10m cannot separate them,
+        # while one known precisely separates all three. Run the test against ALL THREE, not
+        # against 508,326,030 alone — matching one variant confirms linearity AND fixes the
+        # convention in a single check.
+        #
+        # NO SCHEDULE STEP IS DECLARED, for one remaining reason and no longer for four: the DECAY
+        # FORM is still an assumption. Linear is not confirmed from World Mobile's own materials,
+        # and a GEOMETRIC decay (fixed % reduction per year) hits the same endpoints with a
+        # different curve and the same 580,000,000 total. Front-loading is confirmed; its shape is
+        # not. Also still missing: the emission START DATE — WMT migrated to WMTx and which event
+        # starts the clock is not established, so even the correct curve cannot be placed on a
+        # calendar.
+        # ---------------------------------------------------------------------------------------
         "issuance_schedule": None,
+        "inflation_budget": {
+            "tokens": 580_000_000,
+            "share_of_total_supply": 0.29,
+            "years": 20,
+            "shape": "front-loaded, reaching nil inflation in year 20",
+            "minted_from": "the capped 2,000,000,000 supply — NOT in addition to it",
+            "status": "CONFIRMED",
+            "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf",
+            "second_source": "https://faq.worldmobiletoken.com (token metrics page)",
+            "source_date": "2026-09-15",
+            "resolves": "the apparent conflict between a fixed 2bn supply and 11.41% inflation — the "
+                        "29% allocation IS the inflation budget.",
+            "horizon_correction": {"was": "zero by year 20 (~2030)", "now": "~2022 to ~2041",
+                                   "why": "a 20-year run ending in 2030 would start in 2010, before the "
+                                          "token existed. The 20-year term is right; the ~2030 date was not."},
+        },
+        "inflation_schedule_derived": {
+            "status": "DERIVED, NOT DECLARED — not used by any adapter",
+            "continuous": {"rate_at_t0_per_year": 58_000_000, "zero_at_year": 20,
+                           "area": 580_000_000, "status": "exact, given linearity"},
+            "discretisations": {
+                "A_year_start": {"y1": 58_000_000, "step": -2_900_000, "sum": 609_000_000,
+                                 "over_budget_by": 29_000_000, "over_budget_pct": 0.05,
+                                 "zero_in_year": 21,
+                                 "note": "the variant as supplied. Its stated tail 'Y19 2,900,000, Y20 0' "
+                                         "is off by one year — the step gives Y19 5,800,000, Y20 2,900,000."},
+                "B_midpoint":   {"y1": 56_550_000, "y20": 1_450_000, "sum": 580_000_000,
+                                 "note": "same triangle, sampled at year midpoints. Conserves the budget exactly."},
+                "C_rescaled":   {"y1": 55_238_095, "step": -2_761_905, "sum": 580_000_000,
+                                 "exact_y1": 580_000_000 / 10.5,
+                                 "rounding_residual": -50,
+                                 "note": "year-start sampling rescaled to the budget. Y1 no longer equals "
+                                         "the triangle height. THE FIGURES HERE ARE ROUNDED TO WHOLE "
+                                         "TOKENS — exact y1 is 55,238,095.238…, so the rounded series sums "
+                                         "to 579,999,950, fifty tokens light. Recorded rather than "
+                                         "silently absorbed: it is rounding, not a fourth variant."},
+            },
+            "validation_test": {
+                "rule": "base = year_one / 0.1141; a matching TGE circulating supply confirms linear decay",
+                "implied_base_by_variant": {"A": 508_326_030, "B": 495_617_879, "C": 484_120_028},
+                "note": "RUN IT AGAINST ALL THREE. They are ~5% apart: a TGE figure known precisely "
+                        "confirms linearity AND fixes the sampling convention in one check. A TGE figure "
+                        "known only roughly separates none of them. If it matches NONE, the decay is "
+                        "likely GEOMETRIC — same endpoints, same 580,000,000 total, different curve.",
+            },
+            "the_single_open_assumption": "THE DECAY FORM. Linear is not confirmed from World Mobile's "
+                                          "own materials; geometric decay reaches the same endpoints with "
+                                          "the same total.",
+            "also_missing": "the emission START DATE. WMT migrated to WMTx and which event starts the "
+                            "clock is not established, so the curve cannot be placed on a calendar.",
+        },
+        # ================= TWO REWARD STREAMS, MECHANICALLY DIFFERENT. ARCHETYPE 2 =================
+        # This is the load-bearing distinction for World Mobile's supply side, and it is now from
+        # World Mobile's OWN whitepaper rather than inferred from payout language.
+        #
+        #   EARTHNODE operators earn WMTX — transaction fees plus inflation rewards — and share
+        #     with delegating stakers. THIS is the token leg and the only inflationary one.
+        #   ** AIRNODE operators earn FIAT, not tokens ** — a percentage of protocol revenue.
+        #
+        # So modelling total supplier earnings as emissions overstates issuance by whatever share
+        # settles in fiat. The existing operating_reference note said as much from inference; it is
+        # now confirmed from the protocol's own document.
+        "reward_streams": [
+            {"role": "EarthNode operator", "paid_in": "WMTX", "funded_by": "transaction fees + inflation rewards",
+             "shares_with": "delegating stakers", "inflationary": True,
+             "min_stake_tokens": 100_000,
+             "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "source_date": "2026-09-15"},
+            {"role": "AirNode operator", "paid_in": "FIAT", "funded_by": "a percentage of protocol revenue",
+             "inflationary": False,
+             "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "source_date": "2026-09-15",
+             "note": "CONFIRMS the fiat-supplier-payment finding from World Mobile's own whitepaper, where "
+                     "it was previously an inference. AirNode payouts are NOT emissions and must not be "
+                     "modelled as issuance."},
+        ],
+        "staking_terms": {
+            "epoch_days": 30, "epoch_starts": "the 1st of each month",
+            "lock_period": None,
+            "unstake": "anytime — no lock period",
+            "mid_epoch_penalty": "unstaking OR adding mid-epoch FORFEITS that epoch's rewards",
+            "live_on": ["Base", "Cardano"],
+            "cardano_method": "monthly snapshot",
+            "earthnode_min_stake_tokens": 100_000,
+            "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "source_date": "2026-09-15",
+            "note": "NO LOCK, but a mid-epoch change forfeits the epoch. So staked balance is liquid in the "
+                    "legal sense and sticky in the behavioural one — do not read 'no lock period' as 'no "
+                    "float constraint'.",
+        },
+        # ** DOCS SAY DECIMALS: 6. THE ADAPTER DOES NOT CARE, AND THAT IS WHY THIS IS SAFE. **
+        # Checked 2026-09-15 in response to the Maple 0.51 failure mode. fetch/chain.py scaled()
+        # reads decimals() FROM THE CONTRACT on every call — `dec_source.functions.decimals().call()`
+        # — and there is no hardcoded 18 anywhere in the fetch path. A 6-decimal token is scaled by
+        # 10**6 because the contract says 6, not because anything assumed it.
+        #
+        # RECORDED ANYWAY, because the claim and the contract may disagree by CHAIN: 6 decimals is
+        # the Cardano native-asset convention and the ERC-20 deployments may well declare 18. The
+        # adapter reads each contract's own decimals(), so a per-chain difference is handled
+        # correctly and silently — but anyone comparing a Cardano figure with an Ethereum one by
+        # hand needs to know.
+        "decimals_note": {
+            "docs_claim": 6,
+            "docs_source": "World Mobile's own documentation",
+            "adapter_behaviour": "reads decimals() from the contract on every call (fetch/chain.py scaled); "
+                                 "no hardcoded 18 exists in the fetch path",
+            "risk": "NONE to the stored figures. The 10^12 error class this check was looking for cannot "
+                    "occur while decimals are read rather than assumed.",
+            "caveat": "the docs claim may describe the CARDANO native asset (6 is the Cardano convention) "
+                      "while the ERC-20 deployments declare 18. Each contract is read on its own terms, so "
+                      "this is handled — but hand-comparing a Cardano figure with an Ethereum one is not.",
+            "checked": "2026-09-15",
+        },
+        # ** CHAIN LIST CORRECTION, NOT YET APPLIED TO THE CONTRACTS BLOCK. **
+        # World Mobile's own materials give: Base, Ethereum, BNB Chain, plus the original Cardano.
+        # Config's contracts block carries Ethereum, Arbitrum, BSC and Base.
+        #   -> ARBITRUM IS NOT IN THE PROTOCOL'S OWN LIST and may be wrong.
+        #   -> CARDANO IS NOT CAPTURED AT ALL.
+        # NOTHING IS REMOVED ON THIS EVIDENCE. The Arbitrum address was confirmed 2026-09-14 by
+        # direct source-code inspection on Arbiscan — a deployed contract that the docs do not
+        # mention is a documentation gap at least as readily as it is a config error, and deleting
+        # a verified on-chain fact because a marketing page omits it is the wrong direction of
+        # trust. It is also inert: Arbitrum has no read slot, so it contributes no number either way.
+        "chain_list_discrepancy": {
+            "protocol_states": ["Base", "Ethereum", "BNB Chain", "Cardano"],
+            "config_has": ["Ethereum", "Arbitrum", "BSC", "Base"],
+            "arbitrum": "IN CONFIG, NOT IN THE PROTOCOL'S LIST. Kept — verified 2026-09-14 by direct "
+                        "source-code inspection on Arbiscan, and it holds no read slot so it contributes "
+                        "nothing. Resolve by asking World Mobile, not by deleting a verified deployment.",
+            "cardano": "IN THE PROTOCOL'S LIST, NOT IN CONFIG. The original chain. NOT CAPTURED: there is "
+                       "no Cardano adapter and no Cardano policy id on file, so its supply is outside the "
+                       "partial Ethereum-only read entirely. This widens supply_is_partial beyond what "
+                       "partial_reason currently says.",
+            "source_date": "2026-09-15",
+        },
+        # A STALE FIGURE WITH A DATE ON IT — recorded so it is not re-adopted as a correction.
+        # World Mobile's docs page shows ~625,000,000 circulating, but that figure is dated
+        # OCTOBER 2024 and we read ~851m. The gap is growth over two years, not a discrepancy, and
+        # the older number is not the more conservative one — it is simply older.
+        "stale_figure_marker": {
+            "metric": "circulating_supply", "stale_value": 625_000_000, "stale_as_of": "2024-10",
+            "our_reading": 851_000_000, "our_source": "CoinGecko",
+            "note": "DO NOT use the 625m docs figure. It is two years old and the difference is issuance, "
+                    "not disagreement.",
+            "source_date": "2026-09-15",
+        },
         "max_supply_declared": {
             "value": 2_000_000_000,
             "source_url": "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
@@ -1579,14 +1985,21 @@ PROJECTS = [
         ],
         "manual_quarterly": ["supply_units", "utilisation_pct"],
         "materiality": "low",
-        "notes": "Archetype 2 + 3. SUPPLY IS PARTIAL (Ethereum only) until the bridge model is settled. "
-                 "ISSUANCE IS SOURCED BUT NOT DECLARABLE: the 2bn contract-enforced cap and the 29% "
-                 "(580,000,000 WMTx) lifetime inflationary ceiling are confirmed, and so is an 11.41% "
-                 "starting annual rate decaying to zero — but the base the 11.41% applies to, the start "
-                 "date and the decay shape are all missing, and the stated horizon (zero by year 20, "
-                 "~2030) is self-contradictory. BUYBACK DESTINATION IS UNDOCUMENTED, so the actual "
-                 "buyback figures are suppressed and only the implied one is computed. Operator payouts "
-                 "are often fiat/stablecoin — do not model all supplier earnings as emissions.",
+        "notes": "Archetype 2 + 3. SUPPLY IS PARTIAL (Ethereum only) until the bridge model is settled, "
+                 "and WIDER THAN THAT: Cardano is the original chain and is not captured at all. "
+                 "ISSUANCE IS NOW MECHANISM-COMPLETE BUT STILL NOT DECLARABLE, and the list of reasons "
+                 "has gone from four to two. Confirmed from World Mobile's own MiCA whitepaper: the 2bn "
+                 "contract-enforced cap, and 580,000,000 WMTx (29%) as the lifetime inflation budget over "
+                 "20 years, front-loaded to nil in year 20, minted OUT OF the cap rather than beyond it — "
+                 "which resolves the old 'fixed supply vs 11.41% inflation' contradiction and corrects the "
+                 "horizon from ~2030 to ~2041. STILL MISSING: the DECAY FORM (linear vs geometric — same "
+                 "endpoints, same total, different curve) and the emission START DATE. The per-year table "
+                 "also does not close: year-start sampling sums to 609m against a 580m budget (+5%), so "
+                 "three discretisations are recorded unreconciled and the 11.41% base test must be run "
+                 "against all three. BUYBACK DESTINATION IS UNDOCUMENTED, so the actual buyback figures "
+                 "are suppressed and only the implied one is computed. EARTHNODE operators earn WMTX, "
+                 "AIRNODE operators earn FIAT — confirmed from the whitepaper, not inferred — so do not "
+                 "model all supplier earnings as emissions.",
     },
     {
         "name": "GEODNET", "symbol": "GEOD",
@@ -1595,8 +2008,79 @@ PROJECTS = [
         "archetypes": [2, 4], "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": 0.80, "source_url": "https://geodnet.com/tokenomics", "source_date": BRIEF_DATE, "status": "active",
-                       "note": "80% of console (data) revenue buys back and burns GEOD. Confirmed burn; re-check the share against the current docs page."},
+                       "note": "80% of console (data) revenue buys back and burns GEOD, 20% to the Foundation. "
+                               "SECOND-SOURCED 2026-09-15 (still no GIP) — see the archetype 3 open question, "
+                               "which stays open: a second source raises confidence in the SPLIT without "
+                               "supplying the GEODNET-authored revenue-share statement archetype 3 needs."},
+        # ================= THE HALVING IS PER-MINER. IT IS NOT NETWORK ISSUANCE. =================
+        # issuance_schedule STAYS None, and that is the whole point of this block.
+        #
+        # The base reward halves ANNUALLY ON 30 JUNE, fixed from launch and NOT governance-
+        # dependent, per docs.geodnet.com/geod-token/tokenomics:
+        #     2022-2023            2 GEOD/hour base
+        #     Jul 2025 - Jun 2026  12 GEOD/day max base
+        #     FROM 2026-07-01       6 GEOD/day max base   <- CURRENT
+        #     expected 2027-07-01   3 GEOD/day
+        #
+        # ** 6 GEOD/day IS THE MAXIMUM PER-MINER BASE RATE, NOT WHAT THE NETWORK EMITS. ** Declaring
+        # it as tokens_per_day would state that GEODNET issues six tokens a day in total, which is
+        # wrong by the miner count — five or six orders of magnitude. Actual network issuance is
+        # f(miner count, effective online time, data quality, band type, multipliers): SuperHex
+        # zones pay up to 4x, and triple-band and dual-band miners differ.
+        #
+        # THE MISSING INPUT IS ONE NUMBER, AND IT IS ALREADY MISSING FOR ANOTHER REASON. Network
+        # issuance needs a miner count; supply_units (archetype 2) IS the miner count. One source
+        # closes both gaps at once, which makes it the highest-value single addition for GEODNET.
         "issuance_schedule": None,
+        "per_miner_reward_schedule": {
+            "unit": "GEOD per miner per day, BASE rate, MAXIMUM",
+            "halves_on": "30 June, annually",
+            "governance_dependent": False,
+            "fixed_from": "launch",
+            "steps": [
+                {"from": "2022-01-01", "until": "2023-12-31", "rate": 2.0, "unit": "GEOD/hour",
+                 "note": "stated in GEOD/hour in the docs, not GEOD/day — do not compare directly with the rows below"},
+                {"from": "2025-07-01", "until": "2026-06-30", "tokens_per_miner_per_day": 12.0},
+                {"from": "2026-07-01", "until": "2027-06-30", "tokens_per_miner_per_day": 6.0, "current": True},
+                {"from": "2027-07-01", "until": "2028-06-30", "tokens_per_miner_per_day": 3.0, "status": "expected"},
+            ],
+            "multipliers": {
+                "superhex_zones_up_to": 4.0,
+                "band_type": "triple-band and dual-band miners earn differently; the per-band figures are not on file",
+            },
+            "total_supply_cap": 1_000_000_000,
+            "source_url": "https://docs.geodnet.com/geod-token/tokenomics",
+            "source_date": "2026-09-15",
+            "network_issuance_requires": "supply_units (miner count) — the same metric archetype 2 is "
+                                         "already missing. Sourcing it closes both.",
+            "do_not": "declare any of these rates as network issuance. They are per-miner maxima before "
+                      "uptime, data quality, band type and zone multipliers.",
+        },
+        # ===== THE FALSE ZERO, SUPPRESSED =====
+        # gross_issuance_tokens was reading 0 from derived:d_supply:MECHANISM_ASSUMED — the supply
+        # delta between two runs, on a token whose supply barely moves between daily reads.
+        #
+        # A ZERO HERE IS WORSE THAN A GAP, which is why this is a suppression and not a tolerance.
+        # Zero renders as a real figure: it says GEODNET issued nothing, it feeds the burn/issuance
+        # ratio as a denominator, and it carries a confidence band as though it had been measured.
+        # A gap says "no route to this number yet", which is the truth.
+        #
+        # AND THE DERIVATION IS NOW KNOWN TO BE THE WRONG SHAPE, not merely imprecise: issuance is
+        # SCHEDULE-BASED AND PER-MINER (see per_miner_reward_schedule). It is not recoverable from
+        # a supply delta at any sampling interval, so no amount of accumulated history fixes it.
+        "issuance_derivation": {
+            "suppressed": True,
+            "suppressed_on": "2026-09-15",
+            "was_producing": "0 from derived:d_supply:MECHANISM_ASSUMED",
+            "why": "issuance is schedule-based and PER-MINER — f(miner count, uptime, data quality, band "
+                   "type, zone multipliers) — not a function of the supply delta. The derivation was "
+                   "returning a plausible-looking zero, and a false zero is worse than a gap: it renders "
+                   "as a measured figure, feeds the burn/issuance ratio as a denominator, and carries a "
+                   "confidence band it has not earned.",
+            "resolves_when": "supply_units (miner count) is sourced, at which point network issuance can "
+                             "be modelled from per_miner_reward_schedule — or, better, read directly from "
+                             "the mining distribution wallet's outflow (see contracts).",
+        },
         # CORRECTED from the working Dune query that actually tracks GEOD burns. The
         # "1nc1nerator111..." address previously here is NOT what that query reads and has been removed.
         # The query UNIONs both chains, which settles the open question: Polygon-era burns DO belong in
@@ -1661,6 +2145,48 @@ PROJECTS = [
                      "chain and GIP-7 is only proposed. It stays UNVERIFIED for a DIFFERENT reason: "
                      "no GEODNET-authored source on file names this address, and it is not referenced "
                      "by the working burn query. Read is refused until a GEODNET source confirms it."),
+            # ============ THREE WALLETS FROM GEODNET'S OWN TOKENOMICS PAGE, ALL POLYGON ============
+            # Added 2026-09-15 from docs.geodnet.com/geod-token/tokenomics — the same page as the
+            # halving schedule above, so one source, three addresses, and the provenance is the
+            # protocol's own documentation rather than an aggregator.
+            #
+            # ALL THREE ARE UNVERIFIED AND WILL BE REFUSED BY THE ADAPTER, deliberately. The page
+            # names them; nothing on file confirms what each currently holds, and a treasury read
+            # that is pointed at the wrong wallet produces a confident wrong number rather than an
+            # obvious one — the Maple 0.51 failure, exactly. They are recorded so the Gap Report
+            # names something specific instead of saying "no address".
+            #
+            # ** THE MIDDLE ONE IS THE PRIZE. ** mining_distribution is the likeliest route to ACTUAL
+            # network emissions: its OUTFLOW is issuance as it happens, which beats modelling the
+            # per-miner rate across an unknown miner count with unknown multipliers. That is a
+            # measured figure against a modelled one. It needs a flow read (transfers out), not the
+            # balance read declared here — balance is what this adapter can do today, and a
+            # distribution wallet's balance is a float, not a cumulative.
+            "mining_polygon": _contract(
+                "0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F", "polygon", "treasury_holding", "GEOD",
+                "https://docs.geodnet.com/geod-token/tokenomics", verified=UNVERIFIED,
+                provenance="docs.geodnet.com/geod-token/tokenomics, read 2026-09-15",
+                purpose="GEODNET Mining wallet (Polygon). The mining allocation's holding.",
+                note="UNVERIFIED — named by GEODNET's docs, but its current holdings have not been "
+                     "confirmed. Confirm the balance is of the expected order before wiring."),
+            "mining_distribution_polygon": _contract(
+                "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478", "polygon", "treasury_holding", "GEOD",
+                "https://docs.geodnet.com/geod-token/tokenomics", verified=UNVERIFIED,
+                provenance="docs.geodnet.com/geod-token/tokenomics, read 2026-09-15",
+                purpose="GEODNET Mining DISTRIBUTION wallet (Polygon) — the best available proxy for "
+                        "ACTUAL emissions flow. Reading its outflow beats modelling the per-miner rate.",
+                note="UNVERIFIED, and the read declared here is the WRONG SHAPE for what makes it "
+                     "valuable. treasury_holding gives a BALANCE; emissions are its OUTFLOW. A "
+                     "distribution wallet's balance is a float that rises on top-up and falls on "
+                     "payout, so differencing it would report negative issuance on a top-up day and "
+                     "zero on a quiet one. Confirm holdings first, then source the transfer flow — "
+                     "tier 4 or a Polygon transfer-log read, not balanceOf."),
+            "ecosystem_polygon": _contract(
+                "0x3A6906E4239F9860C81035c54198Df58D892653b", "polygon", "treasury_holding", "GEOD",
+                "https://docs.geodnet.com/geod-token/tokenomics", verified=UNVERIFIED,
+                provenance="docs.geodnet.com/geod-token/tokenomics, read 2026-09-15",
+                purpose="GEODNET Ecosystem wallet (Polygon).",
+                note="UNVERIFIED — named by GEODNET's docs, holdings unconfirmed."),
         },
         "burn_mechanism": {
             "model": "transfer_to_dead_address", "status": "assumed",
@@ -2435,6 +2961,35 @@ PROJECTS = [
                                        "direct DAO fee receipt is not legally resolved yet",
             "then": "add archetype 3 with a real destination; until then there is nothing to accrue value to",
             "source_url": "https://docs.morpho.org/",
+        },
+        # ===== CONFIRMED 2026-09-15: NOTHING TO DECLARE, AND NOTHING IS BEING REPORTED MISSING. =====
+        # Re-checked against the research brief, which found no issuance mechanism, no buyback and
+        # no burn — matching what this entry already said. The only open point was whether the
+        # ABSENCE renders as not-applicable or as a gap, so it was checked in the code rather than
+        # assumed:
+        #
+        #   config.metrics_for_project(Morpho) returns
+        #     price_usd, market_cap_usd, volume_usd, circulating_supply, total_supply,
+        #     staked_tokens, emissions_tokens, supply_units, utilisation_pct, customer_revenue_usd
+        #
+        #   gross_burn_tokens, gross_issuance_tokens, burn_address_balance, burn_mint_ratio and the
+        #   buyback metrics are NOT IN THAT LIST — they belong to archetypes 1, 3 and 4 and Morpho
+        #   is archetype 2 only.
+        #
+        #   BOTH consumers scope to that same list: fetch/gaps.py:297 iterates it when building the
+        #   Gap Report, and build_workbook.py:303 builds `applicable` from it. So the supply-side
+        #   metrics are OUT OF SCOPE rather than unresolved — no gap row, no empty cell asking to be
+        #   filled. Correct, and now verified rather than assumed.
+        "supply_side": {
+            "issuance": None, "buyback": None, "burn": None,
+            "status": "none — confirmed 2026-09-15",
+            "renders_as": "not-applicable (out of archetype scope), NOT as gaps",
+            "verified_how": "config.metrics_for_project() excludes every supply-side metric for an "
+                            "archetype-2-only project, and both fetch/gaps.py and build_workbook.py "
+                            "scope to that function",
+            "revenue_exists_but": "routes to the Morpho Association, a French nonprofit, not the DAO — "
+                                  "see reopen_condition. Revenue without a route to the token is not "
+                                  "archetype 3.",
         },
         "dune_queries": _dune("emissions_tokens"),
         "materiality": "high",
@@ -3444,7 +3999,127 @@ PROJECTS = [
                               "single documented number — the first month was 100% of Ethereum mainnet "
                               "revenue (~$1.7m), which is a launch condition, not a standing rule."},
         "burn_split": None,
-        "issuance_schedule": None,
+        # ============ VESTING IS COMPLETE. THAT IS A DECLARATION, NOT A GAP. ============
+        # Vesting ENDED IN 2025 and there are no further scheduled unlocks. Allocations, for the
+        # record: Community 55.00%, Current Team 23.79%, Investors 12.09%, Future Team & Ecosystem
+        # Partnership 7.85%, Advisors 1.27%.
+        #
+        # SO gross_issuance FROM VESTING IS ZERO GOING FORWARD, and declaring that beats leaving a
+        # gap. This is the opposite call from GEODNET's suppression ten projects up, and the
+        # difference is worth stating plainly: GEODNET's zero was a DERIVATION ARTEFACT standing in
+        # for a number nobody had, so it was suppressed; Fluid's zero is the ANSWER. A declared
+        # zero from a completed schedule is a fact about the token. A derived zero from a supply
+        # delta is an absence of evidence wearing a number's clothes.
+        "issuance_schedule": {
+            "steps": [{"from": "2026-01-01", "tokens_per_day": 0.0}],
+            "source_url": "https://docs.fluid.io/", "source_date": "2026-09-15", "status": "complete",
+            "note": "VESTING COMPLETE — ended 2025, no further scheduled unlocks. Zero is the ANSWER here, "
+                    "not a missing figure. ** BUT VESTING IS NOT FLUID'S SUPPLY LEVER — see "
+                    "incentive_programme below, which is larger than vesting ever was and is entirely "
+                    "discretionary. A reader who stops at this zero will conclude Fluid has no supply "
+                    "expansion, which is wrong. **",
+            "allocations": {"community_pct": 0.5500, "current_team_pct": 0.2379, "investors_pct": 0.1209,
+                            "future_team_and_ecosystem_partnership_pct": 0.0785, "advisors_pct": 0.0127},
+        },
+        # ================= THE REAL SUPPLY LEVER, AND IT IS NOT MODELLED ANYWHERE =================
+        # From Fluid's rebrand and growth governance proposal:
+        #     up to 0.25% of total supply PER MONTH — stable lending incentives
+        #     up to 0.25% of total supply PER MONTH — DEX activity incentives
+        #     5% of supply allocated to establish FLUID DEX liquidity
+        #
+        # At the 100m cap that is UP TO 500,000 FLUID/MONTH, ~6,000,000/yr, ~6% annualised. LARGER
+        # THAN ANYTHING VESTING EVER DID, and entirely DISCRETIONARY — a ceiling the DAO may use or
+        # not, not a schedule that runs by itself.
+        #
+        # ** DECLARED AS A CEILING, NEVER AS ISSUANCE. ** Same treatment as Sky's SBE BEAM cap.
+        # Writing 0.5%/month into the issuance series would assert that Fluid emits six percent a
+        # year, when the programme may be running at any rate from zero to that. A ceiling with a
+        # discretionary flag is the honest shape: it bounds the answer without inventing it.
+        "incentive_programme": {
+            "is_issuance": False,
+            "is_ceiling": True,
+            "discretionary": True,
+            "monthly_cap_pct_of_total_supply": 0.005,
+            "legs": [
+                {"what": "stable lending incentives", "monthly_cap_pct_of_total_supply": 0.0025},
+                {"what": "DEX activity incentives", "monthly_cap_pct_of_total_supply": 0.0025},
+            ],
+            "dex_liquidity_allocation_pct": 0.05,
+            "at_100m_supply": {"monthly_cap_tokens": 500_000, "annualised_tokens": 6_000_000,
+                               "annualised_pct": 0.06},
+            "funded_from": "treasury",
+            "source": "Fluid's rebrand and growth governance proposal",
+            "source_date": "2026-09-15",
+            "modelled_as": "CEILING with a discretionary flag — the same treatment as Sky's SBE BEAM cap",
+            "do_not": "DO NOT declare 0.5%/month as actual issuance. The programme is discretionary and "
+                      "may be running anywhere between zero and the cap. A ceiling bounds the answer; "
+                      "asserting the cap invents one.",
+            "why_it_matters": "treasury-funded incentives are a LARGER supply lever than vesting ever was "
+                              "for Fluid, and vesting is the one that is finished. Reading the completed "
+                              "vesting schedule as the whole supply story gets Fluid exactly backwards.",
+            "ties_to": "contested_circulating_supply — treasury-held tokens counted as circulating by one "
+                       "source and not another would explain the 5m gap there.",
+        },
+        # ============ CONTESTED CIRCULATING SUPPLY — THE SOURCES CONTRADICT THEMSELVES ============
+        # 77,950,000 (secondary) / 78,696,996 (tokenomist, "78.70%") / 83,696,996 (our store,
+        # CoinGecko). Same shape as Plume, with one extra problem on top.
+        #
+        # THE SOURCES DESCRIBE FLUID AS "FULLY UNLOCKED" WHILE REPORTING 77.95%. Those cannot both
+        # be true. Fully unlocked means 100%, and the vesting schedule above says vesting IS
+        # complete — so either the percentage is wrong or "fully unlocked" means something narrower
+        # than all tokens circulating.
+        #
+        # AND THE 5m GAP IS TOO LARGE FOR TIMING. 83,696,996 - 78,696,996 = 5,000,000 exactly, which
+        # is 5% of total supply — and note it is EXACTLY five million, not approximately. A round
+        # number that size is a definitional difference, not a settlement lag. THE LIKELY
+        # EXPLANATION IS TREASURY-HELD TOKENS counted as circulating by one source and not the
+        # other, which points straight at incentive_programme above: the treasury holding the
+        # incentive tokens is the obvious candidate for a 5m block whose status is ambiguous.
+        # That is a HYPOTHESIS with an arithmetic coincidence behind it, not a finding.
+        "contested_circulating_supply": {
+            "figures": [
+                {"value": 77_950_000, "pct_of_total": 0.7795, "source": "secondary source"},
+                {"value": 78_696_996, "pct_of_total": 0.7870, "source": "tokenomist.ai"},
+                {"value": 83_696_996, "source": "CoinGecko — our stored figure"},
+            ],
+            "gap_between_top_two": 5_000_000,
+            "gap_pct_of_total_supply": 0.05,
+            "gap_is_exactly_round": True,
+            "source_self_contradiction": "the sources describe FLUID as 'fully unlocked' while reporting "
+                                         "77.95%. Both cannot be true.",
+            "hypothesis": "treasury-held tokens counted as circulating by one source and not the other. "
+                          "The gap is EXACTLY 5,000,000 — a round number, not a settlement lag — and the "
+                          "incentive programme's treasury is the obvious 5m block of ambiguous status.",
+            "hypothesis_status": "UNTESTED. An arithmetic coincidence is a reason to look, not a finding. "
+                                 "Testing it needs the treasury address, which is missing — see below.",
+            "resolution": "NONE. Recorded, not resolved. The stored figure remains CoinGecko's by tier order.",
+            "source_date": "2026-09-15",
+        },
+        # ============ TWO MISSING ADDRESSES, AND THE SECOND ONE IS NEW ============
+        # THE FLUID RESERVE (buyback destination) is already recorded as a permanent gap in
+        # UNAVAILABLE — five sources checked 2026-09-14, none carrying an address.
+        #
+        # THE INCENTIVE-PROGRAMME TREASURY is a SECOND missing address, added here 2026-09-15, and
+        # it is not the same one. Searched and not found: Fluid's blog, Messari, the X
+        # announcement, Instadapp/fluid-contracts-public and Instadapp/fluid-governance.
+        #
+        # IT IS THE HIGHER-VALUE OF THE TWO TO FIND, which is worth saying because the Reserve has
+        # had all the attention. The treasury would give (a) the actual draw against the
+        # discretionary incentive ceiling — turning a bound into a measurement — and (b) a test of
+        # the 5,000,000 circulating-supply hypothesis above. One address, two open questions.
+        "missing_addresses": [
+            {"what": "The Fluid Reserve (buyback destination)", "status": "permanent gap",
+             "see": "UNAVAILABLE — five sources checked 2026-09-14, none carrying an address"},
+            {"what": "the treasury holding the incentive-programme tokens", "status": "missing",
+             "added": "2026-09-15",
+             "searched": ["Fluid's blog", "Messari", "the X announcement",
+                          "Instadapp/fluid-contracts-public", "Instadapp/fluid-governance"],
+             "would_give": ["the actual draw against the discretionary incentive ceiling — a measurement "
+                            "rather than a bound",
+                            "a test of the 5,000,000 circulating-supply hypothesis"],
+             "priority": "HIGHER than the Reserve address. The Reserve would confirm a buyback we already "
+                         "know is happening; the treasury would close two open questions at once."},
+        ],
         "contracts": {
             "token": _contract(
                 "0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb", "ethereum", "erc20_total_supply", "FLUID",
@@ -4225,13 +4900,17 @@ OPEN_QUESTIONS = [
     {
         "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
         "severity": 2,
-        "reason": "A secondary source (Solana Compass) states that 80% of network DATA revenue funds "
-                  "buyback-and-burn. If true that is an archetype 3 block with a real revenue share. It is "
-                  "NOT ADDED, because it is SINGLE-SOURCED and is not corroborated by GEODNET's own docs or "
-                  "by any GIP. The existing burn_split on file carries the same 80% figure against "
-                  "docs.geodnet.com, so the two may be the same claim reaching us twice rather than two "
-                  "independent confirmations — which is exactly the kind of apparent corroboration that "
-                  "should not be treated as evidence.",
+        "reason": "NOW SECOND-SOURCED (2026-09-15), AND STILL NOT ADDED — and the distance between those "
+                  "two facts is the point of this entry. The 80/20 split itself is corroborated: 80% of "
+                  "revenue to repurchase-and-burn, 20% to the Foundation, from a second source "
+                  "independent of the Solana Compass claim that opened this question. Confidence in the "
+                  "SPLIT rises accordingly and burn_split's note records it.\n\n"
+                  "ARCHETYPE 3 STILL DOES NOT FOLLOW. What archetype 3 needs is a GEODNET-AUTHORED "
+                  "statement of the revenue share and the buyback-and-burn route — docs.geodnet.com or a "
+                  "GIP. Two secondary sources agreeing is not the same thing as the protocol saying it, "
+                  "and the original caution stands: the existing burn_split carries the same 80% against "
+                  "docs.geodnet.com, so some of this apparent corroboration may still be one claim "
+                  "reaching us by several paths.",
         "suggestion": "Confirm from docs.geodnet.com or vote.geodnet.com. If a GEODNET-authored source "
                       "states the revenue share and the buyback-and-burn route, add archetype 3 with that "
                       "source. Do not add it on Solana Compass alone.",

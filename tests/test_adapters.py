@@ -2365,13 +2365,30 @@ def test_geodnet_sql_addresses_match_config_exactly():
         else:
             # base58 is case-SENSITIVE, so a Solana address must match exactly
             assert sql_address == stored, f"{key}: base58 mismatch, {sql_address} vs {stored}"
-    # SIX ENTRIES NOW, and the count is asserted so an address cannot be slipped in unnoticed.
-    # Four come from the query, plus the historical Polygon buyback wallet (unverified, refused)
-    # and the IoTeX deployment added 2026-09-14 from GEODNET's own token docs. The IoTeX entry is
-    # on a chain with no RPC, so it is refused at the coverage gate and cannot contribute a number
-    # — which is the intended outcome while the Wormhole NTT bridge model is unresolved.
-    assert set(contracts) == set(from_sql) | {"buyback_wallet_polygon_historical", "token_iotex"}, \
+    # NINE ENTRIES NOW, and the count is asserted so an address cannot be slipped in unnoticed.
+    # This assertion did its job on 2026-09-15: it failed the moment three wallets were added from
+    # GEODNET's tokenomics page, which is exactly the tripwire it exists to be. Updated
+    # deliberately, listing each addition, rather than loosened to a >= count.
+    #
+    # Four come from the query, plus:
+    #   buyback_wallet_polygon_historical  unverified, refused
+    #   token_iotex                        2026-09-14, GEODNET's own token docs; no IoTeX RPC, so it
+    #                                      is refused at the coverage gate and cannot contribute a
+    #                                      number while the Wormhole NTT bridge model is unresolved
+    #   mining_polygon                     2026-09-15, docs.geodnet.com/geod-token/tokenomics
+    #   mining_distribution_polygon        2026-09-15, same page — the emissions-flow candidate
+    #   ecosystem_polygon                  2026-09-15, same page
+    # All three 2026-09-15 additions are UNVERIFIED, so the adapter refuses them and they appear in
+    # the Gap Report by name. That is the point of recording them.
+    added_2026_09_15 = {"mining_polygon", "mining_distribution_polygon", "ecosystem_polygon"}
+    assert set(contracts) == set(from_sql) | {"buyback_wallet_polygon_historical", "token_iotex"} | added_2026_09_15, \
         f"unexpected contract keys on GEODNET: {sorted(contracts)}"
+    for key in added_2026_09_15:
+        c = contracts[key]
+        assert c["chain"] == "polygon", f"{key}: expected polygon, got {c['chain']}"
+        assert not c["verified"], f"{key} must stay UNVERIFIED until its holdings are confirmed"
+        assert c["source_url"] == "https://docs.geodnet.com/geod-token/tokenomics", \
+            f"{key}: provenance must be GEODNET's own docs, not an aggregator"
     assert contracts["token_iotex"]["chain"] == "iotex"
     assert contracts["token_iotex"]["chain"] not in config.EVM_CHAINS, \
         "iotex has no RPC, so the IoTeX deployment must stay unreadable until one is added"
@@ -2503,6 +2520,138 @@ def test_manual_overrides_suppress_gaps():
     gaps = detect(config.PROJECTS, frame, {("World Mobile", "customer_revenue_usd")}, {}, [])
     assert ("World Mobile", "customer_revenue_usd") not in {(g["project"], g["metric"]) for g in gaps}
     print("manual overrides ok: a hand-entered metric is not reported as a gap")
+
+
+def test_geodnet_issuance_derivation_is_suppressed_and_gaps_instead_of_reading_zero():
+    """A FALSE ZERO IS WORSE THAN A GAP, and this proves the suppression produces the gap.
+
+    GEODNET's gross_issuance_tokens was reading 0 from derived:d_supply:MECHANISM_ASSUMED — the
+    delta between two daily supply reads on a token whose supply barely moves. Zero renders as a
+    measured figure: it says the network issued nothing, it feeds the burn/issuance ratio as a
+    denominator, and it carries a confidence band it never earned.
+
+    The fixture is deliberately built so the OLD code would have stored a number: supply moves
+    1,000,000 -> 1,000,500 between two DIFFERENT dates, which is a perfectly derivable +500 under
+    transfer_to_dead_address. A test that fed it an unchanged supply would pass whether the
+    suppression worked or not, because the old path would have written 0.0 and the assertion
+    `value is None` would have to distinguish 0.0 from None to mean anything.
+    """
+    value, out = _derive("GEODNET", "transfer_to_dead_address",
+                         supply_now=1_000_500.0, supply_prior=1_000_000.0, burn=None)
+    assert value is None, f"GEODNET issuance must be suppressed, got {value!r}"
+
+    gaps = [g for g in out.gaps
+            if g["project"] == "GEODNET" and g["metric"] == "gross_issuance_tokens"]
+    assert len(gaps) == 1, f"expected exactly one gap row, got {len(gaps)}"
+    reason = gaps[0]["reason"]
+    assert "SUPPRESSED" in reason, f"the gap must say it is suppressed, not merely absent: {reason}"
+    assert "per-miner" in reason.lower() or "PER-MINER" in reason, \
+        f"the gap must name WHY the supply delta is the wrong shape: {reason}"
+
+    # And the suppression is CONFIG-DRIVEN, not a hardcoded project name in the fetch path.
+    assert config.PROJECT_BY_NAME["GEODNET"]["issuance_derivation"]["suppressed"] is True
+
+    # THE CONTROL. The same call on a project WITHOUT the flag still derives, so this test cannot
+    # pass because the derivation broke for everyone.
+    value, _ = _derive("Uniswap", "transfer_to_dead_address",
+                       supply_now=1_000_500.0, supply_prior=1_000_000.0, burn=None)
+    assert value == 500.0, f"the control project must still derive; got {value!r}"
+    print("GEODNET issuance ok: suppressed to a gap that names the reason, control still derives")
+
+
+def test_world_mobile_inflation_budget_and_the_schedule_that_does_not_close():
+    """580,000,000 over 20 years is CERTAIN. The per-year table is not, and the gap is 5%.
+
+    This asserts the arithmetic rather than the prose, because the prose is what would rot. The
+    three discretisations recorded in config are each recomputed from their own stated parameters
+    and checked against the budget — so if someone later 'tidies' one of the figures, the sum
+    stops matching and this fails.
+    """
+    p = config.PROJECT_BY_NAME["World Mobile"]
+    budget = p["inflation_budget"]
+    assert budget["tokens"] == 580_000_000
+    assert budget["years"] == 20
+    # 29% of the 2bn cap IS the budget — the fact that resolves "fixed supply vs 11.41% inflation".
+    cap = p["max_supply_declared"]["value"]
+    assert abs(budget["share_of_total_supply"] * cap - budget["tokens"]) < 1, \
+        "the 29% share and the 580m figure must agree against the 2bn cap"
+
+    d = p["inflation_schedule_derived"]
+    h = d["continuous"]["rate_at_t0_per_year"]
+    assert h == 58_000_000
+    # The triangle: 1/2 * 20 * 58m = 580m exactly. This is the part that is not in doubt.
+    assert 0.5 * budget["years"] * h == budget["tokens"]
+
+    # A — year-START sampling, as supplied. Sums to 609m: OVER BUDGET BY 5%.
+    a = d["discretisations"]["A_year_start"]
+    series_a = [a["y1"] + n * a["step"] for n in range(20)]
+    assert sum(series_a) == a["sum"] == 609_000_000
+    assert a["over_budget_by"] == sum(series_a) - budget["tokens"] == 29_000_000
+    # And its tail is off by one year against its own step — Y20 is 2.9m, not 0.
+    assert series_a[19] == 2_900_000, "Y20 under the stated step is 2,900,000, not zero"
+    assert a["zero_in_year"] == 21
+
+    # B — MIDPOINT sampling of the same triangle. Conserves the budget exactly.
+    b = d["discretisations"]["B_midpoint"]
+    series_b = [h * (2 * 20 - 2 * n + 1) / (2 * 20) for n in range(1, 21)]
+    assert sum(series_b) == budget["tokens"]
+    assert series_b[0] == b["y1"] == 56_550_000
+    assert series_b[19] == b["y20"] == 1_450_000
+
+    # C — year-start rescaled to the budget. Its parameters are ROUNDED TO WHOLE TOKENS, so the
+    # series lands fifty tokens light of 580,000,000. Asserted as an exact residual rather than
+    # waved through with a loose tolerance: a wide `abs(...) < 100` would also accept a genuine
+    # arithmetic change, which is the thing this test exists to catch.
+    c = d["discretisations"]["C_rescaled"]
+    series_c = [c["y1"] + n * c["step"] for n in range(20)]
+    assert sum(series_c) - budget["tokens"] == c["rounding_residual"] == -50
+    assert abs(c["exact_y1"] - budget["tokens"] / 10.5) < 1e-6, "C's exact y1 must be budget/10.5"
+
+    # ** THE VALIDATION TEST'S ANSWER DEPENDS ON THE CONVENTION. ** This is the reason all three
+    # are kept: the implied TGE base differs by ~5% across them, so the 11.41% check separates
+    # them only if TGE circulating is known precisely.
+    # C is checked against its EXACT y1, not the rounded one in the series: rounding y1 down by
+    # 0.238 tokens moves the implied base by ~2, which is noise against a 24,000,000 spread but
+    # would still trip a tight assertion. The recorded base is the exact one.
+    implied = d["validation_test"]["implied_base_by_variant"]
+    for key, first_year in (("A", series_a[0]), ("B", series_b[0]), ("C", c["exact_y1"])):
+        assert abs(first_year / 0.1141 - implied[key]) < 1.0, f"variant {key} base mismatch"
+    spread = (max(implied.values()) - min(implied.values())) / max(implied.values())
+    assert spread > 0.04, "if the variants ever converge, the 'run it against all three' advice is stale"
+
+    # The one remaining assumption is named, and it is the DECAY FORM — not the base, which the
+    # budget now supplies, and not the horizon, which is corrected to 20 years.
+    assert "DECAY FORM" in d["the_single_open_assumption"]
+    assert p["issuance_schedule"] is None, "no step may be declared while the decay form is assumed"
+    print("World Mobile ok: 580m/20yr certain, three discretisations, the 5% gap asserted not hidden")
+
+
+def test_world_mobile_decimals_are_read_from_the_contract_never_assumed():
+    """The Maple 0.51 failure mode cannot occur here, and this pins the reason in place.
+
+    World Mobile's docs say DECIMALS: 6. If anything in the fetch path assumed 18, every WMTX
+    figure would be wrong by 10^12 — and would look plausible rather than absurd, which is what
+    makes that class of error dangerous. It does not, because scaled() reads decimals() from the
+    contract on every call. This test asserts the ABSENCE of a hardcoded scale factor in the
+    fetch path, so a future 'optimisation' that caches or assumes 18 fails here.
+    """
+    import pathlib
+    import re
+
+    p = config.PROJECT_BY_NAME["World Mobile"]
+    assert p["decimals_note"]["docs_claim"] == 6
+
+    src = pathlib.Path(__file__).resolve().parent.parent / "fetch" / "chain.py"
+    text = src.read_text()
+    # scaled() must take its divisor from a live decimals() call, not from a literal.
+    assert "dec_source.functions.decimals().call()" in text, \
+        "scaled() must read decimals() from the contract"
+    offenders = [m for m in re.findall(r"10 ?\*\* ?(\d+)", text) if m != ""]
+    assert not offenders, f"hardcoded power-of-ten scaling in fetch/chain.py: 10**{offenders}"
+    for bad in ("1e18", "1e6", "DECIMALS = 18"):
+        assert bad not in text, f"hardcoded scale {bad!r} in fetch/chain.py"
+    print("World Mobile ok: decimals read from the contract, no hardcoded scale in the fetch path")
+
 
 
 if __name__ == "__main__":

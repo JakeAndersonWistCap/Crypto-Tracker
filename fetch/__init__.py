@@ -281,6 +281,20 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
         if "gross_issuance_tokens" not in config.metrics_for_project(p):
             continue
 
+        # SUPPRESSED BY CONFIG, because the supply delta is the WRONG SHAPE for this project's
+        # issuance — not merely imprecise. GEODNET emits per-miner on a halving schedule, so no
+        # sampling interval recovers it from a supply difference. Left alone the derivation returns
+        # a plausible zero, and a false zero is worse than a gap: it renders as measured, feeds the
+        # burn/issuance ratio as a denominator, and carries a confidence band it has not earned.
+        supp = p.get("issuance_derivation") or {}
+        if supp.get("suppressed"):
+            out.gap(name, "gross_issuance_tokens",
+                    reason=("the supply-delta derivation is SUPPRESSED for this project: "
+                            + supp.get("why", "no reason recorded in config.")),
+                    tiers_attempted="1, 2",
+                    suggestion=supp.get("resolves_when", "see this project's config entry."))
+            continue
+
         mech = config.burn_mechanism(p)
         rule = ISSUANCE_FROM_SUPPLY_DELTA.get(mech.get("model"))
         if rule is None or mech.get("status") == "refuted":
