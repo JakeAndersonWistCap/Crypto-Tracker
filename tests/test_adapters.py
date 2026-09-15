@@ -2627,14 +2627,33 @@ def test_world_mobile_inflation_budget_and_the_schedule_that_does_not_close():
         # more than an order of magnitude beyond the ~5% the conventions differ by.
         assert ratio > 2.0, f"variant {key} would have to be >2x TGE for the premise to fail"
 
-    # 11.41% is now a POINT-IN-TIME REFERENCE, not a schedule parameter, and nothing may read it
-    # as one. Its date is the missing piece and is recorded as missing rather than guessed.
+    # 11.41% is a POINT-IN-TIME REFERENCE, not a schedule parameter, and nothing may read it as
+    # one. It is a LIVE STAT — a continuously maintained price/data page with no byline and no
+    # publication date — so it is dated by RETRIEVAL, the same convention as any other live read.
     ref = p["inflation_rate_reference"]
     assert ref["is_schedule_parameter"] is False
     assert ref["kind"] == "point_in_time_reference"
+    assert ref["source_kind"] == "live_stat"
     assert ref["measured_against"].startswith("CIRCULATING SUPPLY")
-    assert ref["article_published"] is None, "the article date must stay None until it is known"
-    assert "NOT ON FILE" in ref["article_published_status"]
+
+    # THE FIELD THAT SHOULD NOT EXIST. article_published modelled this as a dated article and is
+    # gone; a future edit that reintroduces it is reintroducing the wrong model, not filling a gap.
+    assert "article_published" not in ref, \
+        "article_published is the wrong model for a live stat — use reference_date"
+    assert "article_published_status" not in ref
+
+    # A real retrieval date, not a placeholder, and parseable as one.
+    assert pd.Timestamp(ref["reference_date"]) == pd.Timestamp("2026-09-15")
+    assert "RETRIEVED" in ref["reference_date_means"]
+    assert "no publication date to find" in ref["reference_date_means"]
+    # The figure can move under us with no change log, so it carries a re-check instruction.
+    assert "PERIODICALLY" in ref["recheck"]
+
+    # AND DATING IT DOES NOT UNBLOCK THE SANITY CHECK. Mapping a reading to a schedule year still
+    # needs the emission start date, which is separately recorded as missing — so this must not be
+    # quietly recorded as solved.
+    assert "emission START DATE" in ref["sanity_check_still_blocked_by"]
+    assert "start date" in d["also_missing"].lower()
 
     # The one remaining assumption is the DECAY FORM — not the base, which is no longer the
     # question, and not the horizon, which is corrected to 20 years.

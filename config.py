@@ -1804,7 +1804,10 @@ PROJECTS = [
         #
         # WHY THE HYPOTHESIS WAS WRONG, and it is a mechanical reason rather than a data problem:
         # 11.41% is almost certainly a SPOT MEASUREMENT — one year's mint over CIRCULATING SUPPLY
-        # AT THE TIME The Block's article was written — not a constant of the schedule. A schedule
+        # AT THE TIME IT WAS READ off The Block's live data page — not a constant of the schedule.
+        # (That page is a continuously maintained price/data view with a persistent FAQ block: no
+        # byline, no publication date, and revisable without a change log. So the reading is dated
+        # by RETRIEVAL, like every other live stat here. See inflation_rate_reference.) A schedule
         # minting a fixed, DECLINING ABSOLUTE amount each year produces a FALLING PERCENTAGE
         # automatically, because the denominator keeps growing as unlocks land. So the percentage
         # is a ratio of two moving quantities observed once. Treating it as the schedule's Year-1
@@ -1816,7 +1819,7 @@ PROJECTS = [
         #   1. STRUCTURAL, in tokens — inflation_budget below. 580,000,000 WMTX (29% of 2bn) over
         #      20 years, front-loaded to nil in year 20, from the MiCA whitepaper. Solid.
         #   2. POINT-IN-TIME, as a percentage — inflation_rate_reference below. 11.41% of
-        #      CIRCULATING SUPPLY at the date of The Block's article. A reference value at a date,
+        #      CIRCULATING SUPPLY as read on reference_date. A reference value at a date,
         #      never a schedule parameter.
         # Fact 2 SANITY-CHECKS fact 1 and does not calibrate it: take the schedule's mint for
         # whichever year contains that date, divide by circulating supply at that date, and see
@@ -1920,26 +1923,51 @@ PROJECTS = [
         # moment of measurement — so it is meaningless without the date it was taken on, and it
         # cannot be turned back into a token count without the denominator.
         #
-        # ** THE ARTICLE'S PUBLICATION DATE IS NOT ON FILE, AND THAT IS THE MISSING PIECE. ** Until
-        # it is known, this reference cannot be placed against a schedule year and the sanity check
-        # below cannot be run at all. Recorded as a gap rather than filled with a guess: dating it
-        # to "sometime in 2026" would put it in any of three schedule years whose mints differ by
-        # ~6,000,000 WMTX.
+        # ** IT IS A LIVE STAT, NOT AN ARTICLE, AND IT IS DATED BY RETRIEVAL. **
+        # CORRECTED 2026-09-15. This previously carried article_published=None with a note calling
+        # the publication date a missing fact to be found. THAT WAS THE WRONG MODEL FOR THE SOURCE.
+        # theblock.co/price/257077/world-mobile-token-wmt-usd is a LIVE PRICE AND DATA PAGE with a
+        # persistent FAQ-style content block — no byline, no publication date, maintained
+        # continuously. There is no publication date to find, so "not on file" described a field
+        # that should never have existed rather than a gap in our research.
+        #
+        # So it takes the same convention every other live read in this system already uses: dated
+        # by WHEN WE READ IT. A CoinGecko price and a DefiLlama TVL figure are not "published" on a
+        # date either; they carry an as-of, and so does this.
+        #
+        # ** AND THE NUMBER CAN CHANGE UNDER US WITHOUT NOTICE. ** The Block may revise the figure
+        # with no visible change log, so this is a value to RE-CHECK periodically, not a
+        # historically fixed fact. If it reads differently on a later visit, that is the source
+        # updating, not a discrepancy to reconcile — record the new value against a new
+        # reference_date rather than treating either reading as wrong.
         "inflation_rate_reference": {
             "value_pct": 0.1141,
             "measured_against": "CIRCULATING SUPPLY at the time of measurement",
             "is_schedule_parameter": False,
             "kind": "point_in_time_reference",
-            "attributed_to": "The Block, theblock.co/price/257077/world-mobile-token",
-            "article_published": None,
-            "article_published_status": "NOT ON FILE — find and record it. Without the date this "
-                                        "reference cannot be matched to a schedule year, and the "
-                                        "sanity check below cannot be performed.",
-            "sanity_check": "take the declared schedule's mint for whichever year contains the "
-                            "article's date, divide by circulating supply at that date, and see "
+            "source_kind": "live_stat",
+            "attributed_to": "The Block — theblock.co/price/257077/world-mobile-token-wmt-usd, a live "
+                             "price/data page with a persistent FAQ block. No byline, no publication "
+                             "date, continuously maintained.",
+            # THE DATE WE READ IT. Not a publication date — there isn't one.
+            "reference_date": "2026-09-15",
+            "reference_date_means": "the date this figure was RETRIEVED, the same convention as any "
+                                    "other live third-party stat in this config. It is not a "
+                                    "publication date and there is no publication date to find.",
+            "recheck": "PERIODICALLY. The Block can revise the underlying number with no visible "
+                       "change log, so a later reading that differs is the source updating rather "
+                       "than a discrepancy. Record the new value against a new reference_date; do not "
+                       "treat the old one as having been wrong.",
+            "sanity_check": "take the declared schedule's mint for whichever year contains "
+                            "reference_date, divide by circulating supply at that date, and see "
                             "whether it lands NEAR 11.41%. Near is the standard. Percentages from two "
                             "measurement conventions rarely agree exactly, and forcing an exact match "
                             "is back-solving in the other direction.",
+            "sanity_check_still_blocked_by": "the emission START DATE. reference_date now fixes WHEN "
+                                             "the reading was taken, but mapping it to a SCHEDULE YEAR "
+                                             "needs to know when year one began — which is still not "
+                                             "established. Dating the reading was necessary for this "
+                                             "check and is not sufficient for it.",
             "why_it_falls_over_time": "a fixed, DECLINING absolute mint divided by a GROWING "
                                       "circulating supply produces a falling percentage regardless of "
                                       "the schedule's shape. So a falling rate is not evidence of any "
