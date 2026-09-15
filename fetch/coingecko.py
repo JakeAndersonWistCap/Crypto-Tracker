@@ -19,6 +19,7 @@ reported supply on the archetype 4 tab.
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -28,6 +29,7 @@ from .base import LONG_COLUMNS, Http, tidy, today
 
 SOURCE = "coingecko"
 TIER = 1
+log = logging.getLogger(__name__)
 API = "https://api.coingecko.com/api/v3"
 
 
@@ -50,6 +52,18 @@ class CoinGecko:
         key = os.environ.get("COINGECKO_API_KEY", "").strip()
         self.headers = {"x-cg-demo-api-key": key} if key else {}
         self.http = Http(min_interval=self.WITH_KEY if key else self.NO_KEY)
+        # The floor is chosen from key PRESENCE, but the throttling is decided by key ACCEPTANCE,
+        # and those are not the same question. A Pro key sent under the Demo header name, to the
+        # Demo host, is silently ignored: CoinGecko serves the request as anonymous and rate-limits
+        # it accordingly, while this adapter — seeing a non-empty variable — picks the FAST floor.
+        # That combination is the worst case, and it is invisible unless the two are printed apart.
+        log.info(
+            "coingecko: COINGECKO_API_KEY %s (len %d) | header %s | host %s | min_interval %.1fs | "
+            "floor chosen from key PRESENCE, not from the server accepting it",
+            "DETECTED" if key else "NOT SET", len(key),
+            next(iter(self.headers), "(none — anonymous)"), API.split("//")[1].split("/")[0],
+            self.http.min_interval,
+        )
 
     @staticmethod
     def _ms_rows(pairs):
