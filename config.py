@@ -197,6 +197,15 @@ METRICS = {
     # divergence says the balance contains something that is not staked principal.
     # only_projects because most escrows expose no such call; the rest keep the single figure.
     "locked_tokens_principal":    {"label": "Tokens locked (protocol's own principal accounting)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Chainlink"]},
+    # THE ASSET-DENOMINATED TWIN OF A SHARE-DENOMINATED LOCK FIGURE, and the second instance of
+    # the Chainlink pattern. Ether.fi's locked_tokens is staked sETHFI — a SHARE SUPPLY, from
+    # Dune 8683038, with 794 days of history. This is ETHFI.balanceOf(sETHFI): the ETHFI those
+    # shares are a claim on. They are different measures, not two readings of one, which is why
+    # they are two metrics rather than two sources for one — a single metric fed by both would
+    # report the gap between shares and assets as a flow.
+    # Forward-only from the day the contract read was wired, the same limitation Chainlink's
+    # principal figure carries: a contract read returns present state and nothing else.
+    "locked_tokens_underlying":   {"label": "Tokens locked (underlying asset held by the staking contract)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Ether.fi"]},
     # Published lock rate, stored AS PUBLISHED. Deliberately not derived from locked_tokens /
     # supply: where a protocol publishes its own lock rate the published figure is the citable
     # one, and a derived percentage sitting next to it would invite the two being confused.
@@ -566,6 +575,11 @@ KIND_METRIC = {
     "buyback_fund_balance": "buyback_fund_balance",
     "treasury_holding": "treasury_holding_tokens",
     "stake_principal": "locked_tokens_principal",
+    # Read through the HOLDER path (underlying.balanceOf(staking contract)), not by calling the
+    # staking contract itself — so it takes read_method escrow_balance_of like any escrow, and
+    # only the METRIC differs. That separation is the whole point: same read, different column
+    # from the share-denominated series.
+    "stake_underlying": "locked_tokens_underlying",
     "spl_mint": "total_supply",
     "spl_token_account": "burn_address_balance",
 }
@@ -3676,19 +3690,36 @@ PROJECTS = [
             # PARTIAL BY CONSTRUCTION. sETHFI also exists on Scroll (~$1.35m), Arbitrum (~$717k) and
             # Base (~$128k). Those deployments' addresses are not on file, so the mainnet figure
             # UNDERSTATES total staked — flagged rather than silently presented as the whole.
+            # KIND CHANGED 2026-09-15: ve_total_supply -> stake_underlying, so this no longer feeds
+            # locked_tokens. That metric is the DUNE series — staked sETHFI, a SHARE SUPPLY with 794
+            # days of history — and this read is ETHFI.balanceOf(sETHFI), the ASSETS those shares
+            # claim. Two different measures. While both fed locked_tokens the series had two
+            # measuring points and rendered RED, correctly: a window spanning them reports the gap
+            # between shares and assets as though it were a flow.
+            #
+            # THE READ METHOD IS UNCHANGED AND DOES NOT DEPEND ON THE OPEN QUESTION BELOW.
+            # escrow_balance_of gives assets whether sETHFI compounds or is a 1:1 receipt; under 1:1
+            # it simply equals totalSupply(). So the safe read was already the right one.
             "sethfi": _contract(
-                "0x86B5780b606940Eb59A062aA85a07959518c0161", "ethereum", "ve_total_supply", "ETHFI",
+                "0x86B5780b606940Eb59A062aA85a07959518c0161", "ethereum", "stake_underlying", "ETHFI",
                 "https://etherscan.io/address/0x86B5780b606940Eb59A062aA85a07959518c0161",
                 verified="2026-09-14", provenance="Ether.fi staking contract, cross-referenced with the "
                                                   "Dune 8683038 sETHFI series already wired below",
                 read_method="escrow_balance_of", token_standard="erc20", underlying="token",
+                holder_has_code=True,
                 supply_is_partial=True,
                 partial_reason="MAINNET ONLY. sETHFI also exists on Scroll (~$1.35m), Arbitrum (~$717k) and "
                                "Base (~$128k); those addresses are not on file, so this understates total "
                                "staked ETHFI.",
-                purpose="sETHFI — the buyback DESTINATION and the lock-rate input. Read as "
-                        "ETHFI.balanceOf(sETHFI), not sETHFI.totalSupply(): the same ERC-4626-shaped "
-                        "hazard as Maple's stSYRUP, and the assets read is correct either way."),
+                purpose="sETHFI — the buyback DESTINATION, and the ASSET-denominated lock figure. Read as "
+                        "ETHFI.balanceOf(sETHFI). Feeds locked_tokens_underlying; the share-denominated "
+                        "series (locked_tokens) comes from Dune 8683038 and is left untouched.",
+                note="** THE ERC-4626 CLAIM PREVIOUSLY HERE WAS AN ASSUMPTION AND IS WITHDRAWN. ** This "
+                     "note used to read 'the same ERC-4626-shaped hazard as Maple's stSYRUP' — which was "
+                     "reasoning BY ANALOGY from a different protocol, not a finding about sETHFI. Whether "
+                     "sETHFI compounds against ETHFI or is a 1:1 receipt is NOT ESTABLISHED; see "
+                     "OPEN_QUESTIONS. It does not affect this read, and it does decide what a divergence "
+                     "between the two metrics MEANS, which is why no cross-check is wired yet."),
             # THE HUB. Ether.fi resolves its own contracts by NAME through an on-chain registry,
             # the same pattern as Sky's ChainLog and OriginTrail's Hub. If a buyback EXECUTOR is
             # ever needed, query this for a registered name — do not hardcode a found address.
@@ -3715,6 +3746,13 @@ PROJECTS = [
         "destination_effect": "yield_payout",
         "destination_source_url": "https://etherfi.gitbook.io/etherfi",
         "destination_confirmed_date": "2026-09-14",
+        # TWO LOCK FIGURES, LABELLED SO NEITHER IS READ AS THE OTHER. locked_tokens is the Dune
+        # series and is denominated in sETHFI SHARES; qualifying it in the label is the whole
+        # point, because "tokens locked" on its own invites reading it as ETHFI.
+        "metric_labels": {
+            "locked_tokens": "Staked sETHFI (share supply)",
+            "locked_tokens_underlying": "ETHFI held by the sETHFI staking contract (assets)",
+        },
         # A CAP IS NOT A SPEND. Applies here and generally: a stated "$50m authorized" is a CEILING
         # granted by governance, not a transaction that happened. Any stored figure that traces to
         # an authorisation amount rather than to a confirmed executed buyback must be labelled
@@ -4203,6 +4241,42 @@ OPEN_QUESTIONS = [
                       "there IS an independent figure — 77.66M SYRUP as at 2026-09-14 — to check a "
                       "candidate against. Read SYRUP.balanceOf on any candidate and compare it to "
                       "that. Nothing should be wired on a name match alone.",
+    },
+    # ---------------------------------------------------------------- Ether.fi
+    {
+        "project": "Ether.fi",
+        "topic": "does sETHFI COMPOUND against ETHFI, or is it a 1:1 receipt? Decides what a divergence MEANS.",
+        "severity": 1,
+        "reason": "locked_tokens (staked sETHFI, SHARE supply, Dune 8683038) and "
+                  "locked_tokens_underlying (ETHFI.balanceOf(sETHFI), ASSETS) are now two metrics. "
+                  "THE READ IS SAFE EITHER WAY — balanceOf returns assets whether sETHFI compounds or "
+                  "not, and under 1:1 it simply equals totalSupply(). What is NOT settled is what a gap "
+                  "between the two figures means, and the two answers point in opposite directions: "
+                  "IF COMPOUNDING, a growing assets-over-shares ratio is EXPECTED and informative — it "
+                  "is accrued rewards, and the thing worth watching is the ratio SHRINKING, which would "
+                  "mean rewards stopped or holders are exiting at a discount. "
+                  "IF A 1:1 RECEIPT, the two should track almost exactly, and any persistent gap is "
+                  "itself the finding — stray ETHFI at the contract, a sync problem, or a wrong "
+                  "assumption about the mechanism. "
+                  "A cross-check wired under the wrong reading would either flag healthy accrual as an "
+                  "error every run, or stay silent on a real one. So none is wired. "
+                  "AND A CLAIM HAS BEEN WITHDRAWN: the sethfi contract note used to say 'the same "
+                  "ERC-4626-shaped hazard as Maple's stSYRUP'. That was reasoning BY ANALOGY from a "
+                  "different protocol and was never checked against Ether.fi. It is removed rather than "
+                  "softened.",
+        "suggestion": "READ THE CONTRACT: call totalSupply() on sETHFI "
+                      "(0x86B5780b606940Eb59A062aA85a07959518c0161) and ETHFI.balanceOf(sETHFI) in the "
+                      "same block. Equal to the wei means 1:1; assets exceeding shares means "
+                      "compounding, and the ratio is the accrued rate. One block settles it. "
+                      "Or find it in Ether.fi's own staking documentation. "
+                      "ROUTES ALREADY TRIED AND CLOSED FROM THIS ENVIRONMENT, so they are not worth "
+                      "repeating here: etherfi-protocol/smart-contracts contains the LIQUID RESTAKING "
+                      "protocol (eETH/weETH) and its test/TestSetup.sol mentions neither ETHFI nor "
+                      "sETHFI at all; no repo exists at etherfi-protocol/{ethfi-staking, sethfi, "
+                      "governance, etherfi-governance, ethfi, staking, token, contracts}; and "
+                      "etherfi.gitbook.io plus every RPC and explorer are unreachable from the "
+                      "sandbox. The governance-token staking contract is not in a public Ether.fi "
+                      "repository that can be reached.",
     },
     # ---------------------------------------------------------------- Pendle
     {

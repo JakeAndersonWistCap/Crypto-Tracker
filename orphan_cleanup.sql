@@ -218,3 +218,51 @@ SELECT project, metric, source, tier, COUNT(*) AS rows,
  WHERE tier = 4
  GROUP BY project, metric, source, tier
  ORDER BY project, metric;
+
+-- =======================================================================================
+-- 2026-09-15 — ETHER.FI locked_tokens SPLIT: RE-ATTRIBUTE, DO NOT DELETE
+--
+-- The `sethfi` contract changed kind from ve_total_supply to stake_underlying, so it now
+-- feeds locked_tokens_underlying instead of locked_tokens. locked_tokens goes back to being
+-- the Dune series alone — staked sETHFI, a SHARE supply, 794 days of history, untouched.
+--
+-- NOTHING NEEDS DELETING. Any rows the contract wrote under the old metric name are correct
+-- readings that were filed under the wrong column, so they MOVE rather than go. The metrics
+-- table is keyed (date, project, metric), and locked_tokens_underlying is brand new, so an
+-- UPDATE of the metric name cannot collide with an existing row.
+--
+-- The Dune rows must NOT move. They are matched out by source below: only rows whose source
+-- names the sethfi contract are re-attributed.
+--
+-- 1. LOOK FIRST — what is actually there, split by source:
+SELECT source, tier, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+ GROUP BY source, tier
+ ORDER BY first;
+-- Expect: one group sourced 'dune:8683038' (keep, do not touch), and EITHER a second group
+-- sourced 'chain:ethereum:sethfi...' (move it, step 2) or nothing else at all, meaning the
+-- contract never wrote under the old name and there is nothing to do.
+
+-- 2. THE EXACT ROWS THAT WOULD MOVE — review this list before running step 3:
+SELECT date, value, source, tier
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+   AND source LIKE '%sethfi%'
+ ORDER BY date;
+
+-- 3. THE MOVE. Re-attribution, not deletion — the reading was right, the column was wrong.
+--    Run only after reviewing step 2. Commented out deliberately; uncomment to run.
+-- UPDATE metrics
+--    SET metric = 'locked_tokens_underlying'
+--  WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+--    AND source LIKE '%sethfi%';
+
+-- 4. CONFIRM — locked_tokens should be single-source again, which is what clears the
+--    MEASURING POINT CHANGED red flag:
+SELECT metric, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric IN ('locked_tokens', 'locked_tokens_underlying')
+ GROUP BY metric, source
+ ORDER BY metric, first;

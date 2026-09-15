@@ -1711,6 +1711,86 @@ ETHERFI_ROW = {"agg_14": 0.0121, "agg_30": 0.0233, "day": "2026-09-10 00:00:00.0
                "request_users": 1, "staked_supply": 141_470_107.5}
 
 
+def test_etherfi_share_supply_and_underlying_assets_are_TWO_METRICS_not_two_sources():
+    """Shares and assets are different measures. One metric fed by both reports the gap as a flow.
+
+    Adding the sETHFI contract read gave locked_tokens a second source, and the two do not
+    measure the same thing: the Dune series is staked sETHFI (SHARE supply, 794 days of history),
+    the contract read is ETHFI.balanceOf(sETHFI) (ASSETS). confidence_for correctly forced RED
+    with MEASURING POINT CHANGED — the right answer to the wrong arrangement.
+
+    They are now two metrics, the same shape as Chainlink's locked_tokens /
+    locked_tokens_principal. The Dune history is untouched and keeps its 794 days.
+    """
+    import pandas as pd
+    import build_workbook as bw
+
+    spec = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["sethfi"]
+    assert spec["kind"] == "stake_underlying", \
+        f"the contract must no longer serve locked_tokens, got kind {spec['kind']!r}"
+    assert config.KIND_METRIC[spec["kind"]] == "locked_tokens_underlying"
+    # The read method is unchanged and deliberately so: balanceOf returns ASSETS whether sETHFI
+    # compounds or is a 1:1 receipt, so the safe read was already the right one and does not
+    # depend on the open question.
+    assert spec["read_method"] == "escrow_balance_of" and spec["underlying"] == "token"
+
+    # LABELS: neither figure may be readable as the other.
+    assert config.metric_label("Ether.fi", "locked_tokens") == "Staked sETHFI (share supply)"
+    assert "assets" in config.metric_label("Ether.fi", "locked_tokens_underlying")
+
+    # THE CONTRACT FEEDS ONLY THE NEW METRIC.
+    ETHFI = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["token"]["address"]
+
+    class Stub:
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            return (address == ETHFI), ("ETHFI" if address == ETHFI else "")
+
+        def scaled(self, chain, address, call, *args, **kwargs):
+            return 98_000_000.0 if call == "balanceOf" else 1_000_000_000.0
+
+    c = Chain()
+    c.reader = Stub()
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
+    written = dict(zip(out.frame().metric, out.frame().value))
+    assert "locked_tokens" not in written, \
+        f"the contract must not write the share-denominated metric: {written}"
+    assert written["locked_tokens_underlying"] == 98_000_000.0
+
+    # AND THE SPLIT CLEARS THE RED. Same two readings, now in their own columns.
+    hist = pd.DataFrame([
+        {"date": pd.Timestamp("2026-09-10"), "project": "Ether.fi", "metric": "locked_tokens",
+         "value": 141_470_107.5, "source": "dune:8683038", "tier": 4,
+         "is_manual": False, "entered_on": ""},
+        {"date": pd.Timestamp("2026-09-15"), "project": "Ether.fi",
+         "metric": "locked_tokens_underlying", "value": 98_000_000.0,
+         "source": "chain:ethereum:sethfi:PARTIAL", "tier": 2,
+         "is_manual": False, "entered_on": ""}])
+    o = bw.aggregate(hist, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                     gaps=pd.DataFrame(), review=pd.DataFrame())
+    shares = o[(o.project == "Ether.fi") & (o.metric == "locked_tokens")].iloc[0]
+    assets = o[(o.project == "Ether.fi") & (o.metric == "locked_tokens_underlying")].iloc[0]
+    assert shares["confidence"] != "RED" and "MEASURING POINT" not in (shares["why_amber"] or ""), \
+        f"the Dune series is single-source again: {shares['confidence']} {shares['why_amber']!r}"
+    assert shares["now"] == 141_470_107.5, "and its history is untouched"
+    assert assets["now"] == 98_000_000.0
+
+    # NO CROSS-CHECK IS WIRED, AND THAT IS DELIBERATE. Whether sETHFI compounds decides whether a
+    # divergence is expected accrual or a defect, and wiring it under the wrong reading would
+    # either flag healthy accrual every run or stay silent on a real problem. This assertion is
+    # the tripwire: it FAILS once someone adds one, forcing them to confirm the mechanism first.
+    pairs = [c for c in (config.PROJECT_BY_NAME["Ether.fi"].get("cross_checks") or [])
+             if c.get("primary") in ("locked_tokens", "locked_tokens_underlying")]
+    assert not pairs, ("a cross-check was added — confirm whether sETHFI compounds or is a 1:1 "
+                       "receipt FIRST, then update this test with which it is and why the "
+                       "tolerance is what it is. See OPEN_QUESTIONS.")
+    print("etherfi lock split ok: shares and assets are separate metrics and columns, Dune history "
+          "intact, RED cleared, no cross-check wired while the mechanism is unconfirmed")
+
+
 def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     """8683038 publishes the same lock rate twice: perc_staked 0.17452 and perc_staked_cnt 17.452.
 

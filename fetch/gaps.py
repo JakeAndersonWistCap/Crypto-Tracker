@@ -99,6 +99,7 @@ METRIC_CONTRACT_KIND = {
     # than the token's balance of it. Mapped so a missing one names the contract kind it needs,
     # instead of falling through to "no source configured for this metric".
     "locked_tokens_principal": "stake_principal",
+    "locked_tokens_underlying": "stake_underlying",
     "total_supply": "erc20_total_supply",
     "circulating_supply": "erc20_total_supply",
 }
