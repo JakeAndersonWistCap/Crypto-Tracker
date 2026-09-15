@@ -2208,8 +2208,8 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens")].iloc[0]
 
     assert row["status"] == "disputed", f"a stale row under a dispute must not read 'ok': {row['status']}"
-    assert row["now"] is None, f"the figure must be blanked, not shown with a warning: {row['now']}"
-    assert all(row[f] is None for f in ("m1", "q0", "q1", "q2", "q3", "y1")), \
+    assert pd.isna(row["now"]), f"the figure must be blanked, not shown: {row['now']}"
+    assert all(pd.isna(row[f]) for f in ("m1", "q0", "q1", "q2", "q3", "y1")), \
         "every window must be blank too — a trajectory built on a withdrawn figure is still wrong"
     assert row["confidence"] == "RED", \
         f"RED, not AMBER: this is not low confidence, it is withdrawn meaning. Got {row['confidence']}"
@@ -2522,6 +2522,202 @@ def test_manual_overrides_suppress_gaps():
     print("manual overrides ok: a hand-entered metric is not reported as a gap")
 
 
+# =========================================================================================
+# THE STALE-STORE REGRESSION SUITE
+#
+# Every other test in this file is a WRITE-PATH test: it drives the adapter forward and asserts
+# the right value comes out. Three "tested and fixed" claims failed on a live run in one session
+# because the bad value was ALREADY IN THE STORE and no test had one.
+#
+# These three read tests/fixtures/stale_store.json — rows written under a PRE-FIX config — and
+# assert they read correctly NOW. Refresh with: python tests/refresh_stale_fixture.py
+# =========================================================================================
+def _stale_fixture():
+    import json
+    import pathlib as _p
+    path = _p.Path(__file__).resolve().parent / "fixtures" / "stale_store.json"
+    assert path.exists(), f"fixture missing — run python tests/refresh_stale_fixture.py ({path})"
+    return json.loads(path.read_text())
+
+
+def _aggregate_fixture(data):
+    """One aggregate() over ALL fixture rows together.
+
+    Not one call per row, and that matters: changed_measuring_point only exists when its sibling
+    row is present, and the blanked-cell dtype only promotes to float64 when some other row in
+    the column carries a real number. Evaluating rows in isolation hides both.
+    """
+    import pandas as pd
+    import build_workbook as bw
+    long = pd.DataFrame([{"date": pd.Timestamp(r["date"]), "project": r["project"],
+                          "metric": r["metric"], "value": r["value"], "source": r["source"],
+                          "tier": r["tier"], "is_manual": False, "entered_on": ""}
+                         for r in data["rows"]])
+    out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(data["asof"]),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    return {(r["project"], r["metric"]): r for r in out.to_dict("records")}
+
+
+def test_stale_store_every_recorded_expectation_still_holds():
+    """THE PARAMETRISED GENERAL PROPERTY, asserted row by row against the committed snapshot.
+
+    The property is one sentence: NO STORED ROW MAY READ 'ok' WHEN CURRENT CONFIG SAYS ITS BASIS
+    HAS CHANGED. Each fixture row carries the config shape it was written under and the outcome
+    the current code produces; a drift in any of status, confidence band or blanking fails here
+    and names the row.
+
+    Failing this does NOT mean refresh the fixture. It means read the diff: if an expectation
+    moved and nobody intended it, that is the regression this file exists to catch.
+    """
+    import pandas as pd
+
+    data = _stale_fixture()
+    by_key = _aggregate_fixture(data)
+    checked = 0
+    for e in data["expectations"]:
+        key = (e["project"], e["metric"])
+        assert key in by_key, f"{key} vanished from aggregate output"
+        got = by_key[key]
+        ctx = f"{e['transition']} / {e['project']}/{e['metric']} (written under: {e['written_under']})"
+        assert got["status"] == e["expect_status"], \
+            f"{ctx}: status {got['status']!r}, expected {e['expect_status']!r}"
+        assert got["confidence"] == e["expect_confidence"], \
+            f"{ctx}: confidence {got['confidence']!r}, expected {e['expect_confidence']!r}"
+        assert bool(pd.isna(got["now"])) == e["expect_blank"], \
+            f"{ctx}: blank={bool(pd.isna(got['now']))}, expected {e['expect_blank']}"
+        if e["expect_reason_contains"]:
+            assert e["expect_reason_contains"] in str(got["why_amber"]), \
+                f"{ctx}: reason lost its marker {e['expect_reason_contains']!r} — got {got['why_amber']!r}"
+        checked += 1
+
+    # THE PROPERTY ITSELF, asserted over the whole fixture rather than per row: nothing that is
+    # not a control may read 'ok' at GREEN. A transition row is allowed to stay status 'ok' (the
+    # orphan, refuted and measuring-point branches flag without blanking) but never at GREEN.
+    for e in data["expectations"]:
+        if e["transition"] == "control":
+            continue
+        assert e["expect_confidence"] == "RED", \
+            f"{e['transition']} on {e['project']}/{e['metric']} must be RED, got {e['expect_confidence']}"
+
+    # AND THE CONTROLS, which are what prove the guards are targeted rather than broad. A guard
+    # that blanked everything would satisfy every assertion above.
+    controls = [e for e in data["expectations"] if e["transition"] == "control"]
+    assert len(controls) >= 5, "too few controls to prove the guards are narrow"
+    for e in controls:
+        assert e["expect_status"] == "ok", f"control {e['project']}/{e['metric']} was suppressed"
+        assert e["expect_blank"] is False, f"control {e['project']}/{e['metric']} was blanked"
+        assert e["expect_confidence"] != "RED", f"control {e['project']}/{e['metric']} went RED"
+    print(f"stale store ok: {checked} expectations hold, {len(controls)} controls untouched")
+
+
+def test_stale_store_every_row_is_explainable_by_current_config():
+    """THE GENERATIVE WALK — the half that would actually have caught all three failures.
+
+    The test above checks rules we remembered to write. This one runs in the other direction:
+    it takes EVERY row in the fixture and asks current config what it thinks of it, then requires
+    the two to agree about whether the row is still a valid measurement.
+
+    A row config can no longer explain — a source naming a contract that is gone, or one that no
+    longer serves the metric, or a derivation switched off — must not be reading 'ok'. That is
+    the whole invariant, and it is checked without reference to WHICH mechanism applies, so a
+    seventh transition type nobody has written a branch for still trips it.
+    """
+    import pandas as pd
+
+    data = _stale_fixture()
+    by_key = _aggregate_fixture(data)
+
+    unexplained, contradictions = [], []
+    for r in data["rows"]:
+        name, metric, source = r["project"], r["metric"], r["source"]
+        reasons = []
+        if config.orphaned_contract_keys(name, source):
+            reasons.append("orphaned contract")
+        if config.withdrawn_contract_keys(name, metric, source):
+            reasons.append("contract no longer serves this metric")
+        if config.derivation_suppressed(name, metric):
+            reasons.append("derivation suppressed")
+        if config.destination_disputed(name, metric):
+            reasons.append("destination disputed")
+        if metric in config.BURN_METRICS:
+            mech = config.burn_mechanism(config.PROJECT_BY_NAME.get(name) or {})
+            if mech.get("status") == "refuted":
+                reasons.append("burn mechanism refuted")
+        if metric not in config.metrics_for_project(config.PROJECT_BY_NAME[name]):
+            reasons.append("metric not applicable to this project's archetypes")
+
+        got = by_key[(name, metric)]
+        ctx = f"{r['project']}/{r['metric']} <- {r['source']} ({r['transition']})"
+        if reasons and got["confidence"] != "RED":
+            unexplained.append(f"{ctx}: config says {reasons} but the sheet reads "
+                               f"{got['confidence']}/{got['status']}")
+        # AND THE OTHER DIRECTION, which is the one that catches an over-broad guard: a row
+        # config has NO complaint about must not be suppressed. A control row going RED here
+        # means a guard widened past what it was written for.
+        if not reasons and r["transition"] == "control":
+            if got["confidence"] == "RED" or bool(pd.isna(got["now"])):
+                contradictions.append(f"{ctx}: config has no complaint, yet the sheet "
+                                      f"{'blanked' if pd.isna(got['now']) else 'went RED'}")
+
+    assert not unexplained, "rows current config cannot explain, still reading as good:\n  " + \
+                            "\n  ".join(unexplained)
+    assert not contradictions, "rows suppressed with no config reason:\n  " + \
+                               "\n  ".join(contradictions)
+    print(f"generative walk ok: {len(data['rows'])} rows, every one either explained by config "
+          f"or flagged RED, and no control suppressed without a reason")
+
+
+def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
+    """THE ANTI-ROT ASSERTION. A committed fixture decays into decoration without one.
+
+    Two independent guards:
+      1. Every transition type the refresh script declares is actually exercised.
+      2. The NUMBER of RED-returning branches in confidence_for matches what the fixture was
+         built against. Add a seventh RED branch and this fails until somebody adds a row for
+         it — which is the only thing that stops the fixture silently covering five of seven
+         mechanisms a year from now.
+
+    Guard 2 counts by AST rather than by grepping the source text, so a comment mentioning
+    'RED' cannot inflate the count and a reformatted return cannot deflate it.
+    """
+    import ast
+    import inspect
+
+    import build_workbook as bw
+
+    data = _stale_fixture()
+
+    covered = {e["transition"] for e in data["expectations"]}
+    declared = set(data["transitions"])
+    assert covered == declared, \
+        f"fixture covers {sorted(covered)} but declares {sorted(declared)} — missing " \
+        f"{sorted(declared - covered)}"
+
+    # THE SIX RED BRANCHES this fixture was built against, in source order:
+    #   1. the status dict            missing / gap / n/a / disputed / waiting / withdrawn / suppressed
+    #   2. ORPHANED                   contract removed from config
+    #   3. MEASURING CONTRACT WITHDRAWN   contract re-purposed
+    #   4. DERIVATION SUPPRESSED      derivation switched off in config
+    #   5. MEASURING POINT CHANGED    series read from two places
+    #   6. MECHANISM REFUTED          project does not burn this way
+    EXPECTED_RED_BRANCHES = 6
+
+    tree = ast.parse(inspect.getsource(bw.confidence_for))
+    red = [n for n in ast.walk(tree)
+           if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple) and n.value.elts
+           and isinstance(n.value.elts[0], ast.Constant) and n.value.elts[0].value == "RED"]
+    assert len(red) == EXPECTED_RED_BRANCHES, (
+        f"confidence_for has {len(red)} RED branches, the fixture was built against "
+        f"{EXPECTED_RED_BRANCHES}. A new one needs a fixture row and a transition type in "
+        f"tests/refresh_stale_fixture.py — bumping this number alone defeats the point.")
+
+    # The fixture must be regenerable. If the definitions no longer produce the committed JSON,
+    # something moved and the diff is the thing to read.
+    assert data["rows"] and data["expectations"], "fixture is empty"
+    assert len(data["rows"]) >= 15, f"fixture shrank to {len(data['rows'])} rows"
+    print(f"anti-rot ok: {len(declared)} transitions covered, {len(red)} RED branches accounted for")
+
+
 def test_etherfi_stale_locked_tokens_rows_do_not_survive_the_kind_change():
     """THE LIVE FAILURE, REPRODUCED. A row written before the kind changed must not read 'ok'.
 
@@ -2553,8 +2749,8 @@ def test_etherfi_stale_locked_tokens_rows_do_not_survive_the_kind_change():
     row = out[(out.project == "Ether.fi") & (out.metric == "locked_tokens")].iloc[0]
 
     assert row["status"] == "withdrawn", f"must not read 'ok' after the kind change: {row['status']}"
-    assert row["now"] is None, "the assets figure must not sit in the shares column"
-    assert all(row[f] is None for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
+    assert pd.isna(row["now"]), "the assets figure must not sit in the shares column"
+    assert all(pd.isna(row[f]) for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
     assert row["confidence"] == "RED"
     assert "sethfi" in row["note"] and "no longer serve" in row["note"]
 
@@ -2606,8 +2802,8 @@ def test_geodnet_stale_derived_zero_is_not_served_as_ok_on_read():
     row = out[(out.project == "GEODNET") & (out.metric == "gross_issuance_tokens")].iloc[0]
 
     assert row["status"] == "suppressed", f"a stored zero must not read 'ok': {row['status']}"
-    assert row["now"] is None, "a false zero must be blank, not shown — it feeds the burn/issuance ratio"
-    assert all(row[f] is None for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
+    assert pd.isna(row["now"]), "a false zero must be blank, not shown — it feeds the ratio"
+    assert all(pd.isna(row[f]) for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
     assert row["confidence"] == "RED"
     assert "suppressed" in row["note"].lower() and "per-miner" in row["note"].lower()
 
