@@ -512,6 +512,54 @@ separate questions.
 
 ---
 
+## 11d. Read-time vs write-time: which config changes re-judge stored data
+
+Audited 2026-09-15 after a stale figure survived a config correction. Worth knowing before
+you change any rule, because it decides whether you also have to clear the store.
+
+Two passes run over different data:
+
+```
+fetch_all()      -> validators see ONLY this run's fetched rows      (write-time)
+upsert(store)
+build_workbook() -> aggregate() + confidence_for() see THE WHOLE STORE  (read-time)
+```
+
+So the rule is mechanical: **anything evaluated in `build_workbook.py` re-judges everything
+in the store on every build; anything in `fetch/` only affects the next write.**
+
+**Read-time — change config and the sheet corrects itself on the next build:**
+the orphan guard, measuring-point change, `non_comparable`, `destination_indeterminate`,
+`destination_status: disputed`, cross-check "waiting", manual-quarterly staleness, unverified
+addresses, `burn_mechanism` `assumed` / `confirmed` / `refuted`, `metric_labels`,
+`supply_additive`, `threshold_gated`, `UNAVAILABLE`.
+
+**Write-time — change config and stored rows keep their old judgement until you clear them:**
+sanity bounds, change thresholds, `cross_checks` divergence, `reference_values`,
+impossible-relations, the `:PARTIAL` marker (baked into the source string when the row is
+written), every address gate in `chain._gate` (ambiguous, unverified, chain coverage, lock
+read method), the `derive_flow_from_cumulative` measuring-point guard, and schedule `until`.
+
+Tier 4 amplifies all of it: Dune series are skipped once backfilled, so they are never
+re-fetched and their write-time checks never run again on that data.
+
+If you change a write-time rule, add a SELECT to `orphan_cleanup.sql` for what it now judges
+differently. There is a worked audit of all four categories at the end of that file.
+
+### FUTURE CONSIDERATION, NOT BUILT — move the write-time set to read-time
+
+Sanity bounds, cross-checks, reference values and the `:PARTIAL` marker could all be
+evaluated at build time against the store instead of at fetch time against one run's rows.
+Config changes would then self-correct stored data automatically and the manual-clear step
+would mostly disappear.
+
+This is a **genuine new mechanism, not a targeted fix**, and it is deliberately not built.
+Recorded here so it is not lost. Two things to think about first: the `:PARTIAL` marker is
+currently *data* (part of the source string) rather than a *rule*, so moving it means deciding
+whether a historical row should be re-marked by a flag set after it was written; and
+impossible-relations is a cross-metric check whose cost at read time scales with the whole
+store rather than one run.
+
 ## 12. Troubleshooting
 
 ### `ModuleNotFoundError: No module named 'pandas'`

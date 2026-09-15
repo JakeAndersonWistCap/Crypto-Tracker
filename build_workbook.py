@@ -187,8 +187,9 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                        "waiting": "armed cross-check, waiting on a suppressed primary — see the note"
                        }[row["status"]]
 
-    # RED, not AMBER: these two are not low-confidence figures, they are known-false ones. Age and
-    # status say nothing about either, which is how both reached the sheet at full confidence.
+    # RED, not AMBER: these three are not low-confidence figures, they are known-false ones. Age
+    # and status say nothing about any of them, which is how they reached the sheet at full
+    # confidence. All three return immediately so nothing downstream can soften them.
     orphans = config.orphaned_contract_keys(project, row.get("source") or "")
     if orphans:
         return "RED", (f"ORPHANED — this row was written by contract(s) {', '.join(orphans)}, which are "
@@ -202,6 +203,32 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                        f"change reports the move between two different addresses as though it were a "
                        f"flow. The figure is not understated or overstated by a little; it is the gap "
                        f"between two unrelated measurements. Clear the superseded rows.")
+    # A REFUTED MECHANISM IS A STRONGER CLAIM THAN AN ASSUMED ONE, AND IT USED TO RENDER GREEN.
+    # The AMBER branch further down only ever looked for "assumed", so every other status fell
+    # through clean — including "refuted", which means we have POSITIVELY ESTABLISHED that the
+    # protocol does not burn in a way this metric can measure. Silence was the worst possible
+    # answer to the most certain thing config can say.
+    #
+    # Same treatment as an orphaned row, and for the same reason: the number may be perfectly
+    # real and it is not what the column claims. Sky escaped this only by accident — its burn
+    # contract was DELETED, so the orphan guard above caught it through the source string. Had
+    # the contract been kept and only the mechanism flipped, nothing would have flagged it.
+    #
+    # Scoped to BURN_METRICS: a refuted burn mechanism says nothing about total_supply. And no
+    # guard on "does this project claim a burn" is needed here, unlike the assumed branch —
+    # burn_mechanism() defaults to 'assumed' and never to 'refuted', so this status only ever
+    # exists because somebody declared it.
+    if metric in config.BURN_METRICS:
+        mech = config.burn_mechanism(config.PROJECT_BY_NAME.get(project) or {})
+        if mech.get("status") == "refuted":
+            return "RED", (
+                f"MECHANISM REFUTED — this project does not burn by {mech.get('model')!r} in a way "
+                f"{metric} can measure, and that has been positively established rather than "
+                f"assumed. The reading may be real; it is not this metric. "
+                f"{mech.get('note') or ''} "
+                f"Source: {mech.get('source_url') or mech.get('source_note') or 'see burn_mechanism in config'}. "
+                f"Clear the superseded rows; the adapter already refuses to write new ones."
+            ).strip()
 
     why = []
     # correct, and answering a different question from the column it sits in (failure mode 4)

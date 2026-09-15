@@ -179,6 +179,63 @@ def test_an_orphaned_row_and_a_changed_measuring_point_are_RED_not_amber():
     print("orphan/switch guard ok: both forced RED, a clean single-source read is not")
 
 
+def test_a_REFUTED_burn_mechanism_is_RED_not_silently_GREEN():
+    """The most certain thing config can say about a burn used to be the one that said nothing.
+
+    confidence_for's mechanism branch only ever looked for "assumed", so every other status fell
+    through clean — including "refuted", which means we have POSITIVELY ESTABLISHED that the
+    protocol does not burn in a way the metric can measure. assumed (uncertain) went AMBER while
+    refuted (certain, and worse) went GREEN.
+
+    Sky escaped this by accident: its burn contract was DELETED, so the orphan guard caught the
+    row through its source string. Keep the contract and flip only the mechanism and nothing
+    flagged it — which is the Maple pattern with a different trigger.
+    """
+    from build_workbook import confidence_for
+
+    asof = pd.Timestamp("2026-09-15")
+    # Ethereum declares NO contracts (EIP-1559 has no address), so the source must not name a
+    # contract key — orphaned_contract_keys would fire first and the test would pass for the
+    # wrong reason. A tier 1 source is the honest shape for this project.
+    row = {"status": "ok", "source": "tier1", "n_points": 9,
+           "entered_on": "", "measuring_points": ("tier1",)}
+
+    mech = config.PROJECT_BY_NAME["Ethereum"]["burn_mechanism"]
+    live = mech["status"]
+    try:
+        # THE THREE STATUSES, AND THE ORDERING THAT MATTERS: certainty must not buy silence.
+        mech["status"] = "confirmed"
+        assert confidence_for("Ethereum", "gross_burn_tokens", row, asof)[0] == "GREEN"
+
+        mech["status"] = "assumed"
+        band, why = confidence_for("Ethereum", "gross_burn_tokens", row, asof)
+        assert band == "AMBER" and "assumed" in why, f"{band}: {why}"
+
+        mech["status"] = "refuted"
+        band, why = confidence_for("Ethereum", "gross_burn_tokens", row, asof)
+        assert band == "RED", f"refuted is MORE certain than assumed — it cannot be quieter: {band}"
+        assert "REFUTED" in why, f"the reason must name the refutation: {why!r}"
+        assert "protocol_level_destruction" in why, \
+            f"and the model that was refuted, so the reader knows what was ruled out: {why!r}"
+
+        # SAME PRIORITY AS THE ORPHAN GUARD: nothing downstream may soften it. A single
+        # observation would otherwise produce its own AMBER, and a PARTIAL marker its own.
+        thin = dict(row, n_points=1, source="tier1:PARTIAL")
+        band, why = confidence_for("Ethereum", "gross_burn_tokens", thin, asof)
+        assert band == "RED" and "REFUTED" in why, \
+            f"single-observation/PARTIAL must not displace a refutation: {band} {why!r}"
+
+        # SCOPED TO BURN METRICS: a refuted burn says nothing about supply.
+        assert confidence_for("Ethereum", "total_supply", row, asof)[0] != "RED", \
+            "a refuted burn mechanism must not poison unrelated metrics on the same project"
+    finally:
+        mech["status"] = live
+    assert confidence_for("Ethereum", "gross_burn_tokens", row, asof)[0] != "RED", \
+        "config restored"
+    print("refuted mechanism ok: RED with the model named, unsoftened by thin data, "
+          "and scoped to burn metrics only")
+
+
 def test_impossible_relations_have_NO_tolerance():
     """Aerodrome: locked 989,654,626.93 against circulating 988,795,723.09 — a 0.087% breach.
 
