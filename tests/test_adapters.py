@@ -1891,6 +1891,65 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
           "77.66M parses, an unscaled 77.66 is rejected by the floor")
 
 
+def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
+    """Two separate things made the armed Maple guard look like nobody had built it.
+
+    FIRST, the gap text was factually wrong. fetch_all recorded only the NOT-READY registry
+    entries, so a complete, enabled, armed entry was invisible to the gap reporter and fell
+    through to "no sources.yaml entry for this metric" — when there plainly was one, with a url
+    and a selector. A reader acting on that would have gone and written a second entry.
+
+    SECOND, even with correct text, status 'gap' cannot distinguish "armed and correctly idle"
+    from "nobody has built this". The secondary here has nothing to compare against because its
+    PRIMARY is a disputed destination that stores nothing — which is the guard working, not
+    failing.
+    """
+    import pandas as pd
+    import build_workbook as bw
+    from fetch.gaps import detect
+    from fetch.base import LONG_COLUMNS
+    from fetch.scrape import load_registry, entry_ready
+
+    # (1) the gap text must describe an ARMED entry, and name the url and selector
+    registry = {}
+    for e in load_registry("sources.yaml"):
+        ok, why = entry_ready(e)
+        registry[(e["project"], e["metric"])] = (
+            {"ready": True, "url": e.get("url"), "anchor": e.get("anchor"), "method": e.get("method")}
+            if ok else why)
+    rows = detect(config.PROJECTS, pd.DataFrame(columns=LONG_COLUMNS), set(), registry, [])
+    gap = next(g for g in rows
+               if g["project"] == "Maple" and g["metric"] == "buyback_fund_balance_dashboard")
+    assert "no sources.yaml entry" not in gap["reason"], \
+        f"the entry exists and is armed — saying otherwise sends the reader to write a second one: {gap['reason']}"
+    assert "ARMED" in gap["reason"] and "maple.finance/transparency" in gap["reason"] \
+        and "SYRUP Holdings" in gap["reason"], \
+        f"an armed entry must name its url and selector so the reader can tell the cases apart: {gap['reason']}"
+    assert "Run Log" in gap["suggestion"], "and point at where 'did it actually run' is answered"
+
+    # (2) status must distinguish armed-and-idle from unbuilt
+    empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier",
+                                  "is_manual", "entered_on"])
+    out = bw.aggregate(empty, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+
+    waiting = out[(out.project == "Maple") & (out.metric == "buyback_fund_balance_dashboard")].iloc[0]
+    assert waiting["status"] == "waiting", \
+        f"an armed secondary with a suppressed primary is not a plain gap: {waiting['status']}"
+    assert "WAITING ON THE PRIMARY" in waiting["note"] and "treasury_holding_tokens" in waiting["note"], \
+        f"and the note must name what it is waiting for: {waiting['note']!r}"
+
+    # NARROW ON PURPOSE: an ordinary dashboard metric with no cross-check is untouched, and so is
+    # a secondary whose primary is merely empty rather than suppressed by config.
+    other = out[(out.project == "Maple") & (out.metric == "locked_tokens_dashboard")].iloc[0]
+    assert other["status"] != "waiting", \
+        f"only a secondary blocked BY CONFIG waits; everything else is an honest gap: {other['status']}"
+    assert config.cross_check_waiting_on_primary("Chainlink", "buyback_fund_balance_dashboard") is None, \
+        "Chainlink's primary is not disputed, so its secondary is an ordinary gap"
+    print("waiting state ok: armed entry named with its url and selector, status 'waiting' not "
+          "'gap', and nothing else reclassified")
+
+
 def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     """The half of "disputed" that was missing, and the live run found it.
 

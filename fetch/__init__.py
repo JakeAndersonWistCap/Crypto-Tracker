@@ -341,11 +341,19 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)
 
+    # BOTH STATES, NOT JUST THE BROKEN ONE. This used to record only the NOT-READY entries, so a
+    # registry entry that was complete and armed looked, to the gap reporter, exactly like an
+    # entry that had never been written — and Maple's armed cross-check was reported as "no
+    # sources.yaml entry for this metric" when there plainly was one. A ready entry that returned
+    # nothing is a different problem from a missing entry and has to say so.
     registry_reasons = {}
     for e in load_registry():
         ok, why = entry_ready(e)
-        if not ok and e.get("project") and e.get("metric"):
-            registry_reasons[(e["project"], e["metric"])] = why
+        if not (e.get("project") and e.get("metric")):
+            continue
+        registry_reasons[(e["project"], e["metric"])] = (
+            {"ready": True, "url": e.get("url"), "anchor": e.get("anchor"), "method": e.get("method")}
+            if ok else why)
 
     out.gaps = detect_gaps(projects, out.frame(), manual_keys or set(), registry_reasons, out.gaps)
     return out

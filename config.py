@@ -506,6 +506,29 @@ def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:
             if v.get("kind") in kinds and not v.get("verified")]
 
 
+def cross_check_waiting_on_primary(project_name: str, metric: str) -> dict | None:
+    """Is this metric a cross-check SECONDARY whose primary is deliberately suppressed?
+
+    An armed guard with nothing to compare against is not the same state as a metric nobody has
+    built, and rendering both as "gap" loses the distinction that made arming it worth doing.
+    Maple's transparency scrape is ready and correct; its primary is a disputed destination that
+    stores nothing, so the secondary will sit alone until an address is established — at which
+    point the comparison is what confirms it.
+
+    Narrow ON PURPOSE: only a primary suppressed BY CONFIG counts. A primary that merely has no
+    data yet leaves both sides ordinary gaps, which is the truthful description of that.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    for check in p.get("cross_checks") or []:
+        if check.get("secondary") != metric:
+            continue
+        blocked = destination_disputed(project_name, check.get("primary"))
+        if blocked:
+            return {"primary": check["primary"], "why": blocked["why"],
+                    "contracts": blocked["contracts"]}
+    return None
+
+
 def destination_disputed(project_name: str, metric: str) -> dict | None:
     """The contracts serving this metric whose ROLE is disputed, or None.
 

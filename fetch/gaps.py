@@ -194,9 +194,22 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Check the Run Log for the chain read failure, and confirm the RPC endpoints for "
                 f"{contracts[matching[0]].get('chain')} in .env.")
 
-    if (name, metric) in scrape_entries:
-        return (scrape_entries[(name, metric)],
-                f"Complete the sources.yaml entry for {name}/{metric}.")
+    entry = scrape_entries.get((name, metric))
+    if isinstance(entry, dict):
+        # ARMED AND RETURNED NOTHING — a different problem from a missing entry, and the one the
+        # old text got wrong. entry_ready() passed, so the url, method and selector are all
+        # present; the scrape either did not run this pass or ran and produced no value. Naming
+        # the url and the selector is what lets the reader tell those apart at a glance.
+        where = f"{entry.get('method')} on {entry.get('url')}"
+        sel = entry.get("anchor") or entry.get("json_path")
+        return (f"sources.yaml entry EXISTS AND IS ARMED ({where}, selector {sel!r}) but no value "
+                f"reached the store this run. The entry is not the problem — either tier 3 did not "
+                f"run, or it ran and the page returned nothing usable.",
+                f"Check the Run Log for a tier 3 row for {name}. No row at all means the scrape "
+                f"never fired; a failed row names the cause (robots.txt, the browser, or the "
+                f"selector not matching).")
+    if entry is not None:
+        return (entry, f"Complete the sources.yaml entry for {name}/{metric}.")
 
     if 3 in tiers or 5 in tiers:
         return ("no sources.yaml entry for this metric",

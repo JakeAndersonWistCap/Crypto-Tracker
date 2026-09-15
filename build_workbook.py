@@ -173,7 +173,7 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     here is a judgement typed in by hand, because a hand-assigned confidence is an opinion that
     goes stale the moment the underlying data moves.
     """
-    if row["status"] in ("missing", "gap", "n/a", "disputed"):
+    if row["status"] in ("missing", "gap", "n/a", "disputed", "waiting"):
         return "RED", {"missing": "no value in the store",
                        "gap": "unresolved — see the Gap Report",
                        "n/a": "not applicable to this project",
@@ -181,7 +181,11 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                        # low-confidence figure, it is one whose meaning has been withdrawn. The
                        # address reads fine; what it measures is not what the column claims.
                        "disputed": "the contract's ROLE as this project's destination is disputed — "
-                                   "the read works and the figure is not reported"}[row["status"]]
+                                   "the read works and the figure is not reported",
+                       # RED because the cell is empty, not because anything is wrong: the guard is
+                       # armed and waiting on a suppressed primary. The note says which.
+                       "waiting": "armed cross-check, waiting on a suppressed primary — see the note"
+                       }[row["status"]]
 
     # RED, not AMBER: these two are not low-confidence figures, they are known-false ones. Age and
     # status say nothing about either, which is how both reached the sheet at full confidence.
@@ -293,6 +297,24 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row["status"], row["note"] = "gap", f"{gap['reason']} | {gap['suggestion']}"
                 elif metric not in applicable.get(name, ()):
                     row["status"], row["note"] = "n/a", "not applicable to this project's archetypes"
+                # AN ARMED GUARD WITH NOTHING TO COMPARE AGAINST IS NOT AN UNBUILT METRIC.
+                # A cross-check secondary whose PRIMARY is suppressed by config is working exactly
+                # as designed: it will sit empty until the primary becomes reportable, and then it
+                # is what confirms it. Rendering that as a plain "gap" makes it look identical to
+                # "nobody has built this yet", which is the opposite of the reason for arming it.
+                # The existing gap text is KEPT on the row, so a genuine scrape failure is never
+                # dressed up as patience.
+                waiting = config.cross_check_waiting_on_primary(name, metric)
+                if waiting:
+                    row["status"] = "waiting"
+                    prior_note = row["note"]
+                    row["note"] = (
+                        f"WAITING ON THE PRIMARY — this is the cross-check for "
+                        f"{waiting['primary']}, which is suppressed because contract(s) "
+                        f"{', '.join(waiting['contracts'])} have a DISPUTED role. The guard is "
+                        f"armed and correctly idle; it starts comparing the moment the primary "
+                        f"becomes reportable."
+                        + (f" | {prior_note}" if prior_note else ""))
                 row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
                 continue
