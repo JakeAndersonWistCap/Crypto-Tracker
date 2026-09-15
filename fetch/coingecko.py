@@ -29,7 +29,7 @@ from .base import LONG_COLUMNS, Http, tidy, today
 
 SOURCE = "coingecko"
 TIER = 1
-log = logging.getLogger(__name__)
+log = logging.getLogger("token_metrics.fetch.coingecko")
 API = "https://api.coingecko.com/api/v3"
 
 
