@@ -177,6 +177,76 @@ ISSUANCE_FROM_SUPPLY_DELTA = {
 }
 
 
+REASON_RATIO_FELL = "accrued_rate_fell"
+# Same "derived:" prefix the issuance derivation uses, so the source string says at a glance
+# that this figure was computed here rather than read from anywhere.
+SOURCE_DERIVED = "derived"
+
+
+def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dict) -> None:
+    """Assets per share for a COMPOUNDING stake, and a flag on the ONE direction that matters.
+
+    Ether.fi's sETHFI compounds — settled on-chain 2026-09-14 at block 25,982,077, where
+    89,748,241.267610 shares claimed 111,163,214.703019 ETHFI. So a gap between the share
+    figure and the asset figure is EXPECTED AND INFORMATIVE, which is the opposite of Chainlink's
+    cross-check, where the two readings should agree and a gap is the finding.
+
+    That inverts what a check should do. Flagging divergence would flag healthy accrual on every
+    single run and train the reader to ignore the Review Queue. What carries information is the
+    DIRECTION: a rising ratio is rewards accruing, and a FALLING one means rewards stopped or
+    holders are exiting at a discount. The LEVEL is never the finding — 1.24 is not "too high",
+    and neither would 3.0 be — so nothing here compares against a threshold.
+
+    Config-driven rather than hardcoded to Ether.fi: a project declares `lock_ratio` naming its
+    numerator, denominator and output metric, or gets no ratio at all.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    latest = {(r.project, r.metric): (r.value, r.date)
+              for r in frame.sort_values("date")[["project", "metric", "value", "date"]]
+                            .itertuples(index=False)}
+
+    for p in projects:
+        spec = p.get("lock_ratio")
+        if not spec:
+            continue
+        name = p["name"]
+        num = latest.get((name, spec["numerator"]))
+        den = latest.get((name, spec["denominator"]))
+        if num is None or den is None:
+            # Not a gap worth raising: one side simply did not arrive this run, and a ratio from
+            # one number is not a ratio. Logged so a permanently missing side is visible.
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: needs both {spec['numerator']} and "
+                        f"{spec['denominator']} this run; "
+                        f"{'numerator' if num is None else 'denominator'} is absent",
+                        tier=2)
+            continue
+        if not den[0]:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: denominator {spec['denominator']} is zero — no ratio",
+                        tier=2)
+            continue
+
+        ratio = float(num[0]) / float(den[0])
+        when = max(num[1], den[1])
+        out.add(point(name, spec["metric"], ratio, f"{SOURCE_DERIVED}:ratio", 2, when),
+                SOURCE_DERIVED, name,
+                f"{spec['metric']}={ratio:.8f} ({spec['numerator']} / {spec['denominator']})", 2)
+
+        # THE ONLY FLAG, AND ONLY IN ONE DIRECTION.
+        prior = prior_values.get((name, spec["metric"]))
+        if prior is None or prior <= 0:
+            continue
+        tol = float(spec.get("decrease_tolerance", 0.0))
+        fall = (prior - ratio) / prior
+        if fall > tol:
+            out.review_item(name, spec["metric"], REASON_RATIO_FELL, "stored_flagged",
+                            value=ratio, prior_value=prior, date=when,
+                            source=f"{SOURCE_DERIVED}:ratio", tier=2)
+
+
 def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict, prior_dates: dict) -> None:
     """Derive gross_issuance_tokens from the supply change, keyed on the burn mechanism.
 
@@ -337,6 +407,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # AFTER the collision guards, so a derivation can never displace a measured figure, and so the
     # burn it consumes is the deduped one rather than a double-counted month.
     _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"])
+    # AFTER issuance, so both lock figures are certainly in the frame by now.
+    _derive_lock_ratio(out, projects, ctx["prior_values"])
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)

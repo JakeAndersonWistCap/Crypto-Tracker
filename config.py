@@ -206,6 +206,11 @@ METRICS = {
     # Forward-only from the day the contract read was wired, the same limitation Chainlink's
     # principal figure carries: a contract read returns present state and nothing else.
     "locked_tokens_underlying":   {"label": "Tokens locked (underlying asset held by the staking contract)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Ether.fi"]},
+    # DERIVED, not fetched: assets divided by shares. For a compounding stake this is the accrued
+    # rate — how much of the underlying one share currently claims — and its DIRECTION is the
+    # signal. A rising ratio is rewards accruing. Bounded below at 0 and generously above,
+    # because the level itself is never the finding; see lock_ratio on the project.
+    "lock_assets_per_share":      {"label": "Assets per share (accrued rate of the staked position)", "kind": "stock", "unit": "ratio", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 100, "only_projects": ["Ether.fi"]},
     # Published lock rate, stored AS PUBLISHED. Deliberately not derived from locked_tokens /
     # supply: where a protocol publishes its own lock rate the published figure is the citable
     # one, and a derived percentage sitting next to it would invite the two being confused.
@@ -3752,6 +3757,59 @@ PROJECTS = [
         "metric_labels": {
             "locked_tokens": "Staked sETHFI (share supply)",
             "locked_tokens_underlying": "ETHFI held by the sETHFI staking contract (assets)",
+            "lock_assets_per_share": "ETHFI claimed per sETHFI (accrued rate — watch the DIRECTION)",
+        },
+        # ============ sETHFI COMPOUNDS. SETTLED ON-CHAIN 2026-09-14, BLOCK 25,982,077. ============
+        #   sETHFI.totalSupply()        89,748,241.267610   shares
+        #   ETHFI.balanceOf(sETHFI)    111,163,214.703019   assets
+        #   ratio                            1.238611622166
+        #   decimals 18 / 18, confirmed comparable
+        #
+        # So one sETHFI currently claims 1.23861162 ETHFI. That is real accrual, not stray tokens.
+        # It replaces the withdrawn ERC-4626-by-analogy assumption with a measurement.
+        #
+        # WHAT THAT MEANS FOR THE CHECK, and it is the opposite of Chainlink's: divergence here is
+        # EXPECTED AND INFORMATIVE, not an error. A rising ratio is rewards accruing. Flagging any
+        # gap would flag healthy accrual every single run. Only the DIRECTION matters, and only one
+        # direction: a FALLING ratio means rewards stopped, or holders are exiting at a discount.
+        # The LEVEL is never the finding — 1.24 is not "too high", and nor would 3.0 be.
+        "lock_ratio": {
+            "numerator": "locked_tokens_underlying",     # assets — ETHFI.balanceOf(sETHFI)
+            "denominator": "locked_tokens",              # shares — the Dune series
+            "metric": "lock_assets_per_share",
+            "flag_on": "decrease",
+            # A SMALL TOLERANCE, AND HERE IT IS EARNED RATHER THAN A BUFFER FOR COMFORT.
+            # The impossible-relations check runs at ZERO tolerance because it tests identities.
+            # This does not: the two figures come from DIFFERENT SOURCES read at DIFFERENT MOMENTS
+            # — a Dune daily aggregate against a point-in-time contract read — so sub-0.1% wobble
+            # is measurement noise about a quantity that is genuinely monotonic by design. A real
+            # reward halt or discounted exit moves it far further than this.
+            "decrease_tolerance": 0.001,
+            "measured": {
+                "shares": 89_748_241.267610, "assets": 111_163_214.703019,
+                "ratio": 1.238611622166, "block": 25_982_077, "as_of": "2026-09-14",
+                "source": "direct on-chain read via check_offline_items.py, both calls pinned to "
+                          "block 25,982,077; decimals 18/18 confirmed",
+            },
+            # ** THE BASELINE IS A CHAIN-vs-CHAIN RATIO AND THE CHECK IS DUNE-vs-CHAIN. **
+            # 1.238611622166 divides ETHFI.balanceOf(sETHFI) by sETHFI.totalSupply() — BOTH read
+            # on-chain. This check's denominator is locked_tokens, which is the DUNE series, and
+            # Dune's staked_supply does not reconcile with either on-chain figure:
+            #     Dune 141,470,107.5 (2026-09-10)  vs  on-chain shares 89,748,241.27
+            #     -> Dune is 1.58x the share supply, and 30,306,893 ETHFI MORE than the staking
+            #        contract actually holds
+            # A staked supply above the tokens the contract holds needs explaining, so the first
+            # value this check produces will be ~0.79, NOT 1.24. That is recorded rather than
+            # reconciled, and NO Dune-vs-chain baseline is invented to paper over it.
+            # THE CHECK STILL WORKS MEANWHILE, and that is a property of the design rather than
+            # luck: it tests DIRECTION, never level, so it is indifferent to what the denominator
+            # is scaled by — as long as the denominator is CONSISTENT with itself over time. If
+            # the Dune column turns out to measure something else, the reconciliation changes
+            # which series belongs in locked_tokens; it does not invalidate the direction test.
+            "baseline_is_chain_vs_chain": True,
+            "unreconciled": "Dune staked_supply 141,470,107.5 (2026-09-10) exceeds both on-chain "
+                            "figures; see OPEN_QUESTIONS before reading the ratio's LEVEL as "
+                            "meaningful. Its DIRECTION is usable now.",
         },
         # A CAP IS NOT A SPEND. Applies here and generally: a stated "$50m authorized" is a CEILING
         # granted by governance, not a transaction that happened. Any stored figure that traces to
@@ -4245,8 +4303,41 @@ OPEN_QUESTIONS = [
     # ---------------------------------------------------------------- Ether.fi
     {
         "project": "Ether.fi",
-        "topic": "does sETHFI COMPOUND against ETHFI, or is it a 1:1 receipt? Decides what a divergence MEANS.",
+        "topic": "Dune's staked_supply EXCEEDS the ETHFI the staking contract actually holds — reconcile.",
         "severity": 1,
+        "reason": "Settling the compounding question produced a second, unasked-for finding, and it "
+                  "is the one that decides what locked_tokens actually measures. "
+                  "On-chain at block 25,982,077 (2026-09-14): sETHFI.totalSupply() = "
+                  "89,748,241.267610 shares, ETHFI.balanceOf(sETHFI) = 111,163,214.703019 assets. "
+                  "Dune 8683038's staked_supply reports 141,470,107.5 on 2026-09-10. "
+                  "THAT FIGURE IS ABOVE BOTH: 1.58x the share supply, and 30,306,893 ETHFI MORE "
+                  "than the staking contract holds. A staked supply larger than the tokens the "
+                  "contract custodies needs an explanation — a four-day gap in dates does not "
+                  "plausibly cover a 37% fall, and the sETHFI deployments on Scroll, Arbitrum and "
+                  "Base are reported in low single-digit millions of DOLLARS, far too small to "
+                  "account for ~50m tokens. "
+                  "SO locked_tokens IS LABELLED 'Staked sETHFI (share supply)' ON AN ASSUMPTION "
+                  "that has not survived contact with the on-chain read. It may be measuring "
+                  "something else entirely. "
+                  "THE RATIO CHECK IS UNAFFECTED FOR NOW, and that is a property of its design "
+                  "rather than luck: it tests DIRECTION, never level, so it is indifferent to what "
+                  "the denominator is scaled by provided the denominator is consistent with "
+                  "itself over time. What is NOT usable is the ratio's LEVEL — it will read ~0.79, "
+                  "not the measured 1.24, because 1.24 is chain-over-chain and the check is "
+                  "Dune-over-chain.",
+        "suggestion": "Open dune.com/queries/8683038 and read what staked_supply actually sums — "
+                      "whether it is sETHFI totalSupply, a deposit-event cumulative that never "
+                      "nets withdrawals, a multi-chain union, or ETHFI-denominated rather than "
+                      "share-denominated. Then either relabel locked_tokens to what it really is, "
+                      "or replace the Dune series with sETHFI.totalSupply() read on-chain, which "
+                      "would make the ratio chain-over-chain and its LEVEL meaningful too. "
+                      "Do NOT adjust the ratio baseline to make the numbers agree — the "
+                      "disagreement is the finding.",
+    },
+    {
+        "project": "Ether.fi",
+        "topic": "ANSWERED 2026-09-14 — sETHFI COMPOUNDS. Recorded so it is not re-litigated.",
+        "severity": 3,
         "reason": "locked_tokens (staked sETHFI, SHARE supply, Dune 8683038) and "
                   "locked_tokens_underlying (ETHFI.balanceOf(sETHFI), ASSETS) are now two metrics. "
                   "THE READ IS SAFE EITHER WAY — balanceOf returns assets whether sETHFI compounds or "
@@ -4264,7 +4355,12 @@ OPEN_QUESTIONS = [
                   "ERC-4626-shaped hazard as Maple's stSYRUP'. That was reasoning BY ANALOGY from a "
                   "different protocol and was never checked against Ether.fi. It is removed rather than "
                   "softened.",
-        "suggestion": "READ THE CONTRACT: call totalSupply() on sETHFI "
+        "suggestion": "NO ACTION — SETTLED. Direct on-chain read, both calls pinned to block "
+                      "25,982,077, decimals 18/18 confirmed comparable: 89,748,241.267610 shares "
+                      "against 111,163,214.703019 assets, ratio 1.238611622166. One sETHFI claims "
+                      "1.23861162 ETHFI. Real accrual, not stray tokens. The direction-only ratio "
+                      "check is wired on that basis (see lock_ratio). "
+                      "The original instruction, kept for the record: READ THE CONTRACT — call totalSupply() on sETHFI "
                       "(0x86B5780b606940Eb59A062aA85a07959518c0161) and ETHFI.balanceOf(sETHFI) in the "
                       "same block. Equal to the wei means 1:1; assets exceeding shares means "
                       "compounding, and the ratio is the accrued rate. One block settles it. "

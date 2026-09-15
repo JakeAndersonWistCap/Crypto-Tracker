@@ -100,6 +100,8 @@ METRIC_CONTRACT_KIND = {
     # instead of falling through to "no source configured for this metric".
     "locked_tokens_principal": "stake_principal",
     "locked_tokens_underlying": "stake_underlying",
+    # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
+    # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",
     "circulating_supply": "erc20_total_supply",
 }
@@ -194,6 +196,17 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return (f"contract {matching[0]!r} is verified but the tier 2 read returned nothing this run",
                 f"Check the Run Log for the chain read failure, and confirm the RPC endpoints for "
                 f"{contracts[matching[0]].get('chain')} in .env.")
+
+    # A DERIVED METRIC HAS NO SOURCE TO CONFIGURE, so "no source configured for this metric" is
+    # the wrong answer and sends the reader looking for one. It needs its INPUTS, and naming them
+    # is what makes the row actionable.
+    ratio = project.get("lock_ratio") or {}
+    if ratio.get("metric") == metric:
+        return (f"DERIVED, not fetched: {metric} is {ratio['numerator']} / {ratio['denominator']}, "
+                f"and at least one of those did not arrive this run. There is no source to add.",
+                f"Resolve whichever input is missing — see the Gap Report rows for "
+                f"{ratio['numerator']} and {ratio['denominator']}. The ratio computes itself once "
+                f"both are present in the same run.")
 
     entry = scrape_entries.get((name, metric))
     if isinstance(entry, dict):

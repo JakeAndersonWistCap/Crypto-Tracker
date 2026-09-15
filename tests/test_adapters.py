@@ -1711,6 +1711,90 @@ ETHERFI_ROW = {"agg_14": 0.0121, "agg_30": 0.0233, "day": "2026-09-10 00:00:00.0
                "request_users": 1, "staked_supply": 141_470_107.5}
 
 
+def test_a_COMPOUNDING_lock_ratio_flags_only_when_it_FALLS():
+    """sETHFI compounds, so a gap between shares and assets is health, not a defect.
+
+    Settled on-chain at block 25,982,077: 89,748,241.267610 shares claimed 111,163,214.703019
+    ETHFI, a ratio of 1.238611622166. That inverts what the check should do. Chainlink's pair
+    should AGREE and a gap is the finding; this pair should DIVERGE and only the direction
+    carries information — a rising ratio is rewards accruing, a falling one means rewards stopped
+    or holders are exiting at a discount.
+
+    So the level is never tested. 1.24 is not "too high" and neither would 3.0 be.
+    """
+    import pandas as pd
+    from fetch import _derive_lock_ratio
+    from fetch.base import LONG_COLUMNS
+
+    SHARES, ASSETS = 89_748_241.267610, 111_163_214.703019
+    BASELINE = ASSETS / SHARES
+    assert abs(BASELINE - 1.238611622166) < 1e-11, "the measured baseline must reproduce exactly"
+
+    spec = config.PROJECT_BY_NAME["Ether.fi"]["lock_ratio"]
+    assert abs(spec["measured"]["ratio"] - BASELINE) < 1e-11
+    assert spec["measured"]["block"] == 25_982_077
+
+    def run(shares, assets, prior_ratio):
+        out = FetchOutput()
+        out.add(pd.DataFrame([
+            {"date": pd.Timestamp("2026-09-15"), "project": "Ether.fi", "metric": "locked_tokens",
+             "value": shares, "source": "dune:8683038", "tier": 4},
+            {"date": pd.Timestamp("2026-09-15"), "project": "Ether.fi",
+             "metric": "locked_tokens_underlying", "value": assets,
+             "source": "chain:ethereum:sethfi:PARTIAL", "tier": 2},
+        ])[LONG_COLUMNS], "test", "Ether.fi", "", 2)
+        prior = {("Ether.fi", "lock_assets_per_share"): prior_ratio} if prior_ratio else {}
+        _derive_lock_ratio(out, [config.PROJECT_BY_NAME["Ether.fi"]], prior)
+        df = out.frame()
+        got = df[df.metric == "lock_assets_per_share"]
+        return (float(got.value.iloc[0]) if not got.empty else None), out.review
+
+    # RISING — rewards accruing. MUST be silent, or the queue fills with health every run.
+    ratio, review = run(SHARES, ASSETS * 1.02, BASELINE)
+    assert abs(ratio / BASELINE - 1.02) < 1e-9
+    assert not review, f"a rising ratio is the healthy case and must never flag: {review}"
+
+    # FLAT — silent.
+    _, review = run(SHARES, ASSETS, BASELINE)
+    assert not review, f"flat is not a fall: {review}"
+
+    # FALLING — the one thing worth knowing.
+    ratio, review = run(SHARES, ASSETS * 0.97, BASELINE)
+    assert len(review) == 1, f"a 3% fall must flag: {review}"
+    assert review[0]["metric"] == "lock_assets_per_share"
+    assert review[0]["reason"] == "accrued_rate_fell"
+    assert abs(review[0]["prior_value"] - BASELINE) < 1e-9, "and must carry what it fell FROM"
+
+    # THE TOLERANCE IS EARNED, NOT A COMFORT BUFFER, so both sides of it are pinned. The two
+    # figures come from different sources read at different moments — a Dune daily aggregate
+    # against a point-in-time contract read — so sub-0.1% wobble is measurement noise about a
+    # quantity that is monotonic by design.
+    _, review = run(SHARES, ASSETS * 0.9995, BASELINE)     # -0.05%, inside
+    assert not review, f"measurement noise must not flag: {review}"
+    _, review = run(SHARES, ASSETS * 0.995, BASELINE)      # -0.50%, outside
+    assert len(review) == 1, "a real fall just past the tolerance must still flag"
+
+    # FIRST OBSERVATION — nothing to compare against, so nothing is claimed.
+    ratio, review = run(SHARES, ASSETS, None)
+    assert ratio is not None and not review, "a first reading has no direction and must not flag"
+
+    # ONE SIDE MISSING — no ratio invented from one number, and the skip is logged rather than
+    # silent, so a permanently absent side is visible instead of looking like a quiet success.
+    out = FetchOutput()
+    out.add(pd.DataFrame([{"date": pd.Timestamp("2026-09-15"), "project": "Ether.fi",
+                           "metric": "locked_tokens", "value": SHARES,
+                           "source": "dune:8683038", "tier": 4}])[LONG_COLUMNS],
+            "test", "Ether.fi", "", 4)
+    _derive_lock_ratio(out, [config.PROJECT_BY_NAME["Ether.fi"]], {})
+    assert out.frame()[out.frame().metric == "lock_assets_per_share"].empty, \
+        "a ratio needs both sides"
+    assert any(e.status == "skipped" and "lock_assets_per_share" in e.message for e in out.log), \
+        "and the skip must be logged, not silent"
+
+    print("compounding ratio ok: rising and flat silent, falling flags with what it fell from, "
+          "noise inside tolerance silent, no ratio from one side")
+
+
 def test_etherfi_share_supply_and_underlying_assets_are_TWO_METRICS_not_two_sources():
     """Shares and assets are different measures. One metric fed by both reports the gap as a flow.
 
@@ -1778,17 +1862,23 @@ def test_etherfi_share_supply_and_underlying_assets_are_TWO_METRICS_not_two_sour
     assert shares["now"] == 141_470_107.5, "and its history is untouched"
     assert assets["now"] == 98_000_000.0
 
-    # NO CROSS-CHECK IS WIRED, AND THAT IS DELIBERATE. Whether sETHFI compounds decides whether a
-    # divergence is expected accrual or a defect, and wiring it under the wrong reading would
-    # either flag healthy accrual every run or stay silent on a real problem. This assertion is
-    # the tripwire: it FAILS once someone adds one, forcing them to confirm the mechanism first.
-    pairs = [c for c in (config.PROJECT_BY_NAME["Ether.fi"].get("cross_checks") or [])
+    # THE TRIPWIRE IS DISCHARGED. It used to assert that NO cross-check existed, because whether
+    # sETHFI compounds decided what a divergence means and nobody knew. It was answered on-chain
+    # at block 25,982,077 — sETHFI COMPOUNDS — so the assertion inverts: the check must now exist,
+    # and it must be the DIRECTION-ONLY kind rather than a Chainlink-style divergence test.
+    spec = config.PROJECT_BY_NAME["Ether.fi"].get("lock_ratio")
+    assert spec, "sETHFI compounds and the ratio check is no longer optional"
+    assert spec["numerator"] == "locked_tokens_underlying" and spec["denominator"] == "locked_tokens", \
+        "assets over shares, in that order — inverted, a rise would read as a fall"
+    assert spec["flag_on"] == "decrease", \
+        ("divergence here is EXPECTED accrual. Flagging it would flag health on every run, which "
+         "is how a Review Queue gets ignored.")
+    plain = [c for c in (config.PROJECT_BY_NAME["Ether.fi"].get("cross_checks") or [])
              if c.get("primary") in ("locked_tokens", "locked_tokens_underlying")]
-    assert not pairs, ("a cross-check was added — confirm whether sETHFI compounds or is a 1:1 "
-                       "receipt FIRST, then update this test with which it is and why the "
-                       "tolerance is what it is. See OPEN_QUESTIONS.")
+    assert not plain, ("a plain divergence cross_check was added on a COMPOUNDING pair — it would "
+                       "fire on healthy accrual every run. Use lock_ratio's direction test.")
     print("etherfi lock split ok: shares and assets are separate metrics and columns, Dune history "
-          "intact, RED cleared, no cross-check wired while the mechanism is unconfirmed")
+          "intact, RED cleared, direction-only ratio check wired")
 
 
 def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
