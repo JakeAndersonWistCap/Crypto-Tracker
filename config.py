@@ -3390,6 +3390,43 @@ PROJECTS = [
         # documented info endpoint instead, which REPLACES that approach: a plain HTTPS POST with no
         # RPC, no key and no chain field. See node_api below.
         "contracts": {},
+        # ===== buyback_fund_balance IS NOT APPLICABLE, AND THE REASON IS THAT IT IS ALREADY READ. =====
+        # ASKED FOR 2026-09-15: wire the Assistance Fund at 0xfefe...fefe as a contract serving
+        # buyback_fund_balance, on the treasury_holding pattern. NOT DONE, and this block records
+        # why, because the request was reasonable and the answer is non-obvious.
+        #
+        # THE ADDRESS IS ALREADY HERE. It is this project's burn_address, one line below, and it is
+        # already read every run through node_api (hypercore_info) — which fetches
+        # spotClearinghouseState for that exact user, stores it as burn_address_balance, and
+        # differences it into gross_burn_tokens. Nothing about it is missing.
+        #
+        # A SECOND METRIC OVER THE SAME TOKENS WOULD DOUBLE-COUNT. burn_mechanism's own note says
+        # it plainly: "The BALANCE is therefore the cumulative burn." The December 2025 validator
+        # vote recognised all Assistance Fund HYPE, past and future, as permanently burned, and the
+        # address has never had a private key. Reporting that same balance again as a "buyback
+        # fund" would describe permanently burned supply as a redeemable holding — the opposite
+        # sign on float — and put the same 48.42m HYPE on the sheet twice under two names.
+        #
+        # AND IT COULD NOT HAVE READ ANYWAY. Two independent blockers, either one fatal: HyperCore
+        # is not in EVM_CHAINS or DEFAULT_RPC, so the chain-coverage gate refuses it; and there is
+        # no HYPE token contract on file to serve as the `underlying` for a holder balance, so the
+        # same-chain-token guard refuses it too. burn_read_method 'protocol_api' exists precisely
+        # because this figure comes from Hyperliquid's own info endpoint and not from any chain RPC.
+        #
+        # SAME SHAPE AS GEODNET, decided the same way: where purchase and retirement are one flow
+        # into an address nothing leaves, there is no intermediate fund to have a balance, and the
+        # metric that captures the mechanism is the burn one — already wired.
+        "not_applicable": {
+            "buyback_fund_balance":
+                "THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the "
+                "Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised "
+                "as permanently burned by the validator vote of 2025-12-27 (85% of staked weight) and "
+                "corroborated by an SEC-filed exhibit of 2026-05-07 — and that balance is fetched "
+                "every run as burn_address_balance via node_api, then differenced into "
+                "gross_burn_tokens. Reading it a second time as a buyback FUND would report "
+                "permanently burned supply as a redeemable holding and count the same tokens twice. "
+                "Declared 2026-09-15.",
+        },
         "burn_address": "0xfefeFEFeFEFEFEFEFeFefefefefeFEfEfefefEfe",
         # DECLARED 2026-09-14, AND IT SHOULD HAVE BEEN DECLARED LONG AGO.
         # The destination was resolved in December 2025 and destination_confirmed_date has said so
