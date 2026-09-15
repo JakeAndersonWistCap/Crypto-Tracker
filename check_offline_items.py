@@ -39,6 +39,16 @@ SELECTORS = {"receiver()": "0xf7260d3e", "pair()": "0xa8aa1b31", "want()": "0x1f
 # keccak("flapper()")[:4] — on the SPLITTER, not on the flapper itself.
 SELECTORS_SPLITTER = {"flapper()": "0x5c94e4d2"}
 
+# Ether.fi's governance token and its staking contract. The open question is what sETHFI IS:
+# a 1:1 receipt, or a share that compounds against ETHFI the way a vault share does. It decides
+# what a gap between locked_tokens (shares) and locked_tokens_underlying (assets) MEANS, and the
+# two answers point opposite ways — so it is read, not inferred from documentation.
+ETHFI = "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB"
+SETHFI = "0x86B5780b606940Eb59A062aA85a07959518c0161"
+SEL_TOTAL_SUPPLY = "0x18160ddd"    # keccak("totalSupply()")[:4]
+SEL_BALANCE_OF = "0x70a08231"      # keccak("balanceOf(address)")[:4]
+SEL_DECIMALS = "0x313ce567"        # keccak("decimals()")[:4]
+
 
 def head(title: str):
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
@@ -51,12 +61,28 @@ def rpc(url: str, method: str, params=None):
     return r.json()
 
 
-def eth_call(to: str, selector: str):
-    """Try each endpoint until one answers. Returns (result_hex, endpoint) or (None, error)."""
+def eth_block_number():
+    """The current block, so a pair of reads can be pinned to ONE state rather than two."""
+    for url in ETH_RPCS:
+        try:
+            j = rpc(url, "eth_blockNumber")
+            if "result" in j:
+                return j["result"], url
+        except Exception:  # noqa: BLE001
+            continue
+    return None, None
+
+
+def eth_call(to: str, selector: str, block: str = "latest"):
+    """Try each endpoint until one answers. Returns (result_hex, endpoint) or (None, error).
+
+    `block` pins the read. Two calls at "latest" can straddle a block boundary, which for a
+    ratio of two figures is the difference between a measurement and a coincidence.
+    """
     errors = []
     for url in ETH_RPCS:
         try:
-            j = rpc(url, "eth_call", [{"to": to, "data": selector}, "latest"])
+            j = rpc(url, "eth_call", [{"to": to, "data": selector}, block])
             if "result" in j:
                 return j["result"], url
             errors.append(f"{url}: {j.get('error')}")
@@ -229,6 +255,98 @@ def near():
     print("\n  Expect ~2.5% (cut from 5% on 2025-10-30), ~32.2m NEAR/yr, 90% validators / 10% treasury.")
 
 
+def etherfi_sethfi():
+    """Does sETHFI COMPOUND against ETHFI, or is it a 1:1 receipt? One block settles it.
+
+    This is the open question behind Ether.fi's locked_tokens / locked_tokens_underlying split.
+    It is NOT answerable from documentation with any confidence — a previous note in config
+    asserted the compounding shape by ANALOGY with Maple's stSYRUP, which was never checked and
+    has since been withdrawn. Two reads in one block answer it outright.
+
+    DECIMALS ARE READ TOO, and that is not gold-plating: comparing a share supply against an
+    asset balance is only meaningful if both are scaled the same way. If they differ, the ratio
+    is meaningless and the script says so rather than printing a number.
+    """
+    head("ETHER.FI — is sETHFI a 1:1 receipt, or does it COMPOUND against ETHFI?")
+    block, src = eth_block_number()
+    if block is None:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber; nothing else attempted.")
+        return
+    print(f"  pinned to block {block} ({int(block, 16):,}) via {src}")
+    print("  both reads use that block, so the two figures describe ONE state.\n")
+
+    holder = SETHFI[2:].lower().rjust(64, "0")
+    reads = {
+        "sETHFI.totalSupply()":      (SETHFI, SEL_TOTAL_SUPPLY),
+        "ETHFI.balanceOf(sETHFI)":   (ETHFI, SEL_BALANCE_OF + holder),
+        "sETHFI.decimals()":         (SETHFI, SEL_DECIMALS),
+        "ETHFI.decimals()":          (ETHFI, SEL_DECIMALS),
+    }
+    got = {}
+    for name, (to, data) in reads.items():
+        word, where = eth_call(to, data, block)
+        if word is None or word in ("0x", None):
+            print(f"  {name:<26} UNREACHABLE / empty — {str(where)[:110]}")
+            continue
+        got[name] = int(word, 16)
+        print(f"  {name:<26} {word}")
+        print(f"  {'':26} = {got[name]:,} raw")
+
+    shares = got.get("sETHFI.totalSupply()")
+    assets = got.get("ETHFI.balanceOf(sETHFI)")
+    d_s, d_a = got.get("sETHFI.decimals()"), got.get("ETHFI.decimals()")
+    if shares is None or assets is None:
+        print("\n  VERDICT: NOT ESTABLISHED — one of the two reads did not return. Do not guess "
+              "from the other.")
+        return
+    print(f"\n  decimals: sETHFI {d_s}   ETHFI {d_a}")
+    if d_s is not None and d_a is not None and d_s != d_a:
+        print("  VERDICT: NOT COMPARABLE — the two contracts use DIFFERENT decimals, so the ratio "
+              "of the raw figures means nothing. Rescale before concluding anything.")
+        return
+    scale = 10 ** (d_a if d_a is not None else 18)
+    print(f"  scaled:   sETHFI shares {shares / scale:,.6f}")
+    print(f"            ETHFI assets  {assets / scale:,.6f}")
+
+    if shares == 0:
+        print("\n  VERDICT: NOT ESTABLISHED — sETHFI totalSupply is zero, so there is no ratio.")
+        return
+    ratio = assets / shares
+    diff = assets - shares
+    print(f"  assets / shares = {ratio:.12f}   (difference {diff:,} raw)")
+
+    # A ratio this close to 1 is a receipt; anything above it is accrual. The tolerance is in RAW
+    # UNITS rather than a percentage, because a true 1:1 receipt should agree to the wei and a
+    # percentage band would quietly absorb a small real accrual.
+    if abs(diff) <= 1:
+        print("\n  VERDICT: sETHFI IS A 1:1 RECEIPT — shares and assets agree to within 1 wei.")
+        print("  MEANING for the split: locked_tokens and locked_tokens_underlying should track")
+        print("  each other almost exactly, and a PERSISTENT GAP between them is itself a finding")
+        print("  — stray ETHFI at the contract, a sync problem, or a wrong assumption.")
+    elif diff > 1:
+        print(f"\n  VERDICT: sETHFI COMPOUNDS — assets exceed shares by {diff:,} raw "
+              f"({(ratio - 1) * 100:.4f}%).")
+        print(f"  That excess IS the accrued rate: 1 sETHFI currently claims {ratio:.8f} ETHFI.")
+        print("  MEANING for the split: a GROWING assets-over-shares ratio is expected and")
+        print("  informative. The thing worth watching is the ratio SHRINKING, which would mean")
+        print("  rewards stopped or holders are exiting at a discount.")
+    else:
+        # THE THIRD CASE, WHICH THE QUESTION DID NOT ANTICIPATE. Forcing it into one of the two
+        # expected buckets would be the whole error this project keeps correcting.
+        print(f"\n  VERDICT: NEITHER — assets are BELOW shares by {abs(diff):,} raw "
+              f"({(1 - ratio) * 100:.4f}%).")
+        print("  This is not one of the two expected outcomes and must not be filed as either.")
+        print("  Shares outstanding exceeding the ETHFI actually held means the contract cannot")
+        print("  honour every share at par: a shortfall, a slashing event, a pending withdrawal")
+        print("  queue, or a wrong assumption about which contract custodies the stake.")
+        print("  DO NOT wire a cross-check on this reading — establish the cause first.")
+
+    print("\n  PASTE BACK both raw values, the decimals and the verdict. This settles the open")
+    print("  question on Ether.fi's locked_tokens / locked_tokens_underlying split. NO CROSS-CHECK")
+    print("  IS WIRED EITHER WAY until the answer is reviewed — the adapter test fails on purpose")
+    print("  if one is added before then.")
+
+
 def beaconchain():
     head("BEACONCHA.IN — reachability of the free tier (Ethereum validator issuance)")
     try:
@@ -250,7 +368,7 @@ def main():
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
     for fn in (sky_chainlog, sky, lambda: sky_splitter(args.splitter),
-               solana, injective, near, beaconchain):
+               solana, injective, near, etherfi_sethfi, beaconchain):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest
