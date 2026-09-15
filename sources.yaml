@@ -91,6 +91,7 @@
     the universe (May 2026: -1,958,514 CAKE, 33rd consecutive month). Take the self-reported
     figure rather than reconstructing it. Replace url and url_contains with the real ones.
 
+    DO NOT switch this to method: dom — the figure is client-side rendered like the two above.
 - project: PancakeSwap
   metric: burn_address_balance
   tier: 3
@@ -141,27 +142,63 @@
 # answer. That is why these three entries are grouped and commented together rather
 # than left among the per-project stubs.
 #
-# STATUS: NOT ENABLED, and deliberately so. Two things are missing and neither can be
-# invented from this sandbox, where every outbound host except raw.githubusercontent.com
-# is blocked (ultrasound.money/robots.txt returns CONNECT tunnel 403, checked
-# 2026-09-15):
-#   1. robots.txt has NOT been read. The scraper enforces it at runtime regardless, so
-#      enabling these blind would be polite — but it would also be unverified, and
-#      respecting robots.txt is an explicit design requirement, not a runtime detail.
-#   2. The extraction target is unknown. The site is a React app that fetches its
-#      figures from an API; neither the endpoint substring nor the on-page label text
-#      is on file. Guessing a json_path would produce an entry that either extracts
-#      nothing or — worse — extracts the wrong number and stores it as ok.
+# STATUS, UPDATED 2026-09-15: ONE OF THE THREE IS NOW LIVE, TWO REMAIN BLOCKED, and the
+# split runs exactly along what the server renders.
 #
-# TO FINISH, in a browser, once: open the page, confirm robots.txt permits it, then
-# DevTools -> Network -> Fetch/XHR and record the endpoint substring and the dotted
-# path to each of the three figures. Fill in url_contains/json_path, set enabled: true.
-# If no clean endpoint exists, switch method to dom and record the LABEL TEXT.
+#   TOTAL SUPPLY — ENABLED. Server-rendered and present in the initial HTML, so plain
+#     HTTP reaches it. Wired below as a CROSS-CHECK on CoinGecko's total_supply.
+#
+#   BURN and ISSUANCE — STILL BLOCKED, and not for want of an anchor. The homepage HTML
+#     carries the literal placeholder "0K ETH/year" for both where the real figures
+#     belong; they are filled in client-side after hydration. So a DOM anchor would
+#     match the label and extract a PLACEHOLDER — the quiet-wrong-number failure again,
+#     and worse than extracting nothing, because "0" is a number the sheet will render.
+#     They need Playwright executing the page's JS, then either reading the DOM after
+#     hydration or intercepting the network response the scraper prefers. The API
+#     endpoint and its response shape could not be determined from a static fetch.
+#
+# TO FINISH THE OTHER TWO, in a browser, once: DevTools -> Network -> Fetch/XHR, record
+# the endpoint substring and the dotted path to each figure, fill in
+# url_contains/json_path, set enabled: true.
+#
+# ROBOTS.TXT: not independently verified — ultrasound.money is unreachable from the
+# sandbox this config was written in (CONNECT tunnel 403). The scraper performs its own
+# per-fetch robots check and refuses on a Disallow, exactly as it already does for
+# Maple, Pendle, Venice and Chainlink, so the enabled entry cannot fetch a disallowed
+# page. That check is the authority here, not this comment.
 #
 # NOTE THE UNITS TRAP when filling these in: ultrasound.money presents figures both per
 # period and annualised, and both in ETH and in USD. gross_issuance_tokens and
 # gross_burn_tokens are TOKEN flows. Take the ETH figure, not the dollar one.
 # =====================================================================================
+- project: Ethereum
+  metric: total_supply_dashboard
+  tier: 3
+  enabled: true
+  url: "https://ultrasound.money/"
+  method: dom
+  anchor: "Total supply"
+  sanity_min: 100000000
+  sanity_max: 140000000
+  change_threshold_pct: 5
+  added: 2026-09-15
+  note: >-
+    THE ONLY ENABLED ENTRY OF THE THREE. This figure IS server-rendered — it is present in the
+    initial HTML response, so a plain fetch reaches it and no JS execution is needed. Confirmed
+    by direct fetch 2026-09-15.
+
+    ** THE ANCHOR IS 'Total supply', NOT 'EVM balances'. ** The page shows the total beside its
+    three components (EVM balances 167,722,332.48 + beacon balances 43,388,015.76 - beacon
+    deposits 89,067,206.25 = 122,043,141.99), and anchoring on a COMPONENT label would store
+    167,722,332.48 as Ethereum's supply — 37.4% high, and high in a way that passes the generic
+    total_supply bounds of 0..1e15 and renders as ok. The sanity_min/max above are set around the
+    real figure rather than around what is physically possible, so a mis-anchor fails loudly at
+    the sanity gate instead of storing a plausible overstatement. If 'Total supply' turns out not
+    to be the page's literal label, this entry will FAIL to extract and say so, which is the
+    correct failure: a loud miss beats a quiet wrong number.
+
+    CROSS-CHECK ONLY, never a replacement — config declares it against tier 1 CoinGecko with a 1%
+    tolerance. The two agreed to 0.00575% when checked.
 - project: Ethereum
   metric: gross_issuance_tokens
   tier: 3
@@ -172,7 +209,10 @@
   json_path: null                                   # TODO dotted path to ETH issued in the period
   added: 2026-09-15
   note: "Publishes issuance directly. Cross-checks our derived d(total_supply) figure — the only
-    project where the derivation can be checked against a published answer. Take ETH, not USD."
+    project where the derivation can be checked against a published answer. Take ETH, not USD.
+    DO NOT switch this to method dom -- the served HTML carries the placeholder '0K ETH/year'
+    here, so a DOM anchor would match the label and extract a ZERO. Worse than extracting
+    nothing: a zero renders as a figure."
 - project: Ethereum
   metric: gross_burn_tokens
   tier: 3
@@ -183,7 +223,8 @@
   json_path: null                                   # TODO dotted path to ETH burned in the period
   added: 2026-09-15
   note: "EIP-1559 burns at the protocol level, so there is NO burn address to read and no
-    contract read can produce this. A published figure is the only route below tier 4."
+    contract read can produce this. A published figure is the only route below tier 4.
+    DO NOT switch this to method dom -- same '0K ETH/year' placeholder in the served HTML."
 - project: Ethereum
   metric: net_mint_monthly
   tier: 3
@@ -195,7 +236,8 @@
   added: 2026-09-11
   note: "Self-reported net mint — take it as published. Completes the set: with issuance and burn
     above, net supply change arrives as a published figure AND as our own sum, and the two
-    should agree. A divergence is a finding about our arithmetic, not about Ethereum."
+    should agree. A divergence is a finding about our arithmetic, not about Ethereum.
+    DO NOT switch this to method dom -- client-side rendered like the two above."
 
 # ---- Solana (SOL) — archetypes 1, 4
 - project: Solana

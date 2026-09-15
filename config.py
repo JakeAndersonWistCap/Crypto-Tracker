@@ -188,6 +188,12 @@ METRICS = {
     # the page is stored here rather than over the contract read: a tier 3 page must never
     # overwrite a verified tier 2 contract figure, it cross-checks it.
     "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15},
+    # ETHEREUM ONLY, and scoped with only_projects rather than by archetype: every archetype 1 and
+    # 4 project would otherwise acquire this metric and a gap row for a dashboard that exists for
+    # exactly one chain. ultrasound.money publishes total ETH supply as execution layer + consensus
+    # layer - deposits, which is a genuinely independent construction rather than a restatement of
+    # the same vendor figure, so it cross-checks CoinGecko rather than duplicating it.
+    "total_supply_dashboard":     {"label": "Total supply (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum",)},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     # THE PROTOCOL'S OWN ACCOUNTING OF THE SAME THING, stored ALONGSIDE locked_tokens rather than
     # instead of it. locked_tokens is read as TOKEN.balanceOf(pool), which counts every token at
@@ -833,6 +839,48 @@ PROJECTS = [
              "source_date": "2026-09-15",
              "note": "an active proposal to reduce issuance. Same treatment as Glamsterdam."},
         ],
+        # ============ ULTRASOUND.MONEY CROSS-CHECKS TOTAL SUPPLY. IT DOES NOT REPLACE IT. ============
+        # Same pattern as Chainlink's two lock figures: both are kept, agreement confirms the read,
+        # and a persistent gap is a finding rather than an error.
+        #
+        # WHAT MAKES IT WORTH HAVING is that it is an independent CONSTRUCTION, not a second copy
+        # of the same vendor number. ultrasound.money builds total supply from its own components:
+        #     EVM balances             167,722,332.48
+        #   + beacon chain balances     43,388,015.76
+        #   - beacon chain deposits     89,067,206.25
+        #   = TOTAL SUPPLY             122,043,141.99     (checked: the arithmetic closes exactly)
+        # The subtraction is the point — deposits sit on both layers, and naive summing would
+        # double-count them. Against CoinGecko's 122,050,160 that is a 7,018 ETH gap, 0.00575%,
+        # which is agreement rather than divergence and sets the tolerance below.
+        #
+        # PREFER THE PRIMARY. CoinGecko stays the stored total_supply: it is tier 1, it is already
+        # the series with history, and moving the primary to a scrape would trade a stable source
+        # for a fragile one to gain 0.006%.
+        "cross_checks": [
+            {"primary": "total_supply", "primary_source": "tier 1 CoinGecko",
+             "secondary": "total_supply_dashboard",
+             "secondary_source": "https://ultrasound.money/ — EVM balances + beacon balances - beacon deposits",
+             "tolerance": 0.01, "prefer": "primary",
+             "note": "An INDEPENDENT CONSTRUCTION of the same figure, not a second vendor quote — which "
+                     "is what makes a divergence informative. The two agreed to 0.00575% when checked "
+                     "(122,043,141.99 vs 122,050,160), so the 1% tolerance is loose by two orders of "
+                     "magnitude and a trip means something real: a scraper reading the wrong line, or a "
+                     "genuine restatement on one side. ETH supply moves well under 1% a year."},
+        ],
+        # ** THE SECOND DEFENCE, AND THE REASON IT IS NARROW. **
+        # The dashboard publishes its COMPONENTS beside the total, and the largest component — EVM
+        # balances at 167,722,332.48 — is 37.4% ABOVE the total. A DOM anchor that matched the
+        # component label instead of the total's would store that number as Ethereum's supply, and
+        # it would sail through the generic total_supply bounds of 0 .. 1e15 and render as ok.
+        # That is precisely the quiet-wrong-number failure this project keeps correcting.
+        #
+        # So the bound here is set around the actual figure rather than around what is physically
+        # possible: ~122m today, growing well under 1% a year, so 100m..140m rejects the 167.7m
+        # component outright while leaving years of headroom. A mis-anchored scrape now fails
+        # LOUDLY at the sanity gate instead of storing a plausible 37% overstatement.
+        "sanity": {
+            "total_supply_dashboard": {"min": 100_000_000, "max": 140_000_000, "change_threshold_pct": 5},
+        },
         "contracts": {},
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
@@ -1739,45 +1787,54 @@ PROJECTS = [
         # at ~2022, which is consistent with the token's existence. The ~9-year reading is dropped.
         #
         # ---------------------------------------------------------------------------------------
-        # ** THE PER-YEAR TABLE DOES NOT CLOSE, AND IT IS RECORDED UNRECONCILED RATHER THAN
-        #    SMOOTHED. ** The budget is certain; the annual figures depend on a sampling convention
-        #    nobody has stated, and the three readings differ materially.
+        # ** THE 11.41% IS NOT A SCHEDULE PARAMETER. THE TGE ANCHOR SETTLED IT — BY FALSIFICATION. **
+        # CORRECTED 2026-09-15. The previous version of this block tried to reconcile the 11.41%
+        # against the absolute token schedule by back-solving a base: base = year_one / 0.1141,
+        # then checking that base against TGE circulating supply. THAT WAS THE WRONG HYPOTHESIS AND
+        # THE TEST HAS BEEN DROPPED, not merely failed.
         #
-        # The continuous fact is solid. A linear ramp from a rate of 2 x 580,000,000 / 20 =
-        # 58,000,000 WMTX/yr at t=0 down to zero at t=20 has area exactly 580,000,000. That is
-        # where the 58,000,000 comes from and it is not in doubt.
+        # World Mobile's own TGE glossary (worldmobile101.com; faq.worldmobiletoken.com
+        # /docs/token-faq/tge-archive) gives the anchor: the TGE ran 2021-07-04 to 2021-08-16 and
+        # released 10% OF TOTAL SUPPLY = 200,000,000 WMT.
         #
-        # DISCRETISING IT IS WHERE THE 5% GOES MISSING:
-        #   A  year-START sampling, Y_n = 58,000,000 - (n-1) x 2,900,000
-        #      Y1 58,000,000 | Y2 55,100,000 | Y19 5,800,000 | Y20 2,900,000 | zero in year 21
-        #      SUM 609,000,000 — OVER BUDGET BY 29,000,000 (+5.00%)
-        #   B  MIDPOINT sampling of the same triangle, Y_n = 58,000,000 x (41 - 2n) / 40
-        #      Y1 56,550,000 | Y2 53,650,000 | Y19 4,350,000 | Y20 1,450,000
-        #      SUM 580,000,000 — EXACT
-        #   C  year-START sampling rescaled to the budget, Y1 55,238,095, step -2,761,905
-        #      SUM 580,000,000 — EXACT, but Y1 no longer equals the triangle height
+        # Against the three implied bases that is not a near miss:
+        #      A  508,326,030   2.54x TGE      B  495,617,879   2.48x      C  484,120,028   2.42x
+        # A discretisation convention moves the answer by ~5%. This is a factor of 2.5. The gap
+        # falsifies the ASSUMPTION, not the arithmetic — no sampling convention reaches it.
         #
-        # SEPARATELY, THE SUPPLIED TABLE'S TAIL IS OFF BY ONE YEAR against its own stated step:
-        # it gives "Y19 2,900,000, Y20 0", but 58,000,000 - 18 x 2,900,000 = 5,800,000 for Y19 and
-        # 2,900,000 for Y20, reaching zero in year 21. Variant A above uses the stated step and
-        # carries the consequence; the "Y20 0" reading is not reproducible from it.
+        # WHY THE HYPOTHESIS WAS WRONG, and it is a mechanical reason rather than a data problem:
+        # 11.41% is almost certainly a SPOT MEASUREMENT — one year's mint over CIRCULATING SUPPLY
+        # AT THE TIME The Block's article was written — not a constant of the schedule. A schedule
+        # minting a fixed, DECLINING ABSOLUTE amount each year produces a FALLING PERCENTAGE
+        # automatically, because the denominator keeps growing as unlocks land. So the percentage
+        # is a ratio of two moving quantities observed once. Treating it as the schedule's Year-1
+        # constant asks a rate to do the job of a token count, and that is what produced a base
+        # 2.5x too large. (Had 11.41% been TGE-anchored, year one would mint 200,000,000 x 0.1141
+        # = 22,820,000 WMTX — against a triangle height of 58,000,000, the same 2.54x apart.)
         #
-        # ** AND THE VALIDATION TEST'S ANSWER DEPENDS ON WHICH VARIANT IS RIGHT. ** The test is:
-        # if year one is 11.41% inflation, the base is year_one / 0.1141, and a TGE circulating
-        # supply matching it confirms linear decay. But:
-        #      A -> 508,326,030      B -> 495,617,879      C -> 484,120,028
-        # Those are ~5% apart, so a TGE figure known only to the nearest 10m cannot separate them,
-        # while one known precisely separates all three. Run the test against ALL THREE, not
-        # against 508,326,030 alone — matching one variant confirms linearity AND fixes the
-        # convention in a single check.
+        # SO TWO SEPARATE, NON-COMPETING FACTS ARE DECLARED, and they are not made to agree:
+        #   1. STRUCTURAL, in tokens — inflation_budget below. 580,000,000 WMTX (29% of 2bn) over
+        #      20 years, front-loaded to nil in year 20, from the MiCA whitepaper. Solid.
+        #   2. POINT-IN-TIME, as a percentage — inflation_rate_reference below. 11.41% of
+        #      CIRCULATING SUPPLY at the date of The Block's article. A reference value at a date,
+        #      never a schedule parameter.
+        # Fact 2 SANITY-CHECKS fact 1 and does not calibrate it: take the schedule's mint for
+        # whichever year contains that date, divide by circulating supply at that date, and see
+        # whether it lands near 11.41%. Near is the whole standard — percentages from two
+        # measurement conventions rarely agree exactly, and forcing an exact match would be
+        # back-solving again in the other direction.
         #
-        # NO SCHEDULE STEP IS DECLARED, for one remaining reason and no longer for four: the DECAY
-        # FORM is still an assumption. Linear is not confirmed from World Mobile's own materials,
-        # and a GEOMETRIC decay (fixed % reduction per year) hits the same endpoints with a
-        # different curve and the same 580,000,000 total. Front-loading is confirmed; its shape is
-        # not. Also still missing: the emission START DATE — WMT migrated to WMTx and which event
-        # starts the clock is not established, so even the correct curve cannot be placed on a
-        # calendar.
+        # THE DISCRETISATIONS ARE KEPT, DEMOTED. They still describe how to turn the continuous
+        # ramp into annual figures, and the +5% shortfall in the year-start reading is still a real
+        # property worth recording. What is gone is their role as competing candidates to be
+        # separated by a TGE test — there is no such test.
+        #
+        # NO SCHEDULE STEP IS DECLARED, for one reason: the DECAY FORM. Linear is not confirmed
+        # from World Mobile's own materials, and GEOMETRIC decay hits the same endpoints with the
+        # same 580,000,000 total. THE TGE FIGURE CANNOT SETTLE THIS EITHER — it was only ever going
+        # to bear on the base, and the base is no longer the question. The one document that would
+        # close it outright is World Mobile's tokenomics paper, linked separately from their FAQ
+        # and not yet fetched. Also still missing: the emission START DATE.
         # ---------------------------------------------------------------------------------------
         "issuance_schedule": None,
         "inflation_budget": {
@@ -1817,19 +1874,77 @@ PROJECTS = [
                                          "to 579,999,950, fifty tokens light. Recorded rather than "
                                          "silently absorbed: it is rounding, not a fourth variant."},
             },
-            "validation_test": {
-                "rule": "base = year_one / 0.1141; a matching TGE circulating supply confirms linear decay",
+            # WITHDRAWN 2026-09-15. Kept as a record of a test that was run and DROPPED, because a
+            # dropped hypothesis that leaves no trace gets re-proposed.
+            "validation_test_withdrawn": {
+                "was": "base = year_one / 0.1141; a matching TGE circulating supply confirms linear decay",
                 "implied_base_by_variant": {"A": 508_326_030, "B": 495_617_879, "C": 484_120_028},
-                "note": "RUN IT AGAINST ALL THREE. They are ~5% apart: a TGE figure known precisely "
-                        "confirms linearity AND fixes the sampling convention in one check. A TGE figure "
-                        "known only roughly separates none of them. If it matches NONE, the decay is "
-                        "likely GEOMETRIC — same endpoints, same 580,000,000 total, different curve.",
+                "tge_circulating": 200_000_000,
+                "ratios_to_tge": {"A": 2.54, "B": 2.48, "C": 2.42},
+                "why_withdrawn": "the variants imply bases 2.4x-2.5x TGE circulating supply. A "
+                                 "discretisation convention moves the answer ~5%; this is a factor of "
+                                 "2.5, so the gap falsifies the premise rather than choosing between "
+                                 "the variants. 11.41% is a SPOT measurement against circulating supply "
+                                 "at a date, not a schedule constant — see inflation_rate_reference.",
+                "do_not_reinstate": "DO NOT back-solve a token schedule from a percentage again. A "
+                                    "declining absolute mint over a growing circulating supply yields a "
+                                    "falling percentage on its own; the percentage carries no "
+                                    "information about the base without the denominator it was taken "
+                                    "against.",
             },
             "the_single_open_assumption": "THE DECAY FORM. Linear is not confirmed from World Mobile's "
                                           "own materials; geometric decay reaches the same endpoints with "
-                                          "the same total.",
+                                          "the same total. THE TGE FIGURE CANNOT SETTLE THIS — it bore "
+                                          "only on the base, which is no longer the question. World "
+                                          "Mobile's tokenomics paper (linked from their FAQ, not yet "
+                                          "fetched) is the one document that would close it.",
             "also_missing": "the emission START DATE. WMT migrated to WMTx and which event starts the "
                             "clock is not established, so the curve cannot be placed on a calendar.",
+        },
+        # THE TGE, from World Mobile's own glossary. A DATED ABSOLUTE FACT, and the only reason it
+        # is recorded is that it falsified the percentage-anchored reading above — it is not an
+        # input to any schedule.
+        "tge": {
+            "ran_from": "2021-07-04", "ran_to": "2021-08-16",
+            "released_pct_of_total_supply": 0.10,
+            "released_tokens": 200_000_000,
+            "symbol_at_the_time": "WMT",
+            "source_url": "https://faq.worldmobiletoken.com/docs/token-faq/tge-archive",
+            "second_source": "https://worldmobile101.com",
+            "source_date": "2026-09-15",
+            "note": "10% of the 2,000,000,000 total. NOT a base for the inflation schedule — see "
+                    "validation_test_withdrawn.",
+        },
+        # A PERCENTAGE AT A DATE, STORED AS A REFERENCE AND NOTHING ELSE.
+        # 11.41% is a ratio of two moving quantities — a year's mint over circulating supply at the
+        # moment of measurement — so it is meaningless without the date it was taken on, and it
+        # cannot be turned back into a token count without the denominator.
+        #
+        # ** THE ARTICLE'S PUBLICATION DATE IS NOT ON FILE, AND THAT IS THE MISSING PIECE. ** Until
+        # it is known, this reference cannot be placed against a schedule year and the sanity check
+        # below cannot be run at all. Recorded as a gap rather than filled with a guess: dating it
+        # to "sometime in 2026" would put it in any of three schedule years whose mints differ by
+        # ~6,000,000 WMTX.
+        "inflation_rate_reference": {
+            "value_pct": 0.1141,
+            "measured_against": "CIRCULATING SUPPLY at the time of measurement",
+            "is_schedule_parameter": False,
+            "kind": "point_in_time_reference",
+            "attributed_to": "The Block, theblock.co/price/257077/world-mobile-token",
+            "article_published": None,
+            "article_published_status": "NOT ON FILE — find and record it. Without the date this "
+                                        "reference cannot be matched to a schedule year, and the "
+                                        "sanity check below cannot be performed.",
+            "sanity_check": "take the declared schedule's mint for whichever year contains the "
+                            "article's date, divide by circulating supply at that date, and see "
+                            "whether it lands NEAR 11.41%. Near is the standard. Percentages from two "
+                            "measurement conventions rarely agree exactly, and forcing an exact match "
+                            "is back-solving in the other direction.",
+            "why_it_falls_over_time": "a fixed, DECLINING absolute mint divided by a GROWING "
+                                      "circulating supply produces a falling percentage regardless of "
+                                      "the schedule's shape. So a falling rate is not evidence of any "
+                                      "particular curve.",
+            "source_date": "2026-09-15",
         },
         # ================= TWO REWARD STREAMS, MECHANICALLY DIFFERENT. ARCHETYPE 2 =================
         # This is the load-bearing distinction for World Mobile's supply side, and it is now from

@@ -2607,23 +2607,104 @@ def test_world_mobile_inflation_budget_and_the_schedule_that_does_not_close():
     assert sum(series_c) - budget["tokens"] == c["rounding_residual"] == -50
     assert abs(c["exact_y1"] - budget["tokens"] / 10.5) < 1e-6, "C's exact y1 must be budget/10.5"
 
-    # ** THE VALIDATION TEST'S ANSWER DEPENDS ON THE CONVENTION. ** This is the reason all three
-    # are kept: the implied TGE base differs by ~5% across them, so the 11.41% check separates
-    # them only if TGE circulating is known precisely.
-    # C is checked against its EXACT y1, not the rounded one in the series: rounding y1 down by
-    # 0.238 tokens moves the implied base by ~2, which is noise against a 24,000,000 spread but
-    # would still trip a tight assertion. The recorded base is the exact one.
-    implied = d["validation_test"]["implied_base_by_variant"]
+    # ** THE PERCENTAGE-ANCHORED TEST IS WITHDRAWN, AND THIS ASSERTS WHY RATHER THAN JUST THAT. **
+    # The old test back-solved a base from 11.41% and checked it against TGE circulating supply.
+    # World Mobile's own TGE glossary gives 200,000,000 WMT — and every variant implies a base
+    # 2.4x-2.5x that. A sampling convention moves the answer ~5%, so a 2.5x gap falsifies the
+    # premise rather than choosing between the variants.
+    #
+    # C is checked against its EXACT y1, not the rounded one: rounding y1 down by 0.238 tokens
+    # moves the implied base by ~2, noise against the spread but enough to trip a tight assertion.
+    w = d["validation_test_withdrawn"]
+    assert w["tge_circulating"] == p["tge"]["released_tokens"] == 200_000_000
+    assert p["tge"]["released_pct_of_total_supply"] * cap == 200_000_000, "TGE was 10% of the 2bn cap"
     for key, first_year in (("A", series_a[0]), ("B", series_b[0]), ("C", c["exact_y1"])):
-        assert abs(first_year / 0.1141 - implied[key]) < 1.0, f"variant {key} base mismatch"
-    spread = (max(implied.values()) - min(implied.values())) / max(implied.values())
-    assert spread > 0.04, "if the variants ever converge, the 'run it against all three' advice is stale"
+        implied = first_year / 0.1141
+        assert abs(implied - w["implied_base_by_variant"][key]) < 1.0, f"variant {key} base mismatch"
+        ratio = implied / w["tge_circulating"]
+        assert abs(ratio - w["ratios_to_tge"][key]) < 0.01, f"variant {key} TGE ratio mismatch"
+        # THE POINT: falsified by a factor, not by a margin. Every variant is >2x out, which is
+        # more than an order of magnitude beyond the ~5% the conventions differ by.
+        assert ratio > 2.0, f"variant {key} would have to be >2x TGE for the premise to fail"
 
-    # The one remaining assumption is named, and it is the DECAY FORM — not the base, which the
-    # budget now supplies, and not the horizon, which is corrected to 20 years.
+    # 11.41% is now a POINT-IN-TIME REFERENCE, not a schedule parameter, and nothing may read it
+    # as one. Its date is the missing piece and is recorded as missing rather than guessed.
+    ref = p["inflation_rate_reference"]
+    assert ref["is_schedule_parameter"] is False
+    assert ref["kind"] == "point_in_time_reference"
+    assert ref["measured_against"].startswith("CIRCULATING SUPPLY")
+    assert ref["article_published"] is None, "the article date must stay None until it is known"
+    assert "NOT ON FILE" in ref["article_published_status"]
+
+    # The one remaining assumption is the DECAY FORM — not the base, which is no longer the
+    # question, and not the horizon, which is corrected to 20 years.
     assert "DECAY FORM" in d["the_single_open_assumption"]
+    assert "TGE FIGURE CANNOT SETTLE THIS" in d["the_single_open_assumption"], \
+        "the decay form must not be recorded as answerable by the TGE figure"
     assert p["issuance_schedule"] is None, "no step may be declared while the decay form is assumed"
-    print("World Mobile ok: 580m/20yr certain, three discretisations, the 5% gap asserted not hidden")
+    print("World Mobile ok: 580m/20yr certain, the TGE anchor falsifies the percentage test by >2x")
+
+
+def test_ultrasound_total_supply_is_a_crosscheck_and_cannot_anchor_on_a_component():
+    """The enabled entry must not be able to store a COMPONENT as Ethereum's supply.
+
+    ultrasound.money prints the total beside its three inputs, and the largest — EVM balances at
+    167,722,332.48 — is 37.4% above the total of 122,043,141.99. A DOM anchor matching a
+    component label would store that as total supply, and it would pass the generic total_supply
+    bounds of 0..1e15 and render as ok. Two defences are asserted here: the anchor names the
+    total, and Ethereum's own sanity bound is narrow enough to REJECT the component outright.
+    """
+    import yaml
+    from fetch.scrape import entry_ready
+
+    entries = {e["metric"]: e for e in yaml.safe_load(open("sources.yaml"))
+               if e["project"] == "Ethereum" and "ultrasound" in str(e.get("url") or "")}
+    assert set(entries) == {"total_supply_dashboard", "gross_issuance_tokens",
+                            "gross_burn_tokens", "net_mint_monthly"}
+
+    live = entries["total_supply_dashboard"]
+    assert live["enabled"] is True and entry_ready(live) == (True, "")
+    assert live["method"] == "dom"
+    assert live["anchor"] == "Total supply", \
+        f"anchor must name the TOTAL, not a component; got {live['anchor']!r}"
+    assert "EVM balances" != live["anchor"]
+
+    # THE SECOND DEFENCE. The component must be rejected by Ethereum's bound, and the real figure
+    # must be accepted by it — a bound that rejects both would just be broken.
+    lo, hi = config.sanity_bounds("Ethereum", "total_supply_dashboard")
+    component, total = 167_722_332.48, 122_043_141.99
+    assert not (lo <= component <= hi), "the EVM-balances component must fail the sanity gate"
+    assert lo <= total <= hi, "the real total must pass the sanity gate"
+    # And the generic bound would NOT have caught it — which is why the per-project one exists.
+    g_lo = config.METRICS["total_supply"]["sanity_min"]
+    g_hi = config.METRICS["total_supply"]["sanity_max"]
+    assert g_lo <= component <= g_hi, "generic bounds would have waved the component through"
+
+    # The published arithmetic closes, which is what makes this an independent construction
+    # rather than a restatement: execution layer + consensus layer - deposits.
+    assert abs((167_722_332.48 + 43_388_015.76 - 89_067_206.25) - total) < 0.005
+
+    # The other three stay DISABLED: their figures are client-side rendered and the served HTML
+    # carries the literal placeholder "0K ETH/year", so a DOM fallback would extract a zero.
+    for metric in ("gross_issuance_tokens", "gross_burn_tokens", "net_mint_monthly"):
+        e = entries[metric]
+        assert e["enabled"] is False, f"{metric} must stay disabled until the endpoint is known"
+        assert e["method"] == "xhr", f"{metric} must not be switched to dom"
+        assert "DO NOT switch this to method dom" in e["note"]
+
+    # Declared as a CROSS-CHECK, preferring the tier 1 primary — never as a replacement.
+    checks = [c for c in config.PROJECT_BY_NAME["Ethereum"]["cross_checks"]
+              if c["secondary"] == "total_supply_dashboard"]
+    assert len(checks) == 1
+    assert checks[0]["primary"] == "total_supply" and checks[0]["prefer"] == "primary"
+    # The two agreed to 0.00575%, so the tolerance is loose by orders of magnitude on purpose.
+    assert abs(122_050_160 - total) / 122_050_160 < checks[0]["tolerance"]
+
+    # Scoped to Ethereum alone, so no other archetype 1/4 project acquires a gap for it.
+    assert "total_supply_dashboard" in config.metrics_for_project(config.PROJECT_BY_NAME["Ethereum"])
+    for other in ("Bitcoin", "Solana", "Plume"):
+        assert "total_supply_dashboard" not in config.metrics_for_project(config.PROJECT_BY_NAME[other])
+    print("ultrasound ok: anchors the total, sanity bound rejects the component, three stay disabled")
 
 
 def test_world_mobile_decimals_are_read_from_the_contract_never_assumed():
