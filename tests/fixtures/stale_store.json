@@ -207,9 +207,9 @@
       "metric": "burn_address_balance",
       "written_under": "config when Sky had a burn_zero contract",
       "why": "the key is gone from config, so the row measures something this tool decided not to measure",
-      "expect_status": "ok",
+      "expect_status": "orphaned",
       "expect_confidence": "RED",
-      "expect_blank": false,
+      "expect_blank": true,
       "expect_reason_contains": "ORPHANED"
     },
     {
@@ -221,7 +221,7 @@
       "expect_status": "withdrawn",
       "expect_confidence": "RED",
       "expect_blank": true,
-      "expect_reason_contains": "no longer serves this metric"
+      "expect_reason_contains": "MEASURING CONTRACT WITHDRAWN"
     },
     {
       "transition": "suppressed_derivation",
@@ -232,7 +232,7 @@
       "expect_status": "suppressed",
       "expect_confidence": "RED",
       "expect_blank": true,
-      "expect_reason_contains": "derivation behind this figure is switched off"
+      "expect_reason_contains": "DERIVATION SUPPRESSED"
     },
     {
       "transition": "disputed_destination",
@@ -243,7 +243,7 @@
       "expect_status": "disputed",
       "expect_confidence": "RED",
       "expect_blank": true,
-      "expect_reason_contains": "the contract's ROLE"
+      "expect_reason_contains": "DESTINATION DISPUTED"
     },
     {
       "transition": "refuted_mechanism",
@@ -251,9 +251,9 @@
       "metric": "gross_burn_tokens",
       "written_under": "config before burn_mechanism.status='refuted'",
       "why": "a burn figure on a project positively established not to burn this way. Sourced from Dune so neither contract guard can claim it first",
-      "expect_status": "ok",
+      "expect_status": "refuted",
       "expect_confidence": "RED",
-      "expect_blank": false,
+      "expect_blank": true,
       "expect_reason_contains": "MECHANISM REFUTED"
     },
     {
@@ -262,9 +262,9 @@
       "metric": "buyback_fund_balance",
       "written_under": "config when the Reserve was read at a different address",
       "why": "the superseded measuring point",
-      "expect_status": "ok",
+      "expect_status": "measuring_point_changed",
       "expect_confidence": "RED",
-      "expect_blank": false,
+      "expect_blank": true,
       "expect_reason_contains": "MEASURING POINT CHANGED"
     },
     {

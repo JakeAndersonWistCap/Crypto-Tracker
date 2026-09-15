@@ -164,6 +164,106 @@ def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
     return float(w.iloc[-1]) if len(w) else None
 
 
+# =========================================================================================
+# WITHHELD — the one place that decides a stored number is WRONG, not merely uncertain.
+#
+# There are six ways config can withdraw a stored row's meaning, and until 2026-09-15 they were
+# handled in two different places with two different outcomes: three blanked the value, three
+# went RED and showed it anyway. That split was an accident of the order they were found in, not
+# a distinction anyone made — Maple's disputed destination was fixed by blanking because it was
+# found first, and the rest inherited whatever confidence_for happened to do.
+#
+# STANDARDISED: all six blank. The principle is the one that settled Maple, applied to its
+# siblings — a wrong number in a cell is worse than an empty one, because a reader acts on a
+# number and asks about a blank. Three of these previously put a figure on the sheet with RED
+# beside it, which asks the reader to notice a colour before trusting an arithmetic result.
+#
+# The reason travels with the row in `note`, so nothing is lost by blanking: what the figure was,
+# why it is withheld, and how to clear it are all still there.
+# =========================================================================================
+WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed",
+                     "measuring_point_changed", "refuted")
+
+
+def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None:
+    """(status, reason) when config says this stored figure is wrong, else None.
+
+    ONE FUNCTION, TWO CALLERS, SO THEY CANNOT DISAGREE. aggregate() uses it to blank the value
+    and set the status; confidence_for() uses it to return RED with the same reason. Before this
+    existed, aggregate knew about three of the six and confidence_for knew about five, which is
+    exactly how three mechanisms ended up displaying a number they had just declared wrong.
+
+    Order matters only for which reason is reported when several apply; every one of them blanks,
+    so no case can be lost by the ordering. Most specific first: a re-purposed contract is a more
+    useful thing to be told than a changed measuring point, even when both are true.
+    """
+    source = str(row.get("source") or "")
+
+    # 1. REMOVED. The contract key is gone from config, so the row measures something this tool
+    #    decided not to measure. Sky's burn_zero rows outlived their contract by days.
+    orphans = config.orphaned_contract_keys(project, source)
+    if orphans:
+        return "orphaned", (
+            f"ORPHANED — this row was written by contract(s) {', '.join(orphans)}, which are no "
+            f"longer in config. The store upserts and never deletes, so it survived their removal. "
+            f"It measures something this tool has decided not to measure, and its age says nothing "
+            f"about that. Clear it from the store; see orphan_cleanup.sql.")
+
+    # 2. RE-PURPOSED. The key is still there and its KIND moved. The orphan check above asks only
+    #    whether the key exists, so Ether.fi's sethfi rows passed it for two runs after the change.
+    withdrawn = config.withdrawn_contract_keys(project, metric, source)
+    if withdrawn:
+        return "withdrawn", (
+            f"MEASURING CONTRACT WITHDRAWN — this row was written by {', '.join(withdrawn)}, which "
+            f"still exists in config but no longer serves {metric}. The reading may be perfectly "
+            f"good; it belongs in a different column. Re-attribute or clear it; see "
+            f"orphan_cleanup.sql.")
+
+    # 3. DERIVATION SWITCHED OFF. Suppression stops NEW rows and cannot touch old ones — the same
+    #    asymmetry that let Maple's 0.51 survive its dispute.
+    supp = config.derivation_suppressed(project, metric)
+    if supp:
+        return "suppressed", (
+            f"DERIVATION SUPPRESSED — this figure came from a derivation config has since switched "
+            f"off, and it is a value the tool would no longer compute. {supp.get('why', '')} "
+            f"Cleared by: {supp.get('resolves_when', 'see config')}. Clear the stored rows; see "
+            f"orphan_cleanup.sql.").strip()
+
+    # 4. ROLE IN DOUBT. The address is right and the read works; what the contract IS for this
+    #    project is disputed. Burn, hold and distribute have opposite signs on float.
+    disputed = config.destination_disputed(project, metric)
+    if disputed:
+        return "disputed", (
+            f"DESTINATION DISPUTED — the role of contract(s) {', '.join(disputed['contracts'])} as "
+            f"this project's destination is in doubt, so no figure is shown whatever the store "
+            f"holds. {disputed.get('why', '')}").strip()
+
+    # 5. TWO MEASURING POINTS. A window spanning the change reports the move between two different
+    #    addresses as though it were a flow.
+    points = row.get("measuring_points") or ()
+    if len(points) > 1:
+        return "measuring_point_changed", (
+            f"MEASURING POINT CHANGED — this series was read from {len(points)} different places "
+            f"over its history ({', '.join(sorted(points))}). A window spanning the change reports "
+            f"the move between two different addresses as though it were a flow. The figure is not "
+            f"understated or overstated by a little; it is the gap between two unrelated "
+            f"measurements. Clear the superseded rows.")
+
+    # 6. MECHANISM REFUTED. Scoped to BURN_METRICS — a refuted burn mechanism says nothing about
+    #    total_supply. No "does this project claim a burn" guard is needed: burn_mechanism()
+    #    defaults to 'assumed' and never to 'refuted', so this only exists where declared.
+    if metric in config.BURN_METRICS:
+        mech = config.burn_mechanism(config.PROJECT_BY_NAME.get(project) or {})
+        if mech.get("status") == "refuted":
+            return "refuted", (
+                f"MECHANISM REFUTED — this project does not burn by {mech.get('model')!r} in a way "
+                f"{metric} can measure, and that has been positively established rather than "
+                f"assumed. The reading may be real; it is not this metric. {mech.get('note') or ''} "
+                f"Source: {mech.get('source_url') or mech.get('source_note') or 'see burn_mechanism in config'}. "
+                f"Clear the superseded rows; the adapter already refuses to write new ones.").strip()
+    return None
+
+
 def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> tuple[str, str]:
     """GREEN / AMBER / RED, derived mechanically. Returns (band, why).
 
@@ -173,89 +273,23 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     here is a judgement typed in by hand, because a hand-assigned confidence is an opinion that
     goes stale the moment the underlying data moves.
     """
-    if row["status"] in ("missing", "gap", "n/a", "disputed", "waiting", "withdrawn", "suppressed"):
+    # EMPTY OR NOT-APPLICABLE CELLS. These are states of the STORE, not verdicts on a figure —
+    # there is no number here to be wrong — so they are kept apart from the six withheld cases.
+    if row["status"] in ("missing", "gap", "n/a", "waiting"):
         return "RED", {"missing": "no value in the store",
                        "gap": "unresolved — see the Gap Report",
                        "n/a": "not applicable to this project",
-                       # RED, not AMBER, and for the same reason as an orphaned row: this is not a
-                       # low-confidence figure, it is one whose meaning has been withdrawn. The
-                       # address reads fine; what it measures is not what the column claims.
-                       "disputed": "the contract's ROLE as this project's destination is disputed — "
-                                   "the read works and the figure is not reported",
                        # RED because the cell is empty, not because anything is wrong: the guard is
                        # armed and waiting on a suppressed primary. The note says which.
                        "waiting": "armed cross-check, waiting on a suppressed primary — see the note",
-                       # Both RED for the orphan reason: not a low-confidence figure, a withdrawn
-                       # one. The store held it; config no longer says it means what the column says.
-                       "withdrawn": "the contract that wrote this no longer serves this metric — "
-                                    "the stored value is not reported",
-                       "suppressed": "the derivation behind this figure is switched off in config — "
-                                     "the stored value is not reported",
                        }[row["status"]]
 
-    # RED, not AMBER: these three are not low-confidence figures, they are known-false ones. Age
-    # and status say nothing about any of them, which is how they reached the sheet at full
-    # confidence. All three return immediately so nothing downstream can soften them.
-    orphans = config.orphaned_contract_keys(project, row.get("source") or "")
-    if orphans:
-        return "RED", (f"ORPHANED — this row was written by contract(s) {', '.join(orphans)}, which are "
-                       f"no longer in config. The store upserts and never deletes, so it survived their "
-                       f"removal. It measures something this tool has decided not to measure, and its "
-                       f"age says nothing about that. Clear it from the store; see RUNBOOK.")
-    # A CONTRACT THAT WAS RE-PURPOSED, not removed. The orphan check above only asks whether the
-    # key is still IN config; sethfi is, so it passed — while its kind had moved from
-    # ve_total_supply to stake_underlying and it no longer feeds locked_tokens at all. Ether.fi's
-    # stale rows stayed at the newest dates through two runs after the change, reading as ok.
-    withdrawn = config.withdrawn_contract_keys(project, metric, row.get("source") or "")
-    if withdrawn:
-        return "RED", (f"MEASURING CONTRACT WITHDRAWN — this row was written by "
-                       f"{', '.join(withdrawn)}, which still exists in config but no longer serves "
-                       f"{metric}. The store upserts and never deletes, so it survived the change "
-                       f"and sits at the newest date. The reading may be perfectly good; it belongs "
-                       f"in a different column. Re-attribute or clear it; see orphan_cleanup.sql.")
-    # A DERIVATION SUPPRESSED BY CONFIG, whose old output is still in the store. Suppression stops
-    # NEW rows and cannot touch old ones — the same asymmetry that let Maple's 0.51 survive its
-    # dispute. GEODNET's gross_issuance_tokens kept serving a stored 0 at status ok on a run where
-    # the derived tier wrote nothing.
-    _supp = config.derivation_suppressed(project, metric)
-    if _supp:
-        return "RED", (f"DERIVATION SUPPRESSED — this figure came from a derivation config has since "
-                       f"switched off, and it is a value the tool would no longer compute. "
-                       f"{_supp.get('why', '')} Cleared by: {_supp.get('resolves_when', 'see config')}. "
-                       f"Clear the stored rows; see orphan_cleanup.sql.").strip()
-    points = row.get("measuring_points") or ()
-    if len(points) > 1:
-        return "RED", (f"MEASURING POINT CHANGED — this series was read from {len(points)} different "
-                       f"places over its history ({', '.join(sorted(points))}). A window spanning the "
-                       f"change reports the move between two different addresses as though it were a "
-                       f"flow. The figure is not understated or overstated by a little; it is the gap "
-                       f"between two unrelated measurements. Clear the superseded rows.")
-    # A REFUTED MECHANISM IS A STRONGER CLAIM THAN AN ASSUMED ONE, AND IT USED TO RENDER GREEN.
-    # The AMBER branch further down only ever looked for "assumed", so every other status fell
-    # through clean — including "refuted", which means we have POSITIVELY ESTABLISHED that the
-    # protocol does not burn in a way this metric can measure. Silence was the worst possible
-    # answer to the most certain thing config can say.
-    #
-    # Same treatment as an orphaned row, and for the same reason: the number may be perfectly
-    # real and it is not what the column claims. Sky escaped this only by accident — its burn
-    # contract was DELETED, so the orphan guard above caught it through the source string. Had
-    # the contract been kept and only the mechanism flipped, nothing would have flagged it.
-    #
-    # Scoped to BURN_METRICS: a refuted burn mechanism says nothing about total_supply. And no
-    # guard on "does this project claim a burn" is needed here, unlike the assumed branch —
-    # burn_mechanism() defaults to 'assumed' and never to 'refuted', so this status only ever
-    # exists because somebody declared it.
-    if metric in config.BURN_METRICS:
-        mech = config.burn_mechanism(config.PROJECT_BY_NAME.get(project) or {})
-        if mech.get("status") == "refuted":
-            return "RED", (
-                f"MECHANISM REFUTED — this project does not burn by {mech.get('model')!r} in a way "
-                f"{metric} can measure, and that has been positively established rather than "
-                f"assumed. The reading may be real; it is not this metric. "
-                f"{mech.get('note') or ''} "
-                f"Source: {mech.get('source_url') or mech.get('source_note') or 'see burn_mechanism in config'}. "
-                f"Clear the superseded rows; the adapter already refuses to write new ones."
-            ).strip()
+    # THE SIX WITHHELD CASES, all RED and all blanked by aggregate(). Asked here directly rather
+    # than read off row["status"], so confidence_for gives the same answer whether or not
+    # aggregate has already run over the row.
+    w = withheld_for(project, metric, row)
+    if w:
+        return "RED", w[1]
 
     why = []
     # correct, and answering a different question from the column it sits in (failure mode 4)
@@ -409,52 +443,28 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if (name, metric) in review_keys:
                 row["status"] = "review" if row["status"] == "ok" else row["status"]
                 row["note"] = (row["note"] + " | " if row["note"] else "") + "flagged in the Review Queue"
-            # A DISPUTED DESTINATION SUPPRESSES THE FIGURE, AND IT HAS TO HAPPEN HERE.
-            # destination_status "disputed" stops the ADAPTER writing a new value; it cannot touch
-            # a value already in the store, and aggregate() only consults the Gap Report when the
-            # store has NO rows for a key (`if g is None or g.empty`, above). So Maple's 0.51
-            # SYRUP — written before the dispute was recorded — survived it and rendered as a
-            # healthy status 'ok' the next day, which is the precise failure the dispute existed
-            # to prevent. Clearing the row is still the right cleanup, but a human remembering to
-            # run a DELETE is not a guard.
-            # The values are BLANKED rather than shown with a warning: a wrong number in a cell is
-            # worse than an empty one, and the reason travels with the row in `note`.
-            # WITHDRAWN CONTRACT / SUPPRESSED DERIVATION — BLANKED, not merely flagged.
-            # Same reasoning as the disputed branch below, and the same failure they both fix: a
-            # config change that only guards the WRITE path leaves the old value in the store,
-            # and aggregate() consults the Gap Report only when the store has NO rows for a key
-            # (`if g is None or g.empty`, far above). So the stale figure wins.
+            # ================= ALL SIX WITHHELD CASES, HANDLED IN ONE PLACE =================
+            # A config change guards the WRITE path and cannot touch what is already stored, and
+            # aggregate() consults the Gap Report only when the store has NO rows for a key
+            # (`if g is None or g.empty`, far above). So a stale figure wins by default, every
+            # time, for every mechanism. Maple's 0.51 SYRUP was the first found; Ether.fi's
+            # sETHFI rows and GEODNET's derived zero were the same bug wearing different hats.
             #
-            # The value is BLANKED rather than shown with a warning because in both cases it is a
-            # number that measures the wrong thing: Ether.fi's assets sitting in the shares
-            # column, GEODNET's zero on a schedule-based issuance the supply delta cannot see. A
-            # wrong number in a cell is worse than an empty one, and the reason travels in `note`.
-            _withdrawn = config.withdrawn_contract_keys(name, metric, row.get("source") or "")
-            _supp = config.derivation_suppressed(name, metric)
-            if _withdrawn or _supp:
-                if _withdrawn:
-                    row["status"] = "withdrawn"
-                    row["note"] = (f"NOT REPORTED — contract(s) {', '.join(_withdrawn)} still exist "
-                                   f"but no longer serve {metric}, so this stored value measures "
-                                   f"something this column no longer means. "
-                                   + (row["note"] + " | " if row["note"] else ""))
-                else:
-                    row["status"] = "suppressed"
-                    row["note"] = (f"NOT REPORTED — the derivation behind this figure is suppressed "
-                                   f"in config, so the tool would no longer compute it. "
-                                   f"{_supp.get('why', '')} "
-                                   + (row["note"] + " | " if row["note"] else ""))
+            # THE VALUE IS BLANKED, NOT FLAGGED — and as of 2026-09-15 that is true of all six
+            # rather than three. Three of them used to go RED and print the number anyway, which
+            # asks a reader to notice a colour before trusting an arithmetic result. A wrong
+            # number in a cell is worse than an empty one: a number gets acted on, a blank gets
+            # asked about. The reason travels with the row in `note`, so nothing is lost.
+            #
+            # EVERY WINDOW IS BLANKED TOO, not just `now`. A trajectory built on a withdrawn
+            # figure is still a withdrawn figure, and q0..q3 are exactly where a reader would go
+            # looking for the number the blank cell did not give them.
+            withheld = withheld_for(name, metric, row)
+            if withheld:
+                row["status"], reason = withheld
+                row["note"] = f"NOT REPORTED — {reason}" + (f" | {row['note']}" if row["note"] else "")
                 for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
                     row[col] = None
-            _disputed = config.destination_disputed(name, metric)
-            if _disputed:
-                row["status"] = "disputed"
-                row["note"] = (f"NOT REPORTED — the role of contract(s) "
-                               f"{', '.join(_disputed['contracts'])} as this project's destination is "
-                               f"DISPUTED, so no figure is shown whatever the store holds. "
-                               f"{_disputed['why']}").strip()
-                for field in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
-                    row[field] = None
             row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
             rows.append(row)
     return pd.DataFrame(rows, columns=DATA_COLS)

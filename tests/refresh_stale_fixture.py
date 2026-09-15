@@ -246,9 +246,7 @@ def _marker(reason: str) -> str:
     reason = str(reason or "")
     for m in ("ORPHANED", "MEASURING CONTRACT WITHDRAWN", "DERIVATION SUPPRESSED",
               "MEASURING POINT CHANGED", "MECHANISM REFUTED",
-              "the contract's ROLE", "no longer serves this metric",
-              "derivation behind this figure is switched off",
-              "not applicable", "no value in the store"):
+              "DESTINATION DISPUTED", "not applicable", "no value in the store"):
         if m in reason:
             return m
     return ""

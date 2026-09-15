@@ -2693,29 +2693,56 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
         f"fixture covers {sorted(covered)} but declares {sorted(declared)} — missing " \
         f"{sorted(declared - covered)}"
 
-    # THE SIX RED BRANCHES this fixture was built against, in source order:
-    #   1. the status dict            missing / gap / n/a / disputed / waiting / withdrawn / suppressed
-    #   2. ORPHANED                   contract removed from config
-    #   3. MEASURING CONTRACT WITHDRAWN   contract re-purposed
-    #   4. DERIVATION SUPPRESSED      derivation switched off in config
-    #   5. MEASURING POINT CHANGED    series read from two places
-    #   6. MECHANISM REFUTED          project does not burn this way
-    EXPECTED_RED_BRANCHES = 6
+    # ** THE GUARD NOW COUNTS withheld_for's MECHANISMS, NOT confidence_for's RED RETURNS. **
+    # It used to count RED returns, which was a fair proxy while the six mechanisms were six
+    # separate branches. Consolidating them collapsed those six into one, so that count would
+    # now read 2 and tell us nothing — a guard that survives a refactor by being retuned to the
+    # new number is a guard that has stopped guarding. Counting the mechanisms themselves
+    # measures the thing the fixture is actually covering.
+    #
+    # THE SIX, in withheld_for's own order:
+    #   orphaned                 contract removed from config
+    #   withdrawn                contract re-purposed — its kind changed
+    #   suppressed               derivation switched off in config
+    #   disputed                 the contract's ROLE for this project is in doubt
+    #   measuring_point_changed  series read from two different places
+    #   refuted                  project does not burn the way this metric measures
+    EXPECTED_MECHANISMS = 6
 
-    tree = ast.parse(inspect.getsource(bw.confidence_for))
-    red = [n for n in ast.walk(tree)
-           if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple) and n.value.elts
-           and isinstance(n.value.elts[0], ast.Constant) and n.value.elts[0].value == "RED"]
-    assert len(red) == EXPECTED_RED_BRANCHES, (
-        f"confidence_for has {len(red)} RED branches, the fixture was built against "
-        f"{EXPECTED_RED_BRANCHES}. A new one needs a fixture row and a transition type in "
+    tree = ast.parse(inspect.getsource(bw.withheld_for))
+    returns = [n for n in ast.walk(tree)
+               if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple)
+               and n.value.elts and isinstance(n.value.elts[0], ast.Constant)]
+    assert len(returns) == EXPECTED_MECHANISMS, (
+        f"withheld_for returns {len(returns)} mechanisms, the fixture was built against "
+        f"{EXPECTED_MECHANISMS}. A new one needs a fixture row and a transition type in "
         f"tests/refresh_stale_fixture.py — bumping this number alone defeats the point.")
+
+    # Every mechanism withheld_for can return must be a declared status AND have a fixture row,
+    # matched by NAME rather than by count, so swapping one mechanism for another is caught too.
+    statuses = {n.value.elts[0].value for n in returns}
+    assert statuses == set(bw.WITHHELD_STATUSES), \
+        f"withheld_for returns {sorted(statuses)}, WITHHELD_STATUSES declares {sorted(bw.WITHHELD_STATUSES)}"
+    covered_statuses = {e["expect_status"] for e in data["expectations"]} - {"ok"}
+    assert covered_statuses == statuses, \
+        f"fixture exercises {sorted(covered_statuses)}, withheld_for can return {sorted(statuses)}"
+
+    # ** AND THE STANDARDISATION ITSELF, asserted rather than assumed: ALL SIX BLANK. ** This is
+    # the invariant that was false until 2026-09-15, when three of them went RED and printed the
+    # number anyway. If a seventh mechanism is added that flags without blanking, this fails.
+    for e in data["expectations"]:
+        if e["transition"] == "control":
+            continue
+        assert e["expect_blank"] is True, \
+            f"{e['transition']} on {e['project']}/{e['metric']} is RED but still shows its value — " \
+            f"all six withheld mechanisms must blank"
 
     # The fixture must be regenerable. If the definitions no longer produce the committed JSON,
     # something moved and the diff is the thing to read.
     assert data["rows"] and data["expectations"], "fixture is empty"
     assert len(data["rows"]) >= 15, f"fixture shrank to {len(data['rows'])} rows"
-    print(f"anti-rot ok: {len(declared)} transitions covered, {len(red)} RED branches accounted for")
+    print(f"anti-rot ok: {len(declared)} transitions covered, {len(returns)} withheld "
+          f"mechanisms accounted for, all six blanking")
 
 
 def test_etherfi_stale_locked_tokens_rows_do_not_survive_the_kind_change():
