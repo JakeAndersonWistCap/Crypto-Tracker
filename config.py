@@ -506,6 +506,48 @@ def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:
             if v.get("kind") in kinds and not v.get("verified")]
 
 
+def destination_disputed(project_name: str, metric: str) -> dict | None:
+    """The contracts serving this metric whose ROLE is disputed, or None.
+
+    destination_status "disputed" already stops the ADAPTER writing a new value. It did nothing
+    about a value already in the store, and that gap is not theoretical: Maple's 0.51 SYRUP was
+    written before the dispute was recorded, survived it, and rendered as status 'ok' a day later
+    — because aggregate() only consults the Gap Report when the store has NO rows for a key.
+
+    So the disputed flag has to reach the WORKBOOK too, not just the fetch. Config knows the role
+    is in doubt; the sheet must refuse to render a figure for it whatever the store holds. Clearing
+    the row is still the right cleanup, but a human remembering to run a DELETE is not a guard.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    keys, notes = [], []
+    for key, c in (p.get("contracts") or {}).items():
+        if c.get("destination_status") != "disputed":
+            continue
+        if KIND_METRIC.get(c.get("kind")) != metric:
+            continue
+        keys.append(key)
+        if c.get("destination_note"):
+            notes.append(c["destination_note"])
+    if not keys:
+        return None
+    return {"contracts": keys, "why": " ".join(notes)}
+
+
+# Contract kind -> the metric it serves. THE ONE COPY: fetch/chain.py aliases this rather than
+# keeping its own, because two copies of a kind->metric table is exactly the kind of second
+# source of truth that goes stale silently and puts a figure in the wrong column.
+KIND_METRIC = {
+    "erc20_total_supply": "total_supply",
+    "burn_address_balance": "burn_address_balance",
+    "ve_total_supply": "locked_tokens",
+    "buyback_fund_balance": "buyback_fund_balance",
+    "treasury_holding": "treasury_holding_tokens",
+    "stake_principal": "locked_tokens_principal",
+    "spl_mint": "total_supply",
+    "spl_token_account": "burn_address_balance",
+}
+
+
 BURN_METRICS = ("burn_address_balance", "gross_burn_tokens", "burn_revenue_funded")
 
 

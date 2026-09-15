@@ -173,10 +173,15 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     here is a judgement typed in by hand, because a hand-assigned confidence is an opinion that
     goes stale the moment the underlying data moves.
     """
-    if row["status"] in ("missing", "gap", "n/a"):
+    if row["status"] in ("missing", "gap", "n/a", "disputed"):
         return "RED", {"missing": "no value in the store",
                        "gap": "unresolved — see the Gap Report",
-                       "n/a": "not applicable to this project"}[row["status"]]
+                       "n/a": "not applicable to this project",
+                       # RED, not AMBER, and for the same reason as an orphaned row: this is not a
+                       # low-confidence figure, it is one whose meaning has been withdrawn. The
+                       # address reads fine; what it measures is not what the column claims.
+                       "disputed": "the contract's ROLE as this project's destination is disputed — "
+                                   "the read works and the figure is not reported"}[row["status"]]
 
     # RED, not AMBER: these two are not low-confidence figures, they are known-false ones. Age and
     # status say nothing about either, which is how both reached the sheet at full confidence.
@@ -328,6 +333,25 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if (name, metric) in review_keys:
                 row["status"] = "review" if row["status"] == "ok" else row["status"]
                 row["note"] = (row["note"] + " | " if row["note"] else "") + "flagged in the Review Queue"
+            # A DISPUTED DESTINATION SUPPRESSES THE FIGURE, AND IT HAS TO HAPPEN HERE.
+            # destination_status "disputed" stops the ADAPTER writing a new value; it cannot touch
+            # a value already in the store, and aggregate() only consults the Gap Report when the
+            # store has NO rows for a key (`if g is None or g.empty`, above). So Maple's 0.51
+            # SYRUP — written before the dispute was recorded — survived it and rendered as a
+            # healthy status 'ok' the next day, which is the precise failure the dispute existed
+            # to prevent. Clearing the row is still the right cleanup, but a human remembering to
+            # run a DELETE is not a guard.
+            # The values are BLANKED rather than shown with a warning: a wrong number in a cell is
+            # worse than an empty one, and the reason travels with the row in `note`.
+            _disputed = config.destination_disputed(name, metric)
+            if _disputed:
+                row["status"] = "disputed"
+                row["note"] = (f"NOT REPORTED — the role of contract(s) "
+                               f"{', '.join(_disputed['contracts'])} as this project's destination is "
+                               f"DISPUTED, so no figure is shown whatever the store holds. "
+                               f"{_disputed['why']}").strip()
+                for field in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                    row[field] = None
             row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
             rows.append(row)
     return pd.DataFrame(rows, columns=DATA_COLS)

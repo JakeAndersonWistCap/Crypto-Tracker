@@ -1891,6 +1891,59 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
           "77.66M parses, an unscaled 77.66 is rejected by the floor")
 
 
+def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
+    """The half of "disputed" that was missing, and the live run found it.
+
+    Marking the contract disputed stopped the ADAPTER writing a new value — the test below proves
+    that. It did nothing about the 0.51 SYRUP already in the store from the run before, because
+    aggregate() only consults the Gap Report when the store has NO rows for a key. So the figure
+    the dispute existed to suppress rendered as status 'ok' the following day, single-observation
+    AMBER, with nothing anywhere saying it was disputed.
+
+    Suppression now happens in aggregate() too, so it does not depend on anyone remembering to run
+    a DELETE.
+    """
+    import pandas as pd
+    import build_workbook as bw
+
+    assert config.destination_disputed("Maple", "treasury_holding_tokens"), \
+        "precondition: Maple's treasury contract is the disputed one"
+
+    stale = pd.DataFrame([{
+        "date": pd.Timestamp("2026-09-14"), "project": "Maple",
+        "metric": "treasury_holding_tokens", "value": 0.5125357033239131,
+        "source": "chain:ethereum:treasury", "tier": 2, "is_manual": False, "entered_on": ""}])
+
+    # NO gap row is passed, deliberately: the live symptom is that the gap never reaches this
+    # branch at all. If suppression depended on the gap being present, this test would pass for
+    # the wrong reason.
+    out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens")].iloc[0]
+
+    assert row["status"] == "disputed", f"a stale row under a dispute must not read 'ok': {row['status']}"
+    assert row["now"] is None, f"the figure must be blanked, not shown with a warning: {row['now']}"
+    assert all(row[f] is None for f in ("m1", "q0", "q1", "q2", "q3", "y1")), \
+        "every window must be blank too — a trajectory built on a withdrawn figure is still wrong"
+    assert row["confidence"] == "RED", \
+        f"RED, not AMBER: this is not low confidence, it is withdrawn meaning. Got {row['confidence']}"
+    assert "DISPUTED" in row["note"] and "treasury" in row["note"], \
+        f"the row must carry WHY, not just an empty cell: {row['note']!r}"
+
+    # AND THE NEGATIVE: an undisputed metric on the same project is untouched by any of this.
+    clean = pd.DataFrame([{
+        "date": pd.Timestamp("2026-09-14"), "project": "Maple", "metric": "total_supply",
+        "value": 1_190_000_000.0, "source": "chain:ethereum:token", "tier": 2,
+        "is_manual": False, "entered_on": ""}])
+    out2 = bw.aggregate(clean, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                        gaps=pd.DataFrame(), review=pd.DataFrame())
+    ok = out2[(out2.project == "Maple") & (out2.metric == "total_supply")].iloc[0]
+    assert ok["status"] == "ok" and ok["now"] == 1_190_000_000.0, \
+        f"only the disputed metric is suppressed: {ok['status']}, {ok['now']}"
+    print("disputed suppression ok: a stale 0.51 already in the store renders blank and RED, "
+          "with the reason attached; an undisputed metric is untouched")
+
+
 def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figure():
     """0.51 SYRUP against ~75.78m reported: the read was right, the ADDRESS was wrong.
 

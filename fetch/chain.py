@@ -52,25 +52,9 @@ ERC20_ABI = [
 ]
 
 # Metrics a contract read can produce, by contract kind.
-KIND_METRIC = {
-    "erc20_total_supply": "total_supply",
-    "burn_address_balance": "burn_address_balance",
-    "ve_total_supply": "locked_tokens",
-    "buyback_fund_balance": "buyback_fund_balance",
-    # A governance-controlled treasury that RECEIVES a buyback. Read as a balance like any other
-    # holder, and deliberately its own metric: it is neither burned nor locked.
-    "treasury_holding": "treasury_holding_tokens",
-    # THE PROTOCOL'S OWN NUMBER FOR THE SAME THING, kept as a SECOND metric rather than replacing
-    # the first. balanceOf(pool) counts every token sitting at the pool address — staked principal
-    # plus anything stray or in transit — so it is an UPPER BOUND. getTotalPrincipal() is the
-    # pool's own accounting. Storing both and comparing them is the point: agreement is
-    # confirmation, and divergence is a finding about what the balance actually contains.
-    "stake_principal": "locked_tokens_principal",
-    # Solana kinds. Declared so the gap report can name them precisely; the EVM adapter refuses
-    # them at the chain-coverage guard rather than failing obscurely.
-    "spl_mint": "total_supply",
-    "spl_token_account": "burn_address_balance",
-}
+# ALIASED FROM CONFIG, not redeclared. config.destination_disputed() needs the same table to
+# answer "which metric does this disputed contract serve", and two copies of it would drift.
+KIND_METRIC = config.KIND_METRIC
 
 # Contracts kept for reference, that serve NO metric. A burn executor is the contract release()
 # is called on — real, needed for the mechanism and for eth_getCode, and NOT where the tokens end
