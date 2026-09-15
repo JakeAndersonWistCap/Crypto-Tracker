@@ -2522,6 +2522,105 @@ def test_manual_overrides_suppress_gaps():
     print("manual overrides ok: a hand-entered metric is not reported as a gap")
 
 
+def test_etherfi_stale_locked_tokens_rows_do_not_survive_the_kind_change():
+    """THE LIVE FAILURE, REPRODUCED. A row written before the kind changed must not read 'ok'.
+
+    This is the test that was missing. The existing Ether.fi test asserts the kind mapping and
+    drives the adapter through a stub — it proves NEW rows go to locked_tokens_underlying, and it
+    proves nothing at all about the 795 locked_tokens rows already in Jake's store. Those rows
+    kept rendering as a healthy locked_tokens across two runs after the fix, with the newest of
+    them sourced chain:ethereum:sethfi:PARTIAL.
+
+    THE ORPHAN GUARD DID NOT CATCH IT, and the reason is exact: orphaned_contract_keys asks only
+    whether the key is still IN config. sethfi is. Its KIND moved. A contract can stop serving a
+    metric by being removed or by being re-purposed, and only the first was detected.
+    """
+    import pandas as pd
+    import build_workbook as bw
+
+    spec = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["sethfi"]
+    assert spec["kind"] == "stake_underlying", "precondition: the kind change is in place"
+    # The precondition that makes this a DIFFERENT bug from the orphan one.
+    assert config.orphaned_contract_keys("Ether.fi", "chain:ethereum:sethfi:PARTIAL") == [], \
+        "precondition: the orphan guard does NOT fire here — sethfi still exists"
+
+    stale = pd.DataFrame([{
+        "date": pd.Timestamp("2026-09-14"), "project": "Ether.fi", "metric": "locked_tokens",
+        "value": 111_163_214.703019, "source": "chain:ethereum:sethfi:PARTIAL", "tier": 2,
+        "is_manual": False, "entered_on": ""}])
+    out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    row = out[(out.project == "Ether.fi") & (out.metric == "locked_tokens")].iloc[0]
+
+    assert row["status"] == "withdrawn", f"must not read 'ok' after the kind change: {row['status']}"
+    assert row["now"] is None, "the assets figure must not sit in the shares column"
+    assert all(row[f] is None for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
+    assert row["confidence"] == "RED"
+    assert "sethfi" in row["note"] and "no longer serve" in row["note"]
+
+    # THE NEGATIVE THAT MATTERS MOST: the Dune history keeps its 794 days. This guard must not
+    # blank the series it was built to protect.
+    dune = pd.DataFrame([{
+        "date": pd.Timestamp("2026-09-10"), "project": "Ether.fi", "metric": "locked_tokens",
+        "value": 141_470_107.5, "source": "dune:8683038", "tier": 4,
+        "is_manual": False, "entered_on": ""}])
+    out2 = bw.aggregate(dune, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                        gaps=pd.DataFrame(), review=pd.DataFrame())
+    ok = out2[(out2.project == "Ether.fi") & (out2.metric == "locked_tokens")].iloc[0]
+    assert ok["status"] == "ok" and ok["now"] == 141_470_107.5, \
+        f"a non-contract source must be untouched: {ok['status']}, {ok['now']}"
+
+    # AND the same contract feeding its NEW metric is fine — the guard is about the pairing.
+    good = stale.copy(); good["metric"] = "locked_tokens_underlying"
+    out3 = bw.aggregate(good, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                        gaps=pd.DataFrame(), review=pd.DataFrame())
+    u = out3[(out3.project == "Ether.fi") & (out3.metric == "locked_tokens_underlying")].iloc[0]
+    assert u["status"] == "ok" and u["now"] == 111_163_214.703019
+    print("Ether.fi ok: a pre-change locked_tokens row reads withdrawn and blank; Dune history intact")
+
+
+def test_geodnet_stale_derived_zero_is_not_served_as_ok_on_read():
+    """The write-time gate does not reach a zero that is ALREADY in the store.
+
+    Run 20260915T120711Z: the derived tier made 0 OK calls and 1 skip, yet the Data tab showed
+    gross_issuance_tokens = 0 at status ok, source derived:d_supply:MECHANISM_ASSUMED. That value
+    was not written by that run. It was written before the suppression and kept being served.
+
+    Same shape as Maple's 0.51: aggregate() consults the Gap Report only when the store has NO
+    rows for a key, so a gap raised by the write path never reaches a key that already has a row.
+    No gap row is passed here, deliberately — if suppression depended on one, this would pass for
+    the wrong reason.
+    """
+    import pandas as pd
+    import build_workbook as bw
+
+    assert config.PROJECT_BY_NAME["GEODNET"]["issuance_derivation"]["suppressed"] is True
+
+    stale = pd.DataFrame([{
+        "date": pd.Timestamp("2026-09-14"), "project": "GEODNET",
+        "metric": "gross_issuance_tokens", "value": 0.0,
+        "source": "derived:d_supply:MECHANISM_ASSUMED", "tier": 2,
+        "is_manual": False, "entered_on": ""}])
+    out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    row = out[(out.project == "GEODNET") & (out.metric == "gross_issuance_tokens")].iloc[0]
+
+    assert row["status"] == "suppressed", f"a stored zero must not read 'ok': {row['status']}"
+    assert row["now"] is None, "a false zero must be blank, not shown — it feeds the burn/issuance ratio"
+    assert all(row[f] is None for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
+    assert row["confidence"] == "RED"
+    assert "suppressed" in row["note"].lower() and "per-miner" in row["note"].lower()
+
+    # THE CONTROL: the same metric on a project without the flag is served normally, so this
+    # cannot pass because issuance broke for everyone.
+    other = stale.copy(); other["project"] = "Uniswap"; other["value"] = 12_345.0
+    out2 = bw.aggregate(other, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                        gaps=pd.DataFrame(), review=pd.DataFrame())
+    ok = out2[(out2.project == "Uniswap") & (out2.metric == "gross_issuance_tokens")].iloc[0]
+    assert ok["status"] == "ok" and ok["now"] == 12_345.0, f"control broke: {ok['status']}, {ok['now']}"
+    print("GEODNET ok: a stored zero from before the suppression reads blank and RED on read")
+
+
 def test_geodnet_issuance_derivation_is_suppressed_and_gaps_instead_of_reading_zero():
     """A FALSE ZERO IS WORSE THAN A GAP, and this proves the suppression produces the gap.
 

@@ -266,3 +266,110 @@ SELECT metric, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last
  WHERE project = 'Ether.fi' AND metric IN ('locked_tokens', 'locked_tokens_underlying')
  GROUP BY metric, source
  ORDER BY metric, first;
+
+
+-- =====================================================================================
+-- 2026-09-15 (b) — TWO STALE ROWS FOUND ON A LIVE RUN, run 20260915T120711Z.
+--
+-- Both are the SAME BUG: a config change that guarded the WRITE path and could not touch
+-- what was already stored. The read-time guards added alongside this file now blank both
+-- in the workbook whatever the store holds, so THESE DELETES ARE HOUSEKEEPING, NOT THE
+-- FIX. Nothing renders wrongly while they sit here unreviewed.
+--
+-- SELECT ONLY. Review before anything is deleted, same as every previous cleanup.
+-- =====================================================================================
+
+-- ---------------------------------------------------------------------------------
+-- A. ETHER.FI locked_tokens — rows written by sethfi BEFORE its kind changed.
+--
+--    A1 IS A DIAGNOSTIC, NOT A CLEANUP, AND IT ANSWERS A QUESTION I COULD NOT ANSWER
+--    FROM HERE: is the newest sethfi-sourced row dated TODAY or EARLIER?
+--      dated EARLIER  -> the fix is on Jake's branch, the row is simply stale. Expected.
+--      dated TODAY    -> commit 672ae03 is NOT in the working copy that ran, and the
+--                        adapter is still writing locked_tokens from sethfi. Then the
+--                        cleanup below is premature — pull first.
+--    Run this one FIRST and read the date before doing anything else.
+SELECT MAX(date) AS newest_sethfi_row,
+       (SELECT MAX(date) FROM metrics) AS newest_row_in_store
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens' AND source LIKE '%sethfi%';
+
+-- A2. The full picture: which sources feed locked_tokens, and over what spans.
+--     Expect the Dune series to hold the history and sethfi to hold only recent dates.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+ GROUP BY source
+ ORDER BY first;
+
+-- A3. THE ROWS THEMSELVES. These are the ones the UPDATE in the previous section
+--     (2026-09-14, "3. THE MOVE") was written to re-attribute — it is still commented
+--     out and has never been run, which is why the contamination is still here.
+--     RE-ATTRIBUTE, DO NOT DELETE: the reading was correct, the column was wrong.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens' AND source LIKE '%sethfi%'
+ ORDER BY date;
+
+-- A4. Check the destination is clear before moving anything into it. The UPDATE would
+--     collide on the (date, project, metric) primary key if a date already exists on
+--     both sides. If this returns rows, resolve them before running the move.
+SELECT a.date, a.value AS locked_tokens_value, b.value AS underlying_value
+  FROM metrics a
+  JOIN metrics b
+    ON b.date = a.date AND b.project = a.project
+   AND b.metric = 'locked_tokens_underlying'
+ WHERE a.project = 'Ether.fi' AND a.metric = 'locked_tokens'
+   AND a.source LIKE '%sethfi%'
+ ORDER BY a.date;
+
+-- ---------------------------------------------------------------------------------
+-- B. GEODNET gross_issuance_tokens — the derived zero from before the suppression.
+--
+--    DELETE, DO NOT RE-ATTRIBUTE: unlike Ether.fi's, this reading was never right for
+--    any column. Issuance is schedule-based and per-miner and is not recoverable from a
+--    supply delta at any sampling interval, so the zero is not a figure in the wrong
+--    place — it is not a figure.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_issuance_tokens'
+ ORDER BY date;
+
+-- B2. Scope check before deleting: is every row derived, or did a real source ever write
+--     here? A non-derived row would be a measured figure and must NOT be swept up.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last,
+       SUM(CASE WHEN value = 0 THEN 1 ELSE 0 END) AS zero_rows
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_issuance_tokens'
+ GROUP BY source
+ ORDER BY first;
+
+-- B3. THE DELETE. Run only after reviewing B and B2. Commented out deliberately.
+--     Scoped to derived sources so a measured figure, if one ever lands, is not swept up.
+-- DELETE FROM metrics
+--  WHERE project = 'GEODNET' AND metric = 'gross_issuance_tokens'
+--    AND source LIKE 'derived:%';
+
+-- ---------------------------------------------------------------------------------
+-- C. THE SAME QUESTION ASKED EVERYWHERE ELSE — is either pattern hiding on other
+--    projects? Neither of these was looked for until it was reported by hand.
+--
+-- C1. Every stored row whose source names a contract key. Cross-check the key against
+--     config.PROJECT_BY_NAME[project]['contracts'][key]['kind'] and its KIND_METRIC
+--     mapping: any row whose metric does not match is the Ether.fi pattern again.
+--     (The read-time guard now catches these automatically; this finds them for cleanup.)
+SELECT project, metric, source, COUNT(*) AS rows, MAX(date) AS last
+  FROM metrics
+ WHERE source LIKE 'chain:%'
+ GROUP BY project, metric, source
+ ORDER BY project, metric;
+
+-- C2. Every derived row still in the store, so a future suppression has a list to check
+--     against rather than waiting for someone to spot a zero on a workbook tab.
+SELECT project, metric, source, COUNT(*) AS rows, MAX(date) AS last,
+       SUM(CASE WHEN value = 0 THEN 1 ELSE 0 END) AS zero_rows
+  FROM metrics
+ WHERE source LIKE 'derived:%'
+ GROUP BY project, metric, source
+ ORDER BY zero_rows DESC, project;

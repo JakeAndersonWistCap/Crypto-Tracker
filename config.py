@@ -511,6 +511,82 @@ def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
     return missing
 
 
+# A contract can stop serving a metric in TWO ways, and only one of them was being detected.
+#   REMOVED        the key is gone from config          -> orphaned_contract_keys, above
+#   RE-PURPOSED    the key is still there, kind changed -> NOTHING CAUGHT THIS
+# The second is what let Ether.fi's stale locked_tokens rows survive: sethfi is still a contract,
+# so the orphan check passed it, but its kind moved from ve_total_supply to stake_underlying and
+# it now feeds locked_tokens_underlying. The old rows kept rendering as a healthy locked_tokens.
+#
+# Kept SEPARATE from orphaned_contract_keys rather than folded into it, because the two say
+# different things to a reader: one is "this measurement was abandoned", the other is "this
+# measurement moved to a different column, and you are looking at the old one".
+def _flow_parents(metric: str) -> set:
+    """Metrics a contract may serve INDIRECTLY, by having its stock differenced into a flow.
+
+    WITHOUT THIS THE GUARD BELOW TURNS EVERY BURN FLOW RED. gross_burn_tokens rows carry the
+    source of the contract whose BALANCE was differenced — chain:bsc:burn_dead:delta — and that
+    contract's kind is burn_address_balance, not gross_burn_tokens. A naive "does this contract
+    serve this metric" test would call every one of them withdrawn. So a flow metric legitimately
+    accepts the contracts serving the stock it is derived from.
+    """
+    parents = {metric}
+    if metric == "gross_burn_tokens":
+        parents.add("burn_address_balance")
+    if metric == "burn_revenue_funded":
+        parents.add("burn_address_balance")
+    return parents
+
+
+def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list[str]:
+    """Contract keys named in a stored row's source that STILL EXIST but no longer serve `metric`.
+
+    The store upserts and never deletes, so changing a contract's `kind` stops new rows under the
+    old metric and leaves every old one in place, reading as current. Ether.fi's 795-point
+    locked_tokens series kept its sETHFI-sourced rows at the newest dates for exactly this reason,
+    through two runs after the kind was changed.
+
+    Returns [] when the source names no contract, when the keys are genuinely missing (that is
+    orphaned_contract_keys' job, and double-reporting would put two reasons on one cell), or when
+    the contract serves the metric directly or as the stock behind a derived flow.
+    """
+    src = str(source or "")
+    if not src.startswith("chain:"):
+        return []
+    contracts = (PROJECT_BY_NAME.get(project_name) or {}).get("contracts") or {}
+    if not contracts:
+        return []
+    body = ":".join(part for part in src.split(":")[1:]
+                    if part not in ("PARTIAL", "delta", "recurring-only"))
+    pieces = body[4:-1].split("+") if body.startswith("sum(") and body.endswith(")") else [body]
+    allowed = _flow_parents(metric)
+    withdrawn = []
+    for piece in pieces:
+        key = piece.split(":")[-1]
+        spec = contracts.get(key)
+        if spec is None:
+            continue                    # removed, not re-purposed — orphaned_contract_keys has it
+        if KIND_METRIC.get(spec.get("kind")) not in allowed:
+            withdrawn.append(key)
+    return withdrawn
+
+
+def derivation_suppressed(project_name: str, metric: str) -> dict | None:
+    """Is this metric's derivation suppressed by config for this project?
+
+    READ-TIME COMPANION to the write-time gate in fetch._derive_issuance. Suppressing the
+    derivation stops NEW rows; it cannot touch the ones already stored. GEODNET's
+    gross_issuance_tokens kept serving a stored 0 from derived:d_supply:MECHANISM_ASSUMED, at
+    status ok, on a run where the derived tier wrote nothing at all — the same shape as Maple's
+    0.51 surviving its dispute.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    spec = p.get("issuance_derivation") or {}
+    if metric == "gross_issuance_tokens" and spec.get("suppressed"):
+        return spec
+    return None
+
+
 def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:
     """Contract entries serving this metric that were never checked against protocol docs."""
     p = PROJECT_BY_NAME.get(project_name) or {}
