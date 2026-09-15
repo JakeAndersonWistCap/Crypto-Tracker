@@ -183,17 +183,26 @@ METRICS = {
     # The same figure as published on the protocol's own dashboard. Stored SEPARATELY so the two can
     # be compared: the contract read is preferred and the dashboard is a cross-check, with any
     # divergence flagged rather than one being silently picked.
-    "buyback_fund_balance_dashboard": {"label": "Buyback fund balance (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15},
+    # SCOPED, like total_supply_dashboard below. A *_dashboard metric is a CROSS-CHECK SECONDARY:
+    # it exists only where the protocol publishes a dashboard we have declared a cross-check
+    # against. Left unscoped it attached to all eleven archetype 3 projects and produced eight gap
+    # rows asking for a sources.yaml entry for a page that does not exist — noise that buries the
+    # two rows where a dashboard really is missing. Chainlink (metrics.chain.link/reserve) and
+    # Maple (maple.finance/transparency) are the two, and both already have entries.
+    "buyback_fund_balance_dashboard": {"label": "Buyback fund balance (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Chainlink", "Maple")},
     # Same pattern for lock rates. Where a project has BOTH a contract read and a published page,
     # the page is stored here rather than over the contract read: a tier 3 page must never
     # overwrite a verified tier 2 contract figure, it cross-checks it.
-    "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15},
-    # ETHEREUM ONLY, and scoped with only_projects rather than by archetype: every archetype 1 and
-    # 4 project would otherwise acquire this metric and a gap row for a dashboard that exists for
-    # exactly one chain. ultrasound.money publishes total ETH supply as execution layer + consensus
+    # Same scoping, same reason: Sky (info.skyeco.com/staking), Pendle (app.pendle.finance) and
+    # Aave (app.aave.com) are the three projects with a declared lock dashboard cross-check.
+    "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Sky", "Pendle", "Aave")},
+    # TWO CHAINS, scoped with only_projects rather than by archetype: every archetype 1 and 4
+    # project would otherwise acquire this metric and a gap row for a dashboard that does not
+    # exist for it. Ethereum (ultrasound.money) and Near (nearblocks.io/charts/near-supply) are
+    # the two that publish an independently-constructed supply figure. ultrasound.money publishes total ETH supply as execution layer + consensus
     # layer - deposits, which is a genuinely independent construction rather than a restatement of
     # the same vendor figure, so it cross-checks CoinGecko rather than duplicating it.
-    "total_supply_dashboard":     {"label": "Total supply (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum",)},
+    "total_supply_dashboard":     {"label": "Total supply (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near")},
     "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     # THE PROTOCOL'S OWN ACCOUNTING OF THE SAME THING, stored ALONGSIDE locked_tokens rather than
     # instead of it. locked_tokens is read as TOKEN.balanceOf(pool), which counts every token at
@@ -840,6 +849,20 @@ PROJECTS = [
         "coingecko_id": "ethereum",
         "defillama_fees_slug": "ethereum", "defillama_protocol": None, "defillama_chain": "Ethereum",
         "archetypes": [1, 4], "archetypes_held": [],
+        # ===== B4: EIP-1559 DESTROYS, IT DOES NOT SEND. =====
+        "not_applicable": {
+            "burn_address_balance":
+                "THERE IS NO ADDRESS. The EIP-1559 spec is explicit — 'the base fee is always burned "
+                "(i.e. it is destroyed by the protocol)' — so the burn is pure protocol accounting "
+                "and nothing ever holds or receives it. A balance cannot be read because there is "
+                "no balance. The flow is captured by gross_burn_tokens, which needs a published "
+                "figure (ultrasound.money) rather than a contract read. "
+                "DO NOT CONFLATE, if the conventional dead address is ever read for any reason: "
+                "third parties voluntarily send ETH there by choice, which is a separate and "
+                "unmeasured phenomenon with no protocol mechanism routing to it. A nonzero balance "
+                "at that address is voluntary third-party burns, NOT EIP-1559 activity. "
+                "Declared 2026-09-15.",
+        },
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://eips.ethereum.org/EIPS/eip-1559", "source_date": BRIEF_DATE, "status": "active",
                        "note": "EIP-1559 destroys the base fee — it is not sent to an address, so there is no burn-address "
@@ -1626,6 +1649,19 @@ PROJECTS = [
         "coingecko_id": "chainlink",
         "defillama_fees_slug": "chainlink", "defillama_protocol": "chainlink", "defillama_chain": None,
         "archetypes": [1, 3], "archetypes_held": [],
+        # ===== B2: NO ISSUANCE HAS EVER BEEN POSSIBLE, AND NONE EVER WILL BE. =====
+        "not_applicable": {
+            "gross_issuance_tokens":
+                "THE ENTIRE 1,000,000,000 LINK WAS MINTED AT GENESIS IN 2017 and no new tokens can "
+                "ever be created. What looks like circulating-supply growth is VESTING of "
+                "already-minted, previously-locked tokens (Team Managed Wallets, Public Token Sale "
+                "allocations) — a change in float, not in supply — and that vesting itself completed "
+                "in 2024. Sources: tokenomist.ai/chainlink; fitchhub.com's 2025 Chainlink tokenomics "
+                "review, explicit that 'no new tokens beyond the 1B cap will be minted... any "
+                "increase in circulating supply comes from that pre-existing pool'. This is not an "
+                "unsourced figure, it is a figure that does not exist. Same category as Fluid's "
+                "completed vesting and Morpho's absent issuance. Declared 2026-09-15.",
+        },
         "fee_split": {"share_to_buyback": None, "source_url": "https://blog.chain.link/chainlink-reserve/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
                       "note": "Payment Abstraction / SVR route revenue to the Chainlink Reserve and to staking. VERIFY the split."},
         "burn_split": None,
@@ -1707,6 +1743,36 @@ PROJECTS = [
             # The call is made on the pool; symbol() and decimals() come from LINK via
             # `underlying`, because a staking pool is not an ERC-20 and has neither. Taking 18 on
             # faith instead would be exactly the kind of assumption that produced Maple's 0.51.
+            # ===== B3: THE REWARD VAULT IS RECORDED AND DELIBERATELY NOT READ. =====
+            # actual_buyback_tokens IS already wired: it maps to contract kind
+            # buyback_fund_balance, and Chainlink's only contract of that kind is the RESERVE
+            # above. So the answer to "is it wired" is yes, to the Reserve.
+            #
+            # ** IT MUST NOT ALSO READ THE REWARD VAULT, AND MUST NOT READ THE SUM. ** Chainlink
+            # has TWO destinations with OPPOSITE signs on float — the Reserve HOLDS (locked
+            # supply, a multi-day withdrawal timelock with no withdrawals expected for years) and
+            # the reward vault DISTRIBUTES (yield paid out to stakers). This entry's own notes
+            # already record that the two are separated by METRIC and not merely by key, because
+            # the adapter SUMS every contract serving one metric (fetch/chain.py _emit_parts).
+            # Giving the vault kind buyback_fund_balance would therefore silently add a payout
+            # stream to a holding balance and call the total "repurchased and held".
+            #
+            # kind burn_executor puts it in REFERENCE_ONLY_KINDS, so the adapter logs it and reads
+            # nothing — the address is on file and cannot contribute a number by accident. If a
+            # "tokens distributed to stakers" metric is ever wanted, it needs its own metric key,
+            # not a second contract on this one.
+            "staking_reward_vault": _contract(
+                "0x996913c8c08472f584ab8834e925b06D0eb1D813", "ethereum", "burn_executor", "LINK",
+                "https://docs.chain.link/chainlink-automation/overview/supported-networks",
+                verified=UNVERIFIED, provenance="address supplied 2026-09-15; not checked against "
+                                                "Chainlink's own docs in this session",
+                holder_has_code=True,
+                purpose="Chainlink staking REWARD VAULT — the DISTRIBUTE destination. Reference only: "
+                        "it is not a buyback fund and must never be summed with the Reserve.",
+                note="NO READ SLOT, deliberately — see the comment above. Also UNVERIFIED: the "
+                     "address was provided rather than confirmed against Chainlink's own "
+                     "documentation, and this project does not promote an address to verified on "
+                     "the strength of it having been typed into a prompt."),
             "staking_community_principal": _contract(
                 "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e", "ethereum", "stake_principal", "LINK",
                 "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
@@ -2225,6 +2291,81 @@ PROJECTS = [
         "coingecko_id": "geodnet",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 4], "archetypes_held": [],
+        # ===== B7: MINER COUNT — A REAL FIGURE AT LAST, AND IT IS THIRD-PARTY. =====
+        # supply_units is GEODNET's archetype 2 metric AND the missing input for modelling network
+        # issuance from the per-miner halving schedule. One number closes both, which is why it was
+        # flagged as the highest-value single addition for this project.
+        #
+        # TWO DATED POINTS, NEITHER FROM GEODNET:
+        #   DePIN Scan    21,952 active devices (current)   — a live-ish tracker
+        #   Messari Q3'25 ~19,840 active miners, 20,500+ RTK base stations, 148 countries
+        # They corroborate each other on trend and scale. DePIN Scan is taken as the current
+        # reference; Messari is the earlier point that makes it a trend rather than a single read.
+        #
+        # ** FLAGGED THIRD-PARTY, AND THAT IS NOT A FORMALITY. ** Both are aggregators. GEODNET's
+        # own console exposes an "All Miners" toggle on its map
+        # (docs.geodnet.com/geodnet-console-platform-basics/geodnet-map-navigation); if that view
+        # publishes a count anywhere scrapable it would upgrade this from secondary to primary.
+        # Worth a look, not urgent — the scale is established either way.
+        "supply_units_reference": {
+            "value": 21_952,
+            "what": "active devices",
+            "source": "DePIN Scan", "source_kind": "third_party_aggregator",
+            "reference_date": "2026-09-15",
+            "also_reported": {"average_device_cost_usd": 694.54, "estimated_daily_earnings_usd": 1.80},
+            "earlier_point": {"value": 19_840, "what": "active satellite miners",
+                              "also": "20,500+ RTK base stations across 148 countries",
+                              "source": "Messari", "as_of": "2025-Q3"},
+            "primary_would_be": "GEODNET's own console map, 'All Miners' toggle — "
+                                "docs.geodnet.com/geodnet-console-platform-basics/geodnet-map-navigation",
+            "why_it_matters": "supply_units is BOTH the archetype 2 operating metric and the missing "
+                              "input for network issuance, which per_miner_reward_schedule cannot be "
+                              "turned into a network figure without a miner count.",
+            "status": "REFERENCE ONLY — not a stored metric. No source is configured to fetch it.",
+        },
+        # ===== B5 reference data: the burn trend, and a dated claim to test our own figures against.
+        "burn_reference": {
+            "accumulated_burn": [
+                {"tokens": 9_969_841, "as_of": "2025-01"},
+                {"tokens": 58_383_936, "as_of": "2026-06"},
+            ],
+            "use": "trend validation for the Dune-sourced gross_burn_tokens series — a scraped or "
+                   "queried figure that disagrees with this shape is a bug in the read, not a finding.",
+            "protocol_claim": {
+                "text": "GEOD is now net deflationary following the recent halving",
+                "source": "GEODNET's own account", "dated": "2026-08-01",
+                # ** A TESTABLE CLAIM, AND WE CANNOT TEST IT YET. ** Net supply needs issuance, and
+                # GEODNET's issuance is suppressed (see issuance_derivation) until a miner count
+                # makes the per-miner schedule computable. Recorded so the check gets run when it
+                # becomes possible rather than forgotten — and so that a derived net figure that
+                # DISAGREES with GEODNET's own dated claim is noticed as a conflict.
+                "check": "compare our own derived net supply change against this claim ONCE GEODNET's "
+                         "issuance is modelled. Cannot be done today: issuance is suppressed pending "
+                         "supply_units.",
+            },
+            "revenue": {"fees_30d_usd": 874_608, "annualised_usd": 8_030_000,
+                        "source": "DefiLlama", "reference_date": "2026-09-15",
+                        "earlier_estimate": {"annualised_usd": 5_000_000, "source": "Messari", "as_of": "2025-Q3"},
+                        "note": "consistent growth, not a contradiction."},
+        },
+        # ===== B5: BUYBACK AND BURN ARE ONE CONTINUOUS ACTION. NO FUND SITS BETWEEN THEM. =====
+        # DefiLlama's OWN methodology note for GEODNET's revenue metric states it directly: "80% of
+        # the fees are used to repurchase GEOD tokens from the open market and remove them from
+        # circulation." Bought and burned in one flow, straight to a dead wallet — there is no
+        # intermediate holding fund the way Sky has the Pause Proxy or Maple has the Treasury/SSF.
+        #
+        # The metric that DOES capture this mechanism is gross_burn_tokens, already wired
+        # (chain:polygon:burn_polygon, Dune 8683175). So this is not a fund address nobody has
+        # found; it is a fund that structurally does not exist.
+        "not_applicable": {
+            "buyback_fund_balance":
+                "NO INTERMEDIATE FUND EXISTS. DefiLlama's own revenue methodology for GEODNET: '80% "
+                "of the fees are used to repurchase GEOD tokens from the open market and remove them "
+                "from circulation' — purchase and burn are one continuous flow to a dead wallet, "
+                "with nothing holding tokens in between. Captured by gross_burn_tokens, already "
+                "wired. Searching for a fund address here would be searching for something the "
+                "mechanism does not have. Declared 2026-09-15.",
+        },
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": 0.80, "source_url": "https://geodnet.com/tokenomics", "source_date": BRIEF_DATE, "status": "active",
                        "note": "80% of console (data) revenue buys back and burns GEOD, 20% to the Foundation. "
@@ -3512,6 +3653,14 @@ PROJECTS = [
         # no burn contract, no dead address, and no market buyback of AERO itself. This is a
         # positive finding from the primary source, not an empty slot waiting to be filled.
         "archetypes": [3], "archetypes_held": [],
+        # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
+        "not_applicable": {
+            "buyback_fund_balance":
+                "destination_effect is yield_payout: repurchased AERO passes straight through to "
+                "lockers and no fund accumulates, so there is no balance to read. The metric "
+                "describes a HOLDING, and this mechanism holds nothing. Classified from config's "
+                "own destination_effect rather than per-project judgement. Declared 2026-09-15.",
+        },
         # NOT A BUYBACK PATTERN AT ALL, and share_to_buyback=1.0 must not be read as one. 100% of
         # swap fees route through gauges to the veAERO holders WHO VOTED FOR THAT SPECIFIC POOL,
         # and they are paid IN THE SWAP PAIR'S OWN TOKENS — never converted to AERO. So there is no
@@ -3737,6 +3886,17 @@ PROJECTS = [
         "coingecko_id": "sky",
         "defillama_fees_slug": "sky", "defillama_protocol": "sky", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # A3: the surplus passes THROUGH the Splitter and Flapper; only the Pause Proxy receives.
+        "not_applicable": {
+            "buyback_fund_balance":
+                "NO BUYBACK FUND EXISTS. Sky's surplus passes through the Splitter (MCD_SPLIT) and "
+                "the Flapper (MCD_FLAP), both of which are EXECUTORS — config's own contract notes "
+                "record that surplus passes through them and does not accumulate — and the SBE BEAM "
+                "is a rate controller holding nothing. The only address that RECEIVES is the Pause "
+                "Proxy, and that is already read as treasury_holding_tokens, which is the metric "
+                "for it. Reading a balance on an executor would be the Uniswap Firepit mistake "
+                "again. Declared 2026-09-15.",
+        },
         "fee_split": {
             "share_to_buyback": 0.55,
             # SOURCE: Messari, citing the Sky governance Executive Proposal approved 2026-08-13
@@ -4079,6 +4239,13 @@ PROJECTS = [
         "coingecko_id": "pendle",
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
+        "not_applicable": {
+            "buyback_fund_balance":
+                "destination_effect is yield_payout: repurchased PENDLE passes through to vePENDLE "
+                "holders and no fund accumulates, so there is no balance to read. The metric "
+                "describes a HOLDING, and this mechanism holds nothing. Declared 2026-09-15.",
+        },
         # TOKENOMICS CHANGED APRIL 2026, and the change supersedes the old emissions model
         # entirely. The buyback is now REVENUE-FUNDED and distributed to sPENDLE holders, replacing
         # gauge-voting emissions. The SHARE of revenue is NOT documented, so programmed=False and
@@ -4543,6 +4710,13 @@ PROJECTS = [
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
+        "not_applicable": {
+            "buyback_fund_balance":
+                "destination_effect is yield_payout: repurchased ETHFI passes through to stakers "
+                "and no fund accumulates, so there is no balance to read. The metric describes a "
+                "HOLDING, and this mechanism holds nothing. Declared 2026-09-15.",
+        },
         # TWO BUYBACK STREAMS, BOTH TO sETHFI HOLDERS, NEVER COLLAPSED INTO ONE.
         # They have different bases, different cadences and different confidence, and a single
         # share_to_buyback cannot express either honestly — so the top-level share stays None and
@@ -4799,16 +4973,90 @@ PROJECT_BY_NAME = {p["name"]: p for p in PROJECTS}
 
 
 def metrics_for_project(project: dict) -> list[str]:
-    """Metric keys that apply to a project, from its archetypes. Data-only derivation."""
+    """Metric keys that apply to a project, from its archetypes, MINUS its declared exclusions.
+
+    ARCHETYPE MEMBERSHIP IS A LIBRARY, NOT A CHECKLIST. A metric belonging to an archetype says
+    the archetype CAN have it, not that every project in it MUST. Chainlink minted its entire
+    supply at genesis, so gross_issuance_tokens is not an unfilled gap for Chainlink — it is a
+    figure that does not exist and never will. Reporting it as missing sends a reader looking for
+    a source that cannot be built, every run, for ever, and buries the rows that are real work.
+
+    A project's `not_applicable` block names those metrics with a one-line reason each. They drop
+    out of this list entirely, which removes them from the Gap Report (fetch/gaps.py iterates this
+    function) and renders them n/a on the sheet (build_workbook's `applicable`) — the two
+    consumers that already scope to it.
+
+    THE BAR IS "CANNOT EXIST", NOT "HAVE NOT SOURCED IT YET". A metric nobody has got round to is
+    a gap and must stay one. This is only for a figure the protocol's design rules out.
+    """
     arch = set(project["archetypes"])
+    na = project.get("not_applicable") or {}
     out = []
     for key, m in METRICS.items():
+        if key in na:
+            continue
         only = m.get("only_projects")
         if only and project["name"] not in only:
             continue
         if not m["archetypes"] or arch & set(m["archetypes"]):
             out.append(key)
     return out
+
+
+def not_applicable_reason(project_name: str, metric: str) -> str | None:
+    """Why this metric cannot exist for this project, or None if it is not declared inapplicable.
+
+    The reason is what makes the declaration reviewable. A metric quietly dropped from the Gap
+    Report with no recorded reason is indistinguishable from one nobody noticed was missing —
+    which is the failure this file keeps correcting in other forms.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return (p.get("not_applicable") or {}).get(metric)
+
+
+def _check_open_questions() -> list[str]:
+    """An open question whose TOPIC announces it is settled must carry a settled `status`.
+
+    THE FOUR STALE ROWS WERE NOT A DATA PROBLEM, THEY WERE A MISSING FIELD. Closure was written
+    into the prose — "CLOSED 2026-09-14...", "RESOLVED — the zero was the wrong address" — and
+    the Gap Report, which reads structure and not prose, went on listing them at P1/P2 for ever.
+    Deleting those four by hand would have left the next one to be found by eye.
+
+    So the prose and the field must agree, in both directions: a topic that says it is settled
+    with status open regenerates the bug, and a settled status on a topic that reads as an open
+    question hides live work.
+    """
+    settled_words = ("CLOSED", "RESOLVED", "ANSWERED", "SETTLED", "WITHDRAWN")
+    errs = []
+    for q in OPEN_QUESTIONS:
+        topic = str(q.get("topic") or "")
+        status = q.get("status") or "open"
+        announces = any(topic.upper().lstrip("[ ").startswith(w) for w in settled_words)
+        if announces and status == "open":
+            errs.append(f"{q.get('project')}: topic announces it is settled but status is 'open' — "
+                        f"set status, do not delete the entry: {topic[:70]!r}")
+        if not announces and status != "open":
+            errs.append(f"{q.get('project')}: status is {status!r} but the topic does not say so, "
+                        f"so a reader of the entry cannot tell: {topic[:70]!r}")
+        if status not in ("open", "closed", "resolved", "answered"):
+            errs.append(f"{q.get('project')}: unknown open-question status {status!r}")
+    return errs
+
+
+def _check_not_applicable() -> list[str]:
+    """Every not_applicable entry must name a real metric and carry a non-trivial reason.
+
+    The length floor is deliberate and low. It does not judge the reasoning; it stops a metric
+    being silenced with "n/a" or "" and no account of why, which is how a genuine gap gets lost.
+    """
+    errs = []
+    for p in PROJECTS:
+        for metric, reason in (p.get("not_applicable") or {}).items():
+            if metric not in METRICS:
+                errs.append(f"{p['name']}: not_applicable names unknown metric {metric!r}")
+            if not isinstance(reason, str) or len(reason.strip()) < 25:
+                errs.append(f"{p['name']}/{metric}: not_applicable needs a real reason, got {reason!r}")
+    return errs
 
 
 def sanity_bounds(project_name: str, metric: str) -> tuple[float | None, float | None]:
@@ -5119,7 +5367,22 @@ OPEN_QUESTIONS = [
     {
         "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
         "severity": 2,
-        "reason": "NOW SECOND-SOURCED (2026-09-15), AND STILL NOT ADDED — and the distance between those "
+        "reason": "SOURCE UPGRADED AGAIN 2026-09-15, AND STILL NOT ADDED — read the next paragraph "
+                  "before deciding, because the source class has genuinely changed.\n\n"
+                  "DefiLlama's OWN METHODOLOGY NOTE for GEODNET's revenue metric states the mechanism "
+                  "directly: '80% of the fees are used to repurchase GEOD tokens from the open market "
+                  "and remove them from circulation.' That is materially stronger than the Solana "
+                  "Compass article this question opened on. It is not a secondary article repeating a "
+                  "claim — it is the definition DefiLlama uses to COMPUTE the revenue figure this "
+                  "tool already consumes, which makes it primary-adjacent and, unusually, a source we "
+                  "are already depending on for something else.\n\n"
+                  "** FLAGGED FOR REVIEW, NOT ADDED UNILATERALLY. ** It is still not a GEODNET-authored "
+                  "GIP, and the standing bar for archetype 3 has been a protocol-authored statement of "
+                  "the revenue share and the buyback route. Whether DefiLlama's methodology note "
+                  "clears that bar is a judgement about the RULE, not about GEODNET, and changing a "
+                  "standing rule is Jake's call rather than something to slip in with a data update.\n\n"
+                  "The earlier reasoning, which still applies to the weaker sources: "
+                  "SECOND-SOURCED (2026-09-15), AND NOT ADDED — and the distance between those "
                   "two facts is the point of this entry. The 80/20 split itself is corroborated: 80% of "
                   "revenue to repurchase-and-burn, 20% to the Foundation, from a second source "
                   "independent of the Solana Compass claim that opened this question. Confidence in the "
@@ -5236,6 +5499,8 @@ OPEN_QUESTIONS = [
         "project": "Ether.fi",
         "topic": "ANSWERED 2026-09-14 — sETHFI COMPOUNDS. Recorded so it is not re-litigated.",
         "severity": 3,
+        # SETTLED — kept as the record, skipped by the Gap Report (fetch/gaps.py).
+        "status": "answered",
         "reason": "locked_tokens (staked sETHFI, SHARE supply, Dune 8683038) and "
                   "locked_tokens_underlying (ETHFI.balanceOf(sETHFI), ASSETS) are now two metrics. "
                   "THE READ IS SAFE EITHER WAY — balanceOf returns assets whether sETHFI compounds or "
@@ -5396,6 +5661,8 @@ OPEN_QUESTIONS = [
     {
         "project": "Uniswap", "topic": "RESOLVED — the zero was the wrong address, not a genuine absence of burn",
         "severity": 2,
+        # SETTLED — kept as the record, skipped by the Gap Report (fetch/gaps.py).
+        "status": "resolved",
         "reason": "KEPT AS A CORRECTION RATHER THAN DELETED, because the wrong reasoning was nearly "
                   "believed and would otherwise be re-derived. The Fire Pit balance read 0 and that was "
                   "explained as 'plausible, since Uniswap's burn is holder-elected and perhaps nobody "
@@ -5450,7 +5717,11 @@ OPEN_QUESTIONS = [
                       "post-overhaul to 2026-08-12. Do not collapse them into one.",
     },
     {
-        "project": "Venice AI", "topic": "RESOLVED — mechanism confirmed; what is left is the burn ADDRESS",
+        # TOPIC REWORDED 2026-09-15, not marked settled. The mechanism half closed and the topic
+        # was written from that half, so the row read as finished while its actual question — the
+        # burn ADDRESS — was still open. Leading with "RESOLVED" on a half-answered question is
+        # how a live item gets skimmed past. The status stays "open" because it is.
+        "project": "Venice AI", "topic": "WHICH ADDRESS does Venice burn to? Mechanism confirmed, destination not",
         "severity": 2,
         "reason": "THE MECHANISM QUESTION IS CLOSED. Venice burns by dead-address transfer, confirmed from "
                   "Venice's own material: a discretionary monthly channel (a Safe funded with USDC, spent "
@@ -5481,6 +5752,8 @@ OPEN_QUESTIONS = [
     {
         "project": "Uniswap", "topic": "CLOSED 2026-09-14 — the Unichain UNI address is no longer wanted",
         "severity": 3,
+        # SETTLED — kept as the record, skipped by the Gap Report (fetch/gaps.py).
+        "status": "closed",
         "reason": "THIS QUESTION DISSOLVED RATHER THAN BEING ANSWERED, and the reason is worth keeping so it is "
                   "not reopened as a to-do. The ask was for the bridged UNI address on Unichain, so the Unichain "
                   "TokenJar and Firepit could read and the PARTIAL marking could clear. Uniswap's own source says "
@@ -5521,6 +5794,8 @@ OPEN_QUESTIONS = [
     {
         "project": "Pendle", "topic": "CLOSED 2026-09-14 — sPENDLE symbol confirmed; the OPEN risk moved",
         "severity": 3,
+        # SETTLED — kept as the record, skipped by the Gap Report (fetch/gaps.py).
+        "status": "closed",
         "reason": "The expected symbol is CONFIRMED sPENDLE, so the symbol gate will no longer block a correct "
                   "address. THE REAL RISK MOVED RATHER THAN CLEARING: the address, the read method and now the "
                   "symbol are all settled, and what is unresolved is what the NUMBER MEANS — see the open "
@@ -5880,7 +6155,8 @@ def _check_declared_shapes() -> list[str]:
 
 def validate_config(raise_on_error: bool = True) -> list[str]:
     errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
-              + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes())
+              + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes()
+              + _check_not_applicable() + _check_open_questions())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

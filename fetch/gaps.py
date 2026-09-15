@@ -66,6 +66,12 @@ def _priority(project_name: str, metric: str, reason: str, severity: int | None 
         return P_DECISION
     if metric.startswith("[config]"):
         return P_SUPPRESSED
+    # BY DESIGN, NOT UNCOVERED. A registry entry that is disabled ON PURPOSE, with its page on
+    # file and its reason in the entry's note, is a decision someone made and recorded — the same
+    # category as a config-suppressed figure, and not the same as a metric nobody has looked at.
+    # Filing both at P6 made the to-do list longer than the work it represents.
+    if "deliberately disabled in sources.yaml" in reason.lower():
+        return P_SUPPRESSED
     if any(k in reason.lower() for k in ACTIONABLE_SIGNALS):
         return P_ACTIONABLE_HEADLINE if metric in HEADLINE_METRICS else P_ACTIONABLE
     return P_UNCOVERED
@@ -100,6 +106,14 @@ METRIC_CONTRACT_KIND = {
     # instead of falling through to "no source configured for this metric".
     "locked_tokens_principal": "stake_principal",
     "locked_tokens_underlying": "stake_underlying",
+    # WAS MISSING, and the omission produced the WRONG EXPLANATION on thirteen rows. A treasury
+    # holding IS served by a contract read (kind treasury_holding), so a project without one
+    # should be told to add the contract — not told "no sources.yaml entry for this metric",
+    # which sends the reader off to write a scraper for a figure a balance read already covers.
+    # Worse, it hid the opposite case: Near and GEODNET DO have treasury contracts on file, and
+    # their rows were reporting a missing registry entry rather than the real reason the read
+    # produced nothing.
+    "treasury_holding_tokens": "treasury_holding",
     # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
     # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",
@@ -316,7 +330,20 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
 
     # Open questions a human must settle. These are not "a metric has no data" — they are
     # decisions and confirmations, and they always appear so they cannot be forgotten.
+    #
+    # ** EXCEPT THE ONES THAT ARE NO LONGER OPEN, WHICH USED TO APPEAR ANYWAY. ** Every entry was
+    # emitted unconditionally with an "[open]" prefix, so a question that had been settled stayed
+    # on the P1/P2 list for ever — four of them were sitting there reading "[open] CLOSED
+    # 2026-09-14...", "[open] RESOLVED — the zero was the wrong address" and "[open] ANSWERED
+    # 2026-09-14 — sETHFI COMPOUNDS". Closure was recorded in the PROSE and nothing read it.
+    #
+    # Settled entries are NOT deleted from config. Several say so in their own text — the Uniswap
+    # zero-burn entry is kept precisely because the wrong reasoning was nearly convincing — and a
+    # deleted question is one that gets asked again. They are skipped HERE, on a structural
+    # `status` field, so the record survives and the to-do list does not carry it.
     for q in getattr(config, "OPEN_QUESTIONS", []):
+        if (q.get("status") or "open") != "open":
+            continue
         rows.append({
             "project": q["project"], "metric": f"[open] {q['topic']}",
             "tiers_attempted": "-", "reason": q["reason"], "suggestion": q["suggestion"],

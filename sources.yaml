@@ -289,6 +289,42 @@
   anchor: null                                      # TODO the label text beside the figure
   added: 2026-09-11
   note: "RWA.xyz has no API on our tier."
+# =====================================================================================
+# B8 — NEARBLOCKS SUPPLY CHART. A NET-SUPPLY CROSS-CHECK, AND DELIBERATELY NOT A BURN FIGURE.
+#
+# NEAR's burn metrics stay genuinely open and this entry does not close them. NearBlocks
+# exposes tokens_burnt PER TRANSACTION only; no free endpoint sums it network-wide, and
+# building the sum ourselves would mean iterating every transaction. Their Pro API might,
+# unconfirmed, and paid data is the constraint rather than engineering effort.
+#
+# What IS free is the Supply Chart — "a breakdown of daily block reward and total Near
+# supply... pulled directly from the NEAR blockchain". Same pattern as ultrasound.money
+# for Ethereum: an independent construction of a figure we already hold from CoinGecko.
+#
+# ** IT IS NET SUPPLY. IT DOES NOT DECOMPOSE. ** Issuance and burn are already combined by
+# the chain before this figure exists, so no burn number can be recovered from it. Do NOT
+# derive gross_burn_tokens or burn_address_balance here — those remain accepted,
+# currently-unfillable gaps, and a figure forced out of this chart would be a subtraction
+# of two things we do not separately have.
+#
+# DISABLED, like ultrasound.money's burn and issuance entries and for the same reason: the
+# extraction target is unverified from this sandbox and a guessed selector either extracts
+# nothing or extracts the wrong number quietly. robots.txt is likewise unverified — the
+# scraper enforces it per fetch regardless.
+# =====================================================================================
+- project: Near
+  metric: total_supply_dashboard
+  tier: 3
+  enabled: false
+  url: "https://nearblocks.io/charts/near-supply"
+  method: dom
+  anchor: null                                      # TODO the label beside the total-supply figure
+  added: 2026-09-15
+  note: >-
+    NET SUPPLY CROSS-CHECK on CoinGecko's total_supply, the same role ultrasound.money plays for
+    Ethereum. Pulled directly from the NEAR blockchain, so it is an independent construction
+    rather than a second vendor quote. DO NOT derive a burn figure from it - it is net of
+    issuance and burn and does not decompose. NEAR's burn metrics stay open.
 - project: Near
   metric: net_mint_monthly
   tier: 3

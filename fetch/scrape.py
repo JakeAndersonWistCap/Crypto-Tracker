@@ -119,7 +119,16 @@ def load_registry(path: Path | str = REGISTRY) -> list[dict]:
 def entry_ready(entry: dict) -> tuple[bool, str]:
     """Is this entry usable? Returns (ready, reason_if_not)."""
     if entry.get("enabled") is False:
-        return False, "entry disabled in sources.yaml"
+        # TWO VERY DIFFERENT THINGS WERE SAYING THE SAME SENTENCE, and the Gap Report filed both
+        # at P6 "uncovered". An entry disabled WITH a url on file is a diagnosed decision —
+        # robots.txt disallows the page, or the extraction target is not yet known — and the
+        # reason is written in the entry's own note. An entry disabled with url: null is an empty
+        # stub nobody has looked at. The first is "by design", the second is real untouched work,
+        # and collapsing them hides the second behind the first.
+        if entry.get("url"):
+            return False, ("entry DELIBERATELY disabled in sources.yaml — the page is on file "
+                           f"({entry.get('url')}) and the entry's note records why it is not armed")
+        return False, "entry disabled in sources.yaml — EMPTY STUB, no url on file yet"
     missing = [f for f in REQUIRED_FIELDS if not entry.get(f)]
     if missing:
         return False, f"sources.yaml entry incomplete — missing {', '.join(missing)}"
