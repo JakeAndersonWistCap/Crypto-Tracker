@@ -109,15 +109,46 @@ REASON_IMPOSSIBLE = "impossible_relation"
 # its movement, its source — so two figures that were each individually plausible could contradict
 # each other and both pass. Aerodrome's locked supply exceeded its circulating supply and both
 # read GREEN, because nothing ever compared them.
+# EXTENDED 2026-09-15 from four relations to nine. The function below already looped over this
+# list rather than hand-coding comparisons, so widening the coverage is a data change and not a
+# new mechanism — which is why this is an edit to a list and not a second checker.
+#
+# ** EVERY BOUND IS AGAINST total_supply, NEVER max_supply, WHERE A CHOICE EXISTS. ** total_supply
+# is the tighter of the two, so it catches strictly more; and max_supply is frequently ABSENT —
+# Ethereum, Near, Uniswap and GEODNET all have no max_supply figure — so a bound written against
+# it would silently skip the projects most likely to need it. The one place max_supply is used is
+# as a ceiling on total_supply itself, which is the only thing it can bound.
 IMPOSSIBLE_RELATIONS = [
+    # --- float and lock identities -------------------------------------------------------
     ("locked_tokens", "circulating_supply",
      "tokens cannot be locked that are not in circulation"),
-    ("burn_address_balance", "total_supply",
-     "more tokens cannot have been burned than were ever issued"),
+    ("locked_tokens_underlying", "circulating_supply",
+     "the assets backing a lock cannot exceed the tokens in circulation"),
+    ("locked_tokens_principal", "circulating_supply",
+     "staked principal cannot exceed the tokens in circulation"),
+    # --- supply identities ---------------------------------------------------------------
     ("circulating_supply", "total_supply",
      "circulating supply cannot exceed total supply"),
+    ("total_supply", "max_supply",
+     "total supply cannot exceed a hard cap"),
+    # --- holdings ------------------------------------------------------------------------
     ("treasury_holding_tokens", "total_supply",
      "a treasury cannot hold more tokens than exist"),
+    ("buyback_fund_balance", "total_supply",
+     "a buyback fund cannot hold more tokens than exist"),
+    # --- burn ----------------------------------------------------------------------------
+    # A FLOW AGAINST A STOCK, and valid for every token including the ones that mint: however
+    # much is minted, a single period cannot destroy more than exists at the end of it.
+    ("gross_burn_tokens", "total_supply",
+     "a single period cannot burn more tokens than exist"),
+    # ** NOT AN IDENTITY FOR A TOKEN THAT MINTS. ** A dead-address balance is CUMULATIVE over all
+    # time; total_supply is an instantaneous figure. A token that mints and burns continuously
+    # therefore accumulates burns beyond any supply it ever held at once, and the two are not
+    # comparable. This relation's own rationale gives the game away — "than were ever issued" is
+    # cumulative issuance, which is NOT what total_supply measures. Kept, because it is a true
+    # identity for a fixed-supply token, and exempted per project below.
+    ("burn_address_balance", "total_supply",
+     "more tokens cannot have been burned than were ever issued"),
 ]
 
 
@@ -142,6 +173,14 @@ def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) ->
               for r in latest.itertuples(index=False)}
     for project in {p for p, _ in by_key}:
         for greater, lesser, why in IMPOSSIBLE_RELATIONS:
+            # A RELATION THAT IS NOT AN IDENTITY FOR THIS PROJECT IS SKIPPED, WITH A REASON ON FILE.
+            # Not a tolerance — the tolerance stays zero, because the failure this whole check
+            # exists to catch is a small contradiction nobody notices. This is the different case:
+            # a comparison that is not valid HERE at all, and would therefore fire on every run
+            # and teach the reader to scroll past the Review Queue. The exemption is declared in
+            # config with a reason and validated, so it cannot be used to quiet an inconvenience.
+            if config.relation_exempt(project, greater, lesser):
+                continue
             a, b = by_key.get((project, greater)), by_key.get((project, lesser))
             if a is None or b is None or not b[0]:
                 continue

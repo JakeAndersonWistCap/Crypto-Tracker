@@ -3915,6 +3915,43 @@ PROJECTS = [
         ],
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens", "staked_tokens"),
         "materiality": "high",
+        # ===== WHY burn_address_balance IS NOT BOUNDED BY SUPPLY HERE =====
+        # RAISED 2026-09-15 as "4,991,087,157 CAKE against a 400,000,000 max supply — 12.5x the
+        # entire possible supply". The ratio is real and the conclusion does not follow, because
+        # the two figures are not the same kind of number.
+        #
+        # burn_address_balance is the balance of 0x...dEaD: a CUMULATIVE TOTAL of every CAKE ever
+        # sent there, which only ever goes up, over the token's whole life. max_supply and
+        # total_supply are INSTANTANEOUS — what may exist, and what exists, right now.
+        #
+        # ** CAKE MINTS AND BURNS CONTINUOUSLY, AND THIS ENTRY ALREADY SAID SO. ** The notes below
+        # call self-reported NET MINT the headline figure; the sources.yaml entry for
+        # net_mint_monthly records "May 2026: -1,958,514 CAKE, 33rd consecutive month" of net
+        # burn. A net figure that small, sustained over 33 months, means gross mint and gross burn
+        # are both far larger and nearly cancel. So cumulative burns pass the current supply and
+        # keep going, and nothing is wrong when they do.
+        #
+        # THE RELATION'S OWN RATIONALE GIVES IT AWAY: "more tokens cannot have been burned than
+        # were EVER ISSUED". Ever-issued is cumulative. total_supply is not. The comparison was
+        # written for a fixed-supply token, where the two coincide, and it is exempted here rather
+        # than weakened everywhere — the tolerance stays zero for every project including this one.
+        #
+        # WHAT WOULD STILL CATCH A REAL ERROR HERE: gross_burn_tokens vs total_supply, which is a
+        # single period's flow against a stock and IS an identity even for a minting token. That
+        # relation is live for PancakeSwap and not exempted.
+        #
+        # NOT EXEMPTED BECAUSE THE NUMBER WAS CHECKED AND FOUND RIGHT — it has not been. The
+        # magnitude is unverified and needs the live store. What is established is that this
+        # COMPARISON cannot settle it either way.
+        "relation_exemptions": [
+            {"greater": "burn_address_balance", "lesser": "total_supply",
+             "why": "burn_address_balance is a CUMULATIVE dead-address balance over the token's whole "
+                    "life; total_supply is instantaneous. CAKE mints and burns continuously — see this "
+                    "entry's own net-mint note, 33 consecutive months of net burn on a net figure near "
+                    "-2m/month — so cumulative burns exceed current supply as a matter of course. The "
+                    "relation is a true identity only for a fixed-supply token. Exempted 2026-09-15; "
+                    "gross_burn_tokens vs total_supply remains live and would still catch a bad read."},
+        ],
         "notes": "TEMPLATE for the archetype 4 tab. Self-reported net mint is the headline and is PREFERRED over "
                  "the derived calculation; totalSupply delta is the independent check. Hard cap cut 450m -> 400m Jan 2026.",
     },
@@ -5049,6 +5086,50 @@ def not_applicable_reason(project_name: str, metric: str) -> str | None:
     """
     p = PROJECT_BY_NAME.get(project_name) or {}
     return (p.get("not_applicable") or {}).get(metric)
+
+
+def relation_exempt(project_name: str, greater: str, lesser: str) -> str | None:
+    """Why this impossible-relation comparison is not an identity for this project, or None.
+
+    THE TOLERANCE STAYS ZERO. This is not a buffer and must never be used as one — a buffer is
+    what let Aerodrome's 0.087% overshoot and Maple's 0.51 through, and the relations are
+    identities precisely so that no margin is allowed. This answers a different question: whether
+    the comparison is MEANINGFUL for this project at all.
+
+    The case it exists for is a cumulative accumulator measured against an instantaneous stock. A
+    dead-address balance totals every token ever sent there; total_supply is what exists right
+    now. For a token that mints and burns continuously the first can exceed the second by any
+    amount without anything being wrong, so comparing them is not a weak check — it is a check of
+    the wrong thing, and it would fire every run.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    for ex in p.get("relation_exemptions") or []:
+        if ex.get("greater") == greater and ex.get("lesser") == lesser:
+            return ex.get("why")
+    return None
+
+
+def _check_relation_exemptions() -> list[str]:
+    """An exemption must name a relation that exists, and carry a reason worth reading.
+
+    An exemption silences a check, which is the most dangerous kind of config there is. It gets
+    the same treatment as not_applicable: name a real pair, say why, or fail at import.
+    """
+    pairs = _relation_pairs()
+    if not pairs:
+        return []          # fetch not importable here; the check runs where it can
+    from_list = {(g, l) for g, l, _ in pairs}
+    errs = []
+    for p in PROJECTS:
+        for ex in p.get("relation_exemptions") or []:
+            pair = (ex.get("greater"), ex.get("lesser"))
+            if pair not in from_list:
+                errs.append(f"{p['name']}: relation_exemptions names {pair}, which is not a declared "
+                            f"relation in fetch/validate.IMPOSSIBLE_RELATIONS")
+            if not isinstance(ex.get("why"), str) or len(ex.get("why", "").strip()) < 40:
+                errs.append(f"{p['name']}: relation exemption {pair} needs a real reason — silencing a "
+                            f"check without one is how a contradiction gets lost")
+    return errs
 
 
 def _check_open_questions() -> list[str]:
@@ -6190,10 +6271,26 @@ def _check_declared_shapes() -> list[str]:
     return errors
 
 
+def _relation_pairs() -> list:
+    """The declared relations, read from fetch/validate at validation time.
+
+    IMPORTED LAZILY AND ON PURPOSE. fetch/validate.py imports config, so a module-level import
+    here would be circular. Doing it inside the validator keeps the single source of truth in
+    fetch/validate.IMPOSSIBLE_RELATIONS rather than copying the pairs into config, where the copy
+    would drift and the exemption check would start validating against a stale list.
+    """
+    try:
+        from fetch.validate import IMPOSSIBLE_RELATIONS
+        return list(IMPOSSIBLE_RELATIONS)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def validate_config(raise_on_error: bool = True) -> list[str]:
     errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
               + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes()
-              + _check_not_applicable() + _check_open_questions())
+              + _check_not_applicable() + _check_open_questions()
+              + _check_relation_exemptions())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

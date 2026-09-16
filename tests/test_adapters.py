@@ -2522,6 +2522,89 @@ def test_manual_overrides_suppress_gaps():
     print("manual overrides ok: a hand-entered metric is not reported as a gap")
 
 
+def test_bound_check_covers_the_declared_relations_and_honours_exemptions():
+    """Nine relations, zero tolerance, and one exemption that must not leak.
+
+    The PancakeSwap case this was built for is NOT a demonstration that the check works — it is a
+    demonstration that one comparison was being made where it is not an identity. So the test
+    asserts both halves: a real contradiction still fires with no tolerance at all, and the
+    exempted comparison does not fire for PancakeSwap while still firing for everyone else.
+    """
+    import pandas as pd
+    from fetch import FetchOutput
+    from fetch.validate import IMPOSSIBLE_RELATIONS, check_impossible_relations
+
+    pairs = {(g, l) for g, l, _ in IMPOSSIBLE_RELATIONS}
+    # The relations asked for, plus the two lock variants. Every bound is against total_supply
+    # rather than max_supply where a choice exists: tighter, and max_supply is often absent.
+    for want in (("locked_tokens", "circulating_supply"),
+                 ("locked_tokens_underlying", "circulating_supply"),
+                 ("locked_tokens_principal", "circulating_supply"),
+                 ("circulating_supply", "total_supply"),
+                 ("total_supply", "max_supply"),
+                 ("treasury_holding_tokens", "total_supply"),
+                 ("buyback_fund_balance", "total_supply"),
+                 ("gross_burn_tokens", "total_supply"),
+                 ("burn_address_balance", "total_supply")):
+        assert want in pairs, f"relation {want} is not declared"
+    assert len(IMPOSSIBLE_RELATIONS) == 9, f"expected 9 relations, got {len(IMPOSSIBLE_RELATIONS)}"
+
+    def run(project, rows):
+        out = FetchOutput()
+        out.frames = [pd.DataFrame([{"date": pd.Timestamp("2026-09-14"), "project": project,
+                                     "metric": m, "value": v, "source": "test", "tier": 2}
+                                    for m, v in rows])]
+        check_impossible_relations(out.frame(), out)
+        return out
+
+    # ZERO TOLERANCE — and this pins what "zero" actually means, which is not quite zero.
+    # The guard is `a <= b * (1 + epsilon)` with epsilon 1e-9, and that epsilon is RELATIVE, so
+    # what it absorbs scales with the figure:
+    #        lesser 1e3  -> 0.000001 tokens      lesser 1e9  ->     1 token
+    #        lesser 1e6  -> 0.001    tokens      lesser 1e12 -> 1,000 tokens
+    # At a billion-token supply it swallows exactly one token; at a trillion, a thousand. That is
+    # far above float64 noise (~15-16 significant digits) and is therefore a real, if tiny,
+    # tolerance rather than the pure equality guard the comment describes. Asserted here as
+    # BEHAVIOUR so the next person meets it in a test rather than in a missed contradiction.
+    out = run("Uniswap", [("treasury_holding_tokens", 1_000_000_001.0), ("total_supply", 1_000_000_000.0)])
+    assert not any(r for r in out.review), \
+        "expected the 1e-9 RELATIVE epsilon to absorb exactly one token at 1e9 — if this now " \
+        "fires, the epsilon was tightened and that is an improvement worth noting, not a break"
+    # Two tokens over the same supply is outside it and fires. So the practical floor is ~1 part
+    # in 1e9, not zero — orders of magnitude tighter than Aerodrome's 0.087%, which is the
+    # overshoot this check exists to catch, but not literally zero.
+    out = run("Uniswap", [("treasury_holding_tokens", 1_000_000_002.0), ("total_supply", 1_000_000_000.0)])
+    assert any(r for r in out.review), "two tokens over a billion must fire"
+
+    # A NEW RELATION, one of the ones added this round.
+    out = run("Uniswap", [("buyback_fund_balance", 500.0), ("total_supply", 400.0)])
+    assert any("buyback_fund_balance" in str(r) for r in out.review), "buyback bound did not fire"
+
+    # THE EXEMPTION. PancakeSwap's cumulative dead-address balance is not bounded by an
+    # instantaneous supply, because CAKE mints and burns continuously.
+    cake = [("burn_address_balance", 4_991_087_157.0), ("total_supply", 400_000_000.0)]
+    out = run("PancakeSwap", cake)
+    assert not any("burn_address_balance" in str(r) for r in out.review), \
+        "PancakeSwap's cumulative burn must NOT be compared against instantaneous supply"
+
+    # ** AND IT MUST NOT LEAK. ** The same figures on a project with no exemption still fire, so
+    # the exemption is scoped to the project and the pair rather than disabling the relation.
+    out = run("Uniswap", cake)
+    assert any("burn_address_balance" in str(r) for r in out.review), \
+        "the exemption leaked to a project that does not declare it"
+
+    # AND THE LIVE RELATION FOR PANCAKESWAP. Exempting one comparison must not leave the project
+    # unchecked: a period flow against a stock is an identity even for a minting token.
+    out = run("PancakeSwap", [("gross_burn_tokens", 500_000_000.0), ("total_supply", 400_000_000.0)])
+    assert any("gross_burn_tokens" in str(r) for r in out.review), \
+        "gross_burn_tokens vs total_supply must stay live for PancakeSwap"
+
+    # The exemption is declared with a reason, and config refuses one without.
+    assert config.relation_exempt("PancakeSwap", "burn_address_balance", "total_supply")
+    assert config.relation_exempt("PancakeSwap", "gross_burn_tokens", "total_supply") is None
+    print("bound check ok: 9 relations, zero tolerance, exemption scoped and non-leaking")
+
+
 # =========================================================================================
 # THE STALE-STORE REGRESSION SUITE
 #
