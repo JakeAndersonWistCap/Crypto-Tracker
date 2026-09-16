@@ -45,7 +45,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-NEEDED = ("locked_tokens", "circulating_supply", "total_supply")
+LOCK_METRICS = ("locked_tokens", "locked_tokens_underlying", "locked_tokens_principal")
+NEEDED = LOCK_METRICS + ("circulating_supply", "total_supply")
 
 
 def main() -> int:
@@ -60,12 +61,13 @@ def main() -> int:
         return 2
 
     conn = sqlite3.connect(str(path))
-    rows = conn.execute("""
+    placeholders = ",".join("?" for _ in NEEDED)
+    rows = conn.execute(f"""
         SELECT m.project, m.metric, m.value, m.date, m.source
           FROM metrics m
           JOIN (SELECT project, metric, MAX(date) AS d FROM metrics GROUP BY project, metric) t
             ON t.project = m.project AND t.metric = m.metric AND t.d = m.date
-         WHERE m.metric IN (?, ?, ?)
+         WHERE m.metric IN ({placeholders})
     """, NEEDED).fetchall()
     conn.close()
 
@@ -80,60 +82,87 @@ def main() -> int:
               "says nothing about live data. **\n")
 
     projects = [args.project] if args.project else sorted(by)
-    examined = 0
+    verdicts, examined = [], 0
     for name in projects:
         m = by.get(name) or {}
-        if not all(k in m for k in NEEDED):
+        locks = [k for k in LOCK_METRICS if k in m]
+        if not locks or "circulating_supply" not in m or "total_supply" not in m:
             if args.project:
-                missing = [k for k in NEEDED if k not in m]
-                print(f"{name}: cannot test — no stored {', '.join(missing)}. "
-                      f"All three are needed and a missing one is not a pass.")
+                missing = [k for k in ("circulating_supply", "total_supply") if k not in m]
+                print(f"{name}: cannot test — no lock metric stored." if not locks else
+                      f"{name}: cannot test — missing {', '.join(missing)}. A missing figure is "
+                      f"not a pass.")
             continue
-        locked, circ, total = (m["locked_tokens"][0], m["circulating_supply"][0], m["total_supply"][0])
-        if not args.project and locked <= circ:
-            continue                       # only the violating projects, unless one was named
+
+        circ, total = m["circulating_supply"][0], m["total_supply"][0]
+        if not total:
+            continue
+        print(f"=== {name} ===")
+        for k in ("circulating_supply", "total_supply", *locks):
+            v, d, src = m[k]
+            print(f"  {k:<26} {v:>20,.4f}   {str(d)[:10]}  {src}")
+
+        # The discriminator uses the PRIMARY lock metric — the others are components of the same
+        # locked population and would double-count if summed in.
+        locked = m[locks[0]][0]
+        a_err = abs((circ + locked) - total) / total
+        b_err = abs(circ - total) / total
+        print(f"\n  A. circulating + locked  {circ + locked:>19,.4f}  vs total  off by {a_err:>8.2%}")
+        print(f"  B. circulating           {circ:>19,.4f}  vs total  off by {b_err:>8.2%}")
+
+        if a_err < b_err / 2:
+            verdict, convention = "A", "excludes_locked"
+            print("\n  VERDICT A — circulating EXCLUDES locked. Locked and circulating are DISJOINT "
+                  "halves of total supply, so a lock metric must be bounded by total_supply and "
+                  "NEVER by circulating_supply.")
+        elif b_err < a_err / 2:
+            verdict, convention = "B", "includes_locked"
+            print("\n  VERDICT B — circulating INCLUDES locked. The two overlap, so locked exceeding "
+                  "circulating would be a genuine contradiction.")
+        else:
+            verdict, convention = "INCONCLUSIVE", None
+            print("\n  VERDICT INCONCLUSIVE — neither sum is clearly closer to total_supply. Do not "
+                  "pick one.")
+
+        # ** THE NEAR-MISS. ** Under verdict A the withdrawn relation was wrong for this project
+        # too — it simply never fired, because the lock rate happens to sit under 50%. That is a
+        # coincidence of the current figures, not a property of the project, and it would have
+        # started firing the day the lock rate crossed half. Worth knowing even though nothing
+        # looks broken today.
+        rate = locked / total
+        if verdict == "A":
+            if locked <= circ:
+                print(f"  ** NEAR MISS ** lock rate {rate:.2%} of total supply. Under this convention "
+                      f"the withdrawn relation was WRONG here as well, and stayed quiet only because "
+                      f"the rate is below 50%. It would have started flagging on the day it crossed.")
+            else:
+                print(f"  Lock rate {rate:.2%} of total supply — above 50%, which is why this one was "
+                      f"visibly flagging.")
+        declared = None
+        try:
+            import config as _c
+            declared = (_c.PROJECT_BY_NAME.get(name) or {}).get("circulating_supply_convention")
+        except Exception:  # noqa: BLE001
+            pass
+        if declared and convention and declared != convention:
+            print(f"  ** CONFIG DISAGREES ** config declares {declared!r}, the store says "
+                  f"{convention!r}. One of them is wrong.")
+        elif convention and not declared:
+            print(f"  config has no circulating_supply_convention for {name} — record {convention!r}.")
+        verdicts.append((name, verdict, convention, rate))
+        print()
         examined += 1
 
-        print(f"=== {name} ===")
-        for k in NEEDED:
-            v, d, s = m[k]
-            print(f"  {k:<20} {v:>20,.4f}   {str(d)[:10]}  {s}")
-        excess = locked - circ
-        print(f"\n  locked - circulating   {excess:>20,.4f}   "
-              f"({excess / circ:.4%} of circulating)" if circ else "")
-
-        a_sum = circ + locked
-        print(f"\n  A. circulating + locked {a_sum:>19,.4f}   "
-              f"vs total_supply {total:>18,.4f}   off by {abs(a_sum - total) / total:>8.2%}"
-              if total else "")
-        print(f"  B. circulating          {circ:>19,.4f}   "
-              f"vs total_supply {total:>18,.4f}   off by {abs(circ - total) / total:>8.2%}"
-              if total else "")
-
-        if total:
-            a_err, b_err = abs(a_sum - total) / total, abs(circ - total) / total
-            print()
-            if a_err < b_err / 2:
-                print("  VERDICT: A — circulating EXCLUDES locked. The two are disjoint populations "
-                      "and the comparison is not an identity for this project.")
-            elif b_err < a_err / 2:
-                print("  VERDICT: B — circulating INCLUDES locked. They measure nearly the same "
-                      "population, so the excess is a small group inside the escrow that CoinGecko "
-                      "does not count as circulating — protocol- or team-held locks being the "
-                      "likeliest. A real mismatch, but NOT 'circulating excludes locked'.")
-                print(f"           The unexplained slice is {excess:,.2f} tokens; CoinGecko withholds "
-                      f"{total - circ:,.2f} from circulating in total, so the slice is "
-                      f"{excess / (total - circ):.1%} of what it withholds."
-                      if total > circ else "")
-            else:
-                print("  VERDICT: INCONCLUSIVE — neither sum is clearly closer to total_supply. "
-                      "Do not pick one; report it as unresolved.")
+    if verdicts:
+        print("SUMMARY")
+        print(f"  {'project':<14} {'verdict':<14} {'convention':<18} lock rate of total")
+        for name, verdict, convention, rate in verdicts:
+            print(f"  {name:<14} {verdict:<14} {str(convention):<18} {rate:>8.2%}")
         print()
 
     if not examined:
-        print("No project has locked_tokens exceeding circulating_supply with all three figures "
-              "stored. That is not the same as no violation existing — name a project explicitly "
-              "to see which of the three figures it is missing.")
+        print("No project could be tested — every one is missing a lock metric, circulating_supply "
+              "or total_supply. That is NOT a clean result; it means the store lacks the figures.")
     return 0
 
 

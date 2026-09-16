@@ -119,13 +119,29 @@ REASON_IMPOSSIBLE = "impossible_relation"
 # it would silently skip the projects most likely to need it. The one place max_supply is used is
 # as a ceiling on total_supply itself, which is the only thing it can bound.
 IMPOSSIBLE_RELATIONS = [
-    # --- float and lock identities -------------------------------------------------------
-    ("locked_tokens", "circulating_supply",
-     "tokens cannot be locked that are not in circulation"),
-    ("locked_tokens_underlying", "circulating_supply",
-     "the assets backing a lock cannot exceed the tokens in circulation"),
-    ("locked_tokens_principal", "circulating_supply",
-     "staked principal cannot exceed the tokens in circulation"),
+    # --- lock identities ------------------------------------------------------------------
+    # ** BOUNDED BY total_supply, NEVER BY circulating_supply. CORRECTED 2026-09-16. **
+    #
+    # "tokens cannot be locked that are not in circulation" READ LIKE AN IDENTITY AND WAS NOT ONE.
+    # It assumed circulating_supply INCLUDES locked tokens. For a ve-token protocol CoinGecko's
+    # convention is the opposite: circulating EXCLUDES escrowed supply, so locked and circulating
+    # are DISJOINT HALVES of total_supply. Under that convention locked tokens sitting outside
+    # circulating supply is the correct and expected state, not an anomaly — and the check was
+    # flagging Aerodrome every run for being normal.
+    #
+    # Settled on live data, not argued: Aerodrome's locked 989,752,701 + circulating 988,697,600
+    # = total 1,978,450,301, matching to 0.00%, while the include-locked reading is out by 50%.
+    #
+    # The three relations below are the REPLACEMENTS, not additions alongside the old ones. They
+    # hold under EITHER convention, because total_supply counts every token that exists however a
+    # provider chooses to slice it — which is exactly what makes them identities and the previous
+    # form not one.
+    ("locked_tokens", "total_supply",
+     "more tokens cannot be locked than exist"),
+    ("locked_tokens_underlying", "total_supply",
+     "the assets backing a lock cannot exceed the tokens that exist"),
+    ("locked_tokens_principal", "total_supply",
+     "staked principal cannot exceed the tokens that exist"),
     # --- supply identities ---------------------------------------------------------------
     ("circulating_supply", "total_supply",
      "circulating supply cannot exceed total supply"),
@@ -157,13 +173,26 @@ def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) ->
 
     THE TOLERANCE IS ZERO, and that is the whole point. The first version of this had half a
     percent, to absorb the two figures being read at slightly different moments from different
-    sources — and it silently passed the case it was written for: Aerodrome's locked supply
-    exceeds its circulating supply by 0.087%, comfortably inside the buffer.
+    sources, and it silently passed the very case it was written for — a 0.087% overshoot sitting
+    comfortably inside the buffer.
 
-    These are identities, not estimates. Tokens cannot be locked that are not in circulation, by
-    any margin, ever. A buffer here is not caution, it is a licence for the contradiction to sit
-    in the sheet as long as it stays small — and a small contradiction is the one nobody notices.
-    The float epsilon below guards floating-point equality and nothing else.
+    These are identities, not estimates. A buffer here is not caution, it is a licence for the
+    contradiction to sit in the sheet as long as it stays small, and a small contradiction is the
+    one nobody notices.
+
+    ** BUT ZERO TOLERANCE ONLY HELPS IF THE RELATION IS ACTUALLY AN IDENTITY. ** The case that
+    motivated the zero tolerance — locked_tokens vs circulating_supply — turned out not to be one
+    at all, and was withdrawn on 2026-09-16 (see the list above). A non-identity checked at zero
+    tolerance does not catch a subtle error; it manufactures a violation every single run and
+    teaches the reader to scroll past the Review Queue. Rigour on the threshold is worth nothing
+    without rigour on the premise.
+
+    Two caveats on "zero", both real:
+      * the float epsilon below is RELATIVE at 1e-9, so it absorbs ~1 token at a 1e9 supply and
+        ~1,000 at 1e12 — far above float64 noise, and a tolerance in all but name at that scale;
+      * config.relation_exempt() can withdraw one comparison for one project, with a recorded
+        reason. That is for a relation which is not an identity THERE, never for one that is
+        merely inconvenient.
     """
     epsilon = 1e-9
     if df is None or df.empty:

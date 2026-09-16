@@ -3794,6 +3794,27 @@ PROJECTS = [
                                  "automatic weekly REBASES that increase their veAERO balance. Only "
                                  "AERO.balanceOf(escrow) gives the tokens actually locked."),
         },
+        # ===== HOW THIS PROJECT'S circulating_supply IS DEFINED. SETTLED ON LIVE DATA. =====
+        # CoinGecko's circulating_supply for AERO EXCLUDES escrowed supply, which is its standard
+        # treatment for a ve-token protocol. So circulating and locked are DISJOINT HALVES of
+        # total supply, not overlapping populations:
+        #     locked      989,752,701
+        #   + circulating 988,697,600
+        #   = total     1,978,450,301      matching to 0.00%; the include-locked reading is out by 50%
+        #
+        # CONSEQUENCE, and it is the reason this is recorded rather than left as prose: a lock
+        # metric here can NEVER be bounded by circulating_supply. Locked tokens sitting outside
+        # circulating supply is the CORRECT state under this convention, and the old relation
+        # flagged Aerodrome every run for being normal. The relation is withdrawn globally — see
+        # fetch/validate.IMPOSSIBLE_RELATIONS — so this field is documentation for a reader, not
+        # a gate on a check.
+        "circulating_supply_convention": "excludes_locked",
+        "circulating_supply_convention_evidence": {
+            "locked": 989_752_701, "circulating": 988_697_600, "total": 1_978_450_301,
+            "test": "circulating + locked == total_supply to 0.00%; circulating alone is out by 50%",
+            "confirmed_on": "2026-09-16", "by": "diagnose_lock_vs_float.py against the live store",
+            "provider": "CoinGecko",
+        },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
         # NO locked_tokens_dashboard ENTRY, AND NO CROSS-CHECK. Query 2986047 was the only candidate
@@ -5132,6 +5153,27 @@ def _check_relation_exemptions() -> list[str]:
     return errs
 
 
+def _check_circulating_conventions() -> list[str]:
+    """circulating_supply_convention must be one of the two known values, and carry its evidence.
+
+    The field decides how a reader interprets every lock figure on the project, so an undeclared
+    one is honest (we have not tested it) and a declared-but-unevidenced one is not.
+    """
+    allowed = ("excludes_locked", "includes_locked")
+    errs = []
+    for p in PROJECTS:
+        conv = p.get("circulating_supply_convention")
+        if conv is None:
+            continue
+        if conv not in allowed:
+            errs.append(f"{p['name']}: circulating_supply_convention {conv!r} not in {allowed}")
+        ev = p.get("circulating_supply_convention_evidence") or {}
+        if not ev.get("test") or not ev.get("confirmed_on"):
+            errs.append(f"{p['name']}: circulating_supply_convention is declared but carries no "
+                        f"evidence — record the test and the date it was confirmed")
+    return errs
+
+
 def _check_open_questions() -> list[str]:
     """An open question whose TOPIC announces it is settled must carry a settled `status`.
 
@@ -5484,56 +5526,39 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Aerodrome",
-        "topic": "locked_tokens exceeds circulating_supply by 0.106% — ONE TEST LEFT TO RUN",
+        "topic": "RESOLVED 2026-09-16 — circulating EXCLUDES locked; the RELATION was wrong",
         "severity": 2,
+        "status": "resolved",
         "reason":
-            "CONFIRMED REAL ON LIVE DATA: the veAERO escrow holds 1,051,850.82 AERO more than "
-            "CoinGecko reports as circulating, about 0.106% of circulating. Two hypotheses were put "
-            "up and BOTH ARE NOW RULED DOWN, without a live read, on evidence already held.\n\n"
+            "VERDICT A, settled on live data by diagnose_lock_vs_float.py: locked 989,752,701 + "
+            "circulating 988,697,600 = total 1,978,450,301, matching to 0.00%, while the "
+            "include-locked reading is out by 50%. CoinGecko's circulating_supply for AERO "
+            "EXCLUDES escrowed supply — its standard treatment for a ve-token protocol. So locked "
+            "and circulating are DISJOINT HALVES of total supply, and locked tokens sitting "
+            "outside circulating supply is the CORRECT state.\n\n"
 
-            "(1) UNCLAIMED REBASE SITTING IN THE ESCROW — does not fit the mechanism. The veAERO "
-            "rebase is a separate weekly anti-dilution stream (SPECIFICATION.md:132-138, recorded in "
-            "emission_streams) paid to veAERO holders. It accrues in the RewardsDistributor and is "
-            "moved into the VotingEscrow only when a holder CLAIMS, at which point it is added to "
-            "their lock and is genuinely locked. So unclaimed rebase is in a different contract and "
-            "is not in AERO.balanceOf(escrow), and claimed rebase is locked AERO that belongs there. "
-            "Either way the escrow balance counts only locked tokens. "
-            "** THIS IS REASONED FROM THE DISTRIBUTOR PATTERN, NOT READ FROM A SOURCE ON FILE. ** "
-            "Nothing in this repo quotes Aerodrome's RewardsDistributor mechanics. It is the weaker "
-            "half of this entry and is falsifiable: read AERO.balanceOf(RewardsDistributor) and see "
-            "whether it is near 1,051,850. The distributor's address is NOT on file and must be "
-            "confirmed from Aerodrome's own repo or legal disclosures before any such read.\n\n"
+            "THE BUG WAS IN THE RELATION, NOT IN EITHER FIGURE. 'Tokens cannot be locked that are "
+            "not in circulation' read like an identity and silently assumed circulating INCLUDES "
+            "locked. It is withdrawn globally and replaced by locked_tokens <= total_supply, which "
+            "holds under either convention.\n\n"
 
-            "(2) COINGECKO EXCLUDES LOCKED TOKENS BY CONVENTION — ruled down by arithmetic. If "
-            "circulating excluded locked, the two would be DISJOINT populations, and there is no "
-            "mechanism that would place two disjoint populations within ONE PART IN 940 of each "
-            "other. A disjoint split can land anywhere; near-equality that tight is the signature of "
-            "two measurements of nearly the SAME population differing by a small specific increment. "
-            "(The tempting reading — that hypothesis 2 implies a lock rate of 50.03%, suspiciously "
-            "round — is an artifact and carries no information: ANY two near-equal numbers give ~50% "
-            "under that formula. The real observation is locked/circulating = 1.00106.)\n\n"
-
-            "SO THE LIKELY ANSWER IS A THIRD ONE: circulating INCLUDES locked, and the escrow holds a "
-            "small population CoinGecko does not count as circulating — protocol- or team-held veNFT "
-            "locks being the obvious candidate, since CoinGecko excludes team and treasury holdings "
-            "from circulating by convention while a balance read cannot tell them from anyone else's "
-            "lock. That is still a methodology mismatch, in a DIFFERENT PLACE from where hypothesis "
-            "(2) put it — and it is a hypothesis, not a finding.\n\n"
-
-            "NO EXEMPTION AND NO TOLERANCE HAS BEEN ADDED. The relation stays live and the violation "
-            "keeps showing, which is correct while the cause is unestablished.",
+            "** AND THE EARLIER REASONING HERE WAS WRONG, WHICH IS WHY THIS ENTRY IS KEPT. ** The "
+            "previous version argued that two figures agreeing to one part in 940 could not be "
+            "disjoint populations, because 'a disjoint split can land anywhere'. That is exactly "
+            "backwards when a FIXED TOTAL constrains both. Two parts of a fixed total are "
+            "near-equal precisely when the split is near 50/50 — here 50.03/49.97 — and that says "
+            "NOTHING about whether the sets overlap. The argument mistook evidence of a balanced "
+            "partition for evidence of overlap, and it nearly produced the wrong diagnosis. It "
+            "also dismissed the 50.03% figure as a meaningless artifact when that figure WAS the "
+            "answer. See RUNBOOK section 11e.",
         "suggestion":
-            "RUN: python diagnose_lock_vs_float.py Aerodrome — it needs no network, because the "
-            "number that settles this is already in the store. total_supply makes the two hypotheses "
-            "give OPPOSITE predictions: if circulating EXCLUDES locked they are disjoint and "
-            "circulating + locked should equal total_supply; if it INCLUDES them, circulating alone "
-            "should be near total_supply and the sum should overshoot badly. Whichever lands near "
-            "total_supply is the methodology in use.\n"
-            "THEN, if the answer is 'includes' as expected: the remaining slice is what CoinGecko "
-            "withholds AND the escrow holds. Aerodrome's legal disclosures list protocol-held "
-            "allocations; compare the slice against them. Only if that fails to account for it is "
-            "this genuinely unexplainable — which is an acceptable answer, but not before the test "
-            "has been run.",
+            "NOTHING TO DO for Aerodrome — the convention is recorded as a config fact and the "
+            "relation is fixed. THE REMAINING WORK IS THE AUDIT: run "
+            "`python diagnose_lock_vs_float.py` with no argument against the live store to get an "
+            "A/B/INCONCLUSIVE verdict for every project carrying a lock metric, and record each "
+            "one's circulating_supply_convention. The script also flags NEAR MISSES — a project on "
+            "the excludes-locked convention whose lock rate is still under 50%, where the "
+            "withdrawn relation was equally wrong and simply never fired."
     },
     {
         "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
@@ -6343,7 +6368,7 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
     errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
               + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes()
               + _check_not_applicable() + _check_open_questions()
-              + _check_relation_exemptions())
+              + _check_relation_exemptions() + _check_circulating_conventions())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

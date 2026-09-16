@@ -512,6 +512,61 @@ separate questions.
 
 ---
 
+## 11e. Do not infer set-overlap from value-proximity when a fixed total constrains both
+
+**The trap, in one line:** two quantities that sum to a known total are near-equal exactly when
+the split is near 50/50 — and that says *nothing* about whether the sets overlap.
+
+This produced a nearly-wrong diagnosis on 2026-09-16 and is worth recognising on sight.
+
+Aerodrome's `locked_tokens` exceeded `circulating_supply` by 0.106%. Two explanations were on the
+table: circulating *includes* locked (so the overshoot is a real contradiction), or circulating
+*excludes* locked (so they are disjoint and the comparison is meaningless). The argument made
+against the second was:
+
+> The two figures agree to one part in 940. If they measured disjoint populations there is no
+> mechanism that would place them that close — a disjoint split can land anywhere.
+
+**That is backwards.** The figures were:
+
+```
+locked      989,752,701
+circulating 988,697,600
+total     1,978,450,301      locked + circulating = total, to 0.00%
+```
+
+They are disjoint halves of a fixed total, and they are near-equal *because the lock rate is
+50.03%*. A disjoint split cannot "land anywhere" once both parts must sum to a fixed total —
+being close is exactly what a balanced partition looks like. The proximity was evidence *for* the
+hypothesis it was used to reject.
+
+The same reasoning also dismissed the implied 50.03% as a meaningless artifact ("any two
+near-equal numbers give ~50% under that formula"). True, and irrelevant: that figure *was* the
+answer — the actual lock rate.
+
+**What to do instead.** Proximity between two quantities is not evidence about their relationship
+in either direction. Find a third number whose predicted value *differs* between the hypotheses,
+and read it:
+
+| hypothesis | prediction |
+|---|---|
+| circulating EXCLUDES locked (disjoint) | `circulating + locked ≈ total_supply` |
+| circulating INCLUDES locked (overlapping) | `circulating ≈ total_supply`, and the sum overshoots badly |
+
+One test, two predictions that cannot both hold. `diagnose_lock_vs_float.py` does exactly this and
+needs no network — the deciding number was already in the store, and nobody had looked at it.
+
+**Generalise it.** Whenever reasoning about a two-part split — locked vs float, staked vs liquid,
+burned vs outstanding, treasury vs public — do not reason from how close the parts are. Reason
+from a constraint that the competing hypotheses disagree about. If no such constraint is
+available, say the question is unresolved rather than settling it on a plausibility argument.
+
+**And the consequence for checks.** A relation is only worth zero tolerance if it is actually an
+identity. `locked_tokens <= circulating_supply` read like one and was not, because it silently
+assumed a convention. Checked at zero tolerance it did not catch a subtle error — it manufactured
+a violation every run on a project that was behaving normally, which is how a Review Queue gets
+ignored. Rigour on the threshold is worth nothing without rigour on the premise.
+
 ## 11d. Read-time vs write-time: which config changes re-judge stored data
 
 Audited 2026-09-15 after a stale figure survived a config correction. Worth knowing before

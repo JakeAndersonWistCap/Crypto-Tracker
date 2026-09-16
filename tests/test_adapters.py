@@ -237,18 +237,31 @@ def test_a_REFUTED_burn_mechanism_is_RED_not_silently_GREEN():
 
 
 def test_impossible_relations_have_NO_tolerance():
-    """Aerodrome: locked 989,654,626.93 against circulating 988,795,723.09 — a 0.087% breach.
+    """Zero tolerance on a REAL identity — and the case this test used to cite was not one.
 
-    The first version of this check had a half-percent buffer and silently passed it. These are
-    identities, not estimates: a buffer is not caution, it is a licence for a contradiction to
-    sit in the sheet as long as it stays small, and a small contradiction is the unnoticed one.
+    IT ASSERTED THE OPPOSITE UNTIL 2026-09-16. The fixture was Aerodrome's locked 989,654,626.93
+    against circulating 988,795,723.09, and the test required that 0.087% overshoot to flag. It
+    was encoding a premise that turned out to be false: CoinGecko EXCLUDES escrowed supply for a
+    ve-token protocol, so locked and circulating are DISJOINT halves of total supply and locked
+    sitting above circulating is the correct state, not a contradiction. Confirmed on live data —
+    locked + circulating = total_supply to 0.00%.
+
+    So the relation was withdrawn, and this test now proves zero tolerance on a relation that IS
+    an identity: treasury_holding_tokens against total_supply. A treasury cannot hold tokens that
+    do not exist, under any provider's convention.
+
+    The original point stands and is what the fixture below preserves: a half-percent buffer is
+    not caution, it is a licence for a contradiction to sit in the sheet as long as it stays
+    small, and a small contradiction is the unnoticed one.
     """
     from fetch.validate import check_impossible_relations
 
-    rows = [("Aerodrome", "locked_tokens", 989_654_626.93, "chain:base:ve"),
-            ("Aerodrome", "circulating_supply", 988_795_723.09, "coingecko"),
-            ("Uniswap", "locked_tokens", 100.0, "chain:x"),
-            ("Uniswap", "circulating_supply", 1_000.0, "coingecko")]
+    # THE SAME 0.087% MARGIN, on a relation where it is genuinely impossible.
+    breach = 988_795_723.09 * 1.00087
+    rows = [("Aerodrome", "treasury_holding_tokens", breach, "chain:base:treasury"),
+            ("Aerodrome", "total_supply", 988_795_723.09, "chain:base:token"),
+            ("Uniswap", "treasury_holding_tokens", 100.0, "chain:x"),
+            ("Uniswap", "total_supply", 1_000.0, "chain:x")]
     df = pd.DataFrame([{"date": pd.Timestamp("2026-09-14"), "project": pr, "metric": m,
                         "value": v, "source": src, "tier": 2} for pr, m, v, src in rows])
     out = FetchOutput()
@@ -256,14 +269,26 @@ def test_impossible_relations_have_NO_tolerance():
 
     flagged = [r for r in out.review if r["reason"] == "impossible_relation"]
     assert len(flagged) == 1 and flagged[0]["project"] == "Aerodrome", \
-        f"a 0.087% breach of an identity must flag, got {len(flagged)}"
-    assert "989,654,626.93" in flagged[0]["source"] and "988,795,723.09" in flagged[0]["source"], \
+        f"a 0.087% breach of a real identity must flag, got {len(flagged)}"
+    assert "988,795,723.09" in flagged[0]["source"], \
         "both figures and both sources must be named, or it cannot be investigated"
     assert not [r for r in flagged if r["project"] == "Uniswap"], "a sane pair must stay silent"
 
-    # the check must not need to know anything about Aerodrome to catch it
+    # the check must not need to know anything about the project to catch it
     assert any("impossible" in g["metric"] for g in out.gaps)
-    print("impossible-relation ok: 0.087% breach caught, sane pair silent")
+
+    # ** AND THE WITHDRAWN COMPARISON MUST STAY SILENT ON THE FIGURES THAT MOTIVATED IT. **
+    # If someone re-adds locked_tokens <= circulating_supply, this fails.
+    out2 = FetchOutput()
+    df2 = pd.DataFrame([{"date": pd.Timestamp("2026-09-14"), "project": "Aerodrome", "metric": m,
+                         "value": v, "source": "test", "tier": 2}
+                        for m, v in (("locked_tokens", 989_654_626.93),
+                                     ("circulating_supply", 988_795_723.09))])
+    check_impossible_relations(df2, out2)
+    assert not [r for r in out2.review if r["reason"] == "impossible_relation"], \
+        "locked above circulating is CORRECT under the excludes-locked convention and must not flag"
+    print("impossible-relation ok: 0.087% breach of a real identity caught, withdrawn "
+          "lock-vs-circulating comparison stays silent")
 
 
 def test_uniswap_buyback_fund_is_relabelled_not_redefined():
@@ -2537,9 +2562,9 @@ def test_bound_check_covers_the_declared_relations_and_honours_exemptions():
     pairs = {(g, l) for g, l, _ in IMPOSSIBLE_RELATIONS}
     # The relations asked for, plus the two lock variants. Every bound is against total_supply
     # rather than max_supply where a choice exists: tighter, and max_supply is often absent.
-    for want in (("locked_tokens", "circulating_supply"),
-                 ("locked_tokens_underlying", "circulating_supply"),
-                 ("locked_tokens_principal", "circulating_supply"),
+    for want in (("locked_tokens", "total_supply"),
+                 ("locked_tokens_underlying", "total_supply"),
+                 ("locked_tokens_principal", "total_supply"),
                  ("circulating_supply", "total_supply"),
                  ("total_supply", "max_supply"),
                  ("treasury_holding_tokens", "total_supply"),
@@ -2549,6 +2574,20 @@ def test_bound_check_covers_the_declared_relations_and_honours_exemptions():
         assert want in pairs, f"relation {want} is not declared"
     assert len(IMPOSSIBLE_RELATIONS) == 9, f"expected 9 relations, got {len(IMPOSSIBLE_RELATIONS)}"
 
+    # ** NO LOCK METRIC MAY BE BOUNDED BY circulating_supply. WITHDRAWN 2026-09-16. **
+    # It is not an identity: CoinGecko EXCLUDES escrowed supply for a ve-token protocol, so
+    # locked and circulating are disjoint halves of total_supply and locked sitting outside
+    # circulating is the correct state. Confirmed on Aerodrome's live figures — locked
+    # 989,752,701 + circulating 988,697,600 = total 1,978,450,301, to 0.00%. Re-adding it would
+    # flag every high-lock-rate project for behaving normally.
+    for greater, lesser, _ in IMPOSSIBLE_RELATIONS:
+        assert not (greater.startswith("locked") and lesser == "circulating_supply"), \
+            f"{greater} <= {lesser} was withdrawn — it assumes circulating INCLUDES locked, " \
+            f"which is false for every ve-token protocol on CoinGecko's convention"
+    # The replacements hold under EITHER convention, which is what makes them identities.
+    for lock in ("locked_tokens", "locked_tokens_underlying", "locked_tokens_principal"):
+        assert (lock, "total_supply") in pairs, f"{lock} must be bounded by total_supply"
+
     def run(project, rows):
         out = FetchOutput()
         out.frames = [pd.DataFrame([{"date": pd.Timestamp("2026-09-14"), "project": project,
@@ -2556,6 +2595,18 @@ def test_bound_check_covers_the_declared_relations_and_honours_exemptions():
                                     for m, v in rows])]
         check_impossible_relations(out.frame(), out)
         return out
+
+    # AERODROME'S LIVE FIGURES MUST NOT VIOLATE THE REPLACEMENT — the arithmetic that settled it.
+    out = run("Aerodrome", [("locked_tokens", 989_752_701.0), ("total_supply", 1_978_450_301.0),
+                            ("circulating_supply", 988_697_600.0)])
+    assert not [r for r in out.review if "locked_tokens" in str(r)], \
+        "Aerodrome's real figures must pass now that the relation is bounded by total_supply"
+    # And the config fact is recorded with its evidence, not just asserted in prose.
+    aero = config.PROJECT_BY_NAME["Aerodrome"]
+    assert aero["circulating_supply_convention"] == "excludes_locked"
+    ev = aero["circulating_supply_convention_evidence"]
+    assert ev["locked"] + ev["circulating"] == ev["total"], \
+        "the recorded evidence must actually satisfy the test it claims to have passed"
 
     # ZERO TOLERANCE — and this pins what "zero" actually means, which is not quite zero.
     # The guard is `a <= b * (1 + epsilon)` with epsilon 1e-9, and that epsilon is RELATIVE, so
