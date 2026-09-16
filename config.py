@@ -5483,6 +5483,59 @@ OPEN_QUESTIONS = [
                       "and record why (lock-and-mint). The same question applies to WMTx and to Aethir.",
     },
     {
+        "project": "Aerodrome",
+        "topic": "locked_tokens exceeds circulating_supply by 0.106% — ONE TEST LEFT TO RUN",
+        "severity": 2,
+        "reason":
+            "CONFIRMED REAL ON LIVE DATA: the veAERO escrow holds 1,051,850.82 AERO more than "
+            "CoinGecko reports as circulating, about 0.106% of circulating. Two hypotheses were put "
+            "up and BOTH ARE NOW RULED DOWN, without a live read, on evidence already held.\n\n"
+
+            "(1) UNCLAIMED REBASE SITTING IN THE ESCROW — does not fit the mechanism. The veAERO "
+            "rebase is a separate weekly anti-dilution stream (SPECIFICATION.md:132-138, recorded in "
+            "emission_streams) paid to veAERO holders. It accrues in the RewardsDistributor and is "
+            "moved into the VotingEscrow only when a holder CLAIMS, at which point it is added to "
+            "their lock and is genuinely locked. So unclaimed rebase is in a different contract and "
+            "is not in AERO.balanceOf(escrow), and claimed rebase is locked AERO that belongs there. "
+            "Either way the escrow balance counts only locked tokens. "
+            "** THIS IS REASONED FROM THE DISTRIBUTOR PATTERN, NOT READ FROM A SOURCE ON FILE. ** "
+            "Nothing in this repo quotes Aerodrome's RewardsDistributor mechanics. It is the weaker "
+            "half of this entry and is falsifiable: read AERO.balanceOf(RewardsDistributor) and see "
+            "whether it is near 1,051,850. The distributor's address is NOT on file and must be "
+            "confirmed from Aerodrome's own repo or legal disclosures before any such read.\n\n"
+
+            "(2) COINGECKO EXCLUDES LOCKED TOKENS BY CONVENTION — ruled down by arithmetic. If "
+            "circulating excluded locked, the two would be DISJOINT populations, and there is no "
+            "mechanism that would place two disjoint populations within ONE PART IN 940 of each "
+            "other. A disjoint split can land anywhere; near-equality that tight is the signature of "
+            "two measurements of nearly the SAME population differing by a small specific increment. "
+            "(The tempting reading — that hypothesis 2 implies a lock rate of 50.03%, suspiciously "
+            "round — is an artifact and carries no information: ANY two near-equal numbers give ~50% "
+            "under that formula. The real observation is locked/circulating = 1.00106.)\n\n"
+
+            "SO THE LIKELY ANSWER IS A THIRD ONE: circulating INCLUDES locked, and the escrow holds a "
+            "small population CoinGecko does not count as circulating — protocol- or team-held veNFT "
+            "locks being the obvious candidate, since CoinGecko excludes team and treasury holdings "
+            "from circulating by convention while a balance read cannot tell them from anyone else's "
+            "lock. That is still a methodology mismatch, in a DIFFERENT PLACE from where hypothesis "
+            "(2) put it — and it is a hypothesis, not a finding.\n\n"
+
+            "NO EXEMPTION AND NO TOLERANCE HAS BEEN ADDED. The relation stays live and the violation "
+            "keeps showing, which is correct while the cause is unestablished.",
+        "suggestion":
+            "RUN: python diagnose_lock_vs_float.py Aerodrome — it needs no network, because the "
+            "number that settles this is already in the store. total_supply makes the two hypotheses "
+            "give OPPOSITE predictions: if circulating EXCLUDES locked they are disjoint and "
+            "circulating + locked should equal total_supply; if it INCLUDES them, circulating alone "
+            "should be near total_supply and the sum should overshoot badly. Whichever lands near "
+            "total_supply is the methodology in use.\n"
+            "THEN, if the answer is 'includes' as expected: the remaining slice is what CoinGecko "
+            "withholds AND the escrow holds. Aerodrome's legal disclosures list protocol-held "
+            "allocations; compare the slice against them. Only if that fails to account for it is "
+            "this genuinely unexplainable — which is an acceptable answer, but not before the test "
+            "has been run.",
+    },
+    {
         "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
         "severity": 2,
         "reason": "SOURCE UPGRADED AGAIN 2026-09-15, AND STILL NOT ADDED — read the next paragraph "
