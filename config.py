@@ -4272,17 +4272,42 @@ PROJECTS = [
                                    "the period before it and from the 55/45 after it, so it is its own "
                                    "period. known_change keeps it unconfirmed even if a share is later "
                                    "filled in, until the change itself is documented."),
-                _split_period("2026-08-13", None, 0.55, "active", source_url="https://messari.io/",
+                _split_period("2026-08-13", "2026-09-13", 0.55, "superseded",
+                              source_url="https://messari.io/",
                               source_date="2026-08-13", destination_split=0.55,
                               note="Executive Proposal approved 2026-08-13: 55% of each Smart Burn Engine "
-                                   "cycle to SKY buybacks, 45% to LSSKY stakers. Messari cites the Executive "
-                                   "Proposal directly; the primary forum URL is still not captured. THE "
-                                   "PRE-2026-08-13 SPLIT REMAINS UNDOCUMENTED and is deliberately NOT "
-                                   "backfilled with this figure."),
+                                   "CYCLE to SKY buybacks, 45% to LSSKY stakers. SUPERSEDED by "
+                                   "fee_split_v2 on 2026-09-14 — dated and kept, NOT deleted, because a "
+                                   "window spanning the boundary needs both regimes proportionally. "
+                                   "Messari cites the Executive Proposal directly; the primary forum URL "
+                                   "is still not captured. THE PRE-2026-08-13 SPLIT REMAINS UNDOCUMENTED "
+                                   "and is deliberately NOT backfilled with this figure."),
+                # ===== STAGE 2, LIVE FROM 2026-09-14. PRIMARY-SOURCED, AND A DIFFERENT BASE. =====
+                # share_to_buyback here is 0.275 — the share of Net Protocol Surplus that BUYS SKY,
+                # being the 22.5% staking-rewards leg PLUS the 5% burn leg. It is NOT 0.05: the
+                # burn is only part of what is bought.
+                #
+                # ** AND THE BASE CHANGED, NOT JUST THE PERCENTAGE. ** The old figure was 55% of
+                # each SMART BURN ENGINE CYCLE; this is 27.5% of MONTHLY NET PROTOCOL SURPLUS.
+                # Those are different quantities, so the two numbers are not comparable as rates
+                # and the fall from 55% to 27.5% is not a 2x cut in buying — it is a different
+                # fraction of a different base. See fee_split_v2 for the full allocation.
+                _split_period("2026-09-14", None, 0.275, "active",
+                              source_url="https://x.com/SkyEcosystem/status/2099488996099227965",
+                              source_date="2026-09-14", destination_split=None,
+                              note="STAGE 2, from Sky's own account: 50% of monthly Net Protocol Surplus "
+                                   "allocated three ways — 22.5% SKY buybacks for SKY Staking Rewards, "
+                                   "22.5% USDS Staking Rewards, 5% SKY buybacks AND BURNS. "
+                                   "share_to_buyback = 0.275 is the SKY-BUYING share (22.5 + 5); only the "
+                                   "5% leg reduces supply. destination_split is None deliberately — a "
+                                   "three-way allocation has no single destination split, and forcing one "
+                                   "would merge a distribute leg with a burn leg."),
             ],
-            "note": "This split has moved before and will move again. Each historical period is treated as "
-                    "potentially different from the current one; undocumented periods are suppressed, never "
-                    "backfilled with today's number.",
+            "note": "This split has moved before and will move again — it moved again on 2026-09-14. "
+                    "Each historical period is treated as potentially different from the current one; "
+                    "undocumented periods are suppressed, never backfilled with today's number. "
+                    "CURRENT REGIME IS STAGE 2 — see fee_split_v2, which carries the three-way "
+                    "allocation this single share cannot express.",
         },
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://docs.sky.money/", "source_date": BRIEF_DATE, "status": "active",
                        "note": "Repurchased SKY is burned OR redistributed to LSSKY stakers per a GOVERNANCE PARAMETER, "
@@ -4564,112 +4589,82 @@ PROJECTS = [
                           "the right archive to search.",
             "recorded": "2026-09-17",
         },
-        # ========== STAGE 2: CONFIRMED BY SKY, NOT YET APPLIED. DO NOT WIRE THIS IN. ==========
-        # NOTHING BELOW CHANGES fee_split. It is recorded because the framework is confirmed from
-        # Sky's own account while the NUMBERS are not, and those are two different confidence
-        # levels that must not be merged into one edit.
+        # ============ STAGE 2 IS LIVE. PRIMARY-SOURCED AND APPLIED 2026-09-17. ============
+        # Source: @SkyEcosystem's own account, thread of 2026-09-14,
+        # x.com/SkyEcosystem/status/2099488996099227965. Sky's own words, not commentary.
         #
-        # CONFIRMED — @SkyEcosystem, the official account, 2026-08-13:
-        #   "Staking rewards are moving from treasury-funded to protocol revenue-funded. Stage 2
-        #    was defined in advance. Once the SKY treasury reserves funding staking rewards
-        #    approached approximately 15 days of remaining supply, Sky Protocol would transition
-        #    to a fully revenue-funded distribution model."
-        #   "In April, Sky Ecosystem published the staged path forward."
+        #   "The first SKY burn is complete. 2.86M SKY, purchased on the open market using 5% of
+        #    monthly Net Protocol Surplus, has been permanently removed from circulation."
+        #   "Under Stage 2, 50% of monthly Net Protocol Surplus is allocated across three
+        #    mechanisms: 22.5% to SKY buybacks for SKY Staking Rewards, 22.5% to USDS Staking
+        #    Rewards, 5% to SKY buybacks and burns."
+        #   "The first burn moves that framework from policy into operation."
         #
-        # IT RECONTEXTUALISES WHAT IS ALREADY ON FILE. March 2026's 87% buyback cut was not a
-        # retreat — it was STAGE 1, building reserves defensively against a trigger published in
-        # advance. April 2026 set out both stages with an explicit numerical trigger (~15 days of
-        # remaining reserves). August/September 2026, the trigger fired.
-        #
-        # ** AND NOTE THE DATE. ** fee_split's current period starts 2026-08-13 — the same day as
-        # this tweet. So either the 55/45 on file already IS the Stage 2 allocation, or that date
-        # was taken from a Stage 2 announcement while the 55/45 figure describes what preceded it.
-        # Those have opposite implications and nothing on file distinguishes them. Whoever
-        # confirms the primary source should settle this first; it decides whether fee_split is
-        # already correct or a period boundary in the wrong place.
+        # ** ONLY THE 5% LEG IS A BURN, AND THE THREE LEGS ARE NEVER NETTED. ** 22.5% buys SKY and
+        # hands it to stakers — buy pressure with NO supply reduction, because the bought SKY
+        # re-enters float. 22.5% touches no SKY at all. 5% buys and destroys. A single share cannot
+        # express that, which is why fee_split carries 0.275 (the SKY-BUYING share) and the
+        # allocation lives here.
         #
         # ---------------------------------------------------------------------------------------
-        # THE WATERFALL IS SECONDARY-SOURCED ONLY AND IS NOT APPLIED.
-        # Source: CoinMarketCap market commentary citing Standard Chartered's 2026-09-11 coverage.
-        # That is AI-assisted commentary citing a bank citing Sky — three steps from the protocol,
-        # and the only place the percentages appear. It must not be treated as confirmed.
+        # ** THE DECOMPOSITION HYPOTHESIS IS REFUTED, AND HOW IT WAS REFUTED IS THE POINT. **
+        # Last round this entry recorded a hypothesis that the waterfall might DECOMPOSE the 55/45
+        # rather than replace it, on an exact numerical fit: 22.50 + 22.50 = 45, 50.00 + 5.00 = 55.
+        # The arithmetic still fits. It was still wrong.
         #
-        # As described, on $100 of net protocol surplus:
-        #     1. security costs        )
-        #     2. backstop capital fund ) ~= $50.00 residual, paid first
-        #     3. SKY buybacks             $22.50  bought and DISTRIBUTED as SKY staking rewards
-        #     4. USDS staking rewards     $22.50  no SKY involved
-        #        buy-and-burn SKY          $5.00  the only permanent removal
+        # It is refuted by "moves that framework from policy into operation" — Sky saying the
+        # mechanism was NOT executing before 2026-09-14. A framework that begins operating on a
+        # date cannot be a description of what a different regime was already doing. And the BASE
+        # differs independently: the old figure was 55% of each SMART BURN ENGINE CYCLE, this is
+        # 27.5% of MONTHLY NET PROTOCOL SURPLUS. Different quantities.
         #
-        # ** IF REAL, THE BURN IMPLICATION FALLS ELEVENFOLD: 55% -> 5% of surplus. ** SKY actually
-        # PURCHASED is 27.50% (22.50 + 5), exactly half the 55% on file, and only 5% is destroyed.
-        # The rest of what is bought is handed to stakers, which is buy pressure without supply
-        # reduction — a completely different thing from a burn and currently indistinguishable
-        # from one in any figure derived from share_to_buyback.
-        #
-        # ---------------------------------------------------------------------------------------
-        # ** A HYPOTHESIS, FLAGGED AS THE EXACT REASONING THAT FAILED ON AERODROME LAST WEEK. **
-        # The waterfall may not REPLACE the 55/45 — it may DECOMPOSE it. The numbers fit exactly:
-        #       22.50 + 22.50 = 45.00   the "45"
-        #       50.00 +  5.00 = 55.00   the "55"
-        # Read that way the split figure is unchanged and only its INTERPRETATION collapses: most
-        # of the 55% leg goes to security and backstop, not to burning, so 55% was never a burn
-        # rate in the first place.
-        #
-        # THIS IS NOT A FINDING. Two decompositions summing to the same totals is weak evidence —
-        # RUNBOOK 11e records the Aerodrome case where exactly this kind of numerical fit was read
-        # as structure and was wrong. It is recorded because it is TESTABLE and it changes what to
-        # look for: the April document either does or does not carve security and backstop out of
-        # the 55% leg. Ask that question of the primary source rather than checking whether the
-        # arithmetic still works.
-        "stage_2_pending": {
-            "status": "OPEN — framework confirmed, numbers not. NOT applied to fee_split.",
-            "confirmed": {
-                "source": "@SkyEcosystem (official), 2026-08-13",
-                "framework": "staking rewards move from treasury-funded to protocol "
-                             "revenue-funded, on a trigger defined in advance",
-                "trigger": "SKY treasury reserves funding staking rewards approaching ~15 days of "
-                           "remaining supply",
-                "published": "April 2026 — 'the staged path forward'",
-                "stage_1": "March 2026's 87% buyback cut — building reserves defensively",
-                "stage_2_fired": "August/September 2026",
+        # THIS IS RUNBOOK 11e WORKING, NOT FAILING. 11e says do not infer structure from numerical
+        # fit — find a fact the competing readings disagree about. The fit was recorded as
+        # untrusted and testable, the discriminating question was written down, and the primary
+        # source answered it against the fit. Had the hypothesis been believed on its arithmetic,
+        # the 55/45 would have been left in place as "unchanged, just reinterpreted" and every Sky
+        # figure from 2026-09-14 would be computed on a superseded regime.
+        "fee_split_v2": {
+            "effective_date": "2026-09-14",
+            "basis": "50% of monthly Net Protocol Surplus, allocated three ways",
+            "confidence": "PRIMARY — Sky's own account, not secondary commentary",
+            "source_url": "https://x.com/SkyEcosystem/status/2099488996099227965",
+            "source_date": "2026-09-14",
+            "splits": {
+                "sky_buyback_for_staking_rewards": 0.225,
+                "usds_staking_rewards": 0.225,
+                "sky_buyback_and_burn": 0.05,
             },
-            "secondary_only_do_not_apply": {
-                "source": "CoinMarketCap market commentary citing Standard Chartered, 2026-09-11",
-                "source_distance": "three steps from the protocol — commentary citing a bank citing Sky",
-                "waterfall": ["security costs", "backstop capital fund", "SKY buybacks",
-                              "USDS staking rewards"],
-                "worked_example_per_100_surplus": {"security_and_backstop": 50.00,
-                                                   "sky_bought_for_staking_rewards": 22.50,
-                                                   "usds_staking_rewards": 22.50,
-                                                   "sky_bought_and_burned": 5.00},
-                "sky_purchased_pct": 0.275, "sky_burned_pct": 0.05,
+            "sky_buying_share": 0.275,      # 0.225 + 0.05 — what fee_split.share_to_buyback carries
+            "burn_share": 0.05,             # the ONLY permanent supply reduction
+            "never_net": "model the 22.5% staking leg and the 5% burn leg as SEPARATE ROWS. The "
+                         "first is buy pressure without supply reduction; the second removes "
+                         "supply. Netting them reports distributed SKY as destroyed — the same "
+                         "discipline applied to every yield-vs-burn split in this file.",
+            # ** THE OTHER 50% IS NOT STATED BY SKY, AND THE GUESS IS KEPT SEPARATE. **
+            "remaining_50_pct": {
+                "status": "NOT STATED in Sky's thread",
+                "unconfirmed_secondary": "CoinMarketCap citing Standard Chartered suggested "
+                                         "security costs and a backstop capital fund take priority "
+                                         "ahead of this 50%.",
+                "confidence": "UNCONFIRMED SECONDARY — deliberately NOT merged with the "
+                              "primary-sourced 50/22.5/22.5/5 above. Sky's thread accounts for one "
+                              "half of surplus and is silent on the other; silence is not "
+                              "agreement with a secondary source that fills it in.",
             },
-            "impact_if_confirmed": {
-                "burn": "55% -> 5% of surplus, an ELEVENFOLD reduction in the burn implication",
-                "purchase": "55% -> 27.5%, exactly half",
-                "why_it_matters_beyond_the_number": "22.5% of surplus buys SKY that is then "
-                                                    "DISTRIBUTED, not destroyed. Buy pressure "
-                                                    "without supply reduction is not a burn, and "
-                                                    "nothing derived from share_to_buyback can "
-                                                    "currently tell the two apart.",
+            "reference_value": {
+                "first_burn_tokens": 2_860_000,
+                "date": "2026-09-14",
+                "funded_by": "one month's 5% allocation of Net Protocol Surplus",
+                "use": "sanity-check the derived burn once this is wired to a live read. A derived "
+                       "figure of a different ORDER is a bug in the read, not a finding.",
             },
-            "decomposition_hypothesis": {
-                "claim": "the waterfall may DECOMPOSE the 55/45 rather than replace it",
-                "fit": "22.50 + 22.50 = 45; 50.00 + 5.00 = 55",
-                "status": "NOT A FINDING — weak evidence of the same kind that produced a wrong "
-                          "diagnosis on Aerodrome (see RUNBOOK 11e). Recorded because it is "
-                          "testable and changes what to ask.",
-                "test": "does the April 2026 document carve security costs and backstop capital "
-                        "out of the 55% leg? If yes, the split is unchanged and only its "
-                        "interpretation collapses. If no, the waterfall genuinely replaces it.",
-            },
-            "when_confirmed": "record as fee_split_v2 with its own effective date. DO NOT delete "
-                              "the 55/45 — date it and mark it superseded, because anything "
-                              "computing over a window spanning the transition needs both.",
-            "blocked_on": "Sky's own April 2026 'staged path forward' document and/or the specific "
-                          "tweet — Jake is sourcing both.",
-            "recorded": "2026-09-17",
+            # A BASE MISMATCH THAT WOULD PRODUCE A WRONG NUMBER SILENTLY — see the open question.
+            "base_caution": "these shares apply to MONTHLY NET PROTOCOL SURPLUS, which is Sky's own "
+                            "accounting term. The archetype 3 formula multiplies DefiLlama's "
+                            "revenue_usd by share_to_buyback, and revenue_usd is NOT established to "
+                            "be the same quantity. Applying 0.275 to a different base gives a "
+                            "plausible wrong answer rather than an obvious one.",
         },
         "buyback_reference": {
             "spent_usd": 114_500_000, "tokens_removed": 1_830_000_000, "staked_share": 0.67,
@@ -6001,59 +5996,55 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Sky",
-        "topic": "STAGE 2 — the 55/45 may imply an 11x overstated burn. BLOCKED ON A PRIMARY SOURCE.",
+        "topic": "RESOLVED 2026-09-17 — Stage 2 applied as fee_split_v2 from 2026-09-14",
         "severity": 1,
+        "status": "resolved",
         "reason":
-            "TWO CLAIMS AT TWO CONFIDENCE LEVELS, AND THEY MUST NOT BE MERGED.\n\n"
-
-            "CONFIRMED, from @SkyEcosystem's own account 2026-08-13: staking rewards move from "
-            "treasury-funded to protocol revenue-funded, on a trigger defined in advance — SKY "
-            "treasury reserves funding staking rewards approaching ~15 days of remaining supply. "
-            "The staged path was published in April 2026. This recontextualises what is already on "
-            "file: March 2026's 87% buyback cut was STAGE 1, building reserves against a published "
-            "trigger, not a retreat. The trigger fired in August/September 2026.\n\n"
-
-            "NOT CONFIRMED, and this is the part that moves numbers: a four-step waterfall — "
-            "security costs, backstop capital, SKY buybacks, USDS staking rewards — with a worked "
-            "example in which, per $100 of net surplus, $22.50 buys SKY that is DISTRIBUTED as "
-            "staking rewards, $22.50 goes to USDS rewards, and only $5 is bought and burned. "
-            "Source: CoinMarketCap commentary citing Standard Chartered — three steps from the "
-            "protocol, and the only place the percentages appear.\n\n"
-
-            "** IF REAL, SKY'S BURN IMPLICATION FALLS ELEVENFOLD: 55% of surplus to 5%. ** SKY "
-            "actually purchased would be 27.5%, exactly half the 55% on file — and most of what is "
-            "purchased is handed to stakers rather than destroyed. Buy pressure without supply "
-            "reduction is not a burn, and nothing derived from share_to_buyback can currently tell "
-            "the two apart.\n\n"
-
-            "ONE CORRECTION TO HOW THIS WAS FRAMED: there is no archetype 4 burn projection to "
-            "revise. Sky is archetype 3 ONLY — archetype 4 was removed deliberately because "
-            "whether the burn leg removes supply at all is unresolved (the FlapperUniV2 variant "
-            "deposits SKY back as LP). So the exposure is to the archetype 3 implied-buyback "
-            "figures, not to a burn column, and that earlier removal now looks well judged: the "
-            "waterfall, if real, is a second independent reason the burn leg is smaller than the "
-            "split suggests.\n\n"
-
-            "A DATE WORTH RESOLVING FIRST: fee_split's current period begins 2026-08-13, the same "
-            "day as the Stage 2 tweet. Either the 55/45 on file already IS the Stage 2 allocation, "
-            "or that date came from a Stage 2 announcement while the figure describes what "
-            "preceded it. Opposite implications, and nothing on file separates them.\n\n"
-
-            "NOTHING HAS BEEN APPLIED. fee_split is untouched at 55/45. See Sky's stage_2_pending "
-            "block for the full record, including a DECOMPOSITION HYPOTHESIS (22.50+22.50=45, "
-            "50.00+5.00=55) that is flagged as the same weak numerical-fit reasoning that produced "
-            "a wrong diagnosis on Aerodrome — recorded because it is testable, not because it is "
-            "believed.",
+            "PRIMARY SOURCE OBTAINED: @SkyEcosystem's own thread of 2026-09-14. Under Stage 2, 50% "
+            "of monthly Net Protocol Surplus splits 22.5% SKY buybacks for staking rewards / 22.5% "
+            "USDS staking rewards / 5% SKY buyback-and-burn. First burn 2,860,000 SKY. Applied as "
+            "fee_split_v2 effective 2026-09-14; the 55/45 period is closed at 2026-09-13 and marked "
+            "superseded, not deleted, so a window spanning the boundary uses both.\n\n"
+            "THE DECOMPOSITION HYPOTHESIS IS REFUTED, and it was refuted the right way. The "
+            "arithmetic that suggested it (22.50+22.50=45, 50.00+5.00=55) STILL FITS — it was "
+            "never the kind of evidence that could settle the question. Sky's own 'moves that "
+            "framework from policy into operation' says the mechanism was not executing before "
+            "2026-09-14, which no numerical fit can override, and the BASE differs independently: "
+            "55% of a Smart Burn Engine CYCLE versus 27.5% of monthly NET PROTOCOL SURPLUS.\n\n"
+            "RUNBOOK 11e WORKED. The fit was recorded as untrusted, the discriminating question was "
+            "written down, and the primary source answered it against the fit. Believing the "
+            "arithmetic would have left the 55/45 in place as 'unchanged, just reinterpreted' and "
+            "computed every Sky figure since 2026-09-14 on a superseded regime.",
         "suggestion":
-            "GET THE PRIMARY SOURCE: Sky's April 2026 'staged path forward' document, and/or the "
-            "specific tweet. Then ask it ONE question that discriminates rather than confirms — "
-            "does the document carve security costs and backstop capital OUT of the 55% leg? If "
-            "yes, the split figure is unchanged and only its interpretation collapses. If no, the "
-            "waterfall replaces the split entirely and fee_split_v2 is needed.\n"
-            "WHEN CONFIRMED: record as fee_split_v2 with its own effective date and mark the 55/45 "
-            "superseded rather than deleting it — any window spanning the transition needs both "
-            "regimes. Until then the 55/45 stays live, because an unconfirmed replacement is not "
-            "better than a dated figure that is at least sourced.",
+            "Nothing further on the percentages. Two follow-ups are recorded separately: the Smart "
+            "Burn Engine reconciliation (its own question), and fee_split_v2.base_caution — these "
+            "shares apply to Sky's NET PROTOCOL SURPLUS while the archetype 3 formula multiplies "
+            "DefiLlama's revenue_usd, and the two are not established to be the same quantity.",
+    },
+    {
+        "project": "Sky",
+        "topic": "does Stage 2 run THROUGH the Smart Burn Engine, or beside it?",
+        "severity": 2,
+        "reason":
+            "Sky's Stage 2 thread never mentions the Smart Burn Engine by name. Config carries the "
+            "SBE machinery in detail — Splitter (MCD_SPLIT), Flapper (MCD_FLAP), SBE BEAM "
+            "(MCD_SBEBEAM) and a $350m/yr BEAM cap — all sourced from Sky's own repositories, and "
+            "the superseded 55/45 was expressed as a share of each SBE CYCLE.\n\n"
+            "SO THE TWO DESCRIPTIONS DO NOT OBVIOUSLY MEET. Stage 2 is a share of monthly NET "
+            "PROTOCOL SURPLUS; the SBE operates on surplus passing through the Vow and Splitter on "
+            "its own cadence. Either Stage 2's mechanisms run on the SAME contracts with new "
+            "percentages, or they are a separate process alongside them. Nothing on file says "
+            "which.\n\n"
+            "IT DOES NOT BLOCK THE PERCENTAGES, which are primary-sourced and applied. It matters "
+            "for two things: whether the $350m/yr BEAM cap still bounds the buyback leg, and "
+            "whether the executor contracts already on file are the ones executing Stage 2 — a "
+            "balance read pointed at the wrong machinery would be the Uniswap Firepit mistake in a "
+            "new place.",
+        "suggestion":
+            "Reconcile against vote.sky.money/executive and the SBE contracts already in config. "
+            "The discriminating question: does a Stage 2 buyback appear as an MCD_SPLIT kick, or "
+            "as a separate transaction path? Do NOT assume continuity from the contracts being on "
+            "file — they were sourced for the 55/45 regime, which is now superseded.",
     },
     {
         "project": "Aerodrome",

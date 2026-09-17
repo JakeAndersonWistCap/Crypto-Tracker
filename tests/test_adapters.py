@@ -1013,8 +1013,35 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
     for (a, b), why in windows.items():
         r = config.split_for_window("Sky", a, b)
         assert r["status"] == "unconfirmed" and r["share_to_buyback"] is None, f"{why}: {r}"
+    # THE 55/45 PERIOD STILL RESOLVES AT 0.55 — it was SUPERSEDED on 2026-09-14, not deleted, and
+    # a window lying entirely inside it must still get its figure. Dating a regime out of the
+    # present must not erase it from the past.
     live = config.split_for_window("Sky", "2026-08-20", "2026-09-12")
-    assert live["status"] == "active" and live["share_to_buyback"] == 0.55, "the documented period still resolves"
+    assert live["share_to_buyback"] == 0.55, f"the superseded period must still resolve: {live}"
+    assert live["status"] == "superseded", \
+        f"status should now say superseded rather than active: {live['status']!r}"
+
+    # STAGE 2, live from 2026-09-14. share_to_buyback is the SKY-BUYING share (22.5% + 5%), NOT
+    # the 5% burn leg — the burn is only part of what is bought.
+    v2 = config.split_for_window("Sky", "2026-09-20", "2026-09-25")
+    assert v2["status"] == "active" and v2["share_to_buyback"] == 0.275, f"Stage 2 window: {v2}"
+
+    # ** A WINDOW SPANNING THE BOUNDARY MUST NOT SILENTLY PICK ONE. ** 2026-09-13 is the last day
+    # of the 55/45 and 2026-09-14 the first of Stage 2, so a window covering both contains two
+    # regimes and cannot resolve to a single share.
+    spanning = config.split_for_window("Sky", "2026-09-10", "2026-09-20")
+    assert spanning["share_to_buyback"] is None, \
+        f"a window spanning the Stage 2 boundary must not resolve to one share: {spanning}"
+
+    # THE ALLOCATION ITSELF: the three legs sum to the stated 50% of Net Protocol Surplus, and the
+    # burn leg is 5% — separate from the 22.5% that buys SKY and hands it to stakers.
+    v = config.PROJECT_BY_NAME["Sky"]["fee_split_v2"]
+    assert round(sum(v["splits"].values()), 6) == 0.50, "the three legs must sum to the stated 50%"
+    assert v["burn_share"] == 0.05 and v["sky_buying_share"] == 0.275
+    assert round(v["splits"]["sky_buyback_for_staking_rewards"] + v["burn_share"], 6) == v["sky_buying_share"]
+    # The other 50% is NOT primary-sourced and must stay quarantined from the figures above.
+    assert "NOT STATED" in v["remaining_50_pct"]["status"]
+    assert "UNCONFIRMED SECONDARY" in v["remaining_50_pct"]["confidence"]
 
     # filling in a share does NOT lift the suppression while the change is unresolved
     period = next(h for h in config.PROJECT_BY_NAME["Sky"]["fee_split"]["history"] if h.get("known_change"))
