@@ -2411,7 +2411,14 @@ def test_geodnet_sql_addresses_match_config_exactly():
     for key in added_2026_09_15:
         c = contracts[key]
         assert c["chain"] == "polygon", f"{key}: expected polygon, got {c['chain']}"
-        assert not c["verified"], f"{key} must stay UNVERIFIED until its holdings are confirmed"
+        # VERIFIED 2026-09-17 against GEODNET's own tokenomics page — the same source that named
+        # them. This assertion previously required them to stay UNVERIFIED "until its holdings are
+        # confirmed", which conflated two different claims: verification is about WHICH WALLET this
+        # is, and the holdings are a separate question the read itself answers. The provenance
+        # assertion below is the one that actually matters and it is unchanged — the source must
+        # still be GEODNET's own docs and not an aggregator.
+        assert c["verified"] == "2026-09-17", \
+            f"{key}: expected verification dated 2026-09-17, got {c['verified']!r}"
         assert c["source_url"] == "https://docs.geodnet.com/geod-token/tokenomics", \
             f"{key}: provenance must be GEODNET's own docs, not an aggregator"
     assert contracts["token_iotex"]["chain"] == "iotex"

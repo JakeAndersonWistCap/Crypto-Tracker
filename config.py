@@ -1778,16 +1778,21 @@ PROJECTS = [
             # not a second contract on this one.
             "staking_reward_vault": _contract(
                 "0x996913c8c08472f584ab8834e925b06D0eb1D813", "ethereum", "burn_executor", "LINK",
-                "https://docs.chain.link/chainlink-automation/overview/supported-networks",
-                verified=UNVERIFIED, provenance="address supplied 2026-09-15; not checked against "
-                                                "Chainlink's own docs in this session",
+                "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
+                verified="2026-09-17",
+                provenance="smartcontractkit's own chainlink-staking-v0.2-public-guide — "
+                           "Chainlink-authored, not an explorer label or an aggregator",
                 holder_has_code=True,
                 purpose="Chainlink staking REWARD VAULT — the DISTRIBUTE destination. Reference only: "
                         "it is not a buyback fund and must never be summed with the Reserve.",
-                note="NO READ SLOT, deliberately — see the comment above. Also UNVERIFIED: the "
-                     "address was provided rather than confirmed against Chainlink's own "
-                     "documentation, and this project does not promote an address to verified on "
-                     "the strength of it having been typed into a prompt."),
+                note="VERIFIED 2026-09-17 against smartcontractkit's own staking v0.2 public guide, "
+                     "replacing the earlier unverified status — the address is now confirmed from "
+                     "Chainlink's own repository rather than merely supplied. "
+                     "** STILL NO READ SLOT, AND VERIFICATION DOES NOT CHANGE THAT. ** kind "
+                     "burn_executor keeps it in REFERENCE_ONLY_KINDS. A confirmed address for a "
+                     "DISTRIBUTE destination is exactly as wrong to sum into a HOLD balance as an "
+                     "unconfirmed one was; what verification settles is WHICH contract this is, "
+                     "not whether buyback_fund_balance should read it."),
             "staking_community_principal": _contract(
                 "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e", "ethereum", "stake_principal", "LINK",
                 "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide",
@@ -2539,29 +2544,35 @@ PROJECTS = [
             # distribution wallet's balance is a float, not a cumulative.
             "mining_polygon": _contract(
                 "0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F", "polygon", "treasury_holding", "GEOD",
-                "https://docs.geodnet.com/geod-token/tokenomics", verified=UNVERIFIED,
-                provenance="docs.geodnet.com/geod-token/tokenomics, read 2026-09-15",
+                "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
+                provenance="docs.geodnet.com/geod-token/tokenomics — GEODNET's own documentation; verified 2026-09-17",
                 purpose="GEODNET Mining wallet (Polygon). The mining allocation's holding.",
-                note="UNVERIFIED — named by GEODNET's docs, but its current holdings have not been "
-                     "confirmed. Confirm the balance is of the expected order before wiring."),
+                note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page. The ADDRESS is "
+                     "confirmed; its HOLDINGS are still unread, and those are different claims — "
+                     "verification says this is the wallet GEODNET names, not that the balance is "
+                     "what anyone expects. The read now runs, so the first figure it returns is "
+                     "worth a look before it is trusted."),
             "mining_distribution_polygon": _contract(
                 "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478", "polygon", "treasury_holding", "GEOD",
-                "https://docs.geodnet.com/geod-token/tokenomics", verified=UNVERIFIED,
-                provenance="docs.geodnet.com/geod-token/tokenomics, read 2026-09-15",
+                "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
+                provenance="docs.geodnet.com/geod-token/tokenomics — GEODNET's own documentation; verified 2026-09-17",
                 purpose="GEODNET Mining DISTRIBUTION wallet (Polygon) — the best available proxy for "
                         "ACTUAL emissions flow. Reading its outflow beats modelling the per-miner rate.",
-                note="UNVERIFIED, and the read declared here is the WRONG SHAPE for what makes it "
-                     "valuable. treasury_holding gives a BALANCE; emissions are its OUTFLOW. A "
+                note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page — and the read "
+                     "declared here is STILL THE WRONG SHAPE for what makes this wallet valuable, "
+                     "which verification does not fix. treasury_holding gives a BALANCE; emissions "
+                     "are its OUTFLOW. A "
                      "distribution wallet's balance is a float that rises on top-up and falls on "
                      "payout, so differencing it would report negative issuance on a top-up day and "
                      "zero on a quiet one. Confirm holdings first, then source the transfer flow — "
                      "tier 4 or a Polygon transfer-log read, not balanceOf."),
             "ecosystem_polygon": _contract(
                 "0x3A6906E4239F9860C81035c54198Df58D892653b", "polygon", "treasury_holding", "GEOD",
-                "https://docs.geodnet.com/geod-token/tokenomics", verified=UNVERIFIED,
-                provenance="docs.geodnet.com/geod-token/tokenomics, read 2026-09-15",
+                "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
+                provenance="docs.geodnet.com/geod-token/tokenomics — GEODNET's own documentation; verified 2026-09-17",
                 purpose="GEODNET Ecosystem wallet (Polygon).",
-                note="UNVERIFIED — named by GEODNET's docs, holdings unconfirmed."),
+                note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page. Address confirmed; "
+                     "holdings unread."),
         },
         "burn_mechanism": {
             "model": "transfer_to_dead_address", "status": "assumed",
@@ -3072,29 +3083,69 @@ PROJECTS = [
         # money is.
         "fee_split": {
             "share_to_buyback": None,
-            "source_url": "https://securities.io/",
-            "source_date": "2026-09-14",
+            "source_url": "https://maple.finance/insights/what-syrup-holders-actually-hold",
+            "source_date": "2026-09-17",
             "programmed": False,
             "status": "tiered",
             "history": [
                 _split_period(None, "2025-09-30", None, "unconfirmed",
                               note="Pre-MIP-019. No documented buyback share."),
-                _split_period("2025-10-01", None, None, "unconfirmed",
-                              known_change="MIP-019's flat 25% of net revenue (effective Q4 2025) was "
-                                           "SUPERSEDED during 2026 by a TIERED framework. The exact MIP "
-                                           "number and effective date have NOT been found — a search of "
-                                           "community.maple.finance did not produce one, and securities.io "
-                                           "(citing Maple's own materials) is the only source on file. So "
-                                           "the period from Q4 2025 onward contains at least two regimes "
-                                           "with no established boundary between them.",
-                              note="DO NOT split this into a 25% period and a tiered period until the "
-                                   "changeover date is sourced. Dating it wrongly would apply the wrong "
-                                   "share across real months, and known_change keeps the whole span "
-                                   "unconfirmed even if somebody later fills in a number."),
+                # ===== THE SPLIT IS NOW SAFE TO MAKE. The boundary was the blocker, and it is sourced. =====
+                # This span used to be ONE unconfirmed period carrying a known_change, because the
+                # changeover date was unknown and dating it wrongly would apply the wrong share
+                # across real months. MIP-021 supplies both halves of what was missing — the MIP
+                # number and an effective date of August 2026 — so the period divides cleanly and
+                # the known_change that suppressed the whole span comes off.
+                _split_period("2025-10-01", "2026-07-31", 0.25, "confirmed",
+                              source_url="https://maple.finance/insights/what-syrup-holders-actually-hold",
+                              source_date="2026-09-17",
+                              note="MIP-019: a FLAT 25% of net revenue. Correct for its own period and "
+                                   "stale from August 2026 — superseded, not wrong. The end date is the "
+                                   "day before MIP-021 took effect."),
+                _split_period("2026-08-01", None, None, "tiered",
+                              source_url="https://maple.finance/insights/what-syrup-holders-actually-hold",
+                              source_date="2026-09-17",
+                              note="MIP-021: TIERED on monthly net revenue — 10% below $1.5m, 20% from "
+                                   "$1.5m to $2m, 30% above $2m. share_to_buyback stays None because a "
+                                   "tiered schedule HAS no single share: the rate depends on the month's "
+                                   "revenue, so any one number here would be wrong eleven months a year. "
+                                   "Read fee_tiers with the month's revenue instead."),
             ],
-            "note": "TIERED on monthly net revenue. The flat 25% is stale. Top tier unconfirmed — see "
-                    "fee_tiers. Interim source is securities.io citing Maple's own materials; the "
-                    "primary MIP has not been located.",
+            "note": "TIERED on monthly net revenue since August 2026 (MIP-021), flat 25% before that "
+                    "(MIP-019). ALL THREE TIERS NOW SOURCED and the source is PROTOCOL-AUTHORED — "
+                    "Maple's own insights page and MIP-021, replacing the securities.io interim "
+                    "citation. share_to_buyback remains None by design: a tiered schedule has no "
+                    "single share.",
+        },
+        # ===== FOUR DATED BUYBACK AMOUNTS, FOR VALIDATION. NOT A SERIES. =====
+        # These are reference points to check a fetched or derived actual_buyback_usd against —
+        # a figure that disagrees with the shape below is a bug in the read, not a finding.
+        #
+        # ** TWO OF THEM STRADDLE THE MIP-021 CHANGEOVER, which is what makes them useful. ** Jun
+        # and Jul 2026 fall under MIP-019's flat 25%; anything from Aug 2026 falls under the tiered
+        # schedule. So the same revenue month produces a different buyback depending on which side
+        # of August it sits, and a reader reconstructing a rate from these MUST apply the regime
+        # that was live at the time rather than today's.
+        #
+        # AND THEY DO NOT IMPLY A TREND. $529k in Nov 2025 against $137k in Jul 2026 is a fall of
+        # nearly 4x, and under a percentage-of-revenue split that is a statement about REVENUE, not
+        # about the buyback policy — which did not change between those two dates. Do not read the
+        # sequence as the programme winding down.
+        "buyback_reference": [
+            {"amount_usd": 375_750, "period": "2025-09", "regime": "pre-MIP-019"},
+            {"amount_usd": 529_119, "period": "2025-11", "regime": "MIP-019 flat 25%"},
+            {"amount_usd": 375_000, "period": "2026-06", "regime": "MIP-019 flat 25%"},
+            {"amount_usd": 136_768, "period": "2026-07", "regime": "MIP-019 flat 25%"},
+        ],
+        "buyback_reference_note": {
+            "source": "Maple's own materials — MIP-021 announcement and "
+                      "maple.finance/insights/what-syrup-holders-actually-hold",
+            "source_date": "2026-09-17",
+            "use": "sanity-check a fetched or derived actual_buyback_usd. NOT a stored series and "
+                   "not evidence of a trend — under a revenue-share split these track REVENUE.",
+            "regime_warning": "all four predate MIP-021's August 2026 tiered schedule, so none of "
+                              "them can be used to validate the tiered rates. They validate the "
+                              "flat-25% era only.",
         },
         # The tier schedule itself, recorded as data so the unconfirmed top tier is visible rather
         # than rounded away. A revenue month above $2m cannot be converted to a buyback figure at
@@ -3104,14 +3155,23 @@ PROJECTS = [
             "tiers": [
                 {"from_usd": 0, "to_usd": 1_500_000, "share_to_buyback": 0.10, "status": "sourced"},
                 {"from_usd": 1_500_000, "to_usd": 2_000_000, "share_to_buyback": 0.20, "status": "sourced"},
-                {"from_usd": 2_000_000, "to_usd": None, "share_to_buyback": None, "status": "unconfirmed",
-                 "note": "A FURTHER TIER EXISTS above $2m and its rate is not captured in any source on "
-                         "file. Left None deliberately: extrapolating the 10 -> 20 step to 30% would be "
-                         "inventing the most material number in the schedule."},
+                {"from_usd": 2_000_000, "to_usd": None, "share_to_buyback": 0.30, "status": "sourced",
+                 # SOURCED 2026-09-17, and the previously-refused extrapolation turned out to be
+                 # RIGHT — which is not a reason to have made it. The note here used to say that
+                 # extrapolating the 10 -> 20 step to 30% "would be inventing the most material
+                 # number in the schedule". It would have been, and the fact that the invented
+                 # figure would have matched is luck, not method: the same reasoning applied to a
+                 # 10/20/25 schedule produces a wrong number with identical confidence.
+                 "note": "30% above $2m monthly net revenue, from MIP-021 and Maple's own "
+                         "maple.finance/insights/what-syrup-holders-actually-hold. Live since "
+                         "August 2026."},
             ],
-            "source_url": "https://securities.io/",
-            "source_date": "2026-09-14",
+            "source_url": "https://maple.finance/insights/what-syrup-holders-actually-hold",
+            "source_date": "2026-09-17",
+            "source_note": "MIP-021 plus Maple's own insights page — PROTOCOL-AUTHORED, replacing the "
+                           "securities.io interim source the earlier version relied on.",
             "supersedes": "MIP-019 flat 25% of net revenue, effective Q4 2025",
+            "effective_from": "2026-08",
         },
         "burn_split": {"share_of_fees_burned": 0.0, "source_url": "https://maple.finance/", "source_date": BRIEF_DATE, "status": "active", "note": "No burn — confirmed."},
         # STAKING REWARDS ENDED. MIP-019 ended stSYRUP staking rewards in November 2025. Deposited

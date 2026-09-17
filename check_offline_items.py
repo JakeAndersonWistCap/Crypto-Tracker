@@ -48,6 +48,14 @@ SETHFI = "0x86B5780b606940Eb59A062aA85a07959518c0161"
 SEL_TOTAL_SUPPLY = "0x18160ddd"    # keccak("totalSupply()")[:4]
 SEL_BALANCE_OF = "0x70a08231"      # keccak("balanceOf(address)")[:4]
 SEL_DECIMALS = "0x313ce567"        # keccak("decimals()")[:4]
+SEL_THRESHOLD = "0x42cde4e8"       # keccak("threshold()")[:4]
+
+# --- addresses for the three checks added 2026-09-17 -------------------------------------
+SYRUP = "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66"           # Maple SYRUP token
+MAPLE_DAO_MULTISIG = "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"
+PENDLE = "0x808507121B80c02388fAd14726482e061B8da827"
+SPENDLE = "0x999999999991E178D52Cd95AFd4b00d066664144"
+UNI_FIRE_PIT = "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721"
 
 
 def head(title: str):
@@ -347,6 +355,156 @@ def etherfi_sethfi():
     print("  if one is added before then.")
 
 
+def maple_dao_multisig():
+    """Is the DAO multisig the "Maple Treasury" Maple's own materials name as the buyback destination?
+
+    THE OPEN P1 QUESTION. The address currently on file as Maple's treasury
+    (0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19) returned 0.51 SYRUP against the ~75.78m Maple
+    reports, and was traced to Maple's v2 protocol FEE treasury — right contract, wrong role. Its
+    destination_status is DISPUTED and it stores nothing.
+
+    A BALANCE IN THE TENS OF MILLIONS OF DOLLARS CONFIRMS THE ROLE; a dust balance refutes it just
+    as cleanly. That asymmetry is why this is worth one read: both outcomes are informative, and
+    neither requires interpretation.
+
+    ** IT CANNOT PRICE ITSELF. ** The threshold is expressed in DOLLARS and the read returns
+    TOKENS, so the verdict below is stated in SYRUP against the ~75.78m reference and the dollar
+    conversion is left to the reader with a price. Printing a dollar figure from a made-up price
+    would be the one way to get this wrong.
+    """
+    head("MAPLE — is the DAO multisig the treasury that holds repurchased SYRUP?")
+    block, src = eth_block_number()
+    if block is None:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber; nothing else attempted.")
+        return
+    print(f"  pinned to block {block} ({int(block, 16):,}) via {src}")
+    print(f"  multisig {MAPLE_DAO_MULTISIG}")
+    print(f"  SYRUP    {SYRUP}\n")
+
+    holder = MAPLE_DAO_MULTISIG[2:].lower().rjust(64, "0")
+    word, where = eth_call(SYRUP, SEL_BALANCE_OF + holder, block)
+    if word is None or word == "0x":
+        print(f"  SYRUP.balanceOf(multisig)  UNREACHABLE / empty — {str(where)[:110]}")
+        print("\n  VERDICT: NOT ESTABLISHED. The read did not return; do not infer from silence.")
+        return
+    raw = int(word, 16)
+    dword, _ = eth_call(SYRUP, SEL_DECIMALS, block)
+    if dword is None or dword == "0x":
+        print(f"  SYRUP.balanceOf(multisig)  {raw:,} raw — decimals() did not return, so it "
+              f"CANNOT be scaled. No verdict.")
+        return
+    dec = int(dword, 16)
+    bal = raw / (10 ** dec)
+    print(f"  SYRUP.decimals()           {dec}")
+    print(f"  SYRUP.balanceOf(multisig)  {bal:,.6f} SYRUP")
+
+    ref = 75_780_000
+    print(f"\n  reference: Maple's transparency page reports ~{ref:,} SYRUP for the Syrup "
+          f"Strategic Fund (77.66M at a later reading).")
+    if bal >= ref * 0.5:
+        print(f"  VERDICT: CONSISTENT — {bal:,.0f} SYRUP is the same ORDER as the reported fund "
+              f"({bal / ref:.2f}x the ~75.78m reference). This supports the multisig being the "
+              f"treasury Maple's materials name. Confirm against the transparency page before "
+              f"changing the disputed status on the other address.")
+    elif bal < 1_000:
+        print(f"  VERDICT: REFUTED — {bal:,.6f} SYRUP is dust, the same shape as the 0.51 that "
+              f"started this. Not the buyback destination either. The question stays open.")
+    else:
+        print(f"  VERDICT: INCONCLUSIVE — {bal:,.2f} SYRUP is neither dust nor the reported order "
+              f"({bal / ref:.4f}x). Report the figure; do not force it either way.")
+
+
+def pendle_spendle_virtual():
+    """Does sPENDLE.totalSupply() include the vePENDLE-migration BOOSTED and virtual balances?
+
+    THE OPEN P1. vePENDLE holders converting to sPENDLE received a boosted balance of up to 4x,
+    decaying over ~2 years, and Pendle's docs describe a separate "virtual sPENDLE balance" used
+    for voting power. If either is inside totalSupply(), locked_tokens OVERSTATES real PENDLE
+    locked — by up to 4x, which is the kind of error that still looks plausible on a sheet.
+
+    THE TEST IS A CEILING, NOT A MEASUREMENT. Real locked PENDLE cannot exceed PENDLE's total
+    supply. If sPENDLE.totalSupply() comes back ABOVE it, boosted or virtual balances are
+    definitely included and the metric is definitely wrong. Coming back BELOW proves nothing on
+    its own — a 4x boost on a small locked fraction still fits under the cap — so a pass here is
+    reported as "not refuted", never as confirmation.
+    """
+    head("PENDLE — does sPENDLE.totalSupply() include boosted / virtual balances?")
+    block, src = eth_block_number()
+    if block is None:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber; nothing else attempted.")
+        return
+    print(f"  pinned to block {block} ({int(block, 16):,}) via {src}\n")
+
+    got = {}
+    for name, to, data in (("sPENDLE.totalSupply()", SPENDLE, SEL_TOTAL_SUPPLY),
+                           ("PENDLE.totalSupply()", PENDLE, SEL_TOTAL_SUPPLY),
+                           ("sPENDLE.decimals()", SPENDLE, SEL_DECIMALS),
+                           ("PENDLE.decimals()", PENDLE, SEL_DECIMALS)):
+        word, where = eth_call(to, data, block)
+        if word is None or word == "0x":
+            print(f"  {name:<24} UNREACHABLE / empty — {str(where)[:100]}")
+            continue
+        got[name] = int(word, 16)
+        print(f"  {name:<24} {got[name]:,} raw")
+
+    sp, pe = got.get("sPENDLE.totalSupply()"), got.get("PENDLE.totalSupply()")
+    ds, dp = got.get("sPENDLE.decimals()"), got.get("PENDLE.decimals()")
+    if sp is None or pe is None or ds is None or dp is None:
+        print("\n  VERDICT: NOT ESTABLISHED — a read did not return. Do not infer from the others.")
+        return
+    if ds != dp:
+        print(f"\n  VERDICT: NOT COMPARABLE — decimals differ ({ds} vs {dp}). Scaling them the "
+              f"same way would be wrong; no ratio is printed.")
+        return
+    locked, total = sp / (10 ** ds), pe / (10 ** dp)
+    print(f"\n  sPENDLE totalSupply  {locked:,.6f}")
+    print(f"  PENDLE  totalSupply  {total:,.6f}")
+    print(f"  ratio                {locked / total:.6f}")
+    if locked > total:
+        print(f"\n  VERDICT: INCLUDES BOOSTED/VIRTUAL — sPENDLE totalSupply EXCEEDS the entire "
+              f"PENDLE supply by {locked / total:.2f}x, which is impossible for real locked "
+              f"tokens. locked_tokens is overstated and the non_comparable flag is correct.")
+    else:
+        print(f"\n  VERDICT: NOT REFUTED, AND NOT CONFIRMED — {locked / total:.2%} of PENDLE "
+              f"supply. This is a CEILING test and it passed, which does not settle the question: "
+              f"a 4x boost on a small locked fraction still fits under the cap. The "
+              f"non_comparable flag stays until Pendle's own docs or a virtual-balance read "
+              f"settles it.")
+
+
+def uniswap_firepit_threshold():
+    """The live threshold() on Uniswap's mainnet Fire Pit — governance STORAGE, not a constant.
+
+    config records that the UNI-burn threshold gating release() is a governance-settable
+    parameter: `uint256 public threshold;` with setThreshold() behind onlyThresholdSetter, and the
+    Governance Timelock holds thresholdSetter and can appoint a different setter. So the value
+    cannot be read from source — only from mainnet storage, at a block.
+    """
+    head("UNISWAP — live threshold() on the mainnet Fire Pit")
+    block, src = eth_block_number()
+    if block is None:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber; nothing else attempted.")
+        return
+    print(f"  pinned to block {block} ({int(block, 16):,}) via {src}")
+    print(f"  fire pit {UNI_FIRE_PIT}\n")
+
+    word, where = eth_call(UNI_FIRE_PIT, SEL_THRESHOLD, block)
+    if word is None or word == "0x":
+        print(f"  threshold()  UNREACHABLE / empty — {str(where)[:110]}")
+        print("\n  VERDICT: NOT ESTABLISHED. An empty return may also mean this contract has no "
+              "threshold() at all — check the address before assuming the RPC failed.")
+        return
+    raw = int(word, 16)
+    print(f"  threshold()  {word}")
+    print(f"  {'':13}{raw:,} raw")
+    # UNI is 18 decimals, but that is an ASSUMPTION about this contract's units rather than a
+    # read: threshold() returns a bare uint256 and nothing declares its scale. Both are printed.
+    print(f"  {'':13}{raw / 1e18:,.6f} if denominated in UNI at 18 decimals")
+    print("\n  VERDICT: READ. Record the raw value and the block in config — it is governance "
+          "STORAGE and can change, so a figure without a block is not a fact. The 18-decimal "
+          "reading is an ASSUMPTION about units, not something this read establishes.")
+
+
 def beaconchain():
     head("BEACONCHA.IN — reachability of the free tier (Ethereum validator issuance)")
     try:
@@ -368,7 +526,9 @@ def main():
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
     for fn in (sky_chainlog, sky, lambda: sky_splitter(args.splitter),
-               solana, injective, near, etherfi_sethfi, beaconchain):
+               solana, injective, near, etherfi_sethfi,
+               maple_dao_multisig, pendle_spendle_virtual, uniswap_firepit_threshold,
+               beaconchain):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest
