@@ -2608,6 +2608,33 @@ def test_bound_check_covers_the_declared_relations_and_honours_exemptions():
     assert ev["locked"] + ev["circulating"] == ev["total"], \
         "the recorded evidence must actually satisfy the test it claims to have passed"
 
+    # ** THE CONVENTION IS PER PROJECT AND GOES BOTH WAYS. ** Recorded rather than inferred from
+    # the lock mechanism, because the mechanism does not predict it: Sky's lssky is an ordinary
+    # ERC-20 receipt with no lockup and Aerodrome's veAERO is an escrowed NFT, and CoinGecko
+    # treats them oppositely. A single global assumption would be wrong for half the book.
+    for name, want in (("Aerodrome", "excludes_locked"), ("Venice AI", "excludes_locked"),
+                       ("Ether.fi", "includes_locked"), ("Sky", "includes_locked")):
+        got = config.PROJECT_BY_NAME[name].get("circulating_supply_convention")
+        assert got == want, f"{name}: convention {got!r}, expected {want!r}"
+    assert {config.PROJECT_BY_NAME[n]["circulating_supply_convention"]
+            for n in ("Aerodrome", "Ether.fi")} == {"excludes_locked", "includes_locked"}, \
+        "both conventions must be represented, or the per-project design is untested"
+
+    # INCONCLUSIVE STAYS UNDECLARED. "We tested and could not tell" must not render as a fact.
+    for name in ("Chainlink", "Maple", "Pendle"):
+        assert config.PROJECT_BY_NAME[name].get("circulating_supply_convention") is None, \
+            f"{name} came back INCONCLUSIVE — declaring a convention for it would be a guess"
+
+    # VENICE'S NEAR MISS IS ON FILE, so "it never flagged" is not mistaken for "it was fine".
+    v = config.PROJECT_BY_NAME["Venice AI"]["circulating_supply_convention_evidence"]
+    assert v["near_miss"] is True and "below 50%" in v["near_miss_note"]
+
+    # AND THE BOUND HOLDS WHICHEVER CONVENTION APPLIES — which is why an undeclared one is safe.
+    for name in ("Chainlink", "Maple", "Pendle", "Sky", "Ether.fi", "Venice AI"):
+        assert ("locked_tokens", "total_supply") in pairs
+        assert ("locked_tokens", "circulating_supply") not in pairs, \
+            f"an undeclared convention is only safe while no lock metric is bounded by circulating"
+
     # ZERO TOLERANCE — and this pins what "zero" actually means, which is not quite zero.
     # The guard is `a <= b * (1 + epsilon)` with epsilon 1e-9, and that epsilon is RELATIVE, so
     # what it absorbs scales with the figure:

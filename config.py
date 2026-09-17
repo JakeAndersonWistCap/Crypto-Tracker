@@ -1649,6 +1649,21 @@ PROJECTS = [
         "coingecko_id": "chainlink",
         "defillama_fees_slug": "chainlink", "defillama_protocol": "chainlink", "defillama_chain": None,
         "archetypes": [1, 3], "archetypes_held": [],
+        # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
+        # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
+        # circulating + locked nor circulating alone lands near total_supply, so the provider's
+        # treatment cannot be read off the figures. The likeliest cause is a third population
+        # sitting outside BOTH — unvested team and treasury allocations, which CoinGecko excludes
+        # from circulating and which no staking-lock figure counts either. Nothing on file
+        # decomposes that, so the test cannot discriminate and no convention is declared.
+        #
+        # ** THIS CREATES NO RISK TO THE BOUND CHECK. ** locked_tokens <= total_supply holds under
+        # either convention — that is the whole reason the relation was moved to total_supply — so
+        # an undeclared convention leaves nothing unguarded. The field is documentation for a
+        # reader, not an input to a check.
+        #
+        # Undeclared rather than guessed, because "we tested and could not tell" and "nobody has
+        # looked" must not render identically.
         # ===== B2: NO ISSUANCE HAS EVER BEEN POSSIBLE, AND NONE EVER WILL BE. =====
         "not_applicable": {
             "gross_issuance_tokens":
@@ -2852,6 +2867,29 @@ PROJECTS = [
         "coingecko_id": "venice-token",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 3, 4], "archetypes_held": [],
+        # ===== CIRCULATING EXCLUDES LOCKED — VERDICT A, AND A NEAR MISS. =====
+        # ** THE NEAR-MISS FLAG IS THE POINT OF RECORDING THIS ONE. ** Venice never appeared as a
+        # violation, and that was luck rather than health: under this convention the withdrawn
+        # locked_tokens <= circulating_supply relation was just as wrong here as on Aerodrome, and
+        # stayed quiet only because the lock rate sits below 50% of total supply. It would have
+        # started flagging on the day the rate crossed half — a correct project suddenly failing a
+        # check because it locked more tokens.
+        #
+        # Written here so a reader sees it without re-running the diagnostic. "Never flagged" is
+        # not evidence a relation was right.
+        "circulating_supply_convention": "excludes_locked",
+        "circulating_supply_convention_evidence": {
+            "test": "circulating + locked == total_supply; circulating alone is out by ~50%",
+            "confirmed_on": "2026-09-17", "by": "diagnose_lock_vs_float.py against the live store",
+            "provider": "CoinGecko",
+            "near_miss": True,
+            "near_miss_note": "lock rate is below 50% of total supply, so the withdrawn "
+                              "locked <= circulating relation never fired here — wrong, but quiet. "
+                              "It would have begun flagging once the rate crossed half.",
+            "figures_not_transcribed": "the per-project numbers were read from the live store and "
+                                       "are not copied here; only Aerodrome's are, as the worked "
+                                       "example. Re-run the diagnostic for current figures.",
+        },
         "fee_split": {"share_to_buyback": None, "source_url": "https://venice.ai/blog", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
                       "note": "Revenue-funded monthly buy-and-burn; the revenue share applied is not documented as a fixed %. "
                               "Use the observed buyback rather than an implied split."},
@@ -3010,6 +3048,21 @@ PROJECTS = [
         "coingecko_id": "syrup",
         "defillama_fees_slug": "maple", "defillama_protocol": "maple", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
+        # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
+        # circulating + locked nor circulating alone lands near total_supply, so the provider's
+        # treatment cannot be read off the figures. The likeliest cause is a third population
+        # sitting outside BOTH — unvested team and treasury allocations, which CoinGecko excludes
+        # from circulating and which no staking-lock figure counts either. Nothing on file
+        # decomposes that, so the test cannot discriminate and no convention is declared.
+        #
+        # ** THIS CREATES NO RISK TO THE BOUND CHECK. ** locked_tokens <= total_supply holds under
+        # either convention — that is the whole reason the relation was moved to total_supply — so
+        # an undeclared convention leaves nothing unguarded. The field is documentation for a
+        # reader, not an input to a check.
+        #
+        # Undeclared rather than guessed, because "we tested and could not tell" and "nobody has
+        # looked" must not render identically.
         # TIERED, NOT FLAT — the 25% on file was STALE. MIP-019 set a flat 25% effective Q4 2025;
         # a later 2026 framework replaced it with a tier schedule on MONTHLY NET REVENUE. Two of
         # the three tiers are sourced; the third is not, and it is left None rather than guessed.
@@ -3981,6 +4034,20 @@ PROJECTS = [
         "coingecko_id": "sky",
         "defillama_fees_slug": "sky", "defillama_protocol": "sky", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # ===== CIRCULATING INCLUDES LOCKED — VERDICT B. =====
+        # Same convention as Ether.fi and the opposite of Aerodrome. Recorded per project because
+        # the provider's treatment is not predictable from the lock mechanism: Sky's lssky is an
+        # ordinary ERC-20 staking receipt with no lockup, Aerodrome's veAERO is an escrowed NFT,
+        # and CoinGecko treats the two differently. Guessing from the mechanism would have got
+        # this one wrong.
+        "circulating_supply_convention": "includes_locked",
+        "circulating_supply_convention_evidence": {
+            "test": "circulating ~= total_supply; circulating + locked overshoots total badly",
+            "confirmed_on": "2026-09-17", "by": "diagnose_lock_vs_float.py against the live store",
+            "provider": "CoinGecko",
+            "figures_not_transcribed": "read from the live store, not copied here. Re-run the "
+                                       "diagnostic for current figures.",
+        },
         # A3: the surplus passes THROUGH the Splitter and Flapper; only the Pause Proxy receives.
         "not_applicable": {
             "buyback_fund_balance":
@@ -4334,6 +4401,21 @@ PROJECTS = [
         "coingecko_id": "pendle",
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
+        # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
+        # circulating + locked nor circulating alone lands near total_supply, so the provider's
+        # treatment cannot be read off the figures. The likeliest cause is a third population
+        # sitting outside BOTH — unvested team and treasury allocations, which CoinGecko excludes
+        # from circulating and which no staking-lock figure counts either. Nothing on file
+        # decomposes that, so the test cannot discriminate and no convention is declared.
+        #
+        # ** THIS CREATES NO RISK TO THE BOUND CHECK. ** locked_tokens <= total_supply holds under
+        # either convention — that is the whole reason the relation was moved to total_supply — so
+        # an undeclared convention leaves nothing unguarded. The field is documentation for a
+        # reader, not an input to a check.
+        #
+        # Undeclared rather than guessed, because "we tested and could not tell" and "nobody has
+        # looked" must not render identically.
         # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
         "not_applicable": {
             "buyback_fund_balance":
@@ -4805,6 +4887,20 @@ PROJECTS = [
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # ===== CIRCULATING INCLUDES LOCKED — VERDICT B. =====
+        # The opposite convention from Aerodrome, which is exactly why this is recorded per project
+        # rather than assumed once for all ve-style protocols. Here circulating and locked OVERLAP,
+        # so locked exceeding circulating WOULD be a genuine contradiction — but the relation is
+        # still bounded by total_supply, because a bound that changes meaning per project is not an
+        # identity and this file does not carry two versions of the same check.
+        "circulating_supply_convention": "includes_locked",
+        "circulating_supply_convention_evidence": {
+            "test": "circulating ~= total_supply; circulating + locked overshoots total badly",
+            "confirmed_on": "2026-09-17", "by": "diagnose_lock_vs_float.py against the live store",
+            "provider": "CoinGecko",
+            "figures_not_transcribed": "read from the live store, not copied here. Re-run the "
+                                       "diagnostic for current figures.",
+        },
         # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
         "not_applicable": {
             "buyback_fund_balance":
