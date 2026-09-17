@@ -1160,7 +1160,9 @@ PROJECTS = [
                 "validator_share": 0.90,
                 "source": "documented 90/10 split, confirmed by multiple current sources 2026-09-15",
                 "source_date": "2026-09-15",
-                "status": "declared",
+                "status": "confirmed",
+                "confidence": "high — the documented split, with the competing read now known to be "
+                              "structurally inapplicable rather than merely uncertain",
                 "applied_to": {"annual_rate_max": 0.025,
                                "validators_pct_of_supply": 0.0225,
                                "treasury_pct_of_supply": 0.0025},
@@ -1168,19 +1170,39 @@ PROJECTS = [
                                                  "validators_pct_of_supply": 0.045,
                                                  "treasury_pct_of_supply": 0.005,
                                                  "attributed_to": "Figment, giving the original arithmetic under 5%"},
-                "supersedes": {
-                    "value": 0.0,
-                    "source": "live on-chain read of protocol_reward_rate = [0, 1]",
-                    "source_date": "2026-09-14",
-                    "why_discarded": "byte-identical to nearcore's serde default for this field "
-                                     "(genesis_config.rs:168). Against a documented non-zero share, a zero "
-                                     "that exactly equals the uninitialised default is a read that never "
-                                     "reached chain state — not a chain value of zero.",
+                # ===== THE READ IS STRUCTURALLY INAPPLICABLE. SETTLED 2026-09-17. =====
+                # It was "a read that never reached chain state" — suspected. It is now EXPLAINED,
+                # in NEAR's own engineering team's words, from a near/nearcore GitHub issue:
+                #
+                #   "the problem with reward calculation... is due to inflation rate set to 0 in
+                #    genesis for mocknet, similar to the protocol_reward_rate problem, that the
+                #    code is picking it from genesis config instead of hard-coded value...
+                #    mainnet uses hard-coded but mocknet using genesis."
+                #
+                # So MAINNET'S protocol_reward_rate IS A HARD-CODED CONSTANT IN THE NEARCORE BINARY,
+                # structurally separate from the genesis.json our RPC queries. The [0, 1] is not a
+                # failed read of the right parameter — it is a CORRECT read of the WRONG one. The
+                # genesis_config RPC method cannot answer this question on mainnet by design, and
+                # no amount of retrying, re-endpointing or archive-hunting changes that.
+                #
+                # ** THE READ IS REMOVED AS A DATA POINT, NOT DEMOTED TO A SECONDARY FIGURE. **
+                # Keeping it "for reference" would present a structurally-inapplicable read as weak
+                # corroboration, which is worse than not having it: a reader would weigh a number
+                # that answers a different question against a documented one that answers this.
+                "live_read_status": "NOT CONSULTED — structurally inapplicable, not merely weak",
+                "live_read_explanation": {
+                    "observed": "genesis_config RPC returns protocol_reward_rate = [0, 1]",
+                    "why": "mainnet takes this value from a HARD-CODED CONSTANT in the nearcore "
+                           "binary; only mocknet reads it from genesis config. The RPC reads "
+                           "genesis, so on mainnet it returns a field mainnet does not use.",
+                    "source": "near/nearcore GitHub issue — NEAR's own engineering team",
+                    "source_date": "2026-09-17",
+                    "consequence": "the RPC method cannot answer this on mainnet BY DESIGN. This is "
+                                   "not a reading that might be wrong; it is the wrong parameter.",
+                    "do_not": "do not keep it as a 'for reference' secondary figure, and do not "
+                              "re-attempt with another endpoint or an archive — the limitation is "
+                              "architectural, not operational.",
                 },
-                "would_confirm_the_read": "a mainnet genesis_config from a NEAR-operated endpoint or "
-                                          "archive, or a second independent RPC returning the same field "
-                                          "non-zero. That would confirm OUR READ; it is not needed to "
-                                          "establish the split.",
             },
         },
         # ===================== THE NUMBER THAT DECIDES NEAR'S NET SUPPLY SIGN =====================
@@ -1320,13 +1342,14 @@ PROJECTS = [
         # settled while the split is not.
         "non_comparable": {
             "emissions_tokens": {
-                "why": "THE SPLIT IS KNOWN — 90% validators and delegators / 10% protocol treasury, so "
-                       "2.25% / 0.25% of the 2.5% ceiling — and it is config-declared. What is unresolved "
-                       "is OUR READ: protocol_reward_rate returns [0, 1], nearcore's serde struct default "
-                       "for that field, not chain state. So the declared split is used and the live read "
-                       "is not. AMBER because emissions_tokens rests on a documented figure rather than "
-                       "on a value this tool read for itself — a weaker footing than a contract read, "
-                       "and a different complaint from 'the split is uncertain', which it no longer is.",
+                "why": "mainnet's protocol_reward_rate is a HARD-CODED CONSTANT in the nearcore binary "
+                       "and is NOT exposed via the genesis_config RPC — confirmed from a near/nearcore "
+                       "issue in NEAR's own engineering team's words. The documented 90/10 "
+                       "validator/treasury split (2.25% / 0.25% of the 2.5% ceiling) is used with HIGH "
+                       "CONFIDENCE, and the live read is INTENTIONALLY NOT CONSULTED for this parameter "
+                       "— it returns a field mainnet does not use, so it is the wrong parameter rather "
+                       "than a weak reading of the right one. AMBER only because the figure is "
+                       "documented rather than read; there is nothing left to resolve.",
                 "use_instead": "gross_issuance_tokens, which is the same under either split and does not "
                                "depend on the declared share at all. emissions_tokens applies the declared "
                                "90% — see issuance_rate_declared.treasury_share",
@@ -1919,16 +1942,46 @@ PROJECTS = [
                               "exchanges). The SHARE is undocumented and so is the DESTINATION — see "
                               "destination_undocumented below. Implied buyback only."},
         "burn_split": None,
-        # DESTINATION UNDOCUMENTED — not indeterminate (Maple's SSF, where the uses ARE stated and
-        # conflict), not disputed (Sky, where a claim was refuted). Simply: nobody has said. The
-        # three possibilities — burn, treasury hold, distribute — have opposite signs, so no
-        # default is safe and none is chosen.
-        "destination_undocumented": {
-            "what": "WMTx repurchased on exchanges with fiat telecom revenue",
-            "why": "no World Mobile material on file states whether repurchased WMTx is burned, held "
-                   "by the treasury, or redistributed",
-            "effect": "actual_buyback_tokens and actual_buyback_usd are suppressed; the implied figure "
-                      "from the revenue side is the only one computed",
+        # ===== DESTINATION CONFIRMED 2026-09-17, FROM THE STRONGEST SOURCE TIER AVAILABLE. =====
+        # This was recorded as UNDOCUMENTED — "nobody has said" — through several rounds. World
+        # Mobile's own MiCA regulatory whitepaper says, at G.13/G.15. That is an EU regulatory
+        # filing and therefore legally binding on the issuer, which outranks a docs page, a blog
+        # post and every aggregator: a protocol can quietly restate marketing copy, and cannot
+        # quietly restate a filing.
+        #
+        # THE FLOW, as filed:
+        #   fiat revenue from telecom services
+        #     -> collected into the "World Mobile Treasury"
+        #     -> purchases WMTX on the open market
+        #     -> tokens held in the "Treasury wallet"
+        #     -> DISTRIBUTED, alongside tokens from the Emissions Pool, as rewards to EarthNode
+        #        operators and WMTX stakers.
+        #
+        # SO IT IS distribute, VIA A TREASURY PASS-THROUGH — the same shape as Chainlink's
+        # Reserve-to-staking pattern: buy, hold briefly, redistribute. NOT a burn and NOT a
+        # permanent hold. The treasury step is real but transient, and reading it as a permanent
+        # hold would count reward inventory as retired supply.
+        #
+        # ** AND THE BURN FUNCTION IS NOT AN ECONOMIC BURN. ** The contract has one, and the filing
+        # documents it as serving CROSS-CHAIN BRIDGING — burn-and-mint interoperability between
+        # deployments. Repurchased WMTX is never burned. Anyone finding burn() in the bytecode
+        # later should read this before concluding a deflationary mechanism exists.
+        "destination_confirmed": {
+            "destination": "distribute",
+            "route": "fiat telecom revenue -> World Mobile Treasury -> open-market WMTX purchase -> "
+                     "Treasury wallet -> distributed as EarthNode operator and staker rewards, "
+                     "alongside Emissions Pool tokens",
+            "same_shape_as": "Chainlink's Reserve-to-staking pattern — buy, hold briefly, redistribute",
+            "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf",
+            "source_sections": "G.13, G.15",
+            "source_tier": "EU MiCA regulatory filing — legally binding on the issuer",
+            "source_date": "2026-09-17",
+            "burn_function_is_not_economic": "the contract's burn() serves CROSS-CHAIN BRIDGING "
+                                             "(burn-and-mint interoperability), not deflation. "
+                                             "Repurchased WMTX is never burned — do not model any "
+                                             "burn mechanism for this buyback.",
+            "supersedes": "destination_undocumented, which said no World Mobile material stated "
+                          "whether repurchased WMTX is burned, held or redistributed. It does.",
         },
         # ================ THE MECHANISM IS FOUND. THE BUDGET IS CERTAIN. ================
         # Source: World Mobile's OWN MiCA whitepaper (worldmobiletoken.com/mica_whitepaper_wmtx.pdf)
@@ -2159,7 +2212,24 @@ PROJECTS = [
                      "it was previously an inference. AirNode payouts are NOT emissions and must not be "
                      "modelled as issuance."},
         ],
+        # NEW ALLOCATION BUCKET, from the same filing: the ISSUER RETAINS 18% of total supply as
+        # an operational fund. Recorded beside the 29% inflation budget because the two are
+        # different things and the difference matters for float: the 29% is MINTED OVER 20 YEARS
+        # to suppliers, this 18% EXISTS NOW and is held by the issuer. Neither is circulating in
+        # the sense a buyer would mean, and only one of them is scheduled.
+        "issuer_operational_fund": {
+            "share_of_total_supply": 0.18,
+            "tokens": 360_000_000,
+            "held_by": "the issuer",
+            "purpose": "operational fund",
+            "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf",
+            "source_date": "2026-09-17",
+            "note": "18% of the 2,000,000,000 cap. NOT part of the 29% / 580,000,000 inflation "
+                    "budget — that is minted to suppliers over 20 years; this already exists.",
+        },
         "staking_terms": {
+            "apy_max": 0.05, "compounding": "monthly",
+            "apy_source": "MiCA whitepaper, confirmed 2026-09-17 — up to 5% APY, monthly compounded",
             "epoch_days": 30, "epoch_starts": "the 1st of each month",
             "lock_period": None,
             "unstake": "anytime — no lock period",
@@ -2183,6 +2253,29 @@ PROJECTS = [
         # adapter reads each contract's own decimals(), so a per-chain difference is handled
         # correctly and silently — but anyone comparing a Cardano figure with an Ethereum one by
         # hand needs to know.
+        # ** THIS CONTRACT HAS ALREADY HAD A DECIMAL-PRECISION BUG. ** Hacken's Jan/Feb 2024 audit
+        # found a HIGH-SEVERITY decimal precision issue in WMTX's contract. It was FIXED — the
+        # post-remediation score was 10/10 — so this is history, not a live defect.
+        #
+        # It is recorded because of what it means for OUR reads rather than for the contract. This
+        # project has a documented history of exactly the bug class that produces a wrong number
+        # which still looks plausible, and that is the hardest kind to catch downstream. Any NEW
+        # WMTX chain read gets extra scrutiny before it is trusted: check the order of magnitude
+        # against a known figure before accepting the first value, and prefer a sanity bound
+        # narrow enough to reject a power-of-ten error rather than one set to what is physically
+        # possible. The adapter already reads decimals() live (see below), which closes the route
+        # we control; the audit history is about the ones we do not.
+        "decimals_audit_history": {
+            "finding": "high-severity decimal precision bug",
+            "auditor": "Hacken", "found": "2024-01/02", "status": "FIXED",
+            "post_remediation_score": "10/10",
+            "why_recorded": "a documented history of this bug class on this contract. It is "
+                            "resolved; the caution is for OUR reads, not for the contract.",
+            "action": "scrutinise any new WMTX chain read before trusting it — order-of-magnitude "
+                      "check against a known figure, and a sanity bound tight enough to reject a "
+                      "power-of-ten error.",
+            "source_date": "2026-09-17",
+        },
         "decimals_note": {
             "docs_claim": 6,
             "docs_source": "World Mobile's own documentation",
@@ -2268,8 +2361,8 @@ PROJECTS = [
                                "the figure is labelled partial. Same open question as GEOD.",
                 purpose="WMTx on Ethereum — the PRIMARY supply read. ERC20Capped at 2,000,000,000."),
         },
-        "buyback_destination": "undocumented", "destination_split": None, "burn_execution": "n/a",
-        "destination_effect": "unresolved",
+        "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "yield_payout",
         "dune_queries": {},
         # ARCHETYPE 2 OPERATING METRICS, World Mobile's own reporting as of Feb 2026.
         #
@@ -3577,6 +3670,31 @@ PROJECTS = [
                           "vote HYPE held there is recognised as permanently burned, and the address has never had "
                           "a private key so nothing can leave. Read from Hyperliquid's own info endpoint, not from "
                           "any chain RPC.",
+        # ===== A SECOND INFLOW TO THE ASSISTANCE FUND, NOT PREVIOUSLY ON FILE. =====
+        # 50% of the reserve yield on USDH — Hyperliquid's native stablecoin, issued by Native
+        # Markets — also routes to the Assistance Fund and converts to HYPE.
+        #
+        # WHY IT MATTERS RATHER THAN BEING A FOOTNOTE: the AF balance has been read as fee-funded,
+        # and its inflow is what the burn rate is implicitly attributed to. A second, structurally
+        # different stream means the AF can grow while trading fees fall, so inferring fee revenue
+        # from the burn — or the burn from fee revenue — is now wrong in both directions.
+        #
+        # NOT MODELLED, deliberately: no share of total AF inflow is on file for either stream, so
+        # the split between them is unknown and any attribution would be invented. The existing
+        # read is unaffected — burn_address_balance is the AF balance whatever funded it.
+        "assistance_fund_inflows": [
+            {"source": "trading fees", "share_of_net_protocol_fees": 0.99,
+             "note": "the existing, long-recorded stream; historical range 97-99%."},
+            {"source": "USDH stablecoin reserve yield", "share_of_reserve_yield": 0.50,
+             "issuer": "Native Markets", "converts_to": "HYPE",
+             "added": "2026-09-17",
+             "note": "NEW. Routes to the Assistance Fund and converts to HYPE — a second funding "
+                     "stream beyond trading fees."},
+        ],
+        "assistance_fund_inflow_note": "The two streams' shares of TOTAL AF inflow are not on file, "
+                                       "so the mix is unknown and is not modelled. Consequence: do "
+                                       "NOT infer trading-fee revenue from the burn rate or vice "
+                                       "versa — the AF can grow while fees fall.",
         "node_api": {
             "kind": "hypercore_info",
             "metric": "burn_address_balance",
@@ -4401,6 +4519,59 @@ PROJECTS = [
                     "not less. Until the active variant is established, Sky has no burn figure, and that "
                     "is the correct state.",
         },
+        # ===== TWO STEPS, AND NEITHER EXISTING BUCKET FITS. RECORDED 2026-09-17. =====
+        # destination_effect stays treasury_redeployable as the FIRST-ORDER answer and is no longer
+        # the whole answer.
+        #
+        # STEP 1 stands, unchanged and confirmed at deploy-code level: the Pause Proxy IS the
+        # enforced receiver of Smart Burn Engine proceeds (FlapperInit.sol). Bought SKY lands there.
+        # STEP 2, newly found: SKY in the Pause Proxy is SUBSEQUENTLY BURNED by a SEPARATE, PERIODIC
+        # governance vote. A Sky executive proposal passed 2026-09-11 and executed 2026-09-13
+        # carries the explicit action "burn SKY from the Pause Proxy balance"
+        # (vote.sky.money/executive).
+        #
+        # Corroborated by Sky's OWN current blog (sky.money/blog/understanding-the-sky-token):
+        # "repurchased tokens are either burned or redistributed to staked SKY holders, depending
+        # on governance-set parameters" — the protocol's own framing, not a secondary reading.
+        #
+        # ** IT IS NOT UNISWAP AND IT IS NOT CHAINLINK. ** Uniswap buys and burns in one flow, so
+        # the supply effect is immediate and certain. Chainlink's Reserve holds and never burns, so
+        # the effect is a lock. Sky does neither: tokens land redeployable, and a later vote MAY
+        # retire some. Forcing it into either bucket asserts a supply effect that has not happened
+        # (burn) or denies one that recurrently does (hold).
+        "destination_two_step": {
+            "first_order": "treasury_redeployable — the Pause Proxy receives, enforced in "
+                           "FlapperInit.sol at deploy-code level",
+            "second_order": "PERIODIC GOVERNANCE-VOTED BURN from that same balance",
+            "second_order_is": "documented, real and recurring — NOT a possibility, NOT automatic",
+            "evidence": {
+                "executive_proposal": "passed 2026-09-11, executed 2026-09-13, explicit action "
+                                      "'burn SKY from the Pause Proxy balance'",
+                "archive": "https://vote.sky.money/executive",
+                "protocol_own_framing": "sky.money/blog/understanding-the-sky-token — 'repurchased "
+                                        "tokens are either burned or redistributed to staked SKY "
+                                        "holders, depending on governance-set parameters'",
+            },
+            "not_the_same_as": {
+                "uniswap_style_burn": "buy-and-burn in one flow; immediate and certain.",
+                "chainlink_style_hold": "the Reserve holds and never burns; the effect is a lock.",
+            },
+            "do_not": "do not net the periodic burns into destination_effect. A vote that may or "
+                      "may not happen is not a supply reduction until it does, and treating the "
+                      "Pause Proxy balance as pre-burned would double-count against gross_burn.",
+            "still_open": "the specific 2026-08-13 proposal's own forum URL was not found — only "
+                          "Messari's secondhand citation. vote.sky.money/executive is confirmed as "
+                          "the right archive to search.",
+            "recorded": "2026-09-17",
+        },
+        "buyback_reference": {
+            "spent_usd": 114_500_000, "tokens_removed": 1_830_000_000, "staked_share": 0.67,
+            "as_of": "2026-03",
+            "note": "~$114.5m spent removing ~1.83bn SKY from circulation, ~67% of SKY staked at "
+                    "that point. REFERENCE ONLY — a sanity bound for the archetype 3 figures, not "
+                    "a stored series.",
+            "source_date": "2026-09-17",
+        },
         "buyback_destination": "split", "destination_split": 0.55, "burn_execution": "protocol",
         # "mixed" understated it: whether the burn LEG removes supply at all is unresolved. If the
         # active variant is FlapperUniV2, part of what was called burn is SKY in an LP position —
@@ -4876,9 +5047,64 @@ PROJECTS = [
             "source_url": "https://governance.aave.com/",
             "source_date": BRIEF_DATE,
             # SOURCES GENUINELY CONFLICT — do not resolve this to True or False.
-            "programmed": "unconfirmed_conflict",
-            "status": "paused",
-            "note": "The AWW framework (passed April 2026) routes 100% of Aave Protocol, GHO and Aave-branded "
+            "programmed": True,
+                      "status": "active",
+                      # ===== RESOLVED 2026-09-17. IT WAS NEVER A CONFLICT — IT WAS TWO SYSTEMS. =====
+                      # This sat as programmed="unconfirmed_conflict" / status="paused" because
+                      # sources disagreed on whether Aave's buyback is immutable or
+                      # committee-directed. They were not describing the same mechanism. They were
+                      # describing two SEQUENTIAL ones, and each was accurate about its own period:
+                      #
+                      #   BEFORE ("Aavenomics Part One", early 2025 - June 2026): genuinely
+                      #     COMMITTEE-DIRECTED. A Finance Committee mandate at $1m/week, which
+                      #     governance could redirect, pause or resize with no protocol-level change.
+                      #   AAVENOMICS 3.0 (live since 2026-06-27/28): built explicitly to REPLACE it.
+                      #     Immutable, automated, non-discretionary, executing at the protocol level,
+                      #     "running continuously unless governance votes to halt it".
+                      #
+                      # ** THE DEFAULT INVERTED, AND THAT IS THE STRUCTURAL DIFFERENCE. ** The old
+                      # system's default was OFF and needed active renewal; 3.0's default is ON and
+                      # needs a vote to stop. Not a change of degree in discretion — a change of
+                      # which way the ratchet points.
+                      #
+                      # The Defiant excerpt that read as calling 3.0 committee-directed was, in full
+                      # context, describing the OLD system being replaced; its own text draws the
+                      # contrast.
+                      #
+                      # ** CONFIDENCE IS HIGH, NOT ABSOLUTE, AND THE LABEL SAYS SO. ** This rests on
+                      # Aave's founder's public statements plus consistent contemporaneous reporting
+                      # (The Defiant, ForkLog, ThirdWeb, Phemex, CryptoDaily). It is NOT verified
+                      # against contract code — and "immutable" is precisely the claim that only
+                      # bytecode can settle.
+                      "confidence": "high, not absolute",
+                      "confidence_basis": "Aave founder's public statements plus consistent "
+                                          "independent contemporaneous reporting. NOT verified "
+                                          "against raw contract code, and 'immutable' is exactly "
+                                          "the claim only bytecode settles.",
+                      "supersedes": {"programmed": "unconfirmed_conflict", "status": "paused",
+                                     "why": "the two sources described two sequential systems, not "
+                                            "one mechanism. Aavenomics 3.0 replaced the "
+                                            "committee-directed programme on 2026-06-27/28."},
+                      "regime_history": [
+                          {"name": "Aavenomics Part One", "from": "2025-early", "to": "2026-06",
+                           "programmed": False, "rate": "$1m/week",
+                           "control": "Finance Committee mandate; governance could redirect, pause "
+                                      "or resize without a protocol-level change",
+                           "bought": "205,000+ AAVE April 2025 - mid 2026, ~1.28% of the 16m max supply"},
+                          {"name": "Aavenomics 3.0", "from": "2026-06-27", "to": None,
+                           "programmed": True,
+                           "control": "immutable, automated, non-discretionary, protocol-level; runs "
+                                      "continuously unless governance votes to HALT it"},
+                      ],
+                      "budget_history": [
+                          {"budget_usd": 50_000_000, "until": "2026-03"},
+                          {"budget_usd": 30_000_000, "from": "2026-03",
+                           "why": "cited a 25% decline in borrow-fee revenue",
+                           "funding_shift": "from stablecoins to ETH-correlated assets, using ~$40m "
+                                            "of DAO ETH holdings"},
+                      ],
+                      "current_rate_tokens_per_day": 292,
+                      "note": "The AWW framework (passed April 2026) routes 100% of Aave Protocol, GHO and Aave-branded "
                     "product revenue to the DAO treasury, and Aavenomics 3.0 draws on that. Sources conflict on "
                     "whether the buyback is immutable and non-discretionary or committee-directed: one June 2026 "
                     "report states governance can redirect, pause or resize it without a protocol-level change. "
@@ -5506,34 +5732,20 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
 # load-bearing field: it is what stops the next person repeating the work.
 # =======================================================================================
 UNAVAILABLE = [
+    # ===== WORLD MOBILE'S TWO BUYBACK CLOSURES WERE REMOVED 2026-09-17, NOT SOFTENED. =====
+    # actual_buyback_tokens and actual_buyback_usd were closed here on the grounds that "the
+    # destination is undocumented, so a token figure cannot be given a meaning". The MiCA filing
+    # documents the destination, so the reason no longer holds and the closure goes with it.
+    #
+    # ** THEY BECOME ORDINARY GAPS, NOT ANSWERS. ** Nothing here supplies a figure — what changed
+    # is that the question is now answerable in principle, where before it was not. Two rows move
+    # from "closed, chased, no route" onto the live Gap Report, which is a real increase in open
+    # work and the correct one: a closed item whose closing reason has been falsified is the worst
+    # state to leave in place.
+
     # ---------------------------------------------------------------- World Mobile
     # SUPPRESSED FOR A DESTINATION REASON, NOT A DATA REASON. The mechanism is confirmed; where
     # the tokens GO is not, and the three candidates have opposite signs on float.
-    {
-        "project": "World Mobile", "metric": "actual_buyback_tokens",
-        "closed_on": "2026-09-14",
-        "summary": "Buyback destination is undocumented, so a token figure cannot be given a meaning.",
-        "what_was_tried": (
-            "The MECHANISM is confirmed: fiat telecom revenue buys WMTx on exchanges. No World Mobile "
-            "material on file states what happens to the bought tokens — burned, held by the treasury, or "
-            "redistributed. Their own metrics page is being rebuilt and does not cover it."),
-        "impact": (
-            "The IMPLIED buyback from the revenue side is unaffected and still computes. What is suppressed "
-            "is the actual figure, because storing a token count without its destination would let it be "
-            "netted against emissions like a burn (removes supply), counted as locked (reduces float), or "
-            "ignored (returns to float) — three answers with three different signs."),
-        "reopen_if": (
-            "World Mobile publishes what happens to repurchased WMTx, or an on-chain destination address "
-            "appears. A single sentence naming the destination closes this."),
-    },
-    {
-        "project": "World Mobile", "metric": "actual_buyback_usd",
-        "closed_on": "2026-09-14",
-        "summary": "Same as actual_buyback_tokens: the destination is undocumented.",
-        "what_was_tried": "See the actual_buyback_tokens entry — the same single missing fact blocks both.",
-        "impact": "Implied buyback still computes from revenue. The actual USD figure is suppressed.",
-        "reopen_if": "World Mobile states the destination of repurchased WMTx.",
-    },
     # ---------------------------------------------------------------- Fluid
     # A PERMANENT GAP, ACCEPTED. Five independent sources checked, none publishes the address.
     {
@@ -5719,32 +5931,57 @@ OPEN_QUESTIONS = [
     {
         "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
         "severity": 2,
-        "reason": "SOURCE UPGRADED AGAIN 2026-09-15, AND STILL NOT ADDED — read the next paragraph "
-                  "before deciding, because the source class has genuinely changed.\n\n"
-                  "DefiLlama's OWN METHODOLOGY NOTE for GEODNET's revenue metric states the mechanism "
-                  "directly: '80% of the fees are used to repurchase GEOD tokens from the open market "
-                  "and remove them from circulation.' That is materially stronger than the Solana "
-                  "Compass article this question opened on. It is not a secondary article repeating a "
-                  "claim — it is the definition DefiLlama uses to COMPUTE the revenue figure this "
-                  "tool already consumes, which makes it primary-adjacent and, unusually, a source we "
-                  "are already depending on for something else.\n\n"
-                  "** FLAGGED FOR REVIEW, NOT ADDED UNILATERALLY. ** It is still not a GEODNET-authored "
-                  "GIP, and the standing bar for archetype 3 has been a protocol-authored statement of "
-                  "the revenue share and the buyback route. Whether DefiLlama's methodology note "
-                  "clears that bar is a judgement about the RULE, not about GEODNET, and changing a "
-                  "standing rule is Jake's call rather than something to slip in with a data update.\n\n"
-                  "The earlier reasoning, which still applies to the weaker sources: "
-                  "SECOND-SOURCED (2026-09-15), AND NOT ADDED — and the distance between those "
-                  "two facts is the point of this entry. The 80/20 split itself is corroborated: 80% of "
-                  "revenue to repurchase-and-burn, 20% to the Foundation, from a second source "
-                  "independent of the Solana Compass claim that opened this question. Confidence in the "
-                  "SPLIT rises accordingly and burn_split's note records it.\n\n"
-                  "ARCHETYPE 3 STILL DOES NOT FOLLOW. What archetype 3 needs is a GEODNET-AUTHORED "
-                  "statement of the revenue share and the buyback-and-burn route — docs.geodnet.com or a "
-                  "GIP. Two secondary sources agreeing is not the same thing as the protocol saying it, "
-                  "and the original caution stands: the existing burn_split carries the same 80% against "
-                  "docs.geodnet.com, so some of this apparent corroboration may still be one claim "
-                  "reaching us by several paths.",
+        "reason": "** THE MECHANISM IS NOW DISPUTED, WHICH MAKES ARCHETYPE 3 HARDER TO JUSTIFY, NOT "
+                  "EASIER. ** Read this before weighing the sourcing upgrade below — a stronger "
+                  "source for a description does not help when two sources describe incompatible "
+                  "flows.\n\n"
+
+                  "VERSION A (DefiLlama's own revenue methodology; DePIN Hub): revenue arrives in "
+                  "whatever currency, 80% of it REPURCHASES GEOD on the open market, and the "
+                  "repurchased GEOD is burned. There is a market-purchase step, so there is real "
+                  "buy pressure and a measurable spend.\n\n"
+
+                  "VERSION B (a separate secondary source): clients PAY DIRECTLY IN GEOD for network "
+                  "services, 80% of the GEOD paid is burned INSTANTLY at the point of use, and 20% "
+                  "goes to the Foundation as opex. There is NO market purchase at all — GEOD is the "
+                  "payment currency itself.\n\n"
+
+                  "THESE ARE STRUCTURALLY DIFFERENT FLOWS, not two phrasings of one. Under A the "
+                  "protocol is a buyer of its own token and the burn is funded by converting other "
+                  "assets; under B the protocol never buys anything and the burn is a fee sink. "
+                  "They imply different demand, different spend, and a different archetype — and "
+                  "the 80/20 figure appears in BOTH, which is exactly why agreement on the number "
+                  "was mistaken for agreement on the mechanism.\n\n"
+
+                  "DO NOT ADD ARCHETYPE 3 until GEODNET's own docs or a GIP settles which is "
+                  "correct, or whether both operate on different revenue lines. Adding it now would "
+                  "commit to A on the strength of a source tier, while B — if true — means there is "
+                  "no revenue-to-token purchase to measure at all.\n\n"
+
+                  "THE EARLIER SOURCING NOTE, which still stands on its own terms and is now "
+                  "insufficient: DefiLlama's OWN METHODOLOGY NOTE for GEODNET's revenue metric "
+                  "states version A directly — '80% of the fees are used to repurchase GEOD tokens "
+                  "from the open market and remove them from circulation.' That is materially "
+                  "stronger than the Solana Compass article this question opened on, and it is the "
+                  "definition DefiLlama uses to COMPUTE a revenue figure this tool already "
+                  "consumes. It settles what DefiLlama believes; it does not settle what GEODNET "
+                  "does.",
+        "mechanism_dispute": {
+            "status": "DISPUTED — two incompatible descriptions, neither from GEODNET",
+            "version_a": {"flow": "revenue (any currency) -> 80% repurchases GEOD on the open market "
+                                  "-> burned", "has_market_purchase": True,
+                          "sources": ["DefiLlama revenue methodology note", "DePIN Hub"]},
+            "version_b": {"flow": "clients pay DIRECTLY IN GEOD -> 80% of GEOD paid burned instantly "
+                                  "at point of use -> 20% to the Foundation as opex",
+                          "has_market_purchase": False,
+                          "sources": ["a separate secondary source"]},
+            "why_it_matters": "A makes the protocol a buyer of its own token; B makes the burn a fee "
+                              "sink with no purchase. Different demand, different spend, different "
+                              "archetype. The shared 80/20 figure is what disguised the conflict.",
+            "resolves_when": "GEODNET's own docs or a GIP states which is correct, or that both "
+                             "operate on different revenue lines.",
+            "recorded": "2026-09-17",
+        },
         "suggestion": "Confirm from docs.geodnet.com or vote.geodnet.com. If a GEODNET-authored source "
                       "states the revenue share and the buyback-and-burn route, add archetype 3 with that "
                       "source. Do not add it on Solana Compass alone.",
@@ -5909,20 +6146,24 @@ OPEN_QUESTIONS = [
     },
     # ---------------------------------------------------------------- Near
     {
-        "project": "Near", "topic": "protocol_reward_rate reads [0, 1] — genuine zero, or a fallback?",
-        "severity": 1,
-        "reason": "Our live on-chain read of NEAR's protocol_reward_rate returned [0, 1] — exactly zero, "
-                  "against secondary sources that all say 90% validators / 10% protocol treasury. "
-                  "THE PROBLEM IS THAT [0, 1] IS BYTE-IDENTICAL TO NEARCORE'S SERDE DEFAULT for that field "
-                  "(core/chain-configs/src/genesis_config.rs:168, "
-                  "`#[default(Rational32::from_integer(0))]`), so a genuine on-chain zero and a read that "
-                  "never reached chain state produce the SAME VALUE and cannot be told apart from the value "
-                  "alone. Source inspection cannot settle it either: nearcore does not vendor mainnet "
-                  "genesis — every path under core/chain-configs/res/ 404s — and the only [1, 10] values in "
-                  "the repository are inside TEST FIXTURES using `test.near` with epoch_length 60. "
-                  "THE LIVE READ IS USED, because it is the only direct chain evidence we hold. It is "
-                  "flagged uncertain rather than quietly overridden by secondary sources, which would be "
-                  "preferring a story to a measurement.",
+        "project": "Near", "topic": "CLOSED 2026-09-17 — the RPC reads a parameter mainnet does not use",
+        "status": "closed",
+        "reason":
+            "NOT A DATA QUESTION AND NEVER WAS — it was an architecture question, and NEAR's own "
+            "engineering team answered it in a near/nearcore issue: 'the problem with reward "
+            "calculation... is due to inflation rate set to 0 in genesis for mocknet, similar to "
+            "the protocol_reward_rate problem, that the code is picking it from genesis config "
+            "instead of hard-coded value... mainnet uses hard-coded but mocknet using genesis.'\n\n"
+            "MAINNET'S protocol_reward_rate IS A HARD-CODED CONSTANT IN THE NEARCORE BINARY, "
+            "separate from the genesis.json the genesis_config RPC returns. Our [0, 1] was a "
+            "CORRECT read of the WRONG parameter. The method cannot answer this on mainnet by "
+            "design, so no endpoint, archive or retry would ever have settled it.\n\n"
+            "The documented 90/10 validator/treasury split is used with HIGH CONFIDENCE and the "
+            "live read is removed as a data point entirely — not demoted to a secondary figure, "
+            "which would present a structurally-inapplicable read as weak corroboration and invite "
+            "a reader to weigh it against the documented figure it cannot speak to.\n\n"
+            "CLOSED OUTRIGHT, not downgraded to P2. Downgrading would say the question is less "
+            "urgent; it is finished.",
         "suggestion": "Fetch genesis_config from a NEAR-operated RPC or archive and read the field, or "
                       "repeat the read against a SECOND independent endpoint. Two independent endpoints "
                       "returning zero settles it; one returning [1, 10] means our read was falling through "
@@ -6169,11 +6410,20 @@ OPEN_QUESTIONS = [
         "suggestion": "After 2026-10-03, confirm the first payment arrived, then set booked=True and add the source URL.",
     },
     {
-        "project": "Hyperliquid", "topic": "is there a second Assistance Fund",
-        "reason": "A community address directory lists an 'Assistance Fund 2' at "
-                  "0xccd69f432ce1d8c9cdc31bd535dd11b37cbea4ea. It does NOT appear in Hyperliquid's own docs, so it "
-                  "has not been added. IF IT IS REAL, the burn total is understated — the same failure mode as "
-                  "omitting Uniswap's Unichain burn path.",
+        "project": "Hyperliquid", "topic": "SETTLED 2026-09-17 — NOT FOUND. No second Assistance Fund exists.",
+        "status": "closed",
+        "reason":
+            "SEARCHED AND NOT FOUND, twice, and this is now closed rather than left open. No second "
+            "Assistance Fund appears in any Hyperliquid-authored source, nor in any otherwise "
+            "authoritative one. The single candidate, 0xccd69f..., rests on ONE uncorroborated "
+            "community-directory label reading 'Infra' — a directory entry is not a protocol "
+            "statement, and 'Infra' does not even claim to be an Assistance Fund.\n\n"
+            "CLOSED AS SETTLED-NOT-FOUND, which is a different state from unresolved. Two searches "
+            "have returned nothing; a third with the same method returns nothing too. Do not "
+            "re-open on another directory listing, another aggregator, or the same address "
+            "surfacing again — only on a HYPERLIQUID-AUTHORED source naming a second fund. "
+            "Recording the reason is the point: an open question with no path forward is "
+            "indistinguishable, on the Gap Report, from one nobody has started.",
         "suggestion": "Check Hyperliquid's own documentation and on-chain history. If genuine, add it as another "
                       "burn path; the adapter already sums multiple paths.",
     },
