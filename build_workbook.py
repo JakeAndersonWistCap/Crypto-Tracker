@@ -550,6 +550,27 @@ def threshold_gated(project: dict, expr: str) -> str:
     return f'="{label}"'
 
 
+def base_gated(project: dict, expr: str) -> str:
+    """Suppress a derived buyback where the SHARE is confirmed but the BASE it multiplies is not.
+
+    threshold_gated's twin, same shape: a project-level dict, absent for every project this does
+    not apply to, so it is a no-op everywhere except where explicitly declared.
+
+    THE FAILURE THIS GUARDS AGAINST IS NOT "THE SHARE IS UNCERTAIN" — that case is already
+    handled by gated()'s "unconfirmed" status, and conflating the two would hide a confirmed
+    number (Sky's Stage 2 split, stated in Sky's own words) behind the same grey used for a
+    number nobody has sourced at all. This is the case where the RATE is solid and the
+    DENOMINATOR it is applied to is not established to be the same quantity the formula uses —
+    Sky states its Stage 2 shares as percentages of "monthly Net Protocol Surplus"; the formula
+    multiplies DefiLlama's revenue_usd. A confirmed rate applied to the wrong base produces a
+    confidently wrong number, the same failure shape as World Mobile's withdrawn 11.41% test.
+    """
+    b = project.get("revenue_base_uncertain")
+    if not b or b.get("status") == "confirmed":
+        return expr
+    return '="base unconfirmed"'
+
+
 def supply_additive(project: dict) -> bool:
     """Is this project's 'buyback' actually an issuance event?"""
     return bool(project.get("buyback_is_supply_additive"))
@@ -980,6 +1001,23 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                         f"Applying a share to revenue below the threshold does not produce a small "
                         f"buyback — it produces one that does not exist.\n\n{t.get('note', '')}",
                         "token_metrics")
+            # THE SHARE IS RIGHT; THE BASE IT IS APPLIED TO MIGHT NOT BE. Distinct from the plain
+            # "unconfirmed" gate above (which means the SPLIT itself is not sourced) — this means
+            # the split IS sourced, in the protocol's own words, but stated against a quantity
+            # ("Net Protocol Surplus", a treasury cash-flow figure) not established to equal the
+            # revenue_usd the formula actually multiplies. Grey for the same reason: do not show a
+            # number here with the same confidence as a genuinely-derived one.
+            if meta.get("base") and p.get("revenue_base_uncertain"):
+                b = p["revenue_base_uncertain"]
+                if b.get("status") != "confirmed":
+                    c.fill = FILL_UNCONFIRMED
+                    c.comment = Comment(
+                        f"BASE UNCONFIRMED — the split itself IS sourced ({b.get('share_source', 'see config')}), "
+                        f"but it is stated as a share of {b.get('basis_stated_by_protocol', 'a different quantity')}"
+                        f", which has not been established to equal {b.get('compared_against', 'the revenue figure used here')}"
+                        f". Applying a confirmed rate to an unconfirmed base produces a confidently "
+                        f"wrong number rather than an obviously missing one.\n\n{b.get('reason', '')}",
+                        "token_metrics")
             if meta.get("supply_additive") and supply_additive(p):
                 c.fill = FILL_STALE
                 c.comment = Comment(
@@ -1130,7 +1168,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     projects = [p for p in PROJECTS if 3 in p["archetypes"]]
     _title(ws, "A3 — Revenue Buyback", "Pipeline: revenue (DefiLlama) × documented split (config) = implied buyback $ ÷ 90d AVERAGE price = implied tokens ÷ circulating supply, annualised = buyback as % of supply. "
                                         "Actual buyback shown alongside; the gap is itself a signal. Yield destination is tracked separately from burn and never netted against it. "
-                                        "Grey = split unconfirmed (derived figure suppressed). Orange status = paused.")
+                                        "Grey = split unconfirmed (derived figure suppressed), OR split confirmed but its BASE unconfirmed (hover for which). Orange status = paused.")
     ann = ANN
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
     rev = lambda r, w="q0": R.D(r, "revenue_usd", w)  # noqa: E731
@@ -1152,30 +1190,30 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Per-product split (never collapsed into one number)", lambda r, p: pull(R.C(r, "Per-product split (never collapsed)")), FMT_TEXT, "pull"),
         ("Revenue Q0 ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull", False, {"metric": "revenue_usd"}),
         ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
-        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}", share(r)), FMT_USD, "calc", False, {"gate": "fee_split"}),
+        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: base_gated(p, gated(st(r), f"{rev(r)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
-        ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}", share(r)), FMT_NUM, "calc", False, {"gate": "fee_split"}),
+        ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: base_gated(p, gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
         ("Circulating supply", lambda r, p: pull(circ(r)), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
-         lambda r, p: threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r))),
-         FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True}),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)))),
+         FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "actual_buyback_tokens"}),
         ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}*{ann}/{circ(r)}"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
-         lambda r, p: threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))),
-         FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True}),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r)))),
+         FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
         ("Net absorption Q0 (tokens) = actual buyback − emissions",
          lambda r, p: calc(net_absorption(p, R.D(r, "actual_buyback_tokens", "q0"),
                                           R.D(r, "emissions_tokens", "q0"))),
          FMT_NUM, "calc", True, {"supply_additive": True}),
         ("Net absorption, implied basis (tokens)",
-         lambda r, p: threshold_gated(p, gated(st(r), net_absorption(
-             p, f"{rev(r)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")), share(r))),
-         FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True}),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), net_absorption(
+             p, f"{rev(r)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")), share(r)))),
+         FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r)}"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Tokens locked (ve)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),

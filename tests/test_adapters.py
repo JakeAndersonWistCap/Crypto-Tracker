@@ -3271,6 +3271,56 @@ def test_world_mobile_decimals_are_read_from_the_contract_never_assumed():
 
 
 
+def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share():
+    """base_gated() suppresses the IMPLIED-BUYBACK figure without touching the confirmed SHARE.
+
+    Sky's Stage 2 split (22.5% / 22.5% / 5%) is PRIMARY-SOURCED — Sky's own words. What is
+    unconfirmed is narrower: whether the "monthly Net Protocol Surplus" the split is a share OF
+    is the same quantity as revenue_usd, which is what the archetype 3 formula actually
+    multiplies. Conflating "share unknown" with "share's base unknown" would hide a confirmed
+    number behind the same grey used for one nobody has sourced at all — exactly the imprecision
+    this session's other fixes (GEODNET, NEAR) were built to eliminate.
+    """
+    import build_workbook as bw
+
+    sky = config.PROJECT_BY_NAME["Sky"]
+    b = sky.get("revenue_base_uncertain")
+    assert b is not None, "Sky must declare revenue_base_uncertain while the mapping is unresolved"
+    assert b["status"] == "unconfirmed"
+
+    # THE IMPLIED FIGURE IS SUPPRESSED — this is the visible flag Jake asked for.
+    formula = bw.base_gated(sky, "REVENUE*SHARE")
+    assert formula == '="base unconfirmed"', f"Sky's implied buyback must render as unconfirmed: {formula!r}"
+
+    # COMPOSED WITH threshold_gated exactly as the real A3 columns do it.
+    composed = bw.base_gated(sky, bw.threshold_gated(sky, "REVENUE*SHARE/PRICE"))
+    assert composed == '="base unconfirmed"'
+
+    # THE SHARE ITSELF IS UNTOUCHED. fee_split_v2 stays confirmed and primary-sourced — the split
+    # and its application to a base are two different claims, and only one is in doubt.
+    v2 = sky["fee_split_v2"]
+    assert v2["confidence"] == "PRIMARY — Sky's own account, not secondary commentary"
+    assert v2["sky_buying_share"] == 0.275 and v2["burn_share"] == 0.05
+    live = config.split_for_window("Sky", "2026-09-20", "2026-09-25")
+    assert live["status"] == "active" and live["share_to_buyback"] == 0.275, \
+        "the split's own status must stay 'active' — only the FORMULA using it is suppressed"
+
+    # THE CONTROL: a project with no revenue_base_uncertain flag is completely untouched. This is
+    # what proves the gate is scoped to Sky and did not become a silent global behaviour change.
+    for name in ("Uniswap", "Maple", "Chainlink", "Aerodrome"):
+        p = config.PROJECT_BY_NAME[name]
+        assert p.get("revenue_base_uncertain") is None, f"{name} must not carry this flag"
+        untouched = bw.base_gated(p, "UNTOUCHED_EXPR")
+        assert untouched == "UNTOUCHED_EXPR", f"{name}'s formula must pass through unchanged: {untouched!r}"
+
+    # THE SANDBOX'S OWN LIMIT IS RECORDED, NOT SILENTLY ASSUMED AWAY. Distinguishing "could not
+    # check" from "checked and confirmed" or "checked and differs" is the whole point of
+    # outcome (c) — collapsing it into either of the other two would be worse than the flag itself.
+    assert "EGRESS-BLOCKED" in b["checked_2026_09_18"] or "UNABLE TO CHECK" in b["checked_2026_09_18"]
+    print("Sky base-uncertain ok: implied buyback suppressed, share stays confirmed, "
+          "other 15 projects untouched")
+
+
 if __name__ == "__main__":
     # EVERY test_* IN THIS MODULE, IN DEFINITION ORDER — discovered, not hand-listed.
     #

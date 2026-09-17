@@ -4659,12 +4659,58 @@ PROJECTS = [
                 "use": "sanity-check the derived burn once this is wired to a live read. A derived "
                        "figure of a different ORDER is a bug in the read, not a finding.",
             },
-            # A BASE MISMATCH THAT WOULD PRODUCE A WRONG NUMBER SILENTLY — see the open question.
+            # A BASE MISMATCH THAT WOULD PRODUCE A WRONG NUMBER SILENTLY. WIRED, not just noted —
+            # see revenue_base_uncertain below and build_workbook.base_gated(). The workbook now
+            # renders the implied-buyback figures grey/suppressed rather than a confident number.
             "base_caution": "these shares apply to MONTHLY NET PROTOCOL SURPLUS, which is Sky's own "
                             "accounting term. The archetype 3 formula multiplies DefiLlama's "
                             "revenue_usd by share_to_buyback, and revenue_usd is NOT established to "
                             "be the same quantity. Applying 0.275 to a different base gives a "
                             "plausible wrong answer rather than an obvious one.",
+        },
+        # ===== THE BASE-MISMATCH FLAG, WIRED. NOT ESTABLISHABLE FROM AVAILABLE SOURCES THIS ROUND. =====
+        # Checked 2026-09-18: forum.sky.money, vote.sky.money, docs.sky.money and the general web
+        # are all EGRESS-BLOCKED from this sandbox — every attempt returned a network-level
+        # refusal, not a content answer. This is OUTCOME (c) as distinguished from (a)/(b): not
+        # "checked and it maps", not "checked and it differs", but genuinely unable to check. That
+        # is a different state from either resolved outcome and must not be reported as either.
+        #
+        # THE SHARE ITSELF IS NOT IN DOUBT. 0.225 / 0.225 / 0.05 comes from Sky's own account, in
+        # Sky's own words, with a first-burn figure (2,860,000 SKY) to sanity-check it against.
+        # What is unconfirmed is narrower and specific: whether "monthly Net Protocol Surplus" — a
+        # treasury cash-flow term Sky uses but has not defined against a public data feed — is the
+        # same quantity as DefiLlama's revenue_usd, which is what the archetype 3 formula actually
+        # multiplies. Those could differ by protocol costs NPS nets out and revenue_usd does not,
+        # in which case 0.275 x revenue_usd is a confirmed rate applied to the wrong number — a
+        # plausible, confident, WRONG figure, not merely an imprecise one.
+        #
+        # SO THIS FORCES A CONFIDENCE BAND, PER OUTCOME (c) AS INSTRUCTED, rather than sitting as
+        # a text note nobody notices next to a number that looks as solid as every other cell on
+        # the row. build_workbook.base_gated() renders "base unconfirmed" (grey, same treatment as
+        # an unsourced split) on every implied-buyback formula that uses share_to_buyback, while
+        # leaving fee_split_v2's own share value untouched and correctly labelled confirmed —
+        # the split and its application are two different claims, and only one of them holds.
+        "revenue_base_uncertain": {
+            "status": "unconfirmed",
+            "share_source": "Sky's own Stage 2 thread, 2026-09-14 — the SHARE, not the base",
+            "basis_stated_by_protocol": "monthly Net Protocol Surplus (Sky's own treasury "
+                                        "accounting term, not otherwise defined in any source on file)",
+            "compared_against": "revenue_usd (DefiLlama) — what the archetype 3 formula multiplies",
+            "reason": "Net Protocol Surplus may net out protocol costs (security, backstop capital "
+                     "— see fee_split_v2.remaining_50_pct) that DefiLlama's revenue_usd does not "
+                     "subtract. If so the two are different quantities and 0.275 x revenue_usd is "
+                     "not the figure Sky described, however confidently it is displayed.",
+            "checked_2026_09_18": "forum.sky.money, vote.sky.money and docs.sky.money are all "
+                                  "EGRESS-BLOCKED from this sandbox — a network-level refusal on "
+                                  "every domain, not a content answer. This is UNABLE TO CHECK, "
+                                  "distinct from 'checked and confirmed' or 'checked and differs'.",
+            "would_confirm": "a Sky-authored definition of Net Protocol Surplus (the April 2026 "
+                             "'staged path forward' document is the most likely source) stating it "
+                             "equals revenue_usd, is a stated function of it, or naming a different "
+                             "figure to use in its place.",
+            "resolves_when": "set status to 'confirmed' once the mapping is sourced, or replace "
+                             "revenue_usd in the archetype 3 formula's inputs with the correct base "
+                             "if NPS turns out to be a different, sourceable figure.",
         },
         "buyback_reference": {
             "spent_usd": 114_500_000, "tokens_removed": 1_830_000_000, "staked_share": 0.67,
@@ -6045,6 +6091,10 @@ OPEN_QUESTIONS = [
             "The discriminating question: does a Stage 2 buyback appear as an MCD_SPLIT kick, or "
             "as a separate transaction path? Do NOT assume continuity from the contracts being on "
             "file — they were sourced for the 55/45 regime, which is now superseded.",
+        "attempted_2026_09_18": "forum.sky.money, vote.sky.money and docs.sky.money were all "
+                                "EGRESS-BLOCKED from this sandbox — a network-level refusal on "
+                                "every domain attempted, not a search that came back empty. Still "
+                                "unresolved, both possibilities still stated, nothing assumed.",
     },
     {
         "project": "Aerodrome",
