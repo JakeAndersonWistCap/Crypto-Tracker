@@ -142,34 +142,67 @@
 # answer. That is why these three entries are grouped and commented together rather
 # than left among the per-project stubs.
 #
-# STATUS, UPDATED 2026-09-15: ONE OF THE THREE IS NOW LIVE, TWO REMAIN BLOCKED, and the
-# split runs exactly along what the server renders.
+# STATUS, REWRITTEN 2026-09-18 after reading ultrasoundmoney/frontend's own source on
+# GitHub (raw.githubusercontent.com — reachable from this sandbox; github.com HTML,
+# codeload.github.com and api.github.com are all NOT, so the repo was read file-by-file
+# by guessing paths under src/mainsite/api/). This REPLACES the 2026-09-15 status note
+# below, which guessed at an endpoint from DevTools; this one is read from the code.
 #
-#   TOTAL SUPPLY — ENABLED. Server-rendered and present in the initial HTML, so plain
-#     HTTP reaches it. Wired below as a CROSS-CHECK on CoinGecko's total_supply.
+# THE REAL API SURFACE, confirmed from source:
+#   /api/fees/grouped-analysis-1   -> feesBurned.feesBurned30d (and variants) — BURN,
+#     a WeiNumber (scale by 1e-18 for ETH). A sibling feesBurned30dUsd field exists —
+#     that is the USD figure and must NOT be used for a token-flow metric.
+#   /api/v2/fees/supply-parts      -> executionBalancesSum + beaconBalancesSum -
+#     beaconDepositsSum — TOTAL SUPPLY. Matches this tool's own already-documented
+#     formula for Ethereum supply exactly. Confirms the formula, not just the figure.
+#   /api/v2/fees/supply-over-time  -> a supply time series.
+#   /api/fees/scarcity             -> engines.burned.amount — a cumulative-burn
+#     cross-check, separate from the 30d figure above.
 #
-#   BURN and ISSUANCE — STILL BLOCKED, and not for want of an anchor. The homepage HTML
-#     carries the literal placeholder "0K ETH/year" for both where the real figures
-#     belong; they are filled in client-side after hydration. So a DOM anchor would
-#     match the label and extract a PLACEHOLDER — the quiet-wrong-number failure again,
-#     and worse than extracting nothing, because "0" is a number the sheet will render.
-#     They need Playwright executing the page's JS, then either reading the DOM after
-#     hydration or intercepting the network response the scraper prefers. The API
-#     endpoint and its response shape could not be determined from a static fetch.
+# ** ISSUANCE HAS NO RAW FIELD, ANYWHERE. ** Read src/mainsite/api/supply-changes.ts:
+# ultrasound.money computes issuance CLIENT-SIDE via delta(total_supply) + burn — the
+# IDENTICAL formula this tool already uses for its own derived issuance. So there is no
+# endpoint to point gross_issuance_tokens or net_mint_monthly at: filling in
+# url_contains/json_path for either would be inventing a source, not finding one. This
+# is a genuine methodological finding, not a gap — ultrasound.money's issuance figure
+# would never be an INDEPENDENT check on ours, because it is the same computation run
+# twice. Both entries below are re-characterised accordingly, not simply filled in.
 #
-# TO FINISH THE OTHER TWO, in a browser, once: DevTools -> Network -> Fetch/XHR, record
-# the endpoint substring and the dotted path to each figure, fill in
-# url_contains/json_path, set enabled: true.
+# ** WHY FILLING IN THE KNOWN BURN ENDPOINT STILL WILL NOT ENABLE IT. ** Checked
+# fetch/scrape.py's _scrape_one(): robots_allows(url) is evaluated against entry["url"]
+# — the PAGE loaded via Playwright's page.goto() — for EVERY method, dom AND xhr alike.
+# xhr interception only works because Playwright has already loaded and executed the
+# page's JS; there is no code path that fetches an API URL directly without first
+# loading the page it is embedded in. So all three entries share one robots.txt
+# dependency: https://ultrasound.money/ itself, regardless of which API path the data
+# actually comes from. The user's hypothesis this round — that an API sub-path might be
+# permitted where the root page is not — cannot be tested under this architecture: it
+# would need a genuinely new direct-HTTP-fetch mechanism outside the existing
+# Playwright-based sources.yaml scraper, robots-checked against the API path
+# specifically rather than the page. THAT IS A NEW MECHANISM, not built here — flagged
+# per this project's standing rule (fix the specific thing; say so in one line and wait
+# before adding new general tooling) rather than built unilaterally.
 #
-# ROBOTS.TXT: not independently verified — ultrasound.money is unreachable from the
-# sandbox this config was written in (CONNECT tunnel 403). The scraper performs its own
-# per-fetch robots check and refuses on a Disallow, exactly as it already does for
-# Maple, Pendle, Venice and Chainlink, so the enabled entry cannot fetch a disallowed
-# page. That check is the authority here, not this comment.
+# ROBOTS.TXT ITSELF remains not independently verified from this sandbox: both curl and
+# the WebFetch tool return a deliberate proxy-level block (curl: "CONNECT tunnel failed,
+# response 403"; WebFetch: structured error_type EGRESS_BLOCKED) for ultrasound.money on
+# EVERY path tried, including /robots.txt itself — this is a network-level refusal, not
+# an application-layer robots rule, so even the root page's ACTUAL robots.txt content is
+# unconfirmed from here. THE LIVE RUN OF 2026-09-17/18 CONFIRMS THE PRACTICAL OUTCOME
+# ANYWAY: the total_supply_dashboard entry below (enabled: true) failed that run on
+# robots.txt disallowing https://ultrasound.money/ — so whatever the sandbox cannot
+# read, the scraper's own live check already answered empirically for the page root.
 #
-# NOTE THE UNITS TRAP when filling these in: ultrasound.money presents figures both per
-# period and annualised, and both in ETH and in USD. gross_issuance_tokens and
-# gross_burn_tokens are TOKEN flows. Take the ETH figure, not the dollar one.
+# 2026-09-15 STATUS NOTE, KEPT FOR HISTORY, NOW SUPERSEDED BY THE ABOVE: total supply
+# was believed reachable because it is server-rendered (present in the initial HTML, no
+# JS needed) while burn and issuance carry a client-hydrated "0K ETH/year" placeholder
+# in the raw HTML — true as a description of WHAT the page contains, but irrelevant to
+# WHETHER robots.txt allows fetching it, which is a separate question this note did not
+# address and the live run has since answered: no, for the whole page.
+#
+# NOTE THE UNITS TRAP if burn is ever enabled: ultrasound.money presents figures both
+# per period and annualised, and both in ETH and in USD. gross_burn_tokens is a TOKEN
+# flow. Take feesBurned30d (ETH, WeiNumber), never feesBurned30dUsd.
 # =====================================================================================
 - project: Ethereum
   metric: total_supply_dashboard
@@ -183,9 +216,21 @@
   change_threshold_pct: 5
   added: 2026-09-15
   note: >-
-    THE ONLY ENABLED ENTRY OF THE THREE. This figure IS server-rendered — it is present in the
-    initial HTML response, so a plain fetch reaches it and no JS execution is needed. Confirmed
-    by direct fetch 2026-09-15.
+    CONFIRMED BROKEN ON A LIVE RUN, 2026-09-17/18: failed on robots.txt disallowing
+    https://ultrasound.money/. Left enabled anyway, same precedent as Pendle's
+    locked_tokens_dashboard below — the robots check runs before any page load and costs
+    nothing, and an enabled-but-blocked entry keeps the Gap Report naming the accurate reason
+    rather than going silent. Do NOT work around this; robots.txt is respected, not routed
+    around.
+
+    Once/if this is ever reachable: the underlying figure is also available as JSON at
+    /api/v2/fees/supply-parts (executionBalancesSum + beaconBalancesSum - beaconDepositsSum),
+    which matches this tool's own documented Ethereum supply formula exactly — confirmed by
+    reading ultrasoundmoney/frontend's own source, 2026-09-18. Switching method to xhr and
+    pointing at that endpoint would NOT fix the robots.txt failure: robots_allows() is checked
+    against this entry's `url` (the page Playwright loads) for every method, dom or xhr alike,
+    because xhr interception requires the page's JS to already be running. The block is on the
+    page, not the anchor or the method.
 
     ** THE ANCHOR IS 'Total supply', NOT 'EVM balances'. ** The page shows the total beside its
     three components (EVM balances 167,722,332.48 + beacon balances 43,388,015.76 - beacon
@@ -193,50 +238,72 @@
     167,722,332.48 as Ethereum's supply — 37.4% high, and high in a way that passes the generic
     total_supply bounds of 0..1e15 and renders as ok. The sanity_min/max above are set around the
     real figure rather than around what is physically possible, so a mis-anchor fails loudly at
-    the sanity gate instead of storing a plausible overstatement. If 'Total supply' turns out not
-    to be the page's literal label, this entry will FAIL to extract and say so, which is the
-    correct failure: a loud miss beats a quiet wrong number.
+    the sanity gate instead of storing a plausible overstatement.
 
     CROSS-CHECK ONLY, never a replacement — config declares it against tier 1 CoinGecko with a 1%
-    tolerance. The two agreed to 0.00575% when checked.
+    tolerance. The two agreed to 0.00575% when last checked (2026-09-15, before the robots.txt
+    failure).
 - project: Ethereum
   metric: gross_issuance_tokens
   tier: 3
   enabled: false
   url: "https://ultrasound.money/"
   method: xhr
-  url_contains: null                                # TODO the API endpoint substring (DevTools -> Fetch/XHR)
-  json_path: null                                   # TODO dotted path to ETH issued in the period
+  url_contains: null                                # RE-CHARACTERISED 2026-09-18 — see note. No endpoint exists.
+  json_path: null
   added: 2026-09-15
-  note: "Publishes issuance directly. Cross-checks our derived d(total_supply) figure — the only
-    project where the derivation can be checked against a published answer. Take ETH, not USD.
-    DO NOT switch this to method dom -- the served HTML carries the placeholder '0K ETH/year'
-    here, so a DOM anchor would match the label and extract a ZERO. Worse than extracting
-    nothing: a zero renders as a figure."
+  note: "RE-CHARACTERISED 2026-09-18, not merely still-TODO: read ultrasoundmoney/frontend's own
+    source (src/mainsite/api/supply-changes.ts) and confirmed there is NO raw issuance field
+    anywhere in their API. ultrasound.money computes issuance CLIENT-SIDE via
+    delta(total_supply) + burn — the IDENTICAL formula this tool already uses for its own
+    derived figure. So this would never be an independent cross-check even if it were
+    reachable: it is the same computation, run twice. Left disabled and NOT filled in — there is
+    no endpoint to fill in. If a genuine independent issuance source ever surfaces (e.g. a
+    consensus-layer-specific validator-rewards feed), replace this entry rather than repurpose
+    it. DO NOT switch this to method dom either -- the served HTML carries the placeholder '0K
+    ETH/year' here, so a DOM anchor would match the label and extract a ZERO."
 - project: Ethereum
   metric: gross_burn_tokens
   tier: 3
   enabled: false
   url: "https://ultrasound.money/"
   method: xhr
-  url_contains: null                                # TODO the API endpoint substring
-  json_path: null                                   # TODO dotted path to ETH burned in the period
+  url_contains: "/api/fees/grouped-analysis-1"
+  json_path: "feesBurned.feesBurned30d"
   added: 2026-09-15
-  note: "EIP-1559 burns at the protocol level, so there is NO burn address to read and no
-    contract read can produce this. A published figure is the only route below tier 4.
-    DO NOT switch this to method dom -- same '0K ETH/year' placeholder in the served HTML."
+  needs_first_run_check: true
+  note: "ENDPOINT CONFIRMED 2026-09-18 by reading ultrasoundmoney/frontend's own source
+    (src/mainsite/api/fees.ts and grouped-analysis-1's consumers) — url_contains and json_path
+    above are no longer TODOs. STILL DISABLED: robots_allows() is checked against this entry's
+    `url` (the ultrasound.money/ PAGE, which Playwright must load to intercept any xhr response)
+    for every method, and the live run of 2026-09-17/18 confirmed that page is robots-disallowed
+    — see the block comment above. Filling in the endpoint does not change that; enabling this
+    entry today would just fail the same way total_supply_dashboard does. Re-enable once the
+    page is reachable, or once a direct-fetch mechanism checked against the API path
+    specifically exists (flagged in the block comment above, not built here).
+    UNITS: feesBurned30d is a WeiNumber in ETH — scale by 1e-18. A sibling feesBurned30dUsd
+    field exists; do not use it. EIP-1559 burns at the protocol level, so there is no burn
+    address a contract read could use instead — this page is the only route below tier 4.
+    DO NOT switch this to method dom -- the served HTML carries the placeholder '0K ETH/year'
+    here, so a DOM anchor would match the label and extract a ZERO. Worse than extracting
+    nothing: a zero renders as a figure. Knowing the real xhr endpoint does not change this."
 - project: Ethereum
   metric: net_mint_monthly
   tier: 3
   enabled: false
   url: "https://ultrasound.money/"                  # was: TODO the protocol's tokenomics page
   method: xhr
-  url_contains: null                                # TODO the API endpoint substring
-  json_path: null                                   # TODO dotted path to net supply change
+  url_contains: null                                # RE-CHARACTERISED 2026-09-18 — see note. No endpoint exists.
+  json_path: null
   added: 2026-09-11
-  note: "Self-reported net mint — take it as published. Completes the set: with issuance and burn
-    above, net supply change arrives as a published figure AND as our own sum, and the two
-    should agree. A divergence is a finding about our arithmetic, not about Ethereum.
+  note: "RE-CHARACTERISED 2026-09-18, same finding as gross_issuance_tokens above: net mint =
+    issuance - burn, and issuance has no raw field (computed client-side, identically to this
+    tool's own method) — so net mint is equally a derived figure on ultrasound.money's side, not
+    an independent published one. The old note's \"take it as published\" no longer applies;
+    there is nothing published to take. Left disabled and NOT filled in. If gross_burn_tokens
+    above is ever
+    enabled, this project's own d(total_supply) + burn arithmetic already produces the
+    equivalent figure — a separate net_mint_monthly source would add nothing new.
     DO NOT switch this to method dom -- client-side rendered like the two above."
 
 # ---- Solana (SOL) — archetypes 1, 4
@@ -857,6 +924,25 @@
   change_threshold_pct: 25
   added: 2026-09-11
   note: "DISABLED: info.skyeco.com robots.txt disallows scraping, AND this is now superseded. The lssky contract address is verified (0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C, erc20_total_supply), so Sky has a working tier 2 lock read that does not depend on this page at all. Re-enable only if a cross-check becomes worthwhile and robots permits it."
+
+- project: Sky
+  metric: net_protocol_surplus_usd
+  tier: 3
+  enabled: false            # BLOCKED — see note. Fill in url_contains/json_path/anchor once reachable.
+  url: null                 # TODO: financial.skyeco.com's Financial Dashboard, or its Settlement
+                             # Cycle page. Root and any /api/ sub-path both EGRESS_BLOCKED from this
+                             # sandbox (2026-09-18) — could not determine whether it is client-rendered
+                             # (needs method: xhr, an endpoint) or server-rendered (method: dom, an
+                             # anchor). insights.skyeco.com's monthly/quarterly prose updates are a
+                             # documented fallback if the dashboard has no API: method dom, anchor
+                             # something like "Net Protocol Surplus".
+  method: dom               # PLACEHOLDER — confirm xhr vs dom once the page is reachable.
+  anchor: null              # TODO
+  needs_first_run_check: true
+  sanity_min: 0
+  sanity_max: 1000000000
+  added: 2026-09-18
+  note: "Source identified 2026-09-18 (financial.skyeco.com, Sky's own real-time Financial Dashboard, live since 2026-05-06) but EGRESS_BLOCKED from this sandbox — same structured refusal as forum/vote/docs.sky.money, confirmed via both curl and WebFetch (error_type EGRESS_BLOCKED). Needed before enabling: (1) load the dashboard from a normal network, (2) DevTools Network tab to find an XHR endpoint if client-rendered, or the anchor text if server-rendered, (3) check robots.txt for the specific path used, not just the root — an API sub-path may be permitted where the page is not (same distinction raised for ultrasound.money). Seeded meanwhile via manual_quarterly/manual_overrides.csv with five known datapoints (Q1/Q2 2026, FY2025, May/June 2026 monthly). Building a direct-fetch mechanism that bypasses this Playwright-based scraper to test robots.txt path-by-path is a NEW mechanism, not built here — flagged per the session's standing scope-discipline rule rather than built unilaterally."
 
 - project: Ether.fi
   metric: staked_tokens

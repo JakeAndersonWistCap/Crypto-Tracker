@@ -1641,8 +1641,15 @@ def test_dune_sums_split_columns_and_drops_the_incomplete_current_period():
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["GEODNET"]], None, out)
     df = out.frame()
-    assert len(df) == 1, f"the incomplete current month must be dropped, got {len(df)} rows"
-    assert df.value.iloc[0] == 1_400_000.0, f"both chains must sum, got {df.value.iloc[0]}"
+    # actual_buyback_tokens now REUSES this same query (buy-and-burn is one flow for GEODNET —
+    # see config.py, 2026-09-18), so it legitimately produces a second row from the identical
+    # data. actual_buyback_usd is expected to fail: this mock supplies no usd_burned columns.
+    burn = df[df.metric == "gross_burn_tokens"]
+    buyback = df[df.metric == "actual_buyback_tokens"]
+    assert len(burn) == 1, f"the incomplete current month must be dropped, got {len(burn)} rows"
+    assert len(buyback) == 1, f"the incomplete current month must be dropped, got {len(buyback)} rows"
+    assert burn.value.iloc[0] == 1_400_000.0, f"both chains must sum, got {burn.value.iloc[0]}"
+    assert buyback.value.iloc[0] == 1_400_000.0, "actual_buyback_tokens must equal gross_burn_tokens"
     assert cur not in set(df.date.dt.to_period("M"))
     print("dune column summing ok: 1,100,000 + 300,000 = 1,400,000, current month dropped")
 
@@ -2160,14 +2167,22 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     checks = config.PROJECT_BY_NAME["Maple"]["cross_checks"]
     pair = next(c for c in checks if c["secondary"] == "buyback_fund_balance_dashboard")
     assert pair["primary"] == "treasury_holding_tokens"
-    # It still cannot fire, and for a reason worth asserting: the primary stores nothing while the
-    # destination is disputed. This assertion should FAIL once an address is confirmed — that is
-    # the signal to revisit this test, not a defect in it.
-    assert config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]["destination_status"] == "disputed", \
-        ("the address question is resolved — re-read this test: the cross-check can now fire and "
-         "the comment above is out of date")
+    # RESOLVED 2026-09-18: the address question is settled, exactly as this test's own comment
+    # predicted it eventually would be. destination_status is no longer "disputed" (which uniquely
+    # refuses to store — see fetch/chain.py), so the primary CAN now store a figure and the
+    # cross-check can fire on the next live run. "verified_by_label" is a weaker tier than
+    # "confirmed" (Etherscan's label, not Maple's own material, identifies the address) — the armed
+    # cross-check asserted above is what upgrades it: a balance landing near 77.66M confirms the
+    # label, a balance near zero or wildly different reopens the dispute.
+    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    assert treasury["destination_status"] != "disputed", \
+        "the primary should be storing again now that the address is resolved"
+    assert treasury["destination_status"] == "verified_by_label"
+    assert treasury["address"] == "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", \
+        "must be the daoMultisig / 'Maple Finance: DAO' address, not the old disputed fee treasury"
     print("maple cross-check ok: armed (anchor 'SYRUP Holdings', entry_ready passes), "
-          "77.66M parses, an unscaled 77.66 is rejected by the floor")
+          "77.66M parses, an unscaled 77.66 is rejected by the floor, treasury address resolved "
+          "to verified_by_label so the primary can store again")
 
 
 def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
@@ -2207,26 +2222,38 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
     assert "Run Log" in gap["suggestion"], "and point at where 'did it actually run' is answered"
 
     # (2) status must distinguish armed-and-idle from unbuilt
-    empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier",
-                                  "is_manual", "entered_on"])
-    out = bw.aggregate(empty, pd.DataFrame(), pd.Timestamp("2026-09-15"),
-                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    #
+    # Maple's treasury dispute was RESOLVED 2026-09-18 (see test_the_maple_cross_check_is_ARMED...),
+    # so the primary is no longer suppressed by config and this branch has no live example left.
+    # The mechanism itself is unchanged — force the disputed state back on temporarily, the same
+    # pattern used elsewhere in this file (e.g. test_fluid_buyback_is_suppressed...) to exercise a
+    # branch the live config no longer takes.
+    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    live_status = treasury["destination_status"]
+    treasury["destination_status"] = "disputed"
+    try:
+        empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier",
+                                      "is_manual", "entered_on"])
+        out = bw.aggregate(empty, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                           gaps=pd.DataFrame(), review=pd.DataFrame())
 
-    waiting = out[(out.project == "Maple") & (out.metric == "buyback_fund_balance_dashboard")].iloc[0]
-    assert waiting["status"] == "waiting", \
-        f"an armed secondary with a suppressed primary is not a plain gap: {waiting['status']}"
-    assert "WAITING ON THE PRIMARY" in waiting["note"] and "treasury_holding_tokens" in waiting["note"], \
-        f"and the note must name what it is waiting for: {waiting['note']!r}"
+        waiting = out[(out.project == "Maple") & (out.metric == "buyback_fund_balance_dashboard")].iloc[0]
+        assert waiting["status"] == "waiting", \
+            f"an armed secondary with a suppressed primary is not a plain gap: {waiting['status']}"
+        assert "WAITING ON THE PRIMARY" in waiting["note"] and "treasury_holding_tokens" in waiting["note"], \
+            f"and the note must name what it is waiting for: {waiting['note']!r}"
 
-    # NARROW ON PURPOSE: an ordinary dashboard metric with no cross-check is untouched, and so is
-    # a secondary whose primary is merely empty rather than suppressed by config.
-    other = out[(out.project == "Maple") & (out.metric == "locked_tokens_dashboard")].iloc[0]
-    assert other["status"] != "waiting", \
-        f"only a secondary blocked BY CONFIG waits; everything else is an honest gap: {other['status']}"
-    assert config.cross_check_waiting_on_primary("Chainlink", "buyback_fund_balance_dashboard") is None, \
-        "Chainlink's primary is not disputed, so its secondary is an ordinary gap"
-    print("waiting state ok: armed entry named with its url and selector, status 'waiting' not "
-          "'gap', and nothing else reclassified")
+        # NARROW ON PURPOSE: an ordinary dashboard metric with no cross-check is untouched, and so is
+        # a secondary whose primary is merely empty rather than suppressed by config.
+        other = out[(out.project == "Maple") & (out.metric == "locked_tokens_dashboard")].iloc[0]
+        assert other["status"] != "waiting", \
+            f"only a secondary blocked BY CONFIG waits; everything else is an honest gap: {other['status']}"
+        assert config.cross_check_waiting_on_primary("Chainlink", "buyback_fund_balance_dashboard") is None, \
+            "Chainlink's primary is not disputed, so its secondary is an ordinary gap"
+        print("waiting state ok: armed entry named with its url and selector, status 'waiting' not "
+              "'gap', and nothing else reclassified")
+    finally:
+        treasury["destination_status"] = live_status
 
 
 def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
@@ -2240,46 +2267,58 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
 
     Suppression now happens in aggregate() too, so it does not depend on anyone remembering to run
     a DELETE.
+
+    Maple's treasury dispute was RESOLVED 2026-09-18 — see test_the_maple_cross_check_is_ARMED...
+    for the resolution. The mechanism this test exists to protect is unrelated to which project
+    happens to be disputed today, so the dispute is forced back on temporarily (same pattern as
+    test_fluid_buyback_is_suppressed...) to keep exercising it against realistic historical data —
+    the actual 0.51253570332391 SYRUP figure this guard was built for.
     """
     import pandas as pd
     import build_workbook as bw
 
-    assert config.destination_disputed("Maple", "treasury_holding_tokens"), \
-        "precondition: Maple's treasury contract is the disputed one"
+    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    live_status = treasury["destination_status"]
+    treasury["destination_status"] = "disputed"
+    try:
+        assert config.destination_disputed("Maple", "treasury_holding_tokens"), \
+            "precondition: Maple's treasury contract is the disputed one"
 
-    stale = pd.DataFrame([{
-        "date": pd.Timestamp("2026-09-14"), "project": "Maple",
-        "metric": "treasury_holding_tokens", "value": 0.5125357033239131,
-        "source": "chain:ethereum:treasury", "tier": 2, "is_manual": False, "entered_on": ""}])
+        stale = pd.DataFrame([{
+            "date": pd.Timestamp("2026-09-14"), "project": "Maple",
+            "metric": "treasury_holding_tokens", "value": 0.5125357033239131,
+            "source": "chain:ethereum:treasury", "tier": 2, "is_manual": False, "entered_on": ""}])
 
-    # NO gap row is passed, deliberately: the live symptom is that the gap never reaches this
-    # branch at all. If suppression depended on the gap being present, this test would pass for
-    # the wrong reason.
-    out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
-                       gaps=pd.DataFrame(), review=pd.DataFrame())
-    row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens")].iloc[0]
+        # NO gap row is passed, deliberately: the live symptom is that the gap never reaches this
+        # branch at all. If suppression depended on the gap being present, this test would pass for
+        # the wrong reason.
+        out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                           gaps=pd.DataFrame(), review=pd.DataFrame())
+        row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens")].iloc[0]
 
-    assert row["status"] == "disputed", f"a stale row under a dispute must not read 'ok': {row['status']}"
-    assert pd.isna(row["now"]), f"the figure must be blanked, not shown: {row['now']}"
-    assert all(pd.isna(row[f]) for f in ("m1", "q0", "q1", "q2", "q3", "y1")), \
-        "every window must be blank too — a trajectory built on a withdrawn figure is still wrong"
-    assert row["confidence"] == "RED", \
-        f"RED, not AMBER: this is not low confidence, it is withdrawn meaning. Got {row['confidence']}"
-    assert "DISPUTED" in row["note"] and "treasury" in row["note"], \
-        f"the row must carry WHY, not just an empty cell: {row['note']!r}"
+        assert row["status"] == "disputed", f"a stale row under a dispute must not read 'ok': {row['status']}"
+        assert pd.isna(row["now"]), f"the figure must be blanked, not shown: {row['now']}"
+        assert all(pd.isna(row[f]) for f in ("m1", "q0", "q1", "q2", "q3", "y1")), \
+            "every window must be blank too — a trajectory built on a withdrawn figure is still wrong"
+        assert row["confidence"] == "RED", \
+            f"RED, not AMBER: this is not low confidence, it is withdrawn meaning. Got {row['confidence']}"
+        assert "DISPUTED" in row["note"] and "treasury" in row["note"], \
+            f"the row must carry WHY, not just an empty cell: {row['note']!r}"
 
-    # AND THE NEGATIVE: an undisputed metric on the same project is untouched by any of this.
-    clean = pd.DataFrame([{
-        "date": pd.Timestamp("2026-09-14"), "project": "Maple", "metric": "total_supply",
-        "value": 1_190_000_000.0, "source": "chain:ethereum:token", "tier": 2,
-        "is_manual": False, "entered_on": ""}])
-    out2 = bw.aggregate(clean, pd.DataFrame(), pd.Timestamp("2026-09-15"),
-                        gaps=pd.DataFrame(), review=pd.DataFrame())
-    ok = out2[(out2.project == "Maple") & (out2.metric == "total_supply")].iloc[0]
-    assert ok["status"] == "ok" and ok["now"] == 1_190_000_000.0, \
-        f"only the disputed metric is suppressed: {ok['status']}, {ok['now']}"
-    print("disputed suppression ok: a stale 0.51 already in the store renders blank and RED, "
-          "with the reason attached; an undisputed metric is untouched")
+        # AND THE NEGATIVE: an undisputed metric on the same project is untouched by any of this.
+        clean = pd.DataFrame([{
+            "date": pd.Timestamp("2026-09-14"), "project": "Maple", "metric": "total_supply",
+            "value": 1_190_000_000.0, "source": "chain:ethereum:token", "tier": 2,
+            "is_manual": False, "entered_on": ""}])
+        out2 = bw.aggregate(clean, pd.DataFrame(), pd.Timestamp("2026-09-15"),
+                            gaps=pd.DataFrame(), review=pd.DataFrame())
+        ok = out2[(out2.project == "Maple") & (out2.metric == "total_supply")].iloc[0]
+        assert ok["status"] == "ok" and ok["now"] == 1_190_000_000.0, \
+            f"only the disputed metric is suppressed: {ok['status']}, {ok['now']}"
+        print("disputed suppression ok: a stale 0.51 already in the store renders blank and RED, "
+              "with the reason attached; an undisputed metric is untouched")
+    finally:
+        treasury["destination_status"] = live_status
 
 
 def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figure():
@@ -2294,46 +2333,56 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
     What makes this worth a permanent test is the SHAPE of the number. A zero looks broken and
     gets investigated. 0.51 is small, precise, non-zero and would have flowed into every Maple
     archetype 3 destination figure untouched.
+
+    Maple's treasury dispute was RESOLVED 2026-09-18 (new address, verified_by_label — see
+    test_the_maple_cross_check_is_ARMED...). The disputed-destination mechanism this test protects
+    is general, not specific to Maple's current state, so the dispute is forced back on
+    temporarily to keep exercising it against the real historical 0.51253570332391 SYRUP reading.
     """
     spec = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
-    assert spec["destination_status"] == "disputed", (
-        "the address is real and its role is not — it must be read as evidence and stored as "
-        f"nothing, got {spec.get('destination_status')!r}")
+    live_status = spec["destination_status"]
+    spec["destination_status"] = "disputed"
+    try:
+        assert spec["destination_status"] == "disputed", (
+            "the address is real and its role is not — it must be read as evidence and stored as "
+            f"nothing, got {spec.get('destination_status')!r}")
 
-    SYRUP = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+        SYRUP = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
 
-    class DustStub:
-        def has_code(self, chain, address):
-            return True
+        class DustStub:
+            def has_code(self, chain, address):
+                return True
 
-        def symbol_matches(self, chain, address, expected):
-            ok = (chain, address) == ("ethereum", SYRUP)
-            return ok, "SYRUP" if ok else ""
+            def symbol_matches(self, chain, address, expected):
+                ok = (chain, address) == ("ethereum", SYRUP)
+                return ok, "SYRUP" if ok else ""
 
-        def scaled(self, chain, address, call, *args):
-            # the real reading: a genuine dust balance of the right token
-            return 0.51253570332391 if call == "balanceOf" else 1_000_000_000.0
+            def scaled(self, chain, address, call, *args):
+                # the real reading: a genuine dust balance of the right token
+                return 0.51253570332391 if call == "balanceOf" else 1_000_000_000.0
 
-    c = Chain()
-    c.reader = DustStub()
-    out = FetchOutput()
-    c.run([config.PROJECT_BY_NAME["Maple"]], None, out)
-    df = out.frame()
+        c = Chain()
+        c.reader = DustStub()
+        out = FetchOutput()
+        c.run([config.PROJECT_BY_NAME["Maple"]], None, out)
+        df = out.frame()
 
-    assert "treasury_holding_tokens" not in set(df.metric), \
-        "a disputed destination must not reach the sheet as a figure"
-    staged = [s for s in out.staged if "treasury_holding_tokens" in str(s.get("name", ""))]
-    assert staged and abs(float(staged[0]["value"]) - 0.51253570332391) < 1e-9, \
-        f"the observation must survive as EVIDENCE, not vanish: {out.staged}"
-    assert any("disputed" in str(g.get("reason", "")) for g in out.gaps), \
-        f"and the gap must say why, not just leave the cell empty: {out.gaps}"
+        assert "treasury_holding_tokens" not in set(df.metric), \
+            "a disputed destination must not reach the sheet as a figure"
+        staged = [s for s in out.staged if "treasury_holding_tokens" in str(s.get("name", ""))]
+        assert staged and abs(float(staged[0]["value"]) - 0.51253570332391) < 1e-9, \
+            f"the observation must survive as EVIDENCE, not vanish: {out.staged}"
+        assert any("disputed" in str(g.get("reason", "")) for g in out.gaps), \
+            f"and the gap must say why, not just leave the cell empty: {out.gaps}"
 
-    # THE GUARD FOR THE FIX: if the dispute is ever cleared against a still-wrong address, the
-    # floor must reject the dust rather than let it back in quietly.
-    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
-    assert lo is not None and 0.51253570332391 < lo <= 75_780_000 <= (hi or float("inf")), \
-        f"the floor must exclude dust and admit the reported ~75.78m, got ({lo}, {hi})"
-    print("maple treasury ok: dust NOT stored, staged as evidence, gap explains it, floor guards the fix")
+        # THE GUARD FOR THE FIX: if the dispute is ever cleared against a still-wrong address, the
+        # floor must reject the dust rather than let it back in quietly.
+        lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
+        assert lo is not None and 0.51253570332391 < lo <= 75_780_000 <= (hi or float("inf")), \
+            f"the floor must exclude dust and admit the reported ~75.78m, got ({lo}, {hi})"
+        print("maple treasury ok: dust NOT stored, staged as evidence, gap explains it, floor guards the fix")
+    finally:
+        spec["destination_status"] = live_status
 
 
 def test_the_burn_mechanism_flag_fires_only_where_a_burn_is_ACTUALLY_CLAIMED():
@@ -2763,36 +2812,50 @@ def test_stale_store_every_recorded_expectation_still_holds():
 
     Failing this does NOT mean refresh the fixture. It means read the diff: if an expectation
     moved and nobody intended it, that is the regression this file exists to catch.
+
+    ONE EXPECTATION ROW IS AN EXCEPTION, and it is documented rather than silently patched: the
+    'disputed_destination' row keys off Maple's treasury contract, whose dispute was RESOLVED
+    2026-09-18 (new address, verified_by_label). Aggregation reads config LIVE, so this fixture
+    row would otherwise start reading 'ok' — not because the disputed-destination MECHANISM
+    broke, but because the specific example it uses is no longer disputed. Forced back on for
+    the duration of this test, same pattern as the dedicated disputed-destination tests above,
+    so the regression coverage does not silently go dark the moment the example resolves.
     """
     import pandas as pd
 
-    data = _stale_fixture()
-    by_key = _aggregate_fixture(data)
-    checked = 0
-    for e in data["expectations"]:
-        key = (e["project"], e["metric"])
-        assert key in by_key, f"{key} vanished from aggregate output"
-        got = by_key[key]
-        ctx = f"{e['transition']} / {e['project']}/{e['metric']} (written under: {e['written_under']})"
-        assert got["status"] == e["expect_status"], \
-            f"{ctx}: status {got['status']!r}, expected {e['expect_status']!r}"
-        assert got["confidence"] == e["expect_confidence"], \
-            f"{ctx}: confidence {got['confidence']!r}, expected {e['expect_confidence']!r}"
-        assert bool(pd.isna(got["now"])) == e["expect_blank"], \
-            f"{ctx}: blank={bool(pd.isna(got['now']))}, expected {e['expect_blank']}"
-        if e["expect_reason_contains"]:
-            assert e["expect_reason_contains"] in str(got["why_amber"]), \
-                f"{ctx}: reason lost its marker {e['expect_reason_contains']!r} — got {got['why_amber']!r}"
-        checked += 1
+    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    live_status = treasury["destination_status"]
+    treasury["destination_status"] = "disputed"
+    try:
+        data = _stale_fixture()
+        by_key = _aggregate_fixture(data)
+        checked = 0
+        for e in data["expectations"]:
+            key = (e["project"], e["metric"])
+            assert key in by_key, f"{key} vanished from aggregate output"
+            got = by_key[key]
+            ctx = f"{e['transition']} / {e['project']}/{e['metric']} (written under: {e['written_under']})"
+            assert got["status"] == e["expect_status"], \
+                f"{ctx}: status {got['status']!r}, expected {e['expect_status']!r}"
+            assert got["confidence"] == e["expect_confidence"], \
+                f"{ctx}: confidence {got['confidence']!r}, expected {e['expect_confidence']!r}"
+            assert bool(pd.isna(got["now"])) == e["expect_blank"], \
+                f"{ctx}: blank={bool(pd.isna(got['now']))}, expected {e['expect_blank']}"
+            if e["expect_reason_contains"]:
+                assert e["expect_reason_contains"] in str(got["why_amber"]), \
+                    f"{ctx}: reason lost its marker {e['expect_reason_contains']!r} — got {got['why_amber']!r}"
+            checked += 1
 
-    # THE PROPERTY ITSELF, asserted over the whole fixture rather than per row: nothing that is
-    # not a control may read 'ok' at GREEN. A transition row is allowed to stay status 'ok' (the
-    # orphan, refuted and measuring-point branches flag without blanking) but never at GREEN.
-    for e in data["expectations"]:
-        if e["transition"] == "control":
-            continue
-        assert e["expect_confidence"] == "RED", \
-            f"{e['transition']} on {e['project']}/{e['metric']} must be RED, got {e['expect_confidence']}"
+        # THE PROPERTY ITSELF, asserted over the whole fixture rather than per row: nothing that is
+        # not a control may read 'ok' at GREEN. A transition row is allowed to stay status 'ok' (the
+        # orphan, refuted and measuring-point branches flag without blanking) but never at GREEN.
+        for e in data["expectations"]:
+            if e["transition"] == "control":
+                continue
+            assert e["expect_confidence"] == "RED", \
+                f"{e['transition']} on {e['project']}/{e['metric']} must be RED, got {e['expect_confidence']}"
+    finally:
+        treasury["destination_status"] = live_status
 
     # AND THE CONTROLS, which are what prove the guards are targeted rather than broad. A guard
     # that blanked everything would satisfy every assertion above.
@@ -3144,41 +3207,62 @@ def test_world_mobile_inflation_budget_and_the_schedule_that_does_not_close():
         # more than an order of magnitude beyond the ~5% the conventions differ by.
         assert ratio > 2.0, f"variant {key} would have to be >2x TGE for the premise to fail"
 
-    # 11.41% is a POINT-IN-TIME REFERENCE, not a schedule parameter, and nothing may read it as
-    # one. It is a LIVE STAT — a continuously maintained price/data page with no byline and no
-    # publication date — so it is dated by RETRIEVAL, the same convention as any other live read.
+    # 11.41% IS NOW A SCHEDULE PARAMETER, not a point-in-time reference — RESOLVED 2026-09-18.
+    # World Mobile's own whitepaper (Section XI) states it directly, against a fixed AGGREGATE
+    # base, not a moving circulating one read off a third-party live-stat page. The old live_stat
+    # model is fully withdrawn, not merely revised.
     ref = p["inflation_rate_reference"]
-    assert ref["is_schedule_parameter"] is False
-    assert ref["kind"] == "point_in_time_reference"
-    assert ref["source_kind"] == "live_stat"
-    assert ref["measured_against"].startswith("CIRCULATING SUPPLY")
+    assert ref["is_schedule_parameter"] is True
+    assert ref["kind"] == "schedule_parameter"
+    assert ref["measured_against"].startswith("AGGREGATE SUPPLY")
+    assert "live_stat" not in str(ref).lower() or "supersedes" in ref, \
+        "live_stat framing must be gone, or only appear inside the supersedes record of what was removed"
+    assert "source_kind" not in ref, "the third-party live_stat source_kind field must be removed"
+    assert "reference_date" not in ref, \
+        "reference_date was the retrieval-date convention for a live stat — gone with the model"
+    assert "recheck" not in ref, "the periodic-recheck caveat belonged to the withdrawn live_stat model"
+    assert pd.Timestamp(ref["source_date"]) == pd.Timestamp("2026-09-18")
+    assert "The Block" in ref["supersedes"], \
+        "the record of what this replaced (The Block, live_stat) must be kept, not silently dropped"
 
     # THE FIELD THAT SHOULD NOT EXIST. article_published modelled this as a dated article and is
     # gone; a future edit that reintroduces it is reintroducing the wrong model, not filling a gap.
     assert "article_published" not in ref, \
-        "article_published is the wrong model for a live stat — use reference_date"
+        "article_published is the wrong model for this figure — it never applied here either"
     assert "article_published_status" not in ref
 
-    # A real retrieval date, not a placeholder, and parseable as one.
-    assert pd.Timestamp(ref["reference_date"]) == pd.Timestamp("2026-09-15")
-    assert "RETRIEVED" in ref["reference_date_means"]
-    assert "no publication date to find" in ref["reference_date_means"]
-    # The figure can move under us with no change log, so it carries a re-check instruction.
-    assert "PERIODICALLY" in ref["recheck"]
+    # THE OLD LINEAR/GEOMETRIC OPEN QUESTION IS WITHDRAWN IN FULL — not just linear. World
+    # Mobile's own whitepaper (Section XI) gives the actual shape directly: hyperbolic.
+    assert "WITHDRAWN" in d["the_single_open_assumption"]
+    assert "decay_curve_confirmed" in d["the_single_open_assumption"]
+    assert p["issuance_schedule"] is None, \
+        "no step may be declared while the parameterisation (not the shape) is still open"
 
-    # AND DATING IT DOES NOT UNBLOCK THE SANITY CHECK. Mapping a reading to a schedule year still
-    # needs the emission start date, which is separately recorded as missing — so this must not be
-    # quietly recorded as solved.
-    assert "emission START DATE" in ref["sanity_check_still_blocked_by"]
-    assert "start date" in d["also_missing"].lower()
+    # THE HYPERBOLIC SHAPE, CONFIRMED FROM THE WHITEPAPER ITSELF.
+    curve = p["decay_curve_confirmed"]
+    assert curve["shape"] == "hyperbolic"
+    assert curve["formula"] == "rate(t) = 11.41% / (t + 1)"
+    assert curve["initial_rate_pa"] == 0.1141
+    assert curve["target_horizon_years"] == 20
+    assert curve["target_aggregate_supply"] == cap == 2_000_000_000
 
-    # The one remaining assumption is the DECAY FORM — not the base, which is no longer the
-    # question, and not the horizon, which is corrected to 20 years.
-    assert "DECAY FORM" in d["the_single_open_assumption"]
-    assert "TGE FIGURE CANNOT SETTLE THIS" in d["the_single_open_assumption"], \
-        "the decay form must not be recorded as answerable by the TGE figure"
-    assert p["issuance_schedule"] is None, "no step may be declared while the decay form is assumed"
-    print("World Mobile ok: 580m/20yr certain, the TGE anchor falsifies the percentage test by >2x")
+    # TWO OPEN PARAMETERISATION QUESTIONS, RECORDED RATHER THAN GUESSED. Neither a yearly nor a
+    # monthly reading of t reproduces the stated 29% target under the naive formula — asserted as
+    # the actual harmonic-sum arithmetic, not just checked for presence, so a later edit that
+    # quietly "fixes" the mismatch by adjusting an unstated assumption breaks this test.
+    oq = curve["open_questions"]
+    import math
+    h20 = sum(1.0 / n for n in range(1, 21))
+    h240 = sum(1.0 / n for n in range(1, 241))
+    years_pct = 0.1141 * h20
+    months_pct = (0.1141 / 12) * h240
+    assert years_pct > 0.29 > months_pct, \
+        "the stated 29% target must sit BETWEEN the naive yearly and monthly readings"
+    assert "t_in_years" in oq["time_unit_ambiguous"] and "t_in_months" in oq["time_unit_ambiguous"]
+    assert oq["base_is_aggregate_not_circulating"]["finding"].startswith("'relative to aggregate supply'")
+    assert "not_yet_resolved" in curve
+    print("World Mobile ok: 580m/20yr certain, the TGE anchor falsifies the old percentage test by "
+          ">2x, decay curve confirmed hyperbolic with the base/time-unit parameterisation open")
 
 
 def test_ultrasound_total_supply_is_a_crosscheck_and_cannot_anchor_on_a_component():
@@ -3280,13 +3364,19 @@ def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share
     multiplies. Conflating "share unknown" with "share's base unknown" would hide a confirmed
     number behind the same grey used for one nobody has sourced at all — exactly the imprecision
     this session's other fixes (GEODNET, NEAR) were built to eliminate.
+
+    RESOLVED 2026-09-18, as outcome (b): NPS and revenue_usd are CONFIRMED DIFFERENT quantities
+    (Sky's own docs plus Sagix research), not merely an unconfirmed mapping — status moved from
+    'unconfirmed' to 'confirmed_different'. base_gated must still suppress: only status
+    'confirmed' un-greys the cell, and a confirmed DIFFERENCE is exactly as suppressing as an
+    unconfirmed mapping, for a stronger and now-permanent reason.
     """
     import build_workbook as bw
 
     sky = config.PROJECT_BY_NAME["Sky"]
     b = sky.get("revenue_base_uncertain")
     assert b is not None, "Sky must declare revenue_base_uncertain while the mapping is unresolved"
-    assert b["status"] == "unconfirmed"
+    assert b["status"] == "confirmed_different"
 
     # THE IMPLIED FIGURE IS SUPPRESSED — this is the visible flag Jake asked for.
     formula = bw.base_gated(sky, "REVENUE*SHARE")
@@ -3313,12 +3403,16 @@ def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share
         untouched = bw.base_gated(p, "UNTOUCHED_EXPR")
         assert untouched == "UNTOUCHED_EXPR", f"{name}'s formula must pass through unchanged: {untouched!r}"
 
-    # THE SANDBOX'S OWN LIMIT IS RECORDED, NOT SILENTLY ASSUMED AWAY. Distinguishing "could not
-    # check" from "checked and confirmed" or "checked and differs" is the whole point of
-    # outcome (c) — collapsing it into either of the other two would be worse than the flag itself.
-    assert "EGRESS-BLOCKED" in b["checked_2026_09_18"] or "UNABLE TO CHECK" in b["checked_2026_09_18"]
+    # THE RESOLUTION ITSELF IS RECORDED, NOT SILENTLY ASSUMED. Outcome (b) — genuinely different,
+    # sourced and dated — is a distinct state from the earlier "unable to check" and from a found
+    # mapping; the record must say which one this is and cite the evidence.
+    assert "2026-09-18" in b["resolved"]
+    assert "sagix.io" in b["resolved"] or "insights.skyeco.com" in b["resolved"]
+    assert "31%" in b["reason"] or "33.29m" in b["reason"]
+    assert "second_independent_reason" in b, \
+        "the margin-instability finding (49% Q1 vs 31% Q2) is a second, independent reason and must be recorded"
     print("Sky base-uncertain ok: implied buyback suppressed, share stays confirmed, "
-          "other 15 projects untouched")
+          "base confirmed different (not merely unmapped), other 15 projects untouched")
 
 
 def test_geodnet_treasury_wallets_are_eoas_not_contracts_targeted_not_kind_wide():

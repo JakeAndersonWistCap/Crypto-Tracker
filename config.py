@@ -190,6 +190,15 @@ METRICS = {
     # two rows where a dashboard really is missing. Chainlink (metrics.chain.link/reserve) and
     # Maple (maple.finance/transparency) are the two, and both already have entries.
     "buyback_fund_balance_dashboard": {"label": "Buyback fund balance (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Chainlink", "Maple")},
+    # Sky's OWN accounting term — revenue on protocol collateral, minus the Sky Savings Rate paid to
+    # sUSDS holders, minus the security/maintenance distribution, minus operating costs. Confirmed
+    # 2026-09-18 to be a DIFFERENT quantity from DefiLlama's revenue_usd (see Sky's
+    # revenue_base_uncertain), not a derivation of it, so it needs its own metric and its own
+    # source rather than being computed. No recurring feed is identified yet — seeded via
+    # manual_quarterly/manual_overrides.csv with the one known quarterly datapoint (Q2 2026) pending
+    # a recurring source (Sky's own quarterly reporting, or insights.skyeco.com if it starts
+    # publishing on a rolling basis).
+    "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Same pattern for lock rates. Where a project has BOTH a contract read and a published page,
     # the page is stored here rather than over the contract read: a tier 3 page must never
     # overwrite a verified tier 2 contract figure, it cross-checks it.
@@ -2047,14 +2056,78 @@ PROJECTS = [
         # property worth recording. What is gone is their role as competing candidates to be
         # separated by a TGE test — there is no such test.
         #
-        # NO SCHEDULE STEP IS DECLARED, for one reason: the DECAY FORM. Linear is not confirmed
-        # from World Mobile's own materials, and GEOMETRIC decay hits the same endpoints with the
-        # same 580,000,000 total. THE TGE FIGURE CANNOT SETTLE THIS EITHER — it was only ever going
-        # to bear on the base, and the base is no longer the question. The one document that would
-        # close it outright is World Mobile's tokenomics paper, linked separately from their FAQ
-        # and not yet fetched. Also still missing: the emission START DATE.
+        # DECAY FORM RESOLVED 2026-09-18 — HYPERBOLIC, NOT LINEAR AND NOT GEOMETRIC. Both were
+        # candidates recorded below as the "single open assumption"; both are now WITHDRAWN. See
+        # decay_curve_confirmed. The one document that closed it (worldmobiletoken.com/WhitePaper.pdf,
+        # Section XI) was fetched 2026-09-18. Emission START DATE is still missing.
         # ---------------------------------------------------------------------------------------
         "issuance_schedule": None,
+        # ================= DECAY CURVE — HYPERBOLIC, FROM THE WHITEPAPER ITSELF =================
+        # Source: worldmobiletoken.com/WhitePaper.pdf, Section XI "Inflation Mechanics", verbatim:
+        #   "The rate of monthly inflation is calculated as the initial rate of inflation divided
+        #    by the time since launch + 1. The initial rate of inflation is 11.41% p.a. (relative
+        #    to aggregate supply) and set as such to target a 2bn aggregate WMT supply in year 20.
+        #    Total token inflation over a 20-year period represents 29% of the aggregate WMT
+        #    supply."
+        # FORMULA: rate(t) = 11.41% / (t + 1)  — a hyperbola, not the triangular linear ramp or a
+        # constant-ratio geometric decay previously carried as the two open candidates in
+        # inflation_schedule_derived.the_single_open_assumption. BOTH ARE NOW WITHDRAWN, not just
+        # the linear one — do not reintroduce either as an alternative.
+        #
+        # SHAPE: halves by the second period, thirds by the third, then a long flat tail — this
+        # OVERSTATES later-year issuance and UNDERSTATES early issuance relative to the linear
+        # schedule this block previously carried in inflation_schedule_derived. That block is kept
+        # as a withdrawn record (see its own note), not deleted, per the session's supersession
+        # convention.
+        #
+        # TWO PARAMETERISATION QUESTIONS, RECORDED RATHER THAN GUESSED:
+        "decay_curve_confirmed": {
+            "shape": "hyperbolic",
+            "formula": "rate(t) = 11.41% / (t + 1)",
+            "initial_rate_pa": 0.1141,
+            "target_horizon_years": 20,
+            "target_aggregate_supply": 2_000_000_000,
+            "status": "CONFIRMED shape, UNRESOLVED parameterisation — see open_questions",
+            "source_url": "https://worldmobiletoken.com/WhitePaper.pdf",
+            "source_section": "Section XI, Inflation Mechanics",
+            "source_date": "2026-09-18",
+            "supersedes": "inflation_schedule_derived's linear/geometric candidates. Both withdrawn, "
+                          "not just linear — see inflation_schedule_derived.the_single_open_assumption.",
+            "open_questions": {
+                "time_unit_ambiguous": {
+                    "issue": "the text says 'monthly inflation' but states the initial rate as "
+                             "'11.41% p.a.' — so t in the formula could be months or years. Neither "
+                             "reading reconciles to the stated 29% target under the naive formula:",
+                    "t_in_years": "11.41% x H(20) (harmonic sum to 20) ~= 11.41% x 3.5977 ~= 41.05% "
+                                  "of aggregate supply — overshoots the stated 29%.",
+                    "t_in_months": "(11.41%/12) x H(240) ~= 5.76% of aggregate supply — undershoots "
+                                   "the stated 29%.",
+                    "stated_target": "29%, which sits BETWEEN the two naive readings.",
+                    "conclusion": "either the base, the compounding convention, or the rate's "
+                                  "application differs from the naive reading. DO NOT pick a reading "
+                                  "that happens to work by adjusting an unstated assumption — record "
+                                  "the formula as stated and record that the naive parameterisation "
+                                  "does not reproduce 29%.",
+                    "likely_resolved_by": "the whitepaper's own Figure 1 ('Monthly inflation vs "
+                                          "Supply') — a chart, values not extractable from the text.",
+                },
+                "base_is_aggregate_not_circulating": {
+                    "finding": "'relative to aggregate supply' is explicit in the source text — the "
+                               "rate applies to the 2,000,000,000 AGGREGATE supply, not to a moving "
+                               "circulating denominator.",
+                    "corrects": "the earlier finding in inflation_rate_reference that 11.41% was "
+                                "probably a spot measurement against circulating supply at a date "
+                                "(the reason the TGE-base reconciliation in "
+                                "inflation_schedule_derived.validation_test_withdrawn failed). That "
+                                "reasoning is SUPERSEDED — the base is fixed and stated in the "
+                                "primary source, not moving and not undocumented.",
+                },
+            },
+            "not_yet_resolved": "the emission START DATE (same gap as before) and the base/compounding "
+                                "reconciliation above. issuance_schedule stays None until both close — "
+                                "a confirmed shape with an unresolved parameterisation cannot yet drive "
+                                "a per-period token count.",
+        },
         "inflation_budget": {
             "tokens": 580_000_000,
             "share_of_total_supply": 0.29,
@@ -2110,12 +2183,13 @@ PROJECTS = [
                                     "information about the base without the denominator it was taken "
                                     "against.",
             },
-            "the_single_open_assumption": "THE DECAY FORM. Linear is not confirmed from World Mobile's "
-                                          "own materials; geometric decay reaches the same endpoints with "
-                                          "the same total. THE TGE FIGURE CANNOT SETTLE THIS — it bore "
-                                          "only on the base, which is no longer the question. World "
-                                          "Mobile's tokenomics paper (linked from their FAQ, not yet "
-                                          "fetched) is the one document that would close it.",
+            "the_single_open_assumption": "WITHDRAWN 2026-09-18. This entire linear derivation, and its "
+                                          "geometric-decay alternative, are SUPERSEDED — see "
+                                          "decay_curve_confirmed. World Mobile's own whitepaper (Section "
+                                          "XI) states the actual shape is HYPERBOLIC: "
+                                          "rate(t) = 11.41% / (t+1). Kept here as a record of the "
+                                          "reasoning that was run and dropped, not as a live candidate. "
+                                          "Do not reintroduce linear or geometric decay for this project.",
             "also_missing": "the emission START DATE. WMT migrated to WMTx and which event starts the "
                             "clock is not established, so the curve cannot be placed on a calendar.",
         },
@@ -2133,61 +2207,36 @@ PROJECTS = [
             "note": "10% of the 2,000,000,000 total. NOT a base for the inflation schedule — see "
                     "validation_test_withdrawn.",
         },
-        # A PERCENTAGE AT A DATE, STORED AS A REFERENCE AND NOTHING ELSE.
-        # 11.41% is a ratio of two moving quantities — a year's mint over circulating supply at the
-        # moment of measurement — so it is meaningless without the date it was taken on, and it
-        # cannot be turned back into a token count without the denominator.
+        # A SCHEDULE PARAMETER, NOT A POINT-IN-TIME READING. CORRECTED 2026-09-18.
         #
-        # ** IT IS A LIVE STAT, NOT AN ARTICLE, AND IT IS DATED BY RETRIEVAL. **
-        # CORRECTED 2026-09-15. This previously carried article_published=None with a note calling
-        # the publication date a missing fact to be found. THAT WAS THE WRONG MODEL FOR THE SOURCE.
-        # theblock.co/price/257077/world-mobile-token-wmt-usd is a LIVE PRICE AND DATA PAGE with a
-        # persistent FAQ-style content block — no byline, no publication date, maintained
-        # continuously. There is no publication date to find, so "not on file" described a field
-        # that should never have existed rather than a gap in our research.
+        # This entry previously modelled 11.41% as a LIVE STAT — a spot measurement against
+        # circulating supply, read off The Block's continuously-maintained price/data page and
+        # dated by retrieval. That model is WITHDRAWN, not merely revised: World Mobile's own
+        # whitepaper (Section XI) states the figure directly as "the initial rate of inflation ...
+        # set as such to target a 2bn aggregate WMT supply in year 20" and explicit that it is
+        # "relative to aggregate supply" — a fixed, stated base, not a moving circulating
+        # denominator observed once. It is t=0 of the formula in decay_curve_confirmed, not an
+        # independent cross-check of it.
         #
-        # So it takes the same convention every other live read in this system already uses: dated
-        # by WHEN WE READ IT. A CoinGecko price and a DefiLlama TVL figure are not "published" on a
-        # date either; they carry an as-of, and so does this.
-        #
-        # ** AND THE NUMBER CAN CHANGE UNDER US WITHOUT NOTICE. ** The Block may revise the figure
-        # with no visible change log, so this is a value to RE-CHECK periodically, not a
-        # historically fixed fact. If it reads differently on a later visit, that is the source
-        # updating, not a discrepancy to reconcile — record the new value against a new
-        # reference_date rather than treating either reading as wrong.
+        # The live_stat framing, the reference_date convention, and the "recheck periodically —
+        # the source may revise it" caveat all assumed a third-party aggregator page as the source.
+        # None of that applies to a number the issuer states in its own primary document. Removed
+        # accordingly, along with the falsified TGE-anchor sanity check that depended on the
+        # circulating-supply reading — see inflation_schedule_derived.validation_test_withdrawn for
+        # that history and decay_curve_confirmed.open_questions for what replaces it.
         "inflation_rate_reference": {
             "value_pct": 0.1141,
-            "measured_against": "CIRCULATING SUPPLY at the time of measurement",
-            "is_schedule_parameter": False,
-            "kind": "point_in_time_reference",
-            "source_kind": "live_stat",
-            "attributed_to": "The Block — theblock.co/price/257077/world-mobile-token-wmt-usd, a live "
-                             "price/data page with a persistent FAQ block. No byline, no publication "
-                             "date, continuously maintained.",
-            # THE DATE WE READ IT. Not a publication date — there isn't one.
-            "reference_date": "2026-09-15",
-            "reference_date_means": "the date this figure was RETRIEVED, the same convention as any "
-                                    "other live third-party stat in this config. It is not a "
-                                    "publication date and there is no publication date to find.",
-            "recheck": "PERIODICALLY. The Block can revise the underlying number with no visible "
-                       "change log, so a later reading that differs is the source updating rather "
-                       "than a discrepancy. Record the new value against a new reference_date; do not "
-                       "treat the old one as having been wrong.",
-            "sanity_check": "take the declared schedule's mint for whichever year contains "
-                            "reference_date, divide by circulating supply at that date, and see "
-                            "whether it lands NEAR 11.41%. Near is the standard. Percentages from two "
-                            "measurement conventions rarely agree exactly, and forcing an exact match "
-                            "is back-solving in the other direction.",
-            "sanity_check_still_blocked_by": "the emission START DATE. reference_date now fixes WHEN "
-                                             "the reading was taken, but mapping it to a SCHEDULE YEAR "
-                                             "needs to know when year one began — which is still not "
-                                             "established. Dating the reading was necessary for this "
-                                             "check and is not sufficient for it.",
-            "why_it_falls_over_time": "a fixed, DECLINING absolute mint divided by a GROWING "
-                                      "circulating supply produces a falling percentage regardless of "
-                                      "the schedule's shape. So a falling rate is not evidence of any "
-                                      "particular curve.",
-            "source_date": "2026-09-15",
+            "measured_against": "AGGREGATE SUPPLY (2,000,000,000) — stated explicitly, not inferred",
+            "is_schedule_parameter": True,
+            "kind": "schedule_parameter",
+            "role": "the initial rate in decay_curve_confirmed's formula: rate(t) = 11.41% / (t+1)",
+            "source_url": "https://worldmobiletoken.com/WhitePaper.pdf",
+            "source_section": "Section XI, Inflation Mechanics",
+            "source_date": "2026-09-18",
+            "supersedes": "the prior live_stat / point_in_time_reference model attributed to The "
+                          "Block (theblock.co/price/257077/world-mobile-token-wmt-usd) with a "
+                          "reference_date of 2026-09-15 and a periodic-recheck caveat. That was the "
+                          "wrong model for a number the primary source states directly.",
         },
         # ================= TWO REWARD STREAMS, MECHANICALLY DIFFERENT. ARCHETYPE 2 =================
         # This is the load-bearing distinction for World Mobile's supply side, and it is now from
@@ -2204,14 +2253,42 @@ PROJECTS = [
             {"role": "EarthNode operator", "paid_in": "WMTX", "funded_by": "transaction fees + inflation rewards",
              "shares_with": "delegating stakers", "inflationary": True,
              "min_stake_tokens": 100_000,
-             "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "source_date": "2026-09-15"},
-            {"role": "AirNode operator", "paid_in": "FIAT", "funded_by": "a percentage of protocol revenue",
+             "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "source_date": "2026-09-15",
+             "note": "min stake is a BLOCKCHAIN PARAMETER, changeable by token-holder vote — not a fixed "
+                     "constant. Confirmed from the whitepaper itself, 2026-09-18."},
+            {"role": "AetherNode operator", "paid_in": "WMTX", "funded_by": "transaction fees + inflation rewards",
+             "inflationary": True, "min_stake_tokens": 1_000_000,
+             "source_url": "https://worldmobiletoken.com/WhitePaper.pdf", "source_date": "2026-09-18",
+             "note": "NEW 2026-09-18, from the whitepaper. Same funding shape as EarthNode at 10x the "
+                     "minimum stake. Min stake is likewise a blockchain parameter, changeable by vote."},
+            {"role": "AirNode operator", "paid_in": "LOCAL STABLE CURRENCY (fiat)",
+             "funded_by": "up to 10% of in-country revenue, scaling up as volumes grow",
              "inflationary": False,
              "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "source_date": "2026-09-15",
+             "second_source": "https://worldmobiletoken.com/WhitePaper.pdf",
+             "second_source_date": "2026-09-18",
              "note": "CONFIRMS the fiat-supplier-payment finding from World Mobile's own whitepaper, where "
-                     "it was previously an inference. AirNode payouts are NOT emissions and must not be "
-                     "modelled as issuance."},
+                     "it was previously an inference. The whitepaper's own text (2026-09-18 read) further "
+                     "specifies LOCAL STABLE CURRENCY (not just 'fiat') and quantifies the share: up to "
+                     "10% of in-country revenue, scaling with volume. AirNode payouts are NOT emissions "
+                     "and must not be modelled as issuance."},
         ],
+        # TRANSACTION FEES — A THIRD, SEPARATE STREAM FROM INFLATION REWARDS. New 2026-09-18, from
+        # the whitepaper. Fees are denominated in WMTX and paid to node operators, who may share them
+        # with their delegating stakers — mechanically distinct from the inflation-funded leg of
+        # reward_streams above (both EarthNode and AetherNode rows list "transaction fees + inflation
+        # rewards" as funded_by; this is the fee component of that combined figure, named separately
+        # because fees are NOT emissions and inflation rewards ARE).
+        "transaction_fee_stream": {
+            "denominated_in": "WMTX",
+            "paid_to": "node operators (EarthNode / AetherNode)",
+            "shares_with": "delegating stakers, at the operator's discretion",
+            "is_emission": False,
+            "source_url": "https://worldmobiletoken.com/WhitePaper.pdf",
+            "source_date": "2026-09-18",
+            "note": "recorded separately from inflation rewards so the two are never conflated when "
+                    "modelling issuance — fee revenue circulates existing supply, it does not mint new.",
+        },
         # NEW ALLOCATION BUCKET, from the same filing: the ISSUER RETAINS 18% of total supply as
         # an operational fund. Recorded beside the 29% inflation budget because the two are
         # different things and the difference matters for float: the 29% is MINTED OVER 20 YEARS
@@ -2226,6 +2303,42 @@ PROJECTS = [
             "source_date": "2026-09-17",
             "note": "18% of the 2,000,000,000 cap. NOT part of the 29% / 580,000,000 inflation "
                     "budget — that is minted to suppliers over 20 years; this already exists.",
+        },
+        # ================= FULL DISTRIBUTION TABLE — 11 BUCKETS, SUMS TO 100% =================
+        # Source: faq.worldmobiletoken.com (token metrics and lockup pages), read 2026-09-17/18.
+        # CONFIRMS two figures already on file (Node Operators/Staking 29% = inflation_budget;
+        # WM Operations Fund 18% = issuer_operational_fund, found separately in the MiCA whitepaper).
+        # SEVEN BUCKETS ARE NEW: Private Sale, Public Sale, Incentive Rewards, Early Staking Rewards,
+        # Advisors, Co-founders and Team, Partnerships, WM Community Fund.
+        #
+        # CRITICAL FOR THE DECAY CURVE: Node Operators/Staking (29%) has NO initial lockup and NO
+        # monthly unlock schedule — consistent with release via the 20-year emission schedule rather
+        # than a vesting cliff. This CONFIRMS the 29% bucket is the emissions budget and not a
+        # vesting allocation (an assumption until now). It does NOT by itself give the decay curve
+        # shape — that is separately confirmed hyperbolic, see decay_curve_confirmed.
+        "allocation_table": {
+            "source_url": "https://faq.worldmobiletoken.com",
+            "source_date": "2026-09-17",
+            "sums_to_pct": 100.00,
+            "buckets": [
+                {"group": "Private Sale", "pct": 2.50, "initial_lockup": "9 months", "monthly_unlocks": "none"},
+                {"group": "Public Sale", "pct": 10.00, "initial_lockup": "none", "monthly_unlocks": "none"},
+                {"group": "Incentive Rewards", "pct": 3.00, "initial_lockup": "none", "monthly_unlocks": "none"},
+                {"group": "Early Staking Rewards", "pct": 2.50, "initial_lockup": "none", "monthly_unlocks": "none"},
+                {"group": "Advisors", "pct": 5.90, "initial_lockup": "12 months", "monthly_unlocks": "24 months"},
+                {"group": "Co-founders and Team", "pct": 19.25, "initial_lockup": "18 months", "monthly_unlocks": "24 months"},
+                {"group": "Partnerships", "pct": 7.85, "initial_lockup": "at time of partnership", "monthly_unlocks": None,
+                 "see_also": "partnerships_schedule_discrepancy — whitepaper Table I states a 12mo/24mo "
+                             "schedule instead; both recorded, not reconciled."},
+                {"group": "WM Community Fund", "pct": 2.00, "initial_lockup": "24 months", "monthly_unlocks": "48 months"},
+                {"group": "WM Operations Fund", "pct": 18.00, "initial_lockup": "6 months", "monthly_unlocks": "72 months",
+                 "confirms": "issuer_operational_fund (18%, MiCA whitepaper)"},
+                {"group": "Node Operators/Staking", "pct": 29.00, "initial_lockup": "none", "monthly_unlocks": "none",
+                 "confirms": "inflation_budget (29% / 580,000,000 WMTX). No lockup/no monthly unlock is "
+                             "consistent with release via the 20-year emission schedule rather than a "
+                             "vesting cliff — CONFIRMS this bucket is the emissions budget, not a vesting "
+                             "allocation. Does NOT by itself give the decay curve shape."},
+            ],
         },
         "staking_terms": {
             "apy_max": 0.05, "compounding": "monthly",
@@ -2383,27 +2496,55 @@ PROJECTS = [
         ],
         "manual_quarterly": ["supply_units", "utilisation_pct"],
         "materiality": "low",
+        # DISCREPANCY BETWEEN TWO OWN-SOURCE DOCUMENTS — recorded, not resolved by preference.
+        # Whitepaper Table I (2021, pre-launch): Partnerships 7.85%, 12-month initial lockup, 24-month
+        # unlocks. FAQ token-metrics page (current, faq.worldmobiletoken.com): Partnerships 7.85%, "at
+        # time of partnership", no schedule stated. The 7.85% share agrees; the LOCKUP SCHEDULE does
+        # not. The whitepaper is dated and pre-launch; the FAQ is current and likely reflects a later
+        # governance change — but both are recorded with their sources rather than silently preferring
+        # the newer one.
+        "partnerships_schedule_discrepancy": {
+            "share_pct": 0.0785,
+            "whitepaper": {"initial_lockup": "12 months", "monthly_unlocks": "24 months",
+                           "source_url": "https://worldmobiletoken.com/WhitePaper.pdf",
+                           "source_section": "Table I", "source_date": "2021 (pre-launch)"},
+            "faq": {"initial_lockup": "at time of partnership", "monthly_unlocks": "none stated",
+                    "source_url": "https://faq.worldmobiletoken.com", "source_date": "2026-09-17"},
+            "note": "both recorded; not reconciled. The FAQ is current and the whitepaper is pre-launch, "
+                    "so the FAQ likely reflects a later change, but that is a guess, not a source.",
+            "recorded": "2026-09-18",
+        },
         "notes": "Archetype 2 + 3. SUPPLY IS PARTIAL (Ethereum only) until the bridge model is settled, "
                  "and WIDER THAN THAT: Cardano is the original chain and is not captured at all. "
-                 "ISSUANCE IS NOW MECHANISM-COMPLETE BUT STILL NOT DECLARABLE, and the list of reasons "
-                 "has gone from four to two. Confirmed from World Mobile's own MiCA whitepaper: the 2bn "
-                 "contract-enforced cap, and 580,000,000 WMTx (29%) as the lifetime inflation budget over "
-                 "20 years, front-loaded to nil in year 20, minted OUT OF the cap rather than beyond it — "
-                 "which resolves the old 'fixed supply vs 11.41% inflation' contradiction and corrects the "
-                 "horizon from ~2030 to ~2041. STILL MISSING: the DECAY FORM (linear vs geometric — same "
-                 "endpoints, same total, different curve) and the emission START DATE. The per-year table "
-                 "also does not close: year-start sampling sums to 609m against a 580m budget (+5%), so "
-                 "three discretisations are recorded unreconciled and the 11.41% base test must be run "
-                 "against all three. BUYBACK DESTINATION IS UNDOCUMENTED, so the actual buyback figures "
-                 "are suppressed and only the implied one is computed. EARTHNODE operators earn WMTX, "
-                 "AIRNODE operators earn FIAT — confirmed from the whitepaper, not inferred — so do not "
-                 "model all supplier earnings as emissions.",
+                 "ISSUANCE IS NOW MECHANISM-COMPLETE BUT STILL NOT DECLARABLE. Confirmed from World "
+                 "Mobile's own MiCA whitepaper: the 2bn contract-enforced cap, and 580,000,000 WMTx "
+                 "(29%) as the lifetime inflation budget over 20 years, front-loaded to nil in year 20, "
+                 "minted OUT OF the cap rather than beyond it — which resolves the old 'fixed supply vs "
+                 "11.41% inflation' contradiction and corrects the horizon from ~2030 to ~2041. THE "
+                 "DECAY FORM IS NOW CONFIRMED HYPERBOLIC (rate(t) = 11.41% / (t+1), Section XI of the "
+                 "full whitepaper, 2026-09-18) — the earlier linear-vs-geometric open question is "
+                 "WITHDRAWN in full, see decay_curve_confirmed. What remains open is the "
+                 "PARAMETERISATION: the naive formula does not reproduce the stated 29% target under "
+                 "either a monthly or yearly reading of t, and the emission START DATE is still "
+                 "unknown — see decay_curve_confirmed.open_questions. BUYBACK DESTINATION IS NOW "
+                 "DOCUMENTED (distribute, via a transient treasury pass-through — see "
+                 "destination_confirmed), but the SHARE of revenue used for buyback is still "
+                 "undocumented (fee_split.share_to_buyback is None), so the actual buyback figures "
+                 "remain suppressed and only the implied figure is computed. EARTHNODE and AETHERNODE "
+                 "operators earn WMTX "
+                 "(inflation + fees), AIRNODE operators earn local stable currency up to 10% of "
+                 "in-country revenue — confirmed from the whitepaper, not inferred — so do not model "
+                 "all supplier earnings as emissions.",
     },
     {
         "name": "GEODNET", "symbol": "GEOD",
         "coingecko_id": "geodnet",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
-        "archetypes": [2, 4], "archetypes_held": [],
+        # ARCHETYPE 3 ADDED 2026-09-18 — RESOLVED, not a new hypothesis. See OPEN_QUESTIONS'
+        # GEODNET record: Version A (fiat revenue -> 80% buys GEOD on the open market -> burned) is
+        # confirmed by GEODNET's own X account plus three corroborating sources; Version B (clients
+        # pay directly in GEOD, no market purchase) is REMOVED, not merely deprioritised.
+        "archetypes": [2, 3, 4], "archetypes_held": [],
         # ===== B7: MINER COUNT — A REAL FIGURE AT LAST, AND IT IS THIRD-PARTY. =====
         # supply_units is GEODNET's archetype 2 metric AND the missing input for modelling network
         # issuance from the per-miner halving schedule. One number closes both, which is why it was
@@ -2460,6 +2601,43 @@ PROJECTS = [
                         "source": "DefiLlama", "reference_date": "2026-09-15",
                         "earlier_estimate": {"annualised_usd": 5_000_000, "source": "Messari", "as_of": "2025-Q3"},
                         "note": "consistent growth, not a contradiction."},
+            # ===== NEW REFERENCE DATA, 2026-09-18, FOR ARCHETYPE 3 SANITY-BOUNDING. =====
+            "burn_and_arr_reference": {
+                "june_2026_burn_usd": 722_021,
+                "june_2026_cumulative_burned_geod": 58_383_936,
+                "arr_usd": {
+                    "2026-07": 10_390_000,
+                    "coinbase_listing_2026-06_annualised": 7_800_000,
+                    "late_2025_blockworks": {"total_arr_usd": 5_600_000, "onchain_burns_usd": 4_500_000},
+                },
+                "weekly_onchain_revenue_usd": {"2026-07": 200_000, "note": "tripled since mid-2025"},
+                "miner_count": {"value": "21,000+", "countries": "160-170",
+                                "note": "updates supply_units_reference's DePIN Scan figure (21,952, "
+                                        "single country figure not given there) with a wider country "
+                                        "range — both kept, not reconciled to one number."},
+                "sources": ["GEODNET's own X account (@GEODNET, June 2026 burn stats)",
+                           "VanEck investment thesis", "Blockworks Research", "CoinGecko/Yellow"],
+                "use": "sanity-bounding for archetype 3 figures once actual_buyback_usd/tokens are "
+                       "wired — a derived figure far outside this trend is a bug in the read.",
+                "recorded": "2026-09-18",
+            },
+            # ===== CADENCE MISMATCH: GEODNET REPORTS WEEKLY, OUR QUERY AGGREGATES MONTHLY. =====
+            "cadence_mismatch": {
+                "geodnet_own_cadence": "WEEKLY — multiple sources including CMC AI describe weekly "
+                                       "burn reporting (e.g. weekly onchain revenue ~$200,000 as of "
+                                       "2026-07).",
+                "our_query_cadence": "MONTHLY — Dune query 8683175's date_col is 'month'; every CTE "
+                                     "buckets to month at the final step (see dune_queries.note).",
+                "effect": "our stored gross_burn_tokens series is a monthly AGGREGATION of a process "
+                         "GEODNET itself reports weekly. Not wrong, but a granularity mismatch: "
+                         "week-level trend or volatility (e.g. a single bad week) is invisible in "
+                         "our series, and comparing our monthly figures against a GEODNET weekly "
+                         "figure requires summing four-to-five of theirs, not reading one against "
+                         "one.",
+                "action": "recorded as a known limitation. No week-granularity Dune query is on file; "
+                         "building one is future work, not done here.",
+                "recorded": "2026-09-18",
+            },
         },
         # ===== B5: BUYBACK AND BURN ARE ONE CONTINUOUS ACTION. NO FUND SITS BETWEEN THEM. =====
         # DefiLlama's OWN methodology note for GEODNET's revenue metric states it directly: "80% of
@@ -2479,12 +2657,27 @@ PROJECTS = [
                 "wired. Searching for a fund address here would be searching for something the "
                 "mechanism does not have. Declared 2026-09-15.",
         },
-        "fee_split": dict(_NO_SPLIT),
+        # ARCHETYPE 3 FEE_SPLIT — CONFIRMED 2026-09-18, see OPEN_QUESTIONS' GEODNET record.
+        # 80% of fiat revenue buys GEOD on the open market and burns it; 20% goes to the Foundation
+        # treasury. programmed=True: this is a stated protocol mechanism (not a discretionary
+        # governance vote each cycle), per GEODNET's own account and three corroborating sources.
+        "fee_split": {
+            "share_to_buyback": 0.80,
+            "source_url": "https://x.com/GEODNET",
+            "source_date": "2026-09-18",
+            "programmed": True,
+            "status": "active",
+            "note": "CONFIRMED, not merely second-sourced: GEODNET's own X account (June 2026 burn "
+                    "stats post, first-party) plus VanEck, Blockworks Research and CoinGecko/Yellow "
+                    "all describe the same fiat-revenue -> 80% market-buy -> burn flow (Version A). "
+                    "Version B (direct GEOD payment, no market purchase) is REMOVED as a competing "
+                    "description — see OPEN_QUESTIONS. STILL NO ON-CHAIN GIP formalising the split; "
+                    "recorded as the residual gap.",
+        },
         "burn_split": {"share_of_fees_burned": 0.80, "source_url": "https://geodnet.com/tokenomics", "source_date": BRIEF_DATE, "status": "active",
                        "note": "80% of console (data) revenue buys back and burns GEOD, 20% to the Foundation. "
-                               "SECOND-SOURCED 2026-09-15 (still no GIP) — see the archetype 3 open question, "
-                               "which stays open: a second source raises confidence in the SPLIT without "
-                               "supplying the GEODNET-authored revenue-share statement archetype 3 needs."},
+                               "CONFIRMED 2026-09-18 by GEODNET's own X account plus three corroborating "
+                               "sources — see fee_split and OPEN_QUESTIONS' GEODNET record. Still no GIP."},
         # ================= THE HALVING IS PER-MINER. IT IS NOT NETWORK ISSUANCE. =================
         # issuance_schedule STAYS None, and that is the whole point of this block.
         #
@@ -2528,6 +2721,58 @@ PROJECTS = [
                                          "already missing. Sourcing it closes both.",
             "do_not": "declare any of these rates as network issuance. They are per-miner maxima before "
                       "uptime, data quality, band type and zone multipliers.",
+        },
+        # ===== GIP-8: LOCATION NFT CAP — AN ARCHETYPE 2 supply_units CEILING. =====
+        # Reduced from 100,000 to 20,000 active Location NFTs. This BOUNDS the network's maximum
+        # station count differently from supply_units_reference's observed 21,952 active devices —
+        # the two are not the same measurement (a device count vs an NFT-license cap) and are
+        # recorded separately rather than reconciled to one figure. Only stations maintaining >=98%
+        # RTK Reception Rate can earn, which is an eligibility gate on top of the cap, not a
+        # separate ceiling.
+        "location_nft_cap": {
+            "cap_active_nfts": 20_000,
+            "was": 100_000,
+            "reduced_by": "GIP-8",
+            "unique_owners": 4_300,
+            "location_nfts_held": 11_800,
+            "top_10_holders_control_pct": 0.13,
+            "earning_requirement": "stations maintaining >=98% RTK Reception Rate only",
+            "modelled_as": "a supply_units CEILING (archetype 2), same treatment as Sky's SBE BEAM "
+                           "cap and Aerodrome's tail-emission bound — a cap is not a stored series, "
+                           "it bounds one.",
+            "tension_with_supply_units_reference": "the cap (20,000 active NFTs) is BELOW "
+                                                    "supply_units_reference's observed 21,952 active "
+                                                    "devices (DePIN Scan). An NFT is a licence to "
+                                                    "operate a station, not the station itself "
+                                                    "(unique_owners 4,300 hold 11,800 NFTs, fewer "
+                                                    "NFTs than devices reported), so this is not "
+                                                    "necessarily a contradiction — but it is recorded "
+                                                    "as an open tension rather than silently resolved, "
+                                                    "since which figure bounds the other is not stated "
+                                                    "by GEODNET.",
+            "source": "GIP-8", "source_date": "2026-09-18",
+        },
+        # ===== SUPERHEX STAKING — A LOCK MECHANISM, DECLINING MATERIALITY FLAGGED PER JAKE. =====
+        # 20,000 GEOD required to fully stake a SuperHex; multiple participants may contribute in
+        # increments (so it is a POOLED lock, not one holder per SuperHex). Stakers may receive a
+        # 20% GEOD bonus after a one-year producing period.
+        #
+        # NOT WIRED AS locked_tokens: no contract address or query for the staking pool balance is
+        # on file. This is a genuine gap, not a declined one — recorded per the same discipline as
+        # Hyperliquid's still-unsourced actual_buyback_tokens stub, rather than forced into a metric
+        # with no read behind it.
+        "superhex_staking": {
+            "full_stake_required_geod": 20_000,
+            "pooled": True,
+            "pooled_note": "multiple participants may contribute in increments toward one SuperHex",
+            "bonus_pct": 0.20,
+            "bonus_condition": "after a one-year producing period",
+            "materiality_flag": "Jake notes this is becoming LESS MATERIAL. Recorded as a lock "
+                                "mechanism, not modelled as a significant float constraint.",
+            "not_wired": "no contract address or query for the staking pool's balance is on file — "
+                        "locked_tokens and avg_lock_duration_days stay genuine gaps for GEODNET, not "
+                        "forced onto this mechanism without a read behind it.",
+            "source": "GEODNET's own tokenomics material", "source_date": "2026-09-18",
         },
         # ===== THE FALSE ZERO, SUPPRESSED =====
         # gross_issuance_tokens was reading 0 from derived:d_supply:MECHANISM_ASSUMED — the supply
@@ -2746,13 +2991,56 @@ PROJECTS = [
                              "history before August 2026 on the next full backfill. Confirm it is reachable "
                              "under the account the API key belongs to.",
             },
+            # ===== actual_buyback_tokens/usd — WIRED 2026-09-18, REUSING THE SAME QUERY. =====
+            # GEODNET's buy-and-burn is ONE CONTINUOUS FLOW with no intermediate fund (see
+            # not_applicable.buyback_fund_balance) — the tokens this query counts as "burned" ARE
+            # the tokens that were bought back; there is no separate purchase step to measure. So
+            # rather than leaving these as unsourced stubs (the Hyperliquid pattern, correct when
+            # genuinely no data exists), they reuse query 8683175's own burn columns: the SAME
+            # numbers, under the archetype 3 metric names the buyback/demand tabs actually read.
+            # NOT double-counted: gross_burn_tokens and actual_buyback_tokens will report identical
+            # figures for GEODNET, which is the correct and honest outcome of a confirmed one-flow
+            # mechanism, not a bug.
+            "actual_buyback_tokens": {
+                "query_id": 8683175, "date_col": "month",
+                "value_cols": ["tokens_burned", "sol_tokens_burned"],
+                "granularity": "monthly", "drop_current_period": True,
+                "source_url": GEODNET_BURN_QUERY,
+                "provenance": "REUSES gross_burn_tokens' own query and columns — buy-and-burn is one "
+                              "flow for GEODNET, confirmed 2026-09-18 (see fee_split, OPEN_QUESTIONS). "
+                              "There is no separate purchase step to source independently.",
+                "note": "Will equal gross_burn_tokens for this project. That is correct, not a "
+                        "duplication bug — see the block comment above.",
+            },
+            "actual_buyback_usd": {
+                "query_id": 8683175, "date_col": "month",
+                "value_cols": ["usd_burned", "sol_usd_burned"],
+                "granularity": "monthly", "drop_current_period": True,
+                "source_url": GEODNET_BURN_QUERY,
+                "provenance": "REUSES gross_burn_tokens' own query, usd_burned/sol_usd_burned columns "
+                              "instead of the token columns — same reasoning as actual_buyback_tokens.",
+                "note": "USD value of the same one-flow buy-and-burn.",
+            },
             **_dune("emissions_tokens"),
         },
         "materiality": "low",
-        "notes": "Console revenue burn — confirmed. Migrated Polygon -> Solana, and BOTH burn paths belong in the "
-                 "same series: the working Dune query unions them. Polygon burns via balanceOf on the GEOD token at "
-                 "the dead address; Solana via a token-account read, which needs a Solana adapter. "
-                 "GEODNET publishes miner counts on its own dashboard (tier 3/5). "
+        "notes": "ARCHETYPE 3 ADDED 2026-09-18 (was 2, 4): fiat revenue -> 80% buys GEOD on the open "
+                 "market -> burned, 20% to the Foundation. Confirmed by GEODNET's own X account plus "
+                 "three corroborating sources; the competing Version B (direct GEOD payment, no "
+                 "market purchase) is removed, not merely deprioritised — see OPEN_QUESTIONS. "
+                 "actual_buyback_tokens/usd are wired by REUSING the gross_burn_tokens Dune query — "
+                 "buy-and-burn is one flow with no intermediate fund, so the two metrics correctly "
+                 "report the same figures. fdv_usd/revenue_usd/holders_revenue_usd/protocol_tvl_usd "
+                 "stay UNPOPULATED (defillama_fees_slug/protocol/chain are all None) — they render as "
+                 "honest gaps, not as new populated figures. locked_tokens/avg_lock_duration_days "
+                 "ALSO stay gaps: SuperHex staking is a real lock mechanism (see superhex_staking) but "
+                 "has no contract or query behind it, and Jake flags its materiality as declining "
+                 "regardless. GEODNET reports burns WEEKLY; our Dune query aggregates MONTHLY — see "
+                 "burn_reference.cadence_mismatch. Console revenue burn — confirmed. Migrated Polygon "
+                 "-> Solana, and BOTH burn paths belong in the same series: the working Dune query "
+                 "unions them. Polygon burns via balanceOf on the GEOD token at the dead address; "
+                 "Solana via a token-account read, which needs a Solana adapter. GEODNET publishes "
+                 "miner counts on its own dashboard (tier 3/5). "
                  "HISTORY FRAGILITY: everything before 2026-08-01 comes from a STATIC Dune snapshot table, "
                  "dune.geodnet_console.result_geod_tokens_burned_20260731, unioned into query 8683175 ahead of "
                  "its live start date. If that table stops being queryable, a full re-backfill loses ALL GEODNET "
@@ -3355,54 +3643,53 @@ PROJECTS = [
             # THE DESTINATION. The SSF HAS NO SEPARATE ADDRESS — Maple's own transparency page states
             # the Syrup Strategic Fund is "part of the Treasury". Searching for a standalone SSF
             # wallet is closed, not pending.
-            # ============ ROLE DISPUTED 2026-09-14 — THE ADDRESS IS REAL, THE CLAIM WAS MINE ============
-            # The live read returned 0.51253570332391 SYRUP against ~75,780,000 reported by Maple's
-            # own transparency page. THE READ IS CORRECT AND THE ADDRESS IS WRONG FOR THIS QUESTION.
+            # ============ REPLACED 2026-09-18 — 0xa946...FD0B19 (v2 protocol fee treasury) WAS WRONG. ==
+            # The prior address, disputed since 2026-09-14, is gone from this slot entirely (not kept
+            # as a second contracts entry — see its full history in OPEN_QUESTIONS' Maple record,
+            # which is retained). It was the v2 PROTOCOL FEE treasury (fees in pool assets, not
+            # SYRUP), matched on the registry's bare name `treasury` rather than on evidence.
             #
-            # Decimals are ruled out arithmetically, not by inspection: 75,780,000 / 0.51253570332391
-            # = 1.4785e8, and log10 of that is 8.1698 — NOT AN INTEGER. A decimals mismatch is always
-            # an exact power of ten. It is also ruled out structurally: ChainReader.scaled() reads
-            # decimals() live from the same token contract the balance came from, with no hardcoded
-            # 18 and no fallback, and the identical path returned correct figures for Sky, Uniswap
-            # and Pendle in the same run.
+            # NEW ADDRESS: 0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196, Etherscan's own label
+            # "Maple Finance: DAO" — the `daoMultisig` entry in maple-labs/address-registry, which
+            # was already visible as a candidate ("newly surfaced and arguably the most plausible")
+            # before this round confirmed it. This is the entity Maple's own transparency page calls
+            # "the Maple Treasury": "The Maple Treasury is where SYRUP bought back from the market is
+            # held."
             #
-            # And the token is right: the symbol gate passed, so the chain confirmed this really is
-            # SYRUP. 0.51 SYRUP is therefore the GENUINE balance of this address.
+            # ** VERIFIED-BY-LABEL, NOT PROTOCOL-CONFIRMED — AN EXPLICIT, WEAKER TIER. ** Etherscan's
+            # label is a third party's identification of the address, not Maple stating in its own
+            # material that THIS SPECIFIC ADDRESS holds the buyback SYRUP. destination_status is
+            # therefore "verified_by_label", one notch below "confirmed" — do NOT round this up.
             #
-            # WHAT WENT WRONG WAS THE INFERENCE. Maple's transparency page says the SSF is "part of
-            # the Treasury". I read "the Treasury" as a contract and took the one entry in
-            # maple-labs/address-registry literally named `treasury` — which sits under SINGLETONS,
-            # beside globals, feeManager and poolDeployer. That is the PROTOCOL FEE treasury, and
-            # Maple's protocol fees are denominated in the POOL ASSET (USDC/USDT/USDG), not SYRUP.
-            # It is NOT in the registry's own "SyrupToken" section. A dust SYRUP balance there is
-            # exactly what that contract should hold. "The Treasury" on a transparency page means
-            # the DAO's holdings in the ACCOUNTING sense, which need not be one address at all.
-            #
-            # THE SAME ERROR AS THE UNISWAP TOKENJAR, and more dangerous: a name matched, the read
-            # worked, and the answer was small, precise and non-zero. A zero would have looked
-            # broken. 0.51 would have flowed into every Maple archetype 3 figure untouched.
-            #
-            # destination_status "disputed" is the mechanism built for exactly this: the adapter
-            # READS it, stages the 0.51 as evidence, and REFUSES to store it as a metric, with a gap
-            # saying why. Better a gap than a wrong number. Do NOT substitute another address until
-            # one is sourced — see OPEN_QUESTIONS.
-            # ==========================================================================================
+            # THE CROSS-CHECK IS WHAT WILL ACTUALLY CONFIRM IT. cross_checks below (already armed,
+            # anchor "SYRUP Holdings", expecting ~77.66M) validates this address on the first live
+            # run: a treasury_holding_tokens balance landing NEAR 77.66M SYRUP is the confirmation —
+            # Etherscan's label plus a matching balance is a much stronger claim than the label
+            # alone. If the balance instead comes back near zero or wildly different (the same
+            # failure shape as the 0.51 SYRUP read that discredited the previous address), the
+            # address is wrong AGAIN and the dispute REOPENS — do not silently keep a wrong address
+            # just because it replaced another wrong one.
             "treasury": _contract(
-                "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19", "ethereum", "treasury_holding", "SYRUP",
-                "https://maple.finance/transparency",
-                verified="2026-09-14", provenance="maple-labs/address-registry, MapleAddressRegistryETH.sol, "
-                                                  "SINGLETONS section — the protocol fee treasury",
+                "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", "ethereum", "treasury_holding", "SYRUP",
+                "https://etherscan.io/address/0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196",
+                verified="2026-09-18", provenance="Etherscan address label 'Maple Finance: DAO', matching "
+                                                  "the daoMultisig entry in maple-labs/address-registry",
                 holder_has_code=True, token_standard="erc20", underlying="token",
-                destination_status="disputed",
-                destination_note="Read correctly at 0.51253570332391 SYRUP on 2026-09-14 against ~75.78m "
-                                 "reported by Maple. This is the v2 PROTOCOL FEE treasury, which "
-                                 "receives fees in pool assets (USDC/USDT/USDG), not the wallet holding "
-                                 "repurchased SYRUP. Evidence, not a figure.",
-                purpose="Maple v2 protocol fee treasury. RECORDED AS EVIDENCE ONLY — its role as the "
-                        "destination of repurchased SYRUP is DISPUTED and no metric is stored from it.",
-                note="Do not delete: the address is real and its near-zero SYRUP balance is itself the "
-                     "evidence that repurchased SYRUP is held somewhere else. Do not substitute another "
-                     "address on a name match — that is how this happened."),
+                destination_status="verified_by_label",
+                destination_note="Etherscan's OWN label identifies this address as 'Maple Finance: DAO', "
+                                 "matching Maple's transparency page description of 'the Maple Treasury' "
+                                 "as where repurchased SYRUP is held. This is a third-party label, NOT "
+                                 "Maple stating in its own material that this specific address holds the "
+                                 "buyback SYRUP — hence verified_by_label rather than confirmed. The "
+                                 "armed transparency-page cross-check (expecting ~77.66M SYRUP) settles "
+                                 "it on the first live run: near 77.66M confirms, near zero or wildly "
+                                 "different reopens the dispute.",
+                purpose="Maple Treasury (daoMultisig) — the destination for repurchased SYRUP, per "
+                        "Maple's own transparency page and Etherscan's address label.",
+                note="REPLACES 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19 (the disputed v2 protocol fee "
+                     "treasury that returned 0.51 SYRUP). Do not substitute another address on a name "
+                     "match alone — that is how the previous address got here. This one is substituted "
+                     "on a label plus a pending balance cross-check, a materially stronger basis."),
             # REFERENCE ONLY, no read slot: syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA
             # (maple-labs/address-registry). It is the emissions distributor; with staking rewards
             # ended in Nov 2025 there is no ongoing stream to read from it, and giving it a
@@ -4022,18 +4309,38 @@ PROJECTS = [
         # the epoch-to-date mapping is not on file. Declared as a rule instead.
         # =====================================================================
         "issuance_schedule": None,
+        # ===== MINTER.SOL CONSTANTS — THE EXACT BOUNDS ON THE TAIL-EMISSION RANGE. RECORDED 2026-09-18.
+        # Source: Minter.sol itself (aerodrome-finance/contracts), not prose. Precisely bounds what
+        # emission_streams' tail_rule describes in words below.
+        "minter_constants": {
+            "WEEKLY_DECAY_BPS": 9_900,        # 9900/10000 = 1% decay per epoch, CONFIRMED
+            "WEEKLY_GROWTH_BPS": 10_300,       # 10300/10000 — growth-mode step, pre-tail
+            "MINIMUM_TAIL_RATE_BPS": 1,        # 0.01% of circulating supply per week, floor
+            "MAXIMUM_TAIL_RATE_BPS": 100,      # 1.00% of circulating supply per week, ceiling
+            "MAX_BPS": 10_000,
+            "derived": "the EpochGovernor's adjustable tail range is 0.01%-1.00% of circulating "
+                       "supply per week, starting at 30 bps — this bounds the tail-emission "
+                       "mechanism precisely, where emission_streams' tail_rule only described it "
+                       "in words.",
+            "source_url": "https://github.com/aerodrome-finance/contracts",
+            "source_file": "Minter.sol", "source_date": "2026-09-18",
+        },
         "emission_streams": [
             {"stream": "pool emissions", "start_per_epoch": 15_000_000, "decay_per_epoch": 0.01,
              "paid_to": "gauges, by veAERO vote", "is_new_supply": True,
              "tail_trigger_per_epoch": 6_000_000, "tail_trigger_epoch_approx": 92,
              "tail_rule": "weekly emissions become a percentage of circulating supply, starting at "
                           "30 bps (0.003), adjustable +/-1 bp per epoch by EpochGovernor plurality vote "
-                          "(no quorum, no proposal threshold)",
+                          "(no quorum, no proposal threshold), BOUNDED to 1-100 bps "
+                          "(0.01%-1.00% of circulating supply per week) — see minter_constants for "
+                          "the exact MINIMUM_TAIL_RATE/MAXIMUM_TAIL_RATE source.",
              "source_url": "https://github.com/aerodrome-finance/contracts",
              "source_file": "SPECIFICATION.md:119-130, 251-266",
              "note": "EPOCH-INDEXED, not date-indexed, and the epoch-to-date mapping is not on file. The "
                      "'~92 epochs' figure is the spec's own and is UNDATED. The previously circulating "
-                     "'epoch 67' figure was never confirmed and is dropped rather than reconciled."},
+                     "'epoch 67' figure was never confirmed and is dropped rather than reconciled. "
+                     "CONTRACT: Minter.sol (contracts.minter) — see dune_queries.gross_issuance_tokens "
+                     "for how this stream is (not yet) sourced."},
             {"stream": "veAERO rebase", "start_per_epoch": None, "decay_per_epoch": None,
              "paid_to": "veAERO holders only", "is_new_supply": True,
              "purpose": "offsets the dilution that pool emissions cause lockers",
@@ -4041,7 +4348,9 @@ PROJECTS = [
              "source_url": "https://github.com/aerodrome-finance/contracts",
              "source_file": "SPECIFICATION.md:132-138",
              "note": "A SEPARATE LINE, never netted into pool emissions. Its size is not a declared "
-                     "constant — it is computed per epoch from the lock ratio — so no rate is recorded."},
+                     "constant — it is computed per epoch from the lock ratio — so no rate is recorded. "
+                     "CONTRACT: RewardsDistributor.sol (contracts.rewards_distributor) — see "
+                     "dune_queries.emissions_tokens for how this stream is (not yet) sourced."},
         ],
         "contracts": {
             "token": _contract("0x940181a94A35A4569E4529A3CDfB74e38FD98631", "base", "erc20_total_supply", "AERO",
@@ -4066,6 +4375,34 @@ PROJECTS = [
                                  "position count, the weight decays with time to expiry, and holders receive "
                                  "automatic weekly REBASES that increase their veAERO balance. Only "
                                  "AERO.balanceOf(escrow) gives the tokens actually locked."),
+            # ===== MINTER AND REWARDSDISTRIBUTOR — WIRED 2026-09-18. THE TWO EMISSION STREAMS' OWN =====
+            # CONTRACTS, per Aerodrome's own SPECIFICATION.md, named in emission_streams above but
+            # never given contracts entries until now. REFERENCE ONLY (kind burn_executor, this
+            # codebase's only reference-only kind — same treatment as Sky's Splitter/Flapper/SBE BEAM,
+            # none of which are literally burn executors either): no chain-read method exists in this
+            # tool for a scheduled/computed emission figure, so the ACTUAL series for each stream is
+            # sourced via Dune (see dune_queries.gross_issuance_tokens and .emissions_tokens below),
+            # not a contract call on these addresses. Recorded here so the addresses are verified and
+            # on file, not because a metric is read from them directly.
+            "minter": _contract(
+                "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5", "base", "burn_executor", "AERO",
+                "https://github.com/aerodrome-finance/contracts", verified="2026-09-18",
+                provenance="aerodrome-finance/contracts README — confirmed correct against the deployed "
+                           "address list",
+                purpose="Minter — handles emissions for the protocol per SPECIFICATION.md: distributes "
+                        "emissions to Voter.sol (pool emissions, gauges) and rebases to "
+                        "RewardsDistributor.sol (the veAERO anti-dilution stream). THE SOURCE OF "
+                        "gross_issuance_tokens for Aerodrome. Reference only — see dune_queries."),
+            "rewards_distributor": _contract(
+                "0x227f65131A261548b057215bB1D5Ab2997964C7d", "base", "burn_executor", "AERO",
+                "https://github.com/aerodrome-finance/contracts", verified="2026-09-18",
+                provenance="aerodrome-finance/contracts README — confirmed correct against the deployed "
+                           "address list",
+                purpose="RewardsDistributor — handles the rebase distribution for (ve)NFTs/lockers per "
+                        "SPECIFICATION.md. Rebases are calculated from the locked and unlocked AERO one "
+                        "second prior to epoch flip. THE SOURCE OF the veAERO rebase leg of "
+                        "emissions_tokens for Aerodrome — a SEPARATE stream from Minter's pool "
+                        "emissions, never netted. Reference only — see dune_queries."),
         },
         # ===== HOW THIS PROJECT'S circulating_supply IS DEFINED. SETTLED ON LIVE DATA. =====
         # CoinGecko's circulating_supply for AERO EXCLUDES escrowed supply, which is its standard
@@ -4095,8 +4432,25 @@ PROJECTS = [
         # what was tried. A query_id left in place here would fail on every run forever; a
         # cross_checks entry naming a secondary that can never arrive would report a permanent
         # divergence-unavailable. Both are removed rather than left to generate noise.
-        "dune_queries": _dune("avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd",
-                              "actual_buyback_tokens"),
+        # gross_issuance_tokens (Minter, pool emissions) and emissions_tokens (RewardsDistributor,
+        # veAERO rebase) are now DISTINCT LINES, per emission_streams above and never netted. Both
+        # remain query_id None — no Dune query for either flow is on file yet, so both are honest
+        # backfill stubs (see _dune's own docstring), not fabricated figures. Wiring the CONTRACT
+        # addresses (see contracts.minter / .rewards_distributor) is what was missing; an actual
+        # data source for either stream is still future work.
+        "dune_queries": {
+            **_dune("avg_lock_duration_days", "actual_buyback_usd", "actual_buyback_tokens"),
+            "gross_issuance_tokens": dict(DUNE_QUERY_TEMPLATE,
+                note="POOL EMISSIONS leg — Minter.sol, distributed to Voter/gauges. 15,000,000 AERO/epoch "
+                     "at start, decaying 1%/epoch (WEEKLY_DECAY=9900/10000 — see minter_constants), "
+                     "entering tail mode below 6,000,000/epoch. NOT the veAERO rebase — that is "
+                     "emissions_tokens below. See emission_streams for the full rule."),
+            "emissions_tokens": dict(DUNE_QUERY_TEMPLATE,
+                note="veAERO REBASE leg — RewardsDistributor.sol, paid only to veAERO holders as "
+                     "anti-dilution. Calculated on locked and unlocked AERO one second prior to epoch "
+                     "flip. NOT pool emissions — that is gross_issuance_tokens above. Never netted "
+                     "against it. See emission_streams for the full rule."),
+        },
         "materiality": "high",
         # THE MERGER HAS NOT SHIPPED. Checked against the primary repository 2026-09-14: no mention
         # of Velodrome, a merge, Ethereum mainnet or Arc in README.md, SPECIFICATION.md,
@@ -4120,8 +4474,15 @@ PROJECTS = [
                  "is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled "
                  "as two lines: pool emissions (15m AERO/epoch decaying 1%/epoch, entering tail mode below "
                  "6m/epoch at ~epoch 92, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor "
-                 "vote) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so neither is "
-                 "declared as a tokens_per_day schedule. veAERO lock rate is read as AERO.balanceOf(escrow). "
+                 "vote, bounded 0.01%-1.00% per minter_constants) and the separate veAERO anti-dilution "
+                 "rebase. Both are epoch-indexed, so neither is declared as a tokens_per_day schedule. "
+                 "MINTER AND REWARDSDISTRIBUTOR WIRED 2026-09-18 (contracts.minter, "
+                 "contracts.rewards_distributor) — the two emission streams' own contracts, reference-only "
+                 "(no chain-read method exists for a scheduled/computed figure); gross_issuance_tokens and "
+                 "emissions_tokens carry query_id None as honest backfill stubs pending an actual Dune "
+                 "query for either flow. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 "
+                 "is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS "
+                 "and UNAVAILABLE; do not re-attempt it. "
                  "The reported Velodrome merger has NOT shipped into the public contracts.",
     },
     {
@@ -4323,7 +4684,16 @@ PROJECTS = [
                                    "window spanning the boundary needs both regimes proportionally. "
                                    "Messari cites the Executive Proposal directly; the primary forum URL "
                                    "is still not captured. THE PRE-2026-08-13 SPLIT REMAINS UNDOCUMENTED "
-                                   "and is deliberately NOT backfilled with this figure."),
+                                   "and is deliberately NOT backfilled with this figure. "
+                                   "LAYER 2 FIGURE, NOT LAYER 1 — see sbe_allocation_layers. This 55% is "
+                                   "how the SBE splits what it ALREADY RECEIVED (a per-cycle internal "
+                                   "split), not a share of NPS/protocol surplus. What fraction of "
+                                   "surplus reached the SBE at all during this window is NOT KNOWN "
+                                   "(Layer 1 is sourced only for pre-April 75% and the April interim "
+                                   "7.5% — see sbe_allocation_layers) — so 0.55 x revenue_usd is NOT "
+                                   "necessarily the right figure even once base_gated lifts; it may need "
+                                   "a Layer-1 discount this period's data does not yet supply. Flagged, "
+                                   "not fixed."),
                 # ===== STAGE 2, LIVE FROM 2026-09-14. PRIMARY-SOURCED, AND A DIFFERENT BASE. =====
                 # share_to_buyback here is 0.275 — the share of Net Protocol Surplus that BUYS SKY,
                 # being the 22.5% staking-rewards leg PLUS the 5% burn leg. It is NOT 0.05: the
@@ -4343,7 +4713,14 @@ PROJECTS = [
                                    "share_to_buyback = 0.275 is the SKY-BUYING share (22.5 + 5); only the "
                                    "5% leg reduces supply. destination_split is None deliberately — a "
                                    "three-way allocation has no single destination split, and forcing one "
-                                   "would merge a distribute leg with a burn leg."),
+                                   "would merge a distribute leg with a burn leg. "
+                                   "LAYER 1 FIGURE — see sbe_allocation_layers. Stage 2 states its shares "
+                                   "DIRECTLY as a fraction of NPS, collapsing the old two-layer structure "
+                                   "(a share of surplus to the SBE, then the SBE's own internal split) "
+                                   "into one number. That is why 0.275 is comparable across periods only "
+                                   "with the base itself (NPS vs revenue_usd — see revenue_base_uncertain), "
+                                   "not with the 0.55 figure above, which described a different layer "
+                                   "entirely."),
             ],
             "note": "This split has moved before and will move again — it moved again on 2026-09-14. "
                     "Each historical period is treated as potentially different from the current one; "
@@ -4666,6 +5043,95 @@ PROJECTS = [
         # source answered it against the fit. Had the hypothesis been believed on its arithmetic,
         # the 55/45 would have been left in place as "unchanged, just reinterpreted" and every Sky
         # figure from 2026-09-14 would be computed on a superseded regime.
+        # ===== TWO SEPARATE LAYERS, PREVIOUSLY CONFLATED. RECORDED 2026-09-18. =====
+        # Source: Sky's own Q1 2026 reporting (insights.skyeco.com): "Token buyback allocations were
+        # reduced from 75% to 7.5% of protocol surplus on an interim basis." This reveals that the
+        # 55/45 split (fee_split.history, 2026-08-13) and the 27.5% Stage 2 share (fee_split.history,
+        # 2026-09-14) answer DIFFERENT QUESTIONS and were never directly comparable rates:
+        #
+        #   LAYER 1 — what share of NPS/protocol surplus flows to the buyback-and-burn machinery
+        #             AT ALL (the SBE, pre-Stage-2; Stage 2's allocation, post-Stage-2):
+        #     pre-April 2026:    75% of protocol surplus
+        #     April 2026:        cut to 7.5% (interim) — THIS IS the "~87% cut" already on file
+        #                        (destination_two_step / fee_split.history), now quantified. NOTE:
+        #                        75% -> 7.5% is arithmetically a 90% reduction, not 87% — the
+        #                        discrepancy is recorded rather than silently reconciled; both
+        #                        figures are kept, the precise one preferred going forward.
+        #     Stage 2 (2026-09-14): 27.5% of monthly NPS (the SKY-buying share; 50% total allocated
+        #                        three ways) — see fee_split_v2. Stage 2 COLLAPSES Layer 1 and Layer
+        #                        2 into one directly-stated fraction of NPS.
+        #   LAYER 2 — once surplus reaches the buyback machinery, how IT internally splits what it
+        #             received:
+        #     2026-08-13:        55% SKY buyback / 45% LSSKY stakers (fee_split.history) — a share
+        #                        of each Smart Burn Engine CYCLE, not of protocol surplus.
+        #
+        # THE 55/45 IS NOT A LAYER-1 RATE AND MUST NEVER BE COMPARED DIRECTLY AGAINST 27.5% or 7.5%
+        # or 75% — they are different layers of the same waterfall, not four readings of the same
+        # rate over time. This also means the 2026-08-13..2026-09-13 fee_split.history period's
+        # 0.55 figure needs a Layer-1 fraction to convert to a share of surplus/revenue, and that
+        # fraction is NOT sourced for that specific window (only pre-April 75% and the April interim
+        # 7.5% are known) — flagged on that period entry directly.
+        "sbe_allocation_layers": {
+            "layer_1": {
+                "describes": "share of NPS / protocol surplus routed to the buyback-and-burn "
+                             "machinery as a whole",
+                "history": [
+                    {"period": "pre-2026-04", "pct": 0.75, "of": "protocol surplus"},
+                    {"period": "2026-04 (interim)", "pct": 0.075, "of": "protocol surplus",
+                     "note": "quantifies the '~87% cut' already on file. 75% -> 7.5% is a 90% "
+                             "reduction arithmetically; the ~87% report and the precise 75%/7.5% "
+                             "figures are both kept, not reconciled by adjusting either."},
+                    {"period": "2026-09-14 (Stage 2)", "pct": 0.275, "of": "monthly Net Protocol "
+                     "Surplus", "note": "Stage 2 collapses Layer 1 and Layer 2 into one number "
+                                        "stated directly as a fraction of NPS."},
+                ],
+            },
+            "layer_2": {
+                "describes": "once surplus reaches the buyback machinery, how it splits what it "
+                             "received internally",
+                "history": [
+                    {"period": "2026-08-13", "sky_buyback_pct": 0.55, "lssky_stakers_pct": 0.45,
+                     "of": "each Smart Burn Engine cycle"},
+                ],
+            },
+            "source_url": "insights.skyeco.com (Q1 2026 reporting)",
+            "source_date": "2026-09-18",
+            "do_not": "never compare a Layer 1 percentage against a Layer 2 percentage as if they "
+                     "were the same rate measured at different times.",
+        },
+        # THE GROSS-TO-NET BRIDGE, a named component. Confirms part of WHY NPS != revenue_usd
+        # (see revenue_base_uncertain): NPS = revenue on protocol collateral − Sky Savings Rate −
+        # security/maintenance distribution − operating costs (+ Agent revenue shares).
+        "security_maintenance_distribution": {
+            "share_of": "net revenue",
+            "pct": 0.20,
+            "introduced": "late 2025",
+            "source": "Sky's own reporting (insights.skyeco.com)",
+            "source_date": "2026-09-18",
+            "note": "a named deduction in the gross-to-net bridge, alongside the Sky Savings Rate "
+                    "payment to sUSDS holders and operating costs. Part of the reason NPS is "
+                    "structurally smaller than DefiLlama's revenue_usd, not merely unmapped to it.",
+        },
+        # MONTHLY NPS REFERENCE — the granularity Stage 2's shares actually apply to. NOT stored in
+        # manual_overrides.csv: net_protocol_surplus_usd's quarterly entries there are dated by
+        # quarter-end, and June 2026's month-end is the same calendar date as Q2 2026's quarter-end
+        # (both 2026-06-30) — the store's (date, project, metric) primary key cannot hold both
+        # values on one date. Recorded here as reference only, same convention as GEODNET's
+        # supply_units_reference.
+        "net_protocol_surplus_monthly_reference": {
+            "values": [
+                {"month": "2026-05", "usd": 9_710_000},
+                {"month": "2026-06", "usd": 10_810_000},
+            ],
+            "source": "Sky Frontier Foundation's own monthly reporting (insights.skyeco.com)",
+            "source_date": "2026-09-18",
+            "note": "matches Stage 2's 'monthly Net Protocol Surplus' basis exactly. Sanity check: "
+                    "May + June = $20.52m against Q2 2026's $33.29m quarterly figure — consistent "
+                    "with April being the smallest of the three months, plausible immediately after "
+                    "the April 2026 treasury overhaul.",
+            "status": "REFERENCE ONLY — not a stored metric series, no source is configured to fetch "
+                      "it on a recurring monthly basis.",
+        },
         "fee_split_v2": {
             "effective_date": "2026-09-14",
             "basis": "50% of monthly Net Protocol Surplus, allocated three ways",
@@ -4710,49 +5176,82 @@ PROJECTS = [
                             "be the same quantity. Applying 0.275 to a different base gives a "
                             "plausible wrong answer rather than an obvious one.",
         },
-        # ===== THE BASE-MISMATCH FLAG, WIRED. NOT ESTABLISHABLE FROM AVAILABLE SOURCES THIS ROUND. =====
-        # Checked 2026-09-18: forum.sky.money, vote.sky.money, docs.sky.money and the general web
-        # are all EGRESS-BLOCKED from this sandbox — every attempt returned a network-level
-        # refusal, not a content answer. This is OUTCOME (c) as distinguished from (a)/(b): not
-        # "checked and it maps", not "checked and it differs", but genuinely unable to check. That
-        # is a different state from either resolved outcome and must not be reported as either.
+        # ===== THE BASE-MISMATCH FLAG — RESOLVED 2026-09-18. OUTCOME (b): GENUINELY DIFFERENT. =====
+        # NPS and DefiLlama's revenue_usd are confirmed to be DIFFERENT QUANTITIES, not merely an
+        # unconfirmed mapping. base_gated suppression STAYS — this moves the reason from "we could
+        # not check" to "we checked, and they differ", which is a stronger and permanent state, not
+        # a temporary one pending a source.
         #
-        # THE SHARE ITSELF IS NOT IN DOUBT. 0.225 / 0.225 / 0.05 comes from Sky's own account, in
-        # Sky's own words, with a first-burn figure (2,860,000 SKY) to sanity-check it against.
-        # What is unconfirmed is narrower and specific: whether "monthly Net Protocol Surplus" — a
-        # treasury cash-flow term Sky uses but has not defined against a public data feed — is the
-        # same quantity as DefiLlama's revenue_usd, which is what the archetype 3 formula actually
-        # multiplies. Those could differ by protocol costs NPS nets out and revenue_usd does not,
-        # in which case 0.275 x revenue_usd is a confirmed rate applied to the wrong number — a
-        # plausible, confident, WRONG figure, not merely an imprecise one.
+        # EVIDENCE:
+        #   - Sagix research (sagix.io/sky-two-engines, ~2 weeks old as of 2026-09-18), on Sky's NPS
+        #     vs DefiLlama: "The foundation's net protocol revenue also reflects Agent revenue
+        #     shares, and its surplus further deducts the security and maintenance distribution and
+        #     operating costs. On the gross line the two differ in scope and accrual timing, and
+        #     neither publishes a bridge."
+        #   - Sky's own docs (insights.skyeco.com/sky-documentation): "The protocol earns revenue on
+        #     that collateral, pays yield to USDS suppliers through the Sky Savings Rate, and the
+        #     remaining Net Protocol Surplus is allocated according to the treasury management
+        #     framework set by governance."
+        # SO: NPS = revenue on protocol collateral − Sky Savings Rate paid to sUSDS holders −
+        # security and maintenance distribution − operating costs (+ reflects Agent revenue shares).
+        # DefiLlama's revenue_usd does not subtract opex or the security/maintenance distribution —
+        # structurally different figures, not two measurements of the same one.
         #
-        # SO THIS FORCES A CONFIDENCE BAND, PER OUTCOME (c) AS INSTRUCTED, rather than sitting as
-        # a text note nobody notices next to a number that looks as solid as every other cell on
-        # the row. build_workbook.base_gated() renders "base unconfirmed" (grey, same treatment as
-        # an unsourced split) on every implied-buyback formula that uses share_to_buyback, while
-        # leaving fee_split_v2's own share value untouched and correctly labelled confirmed —
-        # the split and its application are two different claims, and only one of them holds.
+        # THE MAGNITUDE, why it matters: Q2 2026 gross protocol revenue $107.35m vs Q2 2026 net
+        # protocol surplus $33.29m — NPS is ~31% of gross revenue. Applying Stage 2's 27.5% to a
+        # DefiLlama revenue figure instead of actual NPS could overstate the implied buyback by
+        # roughly 3x. Same failure shape as World Mobile's 11.41%-on-the-wrong-denominator: correct
+        # rate, wrong base.
+        #
+        # THE CORRECT FIX IS TO SOURCE NPS DIRECTLY, not derive it from revenue_usd — see the new
+        # net_protocol_surplus_usd metric (METRICS, only_projects=("Sky",)) and manual_quarterly
+        # below, seeded with the one known quarterly datapoint. Once a recurring source is found,
+        # Stage 2's shares can be applied to the RIGHT base and this suppression lifts — until then
+        # it correctly stays suppressed, now for a settled reason rather than an open one.
+        #
+        # METHODOLOGY PRECEDENT worth keeping: the Sagix researcher analysing this same question
+        # "uses the foundation for the bottom line, and DefiLlama to cross-check the savings cost."
+        # That is the right structure — protocol's own figure as primary, DefiLlama to validate one
+        # component — and is the model to follow once NPS has a recurring source.
         "revenue_base_uncertain": {
-            "status": "unconfirmed",
+            "status": "confirmed_different",
             "share_source": "Sky's own Stage 2 thread, 2026-09-14 — the SHARE, not the base",
             "basis_stated_by_protocol": "monthly Net Protocol Surplus (Sky's own treasury "
-                                        "accounting term, not otherwise defined in any source on file)",
+                                        "accounting term)",
             "compared_against": "revenue_usd (DefiLlama) — what the archetype 3 formula multiplies",
-            "reason": "Net Protocol Surplus may net out protocol costs (security, backstop capital "
-                     "— see fee_split_v2.remaining_50_pct) that DefiLlama's revenue_usd does not "
-                     "subtract. If so the two are different quantities and 0.275 x revenue_usd is "
-                     "not the figure Sky described, however confidently it is displayed.",
-            "checked_2026_09_18": "forum.sky.money, vote.sky.money and docs.sky.money are all "
-                                  "EGRESS-BLOCKED from this sandbox — a network-level refusal on "
-                                  "every domain, not a content answer. This is UNABLE TO CHECK, "
-                                  "distinct from 'checked and confirmed' or 'checked and differs'.",
-            "would_confirm": "a Sky-authored definition of Net Protocol Surplus (the April 2026 "
-                             "'staged path forward' document is the most likely source) stating it "
-                             "equals revenue_usd, is a stated function of it, or naming a different "
-                             "figure to use in its place.",
-            "resolves_when": "set status to 'confirmed' once the mapping is sourced, or replace "
-                             "revenue_usd in the archetype 3 formula's inputs with the correct base "
-                             "if NPS turns out to be a different, sourceable figure.",
+            "reason": "Sky's own docs and third-party research (Sagix) independently confirm NPS = "
+                     "revenue on protocol collateral − Sky Savings Rate paid to sUSDS holders − "
+                     "security and maintenance distribution − operating costs (+ reflects Agent "
+                     "revenue shares). DefiLlama's revenue_usd does not subtract opex or the "
+                     "security/maintenance distribution. Neither Sky nor DefiLlama publishes a "
+                     "bridge between the two. Q2 2026 reference: NPS $33.29m vs gross protocol "
+                     "revenue $107.35m, ~31% — applying 27.5% to revenue_usd instead of NPS could "
+                     "overstate the implied buyback by roughly 3x.",
+            "resolved": "2026-09-18 — sourced from sagix.io/sky-two-engines and "
+                       "insights.skyeco.com/sky-documentation. This SUPERSEDES the prior "
+                       "'unable to check, egress-blocked' state — the question has now been checked "
+                       "and answered: the two figures are different, permanently, not merely unmapped.",
+            "refutes": "an AI-generated search summary that claimed NPS 'maps directly' to "
+                      "DefiLlama's revenue_usd. It does not — recorded explicitly so the claim is "
+                      "not reintroduced.",
+            "second_independent_reason": "NPS is not even a STABLE fraction of gross revenue, which "
+                                         "a fixed ratio from DefiLlama's revenue could never capture "
+                                         "regardless of which ratio was chosen: Q1 2026 margin "
+                                         "$46.04m NPS / $123.79m gross = 49.06%; Q2 2026 margin "
+                                         "$33.29m / $107.35m = ~31%. The NPS/gross relationship "
+                                         "moved by 18 points in one quarter, so even a correctly "
+                                         "identified historical ratio would not hold going forward.",
+            "correct_fix": "source net_protocol_surplus_usd directly from Sky's own reporting "
+                           "rather than deriving it from revenue_usd — see METRICS and "
+                           "manual_quarterly below. Source identified: financial.skyeco.com, Sky's "
+                           "own real-time Financial Dashboard (live since 2026-05-06). "
+                           "EGRESS_BLOCKED from this sandbox (confirmed 2026-09-18, same structured "
+                           "refusal as forum/vote/docs.sky.money) — wiring must happen from a normal "
+                           "network. See sources.yaml for the disabled entry and what is needed.",
+            "resolves_when": "the base_gated suppression lifts once net_protocol_surplus_usd has a "
+                             "recurring source and Stage 2's shares are applied to IT rather than to "
+                             "revenue_usd — not when a mapping between the two is found, since none "
+                             "exists.",
         },
         "buyback_reference": {
             "spent_usd": 114_500_000, "tokens_removed": 1_830_000_000, "staked_share": 0.67,
@@ -4811,17 +5310,22 @@ PROJECTS = [
              "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
                      "tolerance is flagged rather than one figure silently replacing the other."},
         ],
+        "manual_quarterly": ["net_protocol_surplus_usd"],
         "materiality": "high",
         "notes": "STAGE 2, live from 2026-09-14 (superseding the 13 Aug 2026 55/45 split — see "
                  "fee_split_v2): 50% of monthly Net Protocol Surplus, split 22.5% SKY buyback for SKY "
                  "staking rewards / 22.5% USDS staking rewards / 5% SKY buyback-and-burn. ONLY THE 5% LEG "
                  "IS A BURN — the 22.5% SKY leg buys and DISTRIBUTES, re-entering float, and is never "
-                 "netted against the burn. BASE CURRENTLY UNCONFIRMED against revenue_usd — Sky states the "
-                 "split as a share of its own 'Net Protocol Surplus', not established to equal DefiLlama's "
-                 "revenue_usd; the archetype 3 implied-buyback figures render as base-unconfirmed "
-                 "(suppressed) until that mapping is sourced. THE SPLIT HAS MOVED BEFORE AND WILL MOVE "
-                 "AGAIN — treat each historical period as potentially different from the current one; no "
-                 "current share is applied retroactively across the backfill.",
+                 "netted against the burn. BASE CONFIRMED DIFFERENT FROM revenue_usd, 2026-09-18 (outcome "
+                 "b, not merely unconfirmed) — Sky's NPS additionally deducts the Sky Savings Rate, the "
+                 "security/maintenance distribution and operating costs, and neither Sky nor DefiLlama "
+                 "publishes a bridge; Q2 2026 NPS $33.29m vs gross protocol revenue $107.35m, ~31%. See "
+                 "revenue_base_uncertain. The archetype 3 implied-buyback figures stay base-unconfirmed "
+                 "(suppressed) permanently, not pending a mapping — the fix is to source "
+                 "net_protocol_surplus_usd directly (seeded via manual_quarterly, recurring source still "
+                 "needed) and apply Stage 2's shares to it instead. THE SPLIT HAS MOVED BEFORE AND WILL "
+                 "MOVE AGAIN — treat each historical period as potentially different from the current one; "
+                 "no current share is applied retroactively across the backfill.",
     },
     {
         "name": "Pendle", "symbol": "PENDLE",
@@ -5989,7 +6493,11 @@ UNAVAILABLE = [
             "verified and working. What is lost is the second opinion on it, not the number."),
         "reopen_if": (
             "Somebody publishes a veAERO locked figure on a page we may scrape, or writes a Dune query we "
-            "own. Do NOT re-attempt 2986047 itself: three independent checks have closed it."),
+            "own. NEVER RE-ATTEMPT 2986047 ITSELF, under any circumstance: this is now CLOSED "
+            "PERMANENTLY, not merely unreachable. Jake reports Aerodrome forks their own Dune queries "
+            "private, so this is a deliberate protocol-side choice that will not change with a new key, "
+            "a browser session, or a fork request — see OPEN_QUESTIONS' Aerodrome 2986047 record, "
+            "closed 2026-09-18."),
     },
     {
         "project": "Aerodrome", "metric": "locked_tokens",
@@ -6143,6 +6651,19 @@ OPEN_QUESTIONS = [
                                 "EGRESS-BLOCKED from this sandbox — a network-level refusal on "
                                 "every domain attempted, not a search that came back empty. Still "
                                 "unresolved, both possibilities still stated, nothing assumed.",
+        "rejected_claim_2026_09_18": "an AI-generated search summary asserted Stage 2 runs through "
+                                     "the EXISTING SBE contracts with updated parameters, and that "
+                                     "the $350m BEAM cap no longer applies. ITS CITATIONS WERE "
+                                     "LINKEDIN AND X POSTS, not Sky's own technical documentation — "
+                                     "NOT ACTED ON. Recorded so the claim is not mistaken for a "
+                                     "sourced answer if it resurfaces.",
+        "most_likely_route": "financial.skyeco.com's Settlement Cycle page — named in Sky's own "
+                             "documentation as carrying 'full settlement history, methodology, and "
+                             "governance timelines'. financial.skyeco.com itself is EGRESS-BLOCKED "
+                             "from this sandbox (confirmed 2026-09-18, same structured refusal as "
+                             "forum/vote/docs.sky.money), so this route is untried, not exhausted — "
+                             "try it from a normal network before falling back to any secondary "
+                             "source.",
     },
     {
         "project": "Aerodrome",
@@ -6181,66 +6702,62 @@ OPEN_QUESTIONS = [
             "withdrawn relation was equally wrong and simply never fired."
     },
     {
-        "project": "GEODNET", "topic": "P2 — is GEODNET archetype 3? Single-sourced, NOT added.",
+        "project": "GEODNET", "topic": "RESOLVED 2026-09-18 — GEODNET IS archetype 3. Version A "
+                                       "confirmed, Version B removed as a competing description.",
+        "status": "resolved",
         "severity": 2,
-        "reason": "** THE MECHANISM IS NOW DISPUTED, WHICH MAKES ARCHETYPE 3 HARDER TO JUSTIFY, NOT "
-                  "EASIER. ** Read this before weighing the sourcing upgrade below — a stronger "
-                  "source for a description does not help when two sources describe incompatible "
-                  "flows.\n\n"
+        "reason": "** THE DISPUTE IS SETTLED IN FAVOUR OF VERSION A. ** Version B (clients pay "
+                  "directly in GEOD, 80% burned at point of use, no market purchase) is WRONG and "
+                  "is removed from this record as a live alternative — kept only in "
+                  "mechanism_dispute_resolved below as a record of what was ruled out and why.\n\n"
 
-                  "VERSION A (DefiLlama's own revenue methodology; DePIN Hub): revenue arrives in "
-                  "whatever currency, 80% of it REPURCHASES GEOD on the open market, and the "
-                  "repurchased GEOD is burned. There is a market-purchase step, so there is real "
-                  "buy pressure and a measurable spend.\n\n"
+                  "CONFIRMED MECHANISM: USD/fiat payments from Web2 enterprise customers -> 80% used "
+                  "to purchase GEOD on the open market -> purchased tokens permanently burned; "
+                  "remaining 20% -> GEODNET Foundation treasury. There IS a market-purchase step — "
+                  "the protocol is a genuine buyer of its own token, funded by converting fiat "
+                  "revenue, not a fee sink that never touches the open market.\n\n"
 
-                  "VERSION B (a separate secondary source): clients PAY DIRECTLY IN GEOD for network "
-                  "services, 80% of the GEOD paid is burned INSTANTLY at the point of use, and 20% "
-                  "goes to the Foundation as opex. There is NO market purchase at all — GEOD is the "
-                  "payment currency itself.\n\n"
+                  "SOURCES, DESCENDING STRENGTH: GEODNET's own X account (@GEODNET, June 2026 burn "
+                  "stats post — first-party); VanEck's investment thesis; Blockworks Research; "
+                  "CoinGecko/Yellow. This clears the bar the earlier version of this question set: "
+                  "a GEODNET-authored statement of the mechanism, not merely DefiLlama's methodology "
+                  "note (which stated what DefiLlama computes, not what GEODNET does).\n\n"
 
-                  "THESE ARE STRUCTURALLY DIFFERENT FLOWS, not two phrasings of one. Under A the "
-                  "protocol is a buyer of its own token and the burn is funded by converting other "
-                  "assets; under B the protocol never buys anything and the burn is a fee sink. "
-                  "They imply different demand, different spend, and a different archetype — and "
-                  "the 80/20 figure appears in BOTH, which is exactly why agreement on the number "
-                  "was mistaken for agreement on the mechanism.\n\n"
-
-                  "DO NOT ADD ARCHETYPE 3 until GEODNET's own docs or a GIP settles which is "
-                  "correct, or whether both operate on different revenue lines. Adding it now would "
-                  "commit to A on the strength of a source tier, while B — if true — means there is "
-                  "no revenue-to-token purchase to measure at all.\n\n"
-
-                  "THE EARLIER SOURCING NOTE, which still stands on its own terms and is now "
-                  "insufficient: DefiLlama's OWN METHODOLOGY NOTE for GEODNET's revenue metric "
-                  "states version A directly — '80% of the fees are used to repurchase GEOD tokens "
-                  "from the open market and remove them from circulation.' That is materially "
-                  "stronger than the Solana Compass article this question opened on, and it is the "
-                  "definition DefiLlama uses to COMPUTE a revenue figure this tool already "
-                  "consumes. It settles what DefiLlama believes; it does not settle what GEODNET "
-                  "does.",
-        "mechanism_dispute": {
-            "status": "DISPUTED — two incompatible descriptions, neither from GEODNET",
-            "version_a": {"flow": "revenue (any currency) -> 80% repurchases GEOD on the open market "
-                                  "-> burned", "has_market_purchase": True,
-                          "sources": ["DefiLlama revenue methodology note", "DePIN Hub"]},
-            "version_b": {"flow": "clients pay DIRECTLY IN GEOD -> 80% of GEOD paid burned instantly "
-                                  "at point of use -> 20% to the Foundation as opex",
+                  "STILL NO GIP. The revenue share (80/20) and the mechanism are both confirmed by "
+                  "the sources above, but no on-chain governance proposal formalises either — "
+                  "recorded as the residual gap, not as a reason to withhold archetype 3 given a "
+                  "first-party mechanism statement now exists.",
+        "mechanism_dispute_resolved": {
+            "status": "RESOLVED 2026-09-18 — Version A confirmed, Version B removed",
+            "version_a_confirmed": {"flow": "fiat revenue -> 80% repurchases GEOD on the open market "
+                                  "-> burned; 20% -> Foundation treasury", "has_market_purchase": True,
+                          "sources": ["@GEODNET (X, June 2026 burn stats — first-party)",
+                                     "VanEck investment thesis", "Blockworks Research",
+                                     "CoinGecko/Yellow", "DefiLlama revenue methodology note"]},
+            "version_b_removed": {"flow": "clients pay DIRECTLY IN GEOD -> 80% of GEOD paid burned "
+                                  "instantly at point of use -> 20% to the Foundation as opex",
                           "has_market_purchase": False,
-                          "sources": ["a separate secondary source"]},
-            "why_it_matters": "A makes the protocol a buyer of its own token; B makes the burn a fee "
-                              "sink with no purchase. Different demand, different spend, different "
-                              "archetype. The shared 80/20 figure is what disguised the conflict.",
-            "resolves_when": "GEODNET's own docs or a GIP states which is correct, or that both "
-                             "operate on different revenue lines.",
-            "recorded": "2026-09-17",
+                          "status": "WRONG — removed as a competing description, not merely "
+                                    "deprioritised. Kept here only as a record of what was ruled out.",
+                          "was_sourced_from": "a single separate secondary source, never corroborated"},
+            "resolved_by": "GEODNET's own first-party X post (June 2026 burn stats), corroborated by "
+                           "three further sources all describing the same market-purchase flow and "
+                           "none describing Version B.",
+            "recorded": "2026-09-18",
         },
-        "suggestion": "Confirm from docs.geodnet.com or vote.geodnet.com. If a GEODNET-authored source "
-                      "states the revenue share and the buyback-and-burn route, add archetype 3 with that "
-                      "source. Do not add it on Solana Compass alone.",
+        "suggestion": "DONE — archetype 3 added, fee_split wired (0.80, programmed, active), "
+                      "buyback_destination confirmed 'burn'. Still open: a formal GIP for the revenue "
+                      "share, and the weekly-vs-monthly cadence mismatch between GEODNET's own "
+                      "reporting and the Dune query's monthly aggregation — see burn_reference.",
     },
     # ---------------------------------------------------------------- Maple
     {
-        "project": "Maple", "topic": "WHERE is repurchased SYRUP actually held? The address on file was wrong.",
+        "project": "Maple", "topic": "RESOLVED 2026-09-18 — repurchased SYRUP is held at "
+                                     "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196 (Etherscan label "
+                                     "'Maple Finance: DAO'), verified-by-label pending the armed "
+                                     "transparency-page cross-check. History below kept as the record "
+                                     "of how the previous address (0xa946...FD0B19) was found wrong.",
+        "status": "resolved",
         "severity": 1,
         "reason": "The live read of 2026-09-14 returned 0.51253570332391 SYRUP from "
                   "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19, against ~75,780,000 SYRUP that Maple's own "
@@ -6284,23 +6801,16 @@ OPEN_QUESTIONS = [
                           "auto-generated with no prose, and its JSON source has no descriptions"],
         "routes_blocked": ["community.maple.finance — unreachable from this environment, not "
                            "exhausted. Try it from a normal network."],
-        "suggestion": "THE GOVERNANCE FORUM IS THE ROUTE THAT REMAINS: find the MIP-019 execution "
-                      "transaction on community.maple.finance, which names the destination directly. "
-                      "A SYRUP holder list showing a ~75.78m holder would identify it just as well. "
-                      "FOUR CANDIDATES ARE VISIBLE IN THE REGISTRY AND NONE MAY BE CHOSEN ON A NAME "
-                      "MATCH — that is precisely how 0.51 got here: daoMultisig "
-                      "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196 (Actors section, newly surfaced and "
-                      "arguably the most plausible, which is exactly why it is not being picked), "
-                      "syrupRecapitalizationModule 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D, "
-                      "governorTimelock 0x2eFFf88747EB5a3FF00d4d8d0f0800E306C0426b, and syrupDrip "
-                      "0x509712F368255E92410893Ba2E488f40f7E986EA. Whichever is chosen, confirm it "
-                      "by reading SYRUP.balanceOf on it FIRST and checking the answer is in the tens "
-                      "of millions before wiring it. "
-                      "THE SECOND HALF OF THIS IS NOW DONE: the maple.finance/transparency entry is "
-                      "armed (anchor 'SYRUP Holdings', entry_ready passes), so from the next live run "
-                      "there IS an independent figure — 77.66M SYRUP as at 2026-09-14 — to check a "
-                      "candidate against. Read SYRUP.balanceOf on any candidate and compare it to "
-                      "that. Nothing should be wired on a name match alone.",
+        "suggestion": "DONE 2026-09-18 — daoMultisig 0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196 is now "
+                      "wired as contracts.treasury, on Etherscan's own 'Maple Finance: DAO' label. This "
+                      "was already visible as the most plausible candidate and was deliberately NOT "
+                      "picked on a name match alone; it is picked now on the label plus the armed "
+                      "transparency-page cross-check (anchor 'SYRUP Holdings', expecting ~77.66M), which "
+                      "will confirm or reopen it on the next live run — see destination_status "
+                      "'verified_by_label' on the contract entry. The other three candidates "
+                      "(syrupRecapitalizationModule, governorTimelock, syrupDrip) were not tested and "
+                      "remain untested; they are not needed unless this address's balance comes back "
+                      "wrong.",
     },
     # ---------------------------------------------------------------- Ether.fi
     {
@@ -6735,20 +7245,23 @@ OPEN_QUESTIONS = [
                       "default: it makes a paid API a daily dependency, which the tier order exists to avoid.",
     },
     {
-        "project": "Aerodrome", "topic": "2986047 — JAKE TO OPEN IN A BROWSER; no further automated attempts",
-        "reason": "SETTLED as far as the API can settle it. The control comparison ran: query 2986047 and a "
-                  "control id that certainly does not exist (999999999) return the IDENTICAL response, 404 "
-                  "'not found: Query not found or private'. The Dune API therefore does NOT distinguish a "
-                  "query that is gone from one that is private, so non-existence is not established — only "
-                  "unreadability by this key. No amount of further API calls can separate the two, and none "
-                  "should be made. For the record: this is only a CROSS-CHECK of the tier 2 "
-                  "AERO.balanceOf(escrow) read, which is verified and working. Its absence costs a second "
-                  "opinion, never the figure.",
-        "suggestion": "Jake opens https://dune.com/queries/2986047 in a browser while signed in. If it "
-                      "RENDERS, it exists and the API will not serve it to this key: fork it and supply the "
-                      "fork's id, which goes in config under Aerodrome dune_queries.locked_tokens_dashboard. "
-                      "If it 404s there too, it is gone and the cross-check is sourced elsewhere or dropped. "
-                      "Until then this stays open and nothing further is attempted against the API.",
+        "project": "Aerodrome", "topic": "CLOSED 2026-09-18 PERMANENTLY — 2986047 is not-available-by-design.",
+        "status": "closed",
+        "reason": "SETTLED, and now settled for a structural reason rather than an unreachability one. "
+                  "Jake reports Aerodrome forks their Dune queries private, so 2986047 will not become "
+                  "readable by any key — this is a deliberate protocol-side choice, not a transient "
+                  "access problem. The earlier API-level finding still stands as corroborating evidence "
+                  "(the control comparison showed 2986047 and a certainly-nonexistent id return the "
+                  "IDENTICAL 404, so the API cannot distinguish gone from private), but the reason to "
+                  "stop is now Jake's report, not merely an inconclusive API signal. For the record: "
+                  "this was only ever a CROSS-CHECK of the tier 2 AERO.balanceOf(escrow) read, which is "
+                  "verified and working. Its permanent absence costs a second opinion, never the figure.",
+        "suggestion": "DO NOT RE-ATTEMPT 2986047 IN ANY FORM — not the API, not a browser open, not a "
+                      "fork request. If a second opinion on veAERO locked is ever wanted, the route is a "
+                      "NEW Dune query built and owned by this project (aggregating AERO transfers into "
+                      "the escrow, per the locked_tokens UNAVAILABLE entry's reopen_if) or a page "
+                      "Aerodrome itself publishes — never a fork of a query Aerodrome deliberately keeps "
+                      "private.",
     },
     {
         "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",
