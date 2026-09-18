@@ -2623,11 +2623,37 @@ PROJECTS = [
             # halving schedule above, so one source, three addresses, and the provenance is the
             # protocol's own documentation rather than an aggregator.
             #
-            # ALL THREE ARE UNVERIFIED AND WILL BE REFUSED BY THE ADAPTER, deliberately. The page
-            # names them; nothing on file confirms what each currently holds, and a treasury read
-            # that is pointed at the wrong wallet produces a confident wrong number rather than an
-            # obvious one — the Maple 0.51 failure, exactly. They are recorded so the Gap Report
-            # names something specific instead of saying "no address".
+            # ** ALL THREE ARE EOAs, NOT CONTRACTS, AND THAT IS CORRECT — NOT A DATA ERROR. **
+            # mining_distribution_polygon was REJECTED on a live run: "nothing deployed at
+            # 0x8FB9...5478 on polygon (eth_getCode is empty), and a treasury_holding holder is
+            # supposed to be a contract." Checked rather than assumed either way:
+            #
+            #   1. THE GUARD'S OWN LOGIC (fetch/chain.py holder_should_have_code): treasury_holding
+            #      is in HOLDER_MUST_HAVE_CODE, so the DEFAULT is "require bytecode" — but an
+            #      explicit per-contract holder_has_code always overrides that default. The kind-
+            #      wide default is not a bug: of the five treasury_holding contracts in this file,
+            #      THREE (Sky's Pause Proxy, Maple's fee treasury, NEAR's Intents Treasury on Base)
+            #      genuinely ARE deployed contracts and already declare holder_has_code=True. The
+            #      default is right for the KIND in general.
+            #   2. GEODNET'S OWN DOCS call all three of these "wallet[s]", not contracts — the same
+            #      page that supplied the addresses.
+            #   3. THE LIVE eth_getCode READ CONFIRMS IT: empty bytecode at
+            #      mining_distribution_polygon on Polygon. First-party on-chain evidence, not an
+            #      inference from wording.
+            #
+            #   CONCLUSION: this is the SAME FAILURE SHAPE as the old burn-address regression (Sky's
+            #   burn_zero, PancakeSwap's burn_dead) — an existence check assuming a holder kind
+            #   always has code — but the FIX IS NARROWER. Burn addresses are EOAs by construction
+            #   for every project, so that check was removed for the whole kind. Treasury holders are
+            #   NOT uniformly one shape — Sky/Maple/NEAR's really are contracts — so the fix here is
+            #   the guard's EXISTING per-address escape hatch (holder_has_code=False on these three
+            #   specifically), not a kind-wide exemption that would have silently stopped checking
+            #   Sky's, Maple's and NEAR's genuinely-contract treasuries too.
+            #
+            # ALL THREE ARE OTHERWISE UNCHANGED: addresses verified 2026-09-17 against GEODNET's own
+            # docs, holdings still unread. A treasury read pointed at the wrong wallet produces a
+            # confident wrong number rather than an obvious one — the Maple 0.51 failure — which is
+            # why the address itself, not just the code check, was verified before this fix.
             #
             # ** THE MIDDLE ONE IS THE PRIZE. ** mining_distribution is the likeliest route to ACTUAL
             # network emissions: its OUTFLOW is issuance as it happens, which beats modelling the
@@ -2640,30 +2666,46 @@ PROJECTS = [
                 "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
                 provenance="docs.geodnet.com/geod-token/tokenomics — GEODNET's own documentation; verified 2026-09-17",
                 purpose="GEODNET Mining wallet (Polygon). The mining allocation's holding.",
+                holder_has_code=False,  # an EOA per GEODNET's own "wallet" language — see the block comment above
                 note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page. The ADDRESS is "
                      "confirmed; its HOLDINGS are still unread, and those are different claims — "
                      "verification says this is the wallet GEODNET names, not that the balance is "
                      "what anyone expects. The read now runs, so the first figure it returns is "
-                     "worth a look before it is trusted."),
+                     "worth a look before it is trusted. holder_has_code=False set 2026-09-18: this "
+                     "is a wallet, not a contract, so eth_getCode returning empty is CORRECT and "
+                     "must not refuse the read — see the block comment above for how this was "
+                     "checked, not assumed."),
             "mining_distribution_polygon": _contract(
                 "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478", "polygon", "treasury_holding", "GEOD",
                 "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
                 provenance="docs.geodnet.com/geod-token/tokenomics — GEODNET's own documentation; verified 2026-09-17",
                 purpose="GEODNET Mining DISTRIBUTION wallet (Polygon) — the best available proxy for "
                         "ACTUAL emissions flow. Reading its outflow beats modelling the per-miner rate.",
+                holder_has_code=False,  # an EOA per GEODNET's own "wallet" language — confirmed 2026-09-18
+                                        # by a live eth_getCode returning empty at this exact address; see
+                                        # the block comment above for the guard-logic check that preceded
+                                        # this fix, so this is a targeted override, not a kind-wide exemption
                 note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page — and the read "
                      "declared here is STILL THE WRONG SHAPE for what makes this wallet valuable, "
                      "which verification does not fix. treasury_holding gives a BALANCE; emissions "
-                     "are its OUTFLOW. A "
-                     "distribution wallet's balance is a float that rises on top-up and falls on "
-                     "payout, so differencing it would report negative issuance on a top-up day and "
-                     "zero on a quiet one. Confirm holdings first, then source the transfer flow — "
-                     "tier 4 or a Polygon transfer-log read, not balanceOf."),
+                     "are its OUTFLOW. A distribution wallet's balance is a float that rises on "
+                     "top-up and falls on payout, so differencing it would report negative issuance "
+                     "on a top-up day and zero on a quiet one. Confirm holdings first, then source "
+                     "the transfer flow — tier 4 or a Polygon transfer-log read, not balanceOf. "
+                     "holder_has_code=False set 2026-09-18 for a SEPARATE reason: eth_getCode "
+                     "confirmed empty on a live run, and GEODNET's own docs call this a wallet, so "
+                     "the earlier rejection was the existence-check's kind-wide default being wrong "
+                     "for this specific address, not evidence the address itself is wrong."),
             "ecosystem_polygon": _contract(
                 "0x3A6906E4239F9860C81035c54198Df58D892653b", "polygon", "treasury_holding", "GEOD",
                 "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
                 provenance="docs.geodnet.com/geod-token/tokenomics — GEODNET's own documentation; verified 2026-09-17",
                 purpose="GEODNET Ecosystem wallet (Polygon).",
+                holder_has_code=False,  # an EOA per GEODNET's own "wallet" language — see the block comment above.
+                                        # NOT independently confirmed by eth_getCode (only
+                                        # mining_distribution_polygon was checked on the live run this
+                                        # round) — set on the strength of identical docs wording and the
+                                        # same source page as the two siblings that WERE confirmed.
                 note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page. Address confirmed; "
                      "holdings unread."),
         },
@@ -4770,10 +4812,16 @@ PROJECTS = [
                      "tolerance is flagged rather than one figure silently replacing the other."},
         ],
         "materiality": "high",
-        "notes": "Smart Burn Engine: 55% of each cycle burned, 45% to LSSKY stakers (Executive Proposal, 13 Aug 2026). "
-                 "THE SPLIT HAS MOVED BEFORE AND WILL MOVE AGAIN — treat each historical period as potentially "
-                 "different from the current one; 0.55 is NOT applied retroactively across the backfill. "
-                 "Tokens paid to LSSKY stakers re-enter float, so that leg is never netted against burn.",
+        "notes": "STAGE 2, live from 2026-09-14 (superseding the 13 Aug 2026 55/45 split — see "
+                 "fee_split_v2): 50% of monthly Net Protocol Surplus, split 22.5% SKY buyback for SKY "
+                 "staking rewards / 22.5% USDS staking rewards / 5% SKY buyback-and-burn. ONLY THE 5% LEG "
+                 "IS A BURN — the 22.5% SKY leg buys and DISTRIBUTES, re-entering float, and is never "
+                 "netted against the burn. BASE CURRENTLY UNCONFIRMED against revenue_usd — Sky states the "
+                 "split as a share of its own 'Net Protocol Surplus', not established to equal DefiLlama's "
+                 "revenue_usd; the archetype 3 implied-buyback figures render as base-unconfirmed "
+                 "(suppressed) until that mapping is sourced. THE SPLIT HAS MOVED BEFORE AND WILL MOVE "
+                 "AGAIN — treat each historical period as potentially different from the current one; no "
+                 "current share is applied retroactively across the backfill.",
     },
     {
         "name": "Pendle", "symbol": "PENDLE",

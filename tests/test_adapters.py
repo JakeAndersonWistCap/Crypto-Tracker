@@ -3321,6 +3321,102 @@ def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share
           "other 15 projects untouched")
 
 
+def test_geodnet_treasury_wallets_are_eoas_not_contracts_targeted_not_kind_wide():
+    """GEODNET's three treasury wallets are EOAs by design — the guard's per-address escape
+    hatch, not a kind-wide exemption.
+
+    mining_distribution_polygon was REJECTED live: "nothing deployed... eth_getCode is empty, and
+    a treasury_holding holder is supposed to be a contract." Checked, not assumed, which of two
+    things was true: the KIND-WIDE default requiring bytecode is wrong for treasury_holding in
+    general (the burn-address regression's shape), or this specific address is wrong. Neither —
+    of five treasury_holding contracts on file, three (Sky's Pause Proxy, Maple's fee treasury,
+    NEAR's Intents Treasury) genuinely ARE deployed contracts, so the kind-wide default is right
+    in general. GEODNET's three are EOAs per GEODNET's own "wallet" language AND a live
+    eth_getCode confirming empty bytecode — a per-address fact, not a class-wide one.
+    """
+    from fetch.chain import holder_should_have_code, HOLDER_MUST_HAVE_CODE
+
+    assert "treasury_holding" in HOLDER_MUST_HAVE_CODE, \
+        "the KIND-WIDE default must stay 'require code' — that part of the guard is correct"
+
+    geodnet = config.PROJECT_BY_NAME["GEODNET"]["contracts"]
+    for key in ("mining_polygon", "mining_distribution_polygon", "ecosystem_polygon"):
+        spec = geodnet[key]
+        assert spec["kind"] == "treasury_holding"
+        assert spec["holder_has_code"] is False, \
+            f"{key} must explicitly override to False — an EOA, confirmed by GEODNET's own docs"
+        assert holder_should_have_code(spec) is False, \
+            f"{key}: the guard must not require bytecode for this address"
+
+    # THE CONTROL: real treasury contracts elsewhere must be COMPLETELY UNTOUCHED. This is what
+    # proves the fix is per-address, not a change to the kind-wide default that would have
+    # silently stopped checking Sky's, Maple's and NEAR's genuinely-contract treasuries too.
+    controls = [("Sky", "pause_proxy"), ("Maple", "treasury"), ("Near", "intents_treasury_base")]
+    for proj, key in controls:
+        spec = config.PROJECT_BY_NAME[proj]["contracts"][key]
+        assert spec["kind"] == "treasury_holding"
+        assert spec["holder_has_code"] is True, f"{proj}/{key} must stay True — it is a real contract"
+        assert holder_should_have_code(spec) is True, f"{proj}/{key}: the guard must still require code"
+
+    # A project with NO explicit override still gets the kind-wide default (require code) — the
+    # override is additive, not a change to what "unset" means.
+    unset_spec = dict(kind="treasury_holding", address="0x1111111111111111111111111111111111111a")
+    assert holder_should_have_code(unset_spec) is True, \
+        "an unset holder_has_code on a treasury_holding contract must still default to requiring code"
+    print("GEODNET treasury EOA fix ok: three wallets exempted by address, "
+          "three real treasury contracts elsewhere untouched, default unchanged for anyone unset")
+
+
+def test_sky_notes_reflect_stage_2_not_the_stale_55_45():
+    """The A3 tab's Notes column pulls project['notes'] directly — a stale note there is a stale
+    cell on every future run, independent of anything else in config being correct.
+
+    Found live: Sky's notes still said "Smart Burn Engine: 55% of each cycle burned" after Stage 2
+    (22.5/22.5/5, effective 2026-09-14) had already been applied everywhere else in config. The
+    fee_split_v2 block, the relation exemptions, the base_gated wiring — all correct. This one
+    plain-text field was not, because nothing enforces that prose describing a mechanism updates
+    when the mechanism does.
+    """
+    notes = config.PROJECT_BY_NAME["Sky"]["notes"]
+    assert "55% of each cycle burned" not in notes, "the stale pre-Stage-2 burn framing must be gone"
+    assert "22.5%" in notes and "5%" in notes, "the Stage 2 percentages must be stated"
+    assert "Net Protocol Surplus" in notes or "base" in notes.lower(), \
+        "the base-uncertainty caveat must be visible in the same place the split is described"
+    assert "2026-09-14" in notes, "the effective date must be stated, not just the old 13 Aug date"
+
+    # AND IT ACTUALLY REACHES THE WORKBOOK — this is what the earlier note failed to do; text that
+    # is merely correct in config.py and never rendered is exactly as useless as text that is
+    # wrong. Build a real workbook and read the Notes cell back.
+    import pathlib as _pl
+    import tempfile
+
+    import openpyxl
+
+    import build_workbook as bw
+    import store as store_mod
+
+    db = _pl.Path(__file__).resolve().parent / "_scratch" / "metrics.db"
+    if not db.exists():
+        print("Sky notes ok: config text correct (no _scratch/metrics.db to render against)")
+        return
+    st = store_mod.Store(str(db))
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        out_path = bw.build_workbook(st, tmp.name)
+    wb = openpyxl.load_workbook(out_path)
+    ws = wb["A3 Revenue Buyback"]
+    header_row = next(r for r in range(1, 10)
+                      if any(ws.cell(row=r, column=c).value == "Project" for c in range(1, 6)))
+    headers = {ws.cell(row=header_row, column=c).value: c for c in range(1, ws.max_column + 1)
+              if ws.cell(row=header_row, column=c).value}
+    sky_row = next(r for r in range(header_row + 1, ws.max_row + 1)
+                  if ws.cell(row=r, column=headers["Project"]).value == "Sky")
+    cell_text = ws.cell(row=sky_row, column=headers["Notes"]).value or ""
+    assert "55% of each cycle burned" not in cell_text, \
+        f"the RENDERED Notes cell must not carry the stale framing: {cell_text[:200]!r}"
+    assert "22.5%" in cell_text
+    print("Sky notes ok: Stage 2 stated, stale 55%-burned framing gone, confirmed in a built workbook")
+
+
 if __name__ == "__main__":
     # EVERY test_* IN THIS MODULE, IN DEFINITION ORDER — discovered, not hand-listed.
     #
