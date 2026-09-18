@@ -82,11 +82,11 @@
       "transition": "disputed_destination",
       "date": "2026-09-14",
       "project": "Maple",
-      "metric": "treasury_holding_tokens",
+      "metric": "treasury_holding_tokens_chain_crosscheck",
       "value": 0.5125357033239131,
       "source": "chain:ethereum:treasury",
       "tier": 2,
-      "written_under": "config before destination_status='disputed' was set on treasury",
+      "written_under": "config before destination_status='disputed' was set on treasury, and before metric_override retargeted this contract from treasury_holding_tokens to treasury_holding_tokens_chain_crosscheck (2026-09-18)",
       "why": "the first of these bugs found. Suppressing the WRITE could not touch this row"
     },
     {
@@ -237,8 +237,8 @@
     {
       "transition": "disputed_destination",
       "project": "Maple",
-      "metric": "treasury_holding_tokens",
-      "written_under": "config before destination_status='disputed' was set on treasury",
+      "metric": "treasury_holding_tokens_chain_crosscheck",
+      "written_under": "config before destination_status='disputed' was set on treasury, and before metric_override retargeted this contract from treasury_holding_tokens to treasury_holding_tokens_chain_crosscheck (2026-09-18)",
       "why": "the first of these bugs found. Suppressing the WRITE could not touch this row",
       "expect_status": "disputed",
       "expect_confidence": "RED",

@@ -149,11 +149,27 @@ class Dune:
                 # partial column list and turned out to be a daily history. The shape is real
                 # though, and the guard below is what catches that mistake, so both stay.
                 ongoing = bool(q.get("snapshot") or q.get("ongoing"))
-                if (name, metric) in self.has_history and not always_refetch() and not ongoing:
+                first_time = (name, metric) not in self.has_history
+                if not first_time and not always_refetch() and not ongoing:
                     out.skipped(SOURCE, name,
                                 f"{metric}: store already holds a row — backfill NOT run. Set "
                                 f"TOKEN_METRICS_DUNE_ALWAYS=1 to force it.", TIER)
                     continue
+                # THIS METRIC'S OWN FIRST RUN NEEDS ITS OWN FULL HISTORY, regardless of the
+                # window_days the caller passed for the run as a whole. window_days is a global,
+                # per-RUN decision — trimmed once the SYSTEM has been running a while, so daily
+                # tiers refresh recent revisions cheaply — and it has no idea that a metric added
+                # to config after that history built up (GEODNET's archetype-3 actual_buyback_
+                # tokens/usd, reusing an already-backfilled query) has never been fetched before.
+                # A monthly series with drop_current_period always has its newest surviving row
+                # at least one full period old, which a 30-day trailing window excludes entirely —
+                # so a brand-new metric on a mature run silently got ZERO rows, not a partial
+                # backfill, and looked identical to a broken query. Same treatment as
+                # always_refetch: a first-time pull always takes the whole history.
+                metric_window_days = None if first_time else window_days
+                if first_time and window_days is not None:
+                    log.info("%s/%s: first backfill for this metric — pulling full history, "
+                             "ignoring the %d-day window", name, metric, window_days)
                 if not self.key:
                     out.fail(SOURCE, name, f"{metric}: DUNE_API_KEY not set in .env", TIER)
                     out.gap(name, metric, reason="Dune query configured but DUNE_API_KEY is not set",
@@ -269,7 +285,7 @@ class Dune:
                     note = (f"{metric}: query {qid} ({len(pairs)} rows, "
                             f"{'current-state snapshot' if snapshot else q.get('granularity', 'unspecified') + ' granularity'}"
                             + (f", dropped {dropped} incomplete current-period row(s)" if dropped else "") + ")")
-                    out.add(window(df, window_days), SOURCE, name, note, TIER)
+                    out.add(window(df, metric_window_days), SOURCE, name, note, TIER)
                 except HttpError as e:
                     # A 4xx is the server's definite answer, and its message is what distinguishes
                     # "no such query" from "exists, but not yours to read".

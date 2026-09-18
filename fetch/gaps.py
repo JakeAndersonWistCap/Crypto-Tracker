@@ -114,6 +114,12 @@ METRIC_CONTRACT_KIND = {
     # their rows were reporting a missing registry entry rather than the real reason the read
     # produced nothing.
     "treasury_holding_tokens": "treasury_holding",
+    # Maple-only, via metric_override on contracts.treasury — the chain read demoted to a
+    # cross-check secondary while the metric name "treasury_holding_tokens" itself is now sourced
+    # from a page scrape (see config.py, 2026-09-18). Same kind, different metric — the matching
+    # filter below also checks metric_override so this and treasury_holding_tokens are never
+    # confused for one another.
+    "treasury_holding_tokens_chain_crosscheck": "treasury_holding",
     # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
     # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",
@@ -175,41 +181,60 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:
         contracts = project.get("contracts") or {}
-        matching = [k for k, c in contracts.items() if c.get("kind") == want_kind]
-        if not matching:
+        # metric_override redirects a contract's kind away from its normal metric (Maple's
+        # treasury read -> treasury_holding_tokens_chain_crosscheck, not treasury_holding_tokens
+        # — see config.py, 2026-09-18). Without this check, a kind match alone would credit BOTH
+        # metric names with the same contract: "(override or metric) == metric" is true only when
+        # there is no override (an ordinary contract serves whatever its kind normally means) or
+        # when the override explicitly targets THIS metric.
+        matching = [k for k, c in contracts.items()
+                   if c.get("kind") == want_kind and (c.get("metric_override") or metric) == metric]
+        # A contract of the right kind that exists but is DELIBERATELY redirected elsewhere is a
+        # different situation from no contract at all — "no contract of kind X declared" would be
+        # false (one is declared) and would send the reader to add a duplicate. This metric
+        # genuinely has no tier 2 route BY DESIGN, so fall through to tier 3 below instead of
+        # returning a wrong reason.
+        redirected_elsewhere = any(
+            c.get("kind") == want_kind and c.get("metric_override") and c.get("metric_override") != metric
+            for c in contracts.values())
+        if not matching and not redirected_elsewhere:
             if name in NON_EVM:
                 return (f"no contract read possible — {name} is not EVM, so the tier 2 web3 path does not apply",
                         f"Use the protocol's own dashboard: add a sources.yaml entry for {name}/{metric}.")
             return (f"no contract of kind {want_kind!r} declared in config",
                     f"Add the contract to contracts in config.py for {name}, with the source URL and the date "
                     f"you verified it on the protocol's own docs.")
-        ambiguous = [k for k in matching if contracts[k].get("ambiguous")]
-        if ambiguous:
-            spec = contracts[ambiguous[0]]
-            cands = spec.get("candidates") or []
-            return (f"contract {ambiguous[0]!r} is AMBIGUOUS — {len(cands)} addresses circulate publicly and "
-                    f"none is established as correct, so none is read",
-                    f"Resolve from {spec.get('source_url') or 'the protocol docs'} and replace the candidates "
-                    f"list with the single confirmed address. Candidates: {', '.join(cands)}")
-        unverified = [k for k in matching if not (contracts[k].get("verified"))]
-        if unverified:
-            return (f"contract {unverified[0]!r} is declared but NOT verified against the protocol's own docs",
-                    f"Confirm {contracts[unverified[0]]['address']} on "
-                    f"{contracts[unverified[0]].get('source_url') or 'the protocol docs'}, then set verified "
-                    f"in config.py. Or set TOKEN_METRICS_ALLOW_UNVERIFIED=1 to read it anyway.")
+        if matching:
+            ambiguous = [k for k in matching if contracts[k].get("ambiguous")]
+            if ambiguous:
+                spec = contracts[ambiguous[0]]
+                cands = spec.get("candidates") or []
+                return (f"contract {ambiguous[0]!r} is AMBIGUOUS — {len(cands)} addresses circulate publicly and "
+                        f"none is established as correct, so none is read",
+                        f"Resolve from {spec.get('source_url') or 'the protocol docs'} and replace the candidates "
+                        f"list with the single confirmed address. Candidates: {', '.join(cands)}")
+            unverified = [k for k in matching if not (contracts[k].get("verified"))]
+            if unverified:
+                return (f"contract {unverified[0]!r} is declared but NOT verified against the protocol's own docs",
+                        f"Confirm {contracts[unverified[0]]['address']} on "
+                        f"{contracts[unverified[0]].get('source_url') or 'the protocol docs'}, then set verified "
+                        f"in config.py. Or set TOKEN_METRICS_ALLOW_UNVERIFIED=1 to read it anyway.")
 
-        # Every matching contract is verified, so the address is not the problem. Either the chain
-        # is outside the EVM adapter's reach, or the read itself failed this run.
-        off_chain = [k for k in matching if contracts[k].get("chain") not in config.EVM_CHAINS]
-        if off_chain:
-            chains = sorted({contracts[k]["chain"] for k in off_chain})
-            return (f"contract {off_chain[0]!r} is VERIFIED but sits on {', '.join(chains)}, which the EVM "
-                    f"adapter cannot read",
-                    f"Add a {chains[0]} adapter, or a sources.yaml entry pointing at a page that publishes "
-                    f"the figure. The address itself is confirmed, so this is purely a read-path gap.")
-        return (f"contract {matching[0]!r} is verified but the tier 2 read returned nothing this run",
-                f"Check the Run Log for the chain read failure, and confirm the RPC endpoints for "
-                f"{contracts[matching[0]].get('chain')} in .env.")
+            # Every matching contract is verified, so the address is not the problem. Either the chain
+            # is outside the EVM adapter's reach, or the read itself failed this run.
+            off_chain = [k for k in matching if contracts[k].get("chain") not in config.EVM_CHAINS]
+            if off_chain:
+                chains = sorted({contracts[k]["chain"] for k in off_chain})
+                return (f"contract {off_chain[0]!r} is VERIFIED but sits on {', '.join(chains)}, which the EVM "
+                        f"adapter cannot read",
+                        f"Add a {chains[0]} adapter, or a sources.yaml entry pointing at a page that publishes "
+                        f"the figure. The address itself is confirmed, so this is purely a read-path gap.")
+            return (f"contract {matching[0]!r} is verified but the tier 2 read returned nothing this run",
+                    f"Check the Run Log for the chain read failure, and confirm the RPC endpoints for "
+                    f"{contracts[matching[0]].get('chain')} in .env.")
+        # else: matching is empty but redirected_elsewhere is True — this metric has no tier 2
+        # route BY DESIGN (see the comment above). Fall through to the tier 3 / derived checks
+        # below rather than returning here.
 
     # A DERIVED METRIC HAS NO SOURCE TO CONFIGURE, so "no source configured for this metric" is
     # the wrong answer and sends the reader looking for one. It needs its INPUTS, and naming them

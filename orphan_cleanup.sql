@@ -77,9 +77,14 @@ GROUP  BY project, metric;
 --    WHERE project='Maple' AND metric='treasury_holding_tokens' ORDER BY date;
 --
 -- Then delete:
-DELETE FROM metrics
- WHERE project = 'Maple'
-   AND metric  = 'treasury_holding_tokens';
+-- ALREADY RUN. DO NOT RE-RUN THIS STATEMENT — commented out 2026-09-18.
+-- Maple's treasury address has since been RESOLVED (0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196,
+-- daoMultisig / "Maple Finance: DAO") and is producing LEGITIMATE treasury_holding_tokens rows
+-- again. An unscoped DELETE left live here would destroy that real data on any future blanket
+-- re-run of this file. Left as a record of what was done, not as a statement to run again.
+-- DELETE FROM metrics
+--  WHERE project = 'Maple'
+--    AND metric  = 'treasury_holding_tokens';
 
 -- =======================================================================================
 -- 2026-09-15 — STALE-JUDGEMENT AUDIT
@@ -373,3 +378,60 @@ SELECT project, metric, source, COUNT(*) AS rows, MAX(date) AS last,
  WHERE source LIKE 'derived:%'
  GROUP BY project, metric, source
  ORDER BY zero_rows DESC, project;
+
+-- =======================================================================================
+-- 2026-09-18 — GEODNET treasury_holding_tokens: MEASURING POINT CHANGED
+--
+-- Three treasury wallets (mining_polygon, mining_distribution_polygon, ecosystem_polygon)
+-- are summed into treasury_holding_tokens. mining_distribution_polygon was REJECTED on
+-- live runs before 2026-09-18 (eth_getCode empty, kind-wide default wrongly required
+-- bytecode for a wallet-not-a-contract) and fixed with a targeted holder_has_code=False
+-- override — see config.py's block comment on GEODNET's contracts.mining_distribution_polygon.
+--
+-- So rows written BEFORE that fix summed only TWO components (mining_polygon +
+-- ecosystem_polygon, source "chain:sum(mining_polygon+ecosystem_polygon)" or, if
+-- ecosystem_polygon was also still failing at some point, a single-component
+-- "chain:mining_polygon"); rows written AFTER sum THREE ("chain:sum(mining_polygon+
+-- mining_distribution_polygon+ecosystem_polygon)"). build_workbook.py's
+-- measuring_point_changed guard (WITHHELD_STATUSES) correctly detects this — a series
+-- spanning the change reports the addition of a wallet as though it were a balance
+-- change — and blanks the row RED. THIS IS THE GUARD WORKING, NOT A BUG: the fix is a
+-- store cleanup, not a config bypass (there is no per-project escape hatch for
+-- measuring_point_changed, and there should not be one).
+--
+-- D1. LOOK ONLY — every distinct source treasury_holding_tokens has actually been
+--     written from, oldest first. Confirm there really are two-or-more distinct
+--     _measuring_point() values (composition strings ignoring :PARTIAL/:delta) before
+--     touching anything.
+SELECT date, value, source, tier
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens'
+ ORDER BY date;
+
+-- D2. Grouped by the SAME normalisation build_workbook.py uses (fetch.base._measuring_point
+--     strips only :PARTIAL and :delta, so a source is grouped as printed here).
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens'
+ GROUP BY source
+ ORDER BY first_seen;
+-- Expect to see the OLD (two-component, or single-component) composition strings ending
+-- before 2026-09-18, and the NEW three-component sum starting on or after it. If only one
+-- composition ever appears, the guard should not be firing at all — stop and re-check
+-- rather than deleting anything.
+
+-- D3. THE DELETE. Run only after D1/D2 confirm which composition is the OLD one — copy its
+--     EXACT source string(s) from D2 into the WHERE below before uncommenting. Do not use a
+--     wildcard broad enough to also catch the current three-component sum: that would erase
+--     the very rows this fix exists to keep. Left unfilled deliberately; there is no live
+--     store here to read the real composition strings from.
+-- DELETE FROM metrics
+--  WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens'
+--    AND source IN ('chain:sum(mining_polygon+ecosystem_polygon)', 'chain:mining_polygon');
+
+-- D4. Verify — only the current three-component composition should remain, and the next
+--     build should render treasury_holding_tokens as an ordinary GREEN/AMBER series again
+--     rather than RED/measuring_point_changed.
+-- SELECT source, COUNT(*), MIN(date), MAX(date) FROM metrics
+--  WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens' GROUP BY source;

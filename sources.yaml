@@ -476,9 +476,9 @@
 # enabled: false until the selector is filled in and robots.txt is confirmed permissive for this
 # path. The scraper checks robots.txt on every fetch and refuses if disallowed.
 - project: Maple
-  metric: buyback_fund_balance_dashboard
+  metric: treasury_holding_tokens
   tier: 3
-  enabled: true                                     # ARMED 2026-09-14
+  enabled: true                                     # ARMED 2026-09-14, PROMOTED TO PRIMARY 2026-09-18
   url: https://maple.finance/transparency
   method: dom
   anchor: "SYRUP Holdings"                          # read off the page by Jake, 2026-09-14
@@ -489,10 +489,14 @@
   sanity_max: 500000000
   change_threshold_pct: 30
   added: 2026-09-14
-  note: "ARMED. The guard that would have caught 0.51 SYRUP against ~75.78m on run one.
-    anchor is 'SYRUP Holdings', read off the page directly. entry_ready() now passes; no live fetch
-    has been made from here, because this sandbox cannot reach maple.finance — the first real read
-    happens on the next normal run.
+  note: "RETARGETED 2026-09-18: this entry's metric was buyback_fund_balance_dashboard (a
+    cross-check secondary) and is now treasury_holding_tokens DIRECTLY (the primary) — same url,
+    same anchor, same scrape, only the metric name changed. Maple's OWN publication is now what
+    this tool treats as authoritative for the SYRUP treasury figure, not the daoMultisig chain
+    read, which returned 23.09M against this page's 77.66M on its first live run and did not
+    reconcile — see config.py's Maple.cross_checks and OPEN_QUESTIONS. The chain read is KEPT as a
+    cross-check, stored under treasury_holding_tokens_chain_crosscheck via metric_override, so it
+    no longer collides with this entry under one metric key.
     NO `scale` FIELD, DELIBERATELY. The page renders the figure as '77.66M' and parse_number()
     already handles the M suffix natively (77.66M -> 77,660,000, verified). Adding scale: 1000000
     would multiply a correctly-parsed figure by a further million.
@@ -511,12 +515,8 @@
     Maple's own description, which corroborates the MIP-019 composition (SYRUP + BTC + stablecoins).
     The anchor pattern DOES support two labels on one page: one entry per label, same url, exactly as
     the revenue_usd entry below already does. What is missing is a METRIC to hold it — there is no
-    USD-denominated treasury key in config.METRICS, and buyback_fund_balance_dashboard is taken by
-    this entry. Adding one is a deliberate choice, not a side effect of arming the cross-check.
-    WHY THIS MATTERS MORE THAN AN ORDINARY CROSS-CHECK: the tier 2 treasury read is
-    destination_status 'disputed' and stores nothing, because the address it used is Maple's v2
-    protocol FEE treasury. This page is the only independent figure available to confirm WHICHEVER
-    address is eventually established. It does not resolve the address question itself.
+    USD-denominated treasury key in config.METRICS. Adding one is a deliberate choice, not a side
+    effect of arming this entry.
     robots.txt needs no pre-clearing — the scraper checks it on every fetch and refuses with its own
     gap row if /transparency is disallowed."
 - project: Maple

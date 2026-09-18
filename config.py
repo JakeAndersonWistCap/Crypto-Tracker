@@ -166,6 +166,19 @@ METRICS = {
     "treasury_holding_tokens":    {"label": "Treasury holding (governance-controlled, redeployable)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
                                    "tiers": [2, 3], "sanity_min": 0, "sanity_max": 1e15},
+    # MAPLE ONLY, 2026-09-18. treasury_holding_tokens itself is now sourced from Maple's own
+    # transparency page (what Maple actually publishes) rather than the daoMultisig chain read —
+    # the chain read's own 23.09M does not reconcile against the page's 77.66M and nothing found
+    # explains the gap (see OPEN_QUESTIONS). Demoting the chain read to its own metric, rather
+    # than letting a later tier silently overwrite the earlier one under the same key, is required
+    # by fetch/__init__._resolve_tier_collisions — which ALWAYS keeps the earlier tier and treats
+    # a same-key collision as a registry mistake, never as an intentional priority order. This is
+    # the "prefer: secondary" shape (see Chainlink's locked_tokens/locked_tokens_principal pair),
+    # generalised from a same-tier pair to a cross-tier one.
+    "treasury_holding_tokens_chain_crosscheck": {
+        "label": "Treasury holding — chain read (cross-check only, NOT the primary)",
+        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
     "burn_mint_ratio":            {"label": "Burn ÷ mint ratio (as published by the protocol)",
                                    "kind": "stock", "unit": "count", "archetypes": [1, 4],
                                    "tiers": [3, 4], "sanity_min": 0, "sanity_max": 100,
@@ -584,7 +597,13 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
         spec = contracts.get(key)
         if spec is None:
             continue                    # removed, not re-purposed — orphaned_contract_keys has it
-        if KIND_METRIC.get(spec.get("kind")) not in allowed:
+        # metric_override counts as re-purposing too: a contract whose write target moved away
+        # from `metric` via the override is exactly the "still exists, no longer serves this
+        # metric" case this function exists to catch — e.g. Maple's chain read, moved from
+        # treasury_holding_tokens to treasury_holding_tokens_chain_crosscheck (2026-09-18). Old
+        # rows stored under the vacated metric name must read as withdrawn, not as still current.
+        served = spec.get("metric_override") or KIND_METRIC.get(spec.get("kind"))
+        if served not in allowed:
             withdrawn.append(key)
     return withdrawn
 
@@ -660,7 +679,12 @@ def destination_disputed(project_name: str, metric: str) -> dict | None:
     for key, c in (p.get("contracts") or {}).items():
         if c.get("destination_status") != "disputed":
             continue
-        if KIND_METRIC.get(c.get("kind")) != metric:
+        # metric_override redirects a contract's write target away from its kind's normal
+        # metric (Maple's chain read -> treasury_holding_tokens_chain_crosscheck, not
+        # treasury_holding_tokens — see 2026-09-18). Checking it here too, same as
+        # fetch/gaps.py's METRIC_CONTRACT_KIND matching, so a disputed override target is not
+        # mistaken for disputing the metric its kind would normally serve, or vice versa.
+        if (c.get("metric_override") or KIND_METRIC.get(c.get("kind"))) != metric:
             continue
         keys.append(key)
         if c.get("destination_note"):
@@ -687,6 +711,15 @@ KIND_METRIC = {
     "stake_underlying": "locked_tokens_underlying",
     "spl_mint": "total_supply",
     "spl_token_account": "burn_address_balance",
+    # ADDED 2026-09-18 for Aerodrome, generic to any ve(3,3) fork sharing the same Minter shape.
+    # Minter.weekly() is a public state variable — the CURRENT epoch's planned emission, before
+    # tail mode. A live figure, not a backfilled series: it changes at most once a week, so the
+    # daily snapshot accumulates its own history exactly like CoinGecko's supply reads do.
+    "emission_rate_current": "gross_issuance_tokens",
+    # RewardsDistributor.tokensPerWeek(week) — the AERO actually distributed to veNFT holders as
+    # anti-dilution rebase for one already-completed week. Read with call_arg
+    # "last_complete_week_unix" — see _contract's own note on why never the current week.
+    "rebase_last_week": "emissions_tokens",
 }
 
 
@@ -743,9 +776,9 @@ UNVERIFIED = None
 
 def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERIFIED, note="",
               purpose="", provenance="model-knowledge", candidates=None, ambiguous=False,
-              read_method=None, token_standard=None, underlying=None, call=None,
+              read_method=None, token_standard=None, underlying=None, call=None, call_arg=None,
               supply_is_partial=False, partial_reason="", holder_has_code=None,
-              destination_status=None, destination_note=""):
+              destination_status=None, destination_note="", metric_override=None):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -772,6 +805,22 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         # (totalSupply, or balanceOf where a holder is involved). Named explicitly only where the
         # figure lives behind a non-ERC-20 call, e.g. getTotalPrincipal() on a staking pool.
         "call": call,
+        # A call needing an argument that cannot be a fixed config value because it is a
+        # function of WHEN the run happens — e.g. Aerodrome's RewardsDistributor.tokensPerWeek(t)
+        # takes a week-boundary Unix timestamp. Named per computation rather than hardcoded on
+        # the call name, so the adapter computes it fresh every run. Only
+        # "last_complete_week_unix" exists today: floor(now/WEEK - 1)*WEEK, the most recently
+        # FINISHED week — never the current one, which a permissionless keeper may not have
+        # checkpointed yet and would read back as zero or a partial figure.
+        "call_arg": call_arg,
+        # Overrides KIND_METRIC's kind->metric mapping for THIS CONTRACT ONLY. The mapping is
+        # shared across every project using a kind (treasury_holding alone serves Sky, Maple,
+        # NEAR and three GEODNET wallets), so it cannot be repointed globally without moving
+        # every one of them. Exists for the case where ONE project's read of an otherwise-normal
+        # kind needs to land under a DIFFERENT metric name — e.g. Maple's chain read demoted to a
+        # cross-check secondary while a page scrape takes over the primary metric name (see
+        # Maple's contracts.treasury, 2026-09-18). None means "use the kind's normal metric".
+        "metric_override": metric_override,
         "token_standard": token_standard,
         "underlying": underlying,          # contract key whose balanceOf is called, for escrow_balance_of
         "supply_is_partial": bool(supply_is_partial),
@@ -2940,7 +2989,13 @@ PROJECTS = [
                      "holder_has_code=False set 2026-09-18 for a SEPARATE reason: eth_getCode "
                      "confirmed empty on a live run, and GEODNET's own docs call this a wallet, so "
                      "the earlier rejection was the existence-check's kind-wide default being wrong "
-                     "for this specific address, not evidence the address itself is wrong."),
+                     "for this specific address, not evidence the address itself is wrong. "
+                     "** STORE CLEANUP NEEDED, SEE orphan_cleanup.sql SECTION '2026-09-18 — GEODNET "
+                     "treasury_holding_tokens'. ** Rows written while this contract was rejected "
+                     "summed only mining_polygon + ecosystem_polygon; rows written after this fix "
+                     "sum all three. build_workbook.py's measuring_point_changed guard correctly "
+                     "blanks the resulting series RED — that is the guard working, not a bug — and "
+                     "the fix is clearing the pre-fix rows, not a config bypass."),
             "ecosystem_polygon": _contract(
                 "0x3A6906E4239F9860C81035c54198Df58D892653b", "polygon", "treasury_holding", "GEOD",
                 "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
@@ -3482,6 +3537,18 @@ PROJECTS = [
         "coingecko_id": "syrup",
         "defillama_fees_slug": "maple", "defillama_protocol": "maple", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # buyback_fund_balance_dashboard's ONLY route for Maple was the maple.finance/transparency
+        # scrape (anchor "SYRUP Holdings"), and that scrape now targets treasury_holding_tokens
+        # DIRECTLY as of 2026-09-18 — see sources.yaml and cross_checks. Leaving this metric
+        # applicable with no route left would report a permanent, unexplained gap every run.
+        "not_applicable": {
+            "buyback_fund_balance_dashboard":
+                "THE SAME PAGE READING NOW FEEDS treasury_holding_tokens DIRECTLY (promoted to "
+                "primary 2026-09-18 — see cross_checks and OPEN_QUESTIONS' Maple record). This "
+                "metric's only source for Maple was that scrape; there is no second dashboard to "
+                "read, so nothing is missing here — the figure moved to a different metric name, "
+                "it did not disappear.",
+        },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
         # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
         # circulating + locked nor circulating alone lands near total_supply, so the provider's
@@ -3661,35 +3728,56 @@ PROJECTS = [
             # material that THIS SPECIFIC ADDRESS holds the buyback SYRUP. destination_status is
             # therefore "verified_by_label", one notch below "confirmed" — do NOT round this up.
             #
-            # THE CROSS-CHECK IS WHAT WILL ACTUALLY CONFIRM IT. cross_checks below (already armed,
-            # anchor "SYRUP Holdings", expecting ~77.66M) validates this address on the first live
-            # run: a treasury_holding_tokens balance landing NEAR 77.66M SYRUP is the confirmation —
-            # Etherscan's label plus a matching balance is a much stronger claim than the label
-            # alone. If the balance instead comes back near zero or wildly different (the same
-            # failure shape as the 0.51 SYRUP read that discredited the previous address), the
-            # address is wrong AGAIN and the dispute REOPENS — do not silently keep a wrong address
-            # just because it replaced another wrong one.
+            # ============ DEMOTED TO A CROSS-CHECK SECONDARY, 2026-09-18. READ ON THE FIRST LIVE ==
+            # ============ RUN AND DID NOT RECONCILE: 23.09M SYRUP against the page's 77.66M. ======
+            # The armed cross-check was supposed to CONFIRM this address; instead it surfaced a
+            # roughly 3x gap neither figure explains. 23.09M is not near zero (which would have
+            # been the old 0.51-SYRUP failure shape) and not near 77.66M either — a genuine
+            # unexplained discrepancy, not a decimals or address error of any kind identified so
+            # far. See OPEN_QUESTIONS for what was checked and what remains open.
+            #
+            # DECISION: Maple's OWN transparency page (what Maple itself publishes) is now the
+            # PRIMARY source for treasury_holding_tokens, not this chain read — see
+            # sources.yaml's Maple entry (metric retargeted from buyback_fund_balance_dashboard to
+            # treasury_holding_tokens directly) and cross_checks below. This chain read is KEPT,
+            # not deleted — a 23.09M reading on an address Etherscan itself labels "Maple Finance:
+            # DAO" is still worth watching — but demoted to metric_override
+            # "treasury_holding_tokens_chain_crosscheck" so it no longer collides with the page's
+            # figure under the shared metric name (fetch/__init__._resolve_tier_collisions always
+            # keeps the earlier tier on a same-key collision, which would have silently kept THIS
+            # chain read and dropped the page — the opposite of the decision here — had both been
+            # left pointed at treasury_holding_tokens).
+            #
+            # destination_status stays "verified_by_label": Etherscan's label identifies the
+            # address as "Maple Finance: DAO", matching the transparency page's description of
+            # "the Maple Treasury" — that part of the claim is unweakened. What changed is which
+            # of the two readings this tool treats as authoritative, not whether the address is
+            # the right one; the unreconciled gap is a reason to keep watching both, not evidence
+            # this address is wrong the way the old 0.51-SYRUP address was.
             "treasury": _contract(
                 "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", "ethereum", "treasury_holding", "SYRUP",
                 "https://etherscan.io/address/0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196",
                 verified="2026-09-18", provenance="Etherscan address label 'Maple Finance: DAO', matching "
                                                   "the daoMultisig entry in maple-labs/address-registry",
                 holder_has_code=True, token_standard="erc20", underlying="token",
+                metric_override="treasury_holding_tokens_chain_crosscheck",
                 destination_status="verified_by_label",
                 destination_note="Etherscan's OWN label identifies this address as 'Maple Finance: DAO', "
                                  "matching Maple's transparency page description of 'the Maple Treasury' "
                                  "as where repurchased SYRUP is held. This is a third-party label, NOT "
                                  "Maple stating in its own material that this specific address holds the "
-                                 "buyback SYRUP — hence verified_by_label rather than confirmed. The "
-                                 "armed transparency-page cross-check (expecting ~77.66M SYRUP) settles "
-                                 "it on the first live run: near 77.66M confirms, near zero or wildly "
-                                 "different reopens the dispute.",
-                purpose="Maple Treasury (daoMultisig) — the destination for repurchased SYRUP, per "
-                        "Maple's own transparency page and Etherscan's address label.",
+                                 "buyback SYRUP — hence verified_by_label rather than confirmed. READ ON "
+                                 "THE FIRST LIVE RUN: 23.09M SYRUP against the page's 77.66M — an "
+                                 "unreconciled ~3x gap, not a confirmation. See the block comment above "
+                                 "and OPEN_QUESTIONS.",
+                purpose="Maple Treasury (daoMultisig) — CROSS-CHECK ONLY as of 2026-09-18. Maple's own "
+                        "transparency page is now the primary source for treasury_holding_tokens; this "
+                        "chain read is demoted to treasury_holding_tokens_chain_crosscheck.",
                 note="REPLACES 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19 (the disputed v2 protocol fee "
                      "treasury that returned 0.51 SYRUP). Do not substitute another address on a name "
-                     "match alone — that is how the previous address got here. This one is substituted "
-                     "on a label plus a pending balance cross-check, a materially stronger basis."),
+                     "match alone — that is how the previous address got here. DEMOTED to a cross-check "
+                     "2026-09-18 after its first live read (23.09M) did not reconcile against the "
+                     "transparency page (77.66M) — see the block comment above."),
             # REFERENCE ONLY, no read slot: syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA
             # (maple-labs/address-registry). It is the emissions distributor; with staking rewards
             # ended in Nov 2025 there is no ongoing stream to read from it, and giving it a
@@ -3702,7 +3790,8 @@ PROJECTS = [
         # Queue rather than stored. The Uniswap 100m burn floor exists for the same reason and
         # caught the same class of error.
         "sanity": {
-            "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000},
+            # NOW THE PAGE'S FLOOR, 2026-09-18 — treasury_holding_tokens is sourced from
+            # maple.finance/transparency directly (see sources.yaml), not the chain read.
             # THE FLOOR IS THE REAL GUARD ON THE SCRAPE, and it is here rather than in sources.yaml
             # because validate_frame calls config.sanity_bounds() — the registry's own sanity_min /
             # sanity_max fields are read by nothing (nine entries declare them; see the note on the
@@ -3711,11 +3800,21 @@ PROJECTS = [
             # correct value is ~77,660,000. If the page ever drops the suffix, parse_number returns
             # 77.66 — small, precise and entirely plausible, which is the exact shape of the 0.51
             # that started all this. 1,000,000 rejects it to the Review Queue instead.
-            "buyback_fund_balance_dashboard": {"min": 1_000_000, "max": 500_000_000,
-                                               "change_threshold_pct": 30},
+            "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000,
+                                        "change_threshold_pct": 30},
+            # THE CHAIN READ'S OWN FLOOR — unchanged in shape, just moved to the metric this read
+            # now writes under. Its first live value (23.09M SYRUP) sits comfortably inside this
+            # band, which is exactly why the guard did NOT catch the unreconciled gap against the
+            # page: this floor rejects a DECIMALS-class error (0.51-shaped), not a genuine
+            # divergence between two real balances. check_cross_checks (tolerance 0.05 below) is
+            # what is supposed to catch that instead — see cross_checks and OPEN_QUESTIONS.
+            "treasury_holding_tokens_chain_crosscheck": {"min": 1_000_000, "max": 1_000_000_000},
         },
         "metric_labels": {
-            "treasury_holding_tokens": "SYRUP held by the disputed Maple fee treasury (NOT the SSF)",
+            "treasury_holding_tokens": "SYRUP held per Maple's own transparency page (maple.finance/transparency)",
+            "treasury_holding_tokens_chain_crosscheck": "SYRUP held at the daoMultisig chain address "
+                                                        "(cross-check only — see OPEN_QUESTIONS for "
+                                                        "the unreconciled gap against the page)",
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
@@ -3762,22 +3861,31 @@ PROJECTS = [
             "confirm": "the ticker is SYRUP, not MPL — verify before any figure is quoted",
         },
         "cross_checks": [
-            {"primary": "treasury_holding_tokens", "primary_source": "tier 2 contract read",
-             "secondary": "buyback_fund_balance_dashboard", "secondary_source": "https://maple.finance/transparency",
+            # FLIPPED 2026-09-18. primary/secondary now name what actually WRITES to each metric,
+            # not just a documentation preference (contrast Chainlink's locked_tokens pair, where
+            # "prefer: secondary" is pure narrative and both metrics are chain reads on the same
+            # tier — here the two are on DIFFERENT tiers, so which is "primary" is a real
+            # data-flow fact, not just which column a reader should trust more).
+            {"primary": "treasury_holding_tokens", "primary_source": "https://maple.finance/transparency",
+             "secondary": "treasury_holding_tokens_chain_crosscheck", "secondary_source": "tier 2 daoMultisig contract read",
              "tolerance": 0.05, "prefer": "primary",
-             "note": "ARMED 2026-09-14 — the sources.yaml entry now carries anchor 'SYRUP Holdings' "
-                     "and entry_ready() passes. It was previously enabled:false, which is why 0.51 "
-                     "against ~75.78m reached the sheet unchallenged: check_cross_checks skips "
-                     "silently when either side is missing, so a cross-check with a disabled "
-                     "secondary is documentation, not a guard. "
-                     "IT STILL CANNOT FIRE YET, and for a different reason: the PRIMARY is "
-                     "destination_status 'disputed' and stores nothing, because the address it used "
-                     "is Maple's v2 protocol FEE treasury. The secondary will start arriving on the "
-                     "next live run and will sit alone until an address is established — at which "
-                     "point this comparison is what confirms it. Reference point for the secondary: "
-                     "77.66M SYRUP on 2026-09-14 (~75.78M several rounds earlier; a rising stock, "
-                     "not a discrepancy). Tolerance stays wide because the page reports the SSF "
-                     "label while a contract read is one wallet."},
+             "note": "PROMOTED THE PAGE TO PRIMARY, 2026-09-18. The prior version of this cross-check "
+                     "had the chain read as primary and the page as secondary; on the first live run "
+                     "after arming, the chain read returned 23.09M SYRUP against the page's 77.66M — "
+                     "an unreconciled ~3x gap this cross-check exists to catch, but with the roles "
+                     "reversed it would have STORED the chain's 23.09M as treasury_holding_tokens (the "
+                     "page's 77.66M, what Maple itself publishes, demoted to a secondary the Gap "
+                     "Report/A3 tab never surfaces as the headline figure) and merely flagged a "
+                     "Review Queue divergence nobody is guaranteed to read. Maple's OWN publication is "
+                     "the more defensible default while the gap is unexplained — see OPEN_QUESTIONS — "
+                     "so the metric names were swapped rather than just the note. "
+                     "STILL ARMED the same way: sources.yaml's Maple entry now targets "
+                     "treasury_holding_tokens directly (retargeted from buyback_fund_balance_dashboard, "
+                     "same URL and anchor 'SYRUP Holdings'), and the chain read carries "
+                     "metric_override 'treasury_holding_tokens_chain_crosscheck' so the two no longer "
+                     "collide under one metric key (see fetch/__init__._resolve_tier_collisions, which "
+                     "would otherwise always keep the earlier tier — the chain read — regardless of "
+                     "which one this config wants to be primary)."},
         ],
         "materiality": "medium",
         "notes": "Archetype 3. No burn — confirmed. SPLIT IS TIERED, not the stale flat 25%: 10% below "
@@ -3785,13 +3893,15 @@ PROJECTS = [
                  "is NOT sourced and is left None. stSYRUP is an ERC-4626 VAULT — read "
                  "SYRUP.balanceOf(stSYRUP), never stSYRUP.totalSupply(), which counts shares whose price "
                  "rises with accrued rewards. "
-                 "THE DESTINATION ADDRESS IS NOT ESTABLISHED, and an earlier claim that it was is "
-                 "RETRACTED: 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19 is the v2 PROTOCOL FEE treasury "
-                 "(registry SINGLETONS section, fees paid in pool assets) and holds 0.51 SYRUP against "
-                 "the ~75.78m Maple reports. Its role is marked DISPUTED, so it is read as evidence and "
-                 "no treasury figure is stored. Do NOT derive any archetype 3 destination figure until "
-                 "an address is sourced. stSYRUP staking rewards ENDED November 2025 (MIP-019) — do not "
-                 "model ongoing staking yield.",
+                 "TREASURY: the daoMultisig address (0xd6d4...B196, Etherscan-labelled 'Maple Finance: "
+                 "DAO') replaced the old disputed v2-fee-treasury address (0xa946...FD0B19, which held "
+                 "only 0.51 SYRUP). treasury_holding_tokens IS NOW SOURCED FROM MAPLE'S OWN "
+                 "TRANSPARENCY PAGE DIRECTLY (2026-09-18), not the chain read — the daoMultisig's first "
+                 "live balance (23.09M) did not reconcile against the page's 77.66M, an unexplained "
+                 "~3x gap (see OPEN_QUESTIONS). The chain read is kept as a cross-check under "
+                 "treasury_holding_tokens_chain_crosscheck, never as the primary, until the gap is "
+                 "explained. stSYRUP staking rewards ENDED November 2025 (MIP-019) — do not model "
+                 "ongoing staking yield.",
     },
     {
         "name": "Morpho", "symbol": "MORPHO",
@@ -4312,7 +4422,15 @@ PROJECTS = [
         # ===== MINTER.SOL CONSTANTS — THE EXACT BOUNDS ON THE TAIL-EMISSION RANGE. RECORDED 2026-09-18.
         # Source: Minter.sol itself (aerodrome-finance/contracts), not prose. Precisely bounds what
         # emission_streams' tail_rule describes in words below.
+        # CORRECTED 2026-09-18 against Minter.sol's own source (aerodrome-finance/contracts, main
+        # branch, read directly — not SPECIFICATION.md prose). TWO FIGURES WERE WRONG:
+        #   initial weekly emission:  recorded 15,000,000  ->  actually 10,000,000 (10_000_000 * 1e18)
+        #   tail-mode trigger:        recorded  6,000,000  ->  actually TAIL_START = 8,969,150 * 1e18
+        # Both came from a prose reading of SPECIFICATION.md; the contract's own declared constants
+        # are the authority and are what is recorded now.
         "minter_constants": {
+            "INITIAL_WEEKLY_EMISSION": 10_000_000,   # uint256 public weekly = 10_000_000 * 1e18
+            "TAIL_START": 8_969_150,                 # uint256 public constant TAIL_START = 8_969_150 * 1e18
             "WEEKLY_DECAY_BPS": 9_900,        # 9900/10000 = 1% decay per epoch, CONFIRMED
             "WEEKLY_GROWTH_BPS": 10_300,       # 10300/10000 — growth-mode step, pre-tail
             "MINIMUM_TAIL_RATE_BPS": 1,        # 0.01% of circulating supply per week, floor
@@ -4323,24 +4441,28 @@ PROJECTS = [
                        "mechanism precisely, where emission_streams' tail_rule only described it "
                        "in words.",
             "source_url": "https://github.com/aerodrome-finance/contracts",
-            "source_file": "Minter.sol", "source_date": "2026-09-18",
+            "source_file": "Minter.sol (contract source, not SPECIFICATION.md)", "source_date": "2026-09-18",
         },
         "emission_streams": [
-            {"stream": "pool emissions", "start_per_epoch": 15_000_000, "decay_per_epoch": 0.01,
+            {"stream": "pool emissions", "start_per_epoch": 10_000_000, "decay_per_epoch": 0.01,
              "paid_to": "gauges, by veAERO vote", "is_new_supply": True,
-             "tail_trigger_per_epoch": 6_000_000, "tail_trigger_epoch_approx": 92,
+             "tail_trigger_per_epoch": 8_969_150, "tail_trigger_epoch_approx": 92,
              "tail_rule": "weekly emissions become a percentage of circulating supply, starting at "
                           "30 bps (0.003), adjustable +/-1 bp per epoch by EpochGovernor plurality vote "
                           "(no quorum, no proposal threshold), BOUNDED to 1-100 bps "
                           "(0.01%-1.00% of circulating supply per week) — see minter_constants for "
                           "the exact MINIMUM_TAIL_RATE/MAXIMUM_TAIL_RATE source.",
              "source_url": "https://github.com/aerodrome-finance/contracts",
-             "source_file": "SPECIFICATION.md:119-130, 251-266",
-             "note": "EPOCH-INDEXED, not date-indexed, and the epoch-to-date mapping is not on file. The "
-                     "'~92 epochs' figure is the spec's own and is UNDATED. The previously circulating "
-                     "'epoch 67' figure was never confirmed and is dropped rather than reconciled. "
-                     "CONTRACT: Minter.sol (contracts.minter) — see dune_queries.gross_issuance_tokens "
-                     "for how this stream is (not yet) sourced."},
+             "source_file": "Minter.sol (start_per_epoch, tail_trigger_per_epoch); "
+                            "SPECIFICATION.md:119-130, 251-266 (the rule in prose)",
+             "note": "EPOCH-INDEXED, not date-indexed, and the epoch-to-date mapping is not on file "
+                     "in a usable form — though Minter.activePeriod and Minter.epochCount are BOTH "
+                     "live-readable public getters that could resolve this; not wired, future work. "
+                     "The '~92 epochs' figure is the spec's own and is UNDATED. The previously "
+                     "circulating 'epoch 67' figure was never confirmed and is dropped rather than "
+                     "reconciled. CONTRACT: Minter.sol (contracts.minter). NOW LIVE from tier 2 — "
+                     "Minter.weekly(), read directly. See dune_queries.gross_issuance_tokens for the "
+                     "history-backfill slot (still empty; the live read starts the series today)."},
             {"stream": "veAERO rebase", "start_per_epoch": None, "decay_per_epoch": None,
              "paid_to": "veAERO holders only", "is_new_supply": True,
              "purpose": "offsets the dilution that pool emissions cause lockers",
@@ -4349,8 +4471,10 @@ PROJECTS = [
              "source_file": "SPECIFICATION.md:132-138",
              "note": "A SEPARATE LINE, never netted into pool emissions. Its size is not a declared "
                      "constant — it is computed per epoch from the lock ratio — so no rate is recorded. "
-                     "CONTRACT: RewardsDistributor.sol (contracts.rewards_distributor) — see "
-                     "dune_queries.emissions_tokens for how this stream is (not yet) sourced."},
+                     "CONTRACT: RewardsDistributor.sol (contracts.rewards_distributor). NOW LIVE from "
+                     "tier 2 — RewardsDistributor.tokensPerWeek(last complete week), read directly, "
+                     "one week behind real time by design (see the contract's own note). See "
+                     "dune_queries.emissions_tokens for the history-backfill slot (still empty)."},
         ],
         "contracts": {
             "token": _contract("0x940181a94A35A4569E4529A3CDfB74e38FD98631", "base", "erc20_total_supply", "AERO",
@@ -4375,34 +4499,61 @@ PROJECTS = [
                                  "position count, the weight decays with time to expiry, and holders receive "
                                  "automatic weekly REBASES that increase their veAERO balance. Only "
                                  "AERO.balanceOf(escrow) gives the tokens actually locked."),
-            # ===== MINTER AND REWARDSDISTRIBUTOR — WIRED 2026-09-18. THE TWO EMISSION STREAMS' OWN =====
-            # CONTRACTS, per Aerodrome's own SPECIFICATION.md, named in emission_streams above but
-            # never given contracts entries until now. REFERENCE ONLY (kind burn_executor, this
-            # codebase's only reference-only kind — same treatment as Sky's Splitter/Flapper/SBE BEAM,
-            # none of which are literally burn executors either): no chain-read method exists in this
-            # tool for a scheduled/computed emission figure, so the ACTUAL series for each stream is
-            # sourced via Dune (see dune_queries.gross_issuance_tokens and .emissions_tokens below),
-            # not a contract call on these addresses. Recorded here so the addresses are verified and
-            # on file, not because a metric is read from them directly.
+            # ===== MINTER AND REWARDSDISTRIBUTOR — ACTUALLY WIRED 2026-09-18, NOT JUST DOCUMENTED. =====
+            # THE PRIOR ROUND'S "added as reference contracts" LEFT BOTH METRICS EMPTY. That
+            # phrasing meant added for documentation (kind burn_executor, REFERENCE_ONLY_KINDS —
+            # never read), which is confirmed here explicitly so the distinction is not repeated:
+            # a contract entry in config.py produces a figure ONLY if its kind maps to a metric in
+            # KIND_METRIC and the adapter knows how to call it. Neither was true until now.
+            #
+            # BOTH ARE NOW READ DIRECTLY ON-CHAIN, dropping the Dune dependency entirely for these
+            # two metrics on Aerodrome, per fetch/chain.py's new emission_rate_current /
+            # rebase_last_week kinds (2026-09-18) — see the ABI fragments and PRINCIPAL_KINDS entry
+            # added there. Both call the CONTRACT ITSELF rather than a token balance (like
+            # stake_principal), so they take `underlying` for symbol()/decimals() the same way.
+            #
+            # Minter.weekly() — read from Minter.sol (aerodrome-finance/contracts, main branch,
+            # 2026-09-18): "uint256 public weekly = 10_000_000 * 1e18;", updated by updatePeriod()
+            # each epoch. THIS IS A CURRENT-STATE READ, not a backfilled series — exactly like
+            # CoinGecko's daily supply snapshot, it changes at most weekly and the daily read
+            # accumulates its own history from today forward. Pre-tail-mode only: once weekly()
+            # drops below TAIL_START (8,969,150 * 1e18 — see minter_constants, corrected below),
+            # the CONTRACT switches to the percentage-of-supply tail rule internally and
+            # weekly() stops being what is actually minted; not yet a problem (current weekly is
+            # far above that threshold) but worth remembering if this ever reads suspiciously flat.
             "minter": _contract(
-                "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5", "base", "burn_executor", "AERO",
+                "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5", "base", "emission_rate_current", "AERO",
                 "https://github.com/aerodrome-finance/contracts", verified="2026-09-18",
-                provenance="aerodrome-finance/contracts README — confirmed correct against the deployed "
-                           "address list",
-                purpose="Minter — handles emissions for the protocol per SPECIFICATION.md: distributes "
-                        "emissions to Voter.sol (pool emissions, gauges) and rebases to "
-                        "RewardsDistributor.sol (the veAERO anti-dilution stream). THE SOURCE OF "
-                        "gross_issuance_tokens for Aerodrome. Reference only — see dune_queries."),
+                provenance="Minter.sol source, read directly, aerodrome-finance/contracts main branch",
+                call="weekly", underlying="token",
+                purpose="Minter.weekly() — the current epoch's planned pool-emission rate. THE SOURCE "
+                        "OF gross_issuance_tokens for Aerodrome, read live, not backfilled.",
+                note="Pre-tail-mode only — see the block comment above. If this stops changing "
+                     "week to week while AERO's circulating supply keeps growing, check whether "
+                     "tail mode has activated (weekly() < TAIL_START) before trusting the figure."),
+            # RewardsDistributor.tokensPerWeek(week) — read from RewardsDistributor.sol (same repo,
+            # same date): "uint256[1000000000000000] public tokensPerWeek;", populated by
+            # _checkpointToken() (called from Minter.updatePeriod()) pro-rata across weeks.
+            #
+            # call_arg "last_complete_week_unix", DELIBERATELY NEVER THE CURRENT WEEK: checkpointing
+            # is permissionless and tied to Minter.updatePeriod() being called by ANYONE, on no
+            # guaranteed schedule — reading the current week before that call has landed would
+            # return a partial or zero figure that looks exactly like a real, small rebase. The
+            # most recently FINISHED week is the earliest one guaranteed to be fully checkpointed.
             "rewards_distributor": _contract(
-                "0x227f65131A261548b057215bB1D5Ab2997964C7d", "base", "burn_executor", "AERO",
+                "0x227f65131A261548b057215bB1D5Ab2997964C7d", "base", "rebase_last_week", "AERO",
                 "https://github.com/aerodrome-finance/contracts", verified="2026-09-18",
-                provenance="aerodrome-finance/contracts README — confirmed correct against the deployed "
-                           "address list",
-                purpose="RewardsDistributor — handles the rebase distribution for (ve)NFTs/lockers per "
-                        "SPECIFICATION.md. Rebases are calculated from the locked and unlocked AERO one "
-                        "second prior to epoch flip. THE SOURCE OF the veAERO rebase leg of "
-                        "emissions_tokens for Aerodrome — a SEPARATE stream from Minter's pool "
-                        "emissions, never netted. Reference only — see dune_queries."),
+                provenance="RewardsDistributor.sol source, read directly, aerodrome-finance/contracts "
+                           "main branch",
+                call="tokensPerWeek", call_arg="last_complete_week_unix", underlying="token",
+                purpose="RewardsDistributor.tokensPerWeek(last completed week) — the veAERO "
+                        "anti-dilution rebase actually distributed that week. THE SOURCE OF the "
+                        "rebase leg of emissions_tokens for Aerodrome — a SEPARATE stream from "
+                        "Minter's pool emissions, never netted.",
+                note="Reads ONE WEEK BEHIND real time by design — see the block comment above. A "
+                     "reading of exactly 0 on a week that should have emissions is worth checking "
+                     "against activePeriod/epochCount on Minter before assuming the read is broken; "
+                     "it could mean updatePeriod() genuinely was not called that week."),
         },
         # ===== HOW THIS PROJECT'S circulating_supply IS DEFINED. SETTLED ON LIVE DATA. =====
         # CoinGecko's circulating_supply for AERO EXCLUDES escrowed supply, which is its standard
@@ -4433,23 +4584,41 @@ PROJECTS = [
         # cross_checks entry naming a secondary that can never arrive would report a permanent
         # divergence-unavailable. Both are removed rather than left to generate noise.
         # gross_issuance_tokens (Minter, pool emissions) and emissions_tokens (RewardsDistributor,
-        # veAERO rebase) are now DISTINCT LINES, per emission_streams above and never netted. Both
-        # remain query_id None — no Dune query for either flow is on file yet, so both are honest
-        # backfill stubs (see _dune's own docstring), not fabricated figures. Wiring the CONTRACT
-        # addresses (see contracts.minter / .rewards_distributor) is what was missing; an actual
-        # data source for either stream is still future work.
+        # veAERO rebase) are DISTINCT LINES, per emission_streams above and never netted. BOTH ARE
+        # NOW LIVE from tier 2 (contracts.minter / .rewards_distributor, read directly on-chain,
+        # 2026-09-18) — see the block comment there. These tier-4 slots remain query_id None: they
+        # are a HISTORY backfill only (the chain reads start the series from today, same as any
+        # other tier-2-primary metric), not the primary source, and no Dune query for either
+        # flow's history is on file yet — honest backfill stubs (see _dune's own docstring), not
+        # fabricated figures.
         "dune_queries": {
             **_dune("avg_lock_duration_days", "actual_buyback_usd", "actual_buyback_tokens"),
             "gross_issuance_tokens": dict(DUNE_QUERY_TEMPLATE,
-                note="POOL EMISSIONS leg — Minter.sol, distributed to Voter/gauges. 15,000,000 AERO/epoch "
-                     "at start, decaying 1%/epoch (WEEKLY_DECAY=9900/10000 — see minter_constants), "
-                     "entering tail mode below 6,000,000/epoch. NOT the veAERO rebase — that is "
+                note="POOL EMISSIONS leg — Minter.sol, distributed to Voter/gauges. NOW LIVE from "
+                     "tier 2 (Minter.weekly(), contracts.minter) — this slot is HISTORY backfill "
+                     "only. 10,000,000 AERO/epoch at start (CORRECTED 2026-09-18 from a previously "
+                     "recorded 15,000,000 — Minter.sol's own constant is 10_000_000 * 1e18), decaying "
+                     "1%/epoch (WEEKLY_DECAY=9900/10000 — see minter_constants), entering tail mode "
+                     "below TAIL_START = 8,969,150 AERO/epoch (CORRECTED from a previously recorded "
+                     "6,000,000 — see minter_constants). NOT the veAERO rebase — that is "
                      "emissions_tokens below. See emission_streams for the full rule."),
             "emissions_tokens": dict(DUNE_QUERY_TEMPLATE,
                 note="veAERO REBASE leg — RewardsDistributor.sol, paid only to veAERO holders as "
-                     "anti-dilution. Calculated on locked and unlocked AERO one second prior to epoch "
-                     "flip. NOT pool emissions — that is gross_issuance_tokens above. Never netted "
-                     "against it. See emission_streams for the full rule."),
+                     "anti-dilution. NOW LIVE from tier 2 (RewardsDistributor.tokensPerWeek(last "
+                     "complete week), contracts.rewards_distributor) — this slot is HISTORY backfill "
+                     "only. Calculated on locked and unlocked AERO one second prior to epoch flip. "
+                     "NOT pool emissions — that is gross_issuance_tokens above. Never netted against "
+                     "it. See emission_streams for the full rule."),
+        },
+        # THE GUARD FOR THE NEW LIVE READS. Neither gross_issuance_tokens nor emissions_tokens
+        # gets a floor: a genuine zero is possible for the rebase (no updatePeriod() call that
+        # week) and this tool does not assert a minimum it cannot justify. The CEILING exists to
+        # catch a decimals/scaling slip (e.g. a raw wei figure stored unscaled would be ~1e18 too
+        # large) rather than to bound the real economics, which this file does not model tightly
+        # enough to set a tighter one.
+        "sanity": {
+            "gross_issuance_tokens": {"min": 0, "max": 20_000_000},
+            "emissions_tokens": {"min": 0, "max": 20_000_000},
         },
         "materiality": "high",
         # THE MERGER HAS NOT SHIPPED. Checked against the primary repository 2026-09-14: no mention
@@ -4472,15 +4641,23 @@ PROJECTS = [
                  "not be added. FEES ARE NOT A BUYBACK: 100% of swap fees go to the veAERO holders who voted "
                  "for each specific pool, paid in the PAIR'S OWN TOKENS and never converted to AERO, so there "
                  "is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled "
-                 "as two lines: pool emissions (15m AERO/epoch decaying 1%/epoch, entering tail mode below "
-                 "6m/epoch at ~epoch 92, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor "
-                 "vote, bounded 0.01%-1.00% per minter_constants) and the separate veAERO anti-dilution "
-                 "rebase. Both are epoch-indexed, so neither is declared as a tokens_per_day schedule. "
-                 "MINTER AND REWARDSDISTRIBUTOR WIRED 2026-09-18 (contracts.minter, "
-                 "contracts.rewards_distributor) — the two emission streams' own contracts, reference-only "
-                 "(no chain-read method exists for a scheduled/computed figure); gross_issuance_tokens and "
-                 "emissions_tokens carry query_id None as honest backfill stubs pending an actual Dune "
-                 "query for either flow. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 "
+                 "as two lines: pool emissions (10m AERO/epoch decaying 1%/epoch — CORRECTED 2026-09-18 from "
+                 "a previously recorded 15m; Minter.sol's own constant is 10_000_000 * 1e18 — entering tail "
+                 "mode below TAIL_START = 8.97m/epoch, CORRECTED from a previously recorded 6m, then 30 bps "
+                 "of circulating supply +/-1 bp per epoch by EpochGovernor vote, bounded 0.01%-1.00% per "
+                 "minter_constants) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so "
+                 "neither is declared as a tokens_per_day schedule. "
+                 "MINTER AND REWARDSDISTRIBUTOR ACTUALLY WIRED 2026-09-18, NOT MERELY DOCUMENTED — the prior "
+                 "round's 'added as reference contracts' left both metrics empty (kind burn_executor is "
+                 "reference-only and produces no figure). Both are now read DIRECTLY ON-CHAIN: Minter."
+                 "weekly() for gross_issuance_tokens (current epoch's planned emission), RewardsDistributor."
+                 "tokensPerWeek(last complete week) for emissions_tokens (the veAERO rebase, deliberately "
+                 "one week behind real time — see contracts.rewards_distributor). Both use NEW kinds "
+                 "(emission_rate_current, rebase_last_week) added to fetch/chain.py's PRINCIPAL_KINDS, with "
+                 "a new call_arg mechanism for a call needing a run-time-computed argument. The "
+                 "dune_queries.gross_issuance_tokens/.emissions_tokens slots remain query_id None — they "
+                 "are HISTORY backfill only now, not the primary source; the live reads start each series "
+                 "from today forward. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 "
                  "is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS "
                  "and UNAVAILABLE; do not re-attempt it. "
                  "The reported Velodrome merger has NOT shipped into the public contracts.",
@@ -6804,13 +6981,62 @@ OPEN_QUESTIONS = [
         "suggestion": "DONE 2026-09-18 — daoMultisig 0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196 is now "
                       "wired as contracts.treasury, on Etherscan's own 'Maple Finance: DAO' label. This "
                       "was already visible as the most plausible candidate and was deliberately NOT "
-                      "picked on a name match alone; it is picked now on the label plus the armed "
-                      "transparency-page cross-check (anchor 'SYRUP Holdings', expecting ~77.66M), which "
-                      "will confirm or reopen it on the next live run — see destination_status "
-                      "'verified_by_label' on the contract entry. The other three candidates "
-                      "(syrupRecapitalizationModule, governorTimelock, syrupDrip) were not tested and "
-                      "remain untested; they are not needed unless this address's balance comes back "
-                      "wrong.",
+                      "picked on a name match alone; it is picked now on the label plus the (now-fired) "
+                      "transparency-page cross-check — see destination_status 'verified_by_label' on the "
+                      "contract entry. THE CROSS-CHECK FIRED AND DID NOT CONFIRM CLEANLY: it read 23.09M "
+                      "against the page's 77.66M, an unreconciled gap rather than a match or a "
+                      "near-zero failure — see the SEPARATE open question below "
+                      "('Maple treasury cross-check fired: 23.09M chain vs 77.66M page — unreconciled'). "
+                      "That is a NEW question, not a reopening of this one: the address IDENTITY claim "
+                      "(this is 'Maple Finance: DAO') stands on its own evidence and is unaffected by "
+                      "whether its balance happens to equal the SSF's reported holding. The other three "
+                      "candidates (syrupRecapitalizationModule, governorTimelock, syrupDrip) remain "
+                      "untested; they are not needed unless this address is shown to be wrong outright, "
+                      "which an unexplained balance gap alone does not establish.",
+    },
+    {
+        "project": "Maple", "topic": "Maple treasury cross-check fired: 23.09M chain vs 77.66M page "
+                                     "— unreconciled",
+        "severity": 2,
+        "reason": "The armed transparency-page cross-check (see the resolved 'repurchased SYRUP is "
+                  "held at 0xd6d4...' record above) was expected to CONFIRM the daoMultisig address by "
+                  "landing near Maple's own reported ~77.66M SYRUP. On the first live run it instead "
+                  "read 23.09M — roughly a third of the page's figure. This is a THIRD shape of result, "
+                  "distinct from both prior cases on file: it is not the 0.51-SYRUP near-zero failure "
+                  "that discredited the old address (a decimals-class or wrong-contract error would "
+                  "read as ~0 or as an exact power-of-ten multiple, and 23.09M is neither), and it is "
+                  "not a clean confirmation either. NOTHING FOUND SO FAR EXPLAINS THE GAP: not decimals "
+                  "(23,090,000 / 77,660,000 ~= 0.297, not a power of ten), not an obvious partial-vs-"
+                  "total split (0.297 is not a round fraction like 1/4 or 1/3 that would suggest a "
+                  "documented allocation), and not simply staleness (both figures are current reads).",
+        "possible_explanations_not_yet_tested": {
+            "daoMultisig_holds_only_part_of_the_SSF": "the SSF may span multiple addresses, of which "
+                "the daoMultisig is one — Maple's transparency page describes 'the Maple Treasury' in "
+                "the accounting sense, which this session's earlier work already noted need not be a "
+                "single address (see the resolved record above). NOT CONFIRMED — no second address is "
+                "on file.",
+            "the_page_includes_something_the_chain_balance_does_not": "e.g. pending/unsettled buyback "
+                "flow, a different token standard wrapping SYRUP, or a valuation convention. NOT "
+                "CHECKED against Maple's own transparency-page methodology, which was not read in "
+                "enough detail to rule this in or out.",
+            "the_chain_balance_is_simply_correct_and_the_page_is_stale_or_broader": "equally "
+                "unconfirmed — do not assume the page is right merely because it was chosen as primary. "
+                "Primary was chosen because it is what Maple itself publishes, which is a reasonable "
+                "default while the gap is unexplained, not evidence the chain read is wrong.",
+        },
+        "do_not": "do not guess which explanation is right, and do not silently narrow the tolerance "
+                 "or drop the cross-check to make the divergence stop firing — the divergence IS the "
+                 "finding. Do not add a fourth candidate address on a name match, the same mistake "
+                 "that produced the original 0.51-SYRUP failure.",
+        "suggestion": "Read Maple's transparency page methodology (if published) for how it computes "
+                      "'SYRUP Holdings' — does it sum multiple addresses, include pending flow, or "
+                      "apply some other convention the daoMultisig balance alone would not capture? "
+                      "If a second SSF-related address surfaces (from maple-labs/address-registry or "
+                      "a governance proposal), read its balance and check whether "
+                      "daoMultisig + candidate ~= 77.66M before adding it. This is a P2, not a blocker "
+                      "for this round: treasury_holding_tokens is already the more defensible published "
+                      "figure regardless of how the gap resolves.",
+        "recorded": "2026-09-18",
     },
     # ---------------------------------------------------------------- Ether.fi
     {

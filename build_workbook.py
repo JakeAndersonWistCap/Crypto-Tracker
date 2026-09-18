@@ -830,6 +830,22 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
                     elif v == "review":
                         c.fill = FILL_REVIEW
                     elif v in ("missing", "gap", "n/a"):
+                        # "missing" ALONE does not say WHY: it covers both "nobody has looked
+                        # yet" and "chased and permanently closed" (config.UNAVAILABLE), which
+                        # fetch/gaps.py deliberately keeps OFF the Gap Report so a dead end does
+                        # not sit on the to-do list forever — see detect()'s own comment. The A3
+                        # tab already distinguishes these with CLOSED_TEXT and a full comment;
+                        # the Data tab did not, so the same word covered two different states
+                        # with no way to tell them apart here.
+                        if v == "missing":
+                            closed = config.unavailable_for(row.project, row.metric)
+                            if closed:
+                                c.comment = Comment(
+                                    f"CLOSED, not an open gap — {closed['summary']}\n\n"
+                                    f"Impact: {closed['impact']}\n\n"
+                                    f"Reopen if: {closed['reopen_if']}\n\n"
+                                    f"Closed on {closed['closed_on']}. Recorded in config.py "
+                                    f"UNAVAILABLE.", "token_metrics")
                         c.font = Font(name=FONT, size=10, color="999999")
     _set_widths(ws, {"A": 34, "B": 14, "C": 24, "D": 30, "E": 6, "F": 7, "G": 22, "H": 5, "I": 11, "J": 16, "K": 16, "L": 16,
                      "M": 16, "N": 16, "O": 16, "P": 16, "Q": 7, "R": 11, "S": 20, "T": 12, "U": 60})

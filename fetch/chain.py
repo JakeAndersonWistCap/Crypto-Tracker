@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections import defaultdict
 
 import config
@@ -49,6 +50,11 @@ ERC20_ABI = [
     # of staked principal, which is the figure balanceOf can only bound from above. Adding the
     # fragment here is harmless for every other contract: it is only encoded when it is called.
     {"constant": True, "inputs": [], "name": "getTotalPrincipal", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # Aerodrome-family (ve(3,3)) Minter/RewardsDistributor. Also harmless elsewhere: only encoded
+    # when actually called. weekly() is a public state var (Minter's current planned epoch
+    # emission); tokensPerWeek(week) is a public mapping (RewardsDistributor's per-week rebase).
+    {"constant": True, "inputs": [], "name": "weekly", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    {"constant": True, "inputs": [{"name": "", "type": "uint256"}], "name": "tokensPerWeek", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
 ]
 
 # Metrics a contract read can produce, by contract kind.
@@ -65,7 +71,11 @@ REFERENCE_ONLY_KINDS = {"burn_executor"}
 
 # Kinds whose figure is read by calling the CONTRACT ITSELF rather than a token balance, and
 # which therefore need a separate token for symbol() and decimals().
-PRINCIPAL_KINDS = {"stake_principal"}
+PRINCIPAL_KINDS = {"stake_principal", "emission_rate_current", "rebase_last_week"}
+
+# WEEK, in seconds — the ve(3,3) / Aerodrome-family epoch length. Used only to compute
+# call_arg "last_complete_week_unix"; not a general-purpose constant.
+_WEEK_SECONDS = 7 * 86400
 
 # A cumulative stock that also yields a flow once differenced against the prior observation.
 CUMULATIVE_FLOW = {
@@ -357,7 +367,12 @@ class Chain:
                     out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                             f"{key}: {kind}, reference only — no metric read from it", TIER))
                     continue
-                metric = KIND_METRIC.get(kind)
+                # metric_override lets ONE contract's read land under a different metric than
+                # its kind's normal mapping — kind->metric is otherwise shared across every
+                # project using that kind (treasury_holding alone serves Sky, Maple, NEAR and
+                # three GEODNET wallets), so this is how a single project's read is demoted to a
+                # cross-check secondary without moving everyone else's.
+                metric = spec.get("metric_override") or KIND_METRIC.get(kind)
                 if metric is None:
                     out.unconfigured(SOURCE, name, f"{key}: unknown contract kind {kind!r}", TIER)
                     continue
@@ -443,8 +458,24 @@ class Chain:
                         # Only the principal path needs a separate decimals source, and the kwarg
                         # is passed ONLY there. Every ordinary read keeps the original signature,
                         # so a reader that has never heard of decimals_from still works.
+                        #
+                        # call_arg: a call needing an argument computed AT RUN TIME rather than
+                        # stored in config, because it is a function of when the run happens.
+                        # "last_complete_week_unix" is currently the only one — RewardsDistributor.
+                        # tokensPerWeek(week) for the most recently FINISHED week, never the
+                        # current one: that week's checkpoint may not have run yet (Minter.
+                        # updatePeriod() is permissionless and not on a guaranteed schedule), and
+                        # reading it early would return a partial or zero figure that looks like a
+                        # measured one.
+                        call_args = ()
+                        if spec.get("call_arg") == "last_complete_week_unix":
+                            # time.time() — genuinely UTC, unlike calling .timestamp() on a
+                            # tz-naive pandas Timestamp, which is interpreted in the SYSTEM's
+                            # local timezone and would be wrong on any host not set to UTC.
+                            now_ts = int(time.time())
+                            call_args = (((now_ts // _WEEK_SECONDS) - 1) * _WEEK_SECONDS,)
                         value = self.reader.scaled(chain, read_address,
-                                                   spec.get("call") or "totalSupply",
+                                                   spec.get("call") or "totalSupply", *call_args,
                                                    decimals_from=decimals_address)
                     else:
                         value = self.reader.scaled(chain, read_address, spec.get("call") or "totalSupply")

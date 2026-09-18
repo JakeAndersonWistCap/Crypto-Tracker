@@ -702,6 +702,57 @@ def _a3_formula(project_name: str, header_starts: str) -> str:
     return str(ws.cell(row=row, column=col).value or ""), ws.cell(row=row, column=col)
 
 
+def test_stale_status_renders_visibly_on_the_a3_tab_not_just_the_data_tab():
+    """Ether.fi's Dune series going 'stale' must be visible where a reader actually looks.
+
+    This is the tier-4-freeze issue becoming visible rather than silently sitting there — the
+    correct outcome, not a bug — but 'correct' only holds if the presentation actually surfaces
+    it. Checked on the A3 tab (Ether.fi is archetype 3) rather than only the Data tab: the cell
+    must carry the STALE fill AND a comment naming the actual last-point date, and the tab's own
+    plain-text 'Data flags' column (no hover needed) must say so too.
+    """
+    import build_workbook as bw
+
+    asof = pd.Timestamp("2026-09-14")
+    bw._WINDOWS.clear()
+    for label, start, end in bw._period_windows(asof):
+        bw._WINDOWS[label.lower()] = (start.date().isoformat(), end.date().isoformat())
+    data_by_key = {}
+    for pr in config.PROJECTS:
+        for metric in config.metrics_for_project(pr):
+            data_by_key[f"{pr['name']}|{metric}"] = {
+                "status": "ok", "source": "test", "n_points": 9, "entered_on": "",
+                "confidence": "GREEN", "why_amber": ""}
+    stale_note = "last point 2026-07-10; last successful fetch dune"
+    data_by_key["Ether.fi|locked_tokens"] = {
+        "status": "stale", "source": "test", "n_points": 9, "entered_on": "",
+        "confidence": "RED", "why_amber": "", "note": stale_note}
+
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    R = bw.Refs(len(data_by_key), 0, [])
+    bw.write_a3(ws, R, data_by_key)
+
+    heads = [c.value for c in ws[4]]
+    locked_col = next(i + 1 for i, h in enumerate(heads) if h and h.startswith("Tokens locked (ve)"))
+    flags_col = next(i + 1 for i, h in enumerate(heads) if h and h.startswith("Data flags"))
+    row = next(r for r in range(5, ws.max_row + 1) if ws.cell(row=r, column=1).value == "Ether.fi")
+
+    cell = ws.cell(row=row, column=locked_col)
+    assert cell.fill.fgColor.rgb == bw.FILL_STALE.fgColor.rgb, \
+        f"a stale locked_tokens cell must carry the STALE fill, got {cell.fill.fgColor.rgb}"
+    assert cell.comment is not None and "STALE" in cell.comment.text and "2026-07-10" in cell.comment.text, \
+        f"the comment must name the actual last-point date, got {cell.comment.text if cell.comment else None}"
+
+    flags_cell = ws.cell(row=row, column=flags_col)
+    assert "stale" in str(flags_cell.value).lower(), (
+        "the plain-text Data flags column (visible with no hover) must also say 'stale' for "
+        f"Ether.fi, got {flags_cell.value!r}")
+    print("stale rendering ok: A3 tab shows the STALE fill, a comment with the real last-point "
+          "date, and a plain-text flag — not buried on the Data tab alone")
+
+
 def test_fluid_buyback_is_suppressed_because_it_is_a_SWITCH_not_a_rate():
     """Below the threshold there is no small buyback — there is no buyback.
 
@@ -1405,6 +1456,68 @@ def test_escrow_balance_of_reads_the_underlying_not_the_nft():
     print(f"escrow read ok: {locked:,.0f} AERO locked, not the 4,312 positions totalSupply() would report")
 
 
+def test_aerodrome_minter_and_rewards_distributor_are_actually_read_not_just_documented():
+    """gross_issuance_tokens and emissions_tokens must produce real values, not sit empty.
+
+    A prior round added Minter and RewardsDistributor to Aerodrome's contracts as kind
+    burn_executor — REFERENCE_ONLY, meaning documented but never read. That phrasing ("added as
+    reference contracts") was ambiguous enough to be mistaken for "wired". This asserts the two
+    kinds added to fix it: emission_rate_current calls Minter.weekly() with no arguments;
+    rebase_last_week calls RewardsDistributor.tokensPerWeek(week) with a RUN-TIME-COMPUTED
+    argument — the most recently COMPLETED week, never the current one, because that week's
+    checkpoint may not have run yet (Minter.updatePeriod() is permissionless, not scheduled) and
+    reading it early would return a partial or zero figure indistinguishable from a real one.
+    """
+    import time
+
+    WEEK = 7 * 86400
+    now_ts = int(time.time())
+    last_complete_week = ((now_ts // WEEK) - 1) * WEEK
+
+    class MinterRDStub:
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *args, decimals_from=None):
+            if address == "0xMINTER" and call == "weekly" and not args:
+                return 8_123_456.78
+            if address == "0xRD" and call == "tokensPerWeek":
+                assert args, "tokensPerWeek must be called WITH the week argument, not bare"
+                assert args[0] == last_complete_week, (
+                    f"must read the most recently COMPLETED week ({last_complete_week}), "
+                    f"never the current one — got {args[0]}")
+                return 412_000.5
+            raise AssertionError(f"unexpected call: {address}.{call}{args}")
+
+    proj = {"name": "Aerodrome", "archetypes": [3], "contracts": {
+        "token": {"address": "0xAERO", "chain": "base", "kind": "erc20_total_supply", "expected_symbol": "AERO",
+                  "verified": "2026-09-11", "ambiguous": False, "source_url": "u", "read_method": None,
+                  "token_standard": "erc20", "underlying": None},
+        "minter": {"address": "0xMINTER", "chain": "base", "kind": "emission_rate_current",
+                   "expected_symbol": "AERO", "verified": "2026-09-18", "ambiguous": False,
+                   "source_url": "u", "read_method": None, "token_standard": None,
+                   "underlying": "token", "call": "weekly", "call_arg": None},
+        "rewards_distributor": {"address": "0xRD", "chain": "base", "kind": "rebase_last_week",
+                                 "expected_symbol": "AERO", "verified": "2026-09-18", "ambiguous": False,
+                                 "source_url": "u", "read_method": None, "token_standard": None,
+                                 "underlying": "token", "call": "tokensPerWeek",
+                                 "call_arg": "last_complete_week_unix"},
+    }}
+    c = Chain()
+    c.reader = MinterRDStub()
+    out = FetchOutput()
+    c.run([proj], None, out)
+    values = dict(zip(out.frame().metric, out.frame().value))
+
+    assert values.get("gross_issuance_tokens") == 8_123_456.78, \
+        f"Minter.weekly() must populate gross_issuance_tokens, got {values}"
+    assert values.get("emissions_tokens") == 412_000.5, \
+        f"RewardsDistributor.tokensPerWeek(last complete week) must populate emissions_tokens, got {values}"
+    print(f"aerodrome minter/rewardsdistributor ok: gross_issuance_tokens="
+          f"{values['gross_issuance_tokens']:,.2f}, emissions_tokens={values['emissions_tokens']:,.2f}, "
+          f"read against week {last_complete_week} not the current one")
+
+
 def test_unestablished_lock_read_method_is_refused():
     proj = {"name": "Aave", "archetypes": [3], "contracts": {
         "token": {"address": "0xAAVE", "chain": "ethereum", "kind": "erc20_total_supply", "expected_symbol": "AAVE",
@@ -1652,6 +1765,46 @@ def test_dune_sums_split_columns_and_drops_the_incomplete_current_period():
     assert buyback.value.iloc[0] == 1_400_000.0, "actual_buyback_tokens must equal gross_burn_tokens"
     assert cur not in set(df.date.dt.to_period("M"))
     print("dune column summing ok: 1,100,000 + 300,000 = 1,400,000, current month dropped")
+
+
+def test_dune_first_time_metric_ignores_the_trailing_window_even_on_an_incremental_run():
+    """A metric added to config AFTER its query already has history must still get a full backfill.
+
+    GEODNET's actual_buyback_tokens/usd reuse the SAME query as gross_burn_tokens, which has been
+    backfilled for months. On any run after the system's own first run, the caller passes a
+    trimmed window_days (e.g. 30) so daily tiers refresh cheaply — has_history correctly does NOT
+    skip the new metric (it has never been fetched), but the OLD code then still window()-trimmed
+    its result to that same 30 days. With monthly granularity and drop_current_period always
+    removing the newest (incomplete) month, the closest surviving row is a month or more old —
+    outside any 30-day window — so the new metric silently got ZERO rows on every run, looking
+    identical to a broken query rather than an unbuilt one.
+    """
+    import os
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    now = pd.Timestamp.now("UTC").tz_localize(None)
+    # Two full months back, so it is definitely outside a 30-day trailing window regardless of
+    # where in the current month "now" falls.
+    old_month = now.to_period("M") - 2
+
+    d = Dune(has_history={("GEODNET", "gross_burn_tokens")})  # gross_burn_tokens is the only one
+    d.http = _Rows([
+        {"month": str(old_month), "tokens_burned": 500_000.0, "sol_tokens_burned": 100_000.0},
+    ])
+    out = FetchOutput()
+    # window_days=30: an ordinary incremental run, NOT the system's first ever run.
+    d.run([config.PROJECT_BY_NAME["GEODNET"]], 30, out)
+    df = out.frame()
+
+    burn = df[df.metric == "gross_burn_tokens"]
+    buyback = df[df.metric == "actual_buyback_tokens"]
+    assert burn.empty, "gross_burn_tokens already has history — must be SKIPPED, not re-fetched"
+    assert not buyback.empty, (
+        "actual_buyback_tokens has never been fetched before — its first backfill must ignore "
+        "the run's 30-day window and return its full history, not silently zero rows")
+    assert buyback.value.iloc[0] == 600_000.0
+    print("dune first-time-ignores-window ok: a brand-new metric sharing an already-backfilled "
+          "query still gets its own full history on an incremental run")
 
 
 class _Rows:
@@ -2006,15 +2159,45 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
     finally:
         del os.environ["TOKEN_METRICS_DUNE_ALWAYS"]
 
-    # without the flag the window still applies, because then it IS just a trailing re-fetch
-    d = Dune()
+    # WITHOUT THE FLAG, TWO DIFFERENT ORDINARY CASES, NEITHER OF WHICH IS "FETCH AND TRIM" —
+    # CORRECTED 2026-09-18. The window_days trim on an unforced run only ever mattered for a
+    # metric with NO history (see test_dune_first_time_metric_ignores_the_trailing_window_even_
+    # on_an_incremental_run): that case now ALSO ignores the window and takes the full history,
+    # for the same reason the forced re-pull above does — a metric's own first backfill must
+    # never be silently truncated just because OTHER metrics in the same run are incremental.
+    # This replaces the previous version of this test, which called Dune() with no has_history
+    # and asserted a 25-31 row window trim — that was exercising the first-time path (has_history
+    # defaults to empty) and got a trimmed result only because the OLD code applied window_days
+    # unconditionally. The trim was never really about "ordinary vs forced"; it was an accident of
+    # not distinguishing first-time from already-historied. The real distinction:
+    #
+    #   already has history, no flag  -> SKIPPED entirely (this codebase never does a plain
+    #                                    trimmed re-fetch of a backfilled series; see run()'s
+    #                                    skip branch, which fires whenever it is not first_time,
+    #                                    not forced and not an ongoing/snapshot query)
+    #   no history yet (first time)   -> full history, unconditionally (this test's first block,
+    #                                    and the dedicated first-time test above)
+    d = Dune(has_history=held)
     d.http = _Rows(rows)
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
     locked = out.frame()
     locked = locked[locked.metric == "locked_tokens"]
-    assert 25 <= len(locked) <= 31, f"an ordinary run still honours the 30-day window, got {len(locked)}"
-    print("forced re-pull ok: full 120 rows with the flag, 30-day window without it")
+    assert locked.empty, (
+        "an already-historied metric with no forcing flag must be SKIPPED, not fetched-and-"
+        f"trimmed — this codebase has no 'ordinary incremental re-fetch' path, got {len(locked)} rows")
+    assert any(e.status == "skipped" and "locked_tokens" in e.message for e in out.log)
+
+    d2 = Dune()   # has_history defaults to empty — this metric's OWN first run
+    d2.http = _Rows(rows)
+    out2 = FetchOutput()
+    d2.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out2)
+    locked2 = out2.frame()
+    locked2 = locked2[locked2.metric == "locked_tokens"]
+    assert len(locked2) == 120, (
+        f"a metric's first-ever backfill must ignore window_days too, got {len(locked2)} rows")
+    print("forced re-pull ok: full 120 rows with the flag; an already-historied metric is "
+          "skipped without it; a genuinely first-time metric still gets the full 120")
 
 
 def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
@@ -2134,6 +2317,12 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     The remaining failure mode is the MIRROR of the 0.51: Maple renders "77.66M" and parse_number
     handles the suffix, but if the page ever drops it, parse_number returns 77.66 — small, precise
     and entirely plausible. The sanity floor is what stands between that and the sheet.
+
+    ROLES FLIPPED 2026-09-18: the page (this entry) is now the PRIMARY for treasury_holding_tokens,
+    not a secondary cross-check for buyback_fund_balance_dashboard. The chain read (daoMultisig)
+    is what got demoted, to treasury_holding_tokens_chain_crosscheck via metric_override — because
+    its first live read (23.09M) did not reconcile against this page's 77.66M, and Maple's own
+    publication is the more defensible default while that gap is unexplained (see OPEN_QUESTIONS).
     """
     import yaml
     from fetch.base import parse_number
@@ -2141,11 +2330,12 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
 
     entries = yaml.safe_load(open("sources.yaml", encoding="utf-8"))
     entry = next(e for e in entries
-                 if e["project"] == "Maple" and e["metric"] == "buyback_fund_balance_dashboard")
+                 if e["project"] == "Maple" and e["metric"] == "treasury_holding_tokens")
 
     ready, why = entry_ready(entry)
-    assert ready, f"the Maple cross-check secondary must be usable, got: {why}"
+    assert ready, f"the Maple treasury primary must be usable, got: {why}"
     assert entry["anchor"] == "SYRUP Holdings", f"anchor is the whole job here, got {entry['anchor']!r}"
+    assert entry["url"] == "https://maple.finance/transparency"
 
     # NO scale FIELD. parse_number already expands the suffix; a scale would multiply again.
     assert "scale" not in entry or entry.get("scale") in (None, 1), \
@@ -2155,7 +2345,7 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
 
     # THE FLOOR, read from where validate_frame actually reads it. The registry's own
     # sanity_min/sanity_max are not consulted by anything, so asserting those would prove nothing.
-    lo, hi = config.sanity_bounds("Maple", "buyback_fund_balance_dashboard")
+    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
     unscaled = parse_number("77.66")          # what a dropped suffix would yield
     assert unscaled == 77.66
     assert lo is not None and unscaled < lo, \
@@ -2163,30 +2353,83 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     assert lo <= 77_660_000.0 <= (hi or float("inf")), \
         f"and the correct figure must pass, bounds were ({lo}, {hi})"
 
-    # The cross-check itself exists and points at the right pair.
+    # buyback_fund_balance_dashboard no longer has a route for Maple — the SAME scrape now feeds
+    # treasury_holding_tokens directly, so this must be declared not_applicable, not a live gap.
+    assert config.not_applicable_reason("Maple", "buyback_fund_balance_dashboard") is not None, \
+        "the vacated metric name must be explained, not left as an unexplained permanent gap"
+
+    # The cross-check itself exists and points at the FLIPPED pair: page primary, chain secondary.
     checks = config.PROJECT_BY_NAME["Maple"]["cross_checks"]
-    pair = next(c for c in checks if c["secondary"] == "buyback_fund_balance_dashboard")
+    pair = next(c for c in checks if c["secondary"] == "treasury_holding_tokens_chain_crosscheck")
     assert pair["primary"] == "treasury_holding_tokens"
-    # RESOLVED 2026-09-18: the address question is settled, exactly as this test's own comment
-    # predicted it eventually would be. destination_status is no longer "disputed" (which uniquely
-    # refuses to store — see fetch/chain.py), so the primary CAN now store a figure and the
-    # cross-check can fire on the next live run. "verified_by_label" is a weaker tier than
-    # "confirmed" (Etherscan's label, not Maple's own material, identifies the address) — the armed
-    # cross-check asserted above is what upgrades it: a balance landing near 77.66M confirms the
-    # label, a balance near zero or wildly different reopens the dispute.
+    assert pair["prefer"] == "primary", "prefer the page — it is what Maple itself publishes"
+
+    # The chain read is KEPT, demoted via metric_override — not deleted, not still writing to
+    # treasury_holding_tokens (which would collide with the page under the shared metric key and
+    # be silently dropped by fetch/__init__._resolve_tier_collisions in favour of whichever tier
+    # ran first, tier 2, defeating the whole point of promoting the page).
     treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
-    assert treasury["destination_status"] != "disputed", \
-        "the primary should be storing again now that the address is resolved"
+    assert treasury["metric_override"] == "treasury_holding_tokens_chain_crosscheck"
     assert treasury["destination_status"] == "verified_by_label"
     assert treasury["address"] == "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", \
         "must be the daoMultisig / 'Maple Finance: DAO' address, not the old disputed fee treasury"
-    print("maple cross-check ok: armed (anchor 'SYRUP Holdings', entry_ready passes), "
-          "77.66M parses, an unscaled 77.66 is rejected by the floor, treasury address resolved "
-          "to verified_by_label so the primary can store again")
+    print("maple cross-check ok: page is now primary (anchor 'SYRUP Holdings', entry_ready "
+          "passes, floor rejects an unscaled 77.66), chain read demoted to a cross-check via "
+          "metric_override so the two no longer collide")
+
+
+def test_data_tab_distinguishes_closed_missing_from_an_open_one():
+    """'missing' alone does not say whether nobody has looked, or the search was chased and closed.
+
+    Fluid's actual_buyback_tokens/usd are a real example: the Reserve address was never published
+    anywhere Fluid has written, that search is recorded as CLOSED in config.UNAVAILABLE, and
+    fetch/gaps.py deliberately keeps closed items OFF the Gap Report — so the cell's status ends
+    up 'missing' (no data, no gap row) rather than 'gap'. The A3 tab already renders this
+    correctly (CLOSED_TEXT plus a full comment); the Data tab printed the same grey 'missing' for
+    this as for a metric nobody has ever tried to source, with nothing to tell them apart.
+    """
+    import build_workbook as bw
+    from openpyxl import Workbook
+
+    empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier",
+                                  "is_manual", "entered_on"])
+    data = bw.aggregate(empty, pd.DataFrame(), pd.Timestamp("2026-09-18"),
+                        gaps=pd.DataFrame(), review=pd.DataFrame())
+    row = data[(data.project == "Fluid") & (data.metric == "actual_buyback_tokens")].iloc[0]
+    assert row["status"] == "missing", (
+        f"precondition: this must reproduce the reported state, got {row['status']!r}")
+
+    wb = Workbook()
+    ws = wb.active
+    bw.write_data(ws, data, pd.Timestamp("2026-09-18"))
+
+    status_col = bw.DATA_COLS.index("status") + 1
+    r = next(i for i in range(2, ws.max_row + 1)
+             if ws.cell(row=i, column=bw.DATA_COLS.index("project") + 1).value == "Fluid"
+             and ws.cell(row=i, column=bw.DATA_COLS.index("metric") + 1).value == "actual_buyback_tokens")
+    cell = ws.cell(row=r, column=status_col)
+    assert cell.value == "missing"
+    assert cell.comment is not None, "a closed-and-documented 'missing' must carry a comment saying so"
+    assert "CLOSED" in cell.comment.text and "not an open gap" in cell.comment.text
+    assert "Reserve address" in cell.comment.text or "never published" in cell.comment.text.lower()
+
+    # AND THE NEGATIVE: an ordinary applicable-but-genuinely-unsourced metric gets no such
+    # comment — only a metric matching config.UNAVAILABLE does.
+    other_row = data[(data.status == "missing")
+                     & ~data.apply(lambda r: bool(config.unavailable_for(r.project, r.metric)), axis=1)]
+    assert not other_row.empty, "need at least one ordinary (non-closed) missing row to contrast against"
+    o = other_row.iloc[0]
+    r2 = next(i for i in range(2, ws.max_row + 1)
+              if ws.cell(row=i, column=bw.DATA_COLS.index("project") + 1).value == o["project"]
+              and ws.cell(row=i, column=bw.DATA_COLS.index("metric") + 1).value == o["metric"])
+    assert ws.cell(row=r2, column=status_col).comment is None, \
+        "an ordinary missing metric (not on config.UNAVAILABLE) must not get the CLOSED comment"
+    print("data tab ok: a closed/UNAVAILABLE 'missing' carries an explanatory comment; an "
+          "ordinary unsourced 'missing' does not")
 
 
 def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
-    """Two separate things made the armed Maple guard look like nobody had built it.
+    """Two separate things made an armed guard look like nobody had built it.
 
     FIRST, the gap text was factually wrong. fetch_all recorded only the NOT-READY registry
     entries, so a complete, enabled, armed entry was invisible to the gap reporter and fell
@@ -2194,9 +2437,17 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
     and a selector. A reader acting on that would have gone and written a second entry.
 
     SECOND, even with correct text, status 'gap' cannot distinguish "armed and correctly idle"
-    from "nobody has built this". The secondary here has nothing to compare against because its
-    PRIMARY is a disputed destination that stores nothing — which is the guard working, not
-    failing.
+    from "nobody has built this". A secondary has nothing to compare against when its PRIMARY is
+    a disputed destination that stores nothing — which is the guard working, not failing.
+
+    Part (1) uses Maple's treasury_holding_tokens (the armed page scrape, promoted to primary
+    2026-09-18 — see test_the_maple_cross_check_is_ARMED...). Part (2) uses CHAINLINK's
+    buyback_fund_balance/buyback_fund_balance_dashboard pair, not Maple's: after the 2026-09-18
+    flip Maple's own primary is page-sourced with no contract behind it at all, so
+    destination_disputed can never apply to it — cross_check_waiting_on_primary is structurally
+    inert for Maple now, asserted explicitly below rather than left unexercised. Chainlink's pair
+    still has a contract-based primary (the Reserve) and an armed dashboard secondary, so it is
+    what actually exercises the general mechanism.
     """
     import pandas as pd
     import build_workbook as bw
@@ -2213,7 +2464,7 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
             if ok else why)
     rows = detect(config.PROJECTS, pd.DataFrame(columns=LONG_COLUMNS), set(), registry, [])
     gap = next(g for g in rows
-               if g["project"] == "Maple" and g["metric"] == "buyback_fund_balance_dashboard")
+               if g["project"] == "Maple" and g["metric"] == "treasury_holding_tokens")
     assert "no sources.yaml entry" not in gap["reason"], \
         f"the entry exists and is armed — saying otherwise sends the reader to write a second one: {gap['reason']}"
     assert "ARMED" in gap["reason"] and "maple.finance/transparency" in gap["reason"] \
@@ -2221,39 +2472,40 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
         f"an armed entry must name its url and selector so the reader can tell the cases apart: {gap['reason']}"
     assert "Run Log" in gap["suggestion"], "and point at where 'did it actually run' is answered"
 
-    # (2) status must distinguish armed-and-idle from unbuilt
-    #
-    # Maple's treasury dispute was RESOLVED 2026-09-18 (see test_the_maple_cross_check_is_ARMED...),
-    # so the primary is no longer suppressed by config and this branch has no live example left.
-    # The mechanism itself is unchanged — force the disputed state back on temporarily, the same
-    # pattern used elsewhere in this file (e.g. test_fluid_buyback_is_suppressed...) to exercise a
-    # branch the live config no longer takes.
-    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
-    live_status = treasury["destination_status"]
-    treasury["destination_status"] = "disputed"
+    # MAPLE-SPECIFIC, POST-FLIP: the mechanism cannot apply here any more. treasury_holding_tokens
+    # is sourced from a page, not a contract, so no destination_status exists for it to check.
+    assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
+        "Maple's primary is page-sourced now, not contract-based — 'waiting' cannot apply to it"
+
+    # (2) status must distinguish armed-and-idle from unbuilt — exercised on Chainlink, whose
+    # buyback_fund_balance/buyback_fund_balance_dashboard pair is still shaped the way this
+    # mechanism was built for: both sides contract-or-scrape as before the Maple flip.
+    reserve = config.PROJECT_BY_NAME["Chainlink"]["contracts"]["reserve"]
+    live_status = reserve["destination_status"]
+    reserve["destination_status"] = "disputed"
     try:
         empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier",
                                       "is_manual", "entered_on"])
         out = bw.aggregate(empty, pd.DataFrame(), pd.Timestamp("2026-09-15"),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
 
-        waiting = out[(out.project == "Maple") & (out.metric == "buyback_fund_balance_dashboard")].iloc[0]
+        waiting = out[(out.project == "Chainlink") & (out.metric == "buyback_fund_balance_dashboard")].iloc[0]
         assert waiting["status"] == "waiting", \
             f"an armed secondary with a suppressed primary is not a plain gap: {waiting['status']}"
-        assert "WAITING ON THE PRIMARY" in waiting["note"] and "treasury_holding_tokens" in waiting["note"], \
+        assert "WAITING ON THE PRIMARY" in waiting["note"] and "buyback_fund_balance" in waiting["note"], \
             f"and the note must name what it is waiting for: {waiting['note']!r}"
 
         # NARROW ON PURPOSE: an ordinary dashboard metric with no cross-check is untouched, and so is
         # a secondary whose primary is merely empty rather than suppressed by config.
-        other = out[(out.project == "Maple") & (out.metric == "locked_tokens_dashboard")].iloc[0]
+        other = out[(out.project == "Chainlink") & (out.metric == "locked_tokens_dashboard")].iloc[0]
         assert other["status"] != "waiting", \
             f"only a secondary blocked BY CONFIG waits; everything else is an honest gap: {other['status']}"
-        assert config.cross_check_waiting_on_primary("Chainlink", "buyback_fund_balance_dashboard") is None, \
-            "Chainlink's primary is not disputed, so its secondary is an ordinary gap"
+        assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
+            "Maple's primary is not contract-based, so its secondary is never 'waiting'"
         print("waiting state ok: armed entry named with its url and selector, status 'waiting' not "
-              "'gap', and nothing else reclassified")
+              "'gap' on Chainlink, and Maple correctly never waits post-flip")
     finally:
-        treasury["destination_status"] = live_status
+        reserve["destination_status"] = live_status
 
 
 def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
@@ -2273,6 +2525,12 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     happens to be disputed today, so the dispute is forced back on temporarily (same pattern as
     test_fluid_buyback_is_suppressed...) to keep exercising it against realistic historical data —
     the actual 0.51253570332391 SYRUP figure this guard was built for.
+
+    METRIC RENAMED 2026-09-18: this contract's write target moved from treasury_holding_tokens to
+    treasury_holding_tokens_chain_crosscheck via metric_override, when the page was promoted to
+    primary and the chain read demoted to a cross-check (see config.py). The 0.51 SYRUP figure
+    would land under the new metric name today; the mechanism under test (a disputed contract's
+    stale stored row gets blanked and RED) does not care which metric name it is.
     """
     import pandas as pd
     import build_workbook as bw
@@ -2281,12 +2539,12 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     live_status = treasury["destination_status"]
     treasury["destination_status"] = "disputed"
     try:
-        assert config.destination_disputed("Maple", "treasury_holding_tokens"), \
+        assert config.destination_disputed("Maple", "treasury_holding_tokens_chain_crosscheck"), \
             "precondition: Maple's treasury contract is the disputed one"
 
         stale = pd.DataFrame([{
             "date": pd.Timestamp("2026-09-14"), "project": "Maple",
-            "metric": "treasury_holding_tokens", "value": 0.5125357033239131,
+            "metric": "treasury_holding_tokens_chain_crosscheck", "value": 0.5125357033239131,
             "source": "chain:ethereum:treasury", "tier": 2, "is_manual": False, "entered_on": ""}])
 
         # NO gap row is passed, deliberately: the live symptom is that the gap never reaches this
@@ -2294,7 +2552,7 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
         # the wrong reason.
         out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
-        row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens")].iloc[0]
+        row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens_chain_crosscheck")].iloc[0]
 
         assert row["status"] == "disputed", f"a stale row under a dispute must not read 'ok': {row['status']}"
         assert pd.isna(row["now"]), f"the figure must be blanked, not shown: {row['now']}"
@@ -2338,6 +2596,11 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
     test_the_maple_cross_check_is_ARMED...). The disputed-destination mechanism this test protects
     is general, not specific to Maple's current state, so the dispute is forced back on
     temporarily to keep exercising it against the real historical 0.51253570332391 SYRUP reading.
+
+    METRIC RENAMED 2026-09-18: this contract writes to treasury_holding_tokens_chain_crosscheck
+    now (metric_override — see config.py), not treasury_holding_tokens, regardless of dispute
+    status. Both names are checked below: the new one absent for the real reason (disputed), the
+    old one absent because nothing on this project writes there via a contract read any more.
     """
     spec = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
     live_status = spec["destination_status"]
@@ -2346,6 +2609,7 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
         assert spec["destination_status"] == "disputed", (
             "the address is real and its role is not — it must be read as evidence and stored as "
             f"nothing, got {spec.get('destination_status')!r}")
+        assert spec["metric_override"] == "treasury_holding_tokens_chain_crosscheck"
 
         SYRUP = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
 
@@ -2367,8 +2631,11 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
         c.run([config.PROJECT_BY_NAME["Maple"]], None, out)
         df = out.frame()
 
-        assert "treasury_holding_tokens" not in set(df.metric), \
+        assert "treasury_holding_tokens_chain_crosscheck" not in set(df.metric), \
             "a disputed destination must not reach the sheet as a figure"
+        # AND THE OLD NAME NEVER APPEARS EITHER, for the SEPARATE reason that metric_override
+        # redirects this contract away from it entirely — true whether or not it is disputed.
+        assert "treasury_holding_tokens" not in set(df.metric)
         staged = [s for s in out.staged if "treasury_holding_tokens" in str(s.get("name", ""))]
         assert staged and abs(float(staged[0]["value"]) - 0.51253570332391) < 1e-9, \
             f"the observation must survive as EVIDENCE, not vanish: {out.staged}"
@@ -2377,7 +2644,7 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
 
         # THE GUARD FOR THE FIX: if the dispute is ever cleared against a still-wrong address, the
         # floor must reject the dust rather than let it back in quietly.
-        lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
+        lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens_chain_crosscheck")
         assert lo is not None and 0.51253570332391 < lo <= 75_780_000 <= (hi or float("inf")), \
             f"the floor must exclude dust and admit the reported ~75.78m, got ({lo}, {hi})"
         print("maple treasury ok: dust NOT stored, staged as evidence, gap explains it, floor guards the fix")
