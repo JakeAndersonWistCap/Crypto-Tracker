@@ -3066,14 +3066,45 @@ PROJECTS = [
                 note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page. Address confirmed; "
                      "holdings unread."),
         },
+        # CONFIRMED 2026-09-21. The single thing this block was waiting for — a GEODNET-authored
+        # statement of the mechanism, as opposed to our own query observing its effects — arrived
+        # with the archetype 3 resolution of 2026-09-18 and was not carried back here. That is the
+        # same failure class as the Gap Report closures: the finding was written up in one place
+        # and the structured field it governs stayed at its old value, so every burn figure on the
+        # project kept carrying "the burn MECHANISM is assumed, not documented" in confidence_for.
+        #
+        # THE TWO LEGS, which together are what "confirmed" needs:
+        #   WHAT GEODNET SAYS — @GEODNET's own June 2026 burn-stats post: fiat revenue buys GEOD on
+        #     the open market and the purchased tokens are permanently burned. First-party, and the
+        #     bar the earlier version of this note set explicitly ("no GEODNET document on file
+        #     states the mechanism").
+        #   WHAT WE OBSERVE — Dune 8683175 aggregates real ERC-20 transfers to 0x...dEaD on Polygon
+        #     and a Solana burn token account. The destination is a dead address, not a protocol
+        #     supply decrement, which is what picks transfer_to_dead_address over
+        #     protocol_level_destruction.
+        #
+        # Neither leg alone would do it: the post states a burn without naming a mechanism, and the
+        # query shows a mechanism without GEODNET vouching for it. status stays at "assumed" for
+        # any project where only one of the two exists.
         "burn_mechanism": {
-            "model": "transfer_to_dead_address", "status": "assumed",
-            "source_url": "https://dune.com/queries/8683175", "source_date": None,
-            "note": "ASSUMED, but the best-evidenced of the four. The Dune query aggregates real ERC-20 "
-                    "transfers to 0x...dEaD on Polygon and a Solana burn token account, so transfers to a "
-                    "dead address are OBSERVED rather than inferred — that is mechanism evidence, not just "
-                    "address evidence. Still not 'confirmed': the query is our own construction, and no "
-                    "GEODNET document on file states the mechanism.",
+            "model": "transfer_to_dead_address", "status": "confirmed",
+            "source_url": "https://dune.com/queries/8683175", "source_date": "2026-09-21",
+            "confirmed_by": {
+                "first_party_statement": "@GEODNET, June 2026 burn-stats post — fiat revenue "
+                                         "purchases GEOD on the open market and the purchased "
+                                         "tokens are permanently burned (see the archetype 3 "
+                                         "resolution in OPEN_QUESTIONS for the full source list)",
+                "observed_destination": "Dune 8683175 — ERC-20 transfers to 0x...dEaD on Polygon "
+                                        "and a Solana burn token account",
+                "confirmed_on": "2026-09-21",
+            },
+            "note": "CONFIRMED 2026-09-21 — see the block comment above for the two legs and why "
+                    "either alone is insufficient. Previously 'assumed', which was correct until "
+                    "the first-party statement landed on 2026-09-18 and was simply not carried "
+                    "back to this field. STILL NO GIP: no on-chain governance proposal formalises "
+                    "the mechanism or the 80/20 revenue share, recorded as the residual gap "
+                    "rather than as a reason to withhold confirmation given a first-party "
+                    "statement exists.",
         },
         "burn_read_method": "transfer",
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
@@ -5053,6 +5084,12 @@ PROJECTS = [
             # 45% to LSSKY stakers. The primary governance forum URL is still not captured — Messari
             # is a secondary source that quotes the primary, which is better than nothing and worse
             # than the vote itself, so it is recorded as such rather than promoted.
+            #
+            # AND THIS REGIME IS SUPERSEDED, 2026-09-21 note: Stage 2 took effect 2026-09-14 and is
+            # PRIMARY-sourced from Sky's own thread — see fee_split_v2, which is what describes the
+            # allocation in force. This block still governs 2026-08-13 to 2026-09-13, so its
+            # secondary source still matters for that window and the proposal's own forum URL is
+            # still worth capturing (carried by the "pre-2026-08-13 split" open question).
             "source_url": "https://messari.io/",
             "source_date": "2026-08-13",
             "programmed": False,   # explicitly governance-set and revisable
@@ -6772,6 +6809,49 @@ def series_granularity(project_name: str, metric: str) -> str:
     return "daily"
 
 
+# HOW A SETTLED QUESTION ANNOUNCES ITSELF. Every closed record in OPEN_QUESTIONS opens its topic
+# with one of these plus a date — that is the convention the file already follows, and the check
+# below turns it from a convention into a rule.
+CLOSURE_MARKERS = ("RESOLVED", "CLOSED", "ANSWERED", "SETTLED")
+
+
+def _check_open_question_status() -> list[str]:
+    """The structural `status` field and the prose must agree about whether a question is shut.
+
+    ** THIS IS THE THIRD TIME THE SAME FAILURE HAS BEEN FOUND, WHICH IS WHY IT IS NOW A CHECK. **
+    Settled questions were being written up in the topic text — "RESOLVED 2026-09-16 — ...",
+    "CLOSED 2026-09-14 — ..." — while `status` stayed absent, and fetch/gaps.py reads `status`.
+    So the Gap Report went on printing "[open] RESOLVED ..." as live P1 work, for weeks, on
+    questions nobody could action because they were already answered.
+
+    Fixing the reader (2026-09-18) did not stop it recurring, because nothing made the two agree:
+    the next person to settle a question wrote the prose and forgot the field, exactly as before.
+    A convention that depends on remembering is not a mechanism.
+
+    MATCHED AT THE START OF THE TOPIC, not anywhere in it. A live question may perfectly well
+    discuss something being refuted or confirmed — Near's supply question says its own leading
+    HYPOTHESIS is refuted while the question stays wide open — and a substring match would close
+    it by accident, which is the same class of error in the other direction.
+    """
+    errs = []
+    for q in OPEN_QUESTIONS:
+        topic = str(q.get("topic") or "")
+        status = (q.get("status") or "open")
+        announced = topic.split(None, 1)[0].rstrip(":,—-") if topic.split() else ""
+        looks_closed = announced in CLOSURE_MARKERS
+        if looks_closed and status == "open":
+            errs.append(
+                f"{q.get('project')}: topic opens with {announced!r} but status is still 'open', "
+                f"so the Gap Report will print it as live work — set status (resolved/closed/"
+                f"answered). Topic: {topic[:80]}")
+        if not looks_closed and status != "open":
+            errs.append(
+                f"{q.get('project')}: status is {status!r} but the topic does not say so — open it "
+                f"with RESOLVED/CLOSED/ANSWERED/SETTLED and the date, so the record reads as "
+                f"settled in config too. Topic: {topic[:80]}")
+    return errs
+
+
 def _check_series_granularity() -> list[str]:
     """A declared granularity must be one we know how to date, and a tail rule must be sourced."""
     errs = []
@@ -7644,7 +7724,28 @@ OPEN_QUESTIONS = [
                       "the closure). Do not remove it on the docs' silence.",
     },
     {
-        "project": "Sky", "topic": "FOR REVIEW — do BOTH legs of Sky's 55/45 split return value to the protocol?",
+        # ANSWERED 2026-09-21 by the two-layer finding (sbe_allocation_layers). The question was
+        # posed as though the 55/45 were the whole allocation; it is not. It is LAYER 2 — how the
+        # Smart Burn Engine divides what it receives — sitting under LAYER 1, which decides how
+        # much reaches the engine at all (75% of surplus pre-April, 7.5% interim, 27.5% of NPS
+        # from Stage 2 on 2026-09-14).
+        #
+        # THE ANSWER: no, the two legs do not do the same thing, and neither is a burn.
+        #   55% -> SKY bought and sent to the MCD Pause Proxy, Sky's governance-controlled
+        #          treasury. Supply is not retired; governance can and does spend from it. This is
+        #          treasury accumulation, recorded as such in destination_effect.
+        #   45% -> LSSKY stakers. A genuine return to holders, and not a supply reduction either.
+        # Stage 2 supersedes the pair anyway: from 2026-09-14 the burn is its own 5% leg, stated
+        # separately by Sky (fee_split_v2.burn_share), which is the first leg on this project that
+        # actually destroys supply.
+        #
+        # THE PRESENTATION QUESTION THIS RECORD ALSO ASKED — whether Sky's archetype 3 figure
+        # should be called a buyback at all — is NOT closed by this and does not belong here. It is
+        # a cross-project comparability question, and destination_effect already carries the flag
+        # that keeps the 55% out of any burn total.
+        "status": "answered",
+        "project": "Sky", "topic": "ANSWERED 2026-09-21 — the 55/45 is Layer 2, and NEITHER leg "
+                                   "burns: 55% accumulates in the treasury, 45% pays stakers",
         "severity": 1,
         "reason": "THE RECEIVER QUESTION IS ANSWERED and this is what it leaves behind. The Smart Burn "
                   "Engine's receiver is the MCD Pause Proxy, Sky's governance-controlled treasury — so "
@@ -7732,7 +7833,22 @@ OPEN_QUESTIONS = [
                       "open question on the Unichain UNI address — that, not this, is the live item.",
     },
     {
-        "project": "Sky", "topic": "the April 2026 buyback reduction is not in the fee-split history",
+        # RESOLVED 2026-09-21. The cut IS on file, and has been since 2026-09-18 — it went into
+        # sbe_allocation_layers.layer_1 as two dated periods (pre-2026-04 at 75% of protocol
+        # surplus, 2026-04 interim at 7.5%) and this record was never updated to say so. Same
+        # failure class as the Gap Report closures: written up in one place, not carried to the
+        # field that governs the report.
+        #
+        # WHY fee_split.history STILL SHOWS UNCONFIRMED, AND WHY THAT IS CORRECT: Layer 1 and
+        # fee_split.share_to_buyback are DIFFERENT QUANTITIES. Layer 1 is the share of protocol
+        # surplus that reaches the buyback machinery at all; share_to_buyback is how that machinery
+        # then splits what it received (the 55/45). Filling 0.75 into the pre-April period would be
+        # exactly the mistake sbe_allocation_layers.do_not warns against. What remains undocumented
+        # for those periods is the LAYER 2 split, and that is carried by the "pre-2026-08-13 split"
+        # record, which stays open.
+        "status": "resolved",
+        "project": "Sky", "topic": "RESOLVED 2026-09-21 — the April 2026 cut is on file as Layer 1: "
+                                   "75% of surplus pre-April, 7.5% interim from April",
         "severity": 1,
         "reason": "The history had ONE undocumented period covering everything before 2026-08-13. The "
                   "public record says that span contained at least two materially different regimes: the "
@@ -7751,7 +7867,23 @@ OPEN_QUESTIONS = [
                       "rejects a period that carries a share while known_change is still unresolved.",
     },
     {
-        "project": "Sky", "topic": "fee-split primary source URL",
+        # RESOLVED 2026-09-21, for the CURRENT regime, which is what this record was about: the
+        # split in force is now primary-sourced. @SkyEcosystem's thread of 2026-09-14 is Sky's own
+        # account of the Stage 2 allocation and is recorded on fee_split_v2.source_url
+        # (x.com/SkyEcosystem/status/2099488996099227965). fee_split.source_url still points at
+        # messari.io, which is a SECONDARY quoting the primary — already labelled as such in
+        # fee_split's own comment and deliberately not promoted. It governs the 2026-08-13 regime,
+        # which Stage 2 has superseded.
+        #
+        # BE PRECISE ABOUT WHAT THE THREAD SOURCES. It is the Stage 2 allocation of 2026-09-14. It
+        # is NOT the 2026-08-13 Executive Proposal, whose forum post URL is still uncaptured — a
+        # different event with a different split. That residual is folded into the
+        # "pre-2026-08-13 split" record, which stays open and names it explicitly, rather than
+        # being closed here on a source that does not cover it.
+        "status": "resolved",
+        "project": "Sky", "topic": "RESOLVED 2026-09-21 — the CURRENT split is primary-sourced "
+                                   "(@SkyEcosystem 2026-09-14); the 2026-08-13 proposal URL moves "
+                                   "to the pre-2026-08-13 record",
         "reason": "The 55/45 split is recorded from a Sky governance Executive Proposal approved 2026-08-13, "
                   "but the PRIMARY governance forum post URL has not been captured, so fee_split.source_url "
                   "is None.",
@@ -7759,7 +7891,23 @@ OPEN_QUESTIONS = [
                       "config.py under Sky fee_split.source_url and in the history entry for 2026-08-13.",
     },
     {
-        "project": "Sky", "topic": "pre-2026-08-13 split",
+        # UPDATED 2026-09-21 — NARROWED, NOT CLOSED. Two of the three things this record used to
+        # lump together are now settled, and leaving it unchanged would keep asking for them:
+        #   SETTLED — the April 2026 cut is dated and quantified at Layer 1 (75% -> 7.5% of
+        #     protocol surplus). It is a Layer 1 fact and does not fill a Layer 2 share.
+        #   SETTLED — the split in force is primary-sourced from Sky's own 2026-09-14 thread.
+        # WHAT IS ACTUALLY LEFT, and it is the harder part:
+        #   1. The LAYER 2 split for each pre-2026-08-13 period — how the Smart Burn Engine
+        #      divided what it received, before the 55/45. Not documented for either period.
+        #   2. The exact DATE the April 2026 overhaul took effect. 2026-04-30 in fee_split.history
+        #      is a placeholder, and the period boundary is not a known event date.
+        #   3. The 2026-08-13 Executive Proposal's own forum post URL, inherited from the
+        #      fee-split-source record closed above.
+        # Every window ending before 2026-08-13, or spanning it, stays suppressed until 1 and 2
+        # are documented — and known_change on the post-overhaul period keeps it suppressed even
+        # if somebody fills in a share, which is the guard that matters here.
+        "project": "Sky", "topic": "pre-2026-08-13 split — the LAYER 2 shares and the April "
+                                   "effective date",
         "reason": "The split that applied BEFORE 2026-08-13 is not documented, so every window ending before "
                   "that date, and every window spanning it, is unconfirmed and its derived figure suppressed. "
                   "The current 55% is deliberately NOT applied retroactively. NOTE: that span is now TWO "
@@ -7903,7 +8051,15 @@ OPEN_QUESTIONS = [
                       "governance can move it at any time.",
     },
     {
-        "project": "GEODNET", "topic": "the burn backfill has NEVER RUN — it was skipped, not successful",
+        # CLOSED 2026-09-21 — the backfill ran and landed. Read back from the store: 49 rows on
+        # gross_burn_tokens and 41 on actual_buyback_tokens, against the 1 row that prompted this
+        # record. The fix that made it run was the tier-4 first-backfill change of 2026-09-18
+        # (fetch/dune.py: metric_window_days = None when (name, metric) is absent from
+        # has_history, so a metric with no rows backfills its full window instead of inheriting a
+        # window sized for an existing series). TOKEN_METRICS_DUNE_ALWAYS was never needed.
+        "status": "closed",
+        "project": "GEODNET", "topic": "CLOSED 2026-09-21 — the burn backfill HAS now run: 49 burn "
+                                       "rows and 41 buyback rows are in the store",
         "severity": 1,
         "reason": "CORRECTION to an earlier report that read this as a success because it logged no error. "
                   "The read-back shows 1 row stored, dated today, sourced chain:polygon:burn_polygon — the "
@@ -7979,6 +8135,47 @@ OPEN_QUESTIONS = [
                   "not verified live.",
         "suggestion": "On the first run check the Run Log. If the read failed, adjust node_api.path and "
                       "node_api.response_keys. Do NOT substitute a black-hole address balance.",
+    },
+    {
+        "project": "Near",
+        "topic": "circulating_supply exceeds total_supply by 10 NEAR — the timing hypothesis is REFUTED",
+        "severity": 3,
+        "reason": "Run 20260921T100546Z: circulating_supply 1,306,892,570 against total_supply "
+                  "1,306,892,560. Ten tokens, 7.65e-9 relative — above the check's 1e-9 float "
+                  "epsilon (1.31 NEAR at this scale), so it fires, and it is RIGHT to fire: "
+                  "circulating cannot exceed total. "
+                  "** THE OBVIOUS EXPLANATION IS RULED OUT. ** The suspicion was that the two are "
+                  "read at slightly different moments and the identity is broken by our own "
+                  "timing. They are not: fetch/coingecko.py takes BOTH from a single "
+                  "/coins/{id} response, out of one market_data object, in one loop, in one "
+                  "iteration. They are same-moment by construction, and a test now asserts that "
+                  "so the hypothesis cannot quietly become true later. "
+                  "So the contradiction is in what CoinGecko reports, not in how we read it. "
+                  "NOT INVESTIGATED FURTHER from here — api.coingecko.com is unreachable from "
+                  "this environment (CONNECT tunnel 403), so the two fields could not be "
+                  "inspected live.",
+        "possible_explanations_not_yet_tested": {
+            "different_upstream_pipelines_inside_one_response": "CoinGecko may compute the two "
+                "figures from different sources with different update lags, so one response can "
+                "carry a fresher circulating than total. Most likely, and would explain a gap "
+                "this small and this stable.",
+            "protocol_burn_accounting": "NEAR destroys gas fees at the protocol level "
+                "(burn_mechanism.model = protocol_level_destruction). If CoinGecko nets burns out "
+                "of total_supply but not out of circulating — see RUNBOOK 11f and the "
+                "total_supply_convention work of 2026-09-21 — a small persistent overshoot is "
+                "what that looks like. Testable the moment CoinGecko is reachable: compare "
+                "total_supply against NEAR's own reported supply.",
+            "rounding_at_the_provider": "ten tokens on 1.3bn is the twelfth significant figure; a "
+                "rounding difference between two independently rounded fields would do it.",
+        },
+        "suggestion": "DO NOT WIDEN THE TOLERANCE, and do not add a relation_exempt. The exemption "
+                      "mechanism is for a relation that is not an IDENTITY for a project; "
+                      "circulating <= total is an identity for NEAR, and the figures really do "
+                      "contradict each other. The flag is doing its job by being visible. Settle "
+                      "it by establishing which of the two fields is wrong — compare both against "
+                      "NEAR's own published supply — and if CoinGecko's total proves to be the "
+                      "unreliable one, source total_supply elsewhere for this project rather than "
+                      "silencing the comparison.",
     },
 ]
 
@@ -8238,7 +8435,8 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
               + _check_not_applicable() + _check_open_questions()
               + _check_relation_exemptions() + _check_circulating_conventions()
               + _check_total_supply_conventions()
-              + _check_series_granularity())
+              + _check_series_granularity()
+              + _check_open_question_status())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

@@ -1105,10 +1105,23 @@ def test_the_three_burn_failure_modes_stay_distinct():
     assert uni["status"] == "confirmed" and uni["model"] == "transfer_to_dead_address"
     assert config.PROJECT_BY_NAME["Uniswap"]["contracts"]["burn_dead"]["kind"] == "burn_address_balance"
 
-    # 3. undocumented: neither confirmed nor refuted, and it must not inherit either answer
-    for still_open in ("PancakeSwap", "GEODNET"):
+    # 3. undocumented: neither confirmed nor refuted, and it must not inherit either answer.
+    # GEODNET LEFT THIS MODE ON 2026-09-21, the same way Venice AI did: a first-party statement
+    # of the mechanism appeared (@GEODNET's June 2026 burn-stats post, via the archetype 3
+    # resolution) to sit alongside the dead-address transfers Dune already observed. PancakeSwap
+    # is now the sole example, which is the point of asserting the list rather than each member —
+    # the mode must keep an occupant or it stops being tested at all.
+    for still_open in ("PancakeSwap",):
         assert config.burn_mechanism(config.PROJECT_BY_NAME[still_open])["status"] == "assumed", \
             f"{still_open} is unresolved and resembles none of the others"
+
+    # AND GEODNET'S MOVE IS ASSERTED, not just excused: 'confirmed' has to carry BOTH legs, since
+    # either alone was what kept it at 'assumed' for weeks.
+    geo = config.burn_mechanism(config.PROJECT_BY_NAME["GEODNET"])
+    assert geo["status"] == "confirmed" and geo["model"] == "transfer_to_dead_address"
+    by = geo.get("confirmed_by") or {}
+    assert by.get("first_party_statement") and by.get("observed_destination") and by.get("confirmed_on"), \
+        f"'confirmed' needs the statement AND the observation on file, got {by}"
 
     # 4. right mechanism, right address, wrong COMPOSITION — the one no check can catch, because
     # the figure is correct. Venice moved here from mode 3 when its mechanism was confirmed.
@@ -4492,3 +4505,119 @@ def test_a_flow_that_is_lumpy_by_design_is_not_change_checked_at_all():
     assert config.lumpy_flow("Uniswap", "gross_burn_tokens") is None
     print("S7 lumpy ok:", declared["underlying_cadence"], "underlying vs",
           declared["observed_cadence"], "observed")
+
+
+def test_both_supply_fields_come_from_ONE_coingecko_response():
+    """Item 8. NEAR's circulating_supply exceeded total_supply by 10 tokens and the suspicion was
+    that we read the two at slightly different moments, breaking the identity ourselves.
+
+    WE DO NOT. Both are parsed from a single /coins/{id} response, out of one market_data object,
+    in one loop. They are same-moment by construction, so the contradiction is in what CoinGecko
+    reports — which means the zero-tolerance check is right to fire and no tolerance is warranted.
+
+    This test exists to keep that true. If anyone ever splits the supply fields across two calls,
+    the refuted hypothesis quietly becomes the correct one and the identity starts breaking for a
+    reason that is ours, with an open question on file saying it cannot be.
+    """
+    import ast
+    import inspect
+    import fetch.coingecko as cg
+
+    tree = ast.parse(inspect.getsource(cg))
+    # Every metric name assigned from market_data, and the loop tuple they are read from.
+    loops = [n for n in ast.walk(tree) if isinstance(n, ast.For)
+             and isinstance(n.target, ast.Tuple) and isinstance(n.iter, ast.Tuple)]
+    pairs = [t for loop in loops for t in loop.iter.elts if isinstance(t, ast.Tuple)]
+    names = {t.elts[0].value for t in pairs if isinstance(t.elts[0], ast.Constant)}
+    assert {"circulating_supply", "total_supply"} <= names, \
+        f"both supply fields must be read in ONE loop over one response; found {sorted(names)}"
+
+    # And the zero tolerance stands: no exemption, no widened bound for this pair.
+    assert config.relation_exempt("Near", "circulating_supply", "total_supply") is None, \
+        "a real contradiction must not be silenced by an exemption — see OPEN_QUESTIONS"
+
+    # The finding is recorded, with the refutation stated rather than the suspicion left standing.
+    rec = next(q for q in config.OPEN_QUESTIONS
+               if q["project"] == "Near" and "circulating_supply exceeds" in q["topic"])
+    assert "REFUTED" in rec["topic"], rec["topic"]
+    assert "DO NOT WIDEN THE TOLERANCE" in rec["suggestion"]
+    print("item 8 ok: both fields from one response, so the timing explanation is ruled out")
+
+
+# ======================================================================================
+# WHY CLOSURES KEPT NOT REACHING THE GAP REPORT — two mechanisms, neither the one first fixed
+# ======================================================================================
+
+def test_a_question_settled_in_prose_cannot_stay_structurally_open():
+    """MECHANISM ONE. fetch/gaps.py filters on the `status` field; humans write the closure into
+    the topic text. Nothing made the two agree, so the Gap Report printed "[open] RESOLVED
+    2026-09-16 — ..." as live P1 work for weeks. Fixing the READER in 2026-09-18 did not stop it
+    recurring, because the next person to settle a question wrote the prose and forgot the field.
+    A convention that depends on remembering is not a mechanism; this is the mechanism.
+    """
+    saved = dict(config.OPEN_QUESTIONS[0])
+    try:
+        config.OPEN_QUESTIONS[0] = dict(saved, status="open",
+                                        topic="RESOLVED 2026-09-21 — settled in the prose only")
+        errs = config.validate_config(raise_on_error=False)
+        assert any("still 'open'" in e for e in errs), \
+            f"a prose-closed, structurally-open question must be rejected: {errs}"
+
+        # AND THE OTHER DIRECTION: a record marked settled whose topic does not say so is just as
+        # unreadable, from the config side instead of the report side.
+        config.OPEN_QUESTIONS[0] = dict(saved, status="resolved",
+                                        topic="some question that still reads as open")
+        errs = config.validate_config(raise_on_error=False)
+        assert any("does not say so" in e for e in errs), errs
+    finally:
+        config.OPEN_QUESTIONS[0] = saved
+    assert not config.validate_config(raise_on_error=False), "and the real file is clean"
+
+
+def test_the_marker_must_OPEN_the_topic_so_a_live_question_can_discuss_a_refutation():
+    """THE CONTROL, and it is not hypothetical: Near's supply question says its own leading
+    HYPOTHESIS is refuted while the question stays wide open. A substring match would close it by
+    accident — the same class of error, pointing the other way."""
+    near = next(q for q in config.OPEN_QUESTIONS
+                if q["project"] == "Near" and "circulating_supply exceeds" in q["topic"])
+    assert "REFUTED" in near["topic"] and (near.get("status") or "open") == "open"
+    assert not config.validate_config(raise_on_error=False), \
+        "a live question that discusses a refutation must not be forced closed"
+    print("closure guard ok: matched at the START of the topic, not anywhere in it")
+
+
+def test_a_per_run_table_returns_ONE_run_not_every_run_ever():
+    """MECHANISM TWO, and the one that actually explains the stale rows in this audit.
+
+    gap_report and review_queue are rebuilt per run and their rows carry run_id. Read WITHOUT a
+    run_id they used to return every row ever written — which is not a longer report, it is the
+    same report repeated once per run with every closed row still in it. A later run cannot
+    retract a row it never wrote.
+
+    It bit the recalc path specifically: build_workbook passes run_id after a fetch and None when
+    re-run over an existing store, so the standalone rebuild — the one used precisely to check
+    that a fix landed — was the one showing the stalest report. GEODNET's buyback_fund_balance
+    was the visible case: declared not_applicable, no longer generated by detect() at all, and
+    still on the sheet.
+    """
+    import tempfile
+    import pathlib as _p
+    from store import Store
+
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(_p.Path(d) / "t.db")
+        s.record_gaps("run-1", [{"project": "GEODNET", "metric": "buyback_fund_balance",
+                                "tiers_attempted": "-", "reason": "since declared n/a",
+                                "suggestion": "-", "priority": 3, "priority_label": "P3"}])
+        s.record_gaps("run-2", [{"project": "GEODNET", "metric": "gross_burn_tokens",
+                                "tiers_attempted": "2", "reason": "a live one",
+                                "suggestion": "-", "priority": 3, "priority_label": "P3"}])
+
+        latest = s.gap_report()
+        assert list(latest["metric"]) == ["gross_burn_tokens"], \
+            f"the default read must be the LATEST run, not the union: {list(latest['metric'])}"
+        assert s.latest_run_id("gap_report") == "run-2"
+        # History is not lost — it is still addressable by run_id.
+        assert list(s.gap_report("run-1")["metric"]) == ["buyback_fund_balance"]
+        s.close()
+    print("per-run ok: the default is one run, and older runs stay addressable")
