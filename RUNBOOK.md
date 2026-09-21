@@ -512,6 +512,52 @@ separate questions.
 
 ---
 
+## 11g. A getter can stop meaning what its name says, without failing
+
+Found 2026-09-21 on Aerodrome, and it is the most dangerous shape of wrong number this tool
+produces: the read succeeded, the value was plausible, the magnitude was roughly right, and it
+had not been the emission rate for the better part of two years.
+
+`Minter.weekly()` is Aerodrome's per-epoch pool emission. `updatePeriod()` assigns it back only
+on one of its two branches:
+
+```solidity
+bool _tail = _weekly < TAIL_START;
+if (_tail) { _emission = (_totalSupply * tailEmissionRate) / MAX_BPS; }
+else       { _emission = _weekly;
+             _weekly = _weekly * (epochCount < 15 ? WEEKLY_GROWTH : WEEKLY_DECAY) / MAX_BPS;
+             weekly  = _weekly; }          // <- the assignment lives HERE, and only here
+```
+
+So the first epoch below `TAIL_START` freezes `weekly` permanently while the real emission
+becomes a share of supply. The getter keeps answering. It answers with the number the emission
+used to be.
+
+**How it was caught, and what to copy.** Not by the value looking wrong — it looked fine. By the
+value sitting one token below a named constant. Replaying the contract's own constants
+(10,000,000 start, x1.03 for epochs 1-14, x0.99 after) lands on 8,969,149.540108 at epoch 67,
+against `TAIL_START` of 8,969,150 and a stored figure of 8,969,149. Decay steps are ~90,000 AERO
+apart, so "just below the threshold" is not a coincidence that happens — it is the one outcome
+the frozen branch guarantees.
+
+**The rule.** Before a public getter becomes the source of a metric, read the function that
+WRITES it, not just the one that reads it. Ask: is there a branch on which this variable stops
+being assigned? If so, the read needs the same branch the contract takes, on the contract's own
+threshold, and the branch it took belongs in the source string so a change of basis mid-series
+is visible rather than a mystery step change.
+
+**And never fall back.** When the tail legs cannot be read, the adapter stores nothing. The
+alternative is storing `weekly()`, which is a number of entirely plausible magnitude, years
+stale, with nothing on the row to flag it. A blank gets asked about; a plausible wrong number
+gets acted on.
+
+**A second, separable fault in the same rows: cadence.** Both Aerodrome reads return one figure
+per weekly epoch and were dated to the RUN, so each daily run laid down another row with the
+same number and a trailing-30-day sum counted each as its own week — roughly 7x. A periodic read
+is dated to its PERIOD (`granularity` on the contract; the adapter dates weekly reads to the
+epoch start), so re-reads inside one period overwrite one key instead of accumulating. Check
+both faults separately: re-dating a frozen constant still leaves a frozen constant.
+
 ## 11f. Characterise a provider's supply field before any derivation uses it
 
 **The rule, in one line:** a formula must follow the convention of the *figure it is applied to*,

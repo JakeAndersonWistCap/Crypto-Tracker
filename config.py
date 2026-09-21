@@ -778,7 +778,8 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
               purpose="", provenance="model-knowledge", candidates=None, ambiguous=False,
               read_method=None, token_standard=None, underlying=None, call=None, call_arg=None,
               supply_is_partial=False, partial_reason="", holder_has_code=None,
-              destination_status=None, destination_note="", metric_override=None):
+              destination_status=None, destination_note="", metric_override=None,
+              granularity=None, emission_tail=None):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -835,6 +836,21 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         # "cumulative burned" asserts a destination we are no longer confident about.
         "destination_status": destination_status,
         "destination_note": destination_note,
+        # HOW OFTEN THIS READ PRODUCES A GENUINELY NEW NUMBER. None means daily — a balance read
+        # is a fresh observation every run. "weekly" means the contract holds ONE figure per
+        # epoch: reading it on six consecutive days yields the same number six times, and a
+        # trailing-30-day SUM over those six rows reports six weeks of emissions that never
+        # happened. Aerodrome's two ve(3,3) reads are both weekly, and until 2026-09-21 both were
+        # dated to the run and summed as daily flows — a latent 7x that had not surfaced only
+        # because the series was days old. A weekly read is dated to its EPOCH START instead, so
+        # repeated runs inside one epoch collapse onto the same (date, project, metric) key.
+        "granularity": granularity,
+        # For an emission schedule that STOPS being the emission once a tail phase begins. See
+        # Aerodrome's minter: the contract's updatePeriod() writes `weekly` back only on the
+        # non-tail branch, so the moment weekly < TAIL_START the variable freezes at its last
+        # scheduled value forever and the real emission becomes totalSupply * rate / bps. Reading
+        # weekly() alone past that point returns a dead constant wearing the label of a rate.
+        "emission_tail": emission_tail,
         "note": note,
     }
 
@@ -4499,13 +4515,23 @@ PROJECTS = [
             "TAIL_START": 8_969_150,                 # uint256 public constant TAIL_START = 8_969_150 * 1e18
             "WEEKLY_DECAY_BPS": 9_900,        # 9900/10000 = 1% decay per epoch, CONFIRMED
             "WEEKLY_GROWTH_BPS": 10_300,       # 10300/10000 — growth-mode step, pre-tail
-            "MINIMUM_TAIL_RATE_BPS": 1,        # 0.01% of circulating supply per week, floor
-            "MAXIMUM_TAIL_RATE_BPS": 100,      # 1.00% of circulating supply per week, ceiling
+            "MINIMUM_TAIL_RATE_BPS": 1,        # 0.01% of total supply per week, floor
+            "MAXIMUM_TAIL_RATE_BPS": 100,      # 1.00% of total supply per week, ceiling
             "MAX_BPS": 10_000,
-            "derived": "the EpochGovernor's adjustable tail range is 0.01%-1.00% of circulating "
-                       "supply per week, starting at 30 bps — this bounds the tail-emission "
-                       "mechanism precisely, where emission_streams' tail_rule only described it "
-                       "in words.",
+            # uint256 public tailEmissionRate = 67;  <- the CONTRACT's initial value.
+            # The "30 bps" that used to be recorded here came from SPECIFICATION.md prose. The
+            # deployed source says 67, and where the two disagree the source wins. It is also a
+            # STARTING value, not a constant: nudge() moves it +/-1 bp per epoch on an
+            # EpochGovernor plurality vote, so anything reading the tail emission must read this
+            # getter live. Recorded for reference and for the bounds; never used as an input.
+            "INITIAL_TAIL_EMISSION_RATE_BPS": 67,
+            "TAIL_ACTIVATES_AT_EPOCH": 67,
+            "derived": "the EpochGovernor's adjustable tail range is 0.01%-1.00% of total supply "
+                       "per week, starting at 67 bps (Minter.sol; SPECIFICATION.md's '30 bps' is "
+                       "wrong). Replaying the constants — 10,000,000 start, x1.03 for epochs 1-14, "
+                       "x0.99 after — puts weekly at 8,969,149.540108 on epoch 67, the first value "
+                       "below TAIL_START, where it FREEZES: updatePeriod() writes weekly back only "
+                       "on the non-tail branch. Confirmed 2026-09-21 against the stored figure.",
             "source_url": "https://github.com/aerodrome-finance/contracts",
             "source_file": "Minter.sol (contract source, not SPECIFICATION.md)", "source_date": "2026-09-18",
         },
@@ -4524,11 +4550,15 @@ PROJECTS = [
              "note": "EPOCH-INDEXED, not date-indexed, and the epoch-to-date mapping is not on file "
                      "in a usable form — though Minter.activePeriod and Minter.epochCount are BOTH "
                      "live-readable public getters that could resolve this; not wired, future work. "
-                     "The '~92 epochs' figure is the spec's own and is UNDATED. The previously "
-                     "circulating 'epoch 67' figure was never confirmed and is dropped rather than "
-                     "reconciled. CONTRACT: Minter.sol (contracts.minter). NOW LIVE from tier 2 — "
-                     "Minter.weekly(), read directly. See dune_queries.gross_issuance_tokens for the "
-                     "history-backfill slot (still empty; the live read starts the series today)."},
+                     "** RESOLVED 2026-09-21: the tail trigger is epoch 67, not the spec's '~92'. ** "
+                     "The 'epoch 67' figure dropped here as unconfirmed was the correct one; it is "
+                     "now DERIVED from Minter.sol's own constants rather than asserted, and confirmed "
+                     "against a live read (see contracts.minter). TAIL MODE IS ALREADY ACTIVE, so "
+                     "this stream's start_per_epoch/decay_per_epoch describe a phase Aerodrome has "
+                     "LEFT: the live emission is totalSupply * tailEmissionRate / 10000. "
+                     "CONTRACT: Minter.sol (contracts.minter). LIVE from tier 2, tail-aware. See "
+                     "dune_queries.gross_issuance_tokens for the history-backfill slot (still empty; "
+                     "the live read starts the series today)."},
             {"stream": "veAERO rebase", "start_per_epoch": None, "decay_per_epoch": None,
              "paid_to": "veAERO holders only", "is_new_supply": True,
              "purpose": "offsets the dilution that pool emissions cause lockers",
@@ -4578,25 +4608,72 @@ PROJECTS = [
             # added there. Both call the CONTRACT ITSELF rather than a token balance (like
             # stake_principal), so they take `underlying` for symbol()/decimals() the same way.
             #
-            # Minter.weekly() — read from Minter.sol (aerodrome-finance/contracts, main branch,
-            # 2026-09-18): "uint256 public weekly = 10_000_000 * 1e18;", updated by updatePeriod()
-            # each epoch. THIS IS A CURRENT-STATE READ, not a backfilled series — exactly like
-            # CoinGecko's daily supply snapshot, it changes at most weekly and the daily read
-            # accumulates its own history from today forward. Pre-tail-mode only: once weekly()
-            # drops below TAIL_START (8,969,150 * 1e18 — see minter_constants, corrected below),
-            # the CONTRACT switches to the percentage-of-supply tail rule internally and
-            # weekly() stops being what is actually minted; not yet a problem (current weekly is
-            # far above that threshold) but worth remembering if this ever reads suspiciously flat.
+            # ** TAIL MODE IS ALREADY ACTIVE, AND weekly() IS A FROZEN CONSTANT. ** Corrected
+            # 2026-09-21, from Minter.sol read directly. The note that used to sit here said
+            # "not yet a problem (current weekly is far above that threshold)". It was wrong, and
+            # the run's own number is the proof.
+            #
+            # updatePeriod() writes `weekly` back ONLY on the non-tail branch:
+            #
+            #     bool _tail = _weekly < TAIL_START;
+            #     if (_tail) { _emission = (_totalSupply * tailEmissionRate) / MAX_BPS; }
+            #     else       { _emission = _weekly;
+            #                  _weekly = _weekly * (epochCount < 15 ? WEEKLY_GROWTH : WEEKLY_DECAY)
+            #                            / MAX_BPS;
+            #                  weekly = _weekly; }          <-- inside the else, and ONLY there
+            #
+            # So the first time weekly < TAIL_START, the variable stops being written for good.
+            # It keeps its last scheduled value forever while the actual emission becomes a
+            # percentage of total supply. weekly() does not report the emission after that point;
+            # it reports the number the emission used to be.
+            #
+            # REPLAYING THE CONTRACT'S OWN CONSTANTS (10,000,000 start; x1.03 for epochs 1-14 via
+            # epochCount < 15; x0.99 thereafter; integer wei arithmetic) lands on
+            #
+            #     epoch 67:  weekly = 8,969,149.540108 AERO   <-- first value below TAIL_START
+            #                TAIL_START = 8,969,150
+            #
+            # and run 20260921T100546Z stored gross_issuance_tokens = 8,969,149. That is not a
+            # near miss on the threshold, it IS the frozen value, to the token. The reason it sat
+            # "almost exactly on TAIL_START" is that freezing just below TAIL_START is the one
+            # thing the tail branch guarantees. Decay steps are ~90,000 AERO apart, so landing
+            # within one token of the threshold by coincidence is not a live hypothesis.
+            #
+            # This also settles emission_streams' open "~92 epochs" question, which was recorded
+            # as undated spec prose with the competing "epoch 67" figure dropped as unconfirmed.
+            # 67 is right and it is now confirmed from the constants rather than asserted: the
+            # SPECIFICATION.md estimate is the thing that was wrong.
+            #
+            # SO THE READ IS TAIL-AWARE. It takes the contract's own branch: weekly() while
+            # weekly >= TAIL_START, and totalSupply() * tailEmissionRate() / MAX_BPS once below.
+            # tailEmissionRate IS READ LIVE, NEVER ASSUMED — nudge() moves it +/-1 bp per epoch by
+            # EpochGovernor vote within [1, 100], so a hardcoded 67 would be a guess that silently
+            # decays. There is no stored boolean tail flag to read: `_tail` is a local, computed
+            # from the same weekly() this read already makes, and surfaced only in the Mint event.
             "minter": _contract(
                 "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5", "base", "emission_rate_current", "AERO",
                 "https://github.com/aerodrome-finance/contracts", verified="2026-09-18",
                 provenance="Minter.sol source, read directly, aerodrome-finance/contracts main branch",
-                call="weekly", underlying="token",
-                purpose="Minter.weekly() — the current epoch's planned pool-emission rate. THE SOURCE "
-                        "OF gross_issuance_tokens for Aerodrome, read live, not backfilled.",
-                note="Pre-tail-mode only — see the block comment above. If this stops changing "
-                     "week to week while AERO's circulating supply keeps growing, check whether "
-                     "tail mode has activated (weekly() < TAIL_START) before trusting the figure."),
+                call="weekly", underlying="token", granularity="weekly",
+                emission_tail={
+                    "tail_start": 8_969_150,
+                    "rate_call": "tailEmissionRate",
+                    "rate_bps_denominator": 10_000,
+                    "supply_from": "token",
+                    "rate_bounds_bps": [1, 100],
+                    "frozen_value_if_tail": 8_969_149.540108,
+                    "source_url": "https://github.com/aerodrome-finance/contracts",
+                    "source_file": "Minter.sol, updatePeriod() and nudge()",
+                    "confirmed_on": "2026-09-21",
+                    "note": "The emission in tail mode is totalSupply * tailEmissionRate / 10000, "
+                            "read fresh every epoch — both legs live, neither assumed.",
+                },
+                purpose="Aerodrome's per-EPOCH pool emission. THE SOURCE OF gross_issuance_tokens "
+                        "for Aerodrome, read live, not backfilled. Pre-tail that is Minter.weekly(); "
+                        "in tail mode weekly() is frozen and the emission is a share of supply.",
+                note="WEEKLY, not daily: one figure per epoch, dated to the epoch start. Reading it "
+                     "on six consecutive days is the same number six times, and summing those as a "
+                     "30-day flow reports six weeks of emissions that never happened."),
             # RewardsDistributor.tokensPerWeek(week) — read from RewardsDistributor.sol (same repo,
             # same date): "uint256[1000000000000000] public tokensPerWeek;", populated by
             # _checkpointToken() (called from Minter.updatePeriod()) pro-rata across weeks.
@@ -4612,6 +4689,7 @@ PROJECTS = [
                 provenance="RewardsDistributor.sol source, read directly, aerodrome-finance/contracts "
                            "main branch",
                 call="tokensPerWeek", call_arg="last_complete_week_unix", underlying="token",
+                granularity="weekly",
                 purpose="RewardsDistributor.tokensPerWeek(last completed week) — the veAERO "
                         "anti-dilution rebase actually distributed that week. THE SOURCE OF the "
                         "rebase leg of emissions_tokens for Aerodrome — a SEPARATE stream from "
@@ -6522,6 +6600,88 @@ def _check_circulating_conventions() -> list[str]:
     return errs
 
 
+# A cumulative stock that also yields a flow once differenced against the prior observation.
+# DECLARED HERE, aliased by fetch/chain.py, for the same reason KIND_METRIC is: series_granularity
+# below has to know that a daily balance read is what feeds gross_burn_tokens, or it mistakes
+# GEODNET's monthly Dune backfill for the whole series and labels the live daily deltas monthly.
+CUMULATIVE_FLOW = {
+    "burn_address_balance": "gross_burn_tokens",
+}
+
+SERIES_GRANULARITIES = ("daily", "weekly", "monthly")
+
+
+def series_granularity(project_name: str, metric: str) -> str:
+    """How often this project's series for `metric` produces a genuinely NEW observation.
+
+    "daily" is the default and covers every balance read: each run is a fresh measurement of a
+    thing that moves continuously. The other two are series where the UNDERLYING is periodic, and
+    the distinction matters in two places that both got it wrong:
+
+      - SUMMING. A weekly figure read daily is the same number repeated, and a trailing-30-day
+        sum over those rows reports four to five times the emission that actually happened.
+        Aerodrome's two ve(3,3) reads are the live case (see contracts.minter).
+      - STALENESS. A monthly series cannot have a point from this week, so judging it against a
+        daily staleness threshold marks a perfectly current series stale forever. GEODNET's
+        buyback series is the live case: Dune query 8683175's date_col is "month".
+
+    Resolved from the two places that already know: a contract's declared `granularity`, and a
+    Dune query's `date_col`. Deliberately NOT a third hand-maintained table — a granularity that
+    disagreed with the query actually producing the rows would be worse than none.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    served_by_a_live_read = False
+    for spec in (p.get("contracts") or {}).values():
+        served = spec.get("metric_override") or KIND_METRIC.get(spec.get("kind"))
+        if served != metric and CUMULATIVE_FLOW.get(served) != metric:
+            continue
+        if spec.get("granularity"):
+            return spec["granularity"]
+        served_by_a_live_read = True
+    # A CONTRACT READ BEATS A DUNE date_col. Where both feed one metric the series is genuinely
+    # mixed — GEODNET's gross_burn_tokens is a monthly Dune backfill UNDER a live daily delta —
+    # and it is the live read that decides how the recent end of the series behaves, which is the
+    # end every window and every staleness check looks at. Calling that series monthly would stop
+    # a real daily flow being summed and mark a current series stale.
+    if served_by_a_live_read:
+        return "daily"
+    q = (p.get("dune_queries") or {}).get(metric) or {}
+    if str(q.get("date_col") or "").lower() == "month":
+        return "monthly"
+    if str(q.get("date_col") or "").lower() == "week":
+        return "weekly"
+    return "daily"
+
+
+def _check_series_granularity() -> list[str]:
+    """A declared granularity must be one we know how to date, and a tail rule must be sourced."""
+    errs = []
+    for p in PROJECTS:
+        for key, c in (p.get("contracts") or {}).items():
+            g = c.get("granularity")
+            if g is not None and g not in SERIES_GRANULARITIES:
+                errs.append(f"{p['name']}.{key}: granularity {g!r} is not one of "
+                            f"{SERIES_GRANULARITIES}")
+            tail = c.get("emission_tail")
+            if not tail:
+                continue
+            # A tail rule silently replaces one formula with another mid-series. It does not get
+            # to do that on model knowledge.
+            for field in ("tail_start", "rate_call", "rate_bps_denominator", "supply_from",
+                          "source_url", "confirmed_on"):
+                if not tail.get(field):
+                    errs.append(f"{p['name']}.{key}: emission_tail is missing {field!r} — the "
+                                f"rule changes which formula produces the number, so it carries "
+                                f"its source or it does not exist")
+            if tail.get("supply_from") and tail["supply_from"] not in (p.get("contracts") or {}):
+                errs.append(f"{p['name']}.{key}: emission_tail.supply_from "
+                            f"{tail['supply_from']!r} is not a contract on this project")
+            if g != "weekly":
+                errs.append(f"{p['name']}.{key}: emission_tail is declared but granularity is "
+                            f"{g!r} — an epoch emission is a weekly series")
+    return errs
+
+
 def _check_total_supply_conventions() -> list[str]:
     """total_supply_convention must be one of the two known values, and carry its evidence.
 
@@ -7939,7 +8099,8 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
               + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes()
               + _check_not_applicable() + _check_open_questions()
               + _check_relation_exemptions() + _check_circulating_conventions()
-              + _check_total_supply_conventions())
+              + _check_total_supply_conventions()
+              + _check_series_granularity())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

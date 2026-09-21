@@ -31,6 +31,8 @@ import os
 import time
 from collections import defaultdict
 
+import pandas as pd
+
 import config
 
 from .base import LogEntry, derive_flow_from_cumulative, point, today
@@ -55,6 +57,10 @@ ERC20_ABI = [
     # emission); tokensPerWeek(week) is a public mapping (RewardsDistributor's per-week rebase).
     {"constant": True, "inputs": [], "name": "weekly", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     {"constant": True, "inputs": [{"name": "", "type": "uint256"}], "name": "tokensPerWeek", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # tailEmissionRate() is BASIS POINTS, not a token amount. Scaling it by the token's decimals
+    # would turn 67 bps into a vanishing fraction and the emission into zero. Read through
+    # Reader.raw(), never scaled().
+    {"constant": True, "inputs": [], "name": "tailEmissionRate", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
 ]
 
 # Metrics a contract read can produce, by contract kind.
@@ -78,9 +84,9 @@ PRINCIPAL_KINDS = {"stake_principal", "emission_rate_current", "rebase_last_week
 _WEEK_SECONDS = 7 * 86400
 
 # A cumulative stock that also yields a flow once differenced against the prior observation.
-CUMULATIVE_FLOW = {
-    "burn_address_balance": "gross_burn_tokens",
-}
+# ALIASED FROM CONFIG, not redeclared — config.series_granularity needs the same table to know a
+# daily balance read is what feeds gross_burn_tokens, and two copies of it would drift.
+CUMULATIVE_FLOW = config.CUMULATIVE_FLOW
 
 # Burn read methods this adapter can serve. Everything else is refused with an explanation,
 # because the two burn mechanisms are NOT interchangeable:
@@ -194,6 +200,16 @@ class ChainReader:
         if isinstance(actual, bytes):
             actual = actual.rstrip(b"\x00").decode("utf-8", "replace")
         return str(actual).strip().lower() == str(expected).strip().lower(), str(actual)
+
+    def raw(self, chain: str, address: str, call: str, *args) -> int:
+        """Call `call` and return the integer AS STORED, with no decimals scaling.
+
+        For a figure that is not a token amount. Aerodrome's tailEmissionRate() is basis points:
+        dividing it by the token's decimals would be arithmetically valid and meaningless.
+        """
+        c = self.erc20(chain, address)
+        args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
+        return int(getattr(c.functions, call)(*args).call())
 
     def scaled(self, chain: str, address: str, call: str, *args, decimals_from: str | None = None) -> float:
         """Call `call` on `address`, scaled by decimals().
@@ -352,6 +368,14 @@ class Chain:
             # source string to stay auditable.
             parts: dict[str, list[tuple[str, float]]] = defaultdict(list)
             partial_metrics: set[str] = set()
+            # WHICH FORMULA PRODUCED THE FIGURE, where a contract can produce it two ways. Carried
+            # into the source string so a series that silently changes basis mid-history is
+            # readable in the sheet rather than being an unexplained step change.
+            source_suffix: dict[str, str] = {}
+            # THE DATE A FIGURE BELONGS TO, where that is not the run date. A weekly read is dated
+            # to its EPOCH START, so running six days in a row lands six times on ONE key instead
+            # of laying down six rows a trailing-30-day sum then adds up as six separate weeks.
+            metric_when: dict[str, object] = {}
             # Contracts whose ADDRESS is right but whose role is in doubt — a burn sink we are no
             # longer confident the protocol actually burns to. Read, but never stored as a metric.
             disputed: dict[str, list[str]] = defaultdict(list)
@@ -477,6 +501,24 @@ class Chain:
                         value = self.reader.scaled(chain, read_address,
                                                    spec.get("call") or "totalSupply", *call_args,
                                                    decimals_from=decimals_address)
+                        # AN EMISSION SCHEDULE THAT STOPS BEING THE EMISSION. Aerodrome's
+                        # Minter.updatePeriod() assigns `weekly` back only on the non-tail
+                        # branch, so the first epoch where weekly < TAIL_START freezes the
+                        # variable at its last scheduled value FOREVER while the real emission
+                        # becomes totalSupply * tailEmissionRate / MAX_BPS. Reading weekly()
+                        # past that point returns a dead constant wearing the label of a rate,
+                        # which is exactly what run 20260921T100546Z stored: 8,969,149, the
+                        # frozen value to the token. So the read takes the contract's own
+                        # branch, on the contract's own threshold.
+                        tail = spec.get("emission_tail")
+                        if tail:
+                            value, note = self._tail_aware_emission(
+                                chain, read_address, contracts, tail, value, key, out, name,
+                                metric)
+                            if value is None:
+                                refused[metric].append(f"{key} ({chain}): {note}")
+                                continue
+                            source_suffix[metric] = note
                     else:
                         value = self.reader.scaled(chain, read_address, spec.get("call") or "totalSupply")
                 except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
@@ -486,6 +528,13 @@ class Chain:
                     refused[metric].append(f"{key} ({chain}): read failed")
                     continue
                 parts[metric].append((f"{chain}:{key}", value))
+                # A WEEKLY READ IS DATED TO ITS EPOCH, NOT TO THE RUN. The contract holds one
+                # figure per epoch; the run date is just when we happened to look. Dating to the
+                # epoch start makes a re-read inside the same epoch land on the SAME
+                # (date, project, metric) key and overwrite, instead of laying down another row
+                # that a trailing-30-day sum then counts as another week's emissions.
+                if config.series_granularity(name, metric) == "weekly":
+                    metric_when[metric] = self._epoch_start(spec)
                 if spec.get("supply_is_partial"):
                     partial_metrics.add(metric)
                 if spec.get("destination_status") == "disputed":
@@ -500,13 +549,83 @@ class Chain:
                             tiers_attempted="2",
                             suggestion="Resolve the refused components in config.py; nothing was stored for "
                                        "this metric rather than a partial figure being presented as whole.")
-            self._emit_parts(p, parts, partial_metrics, refused, when, out, disputed)
+            self._emit_parts(p, parts, partial_metrics, refused, when, out, disputed,
+                             source_suffix=source_suffix, metric_when=metric_when)
+
+    @staticmethod
+    def _epoch_start(spec: dict):
+        """The start of the epoch this read describes, as a date.
+
+        Minter.weekly() / the tail emission describe the CURRENT epoch, so they take the current
+        epoch's start. RewardsDistributor.tokensPerWeek(t) is asked for the last COMPLETE week
+        (call_arg), so it takes that week's start — the same boundary that was passed as the
+        argument, never recomputed differently, or the figure would be filed under a week it is
+        not about.
+
+        time.time(), not a pandas Timestamp's .timestamp(): the latter reads a tz-naive value in
+        the SYSTEM's local zone and would put the boundary in the wrong week on any host not on
+        UTC. Same reasoning as the call_arg computation this mirrors.
+        """
+        now_ts = int(time.time())
+        weeks_back = 1 if spec.get("call_arg") == "last_complete_week_unix" else 0
+        start = ((now_ts // _WEEK_SECONDS) - weeks_back) * _WEEK_SECONDS
+        return pd.Timestamp(start, unit="s").normalize()
+
+    def _tail_aware_emission(self, chain, minter_address, contracts, tail, weekly_value, key,
+                             out, name, metric):
+        """Take the emission branch the CONTRACT would take, on the contract's own threshold.
+
+        Returns (value, note), or (None, reason) to refuse. Refusing is the right answer when the
+        tail leg cannot be read: the alternative is storing weekly(), and weekly() in tail mode is
+        a frozen constant that LOOKS like a plausible emission. A number that looks right and is
+        not is the failure this tool exists to prevent, so nothing is stored instead.
+        """
+        tail_start = float(tail["tail_start"])
+        if weekly_value >= tail_start:
+            # Pre-tail: the schedule IS the emission, and weekly() is the whole answer.
+            return weekly_value, f"weekly<{tail_start:,.0f}=no"
+
+        supply_key = tail["supply_from"]
+        supply_spec = contracts.get(supply_key) or {}
+        if not supply_spec.get("address"):
+            return None, (f"tail mode is active (weekly {weekly_value:,.2f} < TAIL_START "
+                          f"{tail_start:,.0f}) but supply_from {supply_key!r} has no address")
+        try:
+            rate_bps = self.reader.raw(chain, minter_address, tail["rate_call"])
+            supply = self.reader.scaled(chain, supply_spec["address"], "totalSupply")
+        except Exception as e:  # noqa: BLE001 — a failed leg refuses; it must not fall back
+            return None, (f"tail mode is active but the tail legs could not be read ({e}). "
+                          f"weekly() returns {weekly_value:,.2f}, which is FROZEN and is not the "
+                          f"emission — refusing rather than storing it")
+
+        lo, hi = tail.get("rate_bounds_bps") or (None, None)
+        if lo is not None and not (lo <= rate_bps <= hi):
+            # Outside the contract's own bounds means the read is not what we think it is.
+            return None, (f"{tail['rate_call']}() returned {rate_bps} bps, outside the contract's "
+                          f"own [{lo}, {hi}] bounds — the read is not measuring what config says")
+
+        denom = float(tail["rate_bps_denominator"])
+        emission = supply * rate_bps / denom
+        out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                f"{metric}: TAIL MODE — weekly() {weekly_value:,.2f} is below "
+                                f"TAIL_START {tail_start:,.0f} and is frozen. Emission computed as "
+                                f"totalSupply {supply:,.2f} x {rate_bps} bps = {emission:,.2f}",
+                                TIER))
+        return emission, f"tail@{rate_bps}bps"
 
     def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out,
-                    disputed: dict | None = None):
+                    disputed: dict | None = None, source_suffix: dict | None = None,
+                    metric_when: dict | None = None):
         """Emit one figure per metric, summing every contract that served it."""
         name = project["name"]
+        source_suffix = source_suffix or {}
+        metric_when = metric_when or {}
+        run_date = when
         for metric, components in parts.items():
+            # A PERIODIC READ IS FILED UNDER ITS PERIOD. Defaults to the run date, which is right
+            # for every balance read; a weekly read overrides it with its epoch start so repeated
+            # runs inside one epoch collapse onto one row instead of accumulating.
+            when = metric_when.get(metric, run_date)
             total = sum(v for _, v in components)
             if len(components) == 1:
                 label, _ = components[0]
@@ -541,6 +660,12 @@ class Chain:
                                    "either clear destination_status on the contract in config.py, or "
                                    "point the entry at the address the burn really uses.")
                 continue
+
+            # WHICH FORMULA PRODUCED IT, in the source string. Where one contract can yield a
+            # figure two ways, a series that changes basis mid-history would otherwise be an
+            # unexplained step change with nothing in the row to explain it.
+            if source_suffix.get(metric):
+                src += f"[{source_suffix[metric]}]"
 
             missing = refused.get(metric) or []
             is_partial = (metric in partial_metrics or bool(missing)

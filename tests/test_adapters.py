@@ -4022,3 +4022,160 @@ if __name__ == "__main__":
     for _name, _fn in _tests:
         _fn()
     print(f"\nALL ADAPTER TESTS PASSED ({len(_tests)} tests)")
+
+
+# ======================================================================================
+# AERODROME'S EMISSION: A WEEKLY FIGURE STORED DAILY, AND A SCHEDULE THAT STOPPED BEING ONE
+# ======================================================================================
+
+class _MinterReader:
+    """Aerodrome's Minter and AERO, with the tail legs readable.
+
+    weekly / rate_bps / supply are the three numbers the contract's own branch is chosen on, so
+    every test below is a statement about which branch a given triple should take.
+    """
+
+    def __init__(self, weekly, rate_bps=67, supply=1_980_000_000.0, raise_on=None):
+        self.weekly, self.rate_bps, self.supply, self.raise_on = weekly, rate_bps, supply, raise_on
+
+    def symbol_matches(self, chain, address, expected):
+        return True, "AERO"
+
+    def raw(self, chain, address, call, *args):
+        if self.raise_on == "rate":
+            raise RuntimeError("execution reverted")
+        return self.rate_bps
+
+    def scaled(self, chain, address, call, *args, decimals_from=None):
+        if call == "weekly":
+            return self.weekly
+        if call == "totalSupply":
+            return self.supply
+        raise AssertionError(f"unexpected call {call!r}")
+
+
+def _aerodrome_minter_project():
+    """The live config's own minter and token entries, not a hand-built lookalike.
+
+    Deliberately taken from config rather than written out here: the whole finding is that the
+    contract's threshold and the contract's rate call have to be the REAL ones, and a test that
+    restated them would keep passing after somebody edited config to something wrong.
+    """
+    live = config.PROJECT_BY_NAME["Aerodrome"]
+    return {"name": "Aerodrome", "archetypes": live["archetypes"],
+            "contracts": {"token": dict(live["contracts"]["token"]),
+                          "minter": dict(live["contracts"]["minter"])}}
+
+
+def test_a_frozen_weekly_is_not_an_emission_and_the_tail_formula_replaces_it():
+    """THE C3 FINDING. Minter.updatePeriod() writes `weekly` back only on the non-tail branch:
+
+        bool _tail = _weekly < TAIL_START;
+        if (_tail) { _emission = _totalSupply * tailEmissionRate / MAX_BPS; }
+        else       { _emission = _weekly; ...; weekly = _weekly; }   <- assignment is HERE only
+
+    So the first epoch below TAIL_START freezes `weekly` for good. Replaying the contract's
+    constants (10,000,000 start, x1.03 for epochs 1-14, x0.99 after) lands on 8,969,149.540108 at
+    epoch 67 — and run 20260921T100546Z stored 8,969,149 as gross_issuance_tokens. That is the
+    frozen value to the token, not a near miss on the threshold.
+    """
+    c = Chain()
+    c.reader = _MinterReader(weekly=8_969_149.540108, rate_bps=67, supply=1_980_000_000.0)
+    out = FetchOutput()
+    c.run([_aerodrome_minter_project()], None, out)
+    df = out.frame()
+    row = df[df["metric"] == "gross_issuance_tokens"].iloc[0]
+
+    expected = 1_980_000_000.0 * 67 / 10_000
+    assert abs(row["value"] - expected) < 1e-6, \
+        f"tail emission must be totalSupply x rate / MAX_BPS ({expected:,.2f}), got {row['value']:,.2f}"
+    assert abs(row["value"] - 8_969_149.540108) > 1.0, "the frozen weekly must not be stored"
+    # AND THE BASIS IS VISIBLE IN THE ROW. A series that changes formula mid-history is otherwise
+    # an unexplained step change with nothing in the row to explain it.
+    assert "tail@67bps" in row["source"], row["source"]
+    print(f"tail mode ok: weekly 8,969,149.54 refused, emission {row['value']:,.2f} "
+          f"from {row['source']}")
+
+
+def test_above_the_threshold_the_schedule_is_still_the_emission():
+    """THE CONTROL. A guard that always took the tail branch would pass the test above and be
+    wrong for every pre-tail protocol. Above TAIL_START, weekly() IS the answer and is stored."""
+    c = Chain()
+    c.reader = _MinterReader(weekly=9_059_747.010210)     # epoch 66, one step before the tail
+    out = FetchOutput()
+    c.run([_aerodrome_minter_project()], None, out)
+    row = out.frame().query("metric == 'gross_issuance_tokens'").iloc[0]
+    assert abs(row["value"] - 9_059_747.010210) < 1e-6, row["value"]
+    assert "tail@" not in row["source"], f"pre-tail must not use the tail formula: {row['source']}"
+    print("pre-tail control ok: weekly() stored unchanged,", row["source"])
+
+
+def test_an_unreadable_tail_leg_refuses_rather_than_falling_back_to_the_frozen_number():
+    """THE ONE THAT MATTERS MOST, because the fallback is so tempting and so wrong.
+
+    If the tail legs cannot be read, weekly() is still sitting there returning a number of
+    entirely plausible magnitude. Storing it would put a figure in the sheet that looks right, is
+    stale by years, and has nothing to flag it. Nothing is stored instead.
+    """
+    c = Chain()
+    c.reader = _MinterReader(weekly=8_969_149.540108, raise_on="rate")
+    out = FetchOutput()
+    c.run([_aerodrome_minter_project()], None, out)
+    df = out.frame()
+    assert df[df["metric"] == "gross_issuance_tokens"].empty, \
+        "a failed tail read must store nothing, never the frozen weekly"
+    reasons = " ".join(g["reason"] for g in out.gaps)
+    assert "FROZEN" in reasons or "frozen" in reasons, reasons
+    print("refusal ok:", [g["reason"][:90] for g in out.gaps if "issuance" in g["metric"]])
+
+
+def test_a_tail_rate_outside_the_contracts_own_bounds_is_refused():
+    """nudge() bounds tailEmissionRate to [1, 100] bps. A read outside that is not a surprising
+    governance outcome, it is evidence the call is not returning what config thinks it is."""
+    c = Chain()
+    c.reader = _MinterReader(weekly=8_969_149.540108, rate_bps=6_700)   # bps vs a raw fraction
+    out = FetchOutput()
+    c.run([_aerodrome_minter_project()], None, out)
+    assert out.frame().query("metric == 'gross_issuance_tokens'").empty
+    assert any("outside the contract" in g["reason"] for g in out.gaps), \
+        [g["reason"] for g in out.gaps]
+    print("bounds ok: 6700 bps refused as not-what-config-thinks")
+
+
+def test_a_weekly_read_is_dated_to_its_epoch_so_daily_runs_do_not_multiply_it():
+    """THE 7x. The store's key is (date, project, metric). A weekly figure dated to the RUN lays
+    down one row per day, all carrying the same number, and a trailing-30-day SUM adds them up as
+    though each were a separate week's emissions. Dated to the epoch start, every run inside one
+    epoch writes the SAME key and the sum is one week per week.
+    """
+    dates = set()
+    for _ in range(6):                      # six runs, all inside one epoch
+        c = Chain()
+        c.reader = _MinterReader(weekly=8_969_149.540108)
+        out = FetchOutput()
+        c.run([_aerodrome_minter_project()], None, out)
+        row = out.frame().query("metric == 'gross_issuance_tokens'").iloc[0]
+        dates.add(pd.Timestamp(row["date"]).normalize())
+
+    assert len(dates) == 1, f"six runs in one epoch produced {len(dates)} distinct dates: {dates}"
+    epoch_start = next(iter(dates))
+    assert epoch_start.dayofweek == 3, \
+        f"ve(3,3) epochs flip Thursday (Unix epoch is a Thursday); got {epoch_start:%A}"
+    assert (pd.Timestamp.now("UTC").tz_localize(None) - epoch_start).days < 8, epoch_start
+    print(f"epoch dating ok: six runs collapse onto {epoch_start:%Y-%m-%d (%A)}")
+
+
+def test_the_granularity_of_every_series_is_resolved_from_what_actually_produces_it():
+    """Granularity is read off the contract or the Dune query, never a third hand-kept table.
+
+    The GEODNET case is the one worth pinning: its gross_burn_tokens is a MONTHLY Dune backfill
+    sitting under a LIVE daily delta. Calling that series monthly would stop a real daily flow
+    being summed and mark a current series stale, so the live read decides.
+    """
+    assert config.series_granularity("Aerodrome", "gross_issuance_tokens") == "weekly"
+    assert config.series_granularity("Aerodrome", "emissions_tokens") == "weekly"
+    assert config.series_granularity("Aerodrome", "total_supply") == "daily"
+    assert config.series_granularity("GEODNET", "actual_buyback_tokens") == "monthly"
+    assert config.series_granularity("GEODNET", "gross_burn_tokens") == "daily"
+    assert config.series_granularity("Uniswap", "gross_burn_tokens") == "daily"
+    print("granularity ok: contract beats Dune date_col where both feed one metric")

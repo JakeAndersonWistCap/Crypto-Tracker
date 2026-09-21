@@ -546,3 +546,64 @@ SELECT date, project, value, source, tier, 'WOULD DELETE' AS action
 --     Venice AI    same.
 -- SELECT project, COUNT(*) FROM metrics WHERE metric='gross_issuance_tokens'
 --  GROUP BY project ORDER BY project;
+
+
+-- ========================================================================================
+-- G. AERODROME'S EMISSION AND REBASE ROWS — a weekly figure stored daily, and, for the
+--    emission leg, the wrong quantity entirely.                          added 2026-09-21
+-- ========================================================================================
+-- TWO FAULTS IN THE SAME ROWS, and each alone would justify clearing them.
+--
+-- (1) GRANULARITY. Both reads return ONE figure per weekly epoch. They were dated to the RUN,
+--     so every daily run laid down another row carrying the same number, and a trailing-30-day
+--     SUM adds them up as though each were a separate week's emissions. Roughly 7x, latent only
+--     because the series was days old. Both contracts now declare granularity="weekly" and the
+--     adapter dates them to the EPOCH START, so re-reads inside one epoch overwrite one key.
+--
+-- (2) THE EMISSION LEG IS NOT AN EMISSION. Minter.updatePeriod() assigns `weekly` back only on
+--     its non-tail branch, so the first epoch where weekly < TAIL_START freezes the variable
+--     for good while the real emission becomes totalSupply * tailEmissionRate / MAX_BPS.
+--     Replaying the contract's constants puts the freeze at epoch 67, value 8,969,149.540108 —
+--     and the stored figure is 8,969,149. These rows are a dead constant, not a rate, and no
+--     amount of re-dating makes them right. The rebase leg (emissions_tokens, tokensPerWeek)
+--     is a REAL per-week figure and has fault (1) only.
+--
+-- G1. LOOK ONLY — what is there, and whether the values are flat (the signature of a frozen
+--     read) or moving. Flat across many dates on the emission leg confirms the diagnosis.
+SELECT metric, source, COUNT(*) AS rows, COUNT(DISTINCT value) AS distinct_values,
+       MIN(date) AS first_seen, MAX(date) AS last_seen, MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Aerodrome'
+   AND metric IN ('gross_issuance_tokens', 'emissions_tokens')
+ GROUP BY metric, source
+ ORDER BY metric, first_seen;
+
+-- G2. LOOK ONLY — the rows themselves. Expect one per run day, all carrying 8,969,149 on the
+--     emission leg and 481,250 on the rebase leg.
+SELECT date, metric, value, source, tier, 'WOULD DELETE' AS action
+  FROM metrics
+ WHERE project = 'Aerodrome'
+   AND metric IN ('gross_issuance_tokens', 'emissions_tokens')
+ ORDER BY metric, date;
+
+-- G3. THE DELETE. Scoped to the two metrics on Aerodrome only. Both series rebuild from the
+--     next run: the rebase leg with the same figures under epoch dates, the emission leg with
+--     whatever the tail formula actually produces — which is NOT 8,969,149 and may be several
+--     times it, depending on where tailEmissionRate has been nudged to.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Aerodrome'
+--    AND metric IN ('gross_issuance_tokens', 'emissions_tokens');
+-- COMMIT;
+
+-- G4. VERIFY after the next run. Expect ONE row per metric per epoch, dated to a THURSDAY
+--     (ve(3,3) epochs flip on the Unix week boundary, which is a Thursday), and the emission
+--     leg's source to carry its branch: '[tail@<n>bps]' in tail mode, '[weekly<...=no]' if the
+--     protocol is somehow still pre-tail.
+-- SELECT date, metric, value, source,
+--        CASE CAST(STRFTIME('%w', date) AS INTEGER) WHEN 4 THEN 'Thursday' ELSE 'NOT a Thursday'
+--        END AS epoch_boundary
+--   FROM metrics
+--  WHERE project = 'Aerodrome'
+--    AND metric IN ('gross_issuance_tokens', 'emissions_tokens')
+--  ORDER BY metric, date;
