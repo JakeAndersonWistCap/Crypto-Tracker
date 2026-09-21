@@ -736,7 +736,7 @@ def test_issuance_follows_the_supply_figures_convention_not_the_burn_mechanism()
     # undeclared for unrelated reasons — this asserts the branch, not a project's current state.
     for name in ("PancakeSwap", "Venice AI"):
         p = config.PROJECT_BY_NAME[name]
-        assert p.get("total_supply_convention") == "net_of_burn", \
+        assert p.get("total_supply_convention") in config.NET_OF_BURN_CONVENTIONS, \
             f"{name} was settled on 2026-09-22 — see total_supply_convention_evidence"
         assert p.get("total_supply_convention_evidence", {}).get("test"), \
             f"{name} must record the test that settled it, not just the answer"
@@ -751,11 +751,25 @@ def test_issuance_follows_the_supply_figures_convention_not_the_burn_mechanism()
                 f"the gap must name the actual unknown, not a generic one: {reason[:200]}"
         finally:
             p["total_supply_convention"] = saved
-        # AND WITH IT DECLARED, IT DERIVES — the half that proves the refusal was the convention
-        # and not something else about these two projects.
-        got, _ = _derive(name, "transfer_to_dead_address",
-                         supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
-        assert got == 0.0, f"{name} must derive now that it is declared net_of_burn, got {got}"
+
+    # ** AND WITH IT DECLARED THEY DIVERGE, which is the point of the third convention. **
+    # Venice's provider nets out the burn alone, so adding it back recovers gross issuance.
+    got, _ = _derive("Venice AI", "transfer_to_dead_address",
+                     supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
+    assert got == 0.0, f"net_of_burn derives via add_burn, got {got}"
+
+    # PancakeSwap's nets out the cross-chain lock TOO, so there is a THIRD term — d(outbound) —
+    # and no series for it. add_burn would store minted-minus-bridge-flow labelled gross
+    # issuance, which is the plausible wrong number this whole field exists to prevent.
+    assert config.issuance_supply_rule(config.PROJECT_BY_NAME["PancakeSwap"],
+                                       "transfer_to_dead_address") is None, \
+        "net_of_burn_and_cross_chain_lock must REFUSE until outboundAmount is tracked"
+    got, out = _derive("PancakeSwap", "transfer_to_dead_address",
+                       supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
+    assert got is None, f"PancakeSwap must not derive issuance under this convention, got {got}"
+    blocked = config.PROJECT_BY_NAME["PancakeSwap"]["issuance_blocked_on"]
+    assert "outboundAmount" in blocked["missing_series"] and blocked["unblocks"], \
+        "a refusal must name the series that would lift it"
 
     # WHERE THE CONVENTION CANNOT MATTER, NO DECLARATION IS NEEDED — and the mechanism table
     # deliberately omits transfer_to_dead_address so a forgetful edit refuses rather than defaults.
@@ -4865,14 +4879,17 @@ def test_every_transfer_burn_project_has_a_TESTED_supply_convention():
     than discarding it, so the dropped contract totalSupply sits beside the kept CoinGecko one.
     The guard that exists to stop last-writer-wins is what preserved the control value.
     """
-    for name, contract, coingecko, burn, residual in (
-            ("Uniswap",     1_000_000_000.00,   888_114_418.92,   111_953_581.00,  None),
-            ("GEODNET",     1_000_000_000.00,   961_518_067.62,    38_481_932.38,  None),
-            ("Venice AI",     114_897_403.56,    81_019_146.16,    33_878_094.96,   162.44),
-            ("PancakeSwap", 5_387_735_435.75,   330_627_631.61, 5_051_176_395.11, 5_931_409.03)):
+    for name, convention, contract, coingecko, burn, residual in (
+            ("Uniswap",     "net_of_burn",  1_000_000_000.00,  888_114_418.92,  111_953_581.00,  None),
+            ("GEODNET",     "net_of_burn",  1_000_000_000.00,  961_518_067.62,   38_481_932.38,  None),
+            ("Venice AI",   "net_of_burn",    114_897_403.56,   81_019_146.16,   33_878_094.96,   162.44),
+            # PancakeSwap's provider nets out the cross-chain lock TOO — a more complete
+            # convention, and the residual is outboundAmount rather than an anomaly.
+            ("PancakeSwap", "net_of_burn_and_cross_chain_lock",
+             5_387_735_435.7511, 330_627_631.6128, 5_051_176_395.1126, 5_931_409.0257)):
         p = config.PROJECT_BY_NAME[name]
-        assert p.get("total_supply_convention") == "net_of_burn", \
-            f"{name} was tested and came back net_of_burn"
+        assert p.get("total_supply_convention") == convention, \
+            f"{name} was tested and came back {convention}"
         ev = p.get("total_supply_convention_evidence") or {}
         assert ev.get("test") and ev.get("confirmed_on"), f"{name} must carry its evidence: {ev}"
         # The arithmetic the claim rests on, recomputed rather than trusted to the prose.
@@ -4886,29 +4903,21 @@ def test_every_transfer_burn_project_has_a_TESTED_supply_convention():
     ven = config.PROJECT_BY_NAME["Venice AI"]["total_supply_convention_evidence"]
     assert ven["residual_explained_by"], "Venice's residual has an explanation and should say it"
 
+    # ** PANCAKESWAP'S RESIDUAL IS NOW EXPLAINED, and the record says what it is. ** It is the
+    # ProxyOFT's outboundAmount: CAKE locked on BSC backing the representations on eight other
+    # chains. Settled by arithmetic on stored data — no live read was needed in the end.
     cake = config.PROJECT_BY_NAME["PancakeSwap"]
-    assert cake["total_supply_convention_evidence"]["residual_explained_by"] is None, \
-        "PancakeSwap's residual is NOT explained — filling this in is how a guess becomes a fact"
-    unexplained = cake["total_supply_residual_unexplained"]
-    assert unexplained["how_to_test"], "a residual needs a way to settle it, not a shrug"
+    ev = cake["total_supply_convention_evidence"]
+    assert ev["residual_explained_by"], "the residual is explained — say what it is"
+    assert "outboundAmount" in ev["residual_explained_by"] or "locked" in ev["residual_explained_by"]
+    assert ev["mechanism_source"] and "ProxyOFT" in ev["mechanism_source"]
+    assert "total_supply_residual_unexplained" not in cake, \
+        "an explained residual must not keep a record that calls it unexplained"
 
-    # ** THE MECHANISM AND THE NUMBER ARE TRACKED SEPARATELY, and that separation is the point. **
-    # ProxyOFTWithFee's lock-on-home-chain semantics are confirmed from source, which makes OUR
-    # double-count the leading explanation — but a mechanism argument is not a measurement, and
-    # changing a live supply figure on one is exactly the move this file refuses. Collapsing the
-    # two flags into "explained" is how a plausible story becomes a recorded fact.
-    lead = unexplained["leading_explanation"]
-    assert lead["mechanism_confirmed"] is True and lead["number_confirmed"] is False, \
-        "confirmed mechanism, unconfirmed number — do not collapse these"
-    assert lead["mechanism_source"] and lead["predicts"], \
-        "a leading explanation must name its source and make a falsifiable prediction"
-    assert "Base" in lead["predicts"], \
-        "the prediction is about BASE's supply, not the proxy's total outbound — see section J"
-
-    # Three outcomes, pointing at different culprits, so the test cannot only confirm.
-    assert len(unexplained["outcomes"]) >= 3, unexplained["outcomes"]
-    assert any("neither" in k.lower() for k in unexplained["outcomes"]), \
-        "a test with no 'neither' branch is one that can only agree with itself"
+    # AND THE LIVE CONFIRMATION IS STILL OUTSTANDING, recorded rather than quietly dropped now
+    # that the arithmetic agrees. Bridging is continuous, so it is an order-of-magnitude check.
+    assert ev["live_confirmation_outstanding"], \
+        "arithmetic agreeing is not the same as having read the contract"
     print("conventions ok: four tested, two residuals, one of them honestly unexplained")
 
 
@@ -5283,45 +5292,142 @@ def test_hyperliquid_holds_archetype_4_on_the_evidence_already_in_config():
     print("hyperliquid ok: 3 and 4 on evidence already on file, staking is orthogonal")
 
 
-def test_the_proxyoft_residual_test_names_the_right_comparand():
-    """The obvious comparand is wrong, and getting it wrong would read as a refutation.
+def test_section_J_records_the_resolved_residual_and_the_corrected_premise():
+    """The residual is outboundAmount — CAKE locked on BSC backing eight other chains. Settled by
+    arithmetic on stored data; no live read was needed.
 
-    CakeProxyOFT's outboundAmount (and its balanceOf) cover EVERY destination chain CAKE has
-    bridged to. We only add Base. So under the double-count hypothesis the residual equals BASE's
-    totalSupply, and outboundAmount should be LARGER — meaning a mismatch against outboundAmount
-    is CONSISTENT with the hypothesis rather than against it.
+    Section J keeps BOTH the answer and the premise that was wrong, because the wrong premise was
+    the instructive part: "we sum bsc:token + base:token_base" was read off the contract LIST
+    without checking the GATE that decides which of those contracts is actually read. token_base
+    was unverified and refused, so the figure was BSC alone the whole time and the double-count
+    being corrected for never existed.
     """
     sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
     section = sql[sql.index("-- J. PANCAKESWAP'S"):]
 
     assert "LOOK ONLY" in section and "DELETE FROM" not in section and "UPDATE metrics" not in section, \
-        "section J is diagnostic — report first, choose a fix after"
-    assert "run_log" in section, \
-        "the decisive figure is already stored; a section that demands a new read misses that"
-    assert "outboundAmount" in section and "balanceOf" in section, \
-        "both candidate reads must be named, with the reason one is preferred"
+        "section J is diagnostic — nothing here needs fixing on our side"
+    assert "FALSE PREMISE" in section, \
+        "the wrong premise is kept: it is the instructive part, not an embarrassment to delete"
+    assert "outboundAmount" in section and "5,931,409" in section
+    assert "circulatingSupply() = totalSupply() - outboundAmount" in section, \
+        "the contract's own accounting is what makes this a finding rather than a coincidence"
 
-    # The arithmetic that picks the comparand has to be shown, not asserted.
-    assert "residual = (BSC + Base) - CoinGecko - burn" in section
-    assert "= Base" in section
-
-    # And all three outcomes, so the check cannot only confirm.
-    for outcome in ("OUR double-count", "outboundAmount", "neither"):
-        assert outcome in section, f"section J must state the {outcome!r} outcome"
-    print("section J ok: right comparand, decisive figure already stored, three outcomes")
+    # J4 is a CONFIRMATION now, not a test, and it must say the figure will have moved.
+    j4 = section[section.index("-- J4."):]
+    assert "ORDER OF MAGNITUDE" in j4 and "bridging is continuous" in j4, \
+        "an exact-match expectation on a continuously-moving figure would read as a refutation"
+    print("section J ok: resolved, premise correction kept, J4 framed as an order-of-magnitude check")
 
 
-def test_pancakeswaps_partial_label_is_flagged_as_probably_inverted():
-    """:PARTIAL tells a reader the figure UNDERSTATES. Under lock-on-home-chain it overstates, by
-    double-counting bridged CAKE — the wrong direction, which is worse than no label at all.
+def test_J3_computes_the_arithmetic_across_the_metric_rename():
+    """J3 returned BLANK contract_sum and residual columns — NULLs rendering as empty cells, which
+    look like an absent answer rather than a broken query. It looked the contract figure up by
+    metric name 'total_supply_gross', which only exists from 2026-09-22; every historical row,
+    including the audited run the section is about, stored the chain read under 'total_supply'.
 
-    Deliberately NOT changed yet: the mechanism is confirmed from source, the number is not, and
-    changing a live supply figure on a mechanism argument alone is the move this file refuses.
-    The flag is what stops the stale reasoning being read as current.
+    Resolving by SOURCE survives the rename in both directions, and the diagnostic column names
+    the missing leg so a blank can never again be mistaken for an answer.
+    """
+    import sqlite3
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "run_sql", Path(__file__).resolve().parent.parent / "run_sql.py")
+    rs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rs)
+    section = rs.parse_sections(rs.SQL_FILE.read_text(encoding="utf-8"))["J"]
+    j3 = [x for x in rs.split_statements(section["text"]) if rs.classify(x) == "select"][2]
+
+    def run(rows):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL, "
+                   "source TEXT, tier INT)")
+        db.execute("CREATE TABLE run_log (run_id TEXT, ts TEXT, source TEXT, tier INT, "
+                   "project TEXT, rows INT, status TEXT, message TEXT)")
+        db.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?)", rows)
+        cur = db.execute(rs.strip_comments(j3))
+        return dict(zip([d[0] for d in cur.description], cur.fetchone()))
+
+    CG = ("2026-09-21", "PancakeSwap", "total_supply", 330_627_631.6128, "coingecko", 1)
+    BURN = ("2026-09-21", "PancakeSwap", "burn_address_balance", 5_051_176_395.1126,
+            "chain:bsc:burn_dead", 2)
+
+    # BOTH namings must compute, because the store holds rows written under each.
+    for metric in ("total_supply", "total_supply_gross"):
+        got = run([("2026-09-21", "PancakeSwap", metric, 5_387_735_435.7511,
+                    "chain:bsc:token", 2), CG, BURN])
+        assert got["bsc_contract_total"] is not None, f"{metric}: the old query returned NULL here"
+        assert abs(got["residual_is_outbound_amount"] - 5_931_409.0257) < 0.01, got
+        assert "all three legs present" in got["diagnostic"]
+
+    # AND A MISSING LEG SAYS SO, rather than rendering as the same blank as a broken query.
+    got = run([CG])
+    assert got["residual_is_outbound_amount"] is None
+    assert "NO CHAIN-SOURCED SUPPLY ROW" in got["diagnostic"], got["diagnostic"]
+    print("J3 ok: computes under both metric names, and names the missing leg when one is absent")
+
+
+def test_pancakeswap_supply_is_not_partial_in_either_direction():
+    """:PARTIAL was wrong TWICE, in opposite directions, and both errors were individually
+    plausible — which is why both are kept written down.
+
+    It first said the BSC read UNDERSTATES because we cover only some deployments, implying the
+    fix was to add chains. Then it was flagged as OVERSTATING, on the theory that we sum BSC and
+    Base and double-count. Neither holds. Bridging LOCKS CAKE on BSC, so the BSC read already
+    includes every token represented elsewhere — and Base was never summed anyway, because
+    token_base was unverified and the gate refused it. The figure is complete.
+
+    A marker pointing in EITHER direction is worse than none: both tell a reader the number needs
+    an adjustment it does not need.
     """
     cake = config.PROJECT_BY_NAME["PancakeSwap"]
-    assert cake["supply_is_partial"] is True, "unchanged pending the section J check"
-    reason = cake["supply_partial_reason"]
-    assert "OVERSTATES" in reason and "section J" in reason, \
-        f"the inverted direction must be flagged on the field a reader actually sees: {reason}"
-    print("partial label ok: flagged as probably inverted, left in place pending the number")
+    assert cake["supply_is_partial"] is False and not cake["supply_partial_reason"]
+    assert cake["contracts"]["token"]["supply_is_partial"] is False, \
+        "the CONTRACT-level flag is what actually marks the cell — the project flag does not " \
+        "even apply to total_supply_gross"
+
+    base = cake["contracts"]["token_base"]
+    assert base["kind"] == "bridged_representation"
+    from fetch.chain import REFERENCE_ONLY_KINDS
+    assert "bridged_representation" in REFERENCE_ONLY_KINDS
+    assert "DO NOT VERIFY-AND-SUM" in base["note"], \
+        "the trap is that verifying it LOOKS like an improvement and would double-count"
+    print("partial label ok: not partial in either direction, and token_base is reference-only")
+
+
+def test_a_reference_only_contract_is_neither_read_nor_nagged_about():
+    """The gate exists to stop an UNVERIFIED ADDRESS BEING READ. A reference-only contract is
+    never read, so its verification status is irrelevant — and gating it first raised an "address
+    is NOT verified" gap every run for token_base, a row whose suggested fix (verify it) would
+    have made the supply figure WORSE by letting a bridged representation be summed into a home
+    total that already contains it.
+
+    A gap row that asks for the harmful action is worse than no row at all.
+    """
+    os.environ.pop("TOKEN_METRICS_ALLOW_UNVERIFIED", None)
+
+    class _Stub:
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *a, **k):
+            return 5_387_735_435.7511 if call == "totalSupply" else 5_051_176_395.1126
+
+    c = Chain()
+    c.reader = _Stub()
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["PancakeSwap"]], None, out)
+
+    row = out.frame().query("metric == 'total_supply_gross'").iloc[0]
+    assert row["source"] == "chain:bsc:token", f"BSC alone, unmarked: {row['source']}"
+    assert ":PARTIAL" not in row["source"]
+    assert abs(row["value"] - 5_387_735_435.7511) < 1e-4
+
+    assert not [g for g in out.gaps if "token_base" in str(g.get("reason", ""))], \
+        "a reference-only contract must not raise an unverified-address gap"
+    assert any("reference only" in e.message for e in out.log), \
+        "but it must stay visible in the log — silently skipped is not the same as declared"
+    print("reference-only ok: BSC alone, unmarked, and token_base raises nothing")

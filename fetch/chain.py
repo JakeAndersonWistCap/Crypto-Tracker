@@ -73,7 +73,14 @@ KIND_METRIC = config.KIND_METRIC
 # up. Reading its balance as "cumulative burned" is what returned 0 for Uniswap while 100k+ UNI a
 # day was being burned to the dead address. Declaring the kind keeps the entry in config without
 # letting it be mistaken for a destination again.
-REFERENCE_ONLY_KINDS = {"burn_executor"}
+# bridged_representation: a token deployment on a DESTINATION chain whose supply is already
+# counted in the home chain's totalSupply. Under a lock-and-mint bridge (LayerZero ProxyOFT and
+# friends) bridging out LOCKS the home-chain tokens rather than burning them, so the home read
+# already includes everything represented elsewhere and ADDING the destination's totalSupply
+# double-counts. Declaring the kind keeps the address on file — it is real, and it matters if the
+# bridge model ever changes — without letting it be summed on the intuition that more chains means
+# a more complete figure. Exactly the role burn_executor plays for a burn address.
+REFERENCE_ONLY_KINDS = {"burn_executor", "bridged_representation"}
 
 # Kinds whose figure is read by calling the CONTRACT ITSELF rather than a token balance, and
 # which therefore need a separate token for symbol() and decimals().
@@ -385,12 +392,21 @@ class Chain:
             # it were the whole is precisely the understatement this tool exists to prevent.
             refused: dict[str, list[str]] = defaultdict(list)
             for key, spec in contracts.items():
-                if not self._gate(p, key, spec, out):
-                    continue
                 chain, kind = spec["chain"], spec["kind"]
+                # ** REFERENCE-ONLY IS CHECKED BEFORE THE GATE, not after. ** The gate exists to
+                # stop an UNVERIFIED ADDRESS BEING READ; a reference-only contract is never read,
+                # so there is nothing for it to gate and its verification status is irrelevant.
+                #
+                # Gating first raised an "address is NOT verified" gap row every run for
+                # PancakeSwap's token_base — and that row invited precisely the wrong fix, because
+                # verifying it would not have improved the supply figure, it would have let a
+                # bridged representation be summed into a home-chain total that already contains
+                # it. A gap row that asks for the harmful action is worse than no row.
                 if kind in REFERENCE_ONLY_KINDS:
                     out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                             f"{key}: {kind}, reference only — no metric read from it", TIER))
+                    continue
+                if not self._gate(p, key, spec, out):
                     continue
                 # metric_override lets ONE contract's read land under a different metric than
                 # its kind's normal mapping — kind->metric is otherwise shared across every

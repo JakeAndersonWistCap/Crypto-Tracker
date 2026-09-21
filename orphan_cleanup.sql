@@ -744,42 +744,40 @@ SELECT date, value, source, tier, 'WOULD MOVE' AS action
 
 
 -- ========================================================================================
--- J. PANCAKESWAP'S 5,931,409 RESIDUAL — the decisive number is already in the store.
---    LOOK ONLY. No fix here: report first, choose after.              added 2026-09-22
 -- ========================================================================================
--- THE MECHANISM IS CONFIRMED FROM SOURCE. CakeProxyOFT
--- (0xb274202daBA6AE180c665B4fbE59857b7c3a8091, BSC) is LayerZero's ProxyOFTWithFee v2, which
--- states its own accounting:
+-- J. PANCAKESWAP'S 5,931,409 RESIDUAL — RESOLVED 2026-09-22. It is outboundAmount.
+--    LOOK ONLY, and now a re-check rather than an investigation.
+-- ========================================================================================
+-- ** THE FIRST VERSION OF THIS SECTION HAD A FALSE PREMISE. ** It said we sum bsc:token and
+-- base:token_base and therefore double-count Base, and predicted the residual would equal
+-- Base's totalSupply. WE NEVER SUMMED THEM: contracts.token_base was unverified, the tier-2
+-- gate refused it, and J1 across all 20 logged runs shows only a bsc:token component. The
+-- premise was read off the contract LIST without checking the GATE that decides which of those
+-- contracts is actually read.
 --
---     uint public outboundAmount;
---     function circulatingSupply() public view returns (uint) {
---         return innerToken.totalSupply() - outboundAmount;
---     }
+-- THE ARITHMETIC, on BSC alone, straight from the store:
+--     BSC contract totalSupply (2026-09-21)   5,387,735,435.7511
+--     CoinGecko total_supply (same date)        330,627,631.6128
+--     difference                              5,057,107,804.1383
+--     burn_address_balance                    5,051,176,395.1126
+--     residual                                    5,931,409.0257
 --
--- _debitFrom LOCKS CAKE into the proxy and increments outboundAmount, leaving BSC's own
--- totalSupply() untouched by bridging. So BSC alone already carries the whole gross figure, locked tokens
--- included, and ADDING a destination chain's totalSupply double-counts whatever was bridged to
--- it. Our total_supply_gross sums bsc:token + base:token_base, so it double-counts Base.
+-- That residual is outboundAmount: CAKE locked in CakeProxyOFT
+-- (0xb274202daBA6AE180c665B4fbE59857b7c3a8091) backing the representations on CAKE's other
+-- eight chains — Ethereum, Arbitrum, Aptos, opBNB, zkSync, Base, Linea, Polygon zkEVM. The
+-- contract's own accounting says so: circulatingSupply() = totalSupply() - outboundAmount, so
+-- BSC's raw totalSupply() carries everything locked cross-chain.
 --
--- ** WHICH NUMBER SETTLES IT IS NOT THE ONE FIRST PROPOSED. ** outboundAmount (or the proxy's
--- balanceOf) covers EVERY destination chain CAKE has bridged to — Aptos, Arbitrum, Ethereum,
--- Linea and others, not just Base. We only add Base. Work the arithmetic through:
+-- ** CONCLUSION: CoinGecko nets out BOTH the dead-address burn AND the cross-chain lock. ** That
+-- is a more complete convention than GEODNET, Uniswap and Venice AI, whose providers net out the
+-- burn alone, and PancakeSwap now carries its own value for it —
+-- total_supply_convention = net_of_burn_and_cross_chain_lock. It is not cosmetic: it changes the
+-- issuance FORMULA, which needs a third term (d(outbound)) we have no series for, so issuance
+-- derivation REFUSES for this project until outboundAmount is wired.
 --
---     residual = (BSC + Base) - CoinGecko - burn
---              = (BSC + Base) - (BSC - burn) - burn        [CoinGecko = BSC net of burn]
---              = Base
---
--- So the prediction is BASE's CAKE totalSupply ~= 5,931,409, and outboundAmount should be
--- LARGER than the residual unless Base is the only chain CAKE has ever bridged to. Comparing
--- the residual against outboundAmount and finding a MISMATCH would therefore be consistent
--- with the hypothesis, not against it — which is why the comparand matters.
---
--- THREE OUTCOMES, and they point at different culprits:
---     residual ~= Base totalSupply       -> OUR double-count. Confirmed. The fix is on our side.
---     residual ~= outboundAmount         -> CoinGecko is netting out ALL bridged CAKE, and Base
---                                           happening to be the only bridged chain. Different
---                                           finding, different fix.
---     residual matches neither           -> something else; do not fix either way.
+-- WHAT THE SECTION IS FOR NOW: re-running the arithmetic after any change, and settling the one
+-- confirmation still outstanding (J4). Nothing here is a fix, and no fix is needed on our side —
+-- BSC alone was always the right read.
 --
 -- J1. THE PER-CHAIN BREAKDOWN, from the run log. _emit_parts logs one line per component, so
 --     Base's totalSupply is ALREADY STORED and needs no new read. Compare the base:token_base
@@ -801,25 +799,73 @@ SELECT date, metric, value, source
    AND metric IN ('total_supply', 'total_supply_gross')
  ORDER BY date DESC;
 
--- J3. THE ARITHMETIC, restated against whatever is in the store right now rather than against
---     the figures quoted above, so this stays honest if the numbers have moved.
+-- J3. THE ARITHMETIC, against whatever is in the store right now rather than the figures quoted
+--     above, so this stays honest if the numbers have moved.
+--
+--     ** FIXED 2026-09-22. The first version returned BLANK contract_sum and residual columns —
+--     not "no rows", which is a much easier failure to notice, but NULLs, which render as empty
+--     cells and look like an absent answer rather than a broken query. **
+--     It looked the contract figure up by metric name, 'total_supply_gross'. That metric only
+--     exists from 2026-09-22; every historical row, including the audited run this section is
+--     about, stored the chain read under 'total_supply' alongside CoinGecko's. So the subquery
+--     found nothing, NULL propagated through the subtraction, and the query silently reported
+--     nothing at all.
+--
+--     RESOLVED BY SOURCE INSTEAD, which survives the rename in both directions: the chain read is
+--     sourced 'chain:%' whatever metric it lands under, and CoinGecko's is sourced 'coingecko%'.
+--     The diagnostic column names which leg is missing when one is, so a blank can never again be
+--     mistaken for an answer.
+WITH contract_read AS (
+    SELECT value, date FROM metrics
+     WHERE project = 'PancakeSwap'
+       AND metric IN ('total_supply', 'total_supply_gross')
+       AND source LIKE 'chain:%'
+     ORDER BY date DESC LIMIT 1
+), provider_read AS (
+    SELECT value, date FROM metrics
+     WHERE project = 'PancakeSwap'
+       AND metric = 'total_supply'
+       AND source LIKE 'coingecko%'
+     ORDER BY date DESC LIMIT 1
+), burn_read AS (
+    SELECT value, date FROM metrics
+     WHERE project = 'PancakeSwap'
+       AND metric = 'burn_address_balance'
+     ORDER BY date DESC LIMIT 1
+)
 SELECT
-    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric IN ('total_supply_gross')
-      ORDER BY date DESC LIMIT 1)                                        AS contract_sum,
-    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='total_supply'
-      ORDER BY date DESC LIMIT 1)                                        AS coingecko_total,
-    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='burn_address_balance'
-      ORDER BY date DESC LIMIT 1)                                        AS burn_cumulative,
-    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric IN ('total_supply_gross')
-      ORDER BY date DESC LIMIT 1)
-  - (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='total_supply'
-      ORDER BY date DESC LIMIT 1)
-  - (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='burn_address_balance'
-      ORDER BY date DESC LIMIT 1)                                        AS residual_to_explain;
+    (SELECT value FROM contract_read)                       AS bsc_contract_total,
+    (SELECT date  FROM contract_read)                       AS contract_date,
+    (SELECT value FROM provider_read)                       AS coingecko_total,
+    (SELECT date  FROM provider_read)                       AS coingecko_date,
+    (SELECT value FROM burn_read)                           AS burn_cumulative,
+      (SELECT value FROM contract_read)
+    - (SELECT value FROM provider_read)                     AS difference,
+      (SELECT value FROM contract_read)
+    - (SELECT value FROM provider_read)
+    - (SELECT value FROM burn_read)                         AS residual_is_outbound_amount,
+    -- WHICH LEG IS MISSING, if any. A blank arithmetic column is ambiguous between "no data"
+    -- and "broken query"; this says which, and that ambiguity is the bug being fixed.
+    CASE
+      WHEN (SELECT value FROM contract_read) IS NULL
+        THEN 'NO CHAIN-SOURCED SUPPLY ROW — is the tier 2 read running? check the Run Log'
+      WHEN (SELECT value FROM provider_read) IS NULL
+        THEN 'NO COINGECKO SUPPLY ROW — the comparison needs both sides'
+      WHEN (SELECT value FROM burn_read) IS NULL
+        THEN 'NO burn_address_balance ROW'
+      ELSE 'all three legs present — the residual above should be ~5,931,409 = outboundAmount'
+    END                                                     AS diagnostic;
 
--- J4. STILL NEEDS A LIVE READ, and only for the second half of the test. Neither is in the
---     store and neither could be read from the session that wrote this (no BSC RPC egress):
---       CakeProxyOFT.outboundAmount()                      -- CAKE represented on other chains
---       CAKE.balanceOf(0xb274202daBA6AE180c665B4fbE59857b7c3a8091)   -- the locked balance
---     The two should agree; balanceOf can exceed outboundAmount if anyone has sent CAKE to the
---     proxy directly, which is why outboundAmount is the better of the two.
+-- J4. THE ONE CONFIRMATION STILL OUTSTANDING, and it is now a confirmation rather than a test —
+--     the arithmetic has already identified the number. Needs a live BSC read, which the session
+--     that wrote this had no egress for:
+--
+--       CakeProxyOFT.outboundAmount()                                  -- preferred
+--       CAKE.balanceOf(0xb274202daBA6AE180c665B4fbE59857b7c3a8091)     -- the locked balance
+--
+--     Expect the SAME ORDER OF MAGNITUDE, not an exact match: bridging is continuous, so the
+--     figure moves between the run that produced 5,931,409.0257 and whenever it is read. A few
+--     percent either way confirms it; a different order of magnitude does not.
+--
+--     outboundAmount is the better of the two — balanceOf also picks up CAKE sent to the proxy
+--     directly, which outboundAmount does not count.

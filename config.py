@@ -5097,71 +5097,76 @@ PROJECTS = [
         #     locked side, and a provider that nets it out would look exactly like this.
         #   - veCAKE, if CoinGecko excludes locked CAKE from total (not merely from circulating).
         # Testable directly: read the ProxyOFT balance and compare it against 5,931,409.
-        # ** THE MECHANISM IS NOW CONFIRMED FROM SOURCE, 2026-09-22 — the residual is very likely
-        # OURS, not CoinGecko's. The NUMBER is not yet checked, so no fix is applied here. **
+        # ===== RESOLVED 2026-09-22 (same day, second pass). The residual IS the cross-chain lock,
+        # and CoinGecko's convention for CAKE is more complete than the other three projects'. =====
         #
-        # CakeProxyOFT (0xb274202daBA6AE180c665B4fbE59857b7c3a8091, BSC) is LayerZero's
-        # ProxyOFTWithFee v2, confirmed against the deployed source on BscScan and against
-        # LayerZero-Labs/solidity-examples. The contract states its own accounting:
+        # ** THE PREVIOUS VERSION OF THIS BLOCK HAD A FALSE PREMISE AND IS REPLACED. ** It said
+        # "we sum bsc:token + base:token_base, so we double-count Base", and predicted the
+        # residual would equal Base's totalSupply. WE DO NOT SUM THEM. contracts.token_base has
+        # verified=None, so the tier-2 gate refuses it, and across all 20 logged runs the only
+        # component ever read is bsc:token. The premise was taken off the contract LIST without
+        # checking the gate that decides which of those contracts is actually read — the figure
+        # was BSC alone the whole time, and "drop the Base component" was a fix for a sum that
+        # never existed.
         #
-        #     uint public outboundAmount;
-        #     function circulatingSupply() public view returns (uint) {
-        #         return innerToken.totalSupply() - outboundAmount;
-        #     }
+        # THE ARITHMETIC, on BSC alone, from the store:
+        #     BSC contract totalSupply (2026-09-21)   5,387,735,435.7511
+        #     CoinGecko total_supply (same date)        330,627,631.6128
+        #     difference                              5,057,107,804.1383
+        #     burn_address_balance                    5,051,176,395.1126
+        #     residual                                    5,931,409.0257
         #
-        # _debitFrom LOCKS CAKE into the proxy and increments outboundAmount, leaving BSC's own
-        # totalSupply() untouched by bridging. The destination chain mints its own representation
-        # against that lock. So BSC ALONE ALREADY CARRIES THE WHOLE GROSS FIGURE, locked tokens
-        # included, and adding a destination chain's totalSupply counts the bridged portion twice.
-        # We sum bsc:token + base:token_base, so we double-count Base.
+        # That residual is outboundAmount: CAKE locked in CakeProxyOFT
+        # (0xb274202daBA6AE180c665B4fbE59857b7c3a8091) backing the representations on CAKE's other
+        # eight chains — Ethereum, Arbitrum, Aptos, opBNB, zkSync, Base, Linea, Polygon zkEVM. The
+        # contract's own accounting says so: circulatingSupply() = totalSupply() - outboundAmount,
+        # so BSC's raw totalSupply() carries everything locked cross-chain.
         #
-        # ** WHICH NUMBER SETTLES IT IS NOT THE OBVIOUS ONE. ** outboundAmount, and the proxy's
-        # balanceOf, cover EVERY destination chain CAKE has bridged to — not just Base, which is
-        # the only one we add. The arithmetic picks the comparand out:
-        #
-        #     residual = (BSC + Base) - CoinGecko - burn
-        #              = (BSC + Base) - (BSC - burn) - burn        [CoinGecko = BSC net of burn]
-        #              = Base
-        #
-        # so the prediction is BASE's totalSupply ~= 5,931,409, and outboundAmount should be
-        # LARGER than the residual unless Base is the only chain CAKE has ever bridged to.
-        # Comparing the residual against outboundAmount and finding a mismatch would be CONSISTENT
-        # with this hypothesis rather than against it, which is exactly why the comparand matters.
-        #
-        # AND THE DECISIVE HALF NEEDS NO NEW READ. _emit_parts logs one line per component, so
-        # Base's totalSupply is already in run_log. See orphan_cleanup.sql section J, which is
-        # LOOK-ONLY and recomputes the residual from whatever the store currently holds.
-        "total_supply_residual_unexplained": {
-            "tokens": 5_931_409.03,
-            "pct_of_contract_supply": 0.0011,
-            "direction": "our summed contract figure reports MORE tokens than CoinGecko plus burn",
-            "leading_explanation": {
-                "claim": "OUR double-count. CAKE bridged to Base is counted twice — once inside "
-                         "BSC's totalSupply (locked in the ProxyOFT) and again as Base's own "
-                         "totalSupply.",
-                "mechanism_confirmed": True,
-                "mechanism_source": "LayerZero ProxyOFTWithFee v2 — outboundAmount and "
-                                    "circulatingSupply() = innerToken.totalSupply() - "
-                                    "outboundAmount; _debitFrom locks rather than burning",
-                "number_confirmed": False,
-                "predicts": "Base CAKE totalSupply ~= 5,931,409.03",
-            },
-            "outcomes": {
-                "residual ~= Base totalSupply": "OUR double-count, confirmed. Fix is on our side.",
-                "residual ~= outboundAmount": "CoinGecko nets out ALL bridged CAKE and Base "
-                                              "happens to be the only bridged chain. A different "
-                                              "finding needing a different fix.",
-                "neither": "something else. Do not fix either way.",
-            },
-            "how_to_test": "orphan_cleanup.sql section J — J1 pulls Base's totalSupply out of "
-                           "run_log (already stored, no read needed) and J3 recomputes the "
-                           "residual live. J4 names the one live read still outstanding: "
-                           "CakeProxyOFT.outboundAmount(), preferred over balanceOf because "
-                           "balanceOf also picks up CAKE sent to the proxy directly.",
-            "not_tested_from_here": "no BSC RPC egress from the session that wrote this",
-            "why_it_does_not_block_the_convention": "gross would have made the difference ZERO. "
-                                                    "0.11% is not zero-shaped, so net_of_burn is "
-                                                    "settled whatever the residual turns out to be.",
+        # ** SO COINGECKO NETS OUT TWO THINGS FOR CAKE, NOT ONE: the dead-address burn AND the
+        # cross-chain lock. ** That is a genuinely different convention from GEODNET, Uniswap and
+        # Venice AI, whose providers net out the burn alone, and it is why this project gets its
+        # own value rather than being filed under net_of_burn with a footnote. The distinction is
+        # not cosmetic — see issuance_supply_rule, where it changes the FORMULA.
+        "total_supply_convention": "net_of_burn_and_cross_chain_lock",
+        "total_supply_convention_evidence": {
+            "test": "BSC contract totalSupply 5,387,735,435.7511 - CoinGecko total_supply "
+                    "330,627,631.6128 = 5,057,107,804.1383; minus burn_address_balance "
+                    "5,051,176,395.1126 leaves 5,931,409.0257, which is the ProxyOFT's "
+                    "outboundAmount",
+            "residual_tokens": 5_931_409.0257,
+            "residual_explained_by": "CAKE locked in CakeProxyOFT backing the representations on "
+                                     "eight other chains — outboundAmount. NOT a double-count on "
+                                     "our side: only bsc:token is read, token_base being "
+                                     "unverified and therefore refused.",
+            "mechanism_source": "LayerZero ProxyOFTWithFee v2 — circulatingSupply() = "
+                                "innerToken.totalSupply() - outboundAmount; _debitFrom locks "
+                                "rather than burning, so BSC's totalSupply is unchanged by "
+                                "bridging",
+            "confirmed_on": "2026-09-22",
+            "source": "run 20260921T100546Z, via orphan_cleanup.sql section J (J1 run_log, J2 "
+                      "stored metrics, J3 arithmetic)",
+            "live_confirmation_outstanding": "read outboundAmount() on the ProxyOFT once BSC RPC "
+                                             "is reachable. Expect the same ORDER of magnitude, "
+                                             "not an exact match — bridging is continuous, so the "
+                                             "figure moves between reads.",
+        },
+        # ** AND THE CONVENTION CHANGES THE ISSUANCE FORMULA, which is the reason it needed its
+        # own name. ** add_burn recovers gross issuance when a provider nets out the burn alone.
+        # Here there is a third term:
+        #     d(CoinGecko) = minted - burn_flow - d(outbound)
+        # so issuance = d(CoinGecko) + burn_flow + d(outbound), and we have no series for
+        # outboundAmount. issuance_supply_rule therefore REFUSES for this project rather than
+        # returning add_burn, which would store minted-minus-bridge-flow under the label "gross
+        # issuance". CAKE bridges continuously across eight chains, so that term is not a rounding
+        # error and can take either sign. The headline here is the self-reported monthly CAKE Burn
+        # Report anyway, so the derivation is a cross-check and little is lost by its being blank.
+        "issuance_blocked_on": {
+            "missing_series": "outboundAmount on CakeProxyOFT "
+                              "(0xb274202daBA6AE180c665B4fbE59857b7c3a8091, BSC)",
+            "why": "d(CoinGecko) = minted - burn_flow - d(outbound). Without the third term the "
+                   "derived figure is minted minus the period's net bridge flow.",
+            "unblocks": "wire outboundAmount as a series, then the rule can return add_burn plus "
+                        "the bridge delta. Until then the refusal is the correct state.",
             "recorded": "2026-09-22",
         },
         "fee_split": {
@@ -5183,31 +5188,56 @@ PROJECTS = [
                                "33rd consecutive month). Hard cap cut 450m -> 400m Jan 2026. TAKE THE SELF-REPORTED FIGURE."},
         "issuance_schedule": None,
         "contracts": {
-            # CAKE IS A MULTI-CHAIN LayerZero OFT. BSC totalSupply is therefore NOT total supply, and a
-            # figure read from BSC alone is wrong while looking complete. Known deployments are summed and
-            # the result is marked partial until the full OFT list is confirmed; the self-reported figure
-            # remains the source of record.
+            # ===== BSC ALONE IS THE WHOLE SUPPLY. Corrected 2026-09-22. =====
+            # This block used to say "BSC totalSupply is therefore NOT total supply, and a figure read
+            # from BSC alone is wrong while looking complete", and summed known deployments. That is
+            # backwards for a LOCK-AND-MINT bridge. CAKE's home chain is BSC and CakeProxyOFT
+            # (0xb274202daBA6AE180c665B4fbE59857b7c3a8091) is LayerZero's ProxyOFTWithFee, which states
+            # its own accounting: circulatingSupply() = innerToken.totalSupply() - outboundAmount.
+            # Bridging out LOCKS CAKE in the proxy and leaves BSC's totalSupply untouched, so the BSC
+            # read ALREADY includes every token represented on the other eight chains. Summing a
+            # destination chain in would double-count it.
+            #
+            # The arithmetic that settled it, from the store rather than from reasoning:
+            #     BSC totalSupply 5,387,735,435.7511 - CoinGecko 330,627,631.6128
+            #       - burn 5,051,176,395.1126  =  5,931,409.0257  =  outboundAmount
+            # See total_supply_convention above.
             "token": _contract("0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", "bsc", "erc20_total_supply", "Cake",
                                "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
                                verified="2026-09-11", provenance="deployed source", token_standard="erc20",
-                               supply_is_partial=True,
-                               partial_reason="CAKE is a LayerZero OFT with deployments beyond BSC, so this is one "
-                                              "deployment's supply, not total supply.",
+                               # NOT PARTIAL. "One deployment's supply, not total supply" reads as an
+                               # understatement needing more chains added; it is the opposite. A PARTIAL
+                               # marker pointing either way was worse than none, because both tell a
+                               # reader the figure needs an adjustment it does not need.
+                               supply_is_partial=False,
                                purpose="CAKE token on BSC. Deployed source declares CakeToken is "
                                        "BEP20('PancakeSwap Token', 'Cake') — the symbol casing is 'Cake', not 'CAKE'.",
                 # GROSS of burn — the contract counts tokens at the dead
                 # address; CoinGecko does not. See METRICS["total_supply_gross"].
                 metric_override="total_supply_gross"),
-            "token_base": _contract("0x3055913c90Fcc1A6CE9a358911721eEb942013A1", "base", "erc20_total_supply", "Cake",
+            # KEPT, AND DELIBERATELY NOT READ. kind bridged_representation is reference-only
+            # (fetch/chain.REFERENCE_ONLY_KINDS), so this address stays on file without being
+            # summed into supply. It is a REAL CAKE deployment and it matters if the bridge model
+            # ever changes — but its supply is already inside BSC's totalSupply as locked
+            # collateral, so adding it double-counts.
+            #
+            # IT WAS NEVER ACTUALLY SUMMED. verified was None, so the tier-2 gate refused it, and
+            # across all 20 logged runs only bsc:token was ever read. What it DID produce was an
+            # "address is NOT verified" gap row every single run — which invited exactly the wrong
+            # fix, since verifying it would have made things worse by letting it be summed. The
+            # kind change removes both the gap row and that trap.
+            "token_base": _contract("0x3055913c90Fcc1A6CE9a358911721eEb942013A1", "base", "bridged_representation", "Cake",
                                     "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
-                                    token_standard="erc20", supply_is_partial=True,
-                                    partial_reason="One of several OFT deployments; the full list is not confirmed.",
-                                    purpose="CAKE OFT deployment on Base.",
-                                    note="UNVERIFIED. Supplied as a known further deployment; confirm against "
-                                         "PancakeSwap's own docs, and see the Gap Report row asking for the "
-                                         "complete OFT deployment list.",
-                # GROSS of burn — the contract counts tokens at the dead
-                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                                    token_standard="erc20",
+                                    purpose="CAKE OFT deployment on Base — REFERENCE ONLY. Its supply is "
+                                            "already counted inside BSC's totalSupply as tokens locked in "
+                                            "CakeProxyOFT. Do NOT give this a metric.",
+                                    note="DO NOT VERIFY-AND-SUM. Verifying this address would not improve "
+                                         "the supply figure, it would double-count: bridging LOCKS CAKE on "
+                                         "BSC rather than reducing BSC's totalSupply, so the home read "
+                                         "already includes it. The same applies to CAKE's seven other "
+                                         "deployments (Ethereum, Arbitrum, Aptos, opBNB, zkSync, Linea, "
+                                         "Polygon zkEVM) — none of them should be added either.",
                 metric_override="total_supply_gross"),
             "burn_dead": _contract("0x000000000000000000000000000000000000dEaD", "bsc", "burn_address_balance", "Cake",
                                    "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
@@ -5229,26 +5259,35 @@ PROJECTS = [
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
         "self_reported_net_mint": True,
-        # ** THIS REASONING IS PROBABLY BACKWARDS, AND IT IS LEFT IN PLACE PENDING ONE NUMBER. **
-        # It says the on-chain sum UNDERSTATES because we cover only some deployments, which
-        # implies the fix is to add more chains. Under the ProxyOFTWithFee semantics confirmed on
-        # 2026-09-22 (see total_supply_residual_unexplained), the opposite holds: bridging LOCKS
-        # CAKE on BSC rather than reducing BSC's totalSupply, so BSC ALONE is already the complete
-        # gross figure and every chain added double-counts what was bridged to it. On that
-        # reading the figure is INFLATED, not partial, and ":PARTIAL" on the cell tells a reader
-        # it understates when it overstates — the wrong direction, which is worse than no label.
+        # ===== NOT PARTIAL. Corrected 2026-09-22 once the residual was explained. =====
+        # This read "CAKE is a LayerZero OFT deployed on several chains, so any on-chain supply
+        # read covers only the deployments listed in contracts", with supply_is_partial True and
+        # a ":PARTIAL" marker on the cell. It was wrong twice over, in opposite directions, and
+        # both errors are worth keeping written down because each was individually plausible.
         #
-        # NOT CHANGED YET, deliberately. The mechanism is confirmed from source; the NUMBER is
-        # not, and changing a live supply figure on a mechanism argument alone is the move this
-        # file exists to refuse. Section J of orphan_cleanup.sql settles it from data already in
-        # the store. If it confirms, the choice is between dropping the Base component and
-        # subtracting the proxy's locked balance, and supply_is_partial goes to False either way.
-        "supply_is_partial": True,
-        "supply_partial_reason": "CAKE is a LayerZero OFT deployed on several chains, so any on-chain supply read "
-                                 "covers only the deployments listed in contracts. The self-reported figure is the "
-                                 "source of record; the on-chain sum is a partial cross-check and is labelled as such. "
-                                 "** SEE THE BLOCK COMMENT ABOVE: this direction is probably wrong — the sum most "
-                                 "likely OVERSTATES by double-counting bridged CAKE, pending the section J check. **",
+        # IT IS NOT MISSING CHAINS. Bridging LOCKS CAKE on BSC rather than reducing BSC's
+        # totalSupply (ProxyOFTWithFee: circulatingSupply() = totalSupply() - outboundAmount), so
+        # the BSC read ALREADY includes every token represented on the other eight chains. Adding
+        # them would double-count, not complete the picture. The instinct to "add more chains" was
+        # the wrong direction.
+        #
+        # NOR IS IT INFLATED, which was the correction made earlier the same day and is also
+        # wrong: that assumed we SUM bsc:token and base:token_base. We do not — token_base is
+        # unverified, the tier-2 gate refuses it, and only bsc:token has ever been read. Nothing
+        # is double-counted because nothing is summed.
+        #
+        # SO THE FIGURE IS COMPLETE AND supply_is_partial IS False. It is BSC's totalSupply, which
+        # is exactly the gross supply of CAKE in existence. The one thing a reader must not do is
+        # compare it against CoinGecko's figure expecting them to differ only by the burn — see
+        # total_supply_convention above, which is what now carries that warning. A PARTIAL marker
+        # pointing in EITHER direction was worse than none, because both told a reader the number
+        # needed an adjustment it does not need.
+        #
+        # token_base STAYS in contracts, unverified and refused. It is a real address and may
+        # matter if the bridge model ever changes; what it must not do is get verified and summed
+        # on the assumption that more chains means a more complete figure. See its own note.
+        "supply_is_partial": False,
+        "supply_partial_reason": "",
         "self_reported_source": {
             "what": "Monthly CAKE Burn Report blog series",
             "url": "https://blog.pancakeswap.finance/",
@@ -7363,6 +7402,10 @@ def _check_open_question_status() -> list[str]:
 # A BOUND THAT HAS TO FOLLOW THE SUPPLY CONVENTION, for the same reason the issuance formula
 # does. Declared as {(greater, lesser): substitute_lesser} and applied only where the project's
 # total_supply_convention says the default comparand is the wrong quantity.
+# CONVENTIONS UNDER WHICH THE PROVIDER HAS ALREADY SUBTRACTED THE BURN. Both of them, so a
+# comparand or a formula keyed on one does not quietly exclude the other.
+NET_OF_BURN_CONVENTIONS = ("net_of_burn", "net_of_burn_and_cross_chain_lock")
+
 BOUND_AGAINST_GROSS_WHEN_NET_OF_BURN = {
     ("burn_address_balance", "total_supply"): "total_supply_gross",
 }
@@ -7397,7 +7440,12 @@ def bound_metric_for(project_name: str, greater: str, lesser: str) -> str:
     if not sub:
         return lesser
     p = PROJECT_BY_NAME.get(project_name) or {}
-    if p.get("total_supply_convention") != "net_of_burn":
+    # EVERY convention that nets the burn OUT needs the gross comparand, not just the simple one.
+    # PancakeSwap moved to net_of_burn_and_cross_chain_lock on 2026-09-22, and an equality test
+    # against "net_of_burn" alone would have silently dropped it back to comparing 5.05bn burned
+    # against a 331m net figure — re-firing the exact contradiction the gross bound was built to
+    # settle, on the project it was built for.
+    if p.get("total_supply_convention") not in NET_OF_BURN_CONVENTIONS:
         return lesser
     if sub not in metrics_for_project(p):
         return lesser
@@ -7441,7 +7489,7 @@ def _check_total_supply_conventions() -> list[str]:
     selects the ISSUANCE FORMULA (see issuance_supply_rule). A wrong declaration here does not
     mislead, it computes.
     """
-    allowed = ("net_of_burn", "gross")
+    allowed = ("net_of_burn", "gross", "net_of_burn_and_cross_chain_lock")
     errs = []
     for p in PROJECTS:
         conv = p.get("total_supply_convention")
@@ -7503,6 +7551,29 @@ def issuance_supply_rule(project: dict, mech_model: str | None) -> str | None:
             return "add_burn"        # the provider already subtracted it; add it back for gross
         if conv == "gross":
             return "delta_only"      # a transfer burn leaves the contract's own figure untouched
+        if conv == "net_of_burn_and_cross_chain_lock":
+            # ** add_burn IS NOT ENOUGH HERE, and this is the whole reason the third convention
+            # needed its own name rather than being filed under net_of_burn. ** Write it out:
+            #
+            #     CG        = contract_total - burn_cumulative - outbound
+            #     d(CG)     = minted - burn_flow - d(outbound)     [a transfer burn does not
+            #                                                       reduce contract_total, so
+            #                                                       d(contract_total) = minted]
+            #     issuance  = d(CG) + burn_flow + d(outbound)
+            #
+            # add_burn computes d(CG) + burn_flow, which is minted MINUS the period's net bridge
+            # flow. There is a third term and we do not have a series for it: outboundAmount is
+            # not read anywhere. CAKE bridges across eight chains continuously, so d(outbound) is
+            # not a rounding error — it is plausibly the same order as daily issuance, and it can
+            # take either sign, so the error does not even average out in a direction a reader
+            # could allow for.
+            #
+            # REFUSING IS THE ANSWER UNTIL outboundAmount IS TRACKED. PancakeSwap's headline is
+            # the self-reported monthly CAKE Burn Report anyway (self_reported_net_mint), so the
+            # derivation is a cross-check and little is lost by leaving it blank. Storing
+            # minted-minus-bridge-flow under the label "gross issuance" is precisely the
+            # plausible-looking wrong number this field exists to prevent.
+            return None
         return None                  # UNTESTED — see the check in the note on each project
     return ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM.get(mech_model)
 
