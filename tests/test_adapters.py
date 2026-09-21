@@ -5231,3 +5231,36 @@ def test_skys_archetype_4_covers_the_burn_leg_and_nothing_else():
     # burn dated before 2026-09-14 is wrong by construction, whatever its source claims.
     assert "no burn" in scope["before_this_date"].lower()
     print("sky A4 ok: 5% leg only, from 2026-09-14, with both excluded legs named")
+
+
+def test_hyperliquid_holds_archetype_4_on_the_evidence_already_in_config():
+    """47.3m HYPE confirmed burned, and it was absent from the A4 tab because it held 3 and 1 but
+    not 4. Nothing new was needed to fix that — every fact was already in the entry.
+
+    Buy, then burn, the same tokens: the ordinary 3-and-4 shape, not a special case. Archetype 3
+    is kept deliberately. Dropping it would hide the mechanism that produces the tokens the burn
+    destroys while keeping the effect.
+    """
+    p = config.PROJECT_BY_NAME["Hyperliquid"]
+    assert {3, 4} <= set(p["archetypes"]), p["archetypes"]
+
+    # ARCHETYPE 3's basis: 99% of net protocol fees buy HYPE, from Hyperliquid's own docs.
+    assert p["fee_split"]["share_to_buyback"] == 0.99
+    assert p["fee_split"]["status"] == "active" and p["fee_split"]["programmed"] is True
+
+    # ARCHETYPE 4's basis: confirmed, on two independent primary sources.
+    mech = config.burn_mechanism(p)
+    assert mech["status"] == "confirmed"
+    note = mech.get("source_note", "")
+    assert "validator vote" in note.lower() and "sec" in note.lower(), \
+        "the two-source basis is what makes this confirmed rather than assumed"
+
+    # THE STAKING ELEMENT IS NOT AN ARCHETYPE. It is metrics, which this project already has.
+    assert set(config.ARCHETYPE_NAMES) == {1, 2, 3, 4}
+    assert "staked_tokens" in config.metrics_for_project(p)
+
+    # And the new burn metrics explain themselves rather than asking for an address: the figure
+    # comes from the protocol's own API, which the node_api branch of the gap reporter knows.
+    assert p["burn_read_method"] == "protocol_api"
+    assert (p.get("node_api") or {}).get("metric") == "burn_address_balance"
+    print("hyperliquid ok: 3 and 4 on evidence already on file, staking is orthogonal")

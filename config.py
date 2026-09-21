@@ -4207,7 +4207,35 @@ PROJECTS = [
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
         "defillama_fees_slug": "hyperliquid", "defillama_protocol": "hyperliquid", "defillama_chain": "Hyperliquid L1",
-        "archetypes": [3, 1], "archetypes_held": [],
+        # ===== ARCHETYPE 4 ADDED 2026-09-22. It was missing, and nothing new was needed to add it.
+        # Hyperliquid had 47.3m HYPE confirmed burned and did not appear on the A4 tab, because it
+        # held 3 and 1 but not 4. Every fact required was already in this entry:
+        #   ARCHETYPE 3, REVENUE BUYBACK — fee_split.share_to_buyback 0.99, programmed, active,
+        #     from Hyperliquid's own Assistance Fund docs. 99% of net protocol fees buy HYPE.
+        #   ARCHETYPE 4, PERMANENT BURN  — burn_mechanism status CONFIRMED on two INDEPENDENT
+        #     primary sources: the validator vote of 2025-12-27 (85% of staked weight) formally
+        #     recognising all Assistance Fund HYPE, past and future, as permanently burned, and an
+        #     SEC-filed exhibit from Hyperliquid Strategies Inc (2026-05-07) corroborating it under
+        #     a separate legal obligation.
+        # Buy, then burn, the same tokens — which is the ordinary 3-and-4 shape this file already
+        # applies to Uniswap, GEODNET and Venice AI, not a special case. The evidence base here is
+        # if anything stronger than most of them.
+        #
+        # THE STAKING ELEMENT DOES NOT BEAR ON THIS. There is no staking archetype: 1 is
+        # Infrastructure, 2 Coordination Mechanism, 3 Revenue Buyback, 4 Permanent Burn. HYPE
+        # staking shows up as metrics (staked_tokens, locked_tokens, avg_lock_duration_days),
+        # which this project already carries, and it neither adds nor removes an archetype.
+        # Dropping 3 was considered and rejected: the buyback is the documented mechanism that
+        # produces the tokens the burn then destroys, so removing it would hide the source of the
+        # burn while keeping its effect.
+        #
+        # ONE THING WORTH A LOOK LATER, not acted on here: the validator vote RECOGNISES Assistance
+        # Fund HYPE as burned. If those tokens still sit at the AF address rather than at a dead
+        # one, "transfer_to_dead_address" describes the accounting rather than the token movement —
+        # the same distinction that took Sky's archetype 4 away in the first place. It does not
+        # change the archetype (the supply effect is agreed by validator vote and an SEC filing),
+        # and burn_read_method is protocol_api so no address balance is being read either way.
+        "archetypes": [3, 1, 4], "archetypes_held": [],
         "fee_split": {
             "share_to_buyback": 0.99,   # current stated figure; the historical range was 97-99%
             "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/assistance-fund",
