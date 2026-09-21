@@ -547,6 +547,38 @@ def is_manual_quarterly(project_name: str, metric: str) -> bool:
     return metric in (p.get("manual_quarterly") or ())
 
 
+# Markers a source string carries that describe HOW a figure was produced, not WHAT was read.
+# Exact-match pieces between colons.
+SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only")
+
+# A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
+# above it is not its own colon-delimited piece — it is glued to the key — so every parser that
+# filtered pieces by exact match sailed straight past it and then failed to find the contract.
+_SOURCE_ANNOTATION = re.compile(r"\[[^\]]*\]")
+
+
+def strip_source_annotations(source: str) -> str:
+    """Remove bracketed annotations from a source string, leaving the addresses it names.
+
+    ** THE 2026-09-21 AERODROME BLANK. ** gross_issuance_tokens read "orphaned — written by
+    contract(s) minter[tail@21bps], which are no longer in config". The contract was there; the
+    parser was looking for a key called `minter[tail@21bps]`.
+
+    The annotation was added on 2026-09-22 so a series that changes basis mid-history says so on
+    the row (see fetch/chain._emit_parts). Three separate parsers then tried to resolve contract
+    keys out of the annotated string, each filtering pieces against an exact-match list of
+    markers — a design that cannot see an annotation glued to a key rather than sitting in its
+    own colon-delimited slot.
+
+    ONE FUNCTION, used by all of them, because the failure was three copies of the same
+    assumption drifting apart. _measuring_point in fetch/base.py is the one that had not bitten
+    yet and would have: "chain:base:minter[tail@21bps]" and "chain:base:minter" are the same
+    address, and it would have called them two measuring points the moment the tail branch
+    flipped — blanking the series for a change that never happened.
+    """
+    return _SOURCE_ANNOTATION.sub("", str(source or ""))
+
+
 def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
     """Contract keys named in a stored row's source that no longer exist in config.
 
@@ -558,10 +590,10 @@ def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
     A source naming a contract config no longer has is, by definition, measuring something this
     tool has decided not to measure. That is not a low-confidence figure; it is not a figure.
     """
-    src = str(source or "")
+    src = strip_source_annotations(source)
     if not src.startswith("chain:"):
         return []                       # coingecko, dune, schedule, derived — no contract behind it
-    body = ":".join(part for part in src.split(":")[1:] if part not in ("PARTIAL", "delta"))
+    body = ":".join(part for part in src.split(":")[1:] if part not in SOURCE_MARKERS)
     if body.startswith("sum(") and body.endswith(")"):
         pieces = body[4:-1].split("+")
     else:
@@ -615,14 +647,13 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
     orphaned_contract_keys' job, and double-reporting would put two reasons on one cell), or when
     the contract serves the metric directly or as the stock behind a derived flow.
     """
-    src = str(source or "")
+    src = strip_source_annotations(source)
     if not src.startswith("chain:"):
         return []
     contracts = (PROJECT_BY_NAME.get(project_name) or {}).get("contracts") or {}
     if not contracts:
         return []
-    body = ":".join(part for part in src.split(":")[1:]
-                    if part not in ("PARTIAL", "delta", "recurring-only"))
+    body = ":".join(part for part in src.split(":")[1:] if part not in SOURCE_MARKERS)
     pieces = body[4:-1].split("+") if body.startswith("sum(") and body.endswith(")") else [body]
     allowed = _flow_parents(metric)
     withdrawn = []

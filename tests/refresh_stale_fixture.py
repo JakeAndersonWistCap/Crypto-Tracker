@@ -119,6 +119,7 @@ TRANSITIONS = (
     "refuted_mechanism",
     "changed_measuring_point",
     "implausible_delta",
+    "unreconciled_flow",
     "control",
 )
 
@@ -246,6 +247,47 @@ ROWS = [
              "to take a ratio of and the guard correctly stays silent — and the stock must "
              "survive the guard that blanks the flow derived from it"),
 
+    # ---- unreconciled_flow -----------------------------------------------------------
+    # THE OPPOSITE SIGN OF implausible_delta, and invisible to it. Hyperliquid's Assistance Fund
+    # balance moved 231,934.0021 HYPE across 2026-09-21 and the burn flow recorded 83,344.4791
+    # of it. The figure is the right order of magnitude, from the right address, on the right
+    # day — and about a third of the truth.
+    #
+    # WHAT PRODUCED IT: four runs on the same date. The hypercore adapter differenced against
+    # latest_values() (the newest reading of ANY date, which after run 1 is THIS MORNING'S) while
+    # carrying values_before()'s date, so the same-date guard in derive_flow_from_cumulative saw
+    # yesterday's date and let it through. Each run wrote only the increment since the last one,
+    # and because metrics is keyed (date, project, metric) each overwrote the one before. The
+    # last increment is what survived. Fixed at the write path on 2026-09-22, which does nothing
+    # for the rows already stored.
+    #
+    # NEITHER OTHER GUARD CAN SEE IT. One source, so changed_measuring_point stays silent.
+    # 83,344 against a cumulative of 27,031,934 is 0.3%, nowhere near implausible_delta's
+    # threshold — and it should not be, because a flow that is too SMALL is not what that guard
+    # is about. Only the telescoping sum catches an understatement.
+    dict(transition="unreconciled_flow", date="2026-09-21", project="Hyperliquid",
+         metric="gross_burn_tokens", value=83_344.4791,
+         source="hypercore_info:spotClearinghouseState:delta", tier=1,
+         written_under="the adapter before prior_delta was threaded through it",
+         why="the last of four same-day increments, left holding the whole day's key. Sums to "
+             "83,344 against 231,934 of stock movement over the same span"),
+    # THE TWO ENDPOINTS OF THE SPAN, and both are good readings that must keep showing their
+    # numbers — the fault is in the flow, not in the balance it was derived from. Labelled
+    # control for exactly the reason the Venice denominator is: a guard keyed on the project or
+    # on the parent metric rather than on the flow would blank these too.
+    dict(transition="control", date="2026-09-20", project="Hyperliquid",
+         metric="burn_address_balance", value=26_800_000.0,
+         source="hypercore_info:spotClearinghouseState", tier=1,
+         written_under="current config",
+         why="the START of the span — the last stock reading strictly before the flow row, which "
+             "is the number the flow was differenced against"),
+    dict(transition="control", date="2026-09-21", project="Hyperliquid",
+         metric="burn_address_balance", value=27_031_934.0021,
+         source="hypercore_info:spotClearinghouseState", tier=1,
+         written_under="current config",
+         why="the END of the span. 27,031,934.0021 - 26,800,000 = 231,934.0021 moved, against "
+             "83,344.4791 recorded: a residual of 148,589.523 the flow never reported"),
+
     # ---- controls --------------------------------------------------------------------
     # A GUARD THAT BLANKS EVERYTHING PASSES EVERY ASSERTION ABOVE. These must stay ok.
     dict(transition="control", date="2026-09-14", project="Ether.fi",
@@ -352,9 +394,12 @@ def _marker(reason: str) -> str:
     # "OF THE CUMULATIVE" rather than the whole opening clause: implausible_delta interpolates
     # the actual share ("ONE OBSERVATION IS 99% OF THE CUMULATIVE"), so anything to the left of
     # it moves with the data and would pin the figure instead of the branch.
+    # "DO NOT SUM TO THE STOCK" and not the figures either side of it, for the same reason: the
+    # unreconciled_flow reason interpolates both totals and the residual.
     for m in ("ORPHANED", "MEASURING CONTRACT WITHDRAWN", "DERIVATION SUPPRESSED",
               "MEASURING POINT CHANGED", "MECHANISM REFUTED", "OF THE CUMULATIVE",
-              "DESTINATION DISPUTED", "not applicable", "no value in the store"):
+              "DO NOT SUM TO THE STOCK", "DESTINATION DISPUTED", "not applicable",
+              "no value in the store"):
         if m in reason:
             return m
     return ""

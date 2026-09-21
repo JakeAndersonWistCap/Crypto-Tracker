@@ -10,6 +10,7 @@
     "refuted_mechanism",
     "changed_measuring_point",
     "implausible_delta",
+    "unreconciled_flow",
     "control"
   ],
   "rows": [
@@ -144,6 +145,39 @@
       "tier": 2,
       "written_under": "current config",
       "why": "the cumulative the flow above is measured against. Without it there is nothing to take a ratio of and the guard correctly stays silent \u2014 and the stock must survive the guard that blanks the flow derived from it"
+    },
+    {
+      "transition": "unreconciled_flow",
+      "date": "2026-09-21",
+      "project": "Hyperliquid",
+      "metric": "gross_burn_tokens",
+      "value": 83344.4791,
+      "source": "hypercore_info:spotClearinghouseState:delta",
+      "tier": 1,
+      "written_under": "the adapter before prior_delta was threaded through it",
+      "why": "the last of four same-day increments, left holding the whole day's key. Sums to 83,344 against 231,934 of stock movement over the same span"
+    },
+    {
+      "transition": "control",
+      "date": "2026-09-20",
+      "project": "Hyperliquid",
+      "metric": "burn_address_balance",
+      "value": 26800000.0,
+      "source": "hypercore_info:spotClearinghouseState",
+      "tier": 1,
+      "written_under": "current config",
+      "why": "the START of the span \u2014 the last stock reading strictly before the flow row, which is the number the flow was differenced against"
+    },
+    {
+      "transition": "control",
+      "date": "2026-09-21",
+      "project": "Hyperliquid",
+      "metric": "burn_address_balance",
+      "value": 27031934.0021,
+      "source": "hypercore_info:spotClearinghouseState",
+      "tier": 1,
+      "written_under": "current config",
+      "why": "the END of the span. 27,031,934.0021 - 26,800,000 = 231,934.0021 moved, against 83,344.4791 recorded: a residual of 148,589.523 the flow never reported"
     },
     {
       "transition": "control",
@@ -309,6 +343,28 @@
       "why": "the cumulative the flow above is measured against. Without it there is nothing to take a ratio of and the guard correctly stays silent \u2014 and the stock must survive the guard that blanks the flow derived from it",
       "expect_status": "ok",
       "expect_confidence": "AMBER",
+      "expect_blank": false,
+      "expect_reason_contains": ""
+    },
+    {
+      "transition": "unreconciled_flow",
+      "project": "Hyperliquid",
+      "metric": "gross_burn_tokens",
+      "written_under": "the adapter before prior_delta was threaded through it",
+      "why": "the last of four same-day increments, left holding the whole day's key. Sums to 83,344 against 231,934 of stock movement over the same span",
+      "expect_status": "unreconciled_flow",
+      "expect_confidence": "RED",
+      "expect_blank": true,
+      "expect_reason_contains": "DO NOT SUM TO THE STOCK"
+    },
+    {
+      "transition": "control",
+      "project": "Hyperliquid",
+      "metric": "burn_address_balance",
+      "written_under": "current config",
+      "why": "the START of the span \u2014 the last stock reading strictly before the flow row, which is the number the flow was differenced against",
+      "expect_status": "ok",
+      "expect_confidence": "GREEN",
       "expect_blank": false,
       "expect_reason_contains": ""
     },

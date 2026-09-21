@@ -251,7 +251,13 @@ def _measuring_point(source: str) -> str:
     'chain:ethereum:fire_pit' does not. Trailing markers are stripped so a figure becoming PARTIAL
     does not read as a change of address.
     """
-    parts = [p for p in str(source).split(":") if p not in ("PARTIAL", "delta")]
+    import config
+    # SAME STRIPPER AS THE ORPHAN AND WITHDRAWN PARSERS, deliberately shared. This one had not
+    # bitten yet: "chain:base:minter[tail@21bps]" and "chain:base:minter" are the same address,
+    # and comparing them as written would have reported a change of measuring point the moment
+    # Aerodrome's tail branch flipped — blanking a series for a change that never happened.
+    src = config.strip_source_annotations(source)
+    parts = [p for p in src.split(":") if p not in config.SOURCE_MARKERS]
     return ":".join(parts)
 
 

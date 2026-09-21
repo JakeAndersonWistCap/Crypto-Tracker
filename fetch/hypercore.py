@@ -35,10 +35,21 @@ KIND = "hypercore_info"
 class HyperCoreInfo:
     """Reads a balance from Hyperliquid's info endpoint for any project declaring this kind."""
 
-    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None):
+    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
+                 prior_delta: dict | None = None):
         self.http = Http(min_interval=0.5)
         self.prior = prior_values or {}
         self.prior_dates = prior_dates or {}
+        # THE VALUE TO SUBTRACT AND THE DATE IT CARRIES MUST COME FROM THE SAME ROW.
+        # prior_values is latest_values() — the newest figure of ANY date, which on a same-day
+        # re-run is THIS MORNING'S. prior_dates is values_before(today) — the last EARLIER-dated
+        # row. Differencing one against the other's date passes the same-date guard (the date is
+        # yesterday's) while subtracting today's number, so run 2 of a day reports only the
+        # increment since run 1 and overwrites the full day's flow on the (date, project, metric)
+        # key. That is the PancakeSwap fault recorded in store.values_before, and it was fixed for
+        # the chain adapter and left in place here. prior_delta is values_before's value, so the
+        # two now agree and a same-day re-run is idempotent.
+        self.prior_delta = prior_delta if prior_delta is not None else (prior_values or {})
 
     @staticmethod
     def _pick_balance(payload, api: dict) -> tuple[float | None, str]:
@@ -106,7 +117,7 @@ class HyperCoreInfo:
                     f"{metric}={value:,.4f} via {detail}", TIER)
             flow_metric = api.get("derive_flow_metric")
             if flow_metric:
-                flow = derive_flow_from_cumulative(value, self.prior.get((name, metric)), name,
+                flow = derive_flow_from_cumulative(value, self.prior_delta.get((name, metric)), name,
                                                    flow_metric, f"{src}:delta", TIER, when,
                                                    prior_date=self.prior_dates.get((name, metric)),
                                                    stock_metric=metric, out=out)

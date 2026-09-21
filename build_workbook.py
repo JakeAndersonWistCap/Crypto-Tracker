@@ -253,7 +253,8 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tu
 # why it is withheld, and how to clear it are all still there.
 # =========================================================================================
 WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed",
-                     "measuring_point_changed", "implausible_delta", "refuted")
+                     "measuring_point_changed", "implausible_delta", "unreconciled_flow",
+                     "refuted")
 
 # A DIFFERENCED FLOW WHOSE PARENT STOCK IT CAN BE SANITY-CHECKED AGAINST.
 # gross_burn_tokens is the change in burn_address_balance between two observations, so one day's
@@ -272,6 +273,19 @@ DERIVED_FLOW_STOCK = {
 # cumulative is still small; a looser one would let a 30x error through. Nothing between a
 # quarter and a whole has ever been a real daily burn for any project in this universe.
 IMPLAUSIBLE_DELTA_SHARE = 0.25
+
+# THE TELESCOPING IDENTITY, AND HOW MUCH OF IT IS FLOATING-POINT.
+# Every flow in DERIVED_FLOW_STOCK is a difference of two readings of its stock, so consecutive
+# flows telescope: summing them over a span must give the stock's move across that span exactly,
+# because every intermediate reading appears once with each sign and cancels. The only slack is
+# IEEE 754: these are doubles holding figures up to ~1e10, where one ulp is ~2e-6.
+#
+# SO THE TOLERANCE IS FLOAT PRECISION AND NOTHING ELSE. It is not a "close enough" band, and it
+# must not become one — a residual of any size that survives this is a flow that failed to
+# account for a real move of the stock, which is the whole failure being looked for. This is the
+# Aerodrome-buffer lesson: a tolerance added to make a check comfortable is a check switched off.
+TELESCOPING_ABS_EPS = 1e-6
+TELESCOPING_REL_EPS = 1e-9
 
 
 def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None:
@@ -371,7 +385,43 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
             f"as a burn. Clear the offending row from the store — see orphan_cleanup.sql — and "
             f"this clears itself; nothing in config needs changing.")
 
-    # 7. MECHANISM REFUTED. Scoped to BURN_METRICS — a refuted burn mechanism says nothing about
+    # 7. THE FLOW DOES NOT ACCOUNT FOR THE STOCK'S MOVE — the telescoping identity, broken.
+    #
+    #    Case 6 asks whether ONE observation is too big. This asks whether ALL of them add up,
+    #    which is a different failure and catches the opposite sign: a flow series that is too
+    #    SMALL. Hyperliquid, 2026-09-21: burn_address_balance moved 231,934 across the day and
+    #    gross_burn_tokens recorded 83,344 of it. Nothing about the 83,344 looked wrong — it is
+    #    the right order of magnitude, from the right address, on the right day, and it was
+    #    roughly a third of the truth.
+    #
+    #    THE CAUSE WAS THE SAME-DAY RE-RUN, now fixed at the write path: the hypercore adapter
+    #    differenced against latest_values() (this morning's reading) while carrying
+    #    values_before()'s date, so each of the four runs that day wrote only the increment since
+    #    the last one and overwrote the previous row on the (date, project, metric) key. The fix
+    #    stops new rows being written that way. It cannot repair the rows already stored, and no
+    #    guard keyed on plausibility could ever have seen them — only the arithmetic can.
+    #
+    #    ZERO TOLERANCE BEYOND FLOAT PRECISION. The identity is exact, so any residual that
+    #    survives TELESCOPING_*_EPS is tokens the flow column failed to report.
+    moved, accounted = row.get("flow_stock_move"), row.get("flow_accounted")
+    if moved is not None and accounted is not None:
+        residual = moved - accounted
+        if abs(residual) > max(TELESCOPING_ABS_EPS, abs(moved) * TELESCOPING_REL_EPS):
+            parent = DERIVED_FLOW_STOCK.get(metric, "the cumulative balance")
+            span = row.get("flow_span") or ("?", "?")
+            return "unreconciled_flow", (
+                f"THE FLOWS DO NOT SUM TO THE STOCK'S MOVE — {accounted:,.4f} recorded against "
+                f"{moved:,.4f} of movement in {parent} between {span[0]} and {span[1]}, leaving "
+                f"{residual:,.4f} unaccounted for. Each of these figures is the difference of two "
+                f"readings of the same balance, so consecutive ones must telescope: every "
+                f"intermediate reading appears once with each sign and cancels. They do not, so "
+                f"at least one period's movement was never written or was written twice — the "
+                f"usual cause is a same-day re-run differencing against its own earlier row and "
+                f"overwriting it on the (date, project, metric) key. The column is not slightly "
+                f"off; it is missing whole periods. Clear the affected rows and let them "
+                f"re-derive — see orphan_cleanup.sql.")
+
+    # 8. MECHANISM REFUTED. Scoped to BURN_METRICS — a refuted burn mechanism says nothing about
     #    total_supply. No "does this project claim a burn" guard is needed: burn_mechanism()
     #    defaults to 'assumed' and never to 'refuted', so this only exists where declared.
     if metric in config.BURN_METRICS:
@@ -519,6 +569,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
                    "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
+                   "flow_stock_move": None, "flow_accounted": None, "flow_residual": None,
+                   "flow_span": None,
                    "granularity": "daily", "period_label": "",
                    "covered_days": None, "window_days": None}
             if g is None or g.empty:
@@ -563,10 +615,27 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             parent = DERIVED_FLOW_STOCK.get(metric)
             if parent:
                 cumulative = latest_value.get((name, parent))
-                deltas = g[g["source"].astype(str).str.contains(":delta", na=False)]
+                deltas = g[g["source"].astype(str).str.contains(":delta", na=False)].sort_values("date")
                 if cumulative and not deltas.empty:
                     row["cumulative_ref"] = cumulative
                     row["max_single_delta"] = float(deltas["value"].max())
+                # THE TELESCOPING IDENTITY. Consecutive differences of one stock must sum to the
+                # stock's move across the same span — every intermediate reading cancels. The
+                # start point is the last stock reading STRICTLY BEFORE the first delta, because
+                # that is the number the first delta was differenced against.
+                stock = groups.get((name, parent))
+                if not deltas.empty and stock is not None and not stock.empty:
+                    st = stock.sort_values("date")
+                    first, last = deltas.iloc[0]["date"], deltas.iloc[-1]["date"]
+                    ends, starts = st[st["date"] <= last], st[st["date"] < first]
+                    if not ends.empty and not starts.empty:
+                        moved = float(ends.iloc[-1]["value"]) - float(starts.iloc[-1]["value"])
+                        accounted = float(deltas["value"].sum())
+                        row["flow_stock_move"] = moved
+                        row["flow_accounted"] = accounted
+                        row["flow_residual"] = moved - accounted
+                        row["flow_span"] = (starts.iloc[-1]["date"].strftime("%Y-%m-%d"),
+                                            ends.iloc[-1]["date"].strftime("%Y-%m-%d"))
             row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))

@@ -539,8 +539,11 @@ SELECT date, project, value, source, tier, 'WOULD DELETE' AS action
 -- COMMIT;
 
 -- F4. VERIFY, and expect DIFFERENT outcomes per project rather than a clean sweep:
---     Uniswap      rebuilds from the next run under d(supply)+burn. Zero is a normal answer
---                  for a day when the only supply movement was the burn.
+--     Uniswap      rebuilds from the next run under d(total_supply_gross) — NOT d(supply)+burn,
+--                  which was retired on 2026-09-22 after it invented 219,999.99 of UNI issuance
+--                  out of provider read timing. See section L, which is the narrow version of
+--                  this delete and the one to run if F has already been applied once. Zero is a
+--                  normal answer for a day when the only supply movement was the burn.
 --     GEODNET      stays empty — its derivation is suppressed on separate grounds.
 --     PancakeSwap  stays empty until total_supply_convention is tested and declared.
 --     Venice AI    same.
@@ -947,3 +950,192 @@ SELECT rowid, project, metric, reason,
 -- K5. VERIFY — K1 should return nothing, and the tiers should read as plain integers.
 -- SELECT typeof(tier) AS tier_type, tier, COUNT(*) AS rows
 --   FROM review_queue GROUP BY typeof(tier), tier ORDER BY tier_type, tier;
+
+
+-- ========================================================================================
+-- L. THE PHANTOM ISSUANCE ROWS — d(net supply) + burn, where the two came from             2026-09-22
+--    different providers sampled at different moments. L1-L3 LOOK. L4 deletes.
+-- ========================================================================================
+-- WHAT HAPPENED: Uniswap's 2026-09-21 run derived gross_issuance_tokens = 219,999.99 while
+-- total_supply_gross read EXACTLY 1,000,000,000 at both ends. UNI's contract has minted nothing
+-- since 2021. The figure was the gap between CoinGecko's net total_supply and the chain's burn
+-- delta — the burn landed inside the window and the provider's net figure had not yet moved to
+-- match it, so adding the two counted the burn as a mint.
+--
+-- THE FIX, already in fetch/__init__.py: where total_supply_gross exists (the net_of_burn
+-- projects, which are the only ones the add_burn rule applies to), issuance is derived from
+-- d(total_supply_gross) directly — one source, one read, no drift. The net+burn figure is still
+-- computed and any disagreement is raised as 'issuance_route_divergence' in the Review Queue,
+-- so the cross-check survives the change rather than being dropped with the route.
+--
+-- SO THESE ROWS ARE HISTORY FROM A FORMULA THE CODE NO LONGER USES. They do not heal on the next
+-- run: metrics is keyed (date, project, metric), so a new run writes a NEW date and the old rows
+-- stay, feeding the 30-day issuance window and the burn/issuance ratio as if measured.
+--
+-- L1. EVERY derived:d_supply+burn ISSUANCE ROW, and whether a gross reading for the same project
+--     and date disagrees with it. A row whose gross delta is 0 while the stored issuance is not
+--     is a phantom; a row where they agree was right by luck and is still better re-derived.
+SELECT m.date, m.project, m.value AS stored_issuance, m.source, m.tier,
+       g.value                                                   AS gross_supply_same_day,
+       (SELECT p.value FROM metrics p
+         WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+           AND p.date < m.date ORDER BY p.date DESC LIMIT 1)      AS gross_supply_prior,
+       g.value - (SELECT p.value FROM metrics p
+                   WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+                     AND p.date < m.date ORDER BY p.date DESC LIMIT 1)
+                                                                  AS gross_delta,
+       CASE WHEN g.value IS NULL THEN 'no gross reading — cannot judge, leave it'
+            WHEN (SELECT p.value FROM metrics p
+                   WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+                     AND p.date < m.date ORDER BY p.date DESC LIMIT 1) IS NULL
+                 THEN 'only one gross reading — cannot judge, leave it'
+            WHEN ABS(m.value - (g.value - (SELECT p.value FROM metrics p
+                                            WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+                                              AND p.date < m.date ORDER BY p.date DESC LIMIT 1))) > 1.0
+                 THEN 'PHANTOM — the contract does not agree'
+            ELSE 'agrees with the gross delta'
+       END                                                        AS verdict
+  FROM metrics m
+  LEFT JOIN metrics g
+    ON g.project = m.project AND g.metric = 'total_supply_gross' AND g.date = m.date
+ WHERE m.metric = 'gross_issuance_tokens'
+   AND m.source = 'derived:d_supply+burn'
+ ORDER BY m.project, m.date;
+
+-- L2. WHAT THE WORKBOOK IS SHOWING BECAUSE OF THEM. The 30-day issuance window and the
+--     burn/issuance ratio both read this metric, so the size of the error is the size of these
+--     values relative to the real (gross) issuance, which for Uniswap and GEODNET is zero.
+SELECT project,
+       COUNT(*)      AS phantom_rows,
+       MIN(date)     AS first_date,
+       MAX(date)     AS last_date,
+       SUM(value)    AS total_issuance_claimed
+  FROM metrics
+ WHERE metric = 'gross_issuance_tokens'
+   AND source = 'derived:d_supply+burn'
+ GROUP BY project
+ ORDER BY project;
+
+-- L3. WHAT SURVIVES. Every OTHER route to this metric stays — a measured figure, a declared
+--     schedule, or the new gross delta. Run this before and after L4 and only the
+--     derived:d_supply+burn count should change.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE metric = 'gross_issuance_tokens'
+ GROUP BY source
+ ORDER BY source;
+
+-- L4. THE DELETE. Scoped to the metric AND the retired source string, so nothing measured and
+--     nothing derived by the surviving route can be caught by it. Rows for a project with no
+--     second gross reading are deleted too and that is deliberate: the formula that produced
+--     them is retired, so the value has no route back to a source we would defend. The metric
+--     re-derives from d(total_supply_gross) on the next run for every project that has two
+--     gross readings, and correctly reports a gap for any that does not.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE metric = 'gross_issuance_tokens'
+--    AND source = 'derived:d_supply+burn';
+-- COMMIT;
+
+-- L5. VERIFY — L1 returns nothing, and L3 no longer lists derived:d_supply+burn.
+-- SELECT COUNT(*) AS should_be_zero FROM metrics
+--  WHERE metric = 'gross_issuance_tokens' AND source = 'derived:d_supply+burn';
+
+
+-- ========================================================================================
+-- M. THE SAME-DAY RE-RUN ROWS — a differenced flow anchored on its own earlier row.  2026-09-22
+--    M1-M3 LOOK. M4 deletes the flow rows only; the balances they came from are untouched.
+-- ========================================================================================
+-- WHAT HAPPENED: Hyperliquid's burn_address_balance moved 231,934.0021 HYPE across 2026-09-21
+-- and gross_burn_tokens for that date recorded 83,344.4791 — about a third of it. Four runs
+-- landed on that date.
+--
+-- THE MECHANISM, confirmed in code before anything was changed: fetch/hypercore.py differenced
+-- against prior_values, which is store.latest_values() — the newest reading of ANY date, and
+-- therefore THIS MORNING'S after the first run of the day — while taking the date that guards
+-- the subtraction from prior_dates, which is store.values_before(today). The same-date guard in
+-- derive_flow_from_cumulative saw yesterday's date, found an interval, and allowed it. So each
+-- run wrote only the increment since the previous run, and because metrics is keyed
+-- (date, project, metric) each one OVERWROTE the last. The final increment kept the day's key.
+--
+-- This is the fault store.values_before was written for — PancakeSwap's 59,857,159.01 burn
+-- becoming 0.0123 on 2026-09-14. It was fixed for the chain adapter then and left standing in
+-- three others. hypercore.py, tron.py and scrape.py now all take prior_delta, and a test asserts
+-- the second argument of every derive_flow_from_cumulative call across the four adapters.
+--
+-- AND A READ-TIME GUARD NOW CATCHES IT WHEREVER IT ALREADY HAPPENED: build_workbook's
+-- unreconciled_flow blanks any differenced flow whose values do not sum to its stock's move
+-- across the same span. So these rows are already withheld from the sheet — this section is for
+-- clearing them so the column comes back, not for making the number safe.
+--
+-- M1. THE AFFECTED DATES — every date holding MORE THAN ONE run's worth of readings for a
+--     cumulative balance. fetched_at is per-write, so several distinct fetched_at values on one
+--     date is exactly the re-run signature. LOOK ONLY.
+SELECT project, metric, date, COUNT(DISTINCT fetched_at) AS writes_on_this_date,
+       MIN(fetched_at) AS first_write, MAX(fetched_at) AS last_write
+  FROM metrics
+ WHERE metric IN ('burn_address_balance', 'buyback_fund_balance', 'treasury_holding_tokens')
+ GROUP BY project, metric, date
+HAVING COUNT(DISTINCT fetched_at) > 1
+ ORDER BY project, metric, date;
+
+-- M2. THE TELESCOPING IDENTITY, PER PROJECT, exactly as build_workbook computes it: the flows
+--     must sum to the stock's move between the reading before the first flow and the reading on
+--     the last. A non-zero residual is tokens the flow column never reported.
+SELECT f.project,
+       MIN(f.date)   AS first_flow_date,
+       MAX(f.date)   AS last_flow_date,
+       COUNT(*)      AS flow_rows,
+       SUM(f.value)  AS flows_recorded,
+       (SELECT e.value FROM metrics e
+         WHERE e.project = f.project AND e.metric = 'burn_address_balance'
+           AND e.date <= (SELECT MAX(x.date) FROM metrics x
+                           WHERE x.project = f.project AND x.metric = 'gross_burn_tokens'
+                             AND x.source LIKE '%:delta')
+         ORDER BY e.date DESC LIMIT 1)                     AS stock_at_end,
+       (SELECT b.value FROM metrics b
+         WHERE b.project = f.project AND b.metric = 'burn_address_balance'
+           AND b.date <  (SELECT MIN(x.date) FROM metrics x
+                           WHERE x.project = f.project AND x.metric = 'gross_burn_tokens'
+                             AND x.source LIKE '%:delta')
+         ORDER BY b.date DESC LIMIT 1)                     AS stock_at_start
+  FROM metrics f
+ WHERE f.metric = 'gross_burn_tokens'
+   AND f.source LIKE '%:delta'
+ GROUP BY f.project
+ ORDER BY f.project;
+--     Read it as: (stock_at_end - stock_at_start) - flows_recorded. Zero is the only passing
+--     answer. Anything else is the residual, and its size is how much the burn column understates.
+
+-- M3. THE ROWS THAT WOULD GO, for the one project confirmed affected. Scoped to the :delta
+--     source, so a burn figure from Dune or a dashboard — a real period total, not a difference
+--     — is never caught by it.
+SELECT date, project, metric, value, source, tier, fetched_at, 'WOULD DELETE' AS action
+  FROM metrics
+ WHERE project = 'Hyperliquid'
+   AND metric = 'gross_burn_tokens'
+   AND source LIKE 'hypercore_info:%:delta'
+ ORDER BY date;
+
+-- M4. THE DELETE. THE BALANCES ARE NOT TOUCHED — burn_address_balance is a good reading on every
+--     one of these dates and is what the flows re-derive from. Deleting only the flows means the
+--     next run differences the current balance against the last stored balance and recovers the
+--     whole span as one figure on the next run's date.
+--
+--     WHAT YOU GET BACK IS NOT WHAT WAS LOST. The per-day split across 2026-09-21 cannot be
+--     recovered — the intermediate readings were overwritten and are gone. One correct figure
+--     spanning the gap replaces several wrong ones; the 30-day total becomes right and the daily
+--     shape inside it does not come back. That is the honest outcome and there is no route to a
+--     better one short of a transfer-history source.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Hyperliquid'
+--    AND metric = 'gross_burn_tokens'
+--    AND source LIKE 'hypercore_info:%:delta';
+-- COMMIT;
+
+-- M5. VERIFY — M3 returns nothing, and the balance series is intact.
+-- SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+--   FROM metrics WHERE project = 'Hyperliquid'
+--    AND metric IN ('burn_address_balance', 'gross_burn_tokens')
+--  GROUP BY metric;

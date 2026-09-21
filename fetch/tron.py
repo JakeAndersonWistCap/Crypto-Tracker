@@ -32,10 +32,17 @@ KIND = "tron_burn_trx"
 class TronNode:
     """Reads BURN_TRX from a TRON node for any project declaring a tron_burn_trx node_api block."""
 
-    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None):
+    def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
+                 prior_delta: dict | None = None):
         self.http = Http(min_interval=0.5)
         self.prior = prior_values or {}
         self.prior_dates = prior_dates or {}
+        # SAME PAIRING RULE AS THE CHAIN AND HYPERCORE ADAPTERS: the value differenced against
+        # must come from the same row as the date that guards it. prior_values is the newest
+        # figure of ANY date and is poisoned by an earlier run on the same day; prior_delta is
+        # values_before(today). Using the first with the second's date makes a same-day re-run
+        # destructive — see store.values_before.
+        self.prior_delta = prior_delta if prior_delta is not None else (prior_values or {})
 
     def _read(self, api: dict) -> tuple[float | None, str]:
         """Try each configured endpoint in turn. Returns (value, detail)."""
@@ -82,7 +89,7 @@ class TronNode:
             src = f"{SOURCE}:BURN_TRX"
             out.add(point(name, metric, value, src, TIER, when), SOURCE, name,
                     f"{metric}={value:,.4f} via {detail}", TIER)
-            flow = derive_flow_from_cumulative(value, self.prior.get((name, metric)), name,
+            flow = derive_flow_from_cumulative(value, self.prior_delta.get((name, metric)), name,
                                                "gross_burn_tokens", f"{src}:delta", TIER, when,
                                                prior_date=self.prior_dates.get((name, metric)),
                                                stock_metric=metric, out=out)

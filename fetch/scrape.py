@@ -258,9 +258,15 @@ class Scrape:
     """Tier 3 adapter. One browser for the whole run; one page per entry."""
 
     def __init__(self, prior_values: dict | None = None, registry_path: Path | str = REGISTRY,
-                 prior_dates: dict | None = None):
+                 prior_dates: dict | None = None, prior_delta: dict | None = None):
         self.prior = prior_values or {}
         self.prior_dates = prior_dates or {}
+        # SAME PAIRING RULE AS THE CHAIN AND HYPERCORE ADAPTERS: the value differenced against
+        # must come from the same row as the date that guards it. prior_values is the newest
+        # figure of ANY date and is poisoned by an earlier run on the same day; prior_delta is
+        # values_before(today). Using the first with the second's date makes a same-day re-run
+        # destructive — see store.values_before.
+        self.prior_delta = prior_delta if prior_delta is not None else (prior_values or {})
         self.registry_path = registry_path
         self.entries = load_registry(registry_path)
 
@@ -390,7 +396,7 @@ class Scrape:
                 f"{metric}={value:,.4f}" + (" (cached)" if cached else "") + (f" | {detail}" if detail else "") + note, tier)
         flow_metric = entry.get("derive_flow_metric")
         if entry.get("cumulative") and flow_metric:
-            flow = derive_flow_from_cumulative(value, self.prior.get((proj, metric)), proj, flow_metric,
+            flow = derive_flow_from_cumulative(value, self.prior_delta.get((proj, metric)), proj, flow_metric,
                                                f"{source}:delta", tier, when,
                                                prior_date=self.prior_dates.get((proj, metric)),
                                                stock_metric=metric, out=out)

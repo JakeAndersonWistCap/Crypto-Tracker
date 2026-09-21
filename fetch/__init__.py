@@ -41,12 +41,15 @@ TIER_ORDER = [
     ("schedule:config", 1, lambda ctx: Schedule()),
     ("defillama", 1, lambda ctx: DefiLlama()),
     ("coingecko", 1, lambda ctx: CoinGecko()),
-    ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
+    ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
+                                                    prior_delta=ctx["prior_delta"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                    prior_sources=ctx["prior_sources"],
                                    prior_delta=ctx["prior_delta"])),
-    ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
-    ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"])),
+    ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
+                                          prior_delta=ctx["prior_delta"])),
+    ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
+                                     prior_delta=ctx["prior_delta"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
 ]
 
@@ -301,9 +304,13 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
 
     supply = {}
     burn = {}
+    gross = {}
     if not frame.empty:
-        for row in frame[frame["metric"].isin(("total_supply", "gross_burn_tokens"))].itertuples(index=False):
-            (supply if row.metric == "total_supply" else burn)[row.project] = (row.value, row.date)
+        wanted = ("total_supply", "gross_burn_tokens", "total_supply_gross")
+        for row in frame[frame["metric"].isin(wanted)].itertuples(index=False):
+            bucket = {"total_supply": supply, "gross_burn_tokens": burn,
+                      "total_supply_gross": gross}[row.metric]
+            bucket[row.project] = (row.value, row.date)
 
     for p in projects:
         name = p["name"]
@@ -382,6 +389,52 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                                "series accumulates from first run and there is no route to history for "
                                "any project without a live issuance endpoint or a declared schedule. "
                                "Settled — see RUNBOOK, not a question to re-ask.")
+            continue
+
+        # ===== ONE SOURCE, ONE READ, NO DRIFT. Added 2026-09-22. =====
+        # d(total_supply_gross) IS gross issuance for a transfer burn, directly: the contract's
+        # totalSupply counts the tokens at the dead address, so a burn does not move it and only
+        # minting does. No burn term, no second source.
+        #
+        # THE NET+BURN ROUTE IS EXPOSED TO READ-TIMING DRIFT between two providers sampled at
+        # different moments, and it showed: Uniswap derived 219,999.99 of issuance on a run where
+        # total_supply_gross was EXACTLY 1,000,000,000 both times. UNI minted nothing. The figure
+        # was the gap between CoinGecko's net number and the chain's burn delta, not a mint.
+        #
+        # The net+burn figure is still computed, and disagreement between the two is raised to the
+        # Review Queue rather than discarded — that is the cross-check, and it costs nothing
+        # because both inputs are already in hand.
+        gross_now, gross_prior = gross.get(name), prior_values.get((name, "total_supply_gross"))
+        if gross_now is not None and gross_prior is not None and rule == "add_burn":
+            gross_delta = gross_now[0] - gross_prior
+            crosscheck = None
+            got = burn.get(name)
+            if got is not None:
+                crosscheck = (value - prior) + got[0]
+                # A real mint shows in both. A divergence is read timing between two providers,
+                # and it is worth seeing rather than silently preferring one.
+                if abs(crosscheck - gross_delta) > max(1.0, abs(gross_delta) * 0.01):
+                    out.review_item(name, "gross_issuance_tokens", "issuance_route_divergence",
+                                    "stored_flagged", value=float(gross_delta),
+                                    prior_value=float(crosscheck), date=gross_now[1],
+                                    source="derived:d_supply_gross vs derived:d_supply+burn", tier=2)
+            if gross_delta < 0:
+                out.review_item(name, "gross_issuance_tokens", "negative_derived_issuance",
+                                "rejected", value=float(gross_delta), prior_value=float(gross_prior),
+                                date=gross_now[1], source="derived:d_supply_gross", tier=2)
+                out.gap(name, "gross_issuance_tokens",
+                        reason=(f"the gross-supply delta came out NEGATIVE ({gross_delta:,.4f}) and was "
+                                f"rejected. A contract's totalSupply cannot fall on a transfer burn, so "
+                                f"this is a read fault, not a supply event."),
+                        tiers_attempted="1, 2",
+                        suggestion="Check the two total_supply_gross readings in the store.")
+                continue
+            out.add(point(name, "gross_issuance_tokens", float(gross_delta),
+                          "derived:d_supply_gross", 2, gross_now[1]),
+                    SOURCE_DERIVED, name,
+                    f"gross_issuance_tokens={gross_delta:,.4f} from d(total_supply_gross)"
+                    + (f"; net+burn route says {crosscheck:,.4f}" if crosscheck is not None else ""),
+                    2)
             continue
 
         delta = value - prior

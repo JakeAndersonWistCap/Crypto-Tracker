@@ -10,6 +10,7 @@ than raised.
 """
 from __future__ import annotations
 
+import re
 import os
 import sys
 from pathlib import Path
@@ -1773,6 +1774,76 @@ def test_hypercore_info_reads_the_assistance_fund_without_any_chain():
     assert "chain" not in api and not any("rpc" in k.lower() for k in api), \
         f"the info API must need no chain and no RPC: {sorted(api)}"
     print("hypercore ok: 48,420,000 HYPE read over plain HTTPS, no chain and no RPC involved")
+
+
+def test_a_same_day_rerun_differences_from_yesterday_not_from_its_own_earlier_row():
+    """THE HYPERLIQUID UNDERSTATEMENT, REPRODUCED. Four runs on 2026-09-21; the burn address
+    moved 231,934.0021 HYPE across the day and gross_burn_tokens recorded 83,344.4791.
+
+    The adapter took the value to subtract from prior_values — store.latest_values(), the newest
+    reading of ANY date, which after the first run of the day is THIS MORNING'S — while taking
+    the date that guards it from prior_dates, which comes from store.values_before(today). The
+    same-date guard in derive_flow_from_cumulative saw yesterday's date and let it through, so
+    each run differenced against the previous run's number and wrote only the increment. metrics
+    is keyed (date, project, metric), so each one overwrote the last and the final increment kept
+    the whole day's key.
+
+    This is the fault store.values_before was written for — PancakeSwap's 59,857,159.01 burn
+    becoming 0.0123 — fixed for the chain adapter at the time and left standing in this one.
+    """
+    from fetch.hypercore import HyperCoreInfo
+
+    class StubHttp:
+        def post(self, url, json_body=None, headers=None):
+            return {"balances": [{"coin": "HYPE", "total": "27031934.0021"}]}
+
+    YESTERDAY, THIS_MORNING = 26_800_000.0, 26_948_589.523
+    h = HyperCoreInfo(
+        # latest_values(): poisoned by run 1 of the same day.
+        prior_values={("Hyperliquid", "burn_address_balance"): THIS_MORNING},
+        # values_before(today): the value AND the date, from the same row.
+        prior_dates={("Hyperliquid", "burn_address_balance"): "2026-09-20"},
+        prior_delta={("Hyperliquid", "burn_address_balance"): YESTERDAY})
+    h.http = StubHttp()
+    out = FetchOutput()
+    h.run(config.PROJECTS, None, out)
+    rows = dict(zip(out.frame().metric, out.frame().value))
+    got = rows["gross_burn_tokens"]
+    assert abs(got - 231_934.0021) < 1e-6, \
+        f"the day's flow is measured from YESTERDAY's reading, so a re-run recomputes it " \
+        f"identically — got {got:,.4f}"
+    assert abs(got - 83_344.4791) > 1.0, \
+        "83,344.4791 is the increment since this morning's run — a third of the day, on the day's key"
+    print("same-day re-run ok: 231,934.0021 from yesterday's anchor, not 83,344.4791 from its own row")
+
+
+def test_every_differenced_flow_anchors_on_values_before_not_on_latest_values():
+    """The Hyperliquid fault was one line, and three adapters had it.
+
+    chain.py was fixed when PancakeSwap surfaced it; hypercore.py, tron.py and scrape.py all call
+    the same helper and all still passed self.prior. A fix applied to one call site and not to
+    its siblings is the shape of bug this asserts away: the SECOND argument of every
+    derive_flow_from_cumulative call — the value being subtracted — must come from the
+    values_before() dict, whatever the module.
+    """
+    import ast
+    import pathlib
+
+    checked = []
+    for mod in ("chain.py", "hypercore.py", "tron.py", "scrape.py"):
+        src = (pathlib.Path(__file__).resolve().parent.parent / "fetch" / mod).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "derive_flow_from_cumulative"):
+                continue
+            assert len(node.args) >= 2, f"{mod}: the prior value is positional and must be there"
+            anchor = ast.unparse(node.args[1])
+            assert "prior_delta" in anchor, (
+                f"{mod} line {node.lineno} differences against {anchor} — that is latest_values(), "
+                f"the newest reading of ANY date, and on a same-day re-run it is this run's own "
+                f"earlier row. It must be prior_delta, which is store.values_before(today).")
+            checked.append(f"{mod}:{node.lineno}")
+    assert len(checked) >= 4, f"expected a call in each of the four adapters, found {checked}"
+    print(f"flow anchoring ok: {len(checked)} call sites, all on values_before — {', '.join(checked)}")
 
 
 def test_hypercore_reports_a_response_shape_change_rather_than_guessing():
@@ -3666,7 +3737,11 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     # the move this guard exists to refuse: implausible_delta arrived with a transition type
     # and its rows in tests/refresh_stale_fixture.py, and the name-matched assertions below
     # would still fail if it had not.
-    EXPECTED_MECHANISMS = 7
+    #
+    # Seven to eight on 2026-09-22, the same way: unreconciled_flow arrived with the
+    # transition, the Hyperliquid flow row and the two stock rows that give it a span to
+    # telescope over. The bump was the LAST edit of that change, not the first.
+    EXPECTED_MECHANISMS = 8
 
     tree = ast.parse(inspect.getsource(bw.withheld_for))
     returns = [n for n in ast.walk(tree)
@@ -3686,7 +3761,7 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     assert covered_statuses == statuses, \
         f"fixture exercises {sorted(covered_statuses)}, withheld_for can return {sorted(statuses)}"
 
-    # ** AND THE STANDARDISATION ITSELF, asserted rather than assumed: ALL SEVEN BLANK. ** This is
+    # ** AND THE STANDARDISATION ITSELF, asserted rather than assumed: ALL EIGHT BLANK. ** This is
     # the invariant that was false until 2026-09-15, when three of them went RED and printed the
     # number anyway. If a seventh mechanism is added that flags without blanking, this fails.
     for e in data["expectations"]:
@@ -3694,7 +3769,7 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
             continue
         assert e["expect_blank"] is True, \
             f"{e['transition']} on {e['project']}/{e['metric']} is RED but still shows its value — " \
-            f"all seven withheld mechanisms must blank"
+            f"all eight withheld mechanisms must blank"
 
     # The fixture must be regenerable. If the definitions no longer produce the committed JSON,
     # something moved and the diff is the thing to read.
@@ -5208,12 +5283,24 @@ def test_etherfi_locked_tokens_comes_from_the_contract_not_from_dune():
     print("etherfi ok: shares on-chain, Dune demoted to cross-check, both ratio legs live")
 
 
+def _cleanup_sql_section(heading: str) -> str:
+    """One section of orphan_cleanup.sql, BOUNDED at the next section's heading.
+
+    Slicing to end-of-file was fine while the section under test happened to be the last one, and
+    silently wrong the moment another was appended: section I's test started failing on a DELETE
+    that belongs to section L. A section assertion has to be about that section.
+    """
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    start = sql.index(heading)
+    nxt = re.search(r"^-- [A-Z]\. ", sql[start + len(heading):], re.M)
+    return sql[start:start + len(heading) + nxt.start()] if nxt else sql[start:]
+
+
 def test_the_etherfi_basis_change_has_its_cleanup_sql():
     """Two sources in one series is exactly what measuring_point_changed is for, and it will
     correctly blank locked_tokens until the old Dune rows are moved. The guard is right; the fix
     is the cleanup, not an exemption — so the cleanup has to exist and has to be a MOVE."""
-    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
-    section = sql[sql.index("-- I. ETHER.FI locked_tokens"):]
+    section = _cleanup_sql_section("-- I. ETHER.FI locked_tokens")
     assert "locked_tokens_dashboard" in section and "UPDATE metrics" in section, \
         "the Dune rows are MOVED to the cross-check metric, not deleted — the history is evidence"
     # "DELETE FROM", not "DELETE" — the section's own prose says "THE MOVE, NOT A DELETE", and a
@@ -5302,8 +5389,7 @@ def test_section_J_records_the_resolved_residual_and_the_corrected_premise():
     was unverified and refused, so the figure was BSC alone the whole time and the double-count
     being corrected for never existed.
     """
-    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
-    section = sql[sql.index("-- J. PANCAKESWAP'S"):]
+    section = _cleanup_sql_section("-- J. PANCAKESWAP'S")
 
     assert "LOOK ONLY" in section and "DELETE FROM" not in section and "UPDATE metrics" not in section, \
         "section J is diagnostic — nothing here needs fixing on our side"
@@ -5565,3 +5651,144 @@ def test_validate_frame_hands_the_store_python_ints_not_numpy_scalars():
         assert type(item["value"]) is float, \
             f"{item['reason']} handed the store a {type(item['value']).__name__}, not a float"
     print("validate_frame ok: both review paths emit Python scalars")
+
+
+# ======================================================================================
+# A BRACKETED ANNOTATION IS NOT PART OF THE CONTRACT KEY. The 2026-09-21 Aerodrome blank.
+# ======================================================================================
+
+def test_every_source_parser_ignores_a_bracketed_annotation():
+    """Aerodrome's gross_issuance_tokens blanked as "orphaned — written by contract(s)
+    minter[tail@21bps], which are no longer in config". The contract was there. The parser was
+    looking for a key literally called `minter[tail@21bps]`.
+
+    The annotation was added so a series that changes basis mid-history says so on the row. Three
+    parsers then resolved contract keys out of the annotated string, each filtering pieces against
+    an EXACT-MATCH marker list — a design that cannot see an annotation glued to a key rather than
+    occupying its own colon-delimited slot.
+
+    All three share one stripper now, because the failure was three copies of one assumption.
+    """
+    from fetch.base import _measuring_point
+
+    annotated = "chain:base:minter[tail@21bps]"
+    plain = "chain:base:minter"
+
+    # (1) and (2): the two that blanked the cell.
+    assert config.orphaned_contract_keys("Aerodrome", annotated) == [], \
+        "the annotation is not a contract key — Aerodrome's minter is in config"
+    assert config.withdrawn_contract_keys("Aerodrome", "gross_issuance_tokens", annotated) == []
+
+    # (3) THE ONE THAT HAD NOT BITTEN YET, and would have on the next branch flip. Two spellings
+    # of the same address must be ONE measuring point, or the series blanks for a change that
+    # never happened.
+    assert _measuring_point(annotated) == _measuring_point(plain) == plain
+
+    # Markers still strip, and still strip alongside an annotation in any order.
+    assert _measuring_point("chain:base:minter[tail@21bps]:PARTIAL:delta") == plain
+    assert _measuring_point("chain:ethereum:burn_dead:delta") == "chain:ethereum:burn_dead"
+
+    # AND A REAL ORPHAN IS STILL CAUGHT — stripping must not blind the guard.
+    assert config.orphaned_contract_keys("Aerodrome", "chain:base:nonesuch[tail@21bps]") == ["nonesuch"], \
+        "stripping the annotation must not stop a genuinely missing contract being reported"
+
+    # The stripper itself, on the shapes it has to survive.
+    for raw, want in (("chain:base:minter[tail@21bps]", "chain:base:minter"),
+                      ("chain:bsc:token", "chain:bsc:token"),
+                      ("chain:sum(a+b)[x]", "chain:sum(a+b)"),
+                      ("", ""), (None, "")):
+        assert config.strip_source_annotations(raw) == want, raw
+    print("source parsers ok: one stripper, three call sites, real orphans still caught")
+
+
+def test_a_summed_source_with_an_annotation_still_resolves_every_component():
+    """The sum path takes a different branch — body[4:-1].split("+") — and an annotation lands
+    outside the closing paren, so it has to be stripped before the paren match is even attempted.
+    """
+    # PancakeSwap's token is real; nonesuch is not. A sum of both must report exactly the missing
+    # one, annotation or no annotation.
+    for src in ("chain:sum(bsc:token+bsc:nonesuch)",
+                "chain:sum(bsc:token+bsc:nonesuch)[some@annotation]"):
+        assert config.orphaned_contract_keys("PancakeSwap", src) == ["nonesuch"], src
+    print("summed sources ok: annotation stripped before the sum(...) match")
+
+
+def test_issuance_prefers_the_single_source_gross_delta_over_net_plus_burn():
+    """Uniswap derived 219,999.99 of issuance on a run where total_supply_gross was EXACTLY
+    1,000,000,000 at both ends. UNI minted nothing. The figure was the gap between CoinGecko's
+    net number and the chain's burn delta — two providers sampled at different moments.
+
+    d(total_supply_gross) IS gross issuance for a transfer burn: the contract's totalSupply counts
+    the dead-address tokens, so a burn does not move it and only minting does. One source, one
+    read, no drift.
+    """
+    import pandas as pd
+    from fetch import _derive_issuance
+    from fetch.base import LONG_COLUMNS
+
+    class _Out:
+        def __init__(self, rows):
+            self.rows, self.gaps, self.review, self.log = rows, [], [], []
+            self.added = []
+
+        def frame(self):
+            return pd.DataFrame(self.rows, columns=LONG_COLUMNS)
+
+        def add(self, df, source, project, detail, tier):
+            self.added.append((project, df))
+
+        def gap(self, project, metric, reason="", **kw):
+            self.gaps.append({"project": project, "metric": metric, "reason": reason})
+
+        def review_item(self, project, metric, reason, action, **kw):
+            self.review.append({"project": project, "metric": metric, "reason": reason, **kw})
+
+    def row(project, metric, value, date="2026-09-21", src="x", tier=1):
+        return {"date": pd.Timestamp(date), "project": project, "metric": metric,
+                "value": value, "source": src, "tier": tier, "is_manual": False, "entered_on": ""}
+
+    uni = config.PROJECT_BY_NAME["Uniswap"]
+
+    # THE LIVE CASE: gross unchanged, net+burn would have said 219,999.99. That is the drift
+    # shape exactly — the chain's burn delta lands in the window while CoinGecko's net figure
+    # has not yet moved to match it, so adding the two counts the burn as a mint.
+    out = _Out([row("Uniswap", "total_supply", 888_334_418.91),
+                row("Uniswap", "total_supply_gross", 1_000_000_000.0),
+                row("Uniswap", "gross_burn_tokens", 219_999.99)])
+    _derive_issuance(out, [uni],
+                     {("Uniswap", "total_supply"): 888_334_418.91,
+                      ("Uniswap", "total_supply_gross"): 1_000_000_000.0},
+                     {("Uniswap", "total_supply"): "2026-09-20"})
+    assert out.added, f"nothing derived; gaps={[g['reason'][:80] for g in out.gaps]}"
+    df = out.added[0][1]
+    assert float(df["value"].iloc[0]) == 0.0, \
+        f"gross supply did not move, so issuance is zero — got {df['value'].iloc[0]}"
+    assert df["source"].iloc[0] == "derived:d_supply_gross"
+
+    # AND THE DISAGREEMENT IS RAISED, not silently discarded — that is the cross-check.
+    assert any(r["reason"] == "issuance_route_divergence" for r in out.review), \
+        "the net+burn route said 219,999.99 against a gross delta of 0 — that must be visible"
+
+    # A REAL MINT STILL COMES THROUGH, so the fix is not "always report zero". Here the two
+    # routes AGREE: 170,000 minted against 220,000 burned leaves the net figure 50,000 lower,
+    # and d(net)+burn lands back on 170,000. No divergence to raise.
+    out = _Out([row("Uniswap", "total_supply", 888_284_418.91),
+                row("Uniswap", "total_supply_gross", 1_000_170_000.0),
+                row("Uniswap", "gross_burn_tokens", 220_000.0)])
+    _derive_issuance(out, [uni],
+                     {("Uniswap", "total_supply"): 888_334_418.91,
+                      ("Uniswap", "total_supply_gross"): 1_000_000_000.0},
+                     {("Uniswap", "total_supply"): "2026-09-20"})
+    assert float(out.added[0][1]["value"].iloc[0]) == 170_000.0
+    assert not [r for r in out.review if r["reason"] == "issuance_route_divergence"], \
+        "the routes agree here; a divergence flag on an agreeing pair is noise"
+
+    # A FALLING GROSS SUPPLY IS A READ FAULT, not a supply event — a transfer burn cannot do it.
+    out = _Out([row("Uniswap", "total_supply", 888_114_418.92),
+                row("Uniswap", "total_supply_gross", 999_000_000.0)])
+    _derive_issuance(out, [uni],
+                     {("Uniswap", "total_supply"): 888_334_418.91,
+                      ("Uniswap", "total_supply_gross"): 1_000_000_000.0},
+                     {("Uniswap", "total_supply"): "2026-09-20"})
+    assert not out.added and any("NEGATIVE" in g["reason"] for g in out.gaps)
+    print("issuance ok: gross delta preferred, divergence flagged, real mints still derive")
