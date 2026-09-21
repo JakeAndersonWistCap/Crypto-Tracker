@@ -741,3 +741,85 @@ SELECT date, value, source, tier, 'WOULD MOVE' AS action
 --                   'lock_assets_per_share')
 --  GROUP BY metric, source
 --  ORDER BY metric, first_seen;
+
+
+-- ========================================================================================
+-- J. PANCAKESWAP'S 5,931,409 RESIDUAL — the decisive number is already in the store.
+--    LOOK ONLY. No fix here: report first, choose after.              added 2026-09-22
+-- ========================================================================================
+-- THE MECHANISM IS CONFIRMED FROM SOURCE. CakeProxyOFT
+-- (0xb274202daBA6AE180c665B4fbE59857b7c3a8091, BSC) is LayerZero's ProxyOFTWithFee v2, which
+-- states its own accounting:
+--
+--     uint public outboundAmount;
+--     function circulatingSupply() public view returns (uint) {
+--         return innerToken.totalSupply() - outboundAmount;
+--     }
+--
+-- _debitFrom LOCKS CAKE into the proxy and increments outboundAmount, leaving BSC's own
+-- totalSupply() untouched by bridging. So BSC alone already carries the whole gross figure, locked tokens
+-- included, and ADDING a destination chain's totalSupply double-counts whatever was bridged to
+-- it. Our total_supply_gross sums bsc:token + base:token_base, so it double-counts Base.
+--
+-- ** WHICH NUMBER SETTLES IT IS NOT THE ONE FIRST PROPOSED. ** outboundAmount (or the proxy's
+-- balanceOf) covers EVERY destination chain CAKE has bridged to — Aptos, Arbitrum, Ethereum,
+-- Linea and others, not just Base. We only add Base. Work the arithmetic through:
+--
+--     residual = (BSC + Base) - CoinGecko - burn
+--              = (BSC + Base) - (BSC - burn) - burn        [CoinGecko = BSC net of burn]
+--              = Base
+--
+-- So the prediction is BASE's CAKE totalSupply ~= 5,931,409, and outboundAmount should be
+-- LARGER than the residual unless Base is the only chain CAKE has ever bridged to. Comparing
+-- the residual against outboundAmount and finding a MISMATCH would therefore be consistent
+-- with the hypothesis, not against it — which is why the comparand matters.
+--
+-- THREE OUTCOMES, and they point at different culprits:
+--     residual ~= Base totalSupply       -> OUR double-count. Confirmed. The fix is on our side.
+--     residual ~= outboundAmount         -> CoinGecko is netting out ALL bridged CAKE, and Base
+--                                           happening to be the only bridged chain. Different
+--                                           finding, different fix.
+--     residual matches neither           -> something else; do not fix either way.
+--
+-- J1. THE PER-CHAIN BREAKDOWN, from the run log. _emit_parts logs one line per component, so
+--     Base's totalSupply is ALREADY STORED and needs no new read. Compare the base:token_base
+--     figure against 5,931,409.03.
+SELECT run_id, ts, message
+  FROM run_log
+ WHERE project = 'PancakeSwap'
+   AND status = 'ok'
+   AND (message LIKE '%component%token%' OR message LIKE '%components:%')
+   AND (message LIKE 'total_supply%' OR message LIKE '%total_supply_gross%')
+ ORDER BY ts DESC;
+
+-- J2. THE SAME THING FROM THE SUMMED SOURCE STRING, as a cross-check on J1 — the composition
+--     is named in the source, so a row here confirms which chains were actually summed even if
+--     the log has rotated.
+SELECT date, metric, value, source
+  FROM metrics
+ WHERE project = 'PancakeSwap'
+   AND metric IN ('total_supply', 'total_supply_gross')
+ ORDER BY date DESC;
+
+-- J3. THE ARITHMETIC, restated against whatever is in the store right now rather than against
+--     the figures quoted above, so this stays honest if the numbers have moved.
+SELECT
+    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric IN ('total_supply_gross')
+      ORDER BY date DESC LIMIT 1)                                        AS contract_sum,
+    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='total_supply'
+      ORDER BY date DESC LIMIT 1)                                        AS coingecko_total,
+    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='burn_address_balance'
+      ORDER BY date DESC LIMIT 1)                                        AS burn_cumulative,
+    (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric IN ('total_supply_gross')
+      ORDER BY date DESC LIMIT 1)
+  - (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='total_supply'
+      ORDER BY date DESC LIMIT 1)
+  - (SELECT value FROM metrics WHERE project='PancakeSwap' AND metric='burn_address_balance'
+      ORDER BY date DESC LIMIT 1)                                        AS residual_to_explain;
+
+-- J4. STILL NEEDS A LIVE READ, and only for the second half of the test. Neither is in the
+--     store and neither could be read from the session that wrote this (no BSC RPC egress):
+--       CakeProxyOFT.outboundAmount()                      -- CAKE represented on other chains
+--       CAKE.balanceOf(0xb274202daBA6AE180c665B4fbE59857b7c3a8091)   -- the locked balance
+--     The two should agree; balanceOf can exceed outboundAmount if anyone has sent CAKE to the
+--     proxy directly, which is why outboundAmount is the better of the two.

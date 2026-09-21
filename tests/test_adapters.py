@@ -4890,8 +4890,25 @@ def test_every_transfer_burn_project_has_a_TESTED_supply_convention():
     assert cake["total_supply_convention_evidence"]["residual_explained_by"] is None, \
         "PancakeSwap's residual is NOT explained — filling this in is how a guess becomes a fact"
     unexplained = cake["total_supply_residual_unexplained"]
-    assert len(unexplained["candidates_not_confirmed"]) >= 2 and unexplained["how_to_test"], \
-        "an unexplained residual needs candidates and a way to settle them, not a shrug"
+    assert unexplained["how_to_test"], "a residual needs a way to settle it, not a shrug"
+
+    # ** THE MECHANISM AND THE NUMBER ARE TRACKED SEPARATELY, and that separation is the point. **
+    # ProxyOFTWithFee's lock-on-home-chain semantics are confirmed from source, which makes OUR
+    # double-count the leading explanation — but a mechanism argument is not a measurement, and
+    # changing a live supply figure on one is exactly the move this file refuses. Collapsing the
+    # two flags into "explained" is how a plausible story becomes a recorded fact.
+    lead = unexplained["leading_explanation"]
+    assert lead["mechanism_confirmed"] is True and lead["number_confirmed"] is False, \
+        "confirmed mechanism, unconfirmed number — do not collapse these"
+    assert lead["mechanism_source"] and lead["predicts"], \
+        "a leading explanation must name its source and make a falsifiable prediction"
+    assert "Base" in lead["predicts"], \
+        "the prediction is about BASE's supply, not the proxy's total outbound — see section J"
+
+    # Three outcomes, pointing at different culprits, so the test cannot only confirm.
+    assert len(unexplained["outcomes"]) >= 3, unexplained["outcomes"]
+    assert any("neither" in k.lower() for k in unexplained["outcomes"]), \
+        "a test with no 'neither' branch is one that can only agree with itself"
     print("conventions ok: four tested, two residuals, one of them honestly unexplained")
 
 
@@ -5264,3 +5281,47 @@ def test_hyperliquid_holds_archetype_4_on_the_evidence_already_in_config():
     assert p["burn_read_method"] == "protocol_api"
     assert (p.get("node_api") or {}).get("metric") == "burn_address_balance"
     print("hyperliquid ok: 3 and 4 on evidence already on file, staking is orthogonal")
+
+
+def test_the_proxyoft_residual_test_names_the_right_comparand():
+    """The obvious comparand is wrong, and getting it wrong would read as a refutation.
+
+    CakeProxyOFT's outboundAmount (and its balanceOf) cover EVERY destination chain CAKE has
+    bridged to. We only add Base. So under the double-count hypothesis the residual equals BASE's
+    totalSupply, and outboundAmount should be LARGER — meaning a mismatch against outboundAmount
+    is CONSISTENT with the hypothesis rather than against it.
+    """
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    section = sql[sql.index("-- J. PANCAKESWAP'S"):]
+
+    assert "LOOK ONLY" in section and "DELETE FROM" not in section and "UPDATE metrics" not in section, \
+        "section J is diagnostic — report first, choose a fix after"
+    assert "run_log" in section, \
+        "the decisive figure is already stored; a section that demands a new read misses that"
+    assert "outboundAmount" in section and "balanceOf" in section, \
+        "both candidate reads must be named, with the reason one is preferred"
+
+    # The arithmetic that picks the comparand has to be shown, not asserted.
+    assert "residual = (BSC + Base) - CoinGecko - burn" in section
+    assert "= Base" in section
+
+    # And all three outcomes, so the check cannot only confirm.
+    for outcome in ("OUR double-count", "outboundAmount", "neither"):
+        assert outcome in section, f"section J must state the {outcome!r} outcome"
+    print("section J ok: right comparand, decisive figure already stored, three outcomes")
+
+
+def test_pancakeswaps_partial_label_is_flagged_as_probably_inverted():
+    """:PARTIAL tells a reader the figure UNDERSTATES. Under lock-on-home-chain it overstates, by
+    double-counting bridged CAKE — the wrong direction, which is worse than no label at all.
+
+    Deliberately NOT changed yet: the mechanism is confirmed from source, the number is not, and
+    changing a live supply figure on a mechanism argument alone is the move this file refuses.
+    The flag is what stops the stale reasoning being read as current.
+    """
+    cake = config.PROJECT_BY_NAME["PancakeSwap"]
+    assert cake["supply_is_partial"] is True, "unchanged pending the section J check"
+    reason = cake["supply_partial_reason"]
+    assert "OVERSTATES" in reason and "section J" in reason, \
+        f"the inverted direction must be flagged on the field a reader actually sees: {reason}"
+    print("partial label ok: flagged as probably inverted, left in place pending the number")

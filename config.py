@@ -5097,19 +5097,71 @@ PROJECTS = [
         #     locked side, and a provider that nets it out would look exactly like this.
         #   - veCAKE, if CoinGecko excludes locked CAKE from total (not merely from circulating).
         # Testable directly: read the ProxyOFT balance and compare it against 5,931,409.
+        # ** THE MECHANISM IS NOW CONFIRMED FROM SOURCE, 2026-09-22 — the residual is very likely
+        # OURS, not CoinGecko's. The NUMBER is not yet checked, so no fix is applied here. **
+        #
+        # CakeProxyOFT (0xb274202daBA6AE180c665B4fbE59857b7c3a8091, BSC) is LayerZero's
+        # ProxyOFTWithFee v2, confirmed against the deployed source on BscScan and against
+        # LayerZero-Labs/solidity-examples. The contract states its own accounting:
+        #
+        #     uint public outboundAmount;
+        #     function circulatingSupply() public view returns (uint) {
+        #         return innerToken.totalSupply() - outboundAmount;
+        #     }
+        #
+        # _debitFrom LOCKS CAKE into the proxy and increments outboundAmount, leaving BSC's own
+        # totalSupply() untouched by bridging. The destination chain mints its own representation
+        # against that lock. So BSC ALONE ALREADY CARRIES THE WHOLE GROSS FIGURE, locked tokens
+        # included, and adding a destination chain's totalSupply counts the bridged portion twice.
+        # We sum bsc:token + base:token_base, so we double-count Base.
+        #
+        # ** WHICH NUMBER SETTLES IT IS NOT THE OBVIOUS ONE. ** outboundAmount, and the proxy's
+        # balanceOf, cover EVERY destination chain CAKE has bridged to — not just Base, which is
+        # the only one we add. The arithmetic picks the comparand out:
+        #
+        #     residual = (BSC + Base) - CoinGecko - burn
+        #              = (BSC + Base) - (BSC - burn) - burn        [CoinGecko = BSC net of burn]
+        #              = Base
+        #
+        # so the prediction is BASE's totalSupply ~= 5,931,409, and outboundAmount should be
+        # LARGER than the residual unless Base is the only chain CAKE has ever bridged to.
+        # Comparing the residual against outboundAmount and finding a mismatch would be CONSISTENT
+        # with this hypothesis rather than against it, which is exactly why the comparand matters.
+        #
+        # AND THE DECISIVE HALF NEEDS NO NEW READ. _emit_parts logs one line per component, so
+        # Base's totalSupply is already in run_log. See orphan_cleanup.sql section J, which is
+        # LOOK-ONLY and recomputes the residual from whatever the store currently holds.
         "total_supply_residual_unexplained": {
             "tokens": 5_931_409.03,
             "pct_of_contract_supply": 0.0011,
-            "direction": "CoinGecko reports FEWER tokens than contract supply minus burn",
-            "candidates_not_confirmed": [
-                "CAKE locked in the LayerZero ProxyOFT 0xb274202daBA6AE180c665B4fbE59857b7c3a8091",
-                "veCAKE, if CoinGecko excludes locked CAKE from TOTAL rather than only circulating",
-            ],
-            "how_to_test": "read balanceOf(CAKE) at the ProxyOFT address and compare against "
-                           "5,931,409.03. A match settles it; a miss leaves veCAKE to check.",
+            "direction": "our summed contract figure reports MORE tokens than CoinGecko plus burn",
+            "leading_explanation": {
+                "claim": "OUR double-count. CAKE bridged to Base is counted twice — once inside "
+                         "BSC's totalSupply (locked in the ProxyOFT) and again as Base's own "
+                         "totalSupply.",
+                "mechanism_confirmed": True,
+                "mechanism_source": "LayerZero ProxyOFTWithFee v2 — outboundAmount and "
+                                    "circulatingSupply() = innerToken.totalSupply() - "
+                                    "outboundAmount; _debitFrom locks rather than burning",
+                "number_confirmed": False,
+                "predicts": "Base CAKE totalSupply ~= 5,931,409.03",
+            },
+            "outcomes": {
+                "residual ~= Base totalSupply": "OUR double-count, confirmed. Fix is on our side.",
+                "residual ~= outboundAmount": "CoinGecko nets out ALL bridged CAKE and Base "
+                                              "happens to be the only bridged chain. A different "
+                                              "finding needing a different fix.",
+                "neither": "something else. Do not fix either way.",
+            },
+            "how_to_test": "orphan_cleanup.sql section J — J1 pulls Base's totalSupply out of "
+                           "run_log (already stored, no read needed) and J3 recomputes the "
+                           "residual live. J4 names the one live read still outstanding: "
+                           "CakeProxyOFT.outboundAmount(), preferred over balanceOf because "
+                           "balanceOf also picks up CAKE sent to the proxy directly.",
+            "not_tested_from_here": "no BSC RPC egress from the session that wrote this",
             "why_it_does_not_block_the_convention": "gross would have made the difference ZERO. "
-                                                    "0.11% is not zero-shaped, so the convention "
-                                                    "is settled even though the residual is not.",
+                                                    "0.11% is not zero-shaped, so net_of_burn is "
+                                                    "settled whatever the residual turns out to be.",
             "recorded": "2026-09-22",
         },
         "fee_split": {
@@ -5177,10 +5229,26 @@ PROJECTS = [
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
         "self_reported_net_mint": True,
+        # ** THIS REASONING IS PROBABLY BACKWARDS, AND IT IS LEFT IN PLACE PENDING ONE NUMBER. **
+        # It says the on-chain sum UNDERSTATES because we cover only some deployments, which
+        # implies the fix is to add more chains. Under the ProxyOFTWithFee semantics confirmed on
+        # 2026-09-22 (see total_supply_residual_unexplained), the opposite holds: bridging LOCKS
+        # CAKE on BSC rather than reducing BSC's totalSupply, so BSC ALONE is already the complete
+        # gross figure and every chain added double-counts what was bridged to it. On that
+        # reading the figure is INFLATED, not partial, and ":PARTIAL" on the cell tells a reader
+        # it understates when it overstates — the wrong direction, which is worse than no label.
+        #
+        # NOT CHANGED YET, deliberately. The mechanism is confirmed from source; the NUMBER is
+        # not, and changing a live supply figure on a mechanism argument alone is the move this
+        # file exists to refuse. Section J of orphan_cleanup.sql settles it from data already in
+        # the store. If it confirms, the choice is between dropping the Base component and
+        # subtracting the proxy's locked balance, and supply_is_partial goes to False either way.
         "supply_is_partial": True,
         "supply_partial_reason": "CAKE is a LayerZero OFT deployed on several chains, so any on-chain supply read "
                                  "covers only the deployments listed in contracts. The self-reported figure is the "
-                                 "source of record; the on-chain sum is a partial cross-check and is labelled as such.",
+                                 "source of record; the on-chain sum is a partial cross-check and is labelled as such. "
+                                 "** SEE THE BLOCK COMMENT ABOVE: this direction is probably wrong — the sum most "
+                                 "likely OVERSTATES by double-counting bridged CAKE, pending the section J check. **",
         "self_reported_source": {
             "what": "Monthly CAKE Burn Report blog series",
             "url": "https://blog.pancakeswap.finance/",
