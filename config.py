@@ -6672,6 +6672,63 @@ CUMULATIVE_FLOW = {
 
 SERIES_GRANULARITIES = ("daily", "weekly", "monthly")
 
+# HOW LONG A SERIES MAY GO WITHOUT A NEW POINT BEFORE IT IS STALE, by granularity. None means
+# "use the global stale_after_days", which is 7 and is right for a daily read.
+#
+# A MONTHLY SERIES CANNOT HAVE A POINT FROM THIS WEEK. Judging one against a 7-day threshold marks
+# a perfectly current series stale forever, which is what GEODNET's buyback series was doing: the
+# incomplete current month is dropped by design, so the newest point is up to ~5 weeks old even
+# when nothing is wrong. 45 days is one month plus a fortnight — long enough that a complete month
+# has been published and collected, short enough that a genuinely dead series still surfaces.
+# 14 days plays the same role for a weekly series: two missed epochs, not one.
+STALE_AFTER_DAYS_BY_GRANULARITY = {"daily": None, "weekly": 14, "monthly": 45}
+
+
+# PROVIDERS WHOSE NEWEST DAILY POINT IS A PARTIAL DAY, not a finished one.
+#
+# DefiLlama and CoinGecko both publish the CURRENT day from the moment it starts, so the last
+# point in a daily series is a few hours of activity, not a day of it. Comparing that against
+# yesterday's complete day is comparing a fraction to a whole, and it fires every single run:
+# run 20260921T100546Z raised 16 change_threshold flags, of which Chainlink revenue
+# $1,105,263 -> $0, Maple fees $406,091 -> $0, Ethereum revenue $94,812 -> $43,611 and GEODNET
+# volume $55.8M -> $1.6M are all this one shape. A guard that cries wolf every run is a guard
+# nobody reads, which costs more than having no guard at all.
+#
+# The fix is not a wider threshold — that would hide the real step changes this check exists for.
+# It is to compare the last two COMPLETE days and leave the partial one alone.
+PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD = ("defillama", "coingecko")
+
+
+# SERIES WHOSE UNDERLYING PROCESS IS LUMPIER THAN THE OBSERVATION CADENCE, with the evidence.
+#
+# GEODNET burns WEEKLY. The chain read differences a cumulative balance DAILY, so most days show
+# nothing and burn days show a week's worth: 35,000 -> 105,000 is the mechanism working exactly as
+# designed, not a data fault. A day-on-day change check on such a series is guaranteed to fire and
+# tells a reader nothing. Declared per series, with the source of the cadence claim, rather than
+# inferred — a silent exemption is how a real break gets missed.
+LUMPY_FLOWS = {
+    ("GEODNET", "gross_burn_tokens"): {
+        "underlying_cadence": "weekly",
+        "observed_cadence": "daily",
+        "why": "GEODNET executes its burn weekly; the chain read differences the cumulative "
+               "balance daily, so a burn day carries a week of burn and the days between carry "
+               "zero. Day-on-day moves of several hundred percent are the mechanism, not a fault.",
+        "source": "config PROJECTS['GEODNET'].cadence_mismatch.geodnet_own_cadence — multiple "
+                  "sources describe the burn as weekly; our Dune query 8683175 aggregates monthly",
+        "recorded_on": "2026-09-21",
+    },
+}
+
+
+def lumpy_flow(project_name: str, metric: str) -> dict | None:
+    """Is this series lumpy BY DESIGN, so a period-on-period change check cannot mean anything?"""
+    return LUMPY_FLOWS.get((project_name, metric))
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:
+    """The staleness threshold for this series, widened where its cadence demands it."""
+    return STALE_AFTER_DAYS_BY_GRANULARITY.get(series_granularity(project_name, metric)) or default
+
 
 def series_granularity(project_name: str, metric: str) -> str:
     """How often this project's series for `metric` produces a genuinely NEW observation.

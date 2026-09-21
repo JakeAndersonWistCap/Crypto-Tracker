@@ -164,6 +164,77 @@ def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
     return float(w.iloc[-1]) if len(w) else None
 
 
+def _latest_complete_month(s: pd.Series, asof: pd.Timestamp) -> tuple[float | None, str]:
+    """The sum over the most recent month that has FINISHED, and which month that was.
+
+    A monthly series cannot fill a 30-day trailing window, and the current month is incomplete by
+    construction — the query that builds it drops the partial month rather than publishing a
+    month-to-date figure as though it were a month. So "trailing 30 days" over a monthly series
+    reports whatever happens to fall inside the window: usually one month, sometimes two, and
+    sometimes — when the last complete month ended more than 30 days ago — NOTHING, which is what
+    GEODNET's buyback was doing. The cell was blank while 41 perfectly good monthly rows sat in
+    the store.
+
+    Reporting the latest COMPLETE month is the honest answer, and the month is named so nobody
+    reads a September figure as an August one.
+    """
+    if s.empty:
+        return None, ""
+    current = asof.to_period("M")
+    finished = s[s.index.to_period("M") < current]
+    if finished.empty:
+        return None, ""
+    month = finished.index.to_period("M").max()
+    return float(finished[finished.index.to_period("M") == month].sum()), str(month)
+
+
+def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> int:
+    """How old the newest point is, measured from the END of the period it represents.
+
+    A PERIODIC POINT IS LABELLED WITH ITS PERIOD'S START. Dune's monthly rows are dated to the
+    first of the month, so a complete August sits at 2026-08-01 and looks 51 days old on the 21st
+    of September when it is in fact the most recent month that exists. Measuring from the period's
+    end — 2026-08-31, 21 days — is what the threshold was always meant to compare against.
+
+    Daily points are their own period, so this is the identity for them.
+    """
+    if granularity == "monthly":
+        end = (latest.to_period("M") + 1).to_timestamp() - pd.Timedelta(days=1)
+    elif granularity == "weekly":
+        end = latest + pd.Timedelta(days=6)
+    else:
+        end = latest
+    return max(int((asof - end).days), 0)
+
+
+def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tuple[int, int]:
+    """(days the series actually covers inside the window, days the window asks for).
+
+    A TRAILING-30-DAY SUM OVER A SERIES TEN DAYS OLD IS A TEN-DAY SUM, and until 2026-09-21 it was
+    printed under a 30-day header with nothing to say so. Hyperliquid's 155,971 was roughly a
+    third of a real 30-day burn for exactly this reason: ~8 runs spanning ~10 days.
+
+    Measured from the series' FIRST EVER observation, not the first inside the window: a series
+    that began 10 days ago covers 10 of the 30 days no matter how many points it has, and one
+    that began two years ago covers all 30 even if this window holds a single point. The question
+    is how much of the window the series was alive for, not how densely it was sampled.
+
+    DELIBERATELY NOT TRUNCATED AT THE LAST OBSERVATION. A daily series read yesterday has not
+    "covered 29 of 30 days" — the one-day lag between the last read and the asof date is ordinary,
+    and every series would carry a warning it had not earned. A series that has genuinely STOPPED
+    is a staleness problem, and staleness is a separate mechanism that already reports it; having
+    coverage report it too would put two warnings on one fault and none on the fault coverage
+    exists for.
+    """
+    span = max(int((end - start).days), 0)
+    if s.empty:
+        return 0, span
+    covered_from = max(start, s.index.min())
+    if covered_from > end:
+        return 0, span
+    return min(int((end - covered_from).days), span), span
+
+
 # =========================================================================================
 # WITHHELD — the one place that decides a stored number is WRONG, not merely uncertain.
 #
@@ -359,6 +430,14 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append("PARTIAL — summed over known components only, so it understates")
     if int(row.get("n_points") or 0) < 2:
         why.append("a single observation — no trend, and nothing to validate it against")
+    # A SHORT WINDOW IS NOT A SMALL NUMBER. A 10-day sum under a 30-day header understates by
+    # roughly two thirds and looks exactly like a real fall in activity — the one thing a reader
+    # is most likely to act on. Point count does not catch it: eight points over ten days is a
+    # densely sampled series that still covers a third of the window.
+    covered, window = row.get("covered_days"), row.get("window_days")
+    if window and covered is not None and covered < window:
+        why.append(f"covers only {covered} of the {window} days in the window — the figure is a "
+                   f"{covered}-day total, not a low {window}-day one")
     if row["status"] == "review":
         why.append("flagged to the Review Queue")
     if row["status"] == "stale":
@@ -439,7 +518,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
-                   "measuring_points": (), "max_single_delta": None, "cumulative_ref": None}
+                   "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
+                   "granularity": "daily", "period_label": "",
+                   "covered_days": None, "window_days": None}
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
                 if gap is not None:
@@ -489,12 +570,34 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))
-            if m["kind"] == "flow":
+            granularity = config.series_granularity(name, metric)
+            row["granularity"] = granularity
+            if m["kind"] == "flow" and granularity == "monthly":
+                # A MONTHLY SERIES CANNOT FILL A 30-DAY WINDOW. Reporting the latest COMPLETE
+                # month, named, beats reporting whatever happened to land inside 30 days — which
+                # for GEODNET's buyback was NOTHING at all while 41 good monthly rows sat in the
+                # store. The prior column becomes the month before it, so the comparison is
+                # month-on-month rather than a 30-day window against a month.
+                row["now"], this_month = _latest_complete_month(s, asof)
+                if this_month:
+                    prior = pd.Period(this_month) - 1
+                    p_rows = s[s.index.to_period("M") == prior]
+                    row["m1"] = float(p_rows.sum()) if len(p_rows) else None
+                    row["period_label"] = this_month
+                for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+                    row[q] = _window_sum(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+                row["y1"] = _window_sum(s, asof - pd.Timedelta(days=365), asof)
+            elif m["kind"] == "flow":
                 row["now"] = _window_sum(s, asof - pd.Timedelta(days=short), asof)
                 row["m1"] = _window_sum(s, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short))
                 for i, q in enumerate(["q0", "q1", "q2", "q3"]):
                     row[q] = _window_sum(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
                 row["y1"] = _window_sum(s, asof - pd.Timedelta(days=365), asof)
+                # HOW MUCH OF THE WINDOW THE SERIES WAS ACTUALLY ALIVE FOR. Only on non-monthly
+                # flows: a monthly series reports a named month above and is not pretending to be
+                # a 30-day sum, so "covers 30 of 30" would be answering a question nobody asked.
+                row["covered_days"], row["window_days"] = _window_coverage(
+                    s, asof - pd.Timedelta(days=short), asof)
             else:
                 row["now"] = float(latest["value"])
                 row["m1"] = _at_or_before(s, asof - pd.Timedelta(days=short))
@@ -508,9 +611,16 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["note"] = latest.get("source_note", "") or ""
             elif base_source == "schedule":
                 row["status"] = "ok"
-            elif (asof - latest["date"]).days > stale_days:
+            elif _age_in_days(latest["date"], asof, granularity) > config.stale_after_days(name, metric, stale_days):
+                # THE THRESHOLD FOLLOWS THE CADENCE. A monthly series cannot have a point from
+                # this week — the incomplete current month is dropped by design — so judging it
+                # against the 7-day global marked a perfectly current series stale forever.
                 row["status"] = "stale"
-                row["note"] = f"last point {row['latest_date']}; last successful fetch {row['last_success'] or 'never'}"
+                limit = config.stale_after_days(name, metric, stale_days)
+                row["note"] = (f"last point {row['latest_date']}; last successful fetch "
+                               f"{row['last_success'] or 'never'}"
+                               + (f"; {granularity} series, stale after {limit} days"
+                                  if granularity != "daily" else ""))
             else:
                 row["status"] = "ok"
             if (name, metric) in review_keys:
@@ -532,6 +642,20 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # EVERY WINDOW IS BLANKED TOO, not just `now`. A trajectory built on a withdrawn
             # figure is still a withdrawn figure, and q0..q3 are exactly where a reader would go
             # looking for the number the blank cell did not give them.
+            # ** SAY WHAT THE NUMBER ACTUALLY COVERS. ** Two different ways a figure can sit
+            # under a header that overstates it, both disclosed on the row rather than left for a
+            # reader to infer from the point count.
+            if row["period_label"]:
+                row["note"] = (f"{granularity} series — 'now' is the latest COMPLETE month "
+                               f"({row['period_label']}), not a trailing 30-day sum"
+                               + (f" | {row['note']}" if row["note"] else ""))
+            covered, window = row["covered_days"], row["window_days"]
+            if window and covered is not None and covered < window:
+                row["note"] = (f"COVERS {covered} OF {window} DAYS — this series' history does not "
+                               f"span the full window, so the figure is a {covered}-day total "
+                               f"under a {window}-day header, not a short {window} days"
+                               + (f" | {row['note']}" if row["note"] else ""))
+
             withheld = withheld_for(name, metric, row)
             if withheld:
                 row["status"], reason = withheld

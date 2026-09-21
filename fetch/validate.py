@@ -36,6 +36,11 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
     prior_values maps (project, metric) -> last stored value, used for the change check. Only
     the newest row per (project, metric) is change-checked: a backfill legitimately walks a
     series through large moves, and flagging every historical point would bury the signal.
+
+    "Newest" now means newest COMPARABLE, which is not always newest. Two series are exempted for
+    reasons that are properties of the data rather than of its quality — a provider's partial
+    current day, and a flow that is lumpy by design — because comparing across either produces a
+    flag on every run, and a check that always fires is a check that is never read.
     """
     if df is None or df.empty:
         return df
@@ -56,16 +61,48 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
     if df.empty:
         return df
 
-    newest = df.sort_values("date").groupby(["project", "metric"], as_index=False).tail(1)
-    for row in newest.itertuples(index=False):
-        prior = prior_values.get((row.project, row.metric))
+    # ** COMPARE LIKE WITH LIKE, OR DO NOT COMPARE. ** Run 20260921T100546Z raised 16
+    # change_threshold flags and essentially all of them were artefacts of comparing things that
+    # are not comparable. A guard that fires every run is one nobody reads.
+    today = pd.Timestamp(pd.Timestamp.now("UTC").date())
+    for (project, metric), g in df.groupby(["project", "metric"]):
+        # (a) LUMPY BY DESIGN. GEODNET burns weekly and the chain read differences daily, so a
+        # burn day carries a week's burn and the days between carry zero. 35,000 -> 105,000 is the
+        # mechanism, not a fault, and no threshold distinguishes it from one.
+        lumpy = config.lumpy_flow(project, metric)
+        if lumpy:
+            continue
+
+        g = g.sort_values("date")
+        # (b) THE CURRENT DAY IS NOT A DAY YET. DefiLlama and CoinGecko publish it from the moment
+        # it starts, so the newest point is a few hours against yesterday's twenty-four. Dropping
+        # it and comparing the last two COMPLETE days is the whole fix — widening the threshold
+        # instead would hide the real step changes this check exists to catch.
+        provider = str(g["source"].iloc[-1] or "").split(":")[0]
+        if provider in config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD:
+            complete = g[pd.to_datetime(g["date"]) < today]
+            if complete.empty:
+                continue                  # nothing but the partial day — nothing to compare
+            # The prior COMPLETE day from THIS frame where the provider gave us one, rather than
+            # prior_values, which may itself hold a partial day stored by an earlier run today.
+            if len(complete) >= 2:
+                row = complete.iloc[-1]
+                prior = float(complete.iloc[-2]["value"])
+            else:
+                row = complete.iloc[-1]
+                prior = prior_values.get((project, metric))
+        else:
+            row = g.iloc[-1]
+            prior = prior_values.get((project, metric))
+
         if prior is None or prior == 0:
             continue
-        threshold = config.change_threshold_pct(row.project, row.metric) / 100.0
-        move = abs(row.value - prior) / abs(prior)
+        threshold = config.change_threshold_pct(project, metric) / 100.0
+        move = abs(float(row["value"]) - prior) / abs(prior)
         if move > threshold:
-            out.review_item(row.project, row.metric, REASON_CHANGE, ACTION_FLAGGED, value=row.value,
-                            prior_value=prior, date=row.date, source=row.source, tier=row.tier)
+            out.review_item(project, metric, REASON_CHANGE, ACTION_FLAGGED,
+                            value=float(row["value"]), prior_value=prior, date=row["date"],
+                            source=row["source"], tier=row["tier"])
     return df
 
 

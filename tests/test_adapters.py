@@ -2712,7 +2712,14 @@ def test_one_observation_larger_than_a_quarter_of_the_cumulative_is_not_a_flow()
     good = build(ordinary)
     assert good["status"] == "ok" and good["now"] == 720_000.0, \
         f"ordinary days must render normally once the artefact is gone: {good['status']}, {good['now']}"
-    assert good["confidence"] == "GREEN"
+    # AMBER, not GREEN, and for a SEPARATE reason rather than a leftover of the artefact: this
+    # fixture's series is a handful of days long, so a trailing-30-day sum over it genuinely
+    # covers only a few of the 30 days and the S6 disclosure says so. What matters here is that
+    # the implausible-delta reason is gone and the value is shown again.
+    assert good["confidence"] == "AMBER", good["why_amber"]
+    assert "OF THE CUMULATIVE" not in str(good["why_amber"]), \
+        f"the implausible-delta reason must go when the artefact does: {good['why_amber']}"
+    assert "covers only" in str(good["why_amber"]), good["why_amber"]
 
     # NARROW ON PURPOSE. A Dune-sourced monthly burn is a PERIOD TOTAL, not a difference, so it
     # has no arithmetic relationship to the cumulative balance and must never be measured against
@@ -4328,3 +4335,160 @@ def test_no_enabled_scrape_targets_the_robots_disallowed_maple_page():
             if e.get("enabled") and "maple.finance/transparency" in str(e.get("url") or "")]
     assert not live, f"robots.txt disallows this path; these entries are armed against it: {live}"
     print("robots ok: no enabled entry targets maple.finance/transparency")
+
+
+# ======================================================================================
+# WHAT A WINDOW ACTUALLY COVERS, AND WHAT A CHANGE CHECK CAN ACTUALLY COMPARE
+# ======================================================================================
+
+def _aggregate_rows(rows, asof):
+    import pandas as pd
+    import build_workbook as bw
+    long = pd.DataFrame([{"date": pd.Timestamp(d), "project": p, "metric": m, "value": v,
+                          "source": src, "tier": t, "is_manual": False, "entered_on": ""}
+                         for d, p, m, v, src, t in rows])
+    out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(asof),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    return {(r["project"], r["metric"]): r for r in out.to_dict("records")}
+
+
+def test_a_monthly_series_reports_its_latest_COMPLETE_month_instead_of_a_blank():
+    """S5. GEODNET's buyback series is monthly (Dune 8683175's date_col is 'month') and the
+    incomplete current month is dropped by design. A trailing-30-day sum over it therefore
+    reports whatever happens to fall inside 30 days — and on 2026-09-21, with the latest complete
+    month being August, that was NOTHING. The cell was blank while 41 good rows sat in the store.
+    """
+    import pandas as pd
+
+    rows = [(f"2026-{mo:02d}-01", "GEODNET", "actual_buyback_tokens", v,
+             "dune:8683175", 4)
+            for mo, v in [(6, 900_000.0), (7, 1_100_000.0), (8, 1_250_000.0)]]
+    got = _aggregate_rows(rows, "2026-09-21")[("GEODNET", "actual_buyback_tokens")]
+
+    assert got["now"] == 1_250_000.0, f"must report August, the latest COMPLETE month: {got['now']}"
+    assert got["m1"] == 1_100_000.0, f"and the prior column is July, not a 30-day window: {got['m1']}"
+    assert "2026-08" in got["note"], f"the month must be NAMED, not implied: {got['note']}"
+    assert "COMPLETE month" in got["note"]
+    # And it is NOT marked stale: 21 days is well inside a monthly series' allowance, though it
+    # would have tripped the 7-day global that was being applied before.
+    assert got["status"] != "stale", got["note"]
+    assert config.stale_after_days("GEODNET", "actual_buyback_tokens", 7) == 45
+    print(f"S5 ok: now={got['now']:,.0f} ({got['note'][:60]}...)")
+
+
+def test_a_monthly_series_still_goes_stale_when_it_actually_stops():
+    """THE CONTROL for the widened threshold. 45 days is not 'never' — a genuinely dead monthly
+    series must still surface, or the fix for a false stale has bought a missed real one."""
+    rows = [("2026-05-01", "GEODNET", "actual_buyback_tokens", 900_000.0, "dune:8683175", 4)]
+    got = _aggregate_rows(rows, "2026-09-21")[("GEODNET", "actual_buyback_tokens")]
+    assert got["status"] == "stale", f"a May point read in late September is dead: {got['status']}"
+    assert "45 days" in got["note"], got["note"]
+    print("S5 control ok:", got["note"][:90])
+
+
+def test_a_thirty_day_header_over_a_ten_day_series_says_how_much_it_covers():
+    """S6. Eight runs over ten days means 'trailing 30d' covers ten. Hyperliquid's 155,971 was
+    roughly a third of a real 30-day burn for exactly this reason, printed under a 30-day header
+    with nothing to say so — and a third of normal looks precisely like a collapse in activity,
+    which is the reading most likely to be acted on.
+    """
+    rows = [(f"2026-09-{d:02d}", "Hyperliquid", "gross_burn_tokens", 15_000.0,
+             "hypercore_info:spot", 2) for d in range(11, 21)]
+    got = _aggregate_rows(rows, "2026-09-21")[("Hyperliquid", "gross_burn_tokens")]
+
+    assert got["now"] == 150_000.0, got["now"]
+    assert "COVERS 10 OF 30 DAYS" in got["note"], f"the note must state the span: {got['note']}"
+    assert got["confidence"] == "AMBER", got["confidence"]
+    assert "covers only 10 of the 30 days" in got["why_amber"], got["why_amber"]
+    print("S6 ok:", got["note"][:100])
+
+
+def test_a_series_older_than_the_window_is_not_flagged_for_coverage():
+    """THE CONTROL. Coverage is about how long the series has EXISTED, not how densely it was
+    sampled — otherwise every sparse series would carry a warning it has not earned. A series
+    running since June covers all 30 days even with a handful of points in them."""
+    rows = [("2026-06-01", "Hyperliquid", "gross_burn_tokens", 15_000.0, "hypercore_info:spot", 2),
+            ("2026-08-25", "Hyperliquid", "gross_burn_tokens", 15_000.0, "hypercore_info:spot", 2),
+            ("2026-09-20", "Hyperliquid", "gross_burn_tokens", 15_000.0, "hypercore_info:spot", 2)]
+    got = _aggregate_rows(rows, "2026-09-21")[("Hyperliquid", "gross_burn_tokens")]
+    assert "COVERS" not in got["note"], f"a long-running series must not be flagged: {got['note']}"
+    assert "covers only" not in str(got["why_amber"]), got["why_amber"]
+    print("S6 control ok: a sparse but long-running series is not flagged")
+
+
+class _Recorder:
+    """Captures review_item calls without needing the full FetchOutput."""
+
+    def __init__(self):
+        self.items = []
+
+    def review_item(self, project, metric, reason, action, **kw):
+        self.items.append({"project": project, "metric": metric, "reason": reason, **kw})
+
+
+def _validated(rows, prior):
+    import pandas as pd
+    from fetch.validate import validate_frame
+    df = pd.DataFrame([{"date": pd.Timestamp(d), "project": p, "metric": m, "value": v,
+                        "source": src, "tier": t} for d, p, m, v, src, t in rows])
+    rec = _Recorder()
+    validate_frame(df, prior, rec)
+    return [i for i in rec.items if i["reason"] == "change_threshold"]
+
+
+def test_a_providers_partial_current_day_is_not_compared_against_a_whole_one():
+    """S7. DefiLlama publishes the current day from the moment it starts, so its newest point is
+    a few hours of revenue. Chainlink $1,105,263 -> $0 and Maple $406,091 -> $0 are that, not a
+    protocol that stopped earning. Comparing the last two COMPLETE days is the fix; widening the
+    threshold would have hidden the real step changes this check exists for.
+    """
+    import pandas as pd
+    today = pd.Timestamp.now("UTC").date()
+    yesterday = today - pd.Timedelta(days=1)
+    before = today - pd.Timedelta(days=2)
+
+    flags = _validated([
+        (before, "Chainlink", "revenue_usd", 1_050_000.0, "defillama:chainlink", 1),
+        (yesterday, "Chainlink", "revenue_usd", 1_105_263.0, "defillama:chainlink", 1),
+        (today, "Chainlink", "revenue_usd", 0.0, "defillama:chainlink", 1),   # hours old
+    ], prior={("Chainlink", "revenue_usd"): 1_050_000.0})
+    assert not flags, f"the partial day must not be change-checked: {flags}"
+
+
+def test_but_a_real_step_change_between_two_complete_days_still_fires():
+    """THE CONTROL, and the one that matters: the S7 fix must narrow what is compared, not what
+    counts as a big move. A guard that stopped firing entirely would pass the test above."""
+    import pandas as pd
+    today = pd.Timestamp.now("UTC").date()
+    yesterday = today - pd.Timedelta(days=1)
+    before = today - pd.Timedelta(days=2)
+
+    flags = _validated([
+        (before, "Chainlink", "revenue_usd", 1_050_000.0, "defillama:chainlink", 1),
+        (yesterday, "Chainlink", "revenue_usd", 12_000.0, "defillama:chainlink", 1),  # real drop
+        (today, "Chainlink", "revenue_usd", 3_000.0, "defillama:chainlink", 1),
+    ], prior={("Chainlink", "revenue_usd"): 1_050_000.0})
+    assert len(flags) == 1, f"a genuine collapse between two COMPLETE days must still flag: {flags}"
+    assert flags[0]["value"] == 12_000.0 and flags[0]["prior_value"] == 1_050_000.0, flags[0]
+    print("S7 ok: partial day exempt, real step change between complete days still flags")
+
+
+def test_a_flow_that_is_lumpy_by_design_is_not_change_checked_at_all():
+    """GEODNET burns weekly; the chain read differences daily. A burn day carries a week of burn
+    and the days between carry zero, so 35,000 -> 105,000 is the mechanism working. No threshold
+    separates that from a fault, so the check is declared off for this series WITH its reason
+    rather than quietly widened."""
+    flags = _validated([
+        ("2026-09-19", "GEODNET", "gross_burn_tokens", 35_000.0, "chain:polygon:burn", 2),
+        ("2026-09-20", "GEODNET", "gross_burn_tokens", 105_000.0, "chain:polygon:burn", 2),
+    ], prior={("GEODNET", "gross_burn_tokens"): 35_000.0})
+    assert not flags, f"a lumpy-by-design flow must not be change-checked: {flags}"
+
+    declared = config.lumpy_flow("GEODNET", "gross_burn_tokens")
+    assert declared and declared["source"] and declared["why"], \
+        "an exemption without a recorded reason is how a real break gets missed"
+    # AND IT IS NARROW: the exemption is per series, not per project.
+    assert config.lumpy_flow("GEODNET", "actual_buyback_tokens") is None
+    assert config.lumpy_flow("Uniswap", "gross_burn_tokens") is None
+    print("S7 lumpy ok:", declared["underlying_cadence"], "underlying vs",
+          declared["observed_cadence"], "observed")
