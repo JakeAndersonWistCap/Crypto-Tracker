@@ -869,3 +869,81 @@ SELECT
 --
 --     outboundAmount is the better of the two — balanceOf also picks up CAKE sent to the proxy
 --     directly, which outboundAmount does not count.
+
+
+-- ========================================================================================
+-- K. THE BLOB TIER — numpy integers stored in INTEGER columns.            2026-09-22
+--    K1-K3 LOOK ONLY. K4 repairs, and is only needed if you want the old rows readable.
+-- ========================================================================================
+-- WHAT HAPPENED: sqlite3 stores a numpy integer as a BLOB in an INTEGER column, silently.
+-- numpy.float64 subclasses Python float and binds as REAL; numpy.int64 does NOT subclass int,
+-- so it falls through to the buffer protocol and 8 little-endian bytes go in without an error:
+--
+--     np.int64(2)  ->  typeof() = 'blob',  x'0200000000000000'
+--
+-- It surfaced one step from the end of the run, three layers from the cause: build_workbook's
+-- int(b'\x02\x00...') in write_review_queue, after a clean fetch of 6,967 rows.
+--
+-- THE CAUSE was fetch/validate.py's change_threshold branch, rewritten on 2026-09-22 for the
+-- S7 partial-day fix. It moved from itertuples() — which hands back Python ints — to
+-- groupby/.iloc[], where a Series element off a mixed-dtype frame is a numpy scalar. Only rows
+-- with reason='change_threshold' are affected; the out_of_bounds branch still used itertuples
+-- and is clean. FIXED at the site AND at the store boundary (store._int_or_none), so no write
+-- path can do this again without stopping the run and naming the column.
+--
+-- ** YOU PROBABLY DO NOT NEED K4. ** review_queue is rebuilt per run and read for the LATEST
+-- run only (store.review_queue defaults to it, since 2026-09-22), so one clean run leaves the
+-- poisoned rows behind as history that nothing reads. K4 is for tidiness or if you want the
+-- older runs to stay queryable.
+--
+-- K1. THE ROW(S), exactly as asked — which ones, what wrote them, when.
+SELECT rowid, run_id, ts, project, metric, reason, action, source,
+       typeof(tier) AS tier_type, tier AS tier_raw
+  FROM review_queue
+ WHERE typeof(tier) = 'blob'
+ ORDER BY ts, rowid;
+
+-- K2. THE SAME EXPOSURE ANYWHERE ELSE. Every integer column across every table that takes one,
+--     because the fix was applied to all of them and the audit should be too. Expect zero rows
+--     outside review_queue.tier — and if any appear, say which table before assuming otherwise.
+SELECT 'review_queue.tier' AS column_name, COUNT(*) AS blob_rows FROM review_queue WHERE typeof(tier) = 'blob'
+UNION ALL SELECT 'staging.tier',            COUNT(*) FROM staging     WHERE typeof(tier) = 'blob'
+UNION ALL SELECT 'metrics.tier',            COUNT(*) FROM metrics     WHERE typeof(tier) = 'blob'
+UNION ALL SELECT 'run_log.tier',            COUNT(*) FROM run_log     WHERE typeof(tier) = 'blob'
+UNION ALL SELECT 'run_log.rows',            COUNT(*) FROM run_log     WHERE typeof(rows) = 'blob'
+UNION ALL SELECT 'gap_report.priority',     COUNT(*) FROM gap_report  WHERE typeof(priority) = 'blob'
+UNION ALL SELECT 'fetch_status.last_rows',  COUNT(*) FROM fetch_status WHERE typeof(last_rows) = 'blob';
+
+-- K3. CONFIRM THE DIAGNOSIS BEFORE REPAIRING. Every blob should be 8 bytes and decode to a
+--     plausible tier (1-4). hex() makes the little-endian layout visible: x'0200000000000000'
+--     is 2. Anything that is NOT 8 bytes, or decodes outside 1-4, is a different fault — stop
+--     and report it rather than running K4 over it.
+SELECT rowid, project, metric, reason,
+       length(tier)                                          AS byte_length,
+       hex(tier)                                             AS hex_layout,
+       -- THE SAME EXPRESSION K4 WRITES, so this row previews the repair rather than merely
+       -- describing it. CAST(blob AS INTEGER) would read 0 here and look like a decode failure.
+       unicode(substr(CAST(tier AS TEXT), 1, 1))             AS would_become,
+       CASE WHEN length(tier) = 8
+             AND unicode(substr(CAST(tier AS TEXT), 1, 1)) BETWEEN 1 AND 4
+            THEN 'K4 will repair this row'
+            ELSE 'NOT an 8-byte tier in 1-4 — a different fault, do not run K4 over it'
+       END                                                   AS verdict
+  FROM review_queue
+ WHERE typeof(tier) = 'blob'
+ ORDER BY rowid;
+
+-- K4. THE REPAIR, only for rows K3 confirmed are 8-byte little-endian tiers in 1-4. It reads the
+--     low byte, which is the whole value for any tier that small, and leaves anything else alone.
+--     Not needed for the workbook to build — see the note above.
+-- BEGIN;
+-- UPDATE review_queue
+--    SET tier = unicode(substr(CAST(tier AS TEXT), 1, 1))
+--  WHERE typeof(tier) = 'blob'
+--    AND length(tier) = 8
+--    AND unicode(substr(CAST(tier AS TEXT), 1, 1)) BETWEEN 1 AND 4;
+-- COMMIT;
+
+-- K5. VERIFY — K1 should return nothing, and the tiers should read as plain integers.
+-- SELECT typeof(tier) AS tier_type, tier, COUNT(*) AS rows
+--   FROM review_queue GROUP BY typeof(tier), tier ORDER BY tier_type, tier;

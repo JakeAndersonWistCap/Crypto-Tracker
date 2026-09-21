@@ -512,6 +512,44 @@ separate questions.
 
 ---
 
+## 11i. sqlite3 stores a numpy integer as a BLOB, silently
+
+Found 2026-09-22, one step from the end of a run: a clean fetch of 6,967 rows, then
+`int(b'\x02\x00\x00\x00\x00\x00\x00\x00')` in `build_workbook.write_review_queue`, with the
+workbook unwritten and the traceback pointing at the reader.
+
+**The mechanism.** `numpy.float64` subclasses Python `float`, so it binds as REAL and nobody
+notices. `numpy.int64` does **not** subclass `int` — it falls through sqlite3's type dispatch to
+the buffer protocol, and eight little-endian bytes go into an INTEGER column without an error:
+
+```
+np.int64(2)   ->  typeof() = 'blob',  x'0200000000000000'
+np.int32(2)   ->  blob, 4 bytes
+np.bool_(True)->  blob, 1 byte
+np.float64    ->  real      (safe)
+np.str_       ->  text      (safe)
+```
+
+So the exposure is integer-like and boolean numpy scalars only, and it is invisible at the write.
+
+**Where they come from.** A Series element off a mixed-dtype DataFrame — `g.iloc[-1]["tier"]` —
+is a numpy scalar. `itertuples()` happens to hand back Python ints for the same column, which is
+why moving one loop from `itertuples` to `groupby`/`.iloc` was enough to start writing blobs.
+
+**The rule.** Every integer column is coerced at the store boundary by `store._int_or_none`,
+which converts `None`, Python ints, numpy integers, bools and integral floats, and **raises** on
+anything else — a str, a bytes, a list, a non-integral float are not "an int needing conversion",
+they are a caller passing the wrong thing. Cast at the source too; the boundary is the net, not
+the fix.
+
+**Do not defend at read time.** Wrapping the `int()` in `build_workbook` would have hidden bad
+data being written, which is the pattern this project has been burned by before. The test that
+belongs here asserts `typeof()` in the database, not that the reader survived.
+
+`orphan_cleanup.sql` section K diagnoses and repairs an affected store. Usually no repair is
+needed: `review_queue` is rebuilt per run and read for the latest run only, so one clean run
+leaves the poisoned rows behind as history nothing reads.
+
 ## 11h. Running the cleanup SQL: `run_sql.py`
 
 `orphan_cleanup.sql` is written to be READ before it is run — every section looks first and

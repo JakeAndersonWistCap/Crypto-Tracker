@@ -5431,3 +5431,137 @@ def test_a_reference_only_contract_is_neither_read_nor_nagged_about():
     assert any("reference only" in e.message for e in out.log), \
         "but it must stay visible in the log — silently skipped is not the same as declared"
     print("reference-only ok: BSC alone, unmarked, and token_base raises nothing")
+
+
+# ======================================================================================
+# sqlite3 STORES A numpy INTEGER AS A BLOB, SILENTLY. The 2026-09-22 workbook crash.
+# ======================================================================================
+
+def test_a_numpy_integer_never_reaches_an_integer_column_as_a_blob():
+    """THE BUG, asserted at the WRITE, which is where it was invisible.
+
+    numpy.float64 subclasses Python float, so it binds as REAL and nobody notices. numpy.int64
+    does NOT subclass int — it falls through sqlite3's type dispatch to the buffer protocol, and
+    an 8-byte little-endian BLOB goes into an INTEGER column without a word of complaint:
+
+        np.int64(2)  ->  typeof() = 'blob',  b'\\x02\\x00\\x00\\x00\\x00\\x00\\x00\\x00'
+
+    It surfaced three layers away and one step from the end: build_workbook's
+    int(b'\\x02\\x00...') in write_review_queue, after a clean fetch of 6,967 rows, with the
+    workbook unwritten and the traceback pointing at the reader.
+
+    Read-time defence was never the answer — a try/except there would have hidden bad data
+    being written, which is the pattern this project has been burned by before. This asserts the
+    typeof() in the DATABASE.
+    """
+    import numpy as np
+    import sqlite3
+    import tempfile
+    import pathlib as _p
+    from store import Store
+
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(_p.Path(d) / "t.db")
+        s.record_review("r1", [{"project": "Chainlink", "metric": "revenue_usd",
+                                "reason": "change_threshold", "action": "stored_flagged",
+                                "value": 10.0, "prior_value": 1e6, "date": "2026-09-22",
+                                "source": "defillama:c", "tier": np.int64(1)}])
+        s.record_gaps("r1", [{"project": "X", "metric": "y", "reason": "r", "suggestion": "s",
+                              "priority": np.int64(3), "priority_label": "P3"}])
+        s.record_fetch("r1", "chain", "X", np.int64(7), "ok", tier=np.int64(2))
+        s.record_staging("r1", [{"project": "X", "name": "n", "value": 1.0,
+                                 "date": "2026-09-22", "source": "chain:x", "tier": np.int64(2)}])
+
+        conn = sqlite3.connect(str(_p.Path(d) / "t.db"))
+        # EVERY integer column across every write path, not just the one that crashed.
+        # fetch_status.last_rows is on the list because record_fetch writes to TWO tables from
+        # one argument, and guarding only the run_log insert would have left it exposed.
+        for table, col in (("review_queue", "tier"), ("gap_report", "priority"),
+                           ("run_log", "tier"), ("run_log", "rows"),
+                           ("fetch_status", "last_rows"), ("staging", "tier")):
+            got = conn.execute(
+                f"SELECT typeof({col}), {col} FROM {table} WHERE {col} IS NOT NULL").fetchall()
+            assert got, f"{table}.{col} wrote nothing — the test proves nothing"
+            for kind, value in got:
+                assert kind == "integer", \
+                    f"{table}.{col} stored typeof={kind} value={value!r} — a numpy integer " \
+                    f"became a {kind}, which is the 2026-09-22 crash"
+        conn.close()
+        s.close()
+    print("write-time ok: numpy integers land as INTEGER in every integer column")
+
+
+def test_a_genuinely_bad_integer_stops_the_run_at_the_write():
+    """Coercing anything numeric-looking would be the same mistake in a different coat. A str, a
+    bytes, a list, a non-integral float — those are not "an int needing conversion", they are a
+    caller passing the wrong thing, and the run should stop at the write with the column named
+    rather than storing it and surfacing somewhere else later."""
+    import tempfile
+    import pathlib as _p
+    from store import Store, _int_or_none
+
+    for good, expected in ((None, None), (2, 2), (True, 1), (2.0, 2), (float("nan"), None)):
+        assert _int_or_none(good, "tier") == expected, good
+
+    for bad in ("2", b"\x02", [2], 2.5, {"tier": 2}):
+        try:
+            _int_or_none(bad, "review_queue.tier", "Chainlink/revenue_usd")
+        except TypeError as e:
+            assert "review_queue.tier" in str(e) and "Chainlink/revenue_usd" in str(e), \
+                f"the error must name the column AND what was being written: {e}"
+            assert "numpy" in str(e), "and it must name the usual cause, which is not obvious"
+        else:
+            raise AssertionError(f"{bad!r} must not be accepted into an integer column")
+
+    # And it stops the actual write, not just the helper in isolation.
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(_p.Path(d) / "t.db")
+        try:
+            s.record_review("r1", [{"project": "X", "metric": "y", "reason": "r",
+                                    "action": "a", "tier": "not an int"}])
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("record_review accepted a string tier")
+        s.close()
+    print("write-time ok: a genuinely bad integer stops the run and names the column")
+
+
+def test_validate_frame_hands_the_store_python_ints_not_numpy_scalars():
+    """THE CAUSE, fixed at the site as well as at the boundary.
+
+    A Series element from .iloc[] on a mixed-dtype frame is a numpy scalar. The change check
+    moved from itertuples() to groupby/iloc on 2026-09-22 for the S7 partial-day fix, and that
+    move is what started writing numpy.int64. The store guard is the net; this is the fix.
+    """
+    import pandas as pd
+    from fetch.validate import validate_frame
+
+    class _Rec:
+        def __init__(self):
+            self.items = []
+
+        def review_item(self, project, metric, reason, action, **kw):
+            self.items.append({"reason": reason, **kw})
+
+    today = pd.Timestamp.now("UTC").date()
+    df = pd.DataFrame([
+        {"date": pd.Timestamp("2026-09-20"), "project": "Uniswap", "metric": "gross_burn_tokens",
+         "value": 9e14, "source": "chain:x", "tier": 2},
+        {"date": pd.Timestamp(today - pd.Timedelta(days=2)), "project": "Chainlink",
+         "metric": "revenue_usd", "value": 1_000_000.0, "source": "defillama:c", "tier": 1},
+        {"date": pd.Timestamp(today - pd.Timedelta(days=1)), "project": "Chainlink",
+         "metric": "revenue_usd", "value": 10.0, "source": "defillama:c", "tier": 1},
+    ])
+    assert df["tier"].dtype == "int64", "the frame must actually hold numpy ints, or this proves nothing"
+
+    rec = _Rec()
+    validate_frame(df, {("Chainlink", "revenue_usd"): 1_000_000.0}, rec)
+    reasons = {i["reason"] for i in rec.items}
+    assert {"out_of_bounds", "change_threshold"} <= reasons, f"both paths must fire: {reasons}"
+    for item in rec.items:
+        assert type(item["tier"]) is int, \
+            f"{item['reason']} handed the store a {type(item['tier']).__name__}, not an int"
+        assert type(item["value"]) is float, \
+            f"{item['reason']} handed the store a {type(item['value']).__name__}, not a float"
+    print("validate_frame ok: both review paths emit Python scalars")

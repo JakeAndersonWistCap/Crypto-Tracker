@@ -51,9 +51,13 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         lo, hi = config.sanity_bounds(row.project, row.metric)
         v = row.value
         if (lo is not None and v < lo) or (hi is not None and v > hi):
-            out.review_item(row.project, row.metric, REASON_BOUNDS, ACTION_REJECTED, value=v,
+            out.review_item(row.project, row.metric, REASON_BOUNDS, ACTION_REJECTED, value=float(v),
                             prior_value=prior_values.get((row.project, row.metric)),
-                            date=row.date, source=row.source, tier=row.tier)
+                            date=row.date, source=row.source,
+                            # Python int today, because itertuples happens to unwrap it. Cast
+                            # anyway: "happens to" is not a guarantee across pandas versions, and
+                            # the sibling path above is proof of what the failure looks like.
+                            tier=None if pd.isna(row.tier) else int(row.tier))
             keep.append(False)
             continue
         keep.append(True)
@@ -100,9 +104,16 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         threshold = config.change_threshold_pct(project, metric) / 100.0
         move = abs(float(row["value"]) - prior) / abs(prior)
         if move > threshold:
+            # int(row["tier"]), NOT row["tier"]. A Series element from .iloc[] on a mixed-dtype
+            # frame is a numpy scalar, and sqlite3 stores numpy.int64 as an 8-byte BLOB in an
+            # INTEGER column without complaining — see store._int_or_none. This exact line, added
+            # on 2026-09-22 when the change check moved from itertuples() to groupby/iloc,
+            # poisoned a review_queue row and killed the workbook build three layers away.
+            # float() on value is doing the same job and was already here.
             out.review_item(project, metric, REASON_CHANGE, ACTION_FLAGGED,
                             value=float(row["value"]), prior_value=prior, date=row["date"],
-                            source=row["source"], tier=row["tier"])
+                            source=row["source"],
+                            tier=None if pd.isna(row["tier"]) else int(row["tier"]))
     return df
 
 

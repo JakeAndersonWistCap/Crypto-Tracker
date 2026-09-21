@@ -19,6 +19,7 @@ current run's rows.
 """
 from __future__ import annotations
 
+import numbers
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -27,6 +28,55 @@ from pathlib import Path
 import pandas as pd
 
 DB_PATH = Path(os.environ.get("TOKEN_METRICS_DB", "metrics.db"))
+
+
+def _int_or_none(value, column: str, context: str = ""):
+    """Coerce an integer-ish value to a Python int, or None. RAISE on anything else.
+
+    ** WHY THIS EXISTS: sqlite3 SILENTLY STORES A numpy INTEGER AS A BLOB. **
+    numpy.float64 subclasses Python float, so it binds as REAL and nobody notices. numpy.int64
+    does NOT subclass int — it falls through sqlite3's type dispatch to the buffer protocol, and
+    an 8-byte little-endian BLOB goes into an INTEGER column without a word of complaint:
+
+        np.int64(2)  ->  typeof() = 'blob',  b'\x02\x00\x00\x00\x00\x00\x00\x00'
+
+    It surfaces much later and somewhere else. On 2026-09-22 it surfaced as
+    `int(b'\x02\x00...')` in build_workbook.write_review_queue, three layers from the write that
+    caused it and after a clean fetch of 6,967 rows — the run died at the last step, with the
+    workbook unwritten and a traceback pointing at the reader.
+
+    np.int32 and np.bool_ have the same shape. np.float64 and np.str_ do not.
+
+    RAISING RATHER THAN COERCING ANYTHING NUMERIC-LOOKING is the point. A str, a bytes, a list —
+    those are not "an int that needs converting", they are a caller passing the wrong thing, and
+    this project has been burned before by accepting a malformed value quietly instead of tracing
+    why it exists. Integral (which numpy's integer types register as) and a float that is exactly
+    an integer are conversions; everything else is a bug that should stop the run at the write.
+    """
+    if value is None:
+        return None
+    # UNWRAP A numpy SCALAR WITHOUT IMPORTING numpy. Every numpy scalar exposes .item(), which
+    # returns the equivalent Python builtin. Doing it by duck-type keeps store.py free of a
+    # numpy import for a problem that is really "something array-shaped got this far", and it
+    # catches np.bool_ too — which subclasses neither bool nor Integral and would otherwise fall
+    # through to the raise despite being a perfectly convertible value.
+    if type(value).__module__ == "numpy" and hasattr(value, "item"):
+        value = value.item()
+    if value is None:
+        return None
+    if isinstance(value, bool) or isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, float):
+        if value != value:                      # NaN — pandas' missing-integer stand-in
+            return None
+        if value.is_integer():
+            return int(value)
+    raise TypeError(
+        f"{column} must be an integer or None before it reaches the database, got "
+        f"{type(value).__name__} {value!r}{(' (' + context + ')') if context else ''}. "
+        f"A numpy integer is the usual cause and is NOT harmless: sqlite3 stores it as a BLOB "
+        f"in an INTEGER column without error, and the failure surfaces later somewhere else. "
+        f"Cast at the source — int(x) — rather than relaxing this check.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS metrics (
@@ -234,7 +284,10 @@ class Store:
         now = utcnow()
         rows = [
             (r.date, r.project, r.metric, float(r.value), r.source,
-             int(r.tier) if pd.notna(r.tier) else None, now)
+             # Already safe via int(), and routed through the same helper anyway so there is ONE
+             # rule for integer columns rather than one site that happens to be careful.
+             _int_or_none(None if not pd.notna(r.tier) else r.tier, "metrics.tier",
+                          f"{r.project}/{r.metric}"), now)
             for r in df.itertuples(index=False)
         ]
         self.conn.executemany(
@@ -280,6 +333,12 @@ class Store:
     def record_fetch(self, run_id: str, source: str, project: str | None, rows: int, status: str,
                      message: str = "", tier: int | None = None):
         ts = utcnow()
+        # COERCED ONCE, at the top, because this method writes to TWO tables. Guarding only the
+        # run_log insert would have left fetch_status.last_rows exposed to exactly the same
+        # numpy-integer-as-BLOB failure — the audit that found it is the reason it is here rather
+        # than inline at each insert.
+        tier = _int_or_none(tier, "run_log.tier", f"{source}/{project}")
+        rows = _int_or_none(rows, "run_log.rows / fetch_status.last_rows", f"{source}/{project}")
         self.conn.execute(
             "INSERT INTO run_log(run_id, ts, source, tier, project, rows, status, message) VALUES (?,?,?,?,?,?,?,?)",
             (run_id, ts, source, tier, project, rows, status, (message or "")[:2000]),
@@ -307,7 +366,10 @@ class Store:
             """INSERT INTO review_queue(run_id, ts, project, metric, date, value, prior_value, reason, action, source, tier)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             [(run_id, ts, i["project"], i["metric"], i.get("date"), i.get("value"), i.get("prior_value"),
-              i["reason"], i["action"], i.get("source"), i.get("tier")) for i in items],
+              i["reason"], i["action"], i.get("source"),
+              _int_or_none(i.get("tier"), "review_queue.tier",
+                           f"{i.get('project')}/{i.get('metric')} via {i.get('reason')}"))
+             for i in items],
         )
         self.conn.commit()
         return len(items)
@@ -321,7 +383,10 @@ class Store:
                                      priority, priority_label)
                VALUES (?,?,?,?,?,?,?,?,?)""",
             [(run_id, ts, i["project"], i["metric"], i.get("tiers_attempted", ""), i["reason"],
-              i.get("suggestion", ""), i.get("priority", 5), i.get("priority_label", "P5 uncovered"))
+              i.get("suggestion", ""),
+              _int_or_none(i.get("priority", 5), "gap_report.priority",
+                           f"{i.get('project')}/{i.get('metric')}"),
+              i.get("priority_label", "P5 uncovered"))
              for i in items],
         )
         self.conn.commit()
@@ -338,7 +403,9 @@ class Store:
             "INSERT INTO staging (run_id, ts, date, project, name, value, source, tier, note) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             [(run_id, ts, i.get("date"), i["project"], i["name"], i.get("value"),
-              i.get("source"), i.get("tier"), i.get("note", "")) for i in items],
+              i.get("source"),
+              _int_or_none(i.get("tier"), "staging.tier", f"{i.get('project')}/{i.get('name')}"),
+              i.get("note", "")) for i in items],
         )
         self.conn.commit()
         return len(items)
