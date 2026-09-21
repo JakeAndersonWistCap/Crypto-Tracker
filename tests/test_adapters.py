@@ -668,6 +668,69 @@ def _derive(project_name: str, model: str, supply_now: float, supply_prior: floa
     return (None if got.empty else float(got.value.iloc[0])), out
 
 
+def test_issuance_follows_the_supply_figures_convention_not_the_burn_mechanism():
+    """CoinGecko's total_supply is NET of burn, so a transfer burn still needs the burn added back.
+
+    Confirmed on live data in the audit of run 20260921T100546Z:
+        GEODNET  1,000,000,000.00 - 961,518,067.62 = 38,481,932.38 = burn balance, to the token
+        Uniswap  1,000,000,000   -  888,114,418.92 = 111,885,581  ~= burn balance 111,953,581
+
+    The old rule keyed on the burn MECHANISM — a transfer burn does not reduce the contract's
+    totalSupply, therefore issuance = d(supply). Correct about the CONTRACT's figure, and the
+    store holds the PROVIDER's. Differencing a net-of-burn figure reports issuance minus burn
+    under a gross label, which for a non-minting token is about -burn: Uniswap's -242,000.
+
+    Neither half looked wrong alone, which is why this asserts the ARITHMETIC OUTCOME rather than
+    which branch was taken — a future refactor that keeps the branch and loses the sign is exactly
+    the regression worth catching.
+    """
+    # A DAY WHERE THE ONLY SUPPLY MOVEMENT WAS THE BURN. Provider supply falls by exactly the
+    # burn; real issuance is zero. Under the old formula this was -120,000 and got rejected.
+    got, out = _derive("Uniswap", "transfer_to_dead_address",
+                       supply_now=888_114_418.92, supply_prior=888_234_418.92, burn=120_000.0)
+    assert got == 0.0, f"net-of-burn supply + burn added back must give 0, got {got}"
+    assert not [r for r in out.review if r.get("reason") == "negative_derived_issuance"], \
+        "the negative that this bug produced must be gone, not merely tolerated"
+
+    # AND REAL MINTING STILL COMES THROUGH. Supply rose 50,000 net while 120,000 burned, so
+    # 170,000 was actually issued — the figure the gross column is supposed to carry.
+    got, _ = _derive("Uniswap", "transfer_to_dead_address",
+                     supply_now=888_284_418.92, supply_prior=888_234_418.92, burn=120_000.0)
+    assert got == 170_000.0, f"gross issuance must include the burned tokens, got {got}"
+
+    # THE CONVENTION IS WHAT DECIDES, NOT THE MECHANISM. Same mechanism, same numbers, gross
+    # provider figure -> the delta alone is already gross and nothing is added.
+    gross = dict(config.PROJECT_BY_NAME["Uniswap"])
+    gross["total_supply_convention"] = "gross"
+    assert config.issuance_supply_rule(gross, "transfer_to_dead_address") == "delta_only"
+    assert config.issuance_supply_rule(config.PROJECT_BY_NAME["Uniswap"],
+                                       "transfer_to_dead_address") == "add_burn"
+
+    # UNTESTED REFUSES. PancakeSwap and Venice are transfer burns whose convention was never
+    # established — and could not be, from a sandbox CoinGecko does not answer. The two candidate
+    # formulas differ by the whole burn, so the derivation must decline and name the test.
+    for name in ("PancakeSwap", "Venice AI"):
+        p = config.PROJECT_BY_NAME[name]
+        assert p.get("total_supply_convention") is None, \
+            f"{name} must stay undeclared until the test is actually run"
+        assert p.get("total_supply_convention_untested", {}).get("test"), \
+            f"{name} must record WHICH test settles it, not just that it is unknown"
+        got, out = _derive(name, "transfer_to_dead_address",
+                           supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
+        assert got is None, f"{name} must refuse to derive while the convention is untested, got {got}"
+        reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+        assert "NET of that burn is not established" in reason, \
+            f"the gap must name the actual unknown, not a generic one: {reason[:200]}"
+
+    # WHERE THE CONVENTION CANNOT MATTER, NO DECLARATION IS NEEDED — and the mechanism table
+    # deliberately omits transfer_to_dead_address so a forgetful edit refuses rather than defaults.
+    assert "transfer_to_dead_address" not in config.ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM
+    assert config.issuance_supply_rule({}, "no_burn") == "delta_only"
+    assert config.issuance_supply_rule({}, "protocol_level_destruction") == "add_burn"
+    print("issuance convention ok: net-of-burn adds the burn back (0 and 170,000), gross does "
+          "not, untested refuses with the test named, and the mechanism table cannot default")
+
+
 # ---------------------------------------------- the three blocks that were declared but inert
 def _a3_formula(project_name: str, header_starts: str) -> str:
     """The formula the REAL A3 writer produces for one project, pulled out of a built workbook.
@@ -894,25 +957,52 @@ def test_validation_survives_a_REAL_fetch_all_frame():
           f"{len(matched)} reference value(s) all compared")
 
 
-def test_the_two_burn_models_derive_DIFFERENT_issuance_from_identical_inputs():
-    """The whole reason issuance is keyed on the mechanism. Same numbers in, different answers out.
+def test_identical_inputs_give_different_issuance_and_the_CONVENTION_is_what_decides():
+    """Same numbers in, different answers out — and the thing that selects the answer changed.
 
-    A protocol burn destroys supply, so the supply delta is already NET of it and the burn must be
-    added back. A transfer burn leaves totalSupply untouched, so adding it would invent issuance
-    that never happened. If these two ever agree, the derivation has collapsed into one formula
-    and one of the two families of projects is silently wrong.
+    THIS TEST USED TO ASSERT THE BUG. It keyed on the burn MECHANISM: protocol burn -> add the
+    burn back, transfer burn -> do not, "if these two ever agree the derivation has collapsed".
+    The audit of 2026-09-21 showed the mechanism is not what decides. CoinGecko's total_supply is
+    contract totalSupply MINUS the dead-address balance (GEODNET exactly; Uniswap within read
+    timing), so a transfer burn DOES move the stored figure, and the burn has to be added back
+    anyway. What distinguishes the two families is the convention of the SUPPLY FIGURE.
+
+    So the assertion is inverted rather than deleted: two projects with the SAME mechanism and
+    different conventions must disagree, which is what proves the keying moved.
     """
     SUPPLY_NOW, SUPPLY_PRIOR, BURN = 1_000_100.0, 1_000_000.0, 30.0   # delta = +100, burn = 30
 
+    # Protocol burn: the contract's own supply fell, so the delta is net and the burn is added.
     protocol, _ = _derive("Ethereum", "protocol_level_destruction", SUPPLY_NOW, SUPPLY_PRIOR, BURN)
-    transfer, _ = _derive("PancakeSwap", "transfer_to_dead_address", SUPPLY_NOW, SUPPLY_PRIOR, BURN)
+    # Transfer burn, NET-OF-BURN provider figure: the provider subtracted it, so it is added back
+    # too — same arithmetic as the protocol case, reached for a completely different reason.
+    net_of_burn, _ = _derive("Uniswap", "transfer_to_dead_address", SUPPLY_NOW, SUPPLY_PRIOR, BURN)
+    # Transfer burn, GROSS provider figure: nothing was subtracted, so the delta is already gross.
+    gross_project = dict(config.PROJECT_BY_NAME["Uniswap"])
+    gross_project["total_supply_convention"] = "gross"
+    gross_project["burn_mechanism"] = {"model": "transfer_to_dead_address", "status": "confirmed",
+                                       "source_url": "x", "source_date": None, "note": ""}
+    from fetch import _derive_issuance
+    out = _issuance_frame("Uniswap", SUPPLY_NOW, BURN)
+    _derive_issuance(out, [gross_project], {("Uniswap", "total_supply"): SUPPLY_PRIOR},
+                     {("Uniswap", "total_supply"): "2026-09-13"})
+    df = out.frame()
+    gross = float(df[df.metric == "gross_issuance_tokens"].value.iloc[0])
 
-    assert protocol == 130.0, f"protocol burn: issuance = delta + burn = 130, got {protocol}"
-    assert transfer == 100.0, f"transfer burn: issuance = delta = 100, got {transfer}"
-    assert protocol != transfer, "IDENTICAL INPUTS MUST NOT GIVE THE SAME ANSWER — the keying is broken"
-    assert protocol - transfer == BURN, "the difference between the models is exactly the burn"
-    print(f"issuance models ok: protocol {protocol:,.0f} vs transfer {transfer:,.0f}, "
-          f"differing by the burn ({BURN:,.0f})")
+    assert protocol == 130.0, f"protocol burn: delta + burn = 130, got {protocol}"
+    assert net_of_burn == 130.0, \
+        f"transfer burn on a NET-OF-BURN figure must also add the burn back, got {net_of_burn}"
+    assert gross == 100.0, f"transfer burn on a GROSS figure: delta alone = 100, got {gross}"
+
+    # THE POINT: the two that differ share a mechanism, and the two that agree do not.
+    assert net_of_burn != gross, \
+        "IDENTICAL INPUTS AND IDENTICAL MECHANISM MUST NOT GIVE THE SAME ANSWER — the convention " \
+        "is what selects the formula, and this is the assertion that proves it"
+    assert net_of_burn - gross == BURN, "the difference between the conventions is exactly the burn"
+    assert protocol == net_of_burn, \
+        "a protocol burn and a net-of-burn transfer burn reach the same formula by different routes"
+    print(f"issuance convention ok: protocol {protocol:,.0f} = net-of-burn transfer "
+          f"{net_of_burn:,.0f}, vs gross transfer {gross:,.0f}, differing by the burn ({BURN:,.0f})")
 
 
 def test_issuance_refuses_rather_than_guessing():
@@ -940,9 +1030,23 @@ def test_issuance_refuses_rather_than_guessing():
     assert "not established" in gap["reason"]
 
     # a transfer burn needs NO burn figure, and derives fine without one
-    value, _ = _derive("PancakeSwap", "transfer_to_dead_address", 1_000_100.0, 1_000_000.0, None)
-    assert value == 100.0, "a transfer burn does not touch supply, so no burn term is needed"
-    print("issuance refusals ok: single observation, missing burn, and unestablished mechanism")
+    # 4. ADDED 2026-09-21 — a transfer burn whose SUPPLY CONVENTION is untested. The two
+    # candidate formulas differ by the entire burn (see
+    # test_issuance_follows_the_supply_figures_convention_not_the_burn_mechanism), so there is no
+    # safe default and the refusal must name the test that settles it.
+    value, out = _derive("PancakeSwap", "transfer_to_dead_address", 1_000_100.0, 1_000_000.0, 30.0)
+    assert value is None, "an untested supply convention must refuse, not pick the likely answer"
+    gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+    assert "NET of that burn is not established" in gap["reason"]
+    assert "total_supply_convention" in gap["suggestion"], \
+        "the refusal must say which field settles it, not merely that something is unknown"
+
+    # THE CONTROL. With the convention DECLARED and a burn figure present, the same shape derives
+    # — so these four refusals cannot be passing because the derivation broke for everyone.
+    value, _ = _derive("Uniswap", "transfer_to_dead_address", 1_000_100.0, 1_000_000.0, 30.0)
+    assert value == 130.0, f"the control must still derive (delta + burn, net-of-burn); got {value!r}"
+    print("issuance refusals ok: single observation, missing burn, unestablished mechanism, "
+          "and untested supply convention")
 
 
 def test_a_measured_issuance_is_never_overwritten_by_a_derivation():
@@ -963,11 +1067,26 @@ def test_a_measured_issuance_is_never_overwritten_by_a_derivation():
 
 
 def test_a_negative_derived_issuance_is_rejected():
-    """Issuance cannot be below zero. A negative means an input is wrong, not that supply shrank."""
-    value, out = _derive("PancakeSwap", "transfer_to_dead_address", 999_000.0, 1_000_000.0, None)
+    """Issuance cannot be below zero. A negative means an input is wrong, not that supply shrank.
+
+    RE-POINTED 2026-09-21. This used to drive the negative through a transfer-burn project with
+    no burn figure — which is now the exact shape the net-of-burn fix makes impossible, because a
+    transfer burn on a net-of-burn figure needs the burn term and refuses without it. Driven
+    through a protocol burn instead: supply fell by more than the burn explains, so an input is
+    genuinely wrong and the guard should still fire.
+
+    Worth keeping precisely BECAUSE the commonest source of negatives is now gone. Uniswap's
+    -242,000 was the net-of-burn mistake, not a bad input, and fixing the formula removed it — so
+    this guard is now protecting against rarer causes (a restated supply figure, a burn covering a
+    different period) and would rot unnoticed without a test that still exercises it.
+    """
+    value, out = _derive("Ethereum", "protocol_level_destruction", 999_000.0, 1_000_000.0, 30.0)
     assert value is None, "a negative derivation must not be stored"
     assert any(r["reason"] == "negative_derived_issuance" and r["action"] == "rejected"
                for r in out.review)
+    gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+    assert "d(total_supply)" in gap["reason"] and "burn=" in gap["reason"], \
+        f"the rejection must name the inputs so the wrong one can be found: {gap['reason'][:200]}"
     print("negative issuance ok: rejected to the Review Queue with its inputs named")
 
 
@@ -2508,6 +2627,78 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
         reserve["destination_status"] = live_status
 
 
+def test_one_observation_larger_than_a_quarter_of_the_cumulative_is_not_a_flow():
+    """The third guard on the same failure, and the only one that still worked.
+
+    Uniswap's burn read moved from fire_pit to the dead address on 2026-09-14, and the delta
+    across that change stored 111,337,581 UNI as ONE DAY'S BURN — 99.99% of every UNI ever
+    burned, against a real rate of 100-200k/day. Two guards existed and neither caught it:
+
+      the WRITE-TIME guard (fetch.base.derive_flow_from_cumulative) refuses to difference across
+        a changed measuring point — but it was added AFTER this row was written, and it cannot
+        reach backwards into the store;
+      the READ-TIME guard (withheld_for case 5) fires on two distinct sources in the history —
+        but the orphan cleanup deleted the fire_pit rows, which removed the evidence and left
+        the consequence, so only one source remained.
+
+    So the row was still on the sheet a week later, found by the audit of run 20260921T100546Z.
+    This check needs neither provenance nor history: a flow differenced out of a stock is bounded
+    by that stock, whatever its source string says and whoever deleted what.
+    """
+    import pandas as pd
+    import build_workbook as bw
+
+    def build(flow_rows):
+        rows = list(flow_rows) + [{
+            "date": pd.Timestamp("2026-09-20"), "project": "Uniswap",
+            "metric": "burn_address_balance", "value": 111_953_581.0,
+            "source": "chain:ethereum:burn_dead", "tier": 2, "is_manual": False, "entered_on": ""}]
+        out = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-21"),
+                           gaps=pd.DataFrame(), review=pd.DataFrame())
+        return out[(out.project == "Uniswap") & (out.metric == "gross_burn_tokens")].iloc[0]
+
+    ordinary = [{"date": d, "project": "Uniswap", "metric": "gross_burn_tokens", "value": 120_000.0,
+                 "source": "chain:ethereum:burn_dead:delta", "tier": 2, "is_manual": False,
+                 "entered_on": ""}
+                for d in pd.date_range("2026-09-15", "2026-09-20")]
+    artefact = {"date": pd.Timestamp("2026-09-14"), "project": "Uniswap",
+                "metric": "gross_burn_tokens", "value": 111_337_581.0,
+                "source": "chain:ethereum:burn_dead:delta", "tier": 2, "is_manual": False,
+                "entered_on": ""}
+
+    # THE REAL SHAPE, exactly as the audit found it: one artefact among ordinary days, and a
+    # SINGLE measuring point, so case 5 cannot be what catches it.
+    bad = build([artefact] + ordinary)
+    assert bad["status"] == "implausible_delta", \
+        f"a 99%-of-cumulative day must not read as a flow: {bad['status']}"
+    assert "MEASURING POINT CHANGED" not in bad["note"], \
+        "precondition: only one source survives, so this is NOT case 5 catching it"
+    assert pd.isna(bad["now"]), f"the figure must be blanked, not shown: {bad['now']}"
+    assert all(pd.isna(bad[c]) for c in ("m1", "q0", "q1", "q2", "q3", "y1")), \
+        "every window spanning the artefact is equally wrong and must blank too"
+    assert bad["confidence"] == "RED"
+    assert "99%" in bad["note"] and "burn_address_balance" in bad["note"], \
+        f"the row must name the ratio and what it was measured against: {bad['note']!r}"
+
+    # AND IT SELF-CLEARS. Deleting the row (orphan_cleanup.sql section E) is the actual fix; this
+    # guard must not need a config change to stand down once the store is clean.
+    good = build(ordinary)
+    assert good["status"] == "ok" and good["now"] == 720_000.0, \
+        f"ordinary days must render normally once the artefact is gone: {good['status']}, {good['now']}"
+    assert good["confidence"] == "GREEN"
+
+    # NARROW ON PURPOSE. A Dune-sourced monthly burn is a PERIOD TOTAL, not a difference, so it
+    # has no arithmetic relationship to the cumulative balance and must never be measured against
+    # it — the :delta marker is what separates the two.
+    period_total = [{"date": pd.Timestamp("2026-08-01"), "project": "Uniswap",
+                     "metric": "gross_burn_tokens", "value": 90_000_000.0,
+                     "source": "dune:1234567", "tier": 4, "is_manual": False, "entered_on": ""}]
+    assert build(period_total)["status"] != "implausible_delta", \
+        "a period total from Dune is not a differenced flow and must not be bounded by the stock"
+    print("implausible delta ok: 99%-of-cumulative blanked RED with one measuring point, "
+          "clears itself when the row goes, and does not touch non-differenced period totals")
+
+
 def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     """The half of "disputed" that was missing, and the live run found it.
 
@@ -3051,6 +3242,22 @@ def _stale_fixture():
     return json.loads(path.read_text())
 
 
+def _forced_dispute():
+    """The fixture's disputed counterfactual, imported from the script that generated it.
+
+    Deliberately NOT re-implemented here. It was a two-liner in the test below and it silently
+    stopped forcing anything when Maple's treasury contract gained a metric_override; one shared
+    definition is what stops the generator and the checker drifting apart again.
+    """
+    import importlib.util
+    import pathlib as _p
+    spec = importlib.util.spec_from_file_location(
+        "refresh_stale_fixture", _p.Path(__file__).resolve().parent / "refresh_stale_fixture.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.forced_dispute()
+
+
 def _aggregate_fixture(data):
     """One aggregate() over ALL fixture rows together.
 
@@ -3064,8 +3271,13 @@ def _aggregate_fixture(data):
                           "metric": r["metric"], "value": r["value"], "source": r["source"],
                           "tier": r["tier"], "is_manual": False, "entered_on": ""}
                          for r in data["rows"]])
-    out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(data["asof"]),
-                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    # Entered through the SAME door the refresh script used to generate the expectations. The
+    # disputed example is a counterfactual — no contract in live config is disputed any more —
+    # so a fixture generated under the forcing and read back without it would disagree on that
+    # row for a reason that has nothing to do with the mechanism.
+    with _forced_dispute():
+        out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(data["asof"]),
+                           gaps=pd.DataFrame(), review=pd.DataFrame())
     return {(r["project"], r["metric"]): r for r in out.to_dict("records")}
 
 
@@ -3085,15 +3297,18 @@ def test_stale_store_every_recorded_expectation_still_holds():
     2026-09-18 (new address, verified_by_label). Aggregation reads config LIVE, so this fixture
     row would otherwise start reading 'ok' — not because the disputed-destination MECHANISM
     broke, but because the specific example it uses is no longer disputed. Forced back on for
-    the duration of this test, same pattern as the dedicated disputed-destination tests above,
-    so the regression coverage does not silently go dark the moment the example resolves.
+    the duration of this test so the coverage does not go dark the moment the example resolves.
+
+    THAT FORCING NOW COMES FROM refresh_stale_fixture.forced_dispute() rather than two lines
+    here. It was two lines here, and on 2026-09-21 the cross-check demotion gave the treasury
+    contract a metric_override that re-pointed it off treasury_holding_tokens — after which
+    setting the flag forced nothing, the row was caught by the WITHDRAWN branch instead, and
+    this test went on passing while the disputed branch had no coverage at all. The anti-rot
+    test's name-matched status assertion is what surfaced it.
     """
     import pandas as pd
 
-    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
-    live_status = treasury["destination_status"]
-    treasury["destination_status"] = "disputed"
-    try:
+    with _forced_dispute():
         data = _stale_fixture()
         by_key = _aggregate_fixture(data)
         checked = 0
@@ -3121,8 +3336,6 @@ def test_stale_store_every_recorded_expectation_still_holds():
                 continue
             assert e["expect_confidence"] == "RED", \
                 f"{e['transition']} on {e['project']}/{e['metric']} must be RED, got {e['expect_confidence']}"
-    finally:
-        treasury["destination_status"] = live_status
 
     # AND THE CONTROLS, which are what prove the guards are targeted rather than broad. A guard
     # that blanked everything would satisfy every assertion above.
@@ -3198,8 +3411,8 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     Two independent guards:
       1. Every transition type the refresh script declares is actually exercised.
       2. The NUMBER of RED-returning branches in confidence_for matches what the fixture was
-         built against. Add a seventh RED branch and this fails until somebody adds a row for
-         it — which is the only thing that stops the fixture silently covering five of seven
+         built against. Add an eighth RED branch and this fails until somebody adds a row for
+         it — which is the only thing that stops the fixture silently covering six of eight
          mechanisms a year from now.
 
     Guard 2 counts by AST rather than by grepping the source text, so a comment mentioning
@@ -3225,14 +3438,20 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     # new number is a guard that has stopped guarding. Counting the mechanisms themselves
     # measures the thing the fixture is actually covering.
     #
-    # THE SIX, in withheld_for's own order:
+    # THE SEVEN, in withheld_for's own order:
     #   orphaned                 contract removed from config
     #   withdrawn                contract re-purposed — its kind changed
     #   suppressed               derivation switched off in config
     #   disputed                 the contract's ROLE for this project is in doubt
     #   measuring_point_changed  series read from two different places
+    #   implausible_delta        one observation is too large a share of the cumulative
     #   refuted                  project does not burn the way this metric measures
-    EXPECTED_MECHANISMS = 6
+    #
+    # Raised from six to seven on 2026-09-21. THE NUMBER WAS NOT BUMPED ON ITS OWN, which is
+    # the move this guard exists to refuse: implausible_delta arrived with a transition type
+    # and its rows in tests/refresh_stale_fixture.py, and the name-matched assertions below
+    # would still fail if it had not.
+    EXPECTED_MECHANISMS = 7
 
     tree = ast.parse(inspect.getsource(bw.withheld_for))
     returns = [n for n in ast.walk(tree)
@@ -3252,7 +3471,7 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     assert covered_statuses == statuses, \
         f"fixture exercises {sorted(covered_statuses)}, withheld_for can return {sorted(statuses)}"
 
-    # ** AND THE STANDARDISATION ITSELF, asserted rather than assumed: ALL SIX BLANK. ** This is
+    # ** AND THE STANDARDISATION ITSELF, asserted rather than assumed: ALL SEVEN BLANK. ** This is
     # the invariant that was false until 2026-09-15, when three of them went RED and printed the
     # number anyway. If a seventh mechanism is added that flags without blanking, this fails.
     for e in data["expectations"]:
@@ -3260,7 +3479,7 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
             continue
         assert e["expect_blank"] is True, \
             f"{e['transition']} on {e['project']}/{e['metric']} is RED but still shows its value — " \
-            f"all six withheld mechanisms must blank"
+            f"all seven withheld mechanisms must blank"
 
     # The fixture must be regenerable. If the definitions no longer produce the committed JSON,
     # something moved and the diff is the thing to read.
@@ -3399,9 +3618,11 @@ def test_geodnet_issuance_derivation_is_suppressed_and_gaps_instead_of_reading_z
     assert config.PROJECT_BY_NAME["GEODNET"]["issuance_derivation"]["suppressed"] is True
 
     # THE CONTROL. The same call on a project WITHOUT the flag still derives, so this test cannot
-    # pass because the derivation broke for everyone.
+    # pass because the derivation broke for everyone. A burn figure is supplied because Uniswap's
+    # stored supply is NET OF BURN (2026-09-21) and the formula needs the burn term back —
+    # supplying None here would refuse for that reason and prove nothing about the suppression.
     value, _ = _derive("Uniswap", "transfer_to_dead_address",
-                       supply_now=1_000_500.0, supply_prior=1_000_000.0, burn=None)
+                       supply_now=1_000_500.0, supply_prior=1_000_000.0, burn=0.0)
     assert value == 500.0, f"the control project must still derive; got {value!r}"
     print("GEODNET issuance ok: suppressed to a gap that names the reason, control still derives")
 

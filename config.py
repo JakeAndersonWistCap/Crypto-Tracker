@@ -2589,6 +2589,32 @@ PROJECTS = [
         "name": "GEODNET", "symbol": "GEOD",
         "coingecko_id": "geodnet",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
+        # ===== COINGECKO'S total_supply IS NET OF BURN HERE. THE CLEANEST CONFIRMATION OF THE =====
+        # ===== FOUR: the difference matches the burn balance TO THE TOKEN, not approximately. =====
+        #   contract totalSupply   1,000,000,000.00
+        #   CoinGecko total_supply   961,518,067.62
+        #   difference                38,481,932.38
+        #   burn_address_balance      38,481,932.38
+        # INERT TODAY and recorded anyway: this project's issuance derivation is separately
+        # SUPPRESSED (see issuance_derivation — the emission is per-miner on a halving schedule,
+        # which no supply delta recovers), so no formula currently reads this field. It is here
+        # because the NEXT person to lift that suppression would otherwise re-make the exact
+        # mistake this convention exists to prevent, and because it is the evidence that settles
+        # the question for CoinGecko as a provider.
+        "total_supply_convention": "net_of_burn",
+        "total_supply_convention_evidence": {
+            "test": "contract totalSupply - CoinGecko total_supply == burn_address_balance",
+            "contract_total_supply": 1_000_000_000.00,
+            "provider_total_supply": 961_518_067.62,
+            "difference": 38_481_932.38,
+            "burn_address_balance": 38_481_932.38,
+            "residual": "zero — the two agree exactly",
+            "confirmed_on": "2026-09-21", "by": "audit of run 20260921T100546Z",
+            "provider": "CoinGecko",
+            "consequence": "none today: issuance_derivation is suppressed for this project on "
+                           "separate grounds. Recorded so that lifting the suppression cannot "
+                           "silently reintroduce the net-of-burn error.",
+        },
         # ARCHETYPE 3 ADDED 2026-09-18 — RESOLVED, not a new hypothesis. See OPEN_QUESTIONS'
         # GEODNET record: Version A (fiat revenue -> 80% buys GEOD on the open market -> burned) is
         # confirmed by GEODNET's own X account plus three corroborating sources; Version B (clients
@@ -3356,6 +3382,26 @@ PROJECTS = [
         "coingecko_id": "venice-token",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 3, 4], "archetypes_held": [],
+        # total_supply_convention DELIBERATELY UNDECLARED — UNTESTED, not assumed either way.
+        # Same reasoning as PancakeSwap: a transfer burn, so the convention picks the issuance
+        # formula and the two answers differ by the whole burn. Not inferred from Uniswap and
+        # GEODNET both coming back net_of_burn — inferring it is the mistake, not the shortcut.
+        #
+        # VENICE HAS ONE EXTRA COMPLICATION FOR WHOEVER RUNS THE TEST: ~99.5% of its cumulative
+        # burn is a single March 2025 airdrop burn, not the recurring programme (which is why
+        # burn_revenue_funded exists as a separate metric). The subtraction below still works —
+        # the dead-address balance is the dead-address balance whatever put it there — but do not
+        # be surprised by the magnitude, and do not use burn_revenue_funded for this comparison.
+        "total_supply_convention_untested": {
+            "why": "transfer burn — the convention decides the formula and nothing on file "
+                   "establishes which one CoinGecko applies to VVV",
+            "test": "contract totalSupply minus CoinGecko total_supply, compared against "
+                    "burn_address_balance (the CUMULATIVE dead-address figure, not "
+                    "burn_revenue_funded). Equal means net_of_burn; zero difference means gross.",
+            "blocked_by": "CoinGecko is unreachable from the sandbox this was written in "
+                          "(CONNECT tunnel 403), so the comparison could not be run here.",
+            "recorded": "2026-09-21",
+        },
         # ===== CIRCULATING EXCLUDES LOCKED — VERDICT A, AND A NEAR MISS. =====
         # ** THE NEAR-MISS FLAG IS THE POINT OF RECORDING THIS ONE. ** Venice never appeared as a
         # violation, and that was luck rather than health: under this convention the withdrawn
@@ -4185,6 +4231,26 @@ PROJECTS = [
         "coingecko_id": "uniswap",
         "defillama_fees_slug": "uniswap", "defillama_protocol": "uniswap", "defillama_chain": None,
         "archetypes": [4], "archetypes_held": [],
+        # ===== COINGECKO'S total_supply IS NET OF BURN HERE. CONFIRMED ON LIVE DATA. =====
+        # 1,000,000,000 (contract) - 888,114,418.92 (CoinGecko) = 111,885,581, against a
+        # burn_address_balance of 111,953,581 — the small residual is read timing, not a
+        # different quantity. See issuance_supply_rule for why this decides the formula.
+        "total_supply_convention": "net_of_burn",
+        "total_supply_convention_evidence": {
+            "test": "contract totalSupply - CoinGecko total_supply == burn_address_balance",
+            "contract_total_supply": 1_000_000_000,
+            "provider_total_supply": 888_114_418.92,
+            "implied_burn": 111_885_581,
+            "burn_address_balance": 111_953_581,
+            "residual": "~68,000 UNI, consistent with the two figures being read at different "
+                        "moments rather than measuring different things",
+            "confirmed_on": "2026-09-21", "by": "audit of run 20260921T100546Z",
+            "provider": "CoinGecko",
+            "consequence": "issuance = d(total_supply) + burn, NOT d(total_supply) alone, even "
+                           "though the burn mechanism is a transfer. Deriving on the mechanism "
+                           "produced -242,000 for Uniswap (negative_derived_issuance), which is "
+                           "approximately -burn: the signature of this exact mistake.",
+        },
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://gov.uniswap.org/", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "Burn-to-claim via Token Jars / fire pit. Fee routing is deterministic; realised burn depends on holder "
@@ -4667,6 +4733,29 @@ PROJECTS = [
         "coingecko_id": "pancakeswap-token",
         "defillama_fees_slug": "pancakeswap", "defillama_protocol": "pancakeswap", "defillama_chain": None,
         "archetypes": [4, 3], "archetypes_held": [],
+        # total_supply_convention DELIBERATELY UNDECLARED — UNTESTED, not assumed either way.
+        # This is a transfer burn, so the convention decides the issuance formula and the two
+        # answers differ by the ENTIRE burn (see issuance_supply_rule). Uniswap and GEODNET both
+        # came back net_of_burn on CoinGecko, which makes net_of_burn the likely answer here too —
+        # and "likely" is exactly the reasoning that produced the bug this field exists to stop,
+        # so it is not written down as a finding. The derivation REFUSES while this is undeclared
+        # and says so on the Gap Report; that is the intended state, not a regression.
+        #
+        # CAKE IS ALSO THE ONE CASE WHERE THE TEST NEEDS CARE: supply is multi-chain (LayerZero
+        # OFT, a deployment per chain) and the Ethereum-only contract read is not the whole
+        # contract total, so the subtraction below must use the SUMMED contract supply, or it
+        # will show a difference that is chain coverage rather than burn.
+        "total_supply_convention_untested": {
+            "why": "transfer burn — the convention decides the formula and nothing on file "
+                   "establishes which one CoinGecko applies to CAKE",
+            "test": "contract totalSupply (summed across ALL deployments, not Ethereum alone) "
+                    "minus CoinGecko total_supply, compared against burn_address_balance. Equal "
+                    "means net_of_burn; a difference of zero means gross.",
+            "blocked_by": "CoinGecko is unreachable from the sandbox this was written in "
+                          "(CONNECT tunnel 403), so the comparison could not be run here. It "
+                          "takes one live run with both figures in the store.",
+            "recorded": "2026-09-21",
+        },
         "fee_split": {
             # NOT a single number — the share is per-product. Stored as a dict and never collapsed
             # into one figure; the workbook shows each product and suppresses the single implied column.
@@ -6433,6 +6522,90 @@ def _check_circulating_conventions() -> list[str]:
     return errs
 
 
+def _check_total_supply_conventions() -> list[str]:
+    """total_supply_convention must be one of the two known values, and carry its evidence.
+
+    Same discipline as circulating_supply_convention above, for the same reason and with one
+    extra consequence: this field does not only tell a READER how to interpret the figure, it
+    selects the ISSUANCE FORMULA (see issuance_supply_rule). A wrong declaration here does not
+    mislead, it computes.
+    """
+    allowed = ("net_of_burn", "gross")
+    errs = []
+    for p in PROJECTS:
+        conv = p.get("total_supply_convention")
+        if conv is None:
+            continue
+        if conv not in allowed:
+            errs.append(f"{p['name']}: total_supply_convention {conv!r} not in {allowed}")
+        ev = p.get("total_supply_convention_evidence") or {}
+        if not ev.get("test") or not ev.get("confirmed_on"):
+            errs.append(f"{p['name']}: total_supply_convention is declared but carries no evidence — "
+                        f"record the test and the date it was confirmed")
+    return errs
+
+
+# ===== WHICH ISSUANCE FORMULA APPLIES, AND WHY IT IS NOT THE BURN MECHANISM THAT DECIDES =====
+#
+# THE BUG THIS EXISTS TO FIX, found by the audit of run 20260921T100546Z and confirmed exactly on
+# live data:
+#     GEODNET   contract totalSupply   1,000,000,000.00
+#               CoinGecko total_supply   961,518,067.62
+#               difference                38,481,932.38
+#               burn_address_balance      38,481,932.38   <- identical, to the token
+#     Uniswap   1,000,000,000 - 888,114,418.92 = 111,885,581 ~= burn balance 111,953,581
+#
+# CoinGecko's total_supply for these tokens is contract totalSupply MINUS the dead-address
+# balance. It is NET OF BURN.
+#
+# The derivation was keyed on the BURN MECHANISM: a transfer burn does not reduce the contract's
+# totalSupply, so issuance was taken to be the supply delta alone. That is true of the CONTRACT's
+# figure and false of the PROVIDER's, and the provider's is the one in the store — CoinGecko is
+# tier 1 and the chain read is tier 2, and _resolve_tier_collisions keeps the earlier tier, so
+# the net-of-burn figure wins every collision. Differencing it gives issuance MINUS burn while
+# the column says gross. For a non-minting token that is approximately -burn, which is how
+# Uniswap came to report -242,000 and trip negative_derived_issuance.
+#
+# ** THE FORMULA MUST FOLLOW THE CONVENTION OF THE SUPPLY FIGURE, NOT THE BURN MECHANISM. **
+# Both were "correct" in isolation and the mixture was wrong, which is why it survived review:
+# nothing about either half looks like an error on its own.
+#
+# WHERE THE TWO AGREE, NO DECLARATION IS NEEDED, and that is most of the universe:
+#   no_burn                      — nothing is netted out, so both conventions coincide.
+#   protocol_level_destruction   — the contract's own totalSupply falls, and there is no
+#                                  dead-address balance for a provider to subtract, so again
+#                                  both coincide and add_burn is right either way.
+# Only transfer_to_dead_address distinguishes them. That is exactly four projects: Uniswap,
+# GEODNET, PancakeSwap and Venice AI.
+#
+# AND AN UNDECLARED CONVENTION ON THOSE FOUR REFUSES TO DERIVE. The two readings differ by the
+# entire burn, so guessing picks a number that is wrong by 100% of the thing being measured.
+def issuance_supply_rule(project: dict, mech_model: str | None) -> str | None:
+    """'add_burn' | 'delta_only' | None, where None means "do not derive, and say why".
+
+    Returns None for a transfer burn whose total_supply_convention is undeclared: the answer
+    differs by the whole burn, so there is no safe default to fall back on.
+    """
+    if mech_model == "transfer_to_dead_address":
+        conv = project.get("total_supply_convention")
+        if conv == "net_of_burn":
+            return "add_burn"        # the provider already subtracted it; add it back for gross
+        if conv == "gross":
+            return "delta_only"      # a transfer burn leaves the contract's own figure untouched
+        return None                  # UNTESTED — see the check in the note on each project
+    return ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM.get(mech_model)
+
+
+# Mechanism -> rule, for the mechanisms where the supply convention cannot change the answer.
+# transfer_to_dead_address is DELIBERATELY ABSENT: it is the one case the convention decides, and
+# leaving it out means a future edit that forgets the convention gets None (refuse) rather than a
+# plausible wrong default.
+ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM = {
+    "protocol_level_destruction": "add_burn",
+    "no_burn": "delta_only",
+}
+
+
 def _check_open_questions() -> list[str]:
     """An open question whose TOPIC announces it is settled must carry a settled `status`.
 
@@ -7765,7 +7938,8 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
     errors = (_check_lock_contracts() + _check_addresses() + _check_split_periods()
               + _check_burn_mechanisms() + _check_burn_destinations() + _check_declared_shapes()
               + _check_not_applicable() + _check_open_questions()
-              + _check_relation_exemptions() + _check_circulating_conventions())
+              + _check_relation_exemptions() + _check_circulating_conventions()
+              + _check_total_supply_conventions())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

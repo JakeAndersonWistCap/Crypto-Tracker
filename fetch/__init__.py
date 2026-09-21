@@ -170,11 +170,20 @@ def _resolve_period_overlaps(out: FetchOutput) -> None:
 #       d(totalSupply) = issuance
 #   Declared, never inferred. A project with no burn address in config might have no burn, or
 #   might have one nobody has found yet — and those produce the same empty config.
-ISSUANCE_FROM_SUPPLY_DELTA = {
-    "protocol_level_destruction": "add_burn",
-    "transfer_to_dead_address": "delta_only",
-    "no_burn": "delta_only",
-}
+# MOVED TO config.issuance_supply_rule, 2026-09-21, AND THE MOVE IS THE FIX.
+#
+# The table used to live here and key on the burn mechanism alone, with
+# transfer_to_dead_address -> "delta_only" on the reasoning that a transfer burn does not reduce
+# the contract's totalSupply. True of the CONTRACT's figure; false of the PROVIDER's, and the
+# provider's is what the store holds: CoinGecko's total_supply for these tokens is contract
+# totalSupply MINUS the dead-address balance, confirmed to the token on GEODNET and within read
+# timing on Uniswap. Differencing a net-of-burn figure and calling the result gross understates
+# issuance by exactly the burn — which for a non-minting token is roughly -burn, and is how
+# Uniswap came to report -242,000.
+#
+# The formula follows the convention of the SUPPLY FIGURE, not the burn mechanism. See
+# config.issuance_supply_rule and the per-project total_supply_convention fields.
+ISSUANCE_FROM_SUPPLY_DELTA = config.ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM
 
 
 REASON_RATIO_FELL = "accrued_rate_fell"
@@ -296,7 +305,28 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
             continue
 
         mech = config.burn_mechanism(p)
-        rule = ISSUANCE_FROM_SUPPLY_DELTA.get(mech.get("model"))
+        rule = config.issuance_supply_rule(p, mech.get("model"))
+        # A TRANSFER BURN WITH AN UNDECLARED SUPPLY CONVENTION REFUSES, and says which test to
+        # run. The two candidate formulas differ by the entire burn, so there is no safe default
+        # — picking one is picking a number that is either right or wrong by 100% of the burn.
+        if (rule is None and mech.get("model") == "transfer_to_dead_address"
+                and mech.get("status") != "refuted"):
+            out.gap(name, "gross_issuance_tokens",
+                    reason=("cannot be derived: this project burns by TRANSFER to a dead address, and "
+                            "whether the stored total_supply is NET of that burn is not established. "
+                            "CoinGecko's total_supply is contract totalSupply minus the dead-address "
+                            "balance for every project tested so far (GEODNET exactly, Uniswap within "
+                            "read timing), and the two readings imply formulas that differ by the "
+                            "ENTIRE burn: d(supply) under a gross figure, d(supply)+burn under a net "
+                            "one. Deriving without knowing which would produce a figure wrong by 100% "
+                            "of the burn, in the direction that looks like negative issuance."),
+                    tiers_attempted="1, 2",
+                    suggestion=("Run the test recorded in this project's total_supply_convention_untested "
+                                "block: contract totalSupply minus the provider's total_supply, compared "
+                                "against burn_address_balance. Equal means net_of_burn; a zero difference "
+                                "means gross. Then set total_supply_convention in config.py and the "
+                                "derivation follows automatically."))
+            continue
         if rule is None or mech.get("status") == "refuted":
             out.gap(name, "gross_issuance_tokens",
                     reason=f"cannot be derived: the burn mechanism is {mech.get('model')!r} "
@@ -336,18 +366,29 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
         if rule == "add_burn":
             got = burn.get(name)
             if got is None:
+                # WHY the burn has to be added back differs by project, and saying the wrong one
+                # sends the reader to check the wrong thing: a protocol burn destroys supply at
+                # the contract, while a transfer burn leaves the contract alone and the PROVIDER
+                # subtracts it. Both end at the same formula and at different explanations.
+                why_net = ("the stored total_supply is NET OF BURN (see this project's "
+                           "total_supply_convention) — the provider subtracts the dead-address "
+                           "balance, so the burn has to be added back"
+                           if p.get("total_supply_convention") == "net_of_burn" else
+                           "this project's burn DESTROYS supply at the contract")
                 out.gap(name, "gross_issuance_tokens",
-                        reason=("cannot be derived: this project's burn DESTROYS supply, so issuance is "
-                                "the supply change PLUS the burn — and no burn figure was produced this "
-                                "run. Deriving from the supply delta alone would report issuance NET of "
-                                "burn while labelling it gross, understating it by exactly the burn."),
+                        reason=(f"cannot be derived: {why_net}, so issuance is the supply change PLUS "
+                                f"the burn — and no burn figure was produced this run. Deriving from "
+                                f"the supply delta alone would report issuance NET of burn while "
+                                f"labelling it gross, understating it by exactly the burn."),
                         tiers_attempted="1, 2",
                         suggestion="Source gross_burn_tokens for this project first; issuance follows from "
                                    "it automatically. Until then neither figure exists, which is correct.")
                 continue
-            issued, how = delta + got[0], f"d(total_supply)={delta:,.4f} + burn={got[0]:,.4f}"
+            basis = ("provider supply is net of burn" if p.get("total_supply_convention") == "net_of_burn"
+                     else "protocol burn reduces supply")
+            issued, how = delta + got[0], f"d(total_supply)={delta:,.4f} + burn={got[0]:,.4f} ({basis})"
         else:
-            issued, how = delta, f"d(total_supply)={delta:,.4f} (transfer burn does not reduce supply)"
+            issued, how = delta, f"d(total_supply)={delta:,.4f} (supply figure is gross of burn)"
 
         if issued < 0:
             out.review_item(name, "gross_issuance_tokens", "negative_derived_issuance", "rejected",

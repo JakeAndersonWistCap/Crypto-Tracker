@@ -167,13 +167,13 @@ def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
 # =========================================================================================
 # WITHHELD — the one place that decides a stored number is WRONG, not merely uncertain.
 #
-# There are six ways config can withdraw a stored row's meaning, and until 2026-09-15 they were
+# There are seven ways a stored row's meaning can be withdrawn, and until 2026-09-15 they were
 # handled in two different places with two different outcomes: three blanked the value, three
 # went RED and showed it anyway. That split was an accident of the order they were found in, not
 # a distinction anyone made — Maple's disputed destination was fixed by blanking because it was
 # found first, and the rest inherited whatever confidence_for happened to do.
 #
-# STANDARDISED: all six blank. The principle is the one that settled Maple, applied to its
+# STANDARDISED: all of them blank. The principle is the one that settled Maple, applied to its
 # siblings — a wrong number in a cell is worse than an empty one, because a reader acts on a
 # number and asks about a blank. Three of these previously put a figure on the sheet with RED
 # beside it, which asks the reader to notice a colour before trusting an arithmetic result.
@@ -182,7 +182,25 @@ def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
 # why it is withheld, and how to clear it are all still there.
 # =========================================================================================
 WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed",
-                     "measuring_point_changed", "refuted")
+                     "measuring_point_changed", "implausible_delta", "refuted")
+
+# A DIFFERENCED FLOW WHOSE PARENT STOCK IT CAN BE SANITY-CHECKED AGAINST.
+# gross_burn_tokens is the change in burn_address_balance between two observations, so one day's
+# flow can never be a large fraction of every burn ever recorded. The mapping mirrors
+# config._flow_parents, inverted; it is small and explicit rather than derived, because getting it
+# wrong in the derived direction would silently disarm the guard.
+DERIVED_FLOW_STOCK = {
+    "gross_burn_tokens": "burn_address_balance",
+    "burn_revenue_funded": "burn_address_balance",
+}
+
+# THE SHARE ABOVE WHICH A SINGLE OBSERVATION IS NOT A FLOW.
+# 25% is deliberately loose. The failure this catches is not a figure that is somewhat too high —
+# it is a measuring-point change reported as one day's burn, which lands at 90-100% of the
+# cumulative. A tighter bound would start rejecting real days on a young series where the
+# cumulative is still small; a looser one would let a 30x error through. Nothing between a
+# quarter and a whole has ever been a real daily burn for any project in this universe.
+IMPLAUSIBLE_DELTA_SHARE = 0.25
 
 
 def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None:
@@ -190,7 +208,7 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
 
     ONE FUNCTION, TWO CALLERS, SO THEY CANNOT DISAGREE. aggregate() uses it to blank the value
     and set the status; confidence_for() uses it to return RED with the same reason. Before this
-    existed, aggregate knew about three of the six and confidence_for knew about five, which is
+    existed, aggregate knew about three of them and confidence_for knew about five, which is
     exactly how three mechanisms ended up displaying a number they had just declared wrong.
 
     Order matters only for which reason is reported when several apply; every one of them blanks,
@@ -249,7 +267,40 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
             f"understated or overstated by a little; it is the gap between two unrelated "
             f"measurements. Clear the superseded rows.")
 
-    # 6. MECHANISM REFUTED. Scoped to BURN_METRICS — a refuted burn mechanism says nothing about
+    # 6. ONE OBSERVATION IS TOO LARGE TO BE A FLOW — the read-time half of case 5.
+    #
+    #    Case 5 fires on EVIDENCE of a measuring-point change: two distinct source strings in the
+    #    stored history. Case 5 and the write-time guard in fetch.base.derive_flow_from_cumulative
+    #    between them were supposed to make this impossible. Both missed the same row, and the
+    #    audit of 2026-09-21 found it still on the sheet a week later:
+    #
+    #      Uniswap gross_burn_tokens "now" (trailing 30d)  111,941,581
+    #      Uniswap burn_address_balance (cumulative)       111,953,581
+    #
+    #    One day's burn, 99.99% of every UNI ever burned, against a real rate of 100-200k/day.
+    #    It was written on 2026-09-14 when the read moved from fire_pit to burn_dead; the write-
+    #    time guard was added AFTER it, and it cannot reach back. Case 5 could not see it either,
+    #    because the row carries the NEW source (chain:ethereum:burn_dead:...:delta) — the
+    #    fire_pit rows that would have made two measuring points were deleted by the orphan
+    #    cleanup, taking the evidence with them and leaving the consequence behind.
+    #
+    #    SO THIS CHECKS THE ARITHMETIC RATHER THAN THE PROVENANCE. A differenced flow is bounded
+    #    by the stock it is differenced from, whatever its source string says and whoever deleted
+    #    what. It needs no history, no second source and no config declaration — which is what
+    #    makes it the check that still works when the other two have been outmanoeuvred.
+    cum, biggest = row.get("cumulative_ref"), row.get("max_single_delta")
+    if cum and biggest and biggest > cum * IMPLAUSIBLE_DELTA_SHARE:
+        parent = DERIVED_FLOW_STOCK.get(metric, "the cumulative balance")
+        return "implausible_delta", (
+            f"ONE OBSERVATION IS {biggest / cum:.0%} OF THE CUMULATIVE — not a flow. A single "
+            f"reading of {biggest:,.0f} sits against a {parent} of {cum:,.0f}, so this window "
+            f"reports most of every {metric.replace('_', ' ')} ever recorded as though it "
+            f"happened in one period. The usual cause is a measuring-point change differenced "
+            f"across: the address moved, and the step between two unrelated balances was stored "
+            f"as a burn. Clear the offending row from the store — see orphan_cleanup.sql — and "
+            f"this clears itself; nothing in config needs changing.")
+
+    # 7. MECHANISM REFUTED. Scoped to BURN_METRICS — a refuted burn mechanism says nothing about
     #    total_supply. No "does this project claim a burn" guard is needed: burn_mechanism()
     #    defaults to 'assumed' and never to 'refuted', so this only exists where declared.
     if metric in config.BURN_METRICS:
@@ -274,7 +325,7 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     goes stale the moment the underlying data moves.
     """
     # EMPTY OR NOT-APPLICABLE CELLS. These are states of the STORE, not verdicts on a figure —
-    # there is no number here to be wrong — so they are kept apart from the six withheld cases.
+    # there is no number here to be wrong — so they are kept apart from the withheld cases.
     if row["status"] in ("missing", "gap", "n/a", "waiting"):
         return "RED", {"missing": "no value in the store",
                        "gap": "unresolved — see the Gap Report",
@@ -284,7 +335,7 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                        "waiting": "armed cross-check, waiting on a suppressed primary — see the note",
                        }[row["status"]]
 
-    # THE SIX WITHHELD CASES, all RED and all blanked by aggregate(). Asked here directly rather
+    # THE SEVEN WITHHELD CASES, all RED and all blanked by aggregate(). Asked here directly rather
     # than read off row["status"], so confidence_for gives the same answer whether or not
     # aggregate has already run over the row.
     w = withheld_for(project, metric, row)
@@ -368,6 +419,16 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    # The latest value of every series, keyed the same way — so a flow can be checked against the
+    # stock it was differenced from without depending on the order METRICS happens to iterate in.
+    latest_value = {}
+    for key, gg in groups.items():
+        if gg.empty:
+            continue
+        try:
+            latest_value[key] = float(gg.sort_values("date").iloc[-1]["value"])
+        except (TypeError, ValueError):
+            continue
     rows = []
     for p in PROJECTS:
         name = p["name"]
@@ -378,7 +439,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
-                   "measuring_points": ()}
+                   "measuring_points": (), "max_single_delta": None, "cumulative_ref": None}
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
                 if gap is not None:
@@ -413,6 +474,18 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # Every distinct place this series was read from. More than one means the window can
             # span a change of address, and the delta across it is not a flow.
             row["measuring_points"] = tuple({_measuring_point(v) for v in g["source"].dropna().unique()})
+            # A DIFFERENCED FLOW IS BOUNDED BY THE STOCK IT CAME FROM. Captured here rather than
+            # inside withheld_for because only aggregate() has the series; withheld_for sees one
+            # row. Restricted to rows whose source carries the :delta marker, so a genuine
+            # period figure from Dune or a dashboard is never measured against a balance it has
+            # no arithmetic relationship to.
+            parent = DERIVED_FLOW_STOCK.get(metric)
+            if parent:
+                cumulative = latest_value.get((name, parent))
+                deltas = g[g["source"].astype(str).str.contains(":delta", na=False)]
+                if cumulative and not deltas.empty:
+                    row["cumulative_ref"] = cumulative
+                    row["max_single_delta"] = float(deltas["value"].max())
             row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))
@@ -443,15 +516,15 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if (name, metric) in review_keys:
                 row["status"] = "review" if row["status"] == "ok" else row["status"]
                 row["note"] = (row["note"] + " | " if row["note"] else "") + "flagged in the Review Queue"
-            # ================= ALL SIX WITHHELD CASES, HANDLED IN ONE PLACE =================
+            # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
             # (`if g is None or g.empty`, far above). So a stale figure wins by default, every
             # time, for every mechanism. Maple's 0.51 SYRUP was the first found; Ether.fi's
             # sETHFI rows and GEODNET's derived zero were the same bug wearing different hats.
             #
-            # THE VALUE IS BLANKED, NOT FLAGGED — and as of 2026-09-15 that is true of all six
-            # rather than three. Three of them used to go RED and print the number anyway, which
+            # THE VALUE IS BLANKED, NOT FLAGGED — and as of 2026-09-15 that is true of all of
+            # them rather than three. Three of them used to go RED and print the number anyway, which
             # asks a reader to notice a colour before trusting an arithmetic result. A wrong
             # number in a cell is worse than an empty one: a number gets acted on, a blank gets
             # asked about. The reason travels with the row in `note`, so nothing is lost.

@@ -9,6 +9,7 @@
     "disputed_destination",
     "refuted_mechanism",
     "changed_measuring_point",
+    "implausible_delta",
     "control"
   ],
   "rows": [
@@ -86,7 +87,7 @@
       "value": 0.5125357033239131,
       "source": "chain:ethereum:treasury",
       "tier": 2,
-      "written_under": "config before destination_status='disputed' was set on treasury, and before metric_override retargeted this contract from treasury_holding_tokens to treasury_holding_tokens_chain_crosscheck (2026-09-18)",
+      "written_under": "config before destination_status='disputed' was set on treasury",
       "why": "the first of these bugs found. Suppressing the WRITE could not touch this row"
     },
     {
@@ -121,6 +122,28 @@
       "tier": 2,
       "written_under": "current config",
       "why": "the current measuring point. Together these two make measuring_points > 1"
+    },
+    {
+      "transition": "implausible_delta",
+      "date": "2026-09-14",
+      "project": "Venice AI",
+      "metric": "gross_burn_tokens",
+      "value": 111337581.0,
+      "source": "chain:base:burn_zero:delta",
+      "tier": 2,
+      "written_under": "config before the burn read moved address, differenced across the move",
+      "why": "one day's burn at 99% of the cumulative. Carries a SINGLE source, so changed_measuring_point cannot catch it \u2014 only the ratio to the stock can"
+    },
+    {
+      "transition": "control",
+      "date": "2026-09-15",
+      "project": "Venice AI",
+      "metric": "burn_address_balance",
+      "value": 111953581.0,
+      "source": "chain:base:burn_zero",
+      "tier": 2,
+      "written_under": "current config",
+      "why": "the cumulative the flow above is measured against. Without it there is nothing to take a ratio of and the guard correctly stays silent \u2014 and the stock must survive the guard that blanks the flow derived from it"
     },
     {
       "transition": "control",
@@ -238,7 +261,7 @@
       "transition": "disputed_destination",
       "project": "Maple",
       "metric": "treasury_holding_tokens_chain_crosscheck",
-      "written_under": "config before destination_status='disputed' was set on treasury, and before metric_override retargeted this contract from treasury_holding_tokens to treasury_holding_tokens_chain_crosscheck (2026-09-18)",
+      "written_under": "config before destination_status='disputed' was set on treasury",
       "why": "the first of these bugs found. Suppressing the WRITE could not touch this row",
       "expect_status": "disputed",
       "expect_confidence": "RED",
@@ -266,6 +289,28 @@
       "expect_confidence": "RED",
       "expect_blank": true,
       "expect_reason_contains": "MEASURING POINT CHANGED"
+    },
+    {
+      "transition": "implausible_delta",
+      "project": "Venice AI",
+      "metric": "gross_burn_tokens",
+      "written_under": "config before the burn read moved address, differenced across the move",
+      "why": "one day's burn at 99% of the cumulative. Carries a SINGLE source, so changed_measuring_point cannot catch it \u2014 only the ratio to the stock can",
+      "expect_status": "implausible_delta",
+      "expect_confidence": "RED",
+      "expect_blank": true,
+      "expect_reason_contains": "OF THE CUMULATIVE"
+    },
+    {
+      "transition": "control",
+      "project": "Venice AI",
+      "metric": "burn_address_balance",
+      "written_under": "current config",
+      "why": "the cumulative the flow above is measured against. Without it there is nothing to take a ratio of and the guard correctly stays silent \u2014 and the stock must survive the guard that blanks the flow derived from it",
+      "expect_status": "ok",
+      "expect_confidence": "AMBER",
+      "expect_blank": false,
+      "expect_reason_contains": ""
     },
     {
       "transition": "control",

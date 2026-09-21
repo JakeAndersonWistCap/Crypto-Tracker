@@ -512,6 +512,55 @@ separate questions.
 
 ---
 
+## 11f. Characterise a provider's supply field before any derivation uses it
+
+**The rule, in one line:** a formula must follow the convention of the *figure it is applied to*,
+not the mechanism it is reasoning about.
+
+Found on 2026-09-21, in the run audit. It had been producing wrong numbers quietly for weeks and
+neither half of it looked like a mistake in isolation — which is what makes it worth a section.
+
+The issuance derivation was keyed on the **burn mechanism**: a transfer burn moves tokens to a
+dead address without reducing the contract's `totalSupply`, so issuance is just the supply delta.
+That reasoning is correct *about the contract's figure*. But the stored `total_supply` comes from
+**CoinGecko**, and CoinGecko's `total_supply` for these tokens is contract `totalSupply` **minus
+the dead-address balance**:
+
+| | contract totalSupply | CoinGecko total_supply | difference | burn_address_balance |
+|---|---|---|---|---|
+| GEODNET | 1,000,000,000.00 | 961,518,067.62 | 38,481,932.38 | **38,481,932.38** |
+| Uniswap | 1,000,000,000 | 888,114,418.92 | 111,885,581 | 111,953,581 (read timing) |
+
+So differencing it gives issuance **minus** burn, under a column labelled gross. For a
+non-minting token that is approximately `-burn` — which is exactly how Uniswap came to report
+−242,000 and trip `negative_derived_issuance`. The negative was not a data error; it was the
+formula reading the right number under the wrong convention.
+
+**What to do, every time a provider field feeds a derivation:**
+
+1. Establish the convention *before* writing the formula, by arithmetic, not by reading docs:
+   subtract the provider's figure from the on-chain one and see whether the difference equals a
+   quantity you already hold (here, the burn balance).
+2. Record it as a declared field with its evidence — `total_supply_convention` alongside the
+   existing `circulating_supply_convention`. Both are `net_of_burn` | `gross`, both require
+   `..._evidence` with a test and a date, and `config.validate_config` enforces that.
+3. Where the convention is **untested**, refuse to derive and say which test to run. Do not pick
+   the likely answer. The two formulas here differ by the *entire* burn, so a guess is not
+   approximately right — it is wrong by 100% of the thing being measured. PancakeSwap and Venice
+   AI sit in this state deliberately.
+4. Note where the convention **cannot** matter and skip the ceremony: with `no_burn` there is
+   nothing to net out, and with `protocol_level_destruction` the contract's own figure falls and
+   there is no dead-address balance for a provider to subtract. Only `transfer_to_dead_address`
+   distinguishes them — which is why `config.ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM` deliberately
+   *omits* that key: a future edit that forgets the convention gets a refusal, not a default.
+
+**The related trap, worth knowing about:** the gross on-chain figure *is* fetched (tier 2 reads
+the contract) but never wins — `_resolve_tier_collisions` keeps the earlier tier, and CoinGecko is
+tier 1. So the net-of-burn figure lands in the store and the gross one is dropped as a collision.
+Deriving from the chain read instead would also be correct, but it means inverting that
+preference, which the collision resolver treats as always-wrong. Declaring the convention is the
+cheaper of the two fixes and the one taken.
+
 ## 11e. Do not infer set-overlap from value-proximity when a fixed total constrains both
 
 **The trap, in one line:** two quantities that sum to a known total are near-equal exactly when

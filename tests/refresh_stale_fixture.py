@@ -39,6 +39,7 @@ did not intend it, that is the bug the fixture exists to catch.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import pathlib
 import sys
@@ -53,6 +54,32 @@ import config  # noqa: E402
 OUT = pathlib.Path(__file__).resolve().parent / "fixtures" / "stale_store.json"
 ASOF = "2026-09-15"
 
+
+@contextlib.contextmanager
+def forced_dispute():
+    """Hold Maple's treasury contract disputed for the duration of the block.
+
+    NO CONTRACT IN LIVE CONFIG IS DISPUTED ANY MORE, so without this the disputed branch has no
+    example and the fixture stops covering it. Maple's was the original one and it resolved on
+    2026-09-18 (new address, verified_by_label). The mechanism did not go away with it, so the
+    example is kept as an explicit counterfactual rather than deleted.
+
+    ** WHY THIS IS A SHARED HELPER AND NOT AN INLINE TWO-LINER. ** It was inline in the test,
+    and on 2026-09-21 it silently stopped working: the cross-check demotion gave the treasury
+    contract a metric_override, so destination_disputed() — which resolves contract -> metric
+    through that override — no longer matched treasury_holding_tokens whatever the flag said.
+    Setting the flag kept "working" while testing nothing. Every consumer now enters the same
+    counterfactual through one door, and the row below names the override's metric, so the two
+    halves cannot drift apart again without the coverage assertion catching it.
+    """
+    treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    previous = treasury.get("destination_status")
+    treasury["destination_status"] = "disputed"
+    try:
+        yield
+    finally:
+        treasury["destination_status"] = previous
+
 # Every transition type the fixture must cover. The coverage test asserts this set is fully
 # exercised AND that confidence_for has not grown a RED branch nobody added a row for.
 TRANSITIONS = (
@@ -62,6 +89,7 @@ TRANSITIONS = (
     "disputed_destination",
     "refuted_mechanism",
     "changed_measuring_point",
+    "implausible_delta",
     "control",
 )
 
@@ -113,8 +141,13 @@ ROWS = [
 
     # ---- disputed_destination --------------------------------------------------------
     # 0.51 SYRUP against ~75.78m reported. The read was right; the ADDRESS was wrong.
+    # THE METRIC IS THE OVERRIDE TARGET, not treasury_holding_tokens. Since the chain read was
+    # demoted to a cross-check (2026-09-18) the treasury contract serves
+    # treasury_holding_tokens_chain_crosscheck, and a row on the old metric is caught by the
+    # WITHDRAWN branch instead — which is what quietly cost this branch its coverage. Naming the
+    # metric the contract actually serves is what makes the row test disputed and nothing else.
     dict(transition="disputed_destination", date="2026-09-14", project="Maple",
-         metric="treasury_holding_tokens", value=0.5125357033239131,
+         metric="treasury_holding_tokens_chain_crosscheck", value=0.5125357033239131,
          source="chain:ethereum:treasury", tier=2,
          written_under="config before destination_status='disputed' was set on treasury",
          why="the first of these bugs found. Suppressing the WRITE could not touch this row"),
@@ -141,6 +174,45 @@ ROWS = [
          source="chain:ethereum:reserve", tier=2,
          written_under="current config",
          why="the current measuring point. Together these two make measuring_points > 1"),
+
+    # ---- implausible_delta -----------------------------------------------------------
+    # THE ONE BOTH OTHER GUARDS MISSED, found by the audit of run 20260921T100546Z a week
+    # after they were built. Uniswap's burn read moved from fire_pit to the dead address on
+    # 2026-09-14 and the delta across the change stored 111,337,581 UNI as ONE DAY'S BURN —
+    # 99.99% of every UNI ever burned, against a real rate of 100-200k/day.
+    #
+    # Neither existing guard could see it. The write-time one (derive_flow_from_cumulative)
+    # was added AFTER this row and cannot reach backwards. changed_measuring_point needs two
+    # distinct sources in the history — and the orphan cleanup had deleted the fire_pit rows,
+    # which removed the EVIDENCE and left the CONSEQUENCE, so only one source remained.
+    #
+    # Note the source below carries the NEW address and the :delta marker. That is the whole
+    # point: it looks like an ordinary differenced flow and is only detectable as arithmetic.
+    # ON VENICE, NOT UNISWAP, although Uniswap is where it actually happened: Uniswap already
+    # holds a CONTROL row on this exact metric (an ordinary 134,000 burn flow), and an artefact
+    # in the same series would correctly blank that control and destroy what it is there to
+    # prove. Venice is the same shape — a transfer burn with a dead-address contract — and has
+    # no other row in the fixture to collide with.
+    dict(transition="implausible_delta", date="2026-09-14", project="Venice AI",
+         metric="gross_burn_tokens", value=111_337_581.0,
+         source="chain:base:burn_zero:delta", tier=2,
+         written_under="config before the burn read moved address, differenced across the move",
+         why="one day's burn at 99% of the cumulative. Carries a SINGLE source, so "
+             "changed_measuring_point cannot catch it — only the ratio to the stock can"),
+    # LABELLED control, NOT implausible_delta, although it sits in this section and the guard
+    # cannot fire without it. It is the DENOMINATOR: the cumulative the bogus flow above is
+    # measured against. The stock itself is a perfectly good reading — 111,953,581 really is
+    # the dead address's balance — and must keep showing its number. Calling it a control is
+    # what asserts that: a guard keyed on the project, or on the parent metric, rather than on
+    # the flow alone would blank this too, and the generative walk would catch it. Filed under
+    # implausible_delta it would instead be REQUIRED to go RED, which is the opposite of true.
+    dict(transition="control", date="2026-09-15", project="Venice AI",
+         metric="burn_address_balance", value=111_953_581.0,
+         source="chain:base:burn_zero", tier=2,
+         written_under="current config",
+         why="the cumulative the flow above is measured against. Without it there is nothing "
+             "to take a ratio of and the guard correctly stays silent — and the stock must "
+             "survive the guard that blanks the flow derived from it"),
 
     # ---- controls --------------------------------------------------------------------
     # A GUARD THAT BLANKS EVERYTHING PASSES EVERY ASSERTION ABOVE. These must stay ok.
@@ -209,8 +281,9 @@ def _evaluate(rows: list[dict]) -> dict:
                           "metric": r["metric"], "value": r["value"], "source": r["source"],
                           "tier": r["tier"], "is_manual": False, "entered_on": ""}
                          for r in rows])
-    out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(ASOF),
-                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    with forced_dispute():
+        out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(ASOF),
+                           gaps=pd.DataFrame(), review=pd.DataFrame())
     by_key = {(r["project"], r["metric"]): r for r in out.to_dict("records")}
 
     seen, expectations = set(), []
@@ -244,8 +317,11 @@ def _evaluate(rows: list[dict]) -> dict:
 def _marker(reason: str) -> str:
     """A short, stable slice of the reason — enough to pin WHICH branch fired, not the prose."""
     reason = str(reason or "")
+    # "OF THE CUMULATIVE" rather than the whole opening clause: implausible_delta interpolates
+    # the actual share ("ONE OBSERVATION IS 99% OF THE CUMULATIVE"), so anything to the left of
+    # it moves with the data and would pin the figure instead of the branch.
     for m in ("ORPHANED", "MEASURING CONTRACT WITHDRAWN", "DERIVATION SUPPRESSED",
-              "MEASURING POINT CHANGED", "MECHANISM REFUTED",
+              "MEASURING POINT CHANGED", "MECHANISM REFUTED", "OF THE CUMULATIVE",
               "DESTINATION DISPUTED", "not applicable", "no value in the store"):
         if m in reason:
             return m

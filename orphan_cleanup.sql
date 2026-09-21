@@ -435,3 +435,114 @@ SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen
 --     rather than RED/measuring_point_changed.
 -- SELECT source, COUNT(*), MIN(date), MAX(date) FROM metrics
 --  WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens' GROUP BY source;
+
+-- =======================================================================================
+-- 2026-09-21 — UNISWAP gross_burn_tokens: ONE DELTA ROW HOLDING ~111.3M
+--
+-- FOUND BY THE AUDIT OF RUN 20260921T100546Z:
+--   gross_burn_tokens "now" (trailing 30d sum)   111,941,581
+--   burn_address_balance (cumulative)            111,953,581
+-- The 30-day figure is 99.99% of every UNI ever burned. The real rate is 100-200k/day, so
+-- thirty days should be ~3-6M.
+--
+-- WHY THE EARLIER CLEANUP MISSED IT. The row was written on 2026-09-14, when the read moved
+-- from fire_pit to the dead address: the delta spanned two different addresses and recorded the
+-- step between them as one day's burn. The orphan cleanup deleted rows whose SOURCE named
+-- fire_pit — but this row carries the NEW source (chain:ethereum:burn_dead...:delta), because it
+-- was written by the burn_dead read. Deleting the fire_pit rows removed the EVIDENCE of the
+-- measuring-point change and left the CONSEQUENCE behind, which is also why
+-- build_workbook's measuring_point_changed guard (two distinct sources in the history) cannot
+-- see it: there is only one source left.
+--
+-- A read-time arithmetic guard now catches this class without needing the provenance —
+-- build_workbook.withheld_for case 6, "one observation is >25% of the cumulative". Until this
+-- row is deleted, Uniswap's burn metrics render BLANK and RED with that reason, which is
+-- correct but not a substitute for removing the row.
+--
+-- E1. LOOK ONLY — every Uniswap burn-flow row, largest first. Expect exactly one enormous row
+--     around 2026-09-14 and the rest in the 1e5 range.
+SELECT date, value, source, tier
+  FROM metrics
+ WHERE project = 'Uniswap' AND metric = 'gross_burn_tokens'
+ ORDER BY value DESC;
+
+-- E2. LOOK ONLY — the specific rows the DELETE below would remove, with the cumulative balance
+--     of the same date beside them for scale. Read this before running E3.
+SELECT f.date, f.value AS flow_value, f.source,
+       (SELECT s.value FROM metrics s
+         WHERE s.project = 'Uniswap' AND s.metric = 'burn_address_balance'
+           AND s.date <= f.date ORDER BY s.date DESC LIMIT 1) AS cumulative_then,
+       'WOULD DELETE' AS action
+  FROM metrics f
+ WHERE f.project = 'Uniswap' AND f.metric = 'gross_burn_tokens'
+   AND f.value > 1000000
+ ORDER BY f.date;
+-- Every row returned should be a measuring-point artefact, not a burn. If ANY row here looks
+-- like a real (if large) day, stop and re-check before deleting.
+
+-- E3. THE DELETE. Back up first: cp metrics.db metrics.db.bak-$(date +%Y%m%d)
+--     Threshold is 1,000,000: an order of magnitude above the largest plausible day
+--     (~200k) and two below the artefact (~111.3M), so it cannot catch a real reading.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Uniswap' AND metric = 'gross_burn_tokens' AND value > 1000000;
+-- COMMIT;
+
+-- E4. VERIFY. gross_burn_tokens should now sum to a few hundred thousand over the window, and
+--     the next build should render it GREEN/AMBER rather than RED/implausible_delta.
+-- SELECT COUNT(*) AS rows_left, MIN(value), MAX(value), SUM(value)
+--   FROM metrics WHERE project='Uniswap' AND metric='gross_burn_tokens';
+
+-- =======================================================================================
+-- 2026-09-21 — ISSUANCE ROWS DERIVED UNDER THE NET-OF-BURN MISTAKE
+--
+-- Every gross_issuance_tokens row written by the OLD formula for a TRANSFER-BURN project
+-- understates issuance by exactly that period's burn. The formula keyed on the burn mechanism
+-- (a transfer burn does not reduce the contract's totalSupply, so issuance = d(supply)) while
+-- the stored supply came from CoinGecko, which SUBTRACTS the dead-address balance. Confirmed:
+--   GEODNET  1,000,000,000.00 - 961,518,067.62 = 38,481,932.38 = burn balance, exactly
+--   Uniswap  1,000,000,000 - 888,114,418.92 = 111,885,581 ~= burn balance 111,953,581
+-- For a non-minting token the result is approximately -burn, which is why Uniswap reported
+-- -242,000 and tripped negative_derived_issuance.
+--
+-- AFFECTED: the four transfer-burn projects — Uniswap, GEODNET, PancakeSwap, Venice AI.
+-- GEODNET's derivation is separately suppressed, so it should have no derived rows at all.
+-- PancakeSwap and Venice now REFUSE to derive (convention untested), so their old rows are
+-- orphaned by a formula that no longer runs.
+--
+-- F1. LOOK ONLY — every derived issuance row on the four, with its source. A source of
+--     'derived:d_supply' on a transfer-burn project is a row written under the old formula.
+SELECT project, source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE metric = 'gross_issuance_tokens'
+   AND project IN ('Uniswap', 'GEODNET', 'PancakeSwap', 'Venice AI')
+ GROUP BY project, source
+ ORDER BY project, first_seen;
+
+-- F2. LOOK ONLY — the rows themselves, negatives first. A negative issuance row should not
+--     exist at all (the derivation rejects them), so any that appear here predate that guard.
+SELECT date, project, value, source, tier, 'WOULD DELETE' AS action
+  FROM metrics
+ WHERE metric = 'gross_issuance_tokens'
+   AND project IN ('Uniswap', 'GEODNET', 'PancakeSwap', 'Venice AI')
+   AND source LIKE 'derived:%'
+ ORDER BY value, project, date;
+
+-- F3. THE DELETE. Scoped to DERIVED rows only, so a measured issuance figure — if one ever
+--     arrives from a real source — is never swept up with them.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE metric = 'gross_issuance_tokens'
+--    AND project IN ('Uniswap', 'GEODNET', 'PancakeSwap', 'Venice AI')
+--    AND source LIKE 'derived:%';
+-- COMMIT;
+
+-- F4. VERIFY, and expect DIFFERENT outcomes per project rather than a clean sweep:
+--     Uniswap      rebuilds from the next run under d(supply)+burn. Zero is a normal answer
+--                  for a day when the only supply movement was the burn.
+--     GEODNET      stays empty — its derivation is suppressed on separate grounds.
+--     PancakeSwap  stays empty until total_supply_convention is tested and declared.
+--     Venice AI    same.
+-- SELECT project, COUNT(*) FROM metrics WHERE metric='gross_issuance_tokens'
+--  GROUP BY project ORDER BY project;
