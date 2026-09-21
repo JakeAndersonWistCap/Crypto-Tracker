@@ -616,6 +616,25 @@ class Chain:
 
         denom = float(tail["rate_bps_denominator"])
         emission = supply * rate_bps / denom
+
+        # ** AND A BOUND ON THE RESULT, because the rate bound alone is far too wide. **
+        # [1, 100] bps spans 0.5% to 52% of supply per year; a wrong read lands inside it easily.
+        # Aerodrome documents ~10.9% annualised as of April 2026, so a band around that catches a
+        # rate that is stale, mis-scaled, or read off the wrong getter — none of which the [1,100]
+        # check would notice. See config's annualised_share_source for the band's derivation and
+        # for the ambiguity in the documented figure that makes it deliberately loose.
+        lo, hi = (tail.get("annualised_share_bounds") or (None, None))
+        if lo is not None and supply:
+            annualised = emission * 52.0 / supply
+            if not (lo <= annualised <= hi):
+                return None, (
+                    f"tail emission {emission:,.2f}/week is {annualised:.1%} of supply annualised, "
+                    f"outside the documented {lo:.0%}-{hi:.0%} band "
+                    f"({tail.get('annualised_share_source', {}).get('claim', 'see config')}). "
+                    f"Read back {rate_bps} bps against supply {supply:,.2f}. Refusing rather than "
+                    f"storing: a figure of the wrong ORDER presented as an emission rate is worse "
+                    f"than a blank, and 67 bps — the rate at tail activation — sits outside this "
+                    f"band on purpose, so a value that has never been nudged reads as a finding")
         out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                 f"{metric}: TAIL MODE — weekly() {weekly_value:,.2f} is below "
                                 f"TAIL_START {tail_start:,.0f} and is frozen. Emission computed as "

@@ -123,6 +123,11 @@ METRIC_CONTRACT_KIND = {
     # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
     # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",
+    # SAME KIND, DIFFERENT METRIC. On a net_of_burn project the token contract carries
+    # metric_override="total_supply_gross" (the contract counts tokens at the dead address;
+    # CoinGecko does not), so the gross series is served by exactly the kind the net one used to
+    # be. The override-aware filter below is what keeps the two apart.
+    "total_supply_gross": "erc20_total_supply",
     "circulating_supply": "erc20_total_supply",
 }
 
@@ -233,8 +238,24 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"Check the Run Log for the chain read failure, and confirm the RPC endpoints for "
                     f"{contracts[matching[0]].get('chain')} in .env.")
         # else: matching is empty but redirected_elsewhere is True — this metric has no tier 2
-        # route BY DESIGN (see the comment above). Fall through to the tier 3 / derived checks
-        # below rather than returning here.
+        # route BY DESIGN (see the comment above).
+        #
+        # WHERE TIER 1 IS THE ONLY REMAINING ROUTE, SAY SO INSTEAD OF FALLING THROUGH. Falling
+        # through lands on tier 3's "no source configured for this metric", which is false and
+        # sends the reader to write a sources.yaml entry for something a free API already
+        # serves. This is live for total_supply on every net_of_burn project: the token contract
+        # was re-pointed at total_supply_gross on 2026-09-22, so CoinGecko is the whole route
+        # now, and a blank means CoinGecko did not answer.
+        if not matching and 1 in tiers and metric in TIER1_SOURCE:
+            api, field = TIER1_SOURCE[metric]
+            if project.get(field):
+                return (f"{api} returned no data for this series, and it is now the ONLY route — "
+                        f"the tier 2 contract read is deliberately redirected to a different "
+                        f"metric for this project (metric_override), so there is no chain "
+                        f"fallback here by design",
+                        f"Check the Run Log for the {api} failure and confirm {field}="
+                        f"{project.get(field)!r}. Do NOT add a sources.yaml entry or a second "
+                        f"contract — the redirect is intentional; see config.py.")
 
     # A DERIVED METRIC HAS NO SOURCE TO CONFIGURE, so "no source configured for this metric" is
     # the wrong answer and sends the reader looking for one. It needs its INPUTS, and naming them

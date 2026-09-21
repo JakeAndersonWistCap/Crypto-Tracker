@@ -175,6 +175,25 @@ METRICS = {
     # a same-key collision as a registry mistake, never as an intentional priority order. This is
     # the "prefer: secondary" shape (see Chainlink's locked_tokens/locked_tokens_principal pair),
     # generalised from a same-tier pair to a cross-tier one.
+    # THE CONTRACT'S OWN SUPPLY FIGURE, kept apart from the provider's. For a token that burns by
+    # TRANSFER, the ERC-20 totalSupply() still counts the tokens sitting at the dead address —
+    # nothing was ever _burn()ed — so the contract reports supply GROSS of burn while CoinGecko
+    # reports it NET (see total_supply_convention and RUNBOOK 11f). Two different quantities that
+    # had been sharing one metric name.
+    #
+    # ** THE CHAIN READ WAS ALREADY BEING DISCARDED, so this loses nothing and gains a series. **
+    # _resolve_tier_collisions keeps the EARLIER tier on a same-key collision, and CoinGecko is
+    # tier 1 against the chain read's tier 2, so on every run where CoinGecko answered, the
+    # contract figure was written and then dropped. It survived only when CoinGecko did NOT
+    # answer — which is the worst possible arrangement: total_supply silently switched from a net
+    # figure to a gross one depending on whether a provider happened to respond, and for
+    # PancakeSwap the two differ by 5.05bn tokens. Losing that fallback is the point of the change,
+    # not a cost of it.
+    "total_supply_gross": {
+        "label": "Total supply, GROSS of burn (contract totalSupply — burned tokens still counted)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
+        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI")},
     # KEPT, though nothing writes it today. The chain read went back to serving
     # treasury_holding_tokens directly on 2026-09-21 (robots.txt disallows the page that
     # displaced it), so this metric is currently unfed. It is not deleted: if the page ever
@@ -2931,7 +2950,10 @@ PROJECTS = [
                                "the two answers differ by a double-count of the entire remote float.",
                 purpose="Polygon GEOD token — the PRIMARY supply read, and the token balanceOf is called "
                         "on for the Polygon burn. Polygon remains the home chain: GIP-7 (Solana primary) "
-                        "is PROPOSED, not enacted."),
+                        "is PROPOSED, not enacted.",
+                # GROSS of burn — the contract counts tokens at the dead
+                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                metric_override="total_supply_gross"),
             # PREVIOUSLY UNTRACKED. Recorded with its own chain so the coverage guard names it
             # precisely in the Gap Report rather than it being invisible. iotex has no RPC endpoint
             # in DEFAULT_RPC, so nothing is read and nothing can be silently summed — which is the
@@ -2941,7 +2963,10 @@ PROJECTS = [
                 "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-14",
                 provenance="GEODNET's own token docs", token_standard="erc20",
                 purpose="IoTeX GEOD deployment, named in GEODNET's own token documentation. Recorded for "
-                        "completeness; not summed into supply while the bridge model is unresolved."),
+                        "completeness; not summed into supply while the bridge model is unresolved.",
+                # GROSS of burn — the contract counts tokens at the dead
+                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                metric_override="total_supply_gross"),
             "burn_polygon": _contract(
                 "0x000000000000000000000000000000000000dEaD", "polygon", "burn_address_balance", "GEOD",
                 GEODNET_BURN_QUERY, verified="2026-09-11",
@@ -3444,25 +3469,40 @@ PROJECTS = [
         "coingecko_id": "venice-token",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 3, 4], "archetypes_held": [],
-        # total_supply_convention DELIBERATELY UNDECLARED — UNTESTED, not assumed either way.
-        # Same reasoning as PancakeSwap: a transfer burn, so the convention picks the issuance
-        # formula and the two answers differ by the whole burn. Not inferred from Uniswap and
-        # GEODNET both coming back net_of_burn — inferring it is the mistake, not the shortcut.
+        # ===== TESTED AND CONFIRMED net_of_burn, 2026-09-22. =====
+        # Recorded as untested on 2026-09-21 because CoinGecko was unreachable from the sandbox.
+        # The test did not need CoinGecko reachable after all — run 20260921T100546Z had already
+        # stored both figures, and the TIER-COLLISION machinery is what makes them both
+        # recoverable: _resolve_tier_collisions keeps the earlier tier (CoinGecko, tier 1) and
+        # flags the later one (the chain read, tier 2) rather than discarding it, so the dropped
+        # contract totalSupply is on file beside the kept CoinGecko figure. The guard that exists
+        # to stop last-writer-wins is also the thing that preserved the control value.
         #
-        # VENICE HAS ONE EXTRA COMPLICATION FOR WHOEVER RUNS THE TEST: ~99.5% of its cumulative
-        # burn is a single March 2025 airdrop burn, not the recurring programme (which is why
-        # burn_revenue_funded exists as a separate metric). The subtraction below still works —
-        # the dead-address balance is the dead-address balance whatever put it there — but do not
-        # be surprised by the magnitude, and do not use burn_revenue_funded for this comparison.
-        "total_supply_convention_untested": {
-            "why": "transfer burn — the convention decides the formula and nothing on file "
-                   "establishes which one CoinGecko applies to VVV",
-            "test": "contract totalSupply minus CoinGecko total_supply, compared against "
-                    "burn_address_balance (the CUMULATIVE dead-address figure, not "
-                    "burn_revenue_funded). Equal means net_of_burn; zero difference means gross.",
-            "blocked_by": "CoinGecko is unreachable from the sandbox this was written in "
-                          "(CONNECT tunnel 403), so the comparison could not be run here.",
-            "recorded": "2026-09-21",
+        #     contract totalSupply   114,897,403.56
+        #     CoinGecko total_supply  81,019,146.16
+        #     difference              33,878,257.40
+        #     burn_address_balance    33,878,094.96
+        #     residual                       162.44   (0.0001% of contract supply)
+        #
+        # 162 tokens on 114.9m is read timing — the two figures are not read at the same instant
+        # and the burn is continuous. Compare Venice's residual with PancakeSwap's, which is 0.11%
+        # and NOT timing.
+        #
+        # THE ~99.5% AIRDROP CAVEAT STILL APPLIES and is why burn_address_balance is the right
+        # comparand: most of Venice's cumulative burn is a single March 2025 airdrop burn, not the
+        # recurring programme. burn_revenue_funded would have given a wildly smaller number and
+        # made this look gross.
+        "total_supply_convention": "net_of_burn",
+        "total_supply_convention_evidence": {
+            "test": "contract totalSupply 114,897,403.56 - CoinGecko total_supply 81,019,146.16 "
+                    "= 33,878,257.40, against burn_address_balance 33,878,094.96 — a residual of "
+                    "162.44 tokens, 0.0001% of supply",
+            "residual_tokens": 162.44,
+            "residual_explained_by": "read timing — the two figures are not sampled at the same "
+                                     "instant and the burn is continuous",
+            "confirmed_on": "2026-09-22",
+            "source": "run 20260921T100546Z — CoinGecko's kept tier-1 figure against the chain "
+                      "read's tier-2 value preserved by _resolve_tier_collisions",
         },
         # ===== CIRCULATING EXCLUDES LOCKED — VERDICT A, AND A NEAR MISS. =====
         # ** THE NEAR-MISS FLAG IS THE POINT OF RECORDING THIS ONE. ** Venice never appeared as a
@@ -3507,7 +3547,10 @@ PROJECTS = [
                                "https://docs.venice.ai/", verified="2026-09-11",
                                provenance="Venice developer docs (embedded in working integration code)",
                                token_standard="erc20",
-                               purpose="VVV token contract on Base."),
+                               purpose="VVV token contract on Base.",
+                # GROSS of burn — the contract counts tokens at the dead
+                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                metric_override="total_supply_gross"),
             # Venice's own docs describe VVV staked here becoming sVVV. Read as VVV.balanceOf(staking):
             # this is a STAKING CONTRACT, not a token, so totalSupply() on it would be the TokenJar
             # mistake. Reading the VVV it custodies is well-defined for any address and fails safely.
@@ -4369,7 +4412,10 @@ PROJECTS = [
         "contracts": {
             "token": _contract("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "ethereum", "erc20_total_supply", "UNI",
                                UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
-                               purpose="UNI token contract."),
+                               purpose="UNI token contract.",
+                # GROSS of burn — the contract counts tokens at the dead
+                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                metric_override="total_supply_gross"),
             "token_jar": _contract("0xf38521f130fcCF29dB1961597bc5d2B60F995f85", "ethereum", "buyback_fund_balance", "UNI",
                                    UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                    purpose="TokenJar (AssetSink), mainnet — where fees accumulate before holders elect to burn."),
@@ -4755,6 +4801,54 @@ PROJECTS = [
                     "supply_from": "token",
                     "rate_bounds_bps": [1, 100],
                     "frozen_value_if_tail": 8_969_149.540108,
+                    # ** A SANITY BOUND ON THE RESULT, not just on the rate. ** [1, 100] bps is
+                    # the contract's own range and spans 0.5% to 52% annualised — far too wide to
+                    # catch a wrong read. Aerodrome's docs give a documented figure to narrow it:
+                    # "As of April 2026, the current rate of AERO emissions is approximately
+                    # 10.9% annualized" (aerodrome.finance/docs).
+                    #
+                    # THE DOCS DO NOT SAY 10.9% OF WHAT, and that is recorded rather than resolved
+                    # by picking whichever reading is convenient:
+                    #     of TOTAL supply (~1.98bn)        -> ~4.15m AERO/wk, ~21 bps
+                    #     of CIRCULATING supply (~988m)    -> ~2.07m AERO/wk, ~10.5 bps of total
+                    # The tail formula's own base is totalSupply, so the first reading is the one
+                    # that matches the contract — but the docs are prose and the ambiguity is
+                    # real, so the band is set wide enough to contain BOTH: 10.9% of total is
+                    # 10.9% annualised, and 10.9% of circulating is ~5.4% of total.
+                    #
+                    # 5-15% OF TOTAL SUPPLY PER YEAR. It excludes 67 bps (34.8% annualised), which
+                    # is the rate at tail activation — so this bound ASSERTS that the rate has
+                    # been nudged down since, consistent with the documented 10.9%. If a live read
+                    # comes back at 67 bps, that is a finding, not a pass.
+                    #
+                    # TAIL BRANCH ONLY, deliberately. The pre-tail schedule ran at 8,969,149/wk,
+                    # which annualises to ~23.5% and would fail this band — correctly, because it
+                    # is a different regime with a deterministic schedule that needs no sanity
+                    # check. Applying the band pre-tail would refuse a legitimately scheduled
+                    # emission.
+                    #
+                    # TIGHTEN THIS once a live read establishes the actual rate. It is deliberately
+                    # loose while the rate is unobserved.
+                    "annualised_share_bounds": [0.05, 0.15],
+                    "annualised_share_source": {
+                        "claim": "approximately 10.9% annualized, as of April 2026",
+                        "source_url": "https://aerodrome.finance/docs",
+                        "ambiguity": "the docs do not state the BASE. Of total supply -> ~21 bps/wk; "
+                                     "of circulating -> ~10.5 bps of total. Both readings fall "
+                                     "inside the band, which is why the band is this wide.",
+                        "recorded_on": "2026-09-22",
+                    },
+                    # INDEPENDENTLY CONFIRMED, and it agrees with the contract replay exactly:
+                    # Aerodrome's own announcement puts tail activation at epoch 67, 2024-12-04,
+                    # at "0.67% of the total supply" — the same 67 bps the deployed source carries
+                    # as tailEmissionRate's initial value, and the same epoch the constants replay
+                    # to. Three independent routes to one answer.
+                    "tail_activation": {
+                        "epoch": 67, "date": "2024-12-04", "rate_at_activation_bps": 67,
+                        "source": "Aerodrome's own announcement, cross-checked against the "
+                                  "Minter.sol constant replay and tailEmissionRate's initial value",
+                        "confirmed_on": "2026-09-22",
+                    },
                     "source_url": "https://github.com/aerodrome-finance/contracts",
                     "source_file": "Minter.sol, updatePeriod() and nudge()",
                     "confirmed_on": "2026-09-21",
@@ -4898,34 +4992,97 @@ PROJECTS = [
                  "is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS "
                  "and UNAVAILABLE; do not re-attempt it. "
                  "The reported Velodrome merger has NOT shipped into the public contracts.",
+        # ===== UNVERIFIED, FLAGGED ONLY — DO NOT ACT ON ANY OF THIS. =====
+        # Source is a CoinMarketCap AI summary, not Aerodrome. Recorded because two of the three
+        # would change how this project is read if true, and because a claim written down as
+        # unverified is harder to absorb by accident than one carried in someone's head. None of
+        # it has been checked against Aerodrome's own material, and none of it is wired to
+        # anything.
+        "unverified_reports": [
+            {"claim": "Predictive Allocation Launch, 26 July 2026 — replaced weekly voting with "
+                      "an automated system",
+             "why_it_matters": "the tail rate is nudged +/-1 bp per epoch by an EpochGovernor "
+                               "PLURALITY VOTE (Minter.nudge()). If weekly voting has been "
+                               "replaced, the mechanism by which tailEmissionRate moves may no "
+                               "longer be what config describes — which does NOT affect the read "
+                               "(tailEmissionRate() is read live either way) but does affect how "
+                               "a change in it should be interpreted.",
+             "check_before_relying_on": "whether ±1 bp/epoch governor voting is still the live "
+                                        "mechanism for tailEmissionRate",
+             "source": "CoinMarketCap AI summary", "status": "UNVERIFIED", "recorded": "2026-09-22"},
+            {"claim": "Velodrome merger began July 2026",
+             "why_it_matters": "config already records that the merger has NOT shipped into the "
+                               "public contracts. If it ships, the Minter and RewardsDistributor "
+                               "addresses and the emission mechanism could all move.",
+             "source": "CoinMarketCap AI summary", "status": "UNVERIFIED", "recorded": "2026-09-22"},
+            {"claim": "public audit contest opened 2026-08-31 ahead of an Ethereum launch",
+             "why_it_matters": "a second chain would make the single-chain AERO supply read "
+                               "PARTIAL, the same way CAKE's is.",
+             "source": "CoinMarketCap AI summary", "status": "UNVERIFIED", "recorded": "2026-09-22"},
+        ],
     },
     {
         "name": "PancakeSwap", "symbol": "CAKE",
         "coingecko_id": "pancakeswap-token",
         "defillama_fees_slug": "pancakeswap", "defillama_protocol": "pancakeswap", "defillama_chain": None,
         "archetypes": [4, 3], "archetypes_held": [],
-        # total_supply_convention DELIBERATELY UNDECLARED — UNTESTED, not assumed either way.
-        # This is a transfer burn, so the convention decides the issuance formula and the two
-        # answers differ by the ENTIRE burn (see issuance_supply_rule). Uniswap and GEODNET both
-        # came back net_of_burn on CoinGecko, which makes net_of_burn the likely answer here too —
-        # and "likely" is exactly the reasoning that produced the bug this field exists to stop,
-        # so it is not written down as a finding. The derivation REFUSES while this is undeclared
-        # and says so on the Gap Report; that is the intended state, not a regression.
+        # ===== TESTED AND CONFIRMED net_of_burn, 2026-09-22 — WITH AN UNEXPLAINED RESIDUAL. =====
+        # Recorded as untested on 2026-09-21 for want of CoinGecko egress. It did not need it:
+        # run 20260921T100546Z had both figures, because _resolve_tier_collisions FLAGS the later
+        # tier rather than discarding it, leaving the dropped contract totalSupply on file beside
+        # the kept CoinGecko one.
         #
-        # CAKE IS ALSO THE ONE CASE WHERE THE TEST NEEDS CARE: supply is multi-chain (LayerZero
-        # OFT, a deployment per chain) and the Ethereum-only contract read is not the whole
-        # contract total, so the subtraction below must use the SUMMED contract supply, or it
-        # will show a difference that is chain coverage rather than burn.
-        "total_supply_convention_untested": {
-            "why": "transfer burn — the convention decides the formula and nothing on file "
-                   "establishes which one CoinGecko applies to CAKE",
-            "test": "contract totalSupply (summed across ALL deployments, not Ethereum alone) "
-                    "minus CoinGecko total_supply, compared against burn_address_balance. Equal "
-                    "means net_of_burn; a difference of zero means gross.",
-            "blocked_by": "CoinGecko is unreachable from the sandbox this was written in "
-                          "(CONNECT tunnel 403), so the comparison could not be run here. It "
-                          "takes one live run with both figures in the store.",
-            "recorded": "2026-09-21",
+        #     contract totalSupply  5,387,735,435.75   (SUMMED across deployments, per the caveat
+        #                                               this block has always carried)
+        #     CoinGecko total_supply  330,627,631.61
+        #     difference            5,057,107,804.14
+        #     burn_address_balance  5,051,176,395.11
+        #     residual                  5,931,409.03   (0.11% of contract supply)
+        #
+        # ** THE RESIDUAL IS NOT READ TIMING AND IS NOT TREATED AS NOISE. ** Venice AI's residual
+        # on the same test is 162 tokens, 0.0001%; this is 5.93m tokens, three orders of magnitude
+        # larger in relative terms. Timing cannot produce that. CoinGecko is excluding something
+        # BEYOND the dead address, and the direction is unambiguous — it counts ~5.93m fewer CAKE
+        # as existing than the contracts do, over and above the burn.
+        #
+        # The convention flip stands anyway, and the reason is worth stating: 5,057,107,804 vs
+        # 5,051,176,395 settles net_of_burn vs gross beyond any doubt (gross would have put the
+        # difference at ZERO, not within 0.11%). The residual is a SEPARATE question about what
+        # else CoinGecko excludes, and it does not change which formula applies.
+        "total_supply_convention": "net_of_burn",
+        "total_supply_convention_evidence": {
+            "test": "summed contract totalSupply 5,387,735,435.75 - CoinGecko total_supply "
+                    "330,627,631.61 = 5,057,107,804.14, against burn_address_balance "
+                    "5,051,176,395.11",
+            "residual_tokens": 5_931_409.03,
+            "residual_explained_by": None,      # UNEXPLAINED — see below, and do not fill this
+                                                # in with a guess to make the record look tidy.
+            "confirmed_on": "2026-09-22",
+            "source": "run 20260921T100546Z — CoinGecko's kept tier-1 figure against the chain "
+                      "read's tier-2 value preserved by _resolve_tier_collisions",
+        },
+        # THE RESIDUAL, recorded as an open question rather than an explanation. Two candidates
+        # were suggested and NEITHER is confirmed; they are written here as things to check, not
+        # as the answer:
+        #   - CAKE held in the LayerZero ProxyOFT at
+        #     0xb274202daBA6AE180c665B4fbE59857b7c3a8091. A lock-and-mint bridge holds the
+        #     locked side, and a provider that nets it out would look exactly like this.
+        #   - veCAKE, if CoinGecko excludes locked CAKE from total (not merely from circulating).
+        # Testable directly: read the ProxyOFT balance and compare it against 5,931,409.
+        "total_supply_residual_unexplained": {
+            "tokens": 5_931_409.03,
+            "pct_of_contract_supply": 0.0011,
+            "direction": "CoinGecko reports FEWER tokens than contract supply minus burn",
+            "candidates_not_confirmed": [
+                "CAKE locked in the LayerZero ProxyOFT 0xb274202daBA6AE180c665B4fbE59857b7c3a8091",
+                "veCAKE, if CoinGecko excludes locked CAKE from TOTAL rather than only circulating",
+            ],
+            "how_to_test": "read balanceOf(CAKE) at the ProxyOFT address and compare against "
+                           "5,931,409.03. A match settles it; a miss leaves veCAKE to check.",
+            "why_it_does_not_block_the_convention": "gross would have made the difference ZERO. "
+                                                    "0.11% is not zero-shaped, so the convention "
+                                                    "is settled even though the residual is not.",
+            "recorded": "2026-09-22",
         },
         "fee_split": {
             # NOT a single number — the share is per-product. Stored as a dict and never collapsed
@@ -4957,7 +5114,10 @@ PROJECTS = [
                                partial_reason="CAKE is a LayerZero OFT with deployments beyond BSC, so this is one "
                                               "deployment's supply, not total supply.",
                                purpose="CAKE token on BSC. Deployed source declares CakeToken is "
-                                       "BEP20('PancakeSwap Token', 'Cake') — the symbol casing is 'Cake', not 'CAKE'."),
+                                       "BEP20('PancakeSwap Token', 'Cake') — the symbol casing is 'Cake', not 'CAKE'.",
+                # GROSS of burn — the contract counts tokens at the dead
+                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                metric_override="total_supply_gross"),
             "token_base": _contract("0x3055913c90Fcc1A6CE9a358911721eEb942013A1", "base", "erc20_total_supply", "Cake",
                                     "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
                                     token_standard="erc20", supply_is_partial=True,
@@ -4965,7 +5125,10 @@ PROJECTS = [
                                     purpose="CAKE OFT deployment on Base.",
                                     note="UNVERIFIED. Supplied as a known further deployment; confirm against "
                                          "PancakeSwap's own docs, and see the Gap Report row asking for the "
-                                         "complete OFT deployment list."),
+                                         "complete OFT deployment list.",
+                # GROSS of burn — the contract counts tokens at the dead
+                # address; CoinGecko does not. See METRICS["total_supply_gross"].
+                metric_override="total_supply_gross"),
             "burn_dead": _contract("0x000000000000000000000000000000000000dEaD", "bsc", "burn_address_balance", "Cake",
                                    "https://docs.pancakeswap.finance/protocol/cake-tokenomics",
                                    verified="2026-09-11", provenance="deployed source",
@@ -5007,6 +5170,32 @@ PROJECTS = [
         ],
         "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens", "staked_tokens"),
         "materiality": "high",
+        # ===== THE "4.99bn BURNED AGAINST A 400m CAP" PUZZLE — RESOLVED 2026-09-22. =====
+        # Raised 2026-09-15 as "12.5x the entire possible supply" and treated ever since as a
+        # paradox needing a special exemption. IT WAS NEVER A CONTRADICTION, and the resolution is
+        # one line: 400m caps NET supply, not cumulative issuance.
+        #
+        # The contract has minted 5,387,735,435.75 CAKE over its life — read directly this round,
+        # and the number that was missing every previous time this came up. Set it beside the rest
+        # and nothing is left to explain:
+        #
+        #     cumulative minted (contract totalSupply)   5,387,735,435.75
+        #     cumulative burned (dead address)           5,051,176,395.11
+        #     -> net outstanding                           336,559,040.64
+        #     CoinGecko total_supply (net of burn)         330,627,631.61
+        #     max_supply (hard cap, cut 450m -> 400m)      400,000,000
+        #
+        # Net outstanding sits BELOW the 400m cap, which is what the cap governs. 4.99bn (now
+        # 5.05bn) exceeding 400m says only that CAKE has minted and burned about thirteen times
+        # its cap over its lifetime — which for a token running 33 consecutive months of net burn
+        # is the expected shape, not an anomaly.
+        #
+        # WHY IT LOOKED LIKE A PARADOX FOR A WEEK: every figure available at the time was NET.
+        # CoinGecko's total_supply is net of burn, max_supply is a net cap, and the one gross
+        # figure — the contract's own totalSupply — was being read every run and then silently
+        # discarded by the tier-collision rule. The number that dissolves the puzzle was fetched
+        # and thrown away daily. It is now kept, as total_supply_gross.
+        #
         # ===== WHY burn_address_balance IS NOT BOUNDED BY SUPPLY HERE =====
         # RAISED 2026-09-15 as "4,991,087,157 CAKE against a 400,000,000 max supply — 12.5x the
         # entire possible supply". The ratio is real and the conclusion does not follow, because
@@ -5035,15 +5224,45 @@ PROJECTS = [
         # NOT EXEMPTED BECAUSE THE NUMBER WAS CHECKED AND FOUND RIGHT — it has not been. The
         # magnitude is unverified and needs the live store. What is established is that this
         # COMPARISON cannot settle it either way.
-        "relation_exemptions": [
-            {"greater": "burn_address_balance", "lesser": "total_supply",
-             "why": "burn_address_balance is a CUMULATIVE dead-address balance over the token's whole "
-                    "life; total_supply is instantaneous. CAKE mints and burns continuously — see this "
-                    "entry's own net-mint note, 33 consecutive months of net burn on a net figure near "
-                    "-2m/month — so cumulative burns exceed current supply as a matter of course. The "
-                    "relation is a true identity only for a fixed-supply token. Exempted 2026-09-15; "
-                    "gross_burn_tokens vs total_supply remains live and would still catch a bad read."},
-        ],
+        #
+        # ** SUPERSEDED 2026-09-22 — the heading above this block is now wrong and is kept only
+        # so the reasoning can be read against what replaced it. ** burn_address_balance IS
+        # bounded by supply here; it is bounded by the GROSS supply, and the exemption is gone.
+        # The magnitude the paragraph above called unverified is now verified: 5,051,176,395.11
+        # burned against 5,387,735,435.75 ever minted. The comparison CAN settle it — it just
+        # had to be pointed at a gross figure, which is a different fix from switching it off.
+        # ** THE EXEMPTION IS REMOVED, 2026-09-22, AND THE RELATION IS LIVE AGAIN. **
+        # It read: "burn_address_balance is a CUMULATIVE dead-address balance over the token's
+        # whole life; total_supply is instantaneous", and exempted the pair on that basis.
+        #
+        # That diagnosis was half right and the half it missed is the one that mattered. CAKE does
+        # mint and burn continuously — but the reason 4.99bn burned looked impossible against a
+        # 400m cap was never the cumulative-vs-instantaneous distinction. It was that CoinGecko's
+        # total_supply is NET OF BURN (established 2026-09-21, confirmed for CAKE 2026-09-22), so
+        # the relation was comparing the burn against a figure the burn had already been taken out
+        # of. Of course it failed.
+        #
+        # The CONTRACT's totalSupply() still counts the tokens at the dead address — a transfer
+        # burn never calls _burn() — so it reports supply GROSS of burn, and burn <= gross is a
+        # real identity. With the comparison pointed there (config.bound_metric_for), CAKE reads
+        #     burn_address_balance   5,051,176,395.11
+        #     total_supply_gross     5,387,735,435.75    -> PASSES, with ~6% headroom
+        # and the check does work again instead of being switched off. An exemption that silences
+        # a relation because the wrong comparand was chosen is a patch over a mis-specification,
+        # and this one hid a genuine finding about the provider for a week.
+        #
+        # WHAT THE RELATION NOW CATCHES that the exemption had disabled: a burn figure exceeding
+        # everything ever issued — a double-counted burn address, a decimals error on the burn
+        # side, a Dune query summing the same transfers twice. None of those was detectable while
+        # the pair was exempt.
+        #
+        # ONE HONEST WEAKNESS, recorded rather than smoothed over: total_supply_gross for CAKE is
+        # a PARTIAL sum (two of several LayerZero deployments), so the bound is loose. See
+        # config.bound_metric_for for which direction that errs in and why loose-but-safe is the
+        # right way round.
+        #
+        # "relation_exemptions": [] — deliberately absent, not empty. Re-adding one here needs a
+        # reason that survives the paragraph above.
         "notes": "TEMPLATE for the archetype 4 tab. Self-reported net mint is the headline and is PREFERRED over "
                  "the derived calculation; totalSupply delta is the independent check. Hard cap cut 450m -> 400m Jan 2026.",
     },
@@ -6850,6 +7069,50 @@ def _check_open_question_status() -> list[str]:
                 f"with RESOLVED/CLOSED/ANSWERED/SETTLED and the date, so the record reads as "
                 f"settled in config too. Topic: {topic[:80]}")
     return errs
+
+
+# A BOUND THAT HAS TO FOLLOW THE SUPPLY CONVENTION, for the same reason the issuance formula
+# does. Declared as {(greater, lesser): substitute_lesser} and applied only where the project's
+# total_supply_convention says the default comparand is the wrong quantity.
+BOUND_AGAINST_GROSS_WHEN_NET_OF_BURN = {
+    ("burn_address_balance", "total_supply"): "total_supply_gross",
+}
+
+
+def bound_metric_for(project_name: str, greater: str, lesser: str) -> str:
+    """Which metric `greater` should actually be bounded by, for THIS project.
+
+    ** burn_address_balance <= total_supply IS NOT AN IDENTITY WHEN total_supply IS NET OF BURN. **
+    A cumulative dead-address balance compared against a supply figure that has already had that
+    balance subtracted out is a comparison of a number against itself-minus-itself. It happens to
+    pass for Uniswap and GEODNET only because their burns are small next to supply; on PancakeSwap
+    the same relation reads 5.05bn burned against 331m total and fails, which is why that project
+    carried a blanket exemption for it.
+
+    The exemption was treating a symptom. The contract's own totalSupply() still counts tokens at
+    the dead address — a transfer burn never calls _burn() — so the contract figure is supply
+    GROSS of burn, and burn <= gross IS an identity for a transfer-burn token. Pointing the
+    relation at total_supply_gross makes it true and, more to the point, makes it WORK: it would
+    now catch a burn figure that exceeds everything ever issued, which the exemption had switched
+    off entirely.
+
+    ONE CAVEAT, RECORDED RATHER THAN ASSUMED AWAY: where the gross figure is a PARTIAL sum
+    (PancakeSwap's CAKE is a multi-chain LayerZero OFT and only two deployments are read), it can
+    err in both directions — understated by the chains not read, overstated by any lock-and-mint
+    bridge whose locked balance is counted on both sides. Understatement makes the bound STRICTER
+    than the truth, so it cannot produce a false alarm; overstatement makes it looser, so a real
+    violation could slip through. Weak in the safe direction is the right way round for a bound,
+    but it is not the same as tight.
+    """
+    sub = BOUND_AGAINST_GROSS_WHEN_NET_OF_BURN.get((greater, lesser))
+    if not sub:
+        return lesser
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    if p.get("total_supply_convention") != "net_of_burn":
+        return lesser
+    if sub not in metrics_for_project(p):
+        return lesser
+    return sub
 
 
 def _check_series_granularity() -> list[str]:

@@ -247,6 +247,11 @@ def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) ->
             # config with a reason and validated, so it cannot be used to quiet an inconvenience.
             if config.relation_exempt(project, greater, lesser):
                 continue
+            # THE COMPARAND CAN DEPEND ON THE PROJECT'S SUPPLY CONVENTION. Where total_supply is
+            # NET of burn, bounding a cumulative dead-address balance against it compares a number
+            # with itself-minus-itself; the contract's own gross figure is the real bound. See
+            # config.bound_metric_for.
+            lesser = config.bound_metric_for(project, greater, lesser)
             a, b = by_key.get((project, greater)), by_key.get((project, lesser))
             if a is None or b is None or not b[0]:
                 continue

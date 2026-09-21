@@ -706,21 +706,36 @@ def test_issuance_follows_the_supply_figures_convention_not_the_burn_mechanism()
     assert config.issuance_supply_rule(config.PROJECT_BY_NAME["Uniswap"],
                                        "transfer_to_dead_address") == "add_burn"
 
-    # UNTESTED REFUSES. PancakeSwap and Venice are transfer burns whose convention was never
-    # established — and could not be, from a sandbox CoinGecko does not answer. The two candidate
-    # formulas differ by the whole burn, so the derivation must decline and name the test.
+    # UNTESTED REFUSES — and as of 2026-09-22 NO PROJECT IS UNTESTED, so the state is forced.
+    # PancakeSwap and Venice AI were the examples; both were settled from run 20260921T100546Z's
+    # own stored figures (the tier-collision guard preserves the dropped contract read beside the
+    # kept CoinGecko one, so the comparison never needed live CoinGecko access at all). The
+    # MECHANISM is unchanged and must stay covered: the two candidate formulas differ by the
+    # whole burn, so an undeclared convention has to decline and name the test rather than pick
+    # the likely answer. Forced rather than re-pointed at some project that happens to be
+    # undeclared for unrelated reasons — this asserts the branch, not a project's current state.
     for name in ("PancakeSwap", "Venice AI"):
         p = config.PROJECT_BY_NAME[name]
-        assert p.get("total_supply_convention") is None, \
-            f"{name} must stay undeclared until the test is actually run"
-        assert p.get("total_supply_convention_untested", {}).get("test"), \
-            f"{name} must record WHICH test settles it, not just that it is unknown"
-        got, out = _derive(name, "transfer_to_dead_address",
-                           supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
-        assert got is None, f"{name} must refuse to derive while the convention is untested, got {got}"
-        reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "gross_issuance_tokens")
-        assert "NET of that burn is not established" in reason, \
-            f"the gap must name the actual unknown, not a generic one: {reason[:200]}"
+        assert p.get("total_supply_convention") == "net_of_burn", \
+            f"{name} was settled on 2026-09-22 — see total_supply_convention_evidence"
+        assert p.get("total_supply_convention_evidence", {}).get("test"), \
+            f"{name} must record the test that settled it, not just the answer"
+        saved = p.pop("total_supply_convention")
+        try:
+            got, out = _derive(name, "transfer_to_dead_address",
+                               supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
+            assert got is None, \
+                f"{name} must refuse to derive while the convention is undeclared, got {got}"
+            reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+            assert "NET of that burn is not established" in reason, \
+                f"the gap must name the actual unknown, not a generic one: {reason[:200]}"
+        finally:
+            p["total_supply_convention"] = saved
+        # AND WITH IT DECLARED, IT DERIVES — the half that proves the refusal was the convention
+        # and not something else about these two projects.
+        got, _ = _derive(name, "transfer_to_dead_address",
+                         supply_now=300_000_000.0, supply_prior=300_050_000.0, burn=50_000.0)
+        assert got == 0.0, f"{name} must derive now that it is declared net_of_burn, got {got}"
 
     # WHERE THE CONVENTION CANNOT MATTER, NO DECLARATION IS NEEDED — and the mechanism table
     # deliberately omits transfer_to_dead_address so a forgetful edit refuses rather than defaults.
@@ -1030,16 +1045,26 @@ def test_issuance_refuses_rather_than_guessing():
     assert "not established" in gap["reason"]
 
     # a transfer burn needs NO burn figure, and derives fine without one
-    # 4. ADDED 2026-09-21 — a transfer burn whose SUPPLY CONVENTION is untested. The two
+    # 4. ADDED 2026-09-21 — a transfer burn whose SUPPLY CONVENTION is undeclared. The two
     # candidate formulas differ by the entire burn (see
     # test_issuance_follows_the_supply_figures_convention_not_the_burn_mechanism), so there is no
     # safe default and the refusal must name the test that settles it.
-    value, out = _derive("PancakeSwap", "transfer_to_dead_address", 1_000_100.0, 1_000_000.0, 30.0)
-    assert value is None, "an untested supply convention must refuse, not pick the likely answer"
-    gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
-    assert "NET of that burn is not established" in gap["reason"]
-    assert "total_supply_convention" in gap["suggestion"], \
-        "the refusal must say which field settles it, not merely that something is unknown"
+    #
+    # FORCED, because every project's convention was settled on 2026-09-22 and none is undeclared
+    # any more. The branch is what is under test, not PancakeSwap's current state — and a branch
+    # with no live example is exactly the one that rots, so it is exercised deliberately rather
+    # than deleted along with the last project that happened to trip it.
+    cake = config.PROJECT_BY_NAME["PancakeSwap"]
+    saved = cake.pop("total_supply_convention")
+    try:
+        value, out = _derive("PancakeSwap", "transfer_to_dead_address", 1_000_100.0, 1_000_000.0, 30.0)
+        assert value is None, "an undeclared supply convention must refuse, not pick the likely answer"
+        gap = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+        assert "NET of that burn is not established" in gap["reason"]
+        assert "total_supply_convention" in gap["suggestion"], \
+            "the refusal must say which field settles it, not merely that something is unknown"
+    finally:
+        cake["total_supply_convention"] = saved
 
     # THE CONTROL. With the convention DECLARED and a burn figure present, the same shape derives
     # — so these four refusals cannot be passing because the derivation broke for everyone.
@@ -1344,7 +1369,13 @@ def test_a_component_on_an_uncovered_chain_is_refused_and_makes_the_sum_PARTIAL(
     c.run([geod], None, out)
     df = out.frame()
 
-    supply = df[df.metric == "total_supply"]
+    # THE METRIC NAME COMES FROM CONFIG, not written out. GEODNET's token contracts carry
+    # metric_override="total_supply_gross" as of 2026-09-22 (the contract counts tokens at the
+    # dead address, CoinGecko does not), and a hardcoded "total_supply" would have quietly
+    # asserted that the PARTIAL-sum machinery still worked while testing an empty frame.
+    supply_metric = (geod["contracts"]["token_polygon"].get("metric_override")
+                     or config.KIND_METRIC["erc20_total_supply"])
+    supply = df[df.metric == supply_metric]
     assert len(supply) == 1, f"one supply figure, summed from what could be read: {supply.to_dict()}"
     assert supply.source.iloc[0].endswith(":PARTIAL"), \
         f"Solana and IoTeX were refused — the figure must say so: {supply.source.iloc[0]}"
@@ -3248,29 +3279,71 @@ def test_bound_check_covers_the_declared_relations_and_honours_exemptions():
     out = run("Uniswap", [("buyback_fund_balance", 500.0), ("total_supply", 400.0)])
     assert any("buyback_fund_balance" in str(r) for r in out.review), "buyback bound did not fire"
 
-    # THE EXEMPTION. PancakeSwap's cumulative dead-address balance is not bounded by an
-    # instantaneous supply, because CAKE mints and burns continuously.
-    cake = [("burn_address_balance", 4_991_087_157.0), ("total_supply", 400_000_000.0)]
-    out = run("PancakeSwap", cake)
+    # ** THE EXEMPTION IS GONE, 2026-09-22, AND THE RELATION WORKS INSTEAD OF BEING SILENCED. **
+    # PancakeSwap used to exempt burn_address_balance vs total_supply on the grounds that a
+    # cumulative burn is not bounded by an instantaneous supply. The real reason it failed was
+    # that CoinGecko's total_supply is NET of burn, so the comparison subtracted the burn and
+    # then complained the burn was too big. Pointed at the CONTRACT's gross figure it passes, and
+    # starts catching the things the exemption had switched off.
+    assert config.relation_exempt("PancakeSwap", "burn_address_balance", "total_supply") is None, \
+        "the exemption was removed — a silenced relation catches nothing"
+    assert config.bound_metric_for("PancakeSwap", "burn_address_balance", "total_supply") \
+        == "total_supply_gross"
+
+    # The real figures: 5.05bn burned against 5.39bn gross passes, with headroom.
+    out = run("PancakeSwap", [("burn_address_balance", 5_051_176_395.11),
+                              ("total_supply_gross", 5_387_735_435.75),
+                              ("total_supply", 330_627_631.61)])
     assert not any("burn_address_balance" in str(r) for r in out.review), \
-        "PancakeSwap's cumulative burn must NOT be compared against instantaneous supply"
+        "burn below gross supply must pass, and must be compared against GROSS not net"
 
-    # ** AND IT MUST NOT LEAK. ** The same figures on a project with no exemption still fire, so
-    # the exemption is scoped to the project and the pair rather than disabling the relation.
-    out = run("Uniswap", cake)
+    # ** AND THE RELATION IS NOT MERELY QUIET — it fires on a burn exceeding everything ever
+    # issued, which is exactly what the exemption had made undetectable. **
+    out = run("PancakeSwap", [("burn_address_balance", 5_500_000_000.0),
+                              ("total_supply_gross", 5_387_735_435.75),
+                              ("total_supply", 330_627_631.61)])
     assert any("burn_address_balance" in str(r) for r in out.review), \
-        "the exemption leaked to a project that does not declare it"
+        "a burn above gross supply is impossible and must fire — this is the check the " \
+        "exemption had disabled"
 
-    # AND THE LIVE RELATION FOR PANCAKESWAP. Exempting one comparison must not leave the project
-    # unchecked: a period flow against a stock is an identity even for a minting token.
+    # THE REDIRECT IS SCOPED TO net_of_burn PROJECTS. Sky does not declare the convention, so its
+    # burn stays bounded by total_supply and the substitution must not reach it.
+    assert config.bound_metric_for("Sky", "burn_address_balance", "total_supply") == "total_supply"
+
+    # AND THE OTHER PANCAKESWAP RELATION STAYS LIVE: a period flow against a stock is an identity
+    # even for a minting token, and it is not redirected.
     out = run("PancakeSwap", [("gross_burn_tokens", 500_000_000.0), ("total_supply", 400_000_000.0)])
     assert any("gross_burn_tokens" in str(r) for r in out.review), \
         "gross_burn_tokens vs total_supply must stay live for PancakeSwap"
 
-    # The exemption is declared with a reason, and config refuses one without.
-    assert config.relation_exempt("PancakeSwap", "burn_address_balance", "total_supply")
-    assert config.relation_exempt("PancakeSwap", "gross_burn_tokens", "total_supply") is None
-    print("bound check ok: 9 relations, zero tolerance, exemption scoped and non-leaking")
+    # ** NO PROJECT EXEMPTS A RELATION ANY MORE. ** PancakeSwap's was the only one and it went on
+    # 2026-09-22, when the comparand turned out to be the fault rather than the relation. That is
+    # the healthier state — but it leaves the exemption MECHANISM with no live example, and an
+    # unexercised escape hatch is exactly the one that rots or gets misused. Forced, so both
+    # halves stay covered: an exemption silences its own pair, and only its own pair.
+    assert not [p["name"] for p in config.PROJECTS if p.get("relation_exemptions")], \
+        "an exemption came back — it needs a reason that survives PancakeSwap's removal note"
+
+    cake_cfg = config.PROJECT_BY_NAME["PancakeSwap"]
+    cake_cfg["relation_exemptions"] = [
+        {"greater": "burn_address_balance", "lesser": "total_supply",
+         "why": "forced by the test suite to keep the exemption mechanism exercised while no "
+                "project declares one — not a real exemption, and not written to config.py"}]
+    try:
+        assert config.relation_exempt("PancakeSwap", "burn_address_balance", "total_supply")
+        assert config.relation_exempt("PancakeSwap", "gross_burn_tokens", "total_supply") is None, \
+            "an exemption must silence its own pair and no other"
+        assert config.relation_exempt("Uniswap", "burn_address_balance", "total_supply") is None, \
+            "and it must not leak to another project"
+        # A silenced pair really is skipped — asserted through the check, not just the lookup.
+        out = run("PancakeSwap", [("burn_address_balance", 9e12), ("total_supply", 1.0)])
+        assert not any("burn_address_balance" in str(r) for r in out.review)
+    finally:
+        cake_cfg.pop("relation_exemptions")
+    assert not config.validate_config(raise_on_error=False), "and config is clean afterwards"
+
+    print("bound check ok: 9 relations, zero tolerance, burn bounded by GROSS supply on "
+          "net_of_burn projects, and the exemption mechanism still scoped and non-leaking")
 
 
 # =========================================================================================
@@ -4098,7 +4171,11 @@ class _MinterReader:
     every test below is a statement about which branch a given triple should take.
     """
 
-    def __init__(self, weekly, rate_bps=67, supply=1_980_000_000.0, raise_on=None):
+    # DEFAULT RATE 21 bps, NOT the contract's initial 67. 67 bps on 1.98bn annualises to 34.8%
+    # of supply, which the documented-rate band (5-15%) refuses on purpose — see
+    # test_a_tail_rate_that_has_never_been_nudged_is_a_finding_not_a_pass. 21 bps is the
+    # documented ~10.9% annualised, i.e. what a healthy live read should look like.
+    def __init__(self, weekly, rate_bps=21, supply=1_980_000_000.0, raise_on=None):
         self.weekly, self.rate_bps, self.supply, self.raise_on = weekly, rate_bps, supply, raise_on
 
     def symbol_matches(self, chain, address, expected):
@@ -4143,19 +4220,19 @@ def test_a_frozen_weekly_is_not_an_emission_and_the_tail_formula_replaces_it():
     frozen value to the token, not a near miss on the threshold.
     """
     c = Chain()
-    c.reader = _MinterReader(weekly=8_969_149.540108, rate_bps=67, supply=1_980_000_000.0)
+    c.reader = _MinterReader(weekly=8_969_149.540108, rate_bps=21, supply=1_980_000_000.0)
     out = FetchOutput()
     c.run([_aerodrome_minter_project()], None, out)
     df = out.frame()
     row = df[df["metric"] == "gross_issuance_tokens"].iloc[0]
 
-    expected = 1_980_000_000.0 * 67 / 10_000
+    expected = 1_980_000_000.0 * 21 / 10_000
     assert abs(row["value"] - expected) < 1e-6, \
         f"tail emission must be totalSupply x rate / MAX_BPS ({expected:,.2f}), got {row['value']:,.2f}"
     assert abs(row["value"] - 8_969_149.540108) > 1.0, "the frozen weekly must not be stored"
     # AND THE BASIS IS VISIBLE IN THE ROW. A series that changes formula mid-history is otherwise
     # an unexplained step change with nothing in the row to explain it.
-    assert "tail@67bps" in row["source"], row["source"]
+    assert "tail@21bps" in row["source"], row["source"]
     print(f"tail mode ok: weekly 8,969,149.54 refused, emission {row['value']:,.2f} "
           f"from {row['source']}")
 
@@ -4705,3 +4782,164 @@ def test_a_ratio_blocked_by_a_frozen_backfill_says_so_instead_of_absent():
     assert "has never been fetched" in note, note
     assert "the store HOLDS" not in note, note
     print("item 12 ok: frozen-denominator and missing-denominator now read differently")
+
+
+# ======================================================================================
+# THE CONVENTION, TESTED FOR ALL FOUR — AND THE BOUND THAT HAD TO FOLLOW IT
+# ======================================================================================
+
+def test_every_transfer_burn_project_has_a_TESTED_supply_convention():
+    """All four settled from run 20260921T100546Z's own rows — no live CoinGecko needed.
+
+    The figures were recoverable because _resolve_tier_collisions FLAGS the losing tier rather
+    than discarding it, so the dropped contract totalSupply sits beside the kept CoinGecko one.
+    The guard that exists to stop last-writer-wins is what preserved the control value.
+    """
+    for name, contract, coingecko, burn, residual in (
+            ("Uniswap",     1_000_000_000.00,   888_114_418.92,   111_953_581.00,  None),
+            ("GEODNET",     1_000_000_000.00,   961_518_067.62,    38_481_932.38,  None),
+            ("Venice AI",     114_897_403.56,    81_019_146.16,    33_878_094.96,   162.44),
+            ("PancakeSwap", 5_387_735_435.75,   330_627_631.61, 5_051_176_395.11, 5_931_409.03)):
+        p = config.PROJECT_BY_NAME[name]
+        assert p.get("total_supply_convention") == "net_of_burn", \
+            f"{name} was tested and came back net_of_burn"
+        ev = p.get("total_supply_convention_evidence") or {}
+        assert ev.get("test") and ev.get("confirmed_on"), f"{name} must carry its evidence: {ev}"
+        # The arithmetic the claim rests on, recomputed rather than trusted to the prose.
+        if residual is not None:
+            assert abs((contract - coingecko) - burn - residual) < 0.01, name
+
+    # ** THE TWO RESIDUALS ARE NOT THE SAME KIND OF THING, and the config must not pretend they
+    # are. ** Venice's 162 tokens on 114.9m is read timing. PancakeSwap's 5.93m on 5.39bn is
+    # three orders of magnitude larger relatively, and is recorded as UNEXPLAINED with candidates
+    # to test rather than an explanation chosen to tidy the record.
+    ven = config.PROJECT_BY_NAME["Venice AI"]["total_supply_convention_evidence"]
+    assert ven["residual_explained_by"], "Venice's residual has an explanation and should say it"
+
+    cake = config.PROJECT_BY_NAME["PancakeSwap"]
+    assert cake["total_supply_convention_evidence"]["residual_explained_by"] is None, \
+        "PancakeSwap's residual is NOT explained — filling this in is how a guess becomes a fact"
+    unexplained = cake["total_supply_residual_unexplained"]
+    assert len(unexplained["candidates_not_confirmed"]) >= 2 and unexplained["how_to_test"], \
+        "an unexplained residual needs candidates and a way to settle them, not a shrug"
+    print("conventions ok: four tested, two residuals, one of them honestly unexplained")
+
+
+def test_the_burn_bound_follows_the_supply_convention_not_the_metric_name():
+    """burn_address_balance <= total_supply is NOT an identity when total_supply is net of burn —
+    it compares a number against itself-minus-itself. It passes for Uniswap and GEODNET only
+    because their burns are small relative to supply; on PancakeSwap the same relation reads
+    5.05bn against 331m and fails, which is exactly why that project carried a blanket exemption.
+
+    The exemption was a patch over a mis-specified comparand. The contract's totalSupply() still
+    counts tokens at the dead address, so burn <= GROSS supply is a real identity, and pointing
+    the relation there makes it both true and useful again.
+    """
+    # The substitution is scoped by convention, not applied to everything.
+    for name in ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI"):
+        assert config.bound_metric_for(name, "burn_address_balance", "total_supply") \
+            == "total_supply_gross", name
+    for name in ("Sky", "Ethereum", "Near"):
+        assert config.bound_metric_for(name, "burn_address_balance", "total_supply") \
+            == "total_supply", f"{name} does not declare net_of_burn — leave it alone"
+
+    # And only that pair moves: other relations on the same projects are untouched.
+    assert config.bound_metric_for("PancakeSwap", "gross_burn_tokens", "total_supply") \
+        == "total_supply"
+    assert config.bound_metric_for("Uniswap", "treasury_holding_tokens", "total_supply") \
+        == "total_supply"
+
+    # WOULD THE OLD ARRANGEMENT HAVE FAILED? Asserted, because it is the whole justification.
+    assert 5_051_176_395.11 > 330_627_631.61, "burn vs NET supply — the comparison that failed"
+    assert 5_051_176_395.11 < 5_387_735_435.75, "burn vs GROSS supply — the one that is an identity"
+    print("bound ok: net_of_burn projects bound burn against contract gross supply")
+
+
+def test_the_contract_supply_read_lands_on_the_gross_metric():
+    """The chain read was being written and then dropped by the tier-collision rule on every run
+    where CoinGecko answered — surviving only when CoinGecko did NOT, which silently switched
+    total_supply between a net figure and a gross one depending on a provider's uptime. For CAKE
+    those differ by 5.05bn. It now has its own metric and cannot collide."""
+    for name in ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI"):
+        p = config.PROJECT_BY_NAME[name]
+        tokens = [c for c in p["contracts"].values() if c["kind"] == "erc20_total_supply"]
+        assert tokens, name
+        for c in tokens:
+            assert c["metric_override"] == "total_supply_gross", \
+                f"{name}: the token contract must serve the gross metric, not total_supply"
+        assert "total_supply_gross" in config.metrics_for_project(p), name
+
+    # And it is scoped: a project with no declared convention keeps the chain read on total_supply.
+    sky = config.PROJECT_BY_NAME["Sky"]
+    for c in sky["contracts"].values():
+        if c["kind"] == "erc20_total_supply":
+            assert c["metric_override"] is None, "Sky does not declare net_of_burn — do not move it"
+    print("gross metric ok: six contracts re-pointed, scoped to the four net_of_burn projects")
+
+
+def test_the_cake_paradox_dissolves_once_the_gross_figure_is_on_file():
+    """"4.99bn burned against a 400m max supply" was never a contradiction: 400m caps NET supply.
+    Every figure available when it was raised was a net one — CoinGecko's total, the cap itself —
+    and the single gross figure that resolves it was being fetched every run and discarded."""
+    minted, burned, cap = 5_387_735_435.75, 5_051_176_395.11, 400_000_000
+    net_outstanding = minted - burned
+    assert abs(net_outstanding - 336_559_040.64) < 0.01   # float64, not exact decimal
+    assert net_outstanding < cap, "net outstanding is what the cap governs, and it is under it"
+    assert burned > cap * 12, "cumulative burn exceeding the cap many times over is the expected " \
+                              "shape for 33 consecutive months of net burn, not an anomaly"
+    print(f"cake paradox ok: {minted:,.0f} minted - {burned:,.0f} burned = "
+          f"{net_outstanding:,.0f} net, under the {cap:,} cap")
+
+
+def test_a_tail_rate_that_has_never_been_nudged_is_a_finding_not_a_pass():
+    """The [1, 100] bps bound is the contract's own and spans 0.5% to 52% of supply per year —
+    far too wide to catch a wrong read. Aerodrome documents ~10.9% annualised as of April 2026,
+    so the RESULT gets a band too.
+
+    67 bps is the rate at tail activation (2024-12-04) and annualises to 34.8%. It sits outside
+    the band deliberately: reading it back today would mean the rate has never been nudged in ~90
+    epochs while the docs say 10.9%, and that is a finding — either the getter is wrong, or the
+    documented figure is, and storing a number three times the documented rate settles neither.
+    """
+    c = Chain()
+    c.reader = _MinterReader(weekly=8_969_149.540108, rate_bps=67, supply=1_980_000_000.0)
+    out = FetchOutput()
+    c.run([_aerodrome_minter_project()], None, out)
+
+    assert out.frame().query("metric == 'gross_issuance_tokens'").empty, \
+        "34.8% annualised is outside the documented band and must not be stored"
+    reasons = " ".join(g["reason"] for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+    assert "34.8%" in reasons and "10.9%" in reasons, \
+        f"the refusal must name both the computed share and the documented claim: {reasons}"
+    print("annualised bound ok: 67 bps refused at 34.8% against a documented 10.9%")
+
+
+def test_the_annualised_band_contains_both_readings_of_an_ambiguous_doc():
+    """The docs say "approximately 10.9% annualized" without saying 10.9% OF WHAT. The band is
+    set wide enough to hold both readings rather than resolving the ambiguity by assumption —
+    which is the same discipline applied to World Mobile's decay curve and Sky's two-layer split.
+    """
+    tail = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["minter"]["emission_tail"]
+    lo, hi = tail["annualised_share_bounds"]
+    TOTAL, CIRC = 1_980_000_000, 988_000_000
+
+    of_total = 0.109                                   # 10.9% of total supply
+    of_circulating = 0.109 * CIRC / TOTAL              # the same claim read against circulating
+    assert lo <= of_circulating <= hi, f"the circulating reading ({of_circulating:.1%}) must fit"
+    assert lo <= of_total <= hi, f"the total-supply reading ({of_total:.1%}) must fit"
+
+    # And the ambiguity is RECORDED, not silently resolved by whichever reading was convenient.
+    assert "do not state the BASE" in tail["annualised_share_source"]["ambiguity"]
+    assert tail["annualised_share_source"]["source_url"]
+
+    # The band still excludes the activation rate, or it would not be doing any work.
+    assert not (lo <= 0.67 * 52 / 100 <= hi), "67 bps annualised must stay outside the band"
+
+    # THE ACTIVATION FACTS AGREE ACROSS THREE INDEPENDENT ROUTES: Aerodrome's own announcement,
+    # the deployed constant, and the constants replay.
+    act = tail["tail_activation"]
+    assert act["epoch"] == 67 and act["date"] == "2024-12-04" and act["rate_at_activation_bps"] == 67
+    assert config.PROJECT_BY_NAME["Aerodrome"]["minter_constants"]["TAIL_ACTIVATES_AT_EPOCH"] == 67
+    assert config.PROJECT_BY_NAME["Aerodrome"]["minter_constants"]["INITIAL_TAIL_EMISSION_RATE_BPS"] == 67
+    print(f"band ok: [{lo:.0%}, {hi:.0%}] holds both readings ({of_circulating:.1%} and "
+          f"{of_total:.1%}) and excludes 34.8%")
