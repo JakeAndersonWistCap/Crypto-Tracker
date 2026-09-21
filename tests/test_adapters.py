@@ -2256,6 +2256,16 @@ def test_etherfi_share_supply_and_underlying_assets_are_TWO_METRICS_not_two_sour
           "intact, RED cleared, direction-only ratio check wired")
 
 
+# THE METRIC DUNE 8683038 FEEDS, RESOLVED FROM CONFIG. It moved from locked_tokens to
+# locked_tokens_dashboard on 2026-09-22 when sETHFI.totalSupply() took over the primary — and
+# every test that spelled the name out broke, which is the good outcome. The bad one is a test
+# that keeps passing against a metric the query no longer feeds, so these resolve it instead.
+def _etherfi_dune_metric():
+    q = config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"]
+    return next(m for m, spec in q.items() if spec.get("query_id") == 8683038
+                and spec.get("value_col") == "staked_supply")
+
+
 def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     """8683038 publishes the same lock rate twice: perc_staked 0.17452 and perc_staked_cnt 17.452.
 
@@ -2274,7 +2284,8 @@ def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
     df = out.frame()
 
-    locked = df[df.metric == "locked_tokens"].sort_values("date")
+    staked_metric = _etherfi_dune_metric()
+    locked = df[df.metric == staked_metric].sort_values("date")
     assert len(locked) == 2, f"a daily history backfills every row, got {len(locked)}"
     assert locked.value.iloc[-1] == 141_470_107.5
     assert str(locked.date.iloc[-1].date()) == "2026-09-10", "the row carries the query's own date"
@@ -2285,7 +2296,7 @@ def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
 
     holders = df[df.metric == "staker_count"].sort_values("date")
     assert holders.value.iloc[-1] == 13_011, "num_holders lands under staker_count"
-    assert set(df.metric) == {"locked_tokens", "lock_rate_pct", "staker_count"}, \
+    assert set(df.metric) == {staked_metric, "lock_rate_pct", "staker_count"}, \
         "the withdrawal-queue columns must not reach the store under any metric"
 
     # the bound is the backstop if the mapping is ever changed to the wrong column
@@ -2307,7 +2318,7 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
     now = pd.Timestamp.now("UTC").tz_localize(None).normalize()
     rows = [dict(ETHERFI_ROW, day=f"{(now - pd.Timedelta(days=i)).date()} 00:00:00.000 UTC")
             for i in range(120)]
-    held = {("Ether.fi", "locked_tokens"), ("Ether.fi", "lock_rate_pct")}
+    held = {("Ether.fi", _etherfi_dune_metric()), ("Ether.fi", "lock_rate_pct")}
 
     os.environ["TOKEN_METRICS_DUNE_ALWAYS"] = "1"
     try:
@@ -2317,7 +2328,7 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
         d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)      # a later, incremental run
         locked = out.frame()
         assert not [e for e in out.log if e.status == "skipped"], "the flag overrides the skip"
-        locked = locked[locked.metric == "locked_tokens"]
+        locked = locked[locked.metric == _etherfi_dune_metric()]
         assert len(locked) == 120, f"a forced re-pull rebuilds the whole series, got {len(locked)} rows"
     finally:
         del os.environ["TOKEN_METRICS_DUNE_ALWAYS"]
@@ -2345,18 +2356,18 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
     locked = out.frame()
-    locked = locked[locked.metric == "locked_tokens"]
+    locked = locked[locked.metric == _etherfi_dune_metric()]
     assert locked.empty, (
         "an already-historied metric with no forcing flag must be SKIPPED, not fetched-and-"
         f"trimmed — this codebase has no 'ordinary incremental re-fetch' path, got {len(locked)} rows")
-    assert any(e.status == "skipped" and "locked_tokens" in e.message for e in out.log)
+    assert any(e.status == "skipped" and _etherfi_dune_metric() in e.message for e in out.log)
 
     d2 = Dune()   # has_history defaults to empty — this metric's OWN first run
     d2.http = _Rows(rows)
     out2 = FetchOutput()
     d2.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out2)
     locked2 = out2.frame()
-    locked2 = locked2[locked2.metric == "locked_tokens"]
+    locked2 = locked2[locked2.metric == _etherfi_dune_metric()]
     assert len(locked2) == 120, (
         f"a metric's first-ever backfill must ignore window_days too, got {len(locked2)} rows")
     print("forced re-pull ok: full 120 rows with the flag; an already-historied metric is "
@@ -2368,7 +2379,7 @@ def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
-    d = Dune(has_history={("Ether.fi", "locked_tokens"), ("Ether.fi", "lock_rate_pct"),
+    d = Dune(has_history={("Ether.fi", _etherfi_dune_metric()), ("Ether.fi", "lock_rate_pct"),
                           ("Ether.fi", "staker_count")})
     d.http = _Rows([ETHERFI_ROW])
     out = FetchOutput()
@@ -4736,13 +4747,18 @@ def test_robots_is_checked_against_the_page_url_not_a_captured_api_path():
 
 
 def test_a_ratio_blocked_by_a_frozen_backfill_says_so_instead_of_absent():
-    """Item 12. Ether.fi's lock_assets_per_share has never produced a value, and the run log said
-    its denominator was "absent". It is not absent — locked_tokens has rows in the store. It is a
-    tier-4 Dune series, which runs as a BACKFILL and is skipped once history exists, so it never
-    appears in a run's frame and this derivation never sees it. Structurally, on every run.
+    """Item 12. Ether.fi's lock_assets_per_share had never produced a value, and the run log said
+    its denominator was "absent". It was not absent — locked_tokens had rows in the store. It was
+    a tier-4 Dune series, which runs as a BACKFILL and is skipped once history exists, so it never
+    appeared in a run's frame and this derivation never saw it. Structurally, on every run.
 
-    "Absent" sends a reader to go and build a source that already exists. The two cases now read
-    differently, because they need completely different responses.
+    "Absent" sends a reader to go and build a source that already exists. The two cases read
+    differently now, because they need completely different responses.
+
+    ** THE ETHER.FI CASE ITSELF WAS RESOLVED ON 2026-09-22 ** — sETHFI.totalSupply() is read
+    on-chain, so the denominator is live and the ratio fires. This test keeps the BRANCH covered
+    with a SYNTHETIC project rather than the live one: any project whose ratio leans on a
+    backfill-only source lands here, and a branch outliving its first example is the normal case.
     """
     from fetch import _derive_lock_ratio
     from fetch.base import LONG_COLUMNS
@@ -5071,3 +5087,58 @@ def test_run_sql_splits_on_semicolons_outside_strings_and_prose():
     assert len(stmts) == 2, f"expected 2 statements, got {len(stmts)}: {stmts}"
     assert "chain:sum(a;b)" in stmts[0], "the semicolon inside the literal must not split"
     print("run_sql ok: semicolons in strings and prose do not split statements")
+
+
+def test_etherfi_locked_tokens_comes_from_the_contract_not_from_dune():
+    """Asked directly: can Ether.fi be tracked from the contracts rather than from Dune?
+
+    For the share-denominated lock figure, yes — and the chain read CORRECTS the Dune one rather
+    than merely replacing it. sETHFI is an ordinary ERC-20 whose totalSupply() IS that figure, on
+    an address already in config, and it had even been read by hand into lock_ratio.measured. The
+    config note claiming "there is no contract read for it" was simply wrong.
+
+    Dune reported 141,470,107.5 against a share supply of 89,748,241.27 — 1.58x the sETHFI that
+    exists, and 30,306,893 more ETHFI than the staking contract holds. A figure larger than the
+    whole share supply is not that supply under any convention.
+    """
+    p = config.PROJECT_BY_NAME["Ether.fi"]
+
+    shares = p["contracts"]["sethfi_shares"]
+    assets = p["contracts"]["sethfi"]
+    assert shares["metric_override"] == "locked_tokens"
+    assert shares["kind"] == "erc20_total_supply" and shares["expected_symbol"] == "sETHFI", \
+        "this call is made ON the vault token, so symbol() returns sETHFI, not ETHFI"
+    assert shares["address"] == assets["address"], \
+        "same address, different call — assets vs shares. Not a duplicate entry."
+    assert assets["metric_override"] is None and assets["read_method"] == "escrow_balance_of"
+
+    # THE DUNE SERIES IS KEPT AS A CROSS-CHECK, not deleted: its history is the only long one on
+    # file, and a characterised wrong number is worth more than a discarded one.
+    q = p["dune_queries"]
+    assert "locked_tokens" not in q, "Dune must no longer feed the headline figure"
+    assert q["locked_tokens_dashboard"]["query_id"] == 8683038
+    assert "locked_tokens_dashboard" in config.metrics_for_project(p)
+
+    # BOTH LEGS OF THE RATIO ARE NOW CHAIN READS, which is what lets it fire at all.
+    spec = p["lock_ratio"]
+    served = {c.get("metric_override") or config.KIND_METRIC.get(c["kind"])
+              for c in p["contracts"].values()}
+    assert spec["numerator"] in served and spec["denominator"] in served, \
+        f"both legs must be contract-served for the ratio to fire in one run; served={served}"
+    print("etherfi ok: shares on-chain, Dune demoted to cross-check, both ratio legs live")
+
+
+def test_the_etherfi_basis_change_has_its_cleanup_sql():
+    """Two sources in one series is exactly what measuring_point_changed is for, and it will
+    correctly blank locked_tokens until the old Dune rows are moved. The guard is right; the fix
+    is the cleanup, not an exemption — so the cleanup has to exist and has to be a MOVE."""
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    section = sql[sql.index("-- I. ETHER.FI locked_tokens"):]
+    assert "locked_tokens_dashboard" in section and "UPDATE metrics" in section, \
+        "the Dune rows are MOVED to the cross-check metric, not deleted — the history is evidence"
+    # "DELETE FROM", not "DELETE" — the section's own prose says "THE MOVE, NOT A DELETE", and a
+    # bare word match would fail on the sentence that promises the thing being asserted.
+    assert "DELETE FROM" not in section, "section I must not delete the Dune history"
+    assert "source LIKE 'dune:%'" in section, \
+        "scoped to dune-sourced rows so a chain read already written is never swept up"
+    print("etherfi cleanup ok: section I moves the Dune history rather than discarding it")

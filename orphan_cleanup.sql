@@ -677,3 +677,67 @@ SELECT date, COUNT(*) AS sources_on_this_date, GROUP_CONCAT(source, ' | ') AS wh
  GROUP BY date
 HAVING COUNT(*) > 1
  ORDER BY date;
+
+
+-- ========================================================================================
+-- I. ETHER.FI locked_tokens — the Dune series replaced by a contract read.   2026-09-22
+-- ========================================================================================
+-- WHAT CHANGED: locked_tokens was Dune 8683038's staked_supply. It is now
+-- sETHFI.totalSupply(), read directly (config contracts.sethfi_shares). The Dune series is
+-- KEPT and moves to locked_tokens_dashboard, the cross-check metric.
+--
+-- ** THIS IS A CORRECTION, NOT A CHANGE OF BASIS, and the number moves a long way. **
+--     Dune staked_supply (2026-09-10)   141,470,107.5
+--     sETHFI.totalSupply() on-chain      89,748,241.27
+--     ETHFI held by the sETHFI contract 111,163,214.70
+-- The Dune figure is 1.58x the sETHFI that exists and 30,306,893 more ETHFI than the staking
+-- contract holds. A staked figure larger than the entire share supply is not that supply under
+-- any convention, and the multi-chain sETHFI deployments (Scroll, Arbitrum, Base — together
+-- about $2.2m) are nowhere near large enough to close it. So expect locked_tokens to DROP by
+-- roughly 37% on the next run. That is the fault going away.
+--
+-- WHY THE OLD ROWS MUST GO: they are sourced 'dune:8683038' and the new ones will be sourced
+-- 'chain:ethereum:sethfi_shares'. Two distinct sources in one series is exactly what
+-- build_workbook's measuring_point_changed guard is for, and it will correctly blank
+-- locked_tokens until the old rows are cleared. That is the guard working — the series really
+-- does span a change of measuring point — so the fix is the cleanup, not an exemption.
+--
+-- I1. LOOK ONLY — confirm the series really is Dune-sourced and see what is there.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+ GROUP BY source
+ ORDER BY first_seen;
+
+-- I2. LOOK ONLY — the rows themselves. Every one should carry dune:8683038. A row sourced
+--     'chain:...' means the new read has already run, and the cleanup is now urgent rather
+--     than preparatory: the series is spanning both sources right now.
+SELECT date, value, source, tier, 'WOULD MOVE' AS action
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+ ORDER BY date;
+
+-- I3. THE MOVE, NOT A DELETE. The readings are real Dune output and become the cross-check
+--     series; renaming the metric keeps the history and puts the 1.58x divergence on the sheet
+--     as a cross-check disagreement instead of discarding the evidence for it.
+--     Scoped to dune-sourced rows so a chain read already written is never swept up.
+-- BEGIN;
+-- UPDATE metrics
+--    SET metric = 'locked_tokens_dashboard'
+--  WHERE project = 'Ether.fi' AND metric = 'locked_tokens'
+--    AND source LIKE 'dune:%';
+-- COMMIT;
+
+-- I4. VERIFY after the next run. Expect locked_tokens single-sourced from the chain read at
+--     ~89.7m, locked_tokens_dashboard holding the Dune history at ~141.5m, and
+--     lock_assets_per_share producing a value at last — around 1.2386, the real
+--     assets-per-share, NOT the ~0.79 the Dune denominator would have given.
+-- SELECT metric, source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen,
+--        MAX(value) AS latest_value
+--   FROM metrics
+--  WHERE project = 'Ether.fi'
+--    AND metric IN ('locked_tokens', 'locked_tokens_dashboard', 'locked_tokens_underlying',
+--                   'lock_assets_per_share')
+--  GROUP BY metric, source
+--  ORDER BY metric, first_seen;

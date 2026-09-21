@@ -251,7 +251,7 @@ METRICS = {
     # overwrite a verified tier 2 contract figure, it cross-checks it.
     # Same scoping, same reason: Sky (info.skyeco.com/staking), Pendle (app.pendle.finance) and
     # Aave (app.aave.com) are the three projects with a declared lock dashboard cross-check.
-    "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Sky", "Pendle", "Aave")},
+    "locked_tokens_dashboard": {"label": "Tokens locked (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3, 4], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Sky", "Pendle", "Aave", "Ether.fi")},
     # TWO CHAINS, scoped with only_projects rather than by archetype: every archetype 1 and 4
     # project would otherwise acquire this metric and a gap row for a dashboard that does not
     # exist for it. Ethereum (ultrasound.money) and Near (nearblocks.io/charts/near-supply) are
@@ -6612,6 +6612,67 @@ PROJECTS = [
             # THE READ METHOD IS UNCHANGED AND DOES NOT DEPEND ON THE OPEN QUESTION BELOW.
             # escrow_balance_of gives assets whether sETHFI compounds or is a 1:1 receipt; under 1:1
             # it simply equals totalSupply(). So the safe read was already the right one.
+            # ===== THE SHARE-DENOMINATED LOCK FIGURE, READ ON-CHAIN. Added 2026-09-22. =====
+            # Asked directly: can Ether.fi be tracked from the contracts rather than from Dune?
+            # For this figure, YES — and the chain read is not merely an alternative to the Dune
+            # series, it CORRECTS it.
+            #
+            # sETHFI is an ordinary ERC-20. Its totalSupply() IS the share-denominated staked
+            # figure, and it has already been read once by hand: 89,748,241.267610 at block
+            # 25,982,077, decimals confirmed, recorded in lock_ratio.measured below. The note on
+            # the sethfi entry that follows said "the share-denominated series (locked_tokens)
+            # comes from Dune 8683038 and is left untouched", and the dune_queries note said tier
+            # 4 is "Ether.fi's ONLY automated route for this figure — there is no contract read
+            # for it". Both were wrong: the read is a totalSupply() call on an address already in
+            # config.
+            #
+            # ** AND THE DUNE FIGURE CANNOT BE RIGHT. ** 141,470,107.5 sETHFI against a share
+            # supply of 89,748,241.27 is 1.58x more sETHFI than exists, and 30,306,893 MORE ETHFI
+            # than the staking contract holds (111,163,214.70). That is not two conventions
+            # disagreeing — a figure larger than the entire share supply is not a measurement of
+            # that supply under any convention. The multi-chain sETHFI deployments do not close
+            # it either: Scroll, Arbitrum and Base together are ~$2.2m against a ~30m-token gap.
+            #
+            # SO THE SWITCH IS A CORRECTION, and locked_tokens will DROP from 141,470,107.5 to
+            # ~89,748,241 when this lands. That is the bug going away, not a basis change.
+            #
+            # THREE THINGS FOLLOW, all deliberate:
+            #   1. The Dune series is NOT deleted. It moves to locked_tokens_dashboard, the
+            #      existing cross-check metric, so its history is kept and the 1.58x divergence
+            #      stays visible as a cross-check rather than silently becoming the headline.
+            #      Its staleness stops mattering: a frozen cross-check is a cross-check.
+            #   2. lock_assets_per_share starts FIRING. Its denominator was the Dune series,
+            #      which never appears in a run's frame (tier 4 is backfill-only), so the ratio
+            #      has never produced a value. Both legs are now chain reads in the same run, and
+            #      the first value will be ~1.2386 — the real assets-per-share — not the ~0.79
+            #      the old Dune denominator would have given.
+            #   3. The stored Dune-sourced locked_tokens rows must be cleared, or the
+            #      measuring_point_changed guard will correctly blank the series for spanning two
+            #      sources. See orphan_cleanup.sql section I.
+            #
+            # PARTIAL for the same reason as the sibling read below: mainnet only, and sETHFI also
+            # exists on Scroll, Arbitrum and Base.
+            "sethfi_shares": _contract(
+                "0x86B5780b606940Eb59A062aA85a07959518c0161", "ethereum", "erc20_total_supply", "sETHFI",
+                "https://etherscan.io/address/0x86B5780b606940Eb59A062aA85a07959518c0161",
+                verified="2026-09-14",
+                provenance="same address as contracts.sethfi, already verified; this entry reads "
+                           "sETHFI.totalSupply() rather than ETHFI.balanceOf(sETHFI)",
+                metric_override="locked_tokens", token_standard="erc20", holder_has_code=True,
+                supply_is_partial=True,
+                partial_reason="MAINNET ONLY, exactly as contracts.sethfi — sETHFI also exists on "
+                               "Scroll, Arbitrum and Base and those addresses are not on file, so "
+                               "this understates total staked ETHFI. The understatement is small "
+                               "(~$2.2m against ~$300m) and does NOT account for the Dune series' "
+                               "1.58x overstatement.",
+                purpose="sETHFI.totalSupply() — the SHARE-denominated lock figure, feeding "
+                        "locked_tokens. Pairs with contracts.sethfi (the ASSET-denominated one) "
+                        "to give lock_assets_per_share, which needs both in the same run.",
+                note="SAME ADDRESS as contracts.sethfi, deliberately, and a different call. The "
+                     "two entries are not duplicates: one reads ETHFI.balanceOf(sETHFI) for "
+                     "assets, this one reads sETHFI.totalSupply() for shares, and the RATIO of "
+                     "the two is the accrual this project is watched for. expected_symbol is "
+                     "sETHFI here, not ETHFI, because this call is made ON the vault token."),
             "sethfi": _contract(
                 "0x86B5780b606940Eb59A062aA85a07959518c0161", "ethereum", "stake_underlying", "ETHFI",
                 "https://etherscan.io/address/0x86B5780b606940Eb59A062aA85a07959518c0161",
@@ -6698,16 +6759,26 @@ PROJECTS = [
                 "source": "direct on-chain read via check_offline_items.py, both calls pinned to "
                           "block 25,982,077; decimals 18/18 confirmed",
             },
-            # ** THE BASELINE IS A CHAIN-vs-CHAIN RATIO AND THE CHECK IS DUNE-vs-CHAIN. **
-            # 1.238611622166 divides ETHFI.balanceOf(sETHFI) by sETHFI.totalSupply() — BOTH read
-            # on-chain. This check's denominator is locked_tokens, which is the DUNE series, and
-            # Dune's staked_supply does not reconcile with either on-chain figure:
+            # ** RESOLVED 2026-09-22 — THE CHECK IS NOW CHAIN-vs-CHAIN, matching the baseline. **
+            # This block used to read: "THE BASELINE IS A CHAIN-vs-CHAIN RATIO AND THE CHECK IS
+            # DUNE-vs-CHAIN", and warned that the first value would be ~0.79 rather than 1.24
+            # because the denominator was Dune's staked_supply, which reconciles with neither
+            # on-chain figure:
             #     Dune 141,470,107.5 (2026-09-10)  vs  on-chain shares 89,748,241.27
-            #     -> Dune is 1.58x the share supply, and 30,306,893 ETHFI MORE than the staking
-            #        contract actually holds
-            # A staked supply above the tokens the contract holds needs explaining, so the first
-            # value this check produces will be ~0.79, NOT 1.24. That is recorded rather than
-            # reconciled, and NO Dune-vs-chain baseline is invented to paper over it.
+            #     -> 1.58x the share supply, and 30,306,893 ETHFI MORE than the contract holds
+            #
+            # The denominator is now sETHFI.totalSupply(), read directly (contracts.sethfi_shares),
+            # so numerator and denominator are the SAME two on-chain calls the 1.238611622166
+            # baseline was measured from. The first value will be ~1.2386, and the ~0.79 warning
+            # above no longer applies.
+            #
+            # TWO CONSEQUENCES BEYOND THE NUMBER:
+            #   - this ratio can FIRE AT ALL. Its denominator was a tier-4 Dune series, which
+            #     never appears in a run's frame once the backfill has run, so the derivation has
+            #     never produced a value. Both legs are now chain reads in the same run.
+            #   - the Dune/chain divergence is not swept away with it. It moves to
+            #     locked_tokens_dashboard and renders as a cross-check disagreement, which is a
+            #     standing question on the sheet rather than a paragraph in this file.
             # THE CHECK STILL WORKS MEANWHILE, and that is a property of the design rather than
             # luck: it tests DIRECTION, never level, so it is indifferent to what the denominator
             # is scaled by — as long as the denominator is CONSISTENT with itself over time. If
@@ -6734,7 +6805,20 @@ PROJECTS = [
             # an earlier reading of it as a current-state snapshot came from a partial column
             # list and was wrong, so Ether.fi's 3/6/9-month trajectory comes from real history,
             # not from points accumulating forward from install.
-            "locked_tokens": {
+            # ===== MOVED TO THE CROSS-CHECK METRIC, 2026-09-22 — NOT DELETED. =====
+            # This was locked_tokens, the headline lock figure, and it is now
+            # locked_tokens_dashboard, the cross-check. sETHFI.totalSupply() is read directly
+            # on-chain instead (contracts.sethfi_shares), because this series reports 1.58x more
+            # sETHFI than exists and 30,306,893 more ETHFI than the staking contract holds.
+            #
+            # KEPT, for two reasons that both argue against deleting it. Its history is the only
+            # long series on file for this figure, and a wrong number whose wrongness is
+            # CHARACTERISED is worth more than a deleted one — the 1.58x divergence now renders as
+            # a cross-check disagreement, which is a standing question on the sheet rather than a
+            # note in a config file. Its staleness also stops mattering here: a frozen cross-check
+            # is still a cross-check, which is what makes the tier-4 backfill-only behaviour
+            # harmless for it where it was crippling for the primary.
+            "locked_tokens_dashboard": {
                 "query_id": 8683038,
                 "date_col": "day",
                 "value_col": "staked_supply",
@@ -6770,11 +6854,17 @@ PROJECTS = [
                                   "trusted — this warning is about the flow columns only.",
                 },
                 "source_url": "https://dune.com/queries/8683038",
-                "note": "Staked sETHFI, recorded as locked_tokens (not staked_tokens) as instructed. "
-                        "141,470,107.5 sETHFI as at 2026-09-10. Tier 4 is Ether.fi's ONLY automated route "
-                        "for this figure — there is no contract read for it — so once the backfill has run, "
-                        "the standard tier 4 skip leaves the series static until the next explicit re-pull. "
-                        "See OPEN_QUESTIONS.",
+                "note": "Staked sETHFI, 141,470,107.5 as at 2026-09-10. "
+                        "** BOTH CLAIMS IN THE PREVIOUS VERSION OF THIS NOTE WERE WRONG, 2026-09-22. ** "
+                        "It said tier 4 is 'Ether.fi's ONLY automated route for this figure — there is no "
+                        "contract read for it'. There is: sETHFI.totalSupply(), on an address already in "
+                        "config, which had even been read by hand and recorded in lock_ratio.measured. And "
+                        "it said the figure was locked_tokens; it is now locked_tokens_dashboard, a "
+                        "cross-check, because 141,470,107.5 is 1.58x the sETHFI that exists (89,748,241.27 "
+                        "shares) and 30,306,893 more ETHFI than the staking contract holds. "
+                        "The tier-4 backfill-only skip that froze this series at 2026-09-10 is now "
+                        "harmless: a frozen cross-check is still a cross-check. It was only crippling while "
+                        "this was the primary.",
             },
             "lock_rate_pct": {
                 "query_id": 8683038,
