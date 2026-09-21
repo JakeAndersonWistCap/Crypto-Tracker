@@ -62,6 +62,29 @@ MAPLE_TREASURY_METRIC = (MAPLE_TREASURY_SPEC.get("metric_override")
 
 
 @contextlib.contextmanager
+def forced_refutation():
+    """Hold Sky's burn mechanism refuted for the duration of the block.
+
+    NO PROJECT HAS A REFUTED MECHANISM ANY MORE. Sky was the only one, and on 2026-09-22 it
+    gained a real burn: Stage 2's 5% leg calls SKY.burn(), which decrements totalSupply. The
+    amm_swap_to_receiver refutation is NOT withdrawn — it is kept on the mechanism block as
+    refuted_prior_model, because nothing the Smart Burn Engine does is a burn, before or after —
+    but the project's LIVE status is now confirmed, so the refuted branch has no live example.
+
+    Same treatment, and the same reasoning, as forced_dispute above: the mechanism is what the
+    fixture covers, not whichever project happens to exercise it this week, and a branch with no
+    example is the one that quietly stops being tested.
+    """
+    sky = config.PROJECT_BY_NAME["Sky"]
+    previous = sky["burn_mechanism"]
+    sky["burn_mechanism"] = dict(previous, model="amm_swap_to_receiver", status="refuted")
+    try:
+        yield
+    finally:
+        sky["burn_mechanism"] = previous
+
+
+@contextlib.contextmanager
 def forced_dispute():
     """Hold Maple's treasury contract disputed for the duration of the block.
 
@@ -290,7 +313,7 @@ def _evaluate(rows: list[dict]) -> dict:
                           "metric": r["metric"], "value": r["value"], "source": r["source"],
                           "tier": r["tier"], "is_manual": False, "entered_on": ""}
                          for r in rows])
-    with forced_dispute():
+    with forced_dispute(), forced_refutation():
         out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(ASOF),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
     by_key = {(r["project"], r["metric"]): r for r in out.to_dict("records")}

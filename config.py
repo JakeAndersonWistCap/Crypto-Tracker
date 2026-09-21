@@ -5270,7 +5270,35 @@ PROJECTS = [
         "name": "Sky", "symbol": "SKY",
         "coingecko_id": "sky",
         "defillama_fees_slug": "sky", "defillama_protocol": "sky", "defillama_chain": None,
-        "archetypes": [3], "archetypes_held": [],
+        # ===== ARCHETYPE 4 ADDED 2026-09-22, AND SCOPED TO ONE LEG. =====
+        # Archetype 4 was REMOVED when Sky's "burn" turned out to be a treasury transfer to the
+        # MCD Pause Proxy. That premise changed on 2026-09-14: Stage 2's 5% leg is a genuine
+        # buy-and-burn, and 2,860,000 SKY were destroyed — "permanently removed from circulation"
+        # in Sky's own words. The mechanism is settled from the token source before adding the
+        # archetype, not after: SKY.burn() decrements totalSupply (see burn_mechanism below).
+        #
+        # ** IT COVERS THE 5% LEG AND NOTHING ELSE. ** Of Stage 2's allocation, only
+        # fee_split_v2.burn_share (0.05) destroys supply. The 22.5% staking leg is a distribution
+        # and the 55% Smart Burn Engine output lands in a governance-controlled treasury — both
+        # are buy pressure without supply reduction, and netting either into a burn figure would
+        # report distributed or redeployable SKY as destroyed. That is the single discipline this
+        # file applies to every yield-vs-burn split, and it is why the archetype is recorded here
+        # with its scope rather than as a bare list entry.
+        "archetypes": [3, 4], "archetypes_held": [],
+        "archetype_4_scope": {
+            "effective_from": "2026-09-14",
+            "covers": "fee_split_v2.burn_share only — the 5% buy-and-burn leg of Stage 2",
+            "excludes": ["the 22.5% SKY staking-rewards leg (distributed, not destroyed)",
+                         "the 55% Smart Burn Engine output (lands in the MCD Pause Proxy, a "
+                         "governance-controlled treasury that has been spent from)"],
+            "first_burn": {"tokens": 2_860_000, "date": "2026-09-14",
+                           "source": "Sky's own Stage 2 thread, @SkyEcosystem 2026-09-14",
+                           "use": "sanity-check the first derived burn. A figure of a different "
+                                  "ORDER is a bug, not a surprise."},
+            "before_this_date": "Sky had NO burn. Any burn figure dated before 2026-09-14 is "
+                                "wrong by construction, whatever its source.",
+            "recorded": "2026-09-22",
+        },
         # ===== CIRCULATING INCLUDES LOCKED — VERDICT B. =====
         # Same convention as Ether.fi and the opposite of Aerodrome. Recorded per project because
         # the provider's treatment is not predictable from the lock mechanism: Sky's lssky is an
@@ -5287,6 +5315,21 @@ PROJECTS = [
         },
         # A3: the surplus passes THROUGH the Splitter and Flapper; only the Pause Proxy receives.
         "not_applicable": {
+            # ADDED 2026-09-22 with archetype 4. A protocol-level burn has no address: SKY.burn()
+            # decrements totalSupply and emits Transfer-to-zero, so the destroyed tokens are not
+            # sitting anywhere to be read. This is not "we have not found the address yet" — there
+            # is nothing for an address to hold, and leaving the metric applicable would report a
+            # permanent, unexplained gap on every run and send a reader hunting for a dead address
+            # that does not and cannot exist. gross_burn_tokens stays applicable: the FLOW is real
+            # and comes from a supply delta or an event index, which is the tier 3 route.
+            "burn_address_balance":
+                "NO DEAD ADDRESS EXISTS. Sky's burn (Stage 2's 5% leg, from 2026-09-14) is "
+                "PROTOCOL-LEVEL: SKY.burn() decrements totalSupply and emits "
+                "Transfer(from, address(0), value) — see burn_mechanism, confirmed from "
+                "sky-ecosystem/sky src/Sky.sol on 2026-09-22. The tokens cease to exist rather "
+                "than moving somewhere unspendable, so there is no balance to read and nothing is "
+                "missing here. Contrast Uniswap or PancakeSwap, where a transfer burn leaves the "
+                "tokens at 0x...dEaD and the balance IS the cumulative figure.",
             "buyback_fund_balance":
                 "NO BUYBACK FUND EXISTS. Sky's surplus passes through the Splitter (MCD_SPLIT) and "
                 "the Flapper (MCD_FLAP), both of which are EXECUTORS — config's own contract notes "
@@ -5603,27 +5646,87 @@ PROJECTS = [
                 "status": "confirmed_current",
             },
         },
-        "burn_read_method": "undetermined",
+        # protocol_level as of 2026-09-22: SKY.burn() destroys supply outright, so there is no
+        # address whose balance is the burn total. "undetermined" was right while the mechanism
+        # was open; it now sends the reader to look for a contract that cannot exist.
+        "burn_read_method": "protocol_level",
         "burn_read_note": "Splitter -> Flapper -> UniswapV2 -> receiver ENFORCED as MCD_PAUSE_PROXY by "
                           "FlapperInit.sol:164. No dead address is "
                           "involved, so no address balance models it. Which variant is active determines "
                           "whether the gem is even removed from supply: FlapperUniV2SwapOnly converts and "
                           "sends to a receiver, FlapperUniV2 deposits back into the pool as LP tokens.",
+        # ===== TWO MECHANISMS, AND THE OLD REFUTATION IS NOT WITHDRAWN. Resolved 2026-09-22. =====
+        # Sky had no burn until 2026-09-14. The Smart Burn Engine, despite its name, never burned
+        # anything: FlapperUniV2SwapOnly swaps USDS for SKY on UniswapV2 and sends the proceeds to
+        # a configurable `receiver` (the MCD Pause Proxy), and FlapperUniV2 deposits them back as
+        # LP. Re-read from source 2026-09-22 — sky-ecosystem/dss-flappers,
+        # src/FlapperUniV2SwapOnly.sol line 129 (pair.swap(..., receiver, ...)) and
+        # src/FlapperUniV2.sol line 160 (pair.mint(receiver)). There is NO burn call anywhere in
+        # that repo. The amm_swap_to_receiver refutation stands exactly as recorded, and is kept.
+        #
+        # ** WHAT CHANGED: Stage 2 (2026-09-14) added a 5% buy-and-burn leg, and it is a REAL
+        # burn. ** Settled from SKY's own token source (sky-ecosystem/sky, src/Sky.sol, 2026-09-22):
+        #
+        #     function burn(address from, uint256 value) external {
+        #         ...
+        #         balanceOf[from] = balance - value;
+        #         totalSupply     = totalSupply - value;       <-- supply actually decreases
+        #         emit Transfer(from, address(0), value);
+        #     }
+        #
+        # totalSupply is DECREMENTED and Transfer-to-zero is emitted. That is
+        # protocol_level_destruction, not a transfer to a dead address: the tokens cease to exist
+        # rather than moving somewhere unspendable. burn() carries no `auth` modifier, unlike
+        # mint() immediately above it, so it is permissionless on one's own balance or on an
+        # allowance.
+        #
+        # TWO CONSEQUENCES FOR HOW SKY IS READ:
+        #   - THERE IS NO ADDRESS TO READ. burn_address_balance is not merely unpopulated here, it
+        #     is meaningless — no dead address holds these tokens. Declared not_applicable rather
+        #     than left as a permanent gap, and burn_read_method becomes "protocol_level", which
+        #     is what makes fetch/gaps.py explain it instead of asking for an address that cannot
+        #     exist.
+        #   - THE NET-OF-BURN QUESTION DOES NOT ARISE. total_supply_convention exists because a
+        #     TRANSFER burn leaves burned tokens inside the contract's own totalSupply, so a
+        #     provider may or may not net them out. Here the contract's totalSupply already falls,
+        #     so every source agrees and there is nothing to declare — which is exactly why
+        #     ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM maps protocol_level_destruction to add_burn
+        #     unconditionally.
+        #
+        # STILL NOT ESTABLISHED, and it is an ADDRESS question rather than a mechanism one: WHICH
+        # contract calls burn() for the 5% leg. Probed dss-flappers 2026-09-22 — no burner there.
+        # It blocks neither the mechanism nor the metric, because a protocol-level burn has no
+        # address to read in any case; the figure must come from a supply delta or an event index.
         "burn_mechanism": {
-            "model": "amm_swap_to_receiver", "status": "refuted",
-            "source_url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
-            "source_date": "2026-09-14",
-            "note": "REFUTED, not merely unconfirmed: the transfer-to-dead-address model is positively "
-                    "contradicted by the protocol's own code and audit (ChainSecurity Dss Flappers, July "
-                    "2026, 20260710-ChainSecurity_Sky_Dss_Flappers_audit.pdf; "
-                    "https://github.com/sky-ecosystem/dss-flappers). Surplus is split by a Splitter between "
-                    "a Flapper and a reward farm; the Flapper trades USDS for the gem on UniswapV2 and "
-                    "sends proceeds to a configurable receiver, with the FlapperUniV2 variant depositing "
-                    "the gem back into the pool as LP tokens. Newer components — SBEBeam, letting "
-                    "facilitators configure splitter, kicker and farms within governance bounds, and a "
-                    "Kicker entrypoint for surplus processing — make the destination MORE configurable, "
-                    "not less. Until the active variant is established, Sky has no burn figure, and that "
-                    "is the correct state.",
+            "model": "protocol_level_destruction",
+            "status": "confirmed",
+            "effective_from": "2026-09-14",
+            "source_url": "https://github.com/sky-ecosystem/sky",
+            "source_file": "src/Sky.sol — burn(address,uint256) decrements totalSupply and emits "
+                           "Transfer(from, address(0), value)",
+            "source_date": "2026-09-22",
+            "note": "CONFIRMED from SKY's own token source. Applies ONLY to Stage 2's 5% "
+                    "buy-and-burn leg (fee_split_v2.burn_share). The 22.5% staking leg and the "
+                    "55% landing in the MCD Pause Proxy are NOT burns and must never be netted "
+                    "into a burn figure — see destination_effect and sbe_allocation_layers. Sky "
+                    "had no burn at all before 2026-09-14.",
+            # THE PRIOR MODEL, KEPT. Not superseded in the sense of 'was right, now stale' — it
+            # was WRONG, positively, and the refutation cost real work. Deleting it invites the
+            # dead-address assumption straight back in, which is how it arrived the first time.
+            "refuted_prior_model": {
+                "model": "amm_swap_to_receiver", "status": "refuted",
+                "source_url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+                "source_date": "2026-09-14",
+                "why": "REFUTED, not merely unconfirmed: the transfer-to-dead-address model is "
+                       "positively contradicted by the protocol's own code and audit "
+                       "(ChainSecurity Dss Flappers, July 2026). The Flapper trades USDS for the "
+                       "gem on UniswapV2 and sends proceeds to a configurable receiver; the "
+                       "FlapperUniV2 variant deposits them back into the pool as LP. SBEBeam and "
+                       "the Kicker entrypoint make the destination MORE configurable, not less. "
+                       "Re-verified against source 2026-09-22: no burn call exists in the repo.",
+                "still_applies_to": "the Smart Burn Engine's own output. Nothing the SBE does is a "
+                                    "burn, before or after Stage 2.",
+            },
         },
         # ===== TWO STEPS, AND NEITHER EXISTING BUCKET FITS. RECORDED 2026-09-17. =====
         # destination_effect stays treasury_redeployable as the FIRST-ORDER answer and is no longer

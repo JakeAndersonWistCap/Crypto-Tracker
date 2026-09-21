@@ -505,16 +505,34 @@ def test_a_burn_address_holding_exactly_zero_is_flagged_as_evidence_about_the_ad
 def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     """Sky's zero was correct and beside the point: it does not burn to a dead address at all.
 
-    The Dss Flappers audit describes a Splitter feeding an AMM Flapper that sends proceeds to a
-    configurable receiver — LP tokens, in one variant. No balance read models that, so the entry
-    is REMOVED rather than re-pointed, and the mechanism is marked refuted so nothing re-adds one.
+    That conclusion has SURVIVED Sky acquiring a real burn. The Dss Flappers audit describes a
+    Splitter feeding an AMM Flapper that sends proceeds to a configurable receiver — LP tokens, in
+    one variant — and no balance read models that, so the entry was removed rather than re-pointed.
+
+    ** AND STAGE 2 DID NOT BRING A DEAD ADDRESS EITHER, 2026-09-22. ** The 5% buy-and-burn leg
+    calls SKY.burn(), which decrements totalSupply and emits Transfer-to-zero: the tokens cease to
+    exist rather than moving somewhere unspendable. So the reason Sky has no burn address has
+    changed from "we do not know the mechanism" to "the mechanism has no address", which is a
+    stronger statement, not a weaker one — and burn_address_balance is now declared not_applicable
+    rather than left applicable and permanently empty.
     """
     sky = config.PROJECT_BY_NAME["Sky"]
     assert "burn_zero" not in sky["contracts"], "re-pointing or re-adding a burn address models this wrongly"
-    assert sky["burn_read_method"] == "undetermined", "'transfer' was the refuted assumption"
+    assert sky["burn_read_method"] == "protocol_level", \
+        "'transfer' was the refuted assumption; 'undetermined' was right only while it was open"
     mech = config.burn_mechanism(sky)
-    assert mech["status"] == "refuted" and mech["model"] == "amm_swap_to_receiver"
-    assert "chainsecurity" in (mech["source_url"] or "").lower()
+    assert mech["status"] == "confirmed" and mech["model"] == "protocol_level_destruction"
+    assert mech["effective_from"] == "2026-09-14", "Sky had NO burn before Stage 2"
+
+    # THE REFUTATION IS KEPT, not withdrawn. Nothing the Smart Burn Engine does is a burn, before
+    # or after Stage 2, and deleting that finding invites the dead-address assumption back in.
+    prior = mech["refuted_prior_model"]
+    assert prior["status"] == "refuted" and prior["model"] == "amm_swap_to_receiver"
+    assert "chainsecurity" in (prior["source_url"] or "").lower()
+
+    # A protocol-level burn has no address to hold the tokens, so the metric is not merely empty.
+    assert config.not_applicable_reason("Sky", "burn_address_balance"), \
+        "an applicable-but-unfillable metric reports a permanent unexplained gap every run"
 
     # even if somebody re-added a burn address, a refuted mechanism refuses the read
     probe = dict(sky)
@@ -523,6 +541,8 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
         "0x0000000000000000000000000000000000000000", "ethereum", "burn_address_balance", "SKY",
         "https://example.invalid", verified="2026-09-14")
     probe["burn_read_method"] = "transfer"          # the old, refuted assumption
+    probe["burn_mechanism"] = dict(sky["burn_mechanism"],
+                                   model="amm_swap_to_receiver", status="refuted")
     c = Chain(prior_values={}, prior_dates={})
     c.reader = StubReader(symbol="SKY", supply=1e10, balance=0.0)
     out = FetchOutput()
@@ -1121,10 +1141,18 @@ def test_the_three_burn_failure_modes_stay_distinct():
     uni = config.burn_mechanism(config.PROJECT_BY_NAME["Uniswap"])
     ven = config.burn_mechanism(config.PROJECT_BY_NAME["Venice AI"])
 
-    # 1. wrong mechanism: no address can model it, so there is no burn contract at all
-    assert sky["status"] == "refuted" and sky["model"] == "amm_swap_to_receiver"
+    # 1. wrong mechanism: no address can model it, so there is no burn contract at all.
+    # SKY LEFT THIS MODE ON 2026-09-22 — Stage 2's 5% leg calls SKY.burn(), which decrements
+    # totalSupply, so its LIVE status is confirmed. The refutation is not withdrawn: it is kept on
+    # the mechanism block, because nothing the Smart Burn Engine does is a burn before or after,
+    # and it is asserted THERE rather than dropped. No project has a live refuted mechanism now,
+    # which is why the stale-store fixture forces one (refresh_stale_fixture.forced_refutation).
+    assert sky["status"] == "confirmed" and sky["model"] == "protocol_level_destruction"
+    prior = sky["refuted_prior_model"]
+    assert prior["status"] == "refuted" and prior["model"] == "amm_swap_to_receiver"
     assert not [v for v in config.PROJECT_BY_NAME["Sky"]["contracts"].values()
-                if v["kind"] == "burn_address_balance"]
+                if v["kind"] == "burn_address_balance"], \
+        "a protocol-level burn still has no address — the conclusion outlived its reasoning"
 
     # 2. right mechanism, wrong address: mechanism confirmed, and the fix was the destination
     assert uni["status"] == "confirmed" and uni["model"] == "transfer_to_dead_address"
@@ -3389,6 +3417,32 @@ def _maple_treasury_metric():
     return spec.get("metric_override") or config.KIND_METRIC[spec["kind"]]
 
 
+def _fixture_counterfactuals():
+    """BOTH of the fixture's counterfactuals, imported from the script that generated them.
+
+    Two mechanisms now have no live example — disputed (Maple's resolved 2026-09-18) and refuted
+    (Sky's burn became real on 2026-09-22) — and the fixture holds a row for each. Entering them
+    together, through the generator's own definitions, is what keeps the committed JSON and the
+    tests that read it describing the same world.
+    """
+    import contextlib as _c
+    mod = _refresh_module()
+    stack = _c.ExitStack()
+    stack.enter_context(mod.forced_dispute())
+    stack.enter_context(mod.forced_refutation())
+    return stack
+
+
+def _refresh_module():
+    import importlib.util
+    import pathlib as _p
+    spec = importlib.util.spec_from_file_location(
+        "refresh_stale_fixture", _p.Path(__file__).resolve().parent / "refresh_stale_fixture.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _forced_dispute():
     """The fixture's disputed counterfactual, imported from the script that generated it.
 
@@ -3422,7 +3476,7 @@ def _aggregate_fixture(data):
     # disputed example is a counterfactual — no contract in live config is disputed any more —
     # so a fixture generated under the forcing and read back without it would disagree on that
     # row for a reason that has nothing to do with the mechanism.
-    with _forced_dispute():
+    with _fixture_counterfactuals():
         out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(data["asof"]),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
     return {(r["project"], r["metric"]): r for r in out.to_dict("records")}
@@ -3455,7 +3509,7 @@ def test_stale_store_every_recorded_expectation_still_holds():
     """
     import pandas as pd
 
-    with _forced_dispute():
+    with _fixture_counterfactuals():
         data = _stale_fixture()
         by_key = _aggregate_fixture(data)
         checked = 0
@@ -5142,3 +5196,38 @@ def test_the_etherfi_basis_change_has_its_cleanup_sql():
     assert "source LIKE 'dune:%'" in section, \
         "scoped to dune-sourced rows so a chain read already written is never swept up"
     print("etherfi cleanup ok: section I moves the Dune history rather than discarding it")
+
+
+def test_skys_archetype_4_covers_the_burn_leg_and_nothing_else():
+    """Archetype 4 was REMOVED when Sky's "burn" turned out to be a treasury transfer. Stage 2
+    changed that premise on 2026-09-14, and the mechanism was settled from the token source BEFORE
+    the archetype went back on: SKY.burn() decrements totalSupply.
+
+    The scope is the point. Of Stage 2's allocation only the 5% leg destroys supply; the 22.5%
+    staking leg is distributed and the 55% Smart Burn Engine output lands in a governance-
+    controlled treasury. Netting either into a burn figure reports distributed or redeployable
+    SKY as destroyed — the one discipline this file applies to every yield-vs-burn split.
+    """
+    sky = config.PROJECT_BY_NAME["Sky"]
+    assert 4 in sky["archetypes"] and 3 in sky["archetypes"]
+
+    scope = sky["archetype_4_scope"]
+    assert scope["effective_from"] == "2026-09-14"
+    assert "burn_share" in scope["covers"]
+    assert len(scope["excludes"]) == 2, "both non-burn legs must be named, not implied"
+    assert any("22.5" in e for e in scope["excludes"]) and any("55" in e for e in scope["excludes"])
+
+    # The scope agrees with the split it claims to describe, rather than restating it by hand.
+    v2 = sky["fee_split_v2"]
+    assert v2["burn_share"] == 0.05
+    assert v2["splits"]["sky_buyback_for_staking_rewards"] == 0.225
+    assert v2["sky_buying_share"] == 0.275, "buying is not burning — 27.5% buys, 5% burns"
+
+    # The first burn is on file as a magnitude check, not as a stored figure.
+    first = scope["first_burn"]
+    assert first["tokens"] == 2_860_000 and first["date"] == "2026-09-14"
+
+    # AND THE BEFORE-STATE IS ASSERTED, because it is what makes a backfilled burn a bug: any Sky
+    # burn dated before 2026-09-14 is wrong by construction, whatever its source claims.
+    assert "no burn" in scope["before_this_date"].lower()
+    print("sky A4 ok: 5% leg only, from 2026-09-14, with both excluded legs named")
