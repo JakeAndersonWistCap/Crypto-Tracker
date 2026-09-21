@@ -4943,3 +4943,131 @@ def test_the_annualised_band_contains_both_readings_of_an_ambiguous_doc():
     assert config.PROJECT_BY_NAME["Aerodrome"]["minter_constants"]["INITIAL_TAIL_EMISSION_RATE_BPS"] == 67
     print(f"band ok: [{lo:.0%}, {hi:.0%}] holds both readings ({of_circulating:.1%} and "
           f"{of_total:.1%}) and excludes 34.8%")
+
+
+# ======================================================================================
+# run_sql.py — the cleanup SQL is only reviewable if running the SELECTs is easy
+# ======================================================================================
+
+def _seeded_store(tmpdir):
+    import sqlite3
+    import pathlib as _p
+    db = _p.Path(tmpdir) / "t.db"
+    c = sqlite3.connect(str(db))
+    c.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL, "
+              "source TEXT, tier INT, is_manual INT, entered_on TEXT, fetched_at TEXT)")
+    c.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?,?,?,?)", [
+        ("2026-09-14", "Uniswap", "gross_burn_tokens", 111_337_581.0,
+         "chain:ethereum:burn_dead:delta", 2, 0, "", "t"),
+        ("2026-09-15", "Uniswap", "gross_burn_tokens", 134_000.0,
+         "chain:ethereum:burn_dead:delta", 2, 0, "", "t"),
+        ("2026-09-15", "Uniswap", "burn_address_balance", 111_953_581.0,
+         "chain:ethereum:burn_dead", 2, 0, "", "t"),
+    ])
+    c.commit()
+    c.close()
+    return db
+
+
+def test_run_sql_parses_every_section_and_runs_only_selects():
+    """The cleanup file's whole discipline is LOOK BEFORE YOU DELETE, and that only works if
+    looking is easy. It was not — the SELECTs had to be pasted into an inline python -c or a
+    sqlite3 shell, and the quoting around string literals broke on PowerShell repeatedly.
+    """
+    import tempfile
+    import run_sql
+
+    sections = run_sql.parse_sections(run_sql.SQL_FILE.read_text(encoding="utf-8"))
+    assert set(sections) >= set("ABCDEFGH"), f"sections found: {sorted(sections)}"
+    for letter, sec in sections.items():
+        assert sec["title"] and not sec["title"].startswith(("AND ", "WHERE ", "SELECT ")), \
+            f"section {letter} took a SQL fragment as its title: {sec['title']!r}"
+        selects = [s for s in run_sql.split_statements(sec["text"])
+                   if run_sql.classify(s) == "select"]
+        assert selects, f"section {letter} has no SELECT to run"
+
+    with tempfile.TemporaryDirectory() as d:
+        db = _seeded_store(d)
+        assert run_sql.main(["E", "--db", str(db)]) == 0
+        # AND IT DID NOT TOUCH ANYTHING. Plain mode is the "just look" command.
+        import sqlite3
+        n = sqlite3.connect(str(db)).execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+        assert n == 3, f"running SELECTs must not modify the store, got {n} rows"
+    print("run_sql ok: 8 sections parse, titles resolve, SELECTs run read-only")
+
+
+def test_run_sql_refuses_to_delete_without_the_typed_confirmation():
+    """A preview and a confirmation, in that order. The count alone is not enough — "47 rows"
+    says nothing about whether they are the right 47 — so the rows are printed first, using the
+    DELETE's OWN where clause so the preview cannot drift from what actually goes."""
+    import builtins
+    import sqlite3
+    import tempfile
+    import run_sql
+
+    with tempfile.TemporaryDirectory() as d:
+        db = _seeded_store(d)
+        real_input = builtins.input
+
+        builtins.input = lambda *a: "yes"          # anything but the exact phrase
+        try:
+            assert run_sql.main(["--delete", "E", "--db", str(db)]) == 1
+        finally:
+            builtins.input = real_input
+        n = sqlite3.connect(str(db)).execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+        assert n == 3, "a wrong confirmation must delete nothing"
+
+        builtins.input = lambda *a: "DELETE E"
+        try:
+            assert run_sql.main(["--delete", "E", "--db", str(db)]) == 0
+        finally:
+            builtins.input = real_input
+        rows = sqlite3.connect(str(db)).execute(
+            "SELECT value FROM metrics WHERE metric='gross_burn_tokens'").fetchall()
+        assert [r[0] for r in rows] == [134_000.0], \
+            "the artefact goes and the ordinary day stays — the threshold is doing the work"
+    print("run_sql ok: preview, typed confirmation, and only the artefact removed")
+
+
+def test_run_sql_never_executes_a_write_in_look_mode():
+    """** THE ONE THAT MATTERS. ** If a DELETE is uncommented in the file — half-finished edit,
+    someone mid-review — the plain command must still not run it. Otherwise "just let me look"
+    silently becomes "delete rows"."""
+    import sqlite3
+    import tempfile
+    import run_sql
+
+    live_delete = """
+-- Z1. LOOK ONLY
+SELECT COUNT(*) AS n FROM metrics;
+
+-- Z2. THE DELETE, UNCOMMENTED BY MISTAKE
+DELETE FROM metrics WHERE project = 'Uniswap';
+"""
+    with tempfile.TemporaryDirectory() as d:
+        db = _seeded_store(d)
+        conn = sqlite3.connect(str(db))
+        try:
+            rc = run_sql.run_selects(conn, live_delete, "Z")
+        finally:
+            conn.close()
+        assert rc == 0
+        n = sqlite3.connect(str(db)).execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+        assert n == 3, "look mode executed a DELETE that was sitting uncommented in the file"
+    print("run_sql ok: an uncommented DELETE is skipped, not run, in look mode")
+
+
+def test_run_sql_splits_on_semicolons_outside_strings_and_prose():
+    """A naive split breaks twice over on this file: on a semicolon inside a quoted source string,
+    and on one inside comment prose. Both have happened, and both produce fragments that look
+    like broken SQL and send the reader hunting for a syntax error that is not there."""
+    import run_sql
+
+    sql = ("-- a note; with a semicolon in prose\n"
+           "SELECT * FROM metrics WHERE source = 'chain:sum(a;b)';\n"
+           "SELECT 1;\n")
+    stmts = [run_sql.strip_comments(s) for s in run_sql.split_statements(sql)]
+    stmts = [s for s in stmts if s]
+    assert len(stmts) == 2, f"expected 2 statements, got {len(stmts)}: {stmts}"
+    assert "chain:sum(a;b)" in stmts[0], "the semicolon inside the literal must not split"
+    print("run_sql ok: semicolons in strings and prose do not split statements")

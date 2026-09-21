@@ -512,6 +512,35 @@ separate questions.
 
 ---
 
+## 11h. Running the cleanup SQL: `run_sql.py`
+
+`orphan_cleanup.sql` is written to be READ before it is run — every section looks first and
+deletes second, and the DELETEs ship commented out. That discipline only works if looking is
+easy, and it was not: the SELECTs had to be pasted into an inline `python -c` or a sqlite3 shell,
+and on Windows PowerShell the quoting around SQL string literals broke repeatedly. "Read this
+before you delete anything" became "fight the shell, then guess", and several sections went unrun
+for weeks as a result.
+
+```
+python run_sql.py                 list the sections, with what each is about
+python run_sql.py E               run section E's SELECTs and print the results
+python run_sql.py --delete E      run its DELETE, after showing the rows and confirming
+python run_sql.py E --db other.db run against a different store
+```
+
+**The two modes are separate on purpose.** The plain command refuses to execute anything that is
+not a SELECT — *even if a DELETE has been uncommented in the file* — so a half-finished edit
+cannot delete rows because somebody ran the "just look" command. Deleting takes the explicit
+`--delete` flag, prints the rows first using the DELETE's own WHERE clause (so the preview cannot
+drift from what actually goes), and requires you to type `DELETE <letter>` exactly.
+
+`--delete` also covers section A, whose fix is an UPDATE rather than a DELETE — a re-attribution,
+because that reading was correct and only the column was wrong.
+
+**A section with no write is not a section with a missing one.** Section H is SELECT-only because
+which rows to remove depends on what its queries show, and under one of the two readings the
+answer is none. The tool says so rather than failing silently.
+
 ## 11g. A getter can stop meaning what its name says, without failing
 
 Found 2026-09-21 on Aerodrome, and it is the most dangerous shape of wrong number this tool
