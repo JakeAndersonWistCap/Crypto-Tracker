@@ -224,12 +224,34 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
         num = latest.get((name, spec["numerator"]))
         den = latest.get((name, spec["denominator"]))
         if num is None or den is None:
-            # Not a gap worth raising: one side simply did not arrive this run, and a ratio from
-            # one number is not a ratio. Logged so a permanently missing side is visible.
+            # ** "ABSENT" WAS THE WRONG WORD, AND IT SENT THE READER TO THE WRONG PLACE. **
+            # A ratio from one number is not a ratio, so skipping is right — but the reason
+            # mattered: Ether.fi's lock_assets_per_share has NEVER produced a value, and the
+            # message said its denominator was absent. It is not absent. locked_tokens has 
+            # rows in the store; they are a tier-4 Dune series, which runs as a BACKFILL and is
+            # skipped once history exists, so it never appears in a run's frame and this
+            # derivation never sees it. Not "did not arrive this run" — structurally cannot,
+            # on every run, for as long as that source stays backfill-only.
+            #
+            # The distinction is exactly the one prior_values can make, so it is made here
+            # rather than described in a comment nobody reads at 9am.
+            missing = spec["numerator"] if num is None else spec["denominator"]
+            side = "numerator" if num is None else "denominator"
+            in_store = prior_values.get((name, missing)) is not None
+            if in_store:
+                why = (f"the store HOLDS {missing}, but nothing refreshed it this run — a "
+                       f"backfill-only source (tier 4 Dune) is skipped once history exists, so "
+                       f"this ratio cannot fire on any ordinary run. NOT a missing series: see "
+                       f"the stale flag on {missing} itself. Deriving from the stored value "
+                       f"instead would divide a fresh {spec['numerator']} by a frozen "
+                       f"{spec['denominator']}, and this check reads DIRECTION — the drift would "
+                       f"be the numerator's alone and would look exactly like real accrual")
+            else:
+                why = f"{missing} has no value in the store either — it has never been fetched"
             out.skipped(SOURCE_DERIVED, name,
                         f"{spec['metric']}: needs both {spec['numerator']} and "
-                        f"{spec['denominator']} this run; "
-                        f"{'numerator' if num is None else 'denominator'} is absent",
+                        f"{spec['denominator']} in the same run; {side} {missing} is not in this "
+                        f"run's frame. {why}",
                         tier=2)
             continue
         if not den[0]:

@@ -424,8 +424,8 @@ SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen
 -- D3. THE DELETE. Run only after D1/D2 confirm which composition is the OLD one — copy its
 --     EXACT source string(s) from D2 into the WHERE below before uncommenting. Do not use a
 --     wildcard broad enough to also catch the current three-component sum: that would erase
---     the very rows this fix exists to keep. Left unfilled deliberately; there is no live
---     store here to read the real composition strings from.
+--     the very rows this fix exists to keep. Left unfilled deliberately, because there is no
+--     live store here to read the real composition strings from.
 -- DELETE FROM metrics
 --  WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens'
 --    AND source IN ('chain:sum(mining_polygon+ecosystem_polygon)', 'chain:mining_polygon');
@@ -607,3 +607,73 @@ SELECT date, metric, value, source, tier, 'WOULD DELETE' AS action
 --  WHERE project = 'Aerodrome'
 --    AND metric IN ('gross_issuance_tokens', 'emissions_tokens')
 --  ORDER BY metric, date;
+
+
+-- ========================================================================================
+-- H. GEODNET gross_burn_tokens — the OTHER half of section D.                2026-09-21
+-- ========================================================================================
+-- Section D above handles GEODNET's treasury_holding_tokens, where the measuring point moved
+-- because a third wallet was added to the sum. The audit of run 20260921T100546Z reports
+-- measuring_point_changed on gross_burn_tokens TOO, and D does not cover it. These are the
+-- SELECTs for it. D's cleanup has also never been run — run both together.
+--
+-- ** DO NOT ASSUME THIS IS THE SAME FAULT AS D. ** It probably is not, and the difference
+-- decides whether anything should be deleted at all. GEODNET's burn series is fed from two
+-- places ON PURPOSE:
+--
+--   dune:8683175          a MONTHLY historical backfill, aggregating ERC-20 transfers to
+--                         0x...dEaD on Polygon and a Solana burn token account
+--   chain:...:delta       the LIVE daily figure, differenced from burn_address_balance
+--
+-- and burn_backfill_spans_chains is True precisely so Polygon-era burns sit in the same series
+-- as the Solana ones. build_workbook's measuring_point_changed guard counts DISTINCT sources
+-- and cannot tell "history plus live read of one quantity, by design" from "the address moved
+-- and the delta across the move is not a flow". So there are two possible readings:
+--
+--   (i)  BY DESIGN. The two sources measure the same burn over non-overlapping spans, the
+--        guard is over-broad here, and deleting either half would destroy real history. The
+--        fix is NOT a delete — it is to decide whether a declared backfill source should count
+--        as a second measuring point at all.
+--   (ii) A REAL CHANGE. The chain read's own composition moved (a burn address added or
+--        swapped), exactly as D's treasury read did, and the old composition's rows should go.
+--
+-- H1 and H2 tell you which. Nothing below deletes anything. The DELETE is deliberately absent
+-- rather than commented out, because which rows to remove depends on the answer, and under
+-- reading (i) the answer is none.
+--
+-- H1. LOOK ONLY — every distinct source, with its span. Reading (i) looks like two sources
+--     whose date ranges DO NOT OVERLAP (Dune ending where the chain read begins). Reading (ii)
+--     looks like two chain:... compositions, and probably overlapping or adjacent.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ GROUP BY source
+ ORDER BY first_seen;
+
+-- H2. LOOK ONLY — the handover. If the two sources meet cleanly at a boundary this is reading
+--     (i). If they overlap, the overlapping dates are double-counted in every window that
+--     spans them, which is a real fault whichever reading applies.
+SELECT date, value, source, tier
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ ORDER BY date;
+
+-- H3. LOOK ONLY — the same question for the cumulative the live flow is differenced from. A
+--     composition change HERE is what would produce reading (ii), and it is also what section
+--     E's implausible_delta guard now catches at read time on the flow.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'burn_address_balance'
+ GROUP BY source
+ ORDER BY first_seen;
+
+-- H4. AND THE OVERLAP, stated as a number rather than eyeballed from H2. Any row here is
+--     double-counted by a window spanning it, under either reading.
+SELECT date, COUNT(*) AS sources_on_this_date, GROUP_CONCAT(source, ' | ') AS which,
+       SUM(value) AS summed_as_if_distinct
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ GROUP BY date
+HAVING COUNT(*) > 1
+ ORDER BY date;

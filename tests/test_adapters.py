@@ -4621,3 +4621,87 @@ def test_a_per_run_table_returns_ONE_run_not_every_run_ever():
         assert list(s.gap_report("run-1")["metric"]) == ["buyback_fund_balance"]
         s.close()
     print("per-run ok: the default is one run, and older runs stay addressable")
+
+
+def test_robots_is_checked_against_the_page_url_not_a_captured_api_path():
+    """Item 13. The audit asked whether ultrasound.money's API path is separately disallowed, or
+    whether the scraper is simply still pointed at the root. It is the second, and structurally so.
+
+    _scrape_one() checks robots against entry["url"] before anything else, for every method. An
+    xhr entry still LOADS that page — interception only works because Playwright has executed the
+    page's JS — so no code path fetches an API URL directly, and the API path's own robots status
+    is never consulted. The run log reading "https://ultrasound.money/" is correct, not a
+    misconfiguration.
+
+    Asserted rather than described, because it is the premise under which three entries sit
+    disabled: if someone adds a direct-fetch path later, the reasoning in sources.yaml stops
+    holding and this is what says so.
+    """
+    import ast
+    import inspect
+    import textwrap
+    from fetch.scrape import Scrape
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Scrape._scrape_one)))
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "robots_allows"]
+    assert len(calls) == 1, f"expected exactly one robots check, found {len(calls)}"
+    arg = calls[0].args[0]
+    assert isinstance(arg, ast.Name) and arg.id == "url", \
+        "robots must be checked against the page url the scraper actually loads"
+
+    # And that `url` is the entry's own url, not something derived from a captured response.
+    assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+    assert any(any(getattr(t, "id", "") == "url" or
+                   (isinstance(t, ast.Tuple) and any(getattr(e, "id", "") == "url" for e in t.elts))
+                   for t in a.targets) for a in assigns), "url must come from the entry"
+    print("item 13 ok: robots is checked against the loaded page, so the API path is never asked about")
+
+
+def test_a_ratio_blocked_by_a_frozen_backfill_says_so_instead_of_absent():
+    """Item 12. Ether.fi's lock_assets_per_share has never produced a value, and the run log said
+    its denominator was "absent". It is not absent — locked_tokens has rows in the store. It is a
+    tier-4 Dune series, which runs as a BACKFILL and is skipped once history exists, so it never
+    appears in a run's frame and this derivation never sees it. Structurally, on every run.
+
+    "Absent" sends a reader to go and build a source that already exists. The two cases now read
+    differently, because they need completely different responses.
+    """
+    from fetch import _derive_lock_ratio
+    from fetch.base import LONG_COLUMNS
+    import pandas as pd
+
+    project = {"name": "Ether.fi", "lock_ratio": {
+        "numerator": "locked_tokens_underlying", "denominator": "locked_tokens",
+        "metric": "lock_assets_per_share", "flag_on": "decrease"}}
+
+    class _Out:
+        def __init__(self):
+            self.notes = []
+            self.frames = [pd.DataFrame([{
+                "date": pd.Timestamp("2026-09-21"), "project": "Ether.fi",
+                "metric": "locked_tokens_underlying", "value": 111_163_214.7,
+                "source": "chain:ethereum:sethfi", "tier": 2, "is_manual": False,
+                "entered_on": ""}], columns=LONG_COLUMNS)]
+
+        def frame(self):
+            return self.frames[0]
+
+        def skipped(self, source, project, note, tier=None):
+            self.notes.append(note)
+
+    # (a) the denominator IS in the store — a frozen backfill, not a missing series
+    out = _Out()
+    _derive_lock_ratio(out, [project], {("Ether.fi", "locked_tokens"): 141_470_107.5})
+    note = " ".join(out.notes)
+    assert "the store HOLDS locked_tokens" in note, note
+    assert "backfill-only" in note and "DIRECTION" in note, note
+    assert "has never been fetched" not in note, "that is the OTHER case"
+
+    # (b) it genuinely is not there — a different problem needing a different response
+    out = _Out()
+    _derive_lock_ratio(out, [project], {})
+    note = " ".join(out.notes)
+    assert "has never been fetched" in note, note
+    assert "the store HOLDS" not in note, note
+    print("item 12 ok: frozen-denominator and missing-denominator now read differently")

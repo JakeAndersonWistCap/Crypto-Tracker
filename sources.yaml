@@ -180,8 +180,20 @@
 # would need a genuinely new direct-HTTP-fetch mechanism outside the existing
 # Playwright-based sources.yaml scraper, robots-checked against the API path
 # specifically rather than the page. THAT IS A NEW MECHANISM, not built here — flagged
-# per this project's standing rule (fix the specific thing; say so in one line and wait
+# per this project's standing rule (fix the specific thing, say so in one line and wait
 # before adding new general tooling) rather than built unilaterally.
+#
+# RE-CONFIRMED 2026-09-21, against the audit's question — "is the API path also disallowed,
+# or is the scraper still pointed at the root URL?" IT IS THE SECOND, and not as an
+# oversight: fetch/scrape.py's _scrape_one() calls robots_allows(entry["url"]) as its first
+# act, and entry["url"] for all three ultrasound entries is the root page, which is what
+# Playwright loads even when the figure is captured from an XHR. The run log reading
+# "https://ultrasound.money/" is therefore correct and expected — that IS the URL being
+# checked, whatever path the data would have come from.
+# ** SO THE API PATH'S OWN robots.txt STATUS IS NEVER CONSULTED, and remains unknown. ** It
+# cannot be consulted without the direct-fetch mechanism described above, and it could not be
+# checked by hand from this session either: ultrasound.money is unreachable from this sandbox
+# (robots.txt fetch returned no response at all), so no claim is made about what it permits.
 #
 # ROBOTS.TXT ITSELF remains not independently verified from this sandbox: both curl and
 # the WebFetch tool return a deliberate proxy-level block (curl: "CONNECT tunnel failed,
