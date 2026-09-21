@@ -2437,11 +2437,17 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     handles the suffix, but if the page ever drops it, parse_number returns 77.66 — small, precise
     and entirely plausible. The sanity floor is what stands between that and the sheet.
 
-    ROLES FLIPPED 2026-09-18: the page (this entry) is now the PRIMARY for treasury_holding_tokens,
-    not a secondary cross-check for buyback_fund_balance_dashboard. The chain read (daoMultisig)
-    is what got demoted, to treasury_holding_tokens_chain_crosscheck via metric_override — because
-    its first live read (23.09M) did not reconcile against this page's 77.66M, and Maple's own
-    publication is the more defensible default while that gap is unexplained (see OPEN_QUESTIONS).
+    ** THE FLIP IS OFF AGAIN, 2026-09-21, AND THE ENTRY IS DISABLED. ** maple.finance/robots.txt
+    disallows /transparency. The 2026-09-18 promotion had made this entry the PRIMARY source for
+    treasury_holding_tokens; the scrape refused (correctly — we respect robots.txt, we do not
+    route around it) and the metric went blank. So the chain read serves treasury_holding_tokens
+    again, labelled PARTIAL, this entry is disabled and retargeted at
+    treasury_holding_tokens_reported, and the page's figure is entered by hand.
+
+    WHAT THIS TEST NOW ASSERTS is therefore the opposite of "armed", and the parsing half is kept
+    rather than deleted: the entry is disabled, nothing enabled points at the disallowed path, and
+    the suffix/floor defences still hold — because the figure they protect is now a HAND-TYPED one,
+    where a dropped suffix is if anything easier to produce than a mis-parsed page.
     """
     import yaml
     from fetch.base import parse_number
@@ -2449,12 +2455,17 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
 
     entries = yaml.safe_load(open("sources.yaml", encoding="utf-8"))
     entry = next(e for e in entries
-                 if e["project"] == "Maple" and e["metric"] == "treasury_holding_tokens")
+                 if e["project"] == "Maple" and e["metric"] == "treasury_holding_tokens_reported")
 
+    # DISABLED, and for a reason that is not "unfinished". The url and the anchor are RIGHT; we
+    # are simply not permitted to fetch them. Both are kept so re-enabling is a one-word change
+    # if Maple ever changes robots.txt.
+    assert entry["enabled"] is False, "robots.txt disallows this path — it must not be armed"
     ready, why = entry_ready(entry)
-    assert ready, f"the Maple treasury primary must be usable, got: {why}"
-    assert entry["anchor"] == "SYRUP Holdings", f"anchor is the whole job here, got {entry['anchor']!r}"
+    assert not ready and "disabled" in why.lower(), why
+    assert entry["anchor"] == "SYRUP Holdings", f"anchor must be kept, got {entry['anchor']!r}"
     assert entry["url"] == "https://maple.finance/transparency"
+    assert "robots.txt" in entry["note"], "the note must say WHY it is disabled"
 
     # NO scale FIELD. parse_number already expands the suffix; a scale would multiply again.
     assert "scale" not in entry or entry.get("scale") in (None, 1), \
@@ -2464,8 +2475,8 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
 
     # THE FLOOR, read from where validate_frame actually reads it. The registry's own
     # sanity_min/sanity_max are not consulted by anything, so asserting those would prove nothing.
-    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
-    unscaled = parse_number("77.66")          # what a dropped suffix would yield
+    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens_reported")
+    unscaled = parse_number("77.66")          # what a dropped suffix, or a typo, would yield
     assert unscaled == 77.66
     assert lo is not None and unscaled < lo, \
         f"an unscaled 77.66 must be REJECTED, not stored — floor is {lo}"
@@ -2477,24 +2488,27 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     assert config.not_applicable_reason("Maple", "buyback_fund_balance_dashboard") is not None, \
         "the vacated metric name must be explained, not left as an unexplained permanent gap"
 
-    # The cross-check itself exists and points at the FLIPPED pair: page primary, chain secondary.
+    # The cross-check still exists and still pairs the two readings — the names moved, the
+    # comparison did not. prefer='secondary' says which side is AUTOMATED, not which is truer.
     checks = config.PROJECT_BY_NAME["Maple"]["cross_checks"]
-    pair = next(c for c in checks if c["secondary"] == "treasury_holding_tokens_chain_crosscheck")
-    assert pair["primary"] == "treasury_holding_tokens"
-    assert pair["prefer"] == "primary", "prefer the page — it is what Maple itself publishes"
+    pair = next(c for c in checks if c["primary"] == "treasury_holding_tokens_reported")
+    assert pair["secondary"] == "treasury_holding_tokens"
+    assert pair["prefer"] == "secondary", \
+        "prefer the automated side — a manual figure cannot refresh itself"
 
-    # The chain read is KEPT, demoted via metric_override — not deleted, not still writing to
-    # treasury_holding_tokens (which would collide with the page under the shared metric key and
-    # be silently dropped by fetch/__init__._resolve_tier_collisions in favour of whichever tier
-    # ran first, tier 2, defeating the whole point of promoting the page).
+    # The chain read serves the primary metric DIRECTLY again: no override, and labelled partial.
     treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
-    assert treasury["metric_override"] == "treasury_holding_tokens_chain_crosscheck"
+    assert treasury["metric_override"] is None, \
+        "the override is what left treasury_holding_tokens with no source when the page refused"
+    assert treasury["supply_is_partial"] is True, "23.09M is part of the treasury, not all of it"
+    assert "77.66" in treasury["partial_reason"] and "23.09" in treasury["partial_reason"]
     assert treasury["destination_status"] == "verified_by_label"
     assert treasury["address"] == "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", \
         "must be the daoMultisig / 'Maple Finance: DAO' address, not the old disputed fee treasury"
-    print("maple cross-check ok: page is now primary (anchor 'SYRUP Holdings', entry_ready "
-          "passes, floor rejects an unscaled 77.66), chain read demoted to a cross-check via "
-          "metric_override so the two no longer collide")
+    # And the metric the override vacated is explained, not left as a permanent unexplained gap.
+    assert config.not_applicable_reason("Maple", "treasury_holding_tokens_chain_crosscheck")
+    print("maple ok: page entry disabled on robots.txt, chain read restored as a PARTIAL primary, "
+          "published figure carried manually, floor still rejects an unscaled 77.66")
 
 
 def test_data_tab_distinguishes_closed_missing_from_an_open_one():
@@ -2559,8 +2573,10 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
     from "nobody has built this". A secondary has nothing to compare against when its PRIMARY is
     a disputed destination that stores nothing — which is the guard working, not failing.
 
-    Part (1) uses Maple's treasury_holding_tokens (the armed page scrape, promoted to primary
-    2026-09-18 — see test_the_maple_cross_check_is_ARMED...). Part (2) uses CHAINLINK's
+    Part (1) used Maple's treasury_holding_tokens (the armed page scrape) until 2026-09-21, when
+    robots.txt turned out to disallow that page and the entry was disabled — so it now uses
+    Chainlink's armed dashboard entry for the armed case, and keeps Maple as the DISABLED case,
+    which is the same distinction seen from the other side. Part (2) uses CHAINLINK's
     buyback_fund_balance/buyback_fund_balance_dashboard pair, not Maple's: after the 2026-09-18
     flip Maple's own primary is page-sourced with no contract behind it at all, so
     destination_disputed can never apply to it — cross_check_waiting_on_primary is structurally
@@ -2582,19 +2598,30 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
             {"ready": True, "url": e.get("url"), "anchor": e.get("anchor"), "method": e.get("method")}
             if ok else why)
     rows = detect(config.PROJECTS, pd.DataFrame(columns=LONG_COLUMNS), set(), registry, [])
+    # ON CHAINLINK'S DASHBOARD ENTRY, not Maple's, as of 2026-09-21. Maple's page entry was the
+    # original example and is now DISABLED: maple.finance/robots.txt disallows /transparency, so
+    # it is no longer an armed entry and cannot demonstrate what an armed one reports. Chainlink's
+    # buyback_fund_balance_dashboard is armed and is the same shape the example was chosen for.
     gap = next(g for g in rows
-               if g["project"] == "Maple" and g["metric"] == "treasury_holding_tokens")
+               if g["project"] == "Chainlink" and g["metric"] == "buyback_fund_balance_dashboard")
     assert "no sources.yaml entry" not in gap["reason"], \
         f"the entry exists and is armed — saying otherwise sends the reader to write a second one: {gap['reason']}"
-    assert "ARMED" in gap["reason"] and "maple.finance/transparency" in gap["reason"] \
-        and "SYRUP Holdings" in gap["reason"], \
-        f"an armed entry must name its url and selector so the reader can tell the cases apart: {gap['reason']}"
+    assert "ARMED" in gap["reason"] and str(registry[("Chainlink", "buyback_fund_balance_dashboard")]["url"]) in gap["reason"], \
+        f"an armed entry must name its url so the reader can tell the cases apart: {gap['reason']}"
     assert "Run Log" in gap["suggestion"], "and point at where 'did it actually run' is answered"
 
-    # MAPLE-SPECIFIC, POST-FLIP: the mechanism cannot apply here any more. treasury_holding_tokens
-    # is sourced from a page, not a contract, so no destination_status exists for it to check.
+    # AND THE OTHER HALF OF THE SAME DISTINCTION, which is what the Maple entry now demonstrates:
+    # a DISABLED entry must not read as an absent one either. "We are not allowed to fetch this"
+    # and "nobody has written this yet" send a reader to completely different places.
+    why_maple = registry[("Maple", "treasury_holding_tokens_reported")]
+    assert isinstance(why_maple, str) and "disabled" in why_maple.lower(), why_maple
+    assert "maple.finance/transparency" in why_maple, \
+        f"a deliberately disabled entry must still name the page it is about: {why_maple}"
+
+    # MAPLE-SPECIFIC: the waiting mechanism keys off a DISPUTED destination, and Maple's treasury
+    # contract is verified_by_label, not disputed — so it cannot apply here either way.
     assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
-        "Maple's primary is page-sourced now, not contract-based — 'waiting' cannot apply to it"
+        "nothing is waiting on a disputed primary here — the treasury contract is not disputed"
 
     # (2) status must distinguish armed-and-idle from unbuilt — exercised on Chainlink, whose
     # buyback_fund_balance/buyback_fund_balance_dashboard pair is still shaped the way this
@@ -2717,11 +2744,10 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     test_fluid_buyback_is_suppressed...) to keep exercising it against realistic historical data —
     the actual 0.51253570332391 SYRUP figure this guard was built for.
 
-    METRIC RENAMED 2026-09-18: this contract's write target moved from treasury_holding_tokens to
-    treasury_holding_tokens_chain_crosscheck via metric_override, when the page was promoted to
-    primary and the chain read demoted to a cross-check (see config.py). The 0.51 SYRUP figure
-    would land under the new metric name today; the mechanism under test (a disputed contract's
-    stale stored row gets blanked and RED) does not care which metric name it is.
+    THE METRIC NAME IS RESOLVED FROM CONFIG, not written out — see _maple_treasury_metric(). This
+    contract's write target moved to treasury_holding_tokens_chain_crosscheck on 2026-09-18 and
+    back to treasury_holding_tokens on 2026-09-21, and the mechanism under test (a disputed
+    contract's stale stored row gets blanked and RED) does not care which name it is.
     """
     import pandas as pd
     import build_workbook as bw
@@ -2730,12 +2756,13 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
     live_status = treasury["destination_status"]
     treasury["destination_status"] = "disputed"
     try:
-        assert config.destination_disputed("Maple", "treasury_holding_tokens_chain_crosscheck"), \
+        metric = _maple_treasury_metric()
+        assert config.destination_disputed("Maple", metric), \
             "precondition: Maple's treasury contract is the disputed one"
 
         stale = pd.DataFrame([{
             "date": pd.Timestamp("2026-09-14"), "project": "Maple",
-            "metric": "treasury_holding_tokens_chain_crosscheck", "value": 0.5125357033239131,
+            "metric": metric, "value": 0.5125357033239131,
             "source": "chain:ethereum:treasury", "tier": 2, "is_manual": False, "entered_on": ""}])
 
         # NO gap row is passed, deliberately: the live symptom is that the gap never reaches this
@@ -2743,7 +2770,7 @@ def test_a_disputed_destination_suppresses_a_row_ALREADY_IN_THE_STORE():
         # the wrong reason.
         out = bw.aggregate(stale, pd.DataFrame(), pd.Timestamp("2026-09-15"),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
-        row = out[(out.project == "Maple") & (out.metric == "treasury_holding_tokens_chain_crosscheck")].iloc[0]
+        row = out[(out.project == "Maple") & (out.metric == metric)].iloc[0]
 
         assert row["status"] == "disputed", f"a stale row under a dispute must not read 'ok': {row['status']}"
         assert pd.isna(row["now"]), f"the figure must be blanked, not shown: {row['now']}"
@@ -2800,7 +2827,7 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
         assert spec["destination_status"] == "disputed", (
             "the address is real and its role is not — it must be read as evidence and stored as "
             f"nothing, got {spec.get('destination_status')!r}")
-        assert spec["metric_override"] == "treasury_holding_tokens_chain_crosscheck"
+        metric = _maple_treasury_metric()
 
         SYRUP = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
 
@@ -2822,11 +2849,13 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
         c.run([config.PROJECT_BY_NAME["Maple"]], None, out)
         df = out.frame()
 
-        assert "treasury_holding_tokens_chain_crosscheck" not in set(df.metric), \
+        assert metric not in set(df.metric), \
             "a disputed destination must not reach the sheet as a figure"
-        # AND THE OLD NAME NEVER APPEARS EITHER, for the SEPARATE reason that metric_override
-        # redirects this contract away from it entirely — true whether or not it is disputed.
-        assert "treasury_holding_tokens" not in set(df.metric)
+        # AND NEITHER NAME APPEARS, whichever way the override currently points: the one the
+        # contract serves is withheld because it is disputed, and the other because nothing on
+        # this project writes there via a contract read.
+        for other in ("treasury_holding_tokens", "treasury_holding_tokens_chain_crosscheck"):
+            assert other not in set(df.metric), other
         staged = [s for s in out.staged if "treasury_holding_tokens" in str(s.get("name", ""))]
         assert staged and abs(float(staged[0]["value"]) - 0.51253570332391) < 1e-9, \
             f"the observation must survive as EVIDENCE, not vanish: {out.staged}"
@@ -3240,6 +3269,20 @@ def _stale_fixture():
     path = _p.Path(__file__).resolve().parent / "fixtures" / "stale_store.json"
     assert path.exists(), f"fixture missing — run python tests/refresh_stale_fixture.py ({path})"
     return json.loads(path.read_text())
+
+
+def _maple_treasury_metric():
+    """The metric Maple's treasury contract serves RIGHT NOW, resolved from config.
+
+    It has moved twice in four days — to treasury_holding_tokens_chain_crosscheck when the chain
+    read was demoted for the transparency page (2026-09-18), and back to treasury_holding_tokens
+    when robots.txt turned out to disallow that page (2026-09-21). Every test that hardcoded the
+    name broke on each move, and the ones that did not break were worse: they kept passing while
+    pointing at a metric the contract no longer served, so the branch they existed to cover was
+    not being covered at all. The tests below follow the contract instead of restating it.
+    """
+    spec = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+    return spec.get("metric_override") or config.KIND_METRIC[spec["kind"]]
 
 
 def _forced_dispute():
@@ -4179,3 +4222,109 @@ def test_the_granularity_of_every_series_is_resolved_from_what_actually_produces
     assert config.series_granularity("GEODNET", "gross_burn_tokens") == "daily"
     assert config.series_granularity("Uniswap", "gross_burn_tokens") == "daily"
     print("granularity ok: contract beats Dune date_col where both feed one metric")
+
+
+# ======================================================================================
+# MAPLE'S TREASURY: what happens when the PRIMARY source turns out to be one we may not fetch
+# ======================================================================================
+
+class _MapleReader:
+    """The daoMultisig holding SYRUP, at the figure the first live read returned."""
+
+    def __init__(self, balance=23_090_000.0, supply=1_000_000_000.0):
+        self.balance, self.supply = balance, supply
+
+    def symbol_matches(self, chain, address, expected):
+        return True, "SYRUP"
+
+    def has_code(self, chain, address):
+        return True
+
+    def scaled(self, chain, address, call, *args, decimals_from=None):
+        return self.balance if call == "balanceOf" or args else self.supply
+
+
+def _maple_treasury_project():
+    live = config.PROJECT_BY_NAME["Maple"]
+    return {"name": "Maple", "archetypes": live["archetypes"],
+            "contracts": {"token": dict(live["contracts"]["token"]),
+                          "treasury": dict(live["contracts"]["treasury"])}}
+
+
+def test_the_chain_read_serves_the_primary_metric_again_and_says_it_is_partial():
+    """R4. The 2026-09-18 promotion made maple.finance/transparency the primary source for
+    treasury_holding_tokens. maple.finance/robots.txt disallows /transparency, so the scrape
+    refused — correctly — and the metric went BLANK. A blank says nothing about Maple's treasury;
+    a partial figure says 23.09M and admits it is not the whole thing.
+    """
+    c = Chain()
+    c.reader = _MapleReader()
+    out = FetchOutput()
+    c.run([_maple_treasury_project()], None, out)
+    df = out.frame()
+    by = dict(zip(df["metric"], df["value"]))
+
+    assert "treasury_holding_tokens" in by, \
+        f"the chain read must serve the primary metric again; got {sorted(by)}"
+    assert by["treasury_holding_tokens"] == 23_090_000.0
+    assert "treasury_holding_tokens_chain_crosscheck" not in by, \
+        "the metric_override is gone — nothing should write the cross-check metric now"
+
+    row = df[df["metric"] == "treasury_holding_tokens"].iloc[0]
+    assert ":PARTIAL" in row["source"], f"must be labelled partial: {row['source']}"
+    reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "treasury_holding_tokens")
+    assert "77.66M" in reason and "23.09" in reason, \
+        f"the partial reason must name BOTH figures, not just say 'partial': {reason}"
+    print("R4 ok:", row["source"], "|", reason[:110])
+
+
+def test_a_partial_reason_comes_from_the_contract_not_the_projects_supply_note():
+    """The project-level supply_partial_reason describes a partial TOTAL SUPPLY and is shared by
+    every metric. Maple's treasury is partial for an unrelated reason. Labelling it with the
+    project's text would attach someone else's explanation to this number."""
+    c = Chain()
+    c.reader = _MapleReader()
+    out = FetchOutput()
+    project = _maple_treasury_project()
+    project["supply_partial_reason"] = "SYRUP is not fully enumerated across chains"
+    c.run([project], None, out)
+    reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "treasury_holding_tokens")
+    assert "daoMultisig" in reason, reason
+    assert "not fully enumerated" not in reason, \
+        f"the project's supply note leaked onto the treasury metric: {reason}"
+    print("partial reason ok: contract's own text wins over the project's")
+
+
+def test_maples_published_figure_is_carried_by_hand_and_not_over_the_chain_read():
+    """Manual entry is where the sourcing priority TERMINATES for a robots-disallowed page, and
+    it is a valid answer. What it must not do is overwrite the automated figure — the two are
+    different quantities by a factor of three, and that gap is the thing worth seeing."""
+    import csv
+    rows = [r for r in csv.DictReader(
+        l for l in open("manual_overrides.csv") if not l.startswith("#"))]
+    maple = [r for r in rows if r["project"] == "Maple"]
+    assert len(maple) == 1, maple
+    row = maple[0]
+    assert row["metric"] == "treasury_holding_tokens_reported", \
+        "the manual figure must NOT be entered over treasury_holding_tokens"
+    assert float(row["value"]) == 77_660_000.0
+    # Dated to when the page was read, not to the run that noticed the refusal.
+    assert row["date"] == "2026-09-14" and row["entered_on"] == "2026-09-21", row
+
+    # The floor applies to the hand-entered figure too: a dropped suffix lands at 77.66, which is
+    # small, precise and plausible — the exact shape of the 0.51 SYRUP that started all this.
+    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens_reported")[:2]
+    assert lo <= float(row["value"]) <= hi
+    assert not (lo <= 77.66 <= hi), "the floor must still reject a suffix-dropped 77.66"
+    print(f"manual figure ok: {float(row['value']):,.0f} under its own metric, floor {lo:,.0f}")
+
+
+def test_no_enabled_scrape_targets_the_robots_disallowed_maple_page():
+    """The refusal is respected, not worked around. This fails if anyone re-enables the entry, or
+    points a new one at the same path, without robots.txt having changed."""
+    import yaml
+    registry = yaml.safe_load(open("sources.yaml"))
+    live = [e for e in registry
+            if e.get("enabled") and "maple.finance/transparency" in str(e.get("url") or "")]
+    assert not live, f"robots.txt disallows this path; these entries are armed against it: {live}"
+    print("robots ok: no enabled entry targets maple.finance/transparency")

@@ -55,6 +55,12 @@ OUT = pathlib.Path(__file__).resolve().parent / "fixtures" / "stale_store.json"
 ASOF = "2026-09-15"
 
 
+# The metric Maple's treasury contract serves TODAY. See the disputed_destination row below.
+MAPLE_TREASURY_SPEC = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
+MAPLE_TREASURY_METRIC = (MAPLE_TREASURY_SPEC.get("metric_override")
+                         or config.KIND_METRIC[MAPLE_TREASURY_SPEC["kind"]])
+
+
 @contextlib.contextmanager
 def forced_dispute():
     """Hold Maple's treasury contract disputed for the duration of the block.
@@ -141,13 +147,16 @@ ROWS = [
 
     # ---- disputed_destination --------------------------------------------------------
     # 0.51 SYRUP against ~75.78m reported. The read was right; the ADDRESS was wrong.
-    # THE METRIC IS THE OVERRIDE TARGET, not treasury_holding_tokens. Since the chain read was
-    # demoted to a cross-check (2026-09-18) the treasury contract serves
-    # treasury_holding_tokens_chain_crosscheck, and a row on the old metric is caught by the
-    # WITHDRAWN branch instead — which is what quietly cost this branch its coverage. Naming the
-    # metric the contract actually serves is what makes the row test disputed and nothing else.
+    # THE METRIC IS WHATEVER THE TREASURY CONTRACT CURRENTLY SERVES, resolved from config rather
+    # than written out. It has moved twice in four days — to
+    # treasury_holding_tokens_chain_crosscheck when the chain read was demoted (2026-09-18), and
+    # back to treasury_holding_tokens when robots.txt turned out to disallow the page that
+    # displaced it (2026-09-21) — and each move silently re-pointed this row at a metric the
+    # contract no longer served, where the WITHDRAWN branch claimed it and the disputed branch
+    # lost its only example. Hardcoding the name is what made that possible twice; deriving it
+    # means the row follows the contract wherever it goes.
     dict(transition="disputed_destination", date="2026-09-14", project="Maple",
-         metric="treasury_holding_tokens_chain_crosscheck", value=0.5125357033239131,
+         metric=MAPLE_TREASURY_METRIC, value=0.5125357033239131,
          source="chain:ethereum:treasury", tier=2,
          written_under="config before destination_status='disputed' was set on treasury",
          why="the first of these bugs found. Suppressing the WRITE could not touch this row"),

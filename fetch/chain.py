@@ -368,6 +368,7 @@ class Chain:
             # source string to stay auditable.
             parts: dict[str, list[tuple[str, float]]] = defaultdict(list)
             partial_metrics: set[str] = set()
+            partial_reasons: dict[str, str] = {}
             # WHICH FORMULA PRODUCED THE FIGURE, where a contract can produce it two ways. Carried
             # into the source string so a series that silently changes basis mid-history is
             # readable in the sheet rather than being an unexplained step change.
@@ -537,6 +538,14 @@ class Chain:
                     metric_when[metric] = self._epoch_start(spec)
                 if spec.get("supply_is_partial"):
                     partial_metrics.add(metric)
+                    # THE CONTRACT'S OWN REASON, not the project's. supply_partial_reason on the
+                    # PROJECT describes a partial total_supply and is shared by every metric;
+                    # Maple's treasury read is partial for a reason that has nothing to do with
+                    # SYRUP's supply (the daoMultisig holds part of what Maple counts as the
+                    # treasury). Falling back to the project's text would have labelled it with
+                    # someone else's explanation.
+                    if spec.get("partial_reason"):
+                        partial_reasons[metric] = spec["partial_reason"]
                 if spec.get("destination_status") == "disputed":
                     disputed[metric].append(key)
                 out.log.append(LogEntry(SOURCE, name, 0, "ok",
@@ -550,7 +559,8 @@ class Chain:
                             suggestion="Resolve the refused components in config.py; nothing was stored for "
                                        "this metric rather than a partial figure being presented as whole.")
             self._emit_parts(p, parts, partial_metrics, refused, when, out, disputed,
-                             source_suffix=source_suffix, metric_when=metric_when)
+                             source_suffix=source_suffix, metric_when=metric_when,
+                             partial_reasons=partial_reasons)
 
     @staticmethod
     def _epoch_start(spec: dict):
@@ -615,7 +625,7 @@ class Chain:
 
     def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out,
                     disputed: dict | None = None, source_suffix: dict | None = None,
-                    metric_when: dict | None = None):
+                    metric_when: dict | None = None, partial_reasons: dict | None = None):
         """Emit one figure per metric, summing every contract that served it."""
         name = project["name"]
         source_suffix = source_suffix or {}
@@ -674,7 +684,8 @@ class Chain:
                 src += ":PARTIAL"
                 detail += " [PARTIAL]"
                 reason = (f"{len(missing)} component(s) refused: {'; '.join(missing)}" if missing
-                          else project.get("supply_partial_reason") or "not every component is known")
+                          else (partial_reasons or {}).get(metric)
+                          or project.get("supply_partial_reason") or "not every component is known")
                 out.review_item(name, metric, "supply_partial", "stored_flagged", value=total,
                                 prior_value=self.prior.get((name, metric)), date=when, source=src, tier=TIER)
                 out.gap(name, metric,

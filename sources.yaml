@@ -476,9 +476,9 @@
 # enabled: false until the selector is filled in and robots.txt is confirmed permissive for this
 # path. The scraper checks robots.txt on every fetch and refuses if disallowed.
 - project: Maple
-  metric: treasury_holding_tokens
+  metric: treasury_holding_tokens_reported
   tier: 3
-  enabled: true                                     # ARMED 2026-09-14, PROMOTED TO PRIMARY 2026-09-18
+  enabled: false                                    # DISABLED 2026-09-21 — robots.txt disallows it
   url: https://maple.finance/transparency
   method: dom
   anchor: "SYRUP Holdings"                          # read off the page by Jake, 2026-09-14
@@ -489,7 +489,25 @@
   sanity_max: 500000000
   change_threshold_pct: 30
   added: 2026-09-14
-  note: "RETARGETED 2026-09-18: this entry's metric was buyback_fund_balance_dashboard (a
+  note: "** DISABLED 2026-09-21: maple.finance/robots.txt DISALLOWS /transparency. **
+    Run 20260921T100546Z: 'FAILED scrape / Maple: treasury_holding_tokens: robots.txt disallows
+    https://maple.finance/transparency'. The scraper checked, was refused, and stopped — which is
+    the correct behaviour. We respect robots.txt; we do not route around it, and this entry is not
+    to be re-enabled by pointing it at a different path, an API endpoint, or a cache. It stays here,
+    disabled, because the URL and anchor are right and the only thing wrong is that we are not
+    permitted to fetch them. If Maple ever changes robots.txt, flipping enabled back to true is the
+    whole job.
+    CONSEQUENCE, and why this was not a harmless failure: on 2026-09-18 this entry had been promoted
+    to the PRIMARY source for treasury_holding_tokens and the daoMultisig chain read demoted out of
+    that metric name. So the refusal left treasury_holding_tokens with no source at all and the cell
+    went blank. The chain read is now primary again (labelled PARTIAL), and this page's figure is
+    carried by hand in manual_overrides.csv under treasury_holding_tokens_reported — which is also
+    the metric this entry now names, so if it is ever re-enabled it lands beside the chain read
+    rather than on top of it.
+    A NOTE ON THE PROMOTION ITSELF: the mistake was not preferring Maple's own publication. It was
+    promoting a source to primary without first confirming it actually fetches on a live run. The
+    fetchability of a source is part of whether it can BE the primary.
+    RETARGETED 2026-09-18: this entry's metric was buyback_fund_balance_dashboard (a
     cross-check secondary) and is now treasury_holding_tokens DIRECTLY (the primary) — same url,
     same anchor, same scrape, only the metric name changed. Maple's OWN publication is now what
     this tool treats as authoritative for the SYRUP treasury figure, not the daoMultisig chain
@@ -527,7 +545,12 @@
   method: dom
   anchor: null                                      # TODO the label text beside monthly protocol revenue
   added: 2026-09-14
-  note: "Monthly protocol revenue, published on the same page. Matters more than usual for Maple
+  note: "SAME PAGE, SAME ROBOTS.TXT REFUSAL — maple.finance/robots.txt disallows /transparency
+    (confirmed on the 2026-09-21 run against the sibling entry above). This one was already
+    disabled for a missing anchor, so it never fired, but do not fill the anchor in and arm it
+    expecting a fetch: the path is not permitted and we do not route around robots.txt. Manual
+    entry is the available route, as it is for the treasury figure.
+    Monthly protocol revenue, published on the same page. Matters more than usual for Maple
     because the buyback share is TIERED on monthly net revenue (10% below $1.5m, 20% from $1.5m-$2m,
     and an UNCONFIRMED tier above $2m) — the revenue figure decides which tier applies, so a month
     above $2m cannot be converted to a buyback figure at all until that tier is sourced."

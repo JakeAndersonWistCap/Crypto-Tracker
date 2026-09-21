@@ -175,10 +175,25 @@ METRICS = {
     # a same-key collision as a registry mistake, never as an intentional priority order. This is
     # the "prefer: secondary" shape (see Chainlink's locked_tokens/locked_tokens_principal pair),
     # generalised from a same-tier pair to a cross-tier one.
+    # KEPT, though nothing writes it today. The chain read went back to serving
+    # treasury_holding_tokens directly on 2026-09-21 (robots.txt disallows the page that
+    # displaced it), so this metric is currently unfed. It is not deleted: if the page ever
+    # becomes fetchable the demotion is a one-line metric_override again, and deleting the
+    # metric would also delete the stored history of the period when it WAS the cross-check.
     "treasury_holding_tokens_chain_crosscheck": {
         "label": "Treasury holding — chain read (cross-check only, NOT the primary)",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
+    # MAPLE'S OWN PUBLISHED TREASURY FIGURE, entered by hand. Its page is disallowed by
+    # maple.finance/robots.txt, which we respect rather than route around, so manual entry is
+    # where the sourcing priority terminates for it — a valid answer, not a failure. Kept under
+    # its OWN name rather than overwriting the chain read, so the ~3x gap between what Maple
+    # publishes (77.66M) and what the daoMultisig holds (23.09M) stays visible in the sheet
+    # instead of being resolved by whichever source happened to write last.
+    "treasury_holding_tokens_reported": {
+        "label": "Treasury holding — as published by Maple (manual, robots-disallowed page)",
+        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
     "burn_mint_ratio":            {"label": "Burn ÷ mint ratio (as published by the protocol)",
                                    "kind": "stock", "unit": "count", "archetypes": [1, 4],
                                    "tiers": [3, 4], "sanity_min": 0, "sanity_max": 100,
@@ -3609,7 +3624,20 @@ PROJECTS = [
                 "primary 2026-09-18 — see cross_checks and OPEN_QUESTIONS' Maple record). This "
                 "metric's only source for Maple was that scrape; there is no second dashboard to "
                 "read, so nothing is missing here — the figure moved to a different metric name, "
-                "it did not disappear.",
+                "it did not disappear. (That promotion was itself reversed 2026-09-21 when "
+                "robots.txt turned out to disallow the page; the scrape is disabled and the "
+                "figure is entered by hand under treasury_holding_tokens_reported. This metric "
+                "still has no route either way.)",
+            "treasury_holding_tokens_chain_crosscheck":
+                "UNFED BY DESIGN since 2026-09-21, which is the exact reverse of the move that "
+                "created it. The chain read was given metric_override "
+                "'treasury_holding_tokens_chain_crosscheck' on 2026-09-18 so Maple's transparency "
+                "page could take over the primary metric name. maple.finance/robots.txt DISALLOWS "
+                "that page, so it never fetched, the primary went blank, and the chain read was "
+                "restored to treasury_holding_tokens — leaving this name with nothing writing to "
+                "it. KEPT rather than deleted: it holds the history of the days it WAS the "
+                "cross-check, and re-applying the demotion is one line if the page ever becomes "
+                "fetchable. Nothing is missing here.",
         },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
         # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
@@ -3798,17 +3826,27 @@ PROJECTS = [
             # unexplained discrepancy, not a decimals or address error of any kind identified so
             # far. See OPEN_QUESTIONS for what was checked and what remains open.
             #
-            # DECISION: Maple's OWN transparency page (what Maple itself publishes) is now the
-            # PRIMARY source for treasury_holding_tokens, not this chain read — see
-            # sources.yaml's Maple entry (metric retargeted from buyback_fund_balance_dashboard to
-            # treasury_holding_tokens directly) and cross_checks below. This chain read is KEPT,
-            # not deleted — a 23.09M reading on an address Etherscan itself labels "Maple Finance:
-            # DAO" is still worth watching — but demoted to metric_override
-            # "treasury_holding_tokens_chain_crosscheck" so it no longer collides with the page's
-            # figure under the shared metric name (fetch/__init__._resolve_tier_collisions always
-            # keeps the earlier tier on a same-key collision, which would have silently kept THIS
-            # chain read and dropped the page — the opposite of the decision here — had both been
-            # left pointed at treasury_holding_tokens).
+            # ** THE PAGE PROMOTION IS REVERSED, 2026-09-21, AND THE REASON IS NOT A CHANGE OF
+            # MIND ABOUT WHICH FIGURE IS BETTER. ** maple.finance/robots.txt DISALLOWS
+            # /transparency. Run 20260921T100546Z: "FAILED scrape / Maple:
+            # treasury_holding_tokens: robots.txt disallows https://maple.finance/transparency".
+            # We respect robots.txt; we do not route around it. So the promotion of 2026-09-18
+            # handed the primary metric to a source this tool is not permitted to fetch, and
+            # treasury_holding_tokens went BLANK — strictly worse than the partial figure it
+            # replaced, because a blank cell says nothing at all about Maple's treasury.
+            #
+            # DECISION: the daoMultisig chain read is the PRIMARY AUTOMATED SOURCE again, and it
+            # is labelled PARTIAL rather than presented as the whole treasury. 23.09M on-chain
+            # against Maple's own published 77.66M means this address is at most part of what
+            # Maple counts as the treasury; storing it unlabelled would assert it is all of it.
+            # Partial and labelled beats blank, and beats a figure we cannot legally fetch.
+            #
+            # Maple's published 77.66M is NOT abandoned. It moves to manual entry under its own
+            # metric, treasury_holding_tokens_reported, dated to when it was read off the page —
+            # the same treatment as manual_quarterly, and the terminal answer the sourcing
+            # priority arrives at once free API, contract read and rendered page are exhausted.
+            # The two now sit side by side under different names instead of one overwriting the
+            # other, which is also what keeps the ~3x gap visible rather than resolved by fiat.
             #
             # destination_status stays "verified_by_label": Etherscan's label identifies the
             # address as "Maple Finance: DAO", matching the transparency page's description of
@@ -3822,7 +3860,15 @@ PROJECTS = [
                 verified="2026-09-18", provenance="Etherscan address label 'Maple Finance: DAO', matching "
                                                   "the daoMultisig entry in maple-labs/address-registry",
                 holder_has_code=True, token_standard="erc20", underlying="token",
-                metric_override="treasury_holding_tokens_chain_crosscheck",
+                # NO metric_override as of 2026-09-21: this read serves treasury_holding_tokens
+                # itself again, because the page that displaced it cannot be fetched.
+                supply_is_partial=True,
+                partial_reason="daoMultisig balance — KNOWN TO BE PARTIAL against Maple's own "
+                               "reported figure: 23.09M SYRUP on-chain vs 77.66M on "
+                               "maple.finance/transparency (read 2026-09-14). This address is at "
+                               "most part of what Maple counts as the treasury. The published "
+                               "figure is carried separately as treasury_holding_tokens_reported; "
+                               "the ~3x gap is unexplained and open — see OPEN_QUESTIONS.",
                 destination_status="verified_by_label",
                 destination_note="Etherscan's OWN label identifies this address as 'Maple Finance: DAO', "
                                  "matching Maple's transparency page description of 'the Maple Treasury' "
@@ -3832,14 +3878,16 @@ PROJECTS = [
                                  "THE FIRST LIVE RUN: 23.09M SYRUP against the page's 77.66M — an "
                                  "unreconciled ~3x gap, not a confirmation. See the block comment above "
                                  "and OPEN_QUESTIONS.",
-                purpose="Maple Treasury (daoMultisig) — CROSS-CHECK ONLY as of 2026-09-18. Maple's own "
-                        "transparency page is now the primary source for treasury_holding_tokens; this "
-                        "chain read is demoted to treasury_holding_tokens_chain_crosscheck.",
+                purpose="Maple Treasury (daoMultisig) — the PRIMARY AUTOMATED SOURCE for "
+                        "treasury_holding_tokens, restored 2026-09-21 and labelled PARTIAL. It was "
+                        "demoted to a cross-check on 2026-09-18 in favour of maple.finance/transparency; "
+                        "robots.txt disallows that page, so the demotion left the metric blank.",
                 note="REPLACES 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19 (the disputed v2 protocol fee "
                      "treasury that returned 0.51 SYRUP). Do not substitute another address on a name "
-                     "match alone — that is how the previous address got here. DEMOTED to a cross-check "
+                     "match alone — that is how the previous address got here. Demoted to a cross-check "
                      "2026-09-18 after its first live read (23.09M) did not reconcile against the "
-                     "transparency page (77.66M) — see the block comment above."),
+                     "transparency page (77.66M); RESTORED as primary 2026-09-21 when robots.txt turned "
+                     "out to disallow that page. Partial and labelled, not whole — see above."),
             # REFERENCE ONLY, no read slot: syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA
             # (maple-labs/address-registry). It is the emissions distributor; with staking rewards
             # ended in Nov 2025 there is no ongoing stream to read from it, and giving it a
@@ -3852,31 +3900,45 @@ PROJECTS = [
         # Queue rather than stored. The Uniswap 100m burn floor exists for the same reason and
         # caught the same class of error.
         "sanity": {
-            # NOW THE PAGE'S FLOOR, 2026-09-18 — treasury_holding_tokens is sourced from
-            # maple.finance/transparency directly (see sources.yaml), not the chain read.
-            # THE FLOOR IS THE REAL GUARD ON THE SCRAPE, and it is here rather than in sources.yaml
-            # because validate_frame calls config.sanity_bounds() — the registry's own sanity_min /
-            # sanity_max fields are read by nothing (nine entries declare them; see the note on the
-            # Maple entry).
-            # Maple renders the figure as "77.66M" and parse_number handles the suffix, so the
-            # correct value is ~77,660,000. If the page ever drops the suffix, parse_number returns
-            # 77.66 — small, precise and entirely plausible, which is the exact shape of the 0.51
-            # that started all this. 1,000,000 rejects it to the Review Queue instead.
+            # BACK TO THE CHAIN READ'S FLOOR, 2026-09-21 — treasury_holding_tokens is the
+            # daoMultisig read again (robots.txt disallows the page that briefly took it over).
+            # THE FLOOR IS THE REAL GUARD, and it is here rather than in sources.yaml because
+            # validate_frame calls config.sanity_bounds() — the registry's own sanity_min /
+            # sanity_max fields are read by nothing (nine entries declare them; see the note on
+            # the Maple entry).
+            #
+            # The band is UNCHANGED across all three moves of this metric, and that is the point:
+            # 1,000,000 rejects a DECIMALS-class error (the 0.51-SYRUP shape that started all
+            # this), and it does so whether the figure arrives from a chain read at 23.09M, a
+            # page at 77.66M, or a manual entry. It does NOT and cannot catch the gap BETWEEN
+            # two real balances — check_cross_checks is what is supposed to do that.
             "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000,
                                         "change_threshold_pct": 30},
-            # THE CHAIN READ'S OWN FLOOR — unchanged in shape, just moved to the metric this read
-            # now writes under. Its first live value (23.09M SYRUP) sits comfortably inside this
-            # band, which is exactly why the guard did NOT catch the unreconciled gap against the
-            # page: this floor rejects a DECIMALS-class error (0.51-shaped), not a genuine
-            # divergence between two real balances. check_cross_checks (tolerance 0.05 below) is
-            # what is supposed to catch that instead — see cross_checks and OPEN_QUESTIONS.
+            # Unfed today (nothing writes this metric since the restoration), kept so the bound
+            # is already in place if the page becomes fetchable and the demotion is re-applied.
             "treasury_holding_tokens_chain_crosscheck": {"min": 1_000_000, "max": 1_000_000_000},
+            # THE MANUAL FIGURE GETS THE SAME FLOOR, deliberately. Manual entry is a valid
+            # terminal answer, not a trusted one: a typo that drops a suffix lands in exactly the
+            # range the floor exists to reject, and a hand-entered 77.66 would otherwise sail
+            # through where a scraped 77.66 would have been caught.
+            "treasury_holding_tokens_reported": {"min": 1_000_000, "max": 1_000_000_000},
         },
+        # MANUAL ENTRY IS WHERE THE SOURCING PRIORITY TERMINATES HERE, and that is an answer, not a
+        # failure. Free API: none publishes Maple's treasury. Contract read: done, and it is the
+        # PARTIAL 23.09M. Rendered public page: Maple publishes 77.66M and robots.txt disallows
+        # fetching it. Paid API: not on our tier. So the page figure is typed in, dated to when it
+        # was read, and carried under its own metric — see manual_overrides.csv.
+        "manual_quarterly": ["treasury_holding_tokens_reported"],
         "metric_labels": {
-            "treasury_holding_tokens": "SYRUP held per Maple's own transparency page (maple.finance/transparency)",
+            "treasury_holding_tokens": "SYRUP held at the daoMultisig chain address — PARTIAL "
+                                       "(23.09M on-chain vs Maple's own reported 77.66M; see "
+                                       "treasury_holding_tokens_reported and OPEN_QUESTIONS)",
+            "treasury_holding_tokens_reported": "SYRUP held per Maple's own transparency page "
+                                                "(maple.finance/transparency) — entered by hand, "
+                                                "because robots.txt disallows fetching that page",
             "treasury_holding_tokens_chain_crosscheck": "SYRUP held at the daoMultisig chain address "
-                                                        "(cross-check only — see OPEN_QUESTIONS for "
-                                                        "the unreconciled gap against the page)",
+                                                        "(unfed since 2026-09-21 — this read serves "
+                                                        "treasury_holding_tokens directly again)",
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
@@ -3928,26 +3990,26 @@ PROJECTS = [
             # "prefer: secondary" is pure narrative and both metrics are chain reads on the same
             # tier — here the two are on DIFFERENT tiers, so which is "primary" is a real
             # data-flow fact, not just which column a reader should trust more).
-            {"primary": "treasury_holding_tokens", "primary_source": "https://maple.finance/transparency",
-             "secondary": "treasury_holding_tokens_chain_crosscheck", "secondary_source": "tier 2 daoMultisig contract read",
-             "tolerance": 0.05, "prefer": "primary",
-             "note": "PROMOTED THE PAGE TO PRIMARY, 2026-09-18. The prior version of this cross-check "
-                     "had the chain read as primary and the page as secondary; on the first live run "
-                     "after arming, the chain read returned 23.09M SYRUP against the page's 77.66M — "
-                     "an unreconciled ~3x gap this cross-check exists to catch, but with the roles "
-                     "reversed it would have STORED the chain's 23.09M as treasury_holding_tokens (the "
-                     "page's 77.66M, what Maple itself publishes, demoted to a secondary the Gap "
-                     "Report/A3 tab never surfaces as the headline figure) and merely flagged a "
-                     "Review Queue divergence nobody is guaranteed to read. Maple's OWN publication is "
-                     "the more defensible default while the gap is unexplained — see OPEN_QUESTIONS — "
-                     "so the metric names were swapped rather than just the note. "
-                     "STILL ARMED the same way: sources.yaml's Maple entry now targets "
-                     "treasury_holding_tokens directly (retargeted from buyback_fund_balance_dashboard, "
-                     "same URL and anchor 'SYRUP Holdings'), and the chain read carries "
-                     "metric_override 'treasury_holding_tokens_chain_crosscheck' so the two no longer "
-                     "collide under one metric key (see fetch/__init__._resolve_tier_collisions, which "
-                     "would otherwise always keep the earlier tier — the chain read — regardless of "
-                     "which one this config wants to be primary)."},
+            {"primary": "treasury_holding_tokens_reported",
+             "primary_source": "https://maple.finance/transparency (MANUAL — robots-disallowed)",
+             "secondary": "treasury_holding_tokens",
+             "secondary_source": "tier 2 daoMultisig contract read, labelled PARTIAL",
+             "tolerance": 0.05, "prefer": "secondary",
+             "note": "REVERSED AGAIN 2026-09-21, and this time not over which figure is better. "
+                     "The 2026-09-18 promotion made maple.finance/transparency the primary source "
+                     "for treasury_holding_tokens; maple.finance/robots.txt DISALLOWS /transparency, "
+                     "so the scrape refused — correctly, we respect robots.txt and do not route "
+                     "around it — and the metric went BLANK. A blank cell is worse than a partial "
+                     "one: it says nothing about Maple's treasury at all. "
+                     "SO: the daoMultisig chain read serves treasury_holding_tokens again, labelled "
+                     "PARTIAL, and Maple's published 77.66M is carried by hand under "
+                     "treasury_holding_tokens_reported (manual_quarterly + manual_overrides.csv). "
+                     "prefer='secondary' is deliberate and is NOT a judgement that 23.09M is the "
+                     "truer number — it says which side is AUTOMATED. The manual side cannot "
+                     "refresh itself, so preferring it would pin the sheet to whatever date "
+                     "somebody last read the page. The two sit side by side under different names "
+                     "precisely so the ~3x gap stays visible rather than being settled by whichever "
+                     "source wrote last. The gap is unchanged and still open — see OPEN_QUESTIONS."},
         ],
         "materiality": "medium",
         "notes": "Archetype 3. No burn — confirmed. SPLIT IS TIERED, not the stale flat 25%: 10% below "
@@ -7328,6 +7390,25 @@ OPEN_QUESTIONS = [
                       "which an unexplained balance gap alone does not establish.",
     },
     {
+        # UPDATE 2026-09-21 — THE GAP IS UNCHANGED AND STILL OPEN. What changed is how each side
+        # is sourced, and the change makes the gap MORE visible rather than less.
+        #
+        # The 2026-09-18 response to this question was to prefer Maple's own published figure: the
+        # transparency page became the primary source for treasury_holding_tokens and the chain
+        # read was demoted out of that metric name. maple.finance/robots.txt DISALLOWS
+        # /transparency, so the scrape refused on the next run — correctly — and the metric went
+        # blank. The gap stopped being visible because NEITHER number was on the sheet.
+        #
+        # NOW: the chain read serves treasury_holding_tokens again, explicitly labelled PARTIAL
+        # against the 77.66M, and the published figure is entered by hand under
+        # treasury_holding_tokens_reported. Both numbers are on the sheet under different names,
+        # with the discrepancy stated on the automated one. None of this answers WHY they differ.
+        #
+        # AND THE "PARTIAL" LABEL IS NOT A RESOLUTION. It adopts the FIRST hypothesis below
+        # (daoMultisig holds only part of the SSF) as the working assumption, because "part of the
+        # treasury" is the weakest claim consistent with both readings — not because it has been
+        # confirmed. It has not. If the second or third explanation is the right one, the label is
+        # wrong and the figure may not be a treasury holding at all.
         "project": "Maple", "topic": "Maple treasury cross-check fired: 23.09M chain vs 77.66M page "
                                      "— unreconciled",
         "severity": 2,
