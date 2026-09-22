@@ -158,8 +158,13 @@ def main(argv=None) -> int:
     # store as it stands. Refetching to see a label change is a day's politeness budget spent on
     # free endpoints for nothing, and the standing rule is one run a day.
     if args.no_fetch:
-        log.info("--no-fetch: rebuilding %s from the store, fetching nothing", WORKBOOK.name)
-        build_workbook(st, WORKBOOK)
+        # THE SAME SCOPE AS A FETCHING RUN. --no-fetch is how every read-time change is checked,
+        # so a build that quietly widened to 30 projects would show a workbook nobody is going to
+        # get from a real run.
+        scope = resolve_scope(args, log)
+        log.info("--no-fetch: rebuilding %s from the store, fetching nothing (%d project(s))",
+                 WORKBOOK.name, len(scope))
+        build_workbook(st, WORKBOOK, only=[p["name"] for p in scope])
         log.info("wrote %s", WORKBOOK)
         st.close()
         return 0
@@ -264,8 +269,13 @@ def main(argv=None) -> int:
     if n_gaps:
         log.warning("%d unresolved metrics — see the Gap Report tab, it is the to-do list", n_gaps)
 
-    build_workbook(st, WORKBOOK, run_id=run_id)
-    log.info("wrote %s", WORKBOOK)
+    # THE WORKBOOK IS DRAWN AT THE SCOPE THAT WAS FETCHED. Rendering a project this run never
+    # touched puts a frozen cell next to a fresh one with nothing to tell them apart.
+    build_workbook(st, WORKBOOK, run_id=run_id, only=[p["name"] for p in projects])
+    log.info("wrote %s — %d project(s) rendered%s", WORKBOOK, len(projects),
+             "" if len(projects) == len(config.PROJECTS)
+             else f" of {len(config.PROJECTS)}; the rest keep their stored history and are "
+                  f"redrawn by --all")
     st.close()
     return 0
 

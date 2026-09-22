@@ -8279,3 +8279,80 @@ def test_a_repulled_query_writes_every_metric_it_serves():
     # carrying free, and paying three times would trade one bug for a worse one.
     assert d.http.calls == 1, f"one execution for all three metrics, got {d.http.calls}"
     print(f"query cadence ok: {len(served)} metrics written from one re-pull, 30 rows each")
+
+
+def test_portfolio_scope_applies_to_the_build_and_not_only_to_the_fetch(tmp_path):
+    """** THE RUN FETCHED 16 PROJECTS AND THE WORKBOOK DREW 30. **
+
+    Fourteen of those were frozen at whatever the store last held, with nothing on the sheet
+    saying the run had not touched them — a stale cell presented exactly like a fresh one, which
+    is the failure this project corrects in every other form.
+
+    Parked projects are NOT deleted. Their history stays in the store and comes back the moment
+    they are named again, because a series that stops collecting cannot be backfilled from a
+    provider that only serves current values.
+    """
+    import sqlite3
+    from openpyxl import load_workbook
+    import build_workbook as bw
+    import store as store_mod
+
+    db = tmp_path / "scope.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(store_mod.SCHEMA)
+    conn.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)", [
+        ("2026-09-21", p, "price_usd", 1.0, "coingecko", 1, "t")
+        for p in ("Uniswap", "GEODNET", "Sky", "Bitcoin")])
+    conn.executemany(
+        "INSERT INTO gap_report(run_id, ts, project, metric, tiers_attempted, reason, suggestion,"
+        " priority, priority_label) VALUES (?,?,?,?,?,?,?,?,?)",
+        [("r1", "2026-09-21T00:00:00", p, "emissions_tokens", "1", "no source", "add one", 6, "P6")
+         for p in ("Uniswap", "Bitcoin")])
+    conn.commit()
+    conn.close()
+
+    held = ["Uniswap", "GEODNET", "Sky"]
+    out = tmp_path / "scoped.xlsx"
+    bw.build_workbook(store_mod.Store(db), out, only=held)
+    wb = load_workbook(out)
+
+    drawn = [wb["Config & Sources"].cell(row=r, column=1).value
+             for r in range(bw.CFG_R0, bw._cfg_r1() + 1)]
+    assert drawn == held, drawn
+
+    master = [wb["Master"].cell(row=r, column=1).value for r in range(5, 5 + len(held))]
+    assert master == held, master
+    # THE TITLE STATES THE SCOPE. "all projects" on a narrowed workbook tells the reader nothing
+    # is missing, which is the same untruth as the stale cell.
+    title = wb["Master"].cell(row=1, column=1).value
+    assert f"{len(held)} of {len(bw.PROJECTS)} projects" in title and "--all" in title, title
+
+    # THE GAP REPORT NARROWS TOO — it is the tab most likely to be read as the work queue, and a
+    # row for a project the run never fetched is a to-do item that is out of scope by design.
+    gap = wb["Gap Report"]
+    cells = {gap.cell(row=r, column=c).value
+             for r in range(1, gap.max_row + 1) for c in range(1, 4)}
+    assert "Bitcoin" not in cells, "a parked project must not appear on the Gap Report"
+    assert "Uniswap" in cells
+
+    # --all RESTORES, and the store still holds the parked project's rows.
+    everything = tmp_path / "all.xlsx"
+    bw.build_workbook(store_mod.Store(db), everything)
+    wb2 = load_workbook(everything)
+    assert wb2["Master"].cell(row=1, column=1).value == "Master — all projects"
+    assert bw._cfg_r1() - bw.CFG_R0 + 1 == len(bw.PROJECTS)
+    st = store_mod.Store(db)
+    assert not st.load_long().query("project == 'Bitcoin'").empty, \
+        "parking a project must never delete its history"
+    st.close()
+
+    # AN UNKNOWN NAME IS REFUSED, not quietly dropped: a workbook missing a held asset looks the
+    # same as one where that asset has no data.
+    try:
+        bw.build_workbook(store_mod.Store(db), tmp_path / "bad.xlsx", only=["Uniswapp"])
+    except ValueError as e:
+        assert "unknown project" in str(e)
+    else:
+        raise AssertionError("an unknown name in the build scope must refuse")
+    print(f"build scope ok: {len(held)} drawn, Gap Report narrowed, --all restores all "
+          f"{len(bw.PROJECTS)}, parked history intact")

@@ -128,7 +128,29 @@ CC = {name: get_column_letter(i + 1) for i, (name, _) in enumerate(CFG_COLS)}
 CFG_GLOBAL_ROWS = {"period_days": 3, "short_days": 4, "days_per_year": 5, "stale_after_days": 6}
 CFG_HEADER_ROW = 9
 CFG_R0 = CFG_HEADER_ROW + 1
-CFG_R1 = CFG_R0 + len(PROJECTS) - 1
+
+# ===== WHICH PROJECTS THIS BUILD RENDERS. Added 2026-09-23. =====
+# Portfolio scope was applied to the FETCH and not to the BUILD, so a run that politely fetched
+# 16 projects still rendered 30 — fourteen of them frozen at whatever the store last held, with
+# nothing on the sheet saying the run had not touched them. A parked project's rows stay in the
+# store untouched; they are simply not drawn.
+#
+# ONE MUTABLE, READ THROUGH ONE FUNCTION, because eleven call sites is exactly the number at
+# which passing a list down by hand goes wrong in one of them — and the one that got missed
+# would render a project the rest of the workbook has no row for, producing #N/A in every
+# INDEX/MATCH that reached it.
+_SCOPE: list = list(PROJECTS)
+
+
+def scoped_projects() -> list:
+    """The projects this build renders — all of them unless build_workbook narrowed the scope."""
+    return _SCOPE
+
+
+def _cfg_r1() -> int:
+    """Last row of the Config & Sources table. A FUNCTION because the table is as long as the
+    scope, and the INDEX/MATCH ranges built off it must match what was actually written."""
+    return CFG_R0 + len(scoped_projects()) - 1
 
 MONTHLY_METRICS = ["fees_usd", "revenue_usd", "price_usd", "gross_issuance_tokens", "gross_burn_tokens",
                    "customer_revenue_usd", "emissions_tokens", "actual_buyback_usd"]
@@ -635,7 +657,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     review_keys = set()
     if review is not None and not review.empty:
         review_keys = {(r["project"], r["metric"]) for r in review.to_dict("records")}
-    applicable = {p["name"]: set(config.metrics_for_project(p)) for p in PROJECTS}
+    applicable = {p["name"]: set(config.metrics_for_project(p)) for p in scoped_projects()}
     short, period, stale_days = GLOBALS["short_days"], GLOBALS["period_days"], GLOBALS["stale_after_days"]
     last_success = {}
     if fetch_status is not None and not fetch_status.empty:
@@ -653,7 +675,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         except (TypeError, ValueError):
             continue
     rows = []
-    for p in PROJECTS:
+    for p in scoped_projects():
         name = p["name"]
         for metric, m in METRICS.items():
             g = groups.get((name, metric))
@@ -851,7 +873,7 @@ def monthly_table(long: pd.DataFrame, asof: pd.Timestamp) -> tuple[list[str], pd
     months = [str(end - i) for i in range(n - 1, -1, -1)]
     rows = []
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
-    for p in PROJECTS:
+    for p in scoped_projects():
         for metric in MONTHLY_METRICS:
             m = METRICS[metric]
             g = groups.get((p["name"], metric))
@@ -884,7 +906,8 @@ class Refs:
 
     def C(self, r: int, colname: str) -> str:
         c = CC[colname]
-        return f"INDEX({CFG}!${c}${CFG_R0}:${c}${CFG_R1},MATCH($A{r},{CFG}!$A${CFG_R0}:$A${CFG_R1},0))"
+        r1 = _cfg_r1()
+        return f"INDEX({CFG}!${c}${CFG_R0}:${c}${r1},MATCH($A{r},{CFG}!$A${CFG_R0}:$A${r1},0))"
 
     def M(self, r: int, metric: str, month_cell: str) -> str:
         return (f'INDEX(Monthly!${self.mc0}${self.m0}:${self.mc1}${self.m1},'
@@ -1175,7 +1198,7 @@ def write_config(ws, asof: pd.Timestamp):
     windows = _period_windows(asof)
     headers = [h for h, _ in CFG_COLS]
     _header(ws, CFG_HEADER_ROW, headers)
-    for i, p in enumerate(PROJECTS):
+    for i, p in enumerate(scoped_projects()):
         r = CFG_R0 + i
         fs = p.get("fee_split") or {}
         bs = p.get("burn_split") or {}
@@ -1258,7 +1281,7 @@ def write_config(ws, asof: pd.Timestamp):
                 c.fill = FILL_KEY
             if head in ("Notes", "Status changes"):
                 c.alignment = Alignment(wrap_text=False)
-    _write_closed_records(ws, CFG_R1 + 3)
+    _write_closed_records(ws, _cfg_r1() + 3)
     _set_widths(ws, {get_column_letter(i + 1): w for i, (_, w) in enumerate(CFG_COLS)})
     ws.freeze_panes = ws.cell(row=CFG_R0, column=3)
 
@@ -1587,7 +1610,12 @@ def _txt(fn):
 
 
 def write_master(ws, R: Refs, data_by_key: dict):
-    _title(ws, "Master — all projects", "All live figures over the comparison window (Q0 = trailing 90 days by default, set on Config & Sources). "
+    # THE TITLE STATES THE SCOPE. "all projects" on a 16-project workbook is the same class of
+    # untruth as a stale cell presented as fresh: it tells the reader nothing is missing.
+    _n, _all = len(scoped_projects()), len(PROJECTS)
+    _heading = ("Master — all projects" if _n == _all
+                else f"Master — {_n} of {_all} projects (portfolio scope; --all renders the rest)")
+    _title(ws, _heading, "All live figures over the comparison window (Q0 = trailing 90 days by default, set on Config & Sources). "
                                           "Token conversions use the 90-day AVERAGE price (labelled); spot price shown for reference only. Green = pulled from Data/Config, black = formula.")
     ann = ANN
     specs = [
@@ -1627,14 +1655,14 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Latest data date (core series)", lambda r, p: max([data_by_key.get(f"{p['name']}|{m}", {}).get("latest_date", "") or "" for m in ("price_usd", "fees_usd", "revenue_usd", "tvl_usd")] or [""]), FMT_TEXT, "text"),
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
-    _write_table(ws, R, PROJECTS, specs, data_by_key,
+    _write_table(ws, R, scoped_projects(), specs, data_by_key,
                  ["price_usd", "fees_usd", "revenue_usd", "circulating_supply", "gross_burn_tokens", "gross_issuance_tokens", "actual_buyback_usd"],
                  key_cols={20, 21})
     _set_widths(ws, {"A": 16, "B": 8, "C": 10, "D": 6, "E": 9, "F": 10, "G": 10, **{get_column_letter(i): 14 for i in range(8, 32)}, "AF": 12, "AG": 60, "AH": 60})
 
 
 def write_a4(ws, R: Refs, data_by_key: dict):
-    projects = [p for p in PROJECTS if 4 in p["archetypes"]]
+    projects = [p for p in scoped_projects() if 4 in p["archetypes"]]
     _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
                                        "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
                                        "Otherwise net = issuance − burn (positive = net inflation). "
@@ -1689,13 +1717,13 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["fees_usd", "price_usd", "gross_burn_tokens", "gross_issuance_tokens", "circulating_supply"],
                        key_cols={8, 10, 12, 14})
-    _confidence_tally(ws, end + 2, PROJECTS, specs, data_by_key)
+    _confidence_tally(ws, end + 2, scoped_projects(), specs, data_by_key)
     _set_widths(ws, {"A": 16, "B": 8, "C": 12, "D": 11, "E": 11, **{get_column_letter(i): 14 for i in range(6, 34)}, "AH": 60, "AI": 60})
     return projects, end
 
 
 def write_a3(ws, R: Refs, data_by_key: dict):
-    projects = [p for p in PROJECTS if 3 in p["archetypes"]]
+    projects = [p for p in scoped_projects() if 3 in p["archetypes"]]
     _title(ws, "A3 — Revenue Buyback", "Pipeline: revenue (DefiLlama) × documented split (config) = implied buyback $ ÷ 90d AVERAGE price = implied tokens ÷ circulating supply, annualised = buyback as % of supply. "
                                         "Actual buyback shown alongside; the gap is itself a signal. Yield destination is tracked separately from burn and never netted against it. "
                                         "Grey = split unconfirmed (derived figure suppressed), OR split confirmed but its BASE unconfirmed (hover for which). Orange status = paused.")
@@ -1831,7 +1859,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
 
 
 def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
-    projects = [p for p in PROJECTS if 1 in p["archetypes"]]
+    projects = [p for p in scoped_projects() if 1 in p["archetypes"]]
     _title(ws, "A1 — Infrastructure", "Demand: transactions, fees, fee per tx, active addresses (low weight), stablecoin supply, TVL (primary), RWA on chain (both sources, divergence shown). "
                                        "Supply: gross issuance, staking rate, float, net issuance after burn where an A4 block applies. Key ratio: fees ÷ issuance ($, issuance at 90d average price).")
     ann = ANN
@@ -1881,7 +1909,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
 
 
 def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
-    projects = [p for p in PROJECTS if 2 in p["archetypes"]]
+    projects = [p for p in scoped_projects() if 2 in p["archetypes"]]
     _title(ws, "A2 — Coordination Mechanism", "Demand: physical/resource supply units, utilisation, end-user revenue ($). Supply: emissions to suppliers; split between supplier earnings from emissions vs actual customer payment. "
                                                "Key ratio: customer revenue per unit of emission, tracked over time. Most inputs come from Dune queries or manual overrides — see Data flags.")
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
@@ -2123,7 +2151,7 @@ def _write_manual_quarterly(ws, row: int, long: pd.DataFrame) -> int:
     Deliberately NOT in the gap list above. A number that changes once a year is not an
     unresolved gap, and a permanent entry on a to-do list is how the to-do list stops being read.
     """
-    entries = [(p["name"], m) for p in PROJECTS for m in (p.get("manual_quarterly") or ())]
+    entries = [(p["name"], m) for p in scoped_projects() for m in (p.get("manual_quarterly") or ())]
     ws.cell(row=row, column=1,
             value=f"Manual — review quarterly ({len(entries)}). Hand-entered by design, not gaps. "
                   f"Stale after {config.MANUAL_QUARTERLY_STALE_DAYS} days.").font = F_BOLD
@@ -2330,14 +2358,49 @@ def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: s
 
 
 # ---------------------------------------------------------------------------------------
-def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.Timestamp | None = None) -> Path:
+def build_workbook(store, path: Path | str, run_id: str | None = None,
+                   asof: pd.Timestamp | None = None, only: list[str] | None = None) -> Path:
+    """Render the workbook. `only` narrows it to those project names; None renders every project.
+
+    ** PORTFOLIO SCOPE APPLIED TO THE FETCH AND NOT TO THE BUILD. Fixed 2026-09-23. ** A run that
+    politely fetched 16 projects still drew 30 tabs' worth of rows, fourteen of them frozen at
+    whatever the store last held with nothing on the sheet saying the run had not touched them —
+    a stale cell presented exactly like a fresh one, which is the failure this project corrects
+    in every other form.
+
+    Parked projects are NOT deleted from the store. Their history stays where it is and comes
+    back the moment they are named again, because a series that stops collecting cannot be
+    backfilled from a provider that only serves current values.
+    """
+    global _SCOPE
     path = Path(path)
+    if only:
+        missing = [n for n in only if n not in config.PROJECT_BY_NAME]
+        if missing:
+            # REFUSE. A name that matches nothing would silently shrink the workbook, and a
+            # workbook missing a held asset looks the same as one where that asset has no data.
+            raise ValueError(f"build scope names unknown project(s): {', '.join(missing)}")
+        _SCOPE = [config.PROJECT_BY_NAME[n] for n in only]
+    else:
+        _SCOPE = list(PROJECTS)
     long = store.load_long()
     fetch_status = store.fetch_status()
     runlog = store.run_log(run_id) if run_id else store.run_log()
     gaps = store.gap_report(run_id) if run_id else store.gap_report()
     review = store.review_queue(run_id) if run_id else store.review_queue()
     staged = store.staging(run_id) if run_id else store.staging()
+
+    # EVERY TAB NARROWS, NOT JUST THE ONES BUILT FROM `data`. A Gap Report listing a project the
+    # run never fetched is a to-do list item for work that is out of scope, and it is the tab
+    # most likely to be read as the work queue.
+    if only:
+        keep = {p["name"] for p in scoped_projects()}
+        long = long[long["project"].isin(keep)] if not long.empty else long
+        gaps = gaps[gaps["project"].isin(keep)] if gaps is not None and not gaps.empty else gaps
+        review = review[review["project"].isin(keep)] if review is not None and not review.empty else review
+        staged = staged[staged["project"].isin(keep)] if staged is not None and not staged.empty else staged
+        if fetch_status is not None and not fetch_status.empty:
+            fetch_status = fetch_status[fetch_status["project"].isin(keep)]
     overrides_n = int(long["is_manual"].sum()) if not long.empty else 0
     asof = asof or pd.Timestamp.now('UTC').tz_localize(None).normalize()
 
@@ -2382,7 +2445,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None, asof: pd.
     write_runlog(ws_log, runlog, fetch_status, run_id, asof, overrides_n)
 
     # legend on Master
-    legend_row = 4 + len(PROJECTS) + 3
+    legend_row = 4 + len(scoped_projects()) + 3
     legend = [("Legend", F_BOLD, None), ("Blue text = hardcoded input / config lever", F_INPUT, None), ("Black = formula", F_CALC, None),
               ("Green = pulled from another sheet", F_LINK, None), ("Yellow fill = manual override (entered_on in comment)", F_BASE, FILL_MANUAL),
               ("Grey fill = split unconfirmed, derived figure suppressed", F_BASE, FILL_UNCONFIRMED), ("Orange fill = stale (last good fetch in comment)", F_BASE, FILL_STALE),
