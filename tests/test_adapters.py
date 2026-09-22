@@ -8664,3 +8664,84 @@ def test_the_emissions_paywall_is_the_last_explanation_not_the_first():
         geo["emissions_model"] = whole
     print("emissions reasons ok: 11 projects classified, the paywall kept only where it is the "
           "real obstacle, and unsourced classifications say so")
+
+
+def test_net_mint_monthly_is_self_reported_and_is_never_derived():
+    """** DERIVING THIS WOULD HAVE DESTROYED THE THING IT EXISTS FOR. **
+
+    It was proposed as "monthly issuance minus monthly burn". The A4 tab already carries that
+    derived figure in its own row, and puts a THIRD row beside them: "Self-reported - derived (a
+    gap here means one of the two is wrong)". Deriving this one makes that difference
+    structurally zero for every project and the comparison stops working — silently, because a
+    row of zeros looks exactly like agreement.
+    """
+    m = config.METRICS["net_mint_monthly"]
+    assert m["requires_flag"] == "self_reported_net_mint"
+    assert "SELF-REPORTED" in m["label"] and "never derived" in m["label"]
+
+    # ONE FLAG, ONE MEANING. build_workbook's _net_change already keys the formula preference on
+    # self_reported_net_mint; applicability keys on the same flag rather than a second rule.
+    import build_workbook as bw
+    src = __import__("inspect").getsource(bw._net_change)
+    assert "self_reported_net_mint" in src
+
+    for name in ("Ethereum", "GEODNET", "Hyperliquid", "Uniswap", "Sky"):
+        assert "net_mint_monthly" not in config.metrics_for_project(config.PROJECT_BY_NAME[name]), \
+            f"{name} does not publish a net mint — the derived figure is already on the sheet"
+    # AND IT SURVIVES WHERE A PROTOCOL DOES PUBLISH ONE.
+    assert config.PROJECT_BY_NAME["PancakeSwap"]["self_reported_net_mint"] is True
+    assert "net_mint_monthly" in config.metrics_for_project(config.PROJECT_BY_NAME["PancakeSwap"])
+    print("net mint ok: self-reported only, so the self-reported-vs-derived check keeps working")
+
+
+def test_only_a_time_lock_has_an_average_duration():
+    """Eleven gaps, and for ten of them the quantity does not exist. An average duration presumes
+    positions with an END DATE that varies between holders. Everywhere else the stake is
+    cooldown-based: one notice period for everyone, so the "average" is that constant and
+    computing it from chain data would be an elaborate way to read a number out of the docs."""
+    assert config.METRICS["avg_lock_duration_days"]["requires_lock_model"] == "time_locked"
+
+    aero = config.PROJECT_BY_NAME["Aerodrome"]["lock_model"]
+    assert aero["model"] == "time_locked" and aero["sourced"] is True
+    assert "avg_lock_duration_days" in config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"])
+    # ** AND veAERO'S OWN FIGURE IS NOT BUILT, DELIBERATELY. ** It needs every veNFT's lock end
+    # enumerated and weighted — a Dune query or a full log scan, not a balance read. Flagged so
+    # the cost is visible before anyone starts rather than discovered halfway through.
+    assert aero["derivation_cost"].startswith("HEAVY")
+
+    for name in ("Pendle", "Sky", "Chainlink", "Maple", "Ether.fi", "World Mobile", "GEODNET"):
+        assert "avg_lock_duration_days" not in config.metrics_for_project(
+            config.PROJECT_BY_NAME[name]), name
+
+    # AN UNSOURCED COOLDOWN CONSTANT IS NOT RENDERED ANYWHERE. Pendle's 14 days came from review
+    # and could not be re-confirmed from Pendle's own docs here; carrying it as a figure would be
+    # exactly the "confident number nobody checked" this book keeps removing.
+    pendle = config.PROJECT_BY_NAME["Pendle"]["lock_model"]
+    assert pendle["model"] == "cooldown" and pendle["sourced"] is False
+    assert pendle["cooldown_days"] == 14 and "Confirm the 14 days" in pendle["note"]
+    print("lock duration ok: veAERO is the one time-lock; ten cooldown stakes stop asking")
+
+
+def test_geodnets_revenue_split_reconciles_at_87_not_80_and_that_is_left_open():
+    """The declared 80% split annualises August's burn to ~$11.3m against a reported ~$10.4m ARR.
+    The implied share is 0.8706 — exactly the "~87%, against a declared 80% fee_split" this entry
+    already carried from a different route. Two independent paths to the same 8.8% discrepancy,
+    so it is real, and nothing here picks which of the three readings is right."""
+    rec = config.PROJECT_BY_NAME["GEODNET"]["revenue_split_reconciliation"]
+    assert rec["declared_share"] == 0.80
+    assert round(rec["burn_usd_august"] / 0.80 * 12) == rec["implied_annualised_at_declared"]
+    assert round(rec["burn_usd_august"] * 12 / rec["reported_arr"], 4) == rec["observed_share_against_reported_arr"]
+    assert abs(rec["implied_annualised_at_observed"] - rec["reported_arr"]) / rec["reported_arr"] < 0.01
+    assert rec["status"].startswith("OPEN")
+
+    # THE SECOND, INDEPENDENT ROUTE TO ~87% that was already on file.
+    blob = str(config.PROJECT_BY_NAME["GEODNET"])
+    assert "~87%, against a declared 80% fee_split" in blob
+
+    # AND NO DERIVED customer_revenue_usd WAS ADDED, because DefiLlama's own adapter already
+    # computes fees as burn/0.8 — a second column would be the same number twice, with the 8.8%
+    # question still unasked.
+    ev = config.PROJECT_BY_NAME["GEODNET"]["defillama_fees_evidence"]
+    assert ev["fees_are_derived_from_the_burn"] is True
+    print(f"geodnet reconciliation ok: 80% implies ${rec['implied_annualised_at_declared']:,}, "
+          f"87% implies ${rec['implied_annualised_at_observed']:,} against ${rec['reported_arr']:,}")

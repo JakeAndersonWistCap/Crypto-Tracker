@@ -408,7 +408,24 @@ METRICS = {
     "staker_count":               {"label": "Holders / stakers", "kind": "stock", "unit": "count",
                                    "archetypes": [3], "tiers": [3, 4],
                                    "sanity_min": 0, "sanity_max": 1e8, "only_projects": ["Ether.fi"]},
-    "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830},
+    # ===== ONLY A TIME-LOCK HAS AN AVERAGE DURATION. Scoped 2026-09-23. =====
+    # Eleven gaps, and for most of them the quantity does not exist. "Average lock duration"
+    # presumes positions with an END DATE that varies between holders — a veNFT locked for
+    # anywhere from a week to four years. That is one project in the book: veAERO.
+    #
+    # EVERYWHERE ELSE THE STAKE IS COOLDOWN-BASED. There is no per-position expiry to average:
+    # every holder faces the same fixed notice period, so the "average" is that constant and
+    # computing it from chain data would be an elaborate way to read a number out of the docs.
+    # Reporting it as a missing measurement invites someone to go and build the enumeration.
+    #
+    # ** AND veAERO'S OWN FIGURE IS NOT BUILT HERE, DELIBERATELY. ** It needs every veNFT's
+    # lock-end enumerated and weighted by balance — hundreds of thousands of positions, a Dune
+    # query or a full log scan, not a balance read. It stays a gap, flagged HEAVY, so the cost is
+    # visible before anyone starts rather than discovered halfway through.
+    #
+    # requires_lock_model keys applicability on the declared lock shape: only a project whose
+    # lock is time-based has this metric at all.
+    "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830, "requires_lock_model": "time_locked"},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
     #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
     #                                 producing stkAAVE and stkABPT. THIS is the AAVE lock rate,
@@ -428,7 +445,23 @@ METRICS = {
     "customer_revenue_usd":       {"label": "End-user revenue",                "kind": "flow",  "unit": "usd",    "archetypes": [2],          "tiers": [5, 3, 1], "sanity_min": 0,  "sanity_max": 1e11},
     "publisher_conviction_usd":   {"label": "Publisher Conviction (pre-purchased demand)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [5, 3], "sanity_min": 0,   "sanity_max": 1e10, "only_projects": ["OriginTrail"]},
     # --- self-reported headline figures (tier 3, taken as published and cited)
-    "net_mint_monthly":           {"label": "Net mint, self-reported monthly", "kind": "flow",  "unit": "tokens", "archetypes": [4],          "tiers": [3],    "sanity_min": -1e10, "sanity_max": 1e10},
+    # ===== SELF-REPORTED ONLY, AND THAT IS THE WHOLE POINT OF IT. Scoped 2026-09-23. =====
+    # This metric was proposed for derivation as "monthly issuance minus monthly burn", which
+    # would have quietly destroyed the thing it exists for. The A4 tab already carries the
+    # derived figure in its own row ("Derived net supply change (issuance - burn)") and puts a
+    # THIRD row beside them: "Self-reported - derived (a gap here means one of the two is
+    # wrong)". Deriving this one makes that difference structurally zero for every project and
+    # the comparison stops working — silently, because a row of zeros looks like agreement.
+    #
+    # SO IT IS NOT A DERIVABLE FIGURE NOBODY DERIVED. It is the PROTOCOL'S OWN published number,
+    # and five of the six archetype-4 gaps were simply projects that do not publish one. That is
+    # a not_applicable, not a to-do: the derived figure is already on the sheet for them.
+    # Applicability keys on self_reported_net_mint, which build_workbook's _net_change already
+    # keys on — one flag, one meaning, rather than a flag for the formula and a gap for the row.
+    "net_mint_monthly":           {"label": "Net mint, SELF-REPORTED by the protocol (never derived — the derived figure is its own row)",
+                                   "kind": "flow",  "unit": "tokens", "archetypes": [4],
+                                   "tiers": [3],    "sanity_min": -1e10, "sanity_max": 1e10,
+                                   "requires_flag": "self_reported_net_mint"},
     # only_projects restricts a metric to named projects even when its archetypes match.
 }
 
@@ -2187,6 +2220,14 @@ PROJECTS = [
                     "supply never moves. DefiLlama's unlocks feed is the wrong shape for it and "
                     "the Pro tier would not answer the question.",
         },
+        # COOLDOWN, NOT A TIME-LOCK. Chainlink staking has a fixed unbonding notice shared by
+        # every holder, so there is no distribution of expiries to average.
+        "lock_model": {
+            "model": "cooldown", "sourced": False, "source": None,
+            "declared_by": "Jake, 2026-09-23 review", "cooldown_days": None,
+            "note": "the notice period is the same for every staker; confirm its length from "
+                    "Chainlink's own staking docs before rendering it.",
+        },
         "name": "Chainlink", "symbol": "LINK",
         "coingecko_id": "chainlink",
         "defillama_fees_slug": "chainlink", "defillama_protocol": "chainlink", "defillama_chain": None,
@@ -3381,6 +3422,43 @@ PROJECTS = [
         # AND SOLANA (the incinerator, mint 7JA5eZ...mKHu, from 2024-09-24), so holders_revenue
         # against our own burn series is a COVERAGE cross-check on the Solana leg — a real
         # question, since our chain read is Polygon-only and only the Dune stitch spans both.
+        # ===== THE 80/87 RECONCILIATION, WORKED 2026-09-23. NOT RESOLVED — RECORDED. =====
+        # Deriving revenue from the burn at the DECLARED 80% split was proposed as a cross-check
+        # against GEODNET's reported ARR. The arithmetic is worth writing down because it lands
+        # on a number this entry already carries:
+        #
+        #   August burn                      $754,542
+        #   / 0.80 (declared fee_split)      $943,178/mo  ->  $11,318,130 annualised
+        #   / 0.87 (observed share_of_arr)   $867,290/mo  ->  $10,407,476 annualised
+        #   GEODNET's reported ARR           ~$10.4m
+        #
+        # THE DECLARED SPLIT OVERSTATES REVENUE BY ~8.8%. The implied share against the reported
+        # ARR is 0.8706 — which is exactly the "~87%, against a declared 80% fee_split" already
+        # recorded on this entry's archetype-3 evidence. Two independent routes to the same
+        # discrepancy, so it is a real gap between the mandate and the behaviour, not a rounding
+        # artefact.
+        #
+        # THREE READINGS, AND NOTHING HERE PICKS ONE: the declared split is stale; the buyback is
+        # running ABOVE its mandate; or "revenue" in the ARR figure is a different base from
+        # "fees" in the split. Each has a different consequence for the archetype 3 tab, and the
+        # difference is 8.8% of a headline number — too big to average away and too small to be
+        # obviously wrong, which is the range where a silent choice does the most damage.
+        #
+        # AND IT IS WHY NO DERIVED customer_revenue_usd IS ADDED HERE. DefiLlama's own adapter
+        # computes fees as burn/0.8 (see defillama_fees_evidence), so the slug wired above
+        # already serves that arithmetic under fees_usd and revenue_usd. A second column deriving
+        # the same quotient would not be a cross-check — it would be the same number twice, with
+        # the 8.8% question still unasked.
+        "revenue_split_reconciliation": {
+            "burn_usd_august": 754_542,
+            "declared_share": 0.80,
+            "implied_annualised_at_declared": 11_318_130,
+            "observed_share_against_reported_arr": 0.8706,
+            "implied_annualised_at_observed": 10_407_476,
+            "reported_arr": 10_400_000,
+            "worked_on": "2026-09-23",
+            "status": "OPEN — three readings, none chosen",
+        },
         "defillama_fees_slug": "geodnet",
         "defillama_fees_evidence": {
             "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/geodnet.ts",
@@ -4618,6 +4696,12 @@ PROJECTS = [
             "declared_by": "Jake, 2026-09-23 review",
             "note": "syrupDrip releases pre-minted SYRUP.",
         },
+        "lock_model": {
+            "model": "cooldown", "sourced": False, "source": None,
+            "declared_by": "Jake, 2026-09-23 review", "cooldown_days": None,
+            "note": "stSYRUP is a cooldown stake — one notice period for everyone, so no "
+                    "distribution of expiries.",
+        },
         "name": "Maple", "symbol": "SYRUP",
         "coingecko_id": "syrup",
         "defillama_fees_slug": "maple", "defillama_protocol": "maple", "defillama_chain": None,
@@ -5663,6 +5747,20 @@ PROJECTS = [
             "note": "emissions_tokens is gross_issuance_tokens for this project; a second source "
                     "would be a second reading of one event.",
         },
+        # ===== THE ONE TIME-LOCK IN THE BOOK. =====
+        # veAERO positions are NFTs with a per-position lock end, anywhere from one week to four
+        # years, so an average duration is a real quantity here — and the only place it is.
+        "lock_model": {
+            "model": "time_locked",
+            "sourced": True,
+            "source": "Aerodrome's own contracts/SPECIFICATION.md — VotingEscrow, the same "
+                      "source contracts.ve is verified against",
+            "max_days": 1460,
+            "derivation_cost": "HEAVY — needs every veNFT's lock end enumerated and weighted by "
+                               "balance. Hundreds of thousands of positions: a Dune query or a "
+                               "full log scan, not a balance read. Left as a flagged gap rather "
+                               "than half-built, so the cost is visible before anyone starts.",
+        },
         "name": "Aerodrome", "symbol": "AERO",
         "coingecko_id": "aerodrome-finance",
         "defillama_fees_slug": "aerodrome", "defillama_protocol": "aerodrome", "defillama_chain": None,
@@ -6495,6 +6593,13 @@ PROJECTS = [
                  "the derived calculation; totalSupply delta is the independent check. Hard cap cut 450m -> 400m Jan 2026.",
     },
     {
+        # NO LOCK AT ALL — lsSKY is liquid. There is no notice period and no expiry, so an
+        # average duration is not a quantity this project has.
+        "lock_model": {
+            "model": "none", "sourced": False, "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "staked SKY is represented by a liquid token; nothing is time-locked.",
+        },
         "name": "Sky", "symbol": "SKY",
         "coingecko_id": "sky",
         "defillama_fees_slug": "sky", "defillama_protocol": "sky", "defillama_chain": None,
@@ -7618,6 +7723,17 @@ PROJECTS = [
             "source": None,
             "declared_by": "Jake, 2026-09-23 review",
             "note": "the terminal 2%/yr emission is a mint, per Jake's review.",
+        },
+        # COOLDOWN, NOT A TIME-LOCK. Declared by Jake 2026-09-23 as a 14-day cooldown and NOT
+        # re-confirmed from Pendle's own material here (its docs are not reachable from this
+        # environment), so the constant is carried unsourced and this metric stays out rather
+        # than rendering a number nobody checked.
+        "lock_model": {
+            "model": "cooldown", "sourced": False, "source": None,
+            "declared_by": "Jake, 2026-09-23 review", "cooldown_days": 14,
+            "note": "every holder faces the same notice period, so there is no distribution of "
+                    "expiries to average. Confirm the 14 days from Pendle's own docs before it "
+                    "is rendered anywhere as a figure.",
         },
         "name": "Pendle", "symbol": "PENDLE",
         "coingecko_id": "pendle",
@@ -8786,6 +8902,17 @@ def metrics_for_project(project: dict) -> list[str]:
             continue
         # A protocol that buys nothing has no buyback flow to be missing. See buyback_route.
         if key in BUYBACK_METRICS and buyback_route(project["name"])["route"] == "none":
+            continue
+        # A SELF-REPORTED metric applies only where the protocol reports it. Without this,
+        # net_mint_monthly gapped on every archetype-4 project that simply does not publish a
+        # net mint — asking for a figure that does not exist, beside the derived one that does.
+        flag = m.get("requires_flag")
+        if flag and not project.get(flag):
+            continue
+        # A metric that presumes a particular lock shape applies only where that shape is
+        # declared. See avg_lock_duration_days: an average duration needs per-position expiries.
+        want_lock = m.get("requires_lock_model")
+        if want_lock and (project.get("lock_model") or {}).get("model") != want_lock:
             continue
         only = m.get("only_projects")
         if only and project["name"] not in only:
