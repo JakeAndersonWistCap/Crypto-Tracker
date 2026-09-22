@@ -939,6 +939,375 @@ def test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected():
     print("uniswap floor ok: a zero is rejected to the Review Queue, not stored")
 
 
+def test_a_column_that_is_another_column_says_so_instead_of_sitting_empty():
+    """** AN EMPTY CELL SAYS "WE COULD NOT FIND THIS", AND TWICE THAT WAS WRONG. **
+
+    GEODNET's and Morpho's customer_revenue_usd both sat blank while the number they wanted was
+    in fees_usd on the same row. GEODNET because DefiLlama computes its fees AS the on-chain
+    burn / 0.8, which IS the gross end-user spend; Morpho because it is archetype 2, so fees_usd
+    is fetched for it and has no column of its own.
+
+    NOTHING IS COMPUTED. The series is copied, the source says which column it came from, and the
+    caveat travels to the cell on the label — which is where the reader is.
+    """
+    from fetch import _restate_metrics
+    from fetch.base import FetchOutput
+
+    def run(project, rows):
+        out = FetchOutput()
+        out.frames = [pd.DataFrame(rows)]
+        _restate_metrics(out, [config.PROJECT_BY_NAME[project]])
+        return out
+
+    fees = [{"date": pd.Timestamp("2026-09-20") + pd.Timedelta(days=i), "project": "GEODNET",
+             "metric": "fees_usd", "value": 25_000.0 + i, "source": "defillama", "tier": 1}
+            for i in range(3)]
+    out = run("GEODNET", fees)
+    got = out.frame().query("metric == 'customer_revenue_usd'")
+    assert len(got) == 3
+    assert list(got.value) == [25_000.0, 25_001.0, 25_002.0]
+    assert str(got.source.iloc[0]) == "derived:=fees_usd", got.source.iloc[0]
+    # THE CAVEAT REACHES THE CELL. A restated column that looks like an independent measurement
+    # is worse than a blank one — a reader would compare it against fees_usd and find agreement
+    # they think means something.
+    label = config.metric_label("GEODNET", "customer_revenue_usd")
+    assert "THE SAME SERIES AS fees_usd" in label and "burn / 0.8" in label
+    assert "0.8706" in label, "the unreconciled split has to travel with it too"
+    assert "THE SAME SERIES AS fees_usd" in config.metric_label("Morpho", "customer_revenue_usd")
+    # AND NOBODY ELSE'S LABEL MOVES.
+    assert config.metric_label("Uniswap", "customer_revenue_usd") == "End-user revenue"
+
+    # A MEASURED FIGURE WINS, and nothing is restated over it.
+    both = run("GEODNET", fees + [{"date": pd.Timestamp("2026-09-20"), "project": "GEODNET",
+                                   "metric": "customer_revenue_usd", "value": 1.0,
+                                   "source": "scrape:x", "tier": 3}])
+    assert len(both.frame().query("metric == 'customer_revenue_usd'")) == 1
+    assert [e for e in both.log if e.status == "skipped" and "already has a figure" in e.message]
+
+    # NO SOURCE COLUMN MEANS NO SEPARATE GAP — the reader is sent to the one row that matters.
+    empty = run("GEODNET", [{"date": pd.Timestamp("2026-09-20"), "project": "GEODNET",
+                             "metric": "price_usd", "value": 0.1, "source": "coingecko", "tier": 1}])
+    assert empty.frame().query("metric == 'customer_revenue_usd'").empty
+    assert [e for e in empty.log if "Not a separate gap: see fees_usd" in e.message]
+    print("restatement ok: the column is filled from the column it is, and the caveat is on the "
+          "label rather than in config")
+
+
+def test_morphos_utilisation_is_blocked_and_the_gap_says_what_was_read():
+    """** DefiLlama'S PROTOCOL DATA CANNOT GIVE THIS, AND THAT IS A FINDING, NOT A MISSING SOURCE. **
+
+    The plan was borrowed / supplied off /protocol/morpho. From the adapter itself
+    (DefiLlama-Adapters/projects/morpho-blue/index.js, read 2026-09-22):
+
+        tvl      = sumTokens2({ owner: morphoBlue, tokens, ... })   where `tokens` is built from
+                   BOTH loanToken AND collateralToken of every market
+        borrowed = sum of market.totalBorrowAssets
+
+    So tvl holds every borrower's posted COLLATERAL, and borrowed/(tvl+borrowed) has a
+    denominator that was never lendable. It would look entirely plausible on the sheet.
+
+    "no source configured" would send the next reader to repeat that search. The row says what
+    was read, why it does not answer, and what would.
+    """
+    from fetch.gaps import _tier_note
+
+    reason, suggestion = _tier_note(config.PROJECT_BY_NAME["Morpho"], "utilisation_pct", {})
+    assert "blocked" in reason
+    assert "totalBorrowAssets / totalSupplyAssets" in reason
+    assert "never lendable" in reason
+    assert "morpho-blue/index.js" in reason and "2026-09-22" in reason
+    assert "CreateMarket logs" in suggestion
+    # AND IT DOES NOT PRETEND THE WORK IS SMALL. A route named without its cost is a route
+    # somebody starts and abandons.
+    assert "NOT started without a decision" in suggestion
+    print("morpho utilisation ok: blocked with the adapter line that blocks it, and the route "
+          "that would work named with its cost")
+
+
+# ---------------------------------------------- World Mobile's issuance, from the curve
+def test_world_mobiles_issuance_is_the_curve_evaluated_at_the_t_its_supply_implies():
+    """** THE MISSING START DATE IS NO LONGER AN INPUT. IT IS AN OUTPUT. **
+
+    The whitepaper gives rate(t) = k/(t+1) with k = 0.1141. Integrated that is S(t) = S0(t+1)^k,
+    and the stated year-20 target of 2bn pins S0 = 2bn / 21^k = 1,413,073,572. The model is
+    therefore INVERTIBLE: an observed supply gives its own t, and the emission start date that
+    blocked this route for weeks comes out the other end as a finding to confirm.
+
+    The real figure: total_supply_gross = 1,714,232,116 puts t+1 at 5.437, so t = 4.44 years,
+    a rate of 2.0986%/yr and about 35.97m WMTX a year.
+    """
+    from fetch import _derive_curve_issuance
+    from fetch.base import FetchOutput
+
+    def run(supply, metric_rows=()):
+        rows = [{"date": pd.Timestamp("2026-09-22"), "project": "World Mobile",
+                 "metric": "total_supply_gross", "value": supply,
+                 "source": "chain:sum(...)", "tier": 2}] + list(metric_rows)
+        out = FetchOutput()
+        out.frames = [pd.DataFrame(rows)]
+        _derive_curve_issuance(out, [config.PROJECT_BY_NAME["World Mobile"]])
+        return out
+
+    out = run(1_714_232_116.0)
+    got = out.frame().query("metric == 'emissions_tokens'")
+    assert len(got) == 1, out.log
+    annual = float(got.value.iloc[0]) * 365.25
+    assert abs(annual - 35_974_341) < 2_000, annual
+    # THE SOURCE SAYS IT IS A MODEL, and that it is evaluated on a partial supply.
+    assert str(got.source.iloc[0]) == "schedule:curve:PARTIAL", got.source.iloc[0]
+    detail = [e.message for e in out.log if "emissions_tokens=" in e.message]
+    assert detail and "A DERIVED MODEL, not an observation" in detail[0], detail
+    assert "t=4.44y" in detail[0] and "rate=2.0986%/yr" in detail[0], detail[0]
+
+    # ** THE PARTIALITY TRAVELS WITH THE ROW, AND ITS DIRECTION IS NOT CLAIMED. ** An understated
+    # supply understates t, which RAISES the rate and LOWERS the base — the two pull opposite
+    # ways, so there is no direction to correct for and the row says so instead of pretending.
+    part = [r for r in out.review if r["reason"] == "supply_partial"]
+    assert part and "Cardano" in part[0]["basis"] and "no known sign" in part[0]["basis"]
+
+    # THE IMPLIED LAUNCH DATE IS REPORTED FOR CONFIRMATION — an output of the curve, and the one
+    # independent test of the parameterisation available.
+    gap = next(g for g in out.gaps if "launch date the curve implies" in g["metric"])
+    assert "2022-04" in gap["reason"], gap["reason"]
+    assert "Jake supplies the actual emission start date" in gap["suggestion"]
+    assert "do NOT adjust S0 to close a gap" in gap["suggestion"].replace("Do NOT", "do NOT")
+
+    # ** BELOW THE CURVE'S OWN ORIGIN THERE IS NO t, AND IT REFUSES RATHER THAN CLAMPING. ** A
+    # clamp would report year zero's rate for ever and look like a reading.
+    low = run(1_000_000_000.0)
+    assert low.frame().query("metric == 'emissions_tokens'").empty
+    assert [g for g in low.gaps if "at or below the model's own origin" in g["reason"]]
+
+    # A MEASURED FIGURE WINS. A model beside a measurement is a second measuring point.
+    both = run(1_714_232_116.0, [{"date": pd.Timestamp("2026-09-22"), "project": "World Mobile",
+                                  "metric": "emissions_tokens", "value": 99_000.0,
+                                  "source": "dune:1", "tier": 4}])
+    assert len(both.frame().query("metric == 'emissions_tokens'")) == 1
+    assert [e for e in both.log if e.status == "skipped" and "already has a figure" in e.message]
+    print("world mobile ok: the curve is evaluated at the t its supply implies, the launch date "
+          "comes out as a finding, and the partial supply's error has no claimed direction")
+
+
+# ------------------------------------------------------------------ NEAR's staked supply
+class _NearStub:
+    """Stands in for a NEAR node. Records the bodies it was posted."""
+
+    def __init__(self, payload, fail_urls=()):
+        self.payload, self.fail_urls, self.calls = payload, set(fail_urls), []
+
+    def post(self, url, json_body=None, **kw):
+        self.calls.append((url, json_body))
+        if url in self.fail_urls:
+            raise RuntimeError("connection refused")
+        return self.payload
+
+
+def _near_payload(stakes):
+    return {"jsonrpc": "2.0", "id": "token-metrics",
+            "result": {"current_validators": [{"account_id": f"v{i}.poolv1.near",
+                                               "stake": str(int(v * 10 ** 24))}
+                                              for i, v in enumerate(stakes)],
+                       # THE NEXT EPOCH'S SEATS ARE NOT ADDITIONAL STAKE. Present in the real
+                       # response and deliberately not summed: nearly every validator carries
+                       # over, so adding them would roughly double the figure.
+                       "next_validators": [{"account_id": "v0.poolv1.near",
+                                            "stake": str(int(10 ** 30))}],
+                       "epoch_height": 2180}}
+
+
+def _run_near(payload, supply=1_240_000_000.0, node_api=None, fail_urls=()):
+    from fetch.base import FetchOutput
+    from fetch.near import NearNode
+
+    p = dict(config.PROJECT_BY_NAME["Near"])
+    if node_api is not None:
+        p["node_api"] = node_api
+    n = NearNode(prior_values={("Near", "total_supply"): supply} if supply else {})
+    stub = _NearStub(payload, fail_urls=fail_urls)
+    n.http = stub
+    out = FetchOutput()
+    n.run([p], None, out)
+    return out, stub
+
+
+def test_near_staked_is_summed_from_the_validators_call_and_scaled_from_nears_own_sdk():
+    """** THERE IS NO LOCK CONTRACT TO READ. ** NEAR's staking is protocol-level and spread across
+    one staking-pool contract PER VALIDATOR, so any single address is one validator's stake and
+    not the network's. locked_tokens gapped every run asking for an address that does not exist.
+
+    The `validators` RPC returns every current validator with its stake INCLUDING delegations,
+    and the sum is the figure.
+
+    ** THE EXPONENT IS SOURCED, NOT GUESSED. ** yoctoNEAR is 10^24 — NEAR_NOMINATION_EXP in
+    near/near-api-js, read 2026-09-22 and on the config entry. The EVM's 18 would turn a 600m
+    stake into 600 billion; 30 would turn it into 0.0006.
+    """
+    out, stub = _run_near(_near_payload([200_000_000.0, 150_000_000.0, 100_000_000.0]))
+    got = out.frame().query("metric == 'locked_tokens'")
+    assert len(got) == 1, out.log
+    assert abs(float(got.value.iloc[0]) - 450_000_000.0) < 1.0, float(got.value.iloc[0])
+    assert str(got.source.iloc[0]) == "near_rpc:validators"
+    # NEXT EPOCH'S SEATS ARE NOT SUMMED — the stub carries a 10^6 NEAR next_validators entry.
+    assert float(got.value.iloc[0]) < 1_000_000_000.0
+    body = stub.calls[0][1]
+    assert body["method"] == "validators" and body["params"] == [None]
+
+    # ** AN EXPONENT TOO SMALL IS CAUGHT BY A STRUCTURAL BOUND. ** Nothing staked can exceed
+    # everything in existence, so 10^18 on a yoctoNEAR figure fails and NOTHING is stored.
+    api = dict(config.PROJECT_BY_NAME["Near"]["node_api"], yocto_exponent=18)
+    out2, _ = _run_near(_near_payload([200_000_000.0]), node_api=api)
+    assert out2.frame().query("metric == 'locked_tokens'").empty
+    assert [e for e in out2.log if e.status == "failed" and "FAILS ITS BOUND" in e.message], out2.log
+    assert [g for g in out2.gaps if "do NOT pick the exponent that makes the number look right"
+            in g["suggestion"].replace("Do NOT", "do NOT")]
+
+    # ** AN EXPONENT TOO LARGE IS NOT, AND THE FLAG IS THE ONLY PLACE IT SHOWS. ** 10^30 turns
+    # 450m into 0.00045, which is still "greater than zero and under supply". It is STORED — a
+    # low staked share is possible and the floor is a judgement — and flagged, with the SDK URL
+    # to check.
+    api2 = dict(config.PROJECT_BY_NAME["Near"]["node_api"], yocto_exponent=30)
+    out3, _ = _run_near(_near_payload([200_000_000.0]), node_api=api2)
+    assert not out3.frame().query("metric == 'locked_tokens'").empty, "a judgement must not refuse"
+    low = [r for r in out3.review if r["reason"] == "below_expected_share"]
+    assert low and "near-api-js" in low[0]["basis"], out3.review
+    assert "STORED ANYWAY" in low[0]["basis"]
+
+    # NO SUPPLY TO BOUND AGAINST MEANS NOTHING IS STORED. An unbounded scaled figure is the one
+    # thing this read cannot check about itself.
+    out4, _ = _run_near(_near_payload([200_000_000.0]), supply=None)
+    assert out4.frame().query("metric == 'locked_tokens'").empty
+    assert [e for e in out4.log if "no total_supply in the store to bound" in e.message]
+
+    # A JSON-RPC ERROR IS A 200, and treating it as a payload would report "no validators carried
+    # a stake" for a rejected request. The next endpoint is tried.
+    out5, stub5 = _run_near({"jsonrpc": "2.0", "error": {"name": "HANDLER_ERROR"}, "id": "x"})
+    assert out5.frame().empty
+    assert len(stub5.calls) == 3, "every configured endpoint is tried before giving up"
+    assert [e for e in out5.log if e.status == "failed" and "JSON-RPC error" in e.message]
+    print("near stake ok: current validators summed, 10^24 from NEAR's own SDK, a small exponent "
+          "refused by the bound and a large one flagged where nothing else would see it")
+
+
+# ------------------------------------------------- a chain's burn, already in the store
+def _chain_frame(rows):
+    out = FetchOutput()
+    out.frames = [pd.DataFrame(rows)]
+    return out
+
+
+def _chain_rows(project, days, rev, fees, price, start="2026-08-24"):
+    rows = []
+    for i in range(days):
+        d = pd.Timestamp(start) + pd.Timedelta(days=i)
+        rows.append({"date": d, "project": project, "metric": "revenue_usd", "value": rev,
+                     "source": "defillama", "tier": 1})
+        if fees is not None:
+            rows.append({"date": d, "project": project, "metric": "fees_usd", "value": fees,
+                         "source": "defillama", "tier": 1})
+        rows.append({"date": d, "project": project, "metric": "price_usd", "value": price,
+                     "source": "coingecko", "tier": 1})
+    return rows
+
+
+def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapter():
+    """** THE FIGURE WAS ALREADY IN THE STORE UNDER ANOTHER NAME. **
+
+    Ethereum and Near both gapped gross_burn_tokens asking for a source while revenue_usd sat
+    beside them carrying exactly that quantity. For a CHAIN, DefiLlama's "Revenue" is not a share
+    of fees taken by a protocol — it is the part of the fees nobody receives, because it was
+    destroyed. Read from the adapters themselves on 2026-09-22:
+
+      fees/ethereum/index.ts   dailyRevenue.addGasToken(baseFeesWei ...); addGasToken(blobFeesWei ...)
+                               Revenue: "Amount of ETH burned — base fees plus blob fees"
+      fees/near/index.ts       dailyRevenue.addCGToken('near', totalFees * 0.7, 'Burned NEAR')
+                               Revenue: "70% of every gas fee is permanently burned"
+    """
+    from fetch import _derive_chain_burn
+
+    # NEAR: 70% of fees, priced on each day's own price.
+    out = _chain_frame(_chain_rows("Near", 5, rev=70_000.0, fees=100_000.0, price=3.50))
+    _derive_chain_burn(out, [config.PROJECT_BY_NAME["Near"]])
+    got = out.frame().query("metric == 'gross_burn_tokens'")
+    assert len(got) == 5, out.log
+    assert abs(float(got.value.iloc[0]) - 20_000.0) < 1e-6, got
+    assert "defillama_burned_fee_revenue" in str(got.source.iloc[0])
+    detail = [e.message for e in out.log if "gross_burn_tokens =" in e.message]
+    assert detail and "derived from DefiLlama burned-fee revenue" in detail[0], detail
+
+    # ** THE RATIO GATE IS A TRIPWIRE ON THE METHODOLOGY, NOT A CHECK ON THE FIGURE. ** NEAR's
+    # revenue IS fees x 0.7, so 0.700 holding proves nothing — it is our own arithmetic read back.
+    # What it catches is DefiLlama CHANGING the split, at which point revenue stops being the burn.
+    moved = _chain_frame(_chain_rows("Near", 4, rev=50_000.0, fees=100_000.0, price=3.50))
+    _derive_chain_burn(moved, [config.PROJECT_BY_NAME["Near"]])
+    assert moved.frame().query("metric == 'gross_burn_tokens'").empty, \
+        "a changed split must stop the derivation, not rescale it"
+    flag = [r for r in moved.review if r["reason"] == "burn_share_changed"]
+    assert flag and "0.5000" in flag[0]["basis"], flag
+    assert "dimension-adapters" in str(flag[0]["source"])
+
+    # ETHEREUM has NO ratio gate: priority fees are in Fees and not in Revenue, so the ratio
+    # legitimately moves, and a gate on a moving number is one that gets widened until it is
+    # meaningless.
+    eth = _chain_frame(_chain_rows("Ethereum", 30, rev=98_350.77, fees=405_412.30, price=2_745.0))
+    _derive_chain_burn(eth, [config.PROJECT_BY_NAME["Ethereum"]])
+    burn = eth.frame().query("metric == 'gross_burn_tokens'")
+    assert len(burn) == 30 and not [r for r in eth.review if r["reason"] == "burn_share_changed"]
+    # ** AND THE SANITY BAND DOES NOT MEET, WHICH IS REPORTED RATHER THAN RESOLVED. ** $2,950,523
+    # over 30 days at $2,745 is ~1,075 ETH, about 36/day, against 50-70/day from research. The
+    # adapter is unambiguous about what the number IS, so it is stored; which input is wrong is a
+    # question for a human, and quietly preferring either figure is how a wrong one gets believed.
+    assert abs(float(burn.value.iloc[0]) - 35.83) < 0.05, float(burn.value.iloc[0])
+    band = [r for r in eth.review if r["reason"] == "outside_expected_band"]
+    assert band, eth.review
+    assert "STORED ANYWAY" in band[0]["basis"] and "widening it to fit" in band[0]["basis"]
+
+    # A SOURCED SERIES WINS AND THE DERIVATION IS SKIPPED, never ranked against it: two figures
+    # for one burn is a measuring-point change, and that blanks the column.
+    rows = _chain_rows("Near", 2, rev=70_000.0, fees=100_000.0, price=3.50)
+    rows.append({"date": pd.Timestamp("2026-08-24"), "project": "Near",
+                 "metric": "gross_burn_tokens", "value": 19_000.0, "source": "dune:1", "tier": 4})
+    both = _chain_frame(rows)
+    _derive_chain_burn(both, [config.PROJECT_BY_NAME["Near"]])
+    assert len(both.frame().query("metric == 'gross_burn_tokens'")) == 1
+    assert [e for e in both.log if e.status == "skipped" and "already has a figure" in e.message]
+
+    # A DAY WITH NO PRICE IS NOT CONVERTED AT THE LATEST PRICE. A July burn valued in September
+    # is not what was destroyed.
+    noprice = [r for r in _chain_rows("Near", 3, rev=70_000.0, fees=100_000.0, price=3.50)
+               if not (r["metric"] == "price_usd" and r["date"] == pd.Timestamp("2026-08-25"))]
+    out2 = _chain_frame(noprice)
+    _derive_chain_burn(out2, [config.PROJECT_BY_NAME["Near"]])
+    assert len(out2.frame().query("metric == 'gross_burn_tokens'")) == 2
+    assert [e for e in out2.log if "no price_usd on their own date" in e.message]
+    print("chain burn ok: revenue is the burn per the adapters, the ratio gate is a methodology "
+          "tripwire, Ethereum's band is flagged not fixed, and a sourced series wins")
+
+
+def test_a_chains_issuance_follows_once_the_burn_exists():
+    """gross_issuance_tokens = d(total_supply) + burn, and the burn was the only missing input.
+
+    Both chains destroy at the protocol level, so issuance_supply_rule already said 'add_burn' —
+    it just had no burn figure to add, and gapped every run for want of a number that was one
+    division away from revenue_usd.
+    """
+    from fetch import _derive_chain_burn, _derive_issuance
+
+    rows = _chain_rows("Near", 1, rev=70_000.0, fees=100_000.0, price=3.50, start="2026-09-14")
+    rows.append({"date": pd.Timestamp("2026-09-14"), "project": "Near", "metric": "total_supply",
+                 "value": 1_240_000_000.0, "source": "coingecko", "tier": 1})
+    out = _chain_frame(rows)
+    p = config.PROJECT_BY_NAME["Near"]
+    _derive_chain_burn(out, [p])
+    _derive_issuance(out, [p], {("Near", "total_supply"): 1_239_900_000.0},
+                     {("Near", "total_supply"): "2026-09-13"})
+    got = out.frame().query("metric == 'gross_issuance_tokens'")
+    assert len(got) == 1, [g["reason"] for g in out.gaps if g["metric"] == "gross_issuance_tokens"]
+    # 100,000 of supply change + 20,000 burned = 120,000 minted. Supply is NET of a protocol
+    # burn by construction — the tokens are destroyed at the protocol, so they are not in it.
+    assert abs(float(got.value.iloc[0]) - 120_000.0) < 1e-6, float(got.value.iloc[0])
+    print("chain issuance ok: d(total_supply) + the derived burn, with no new source")
+
+
 # ------------------------------------------------------------------ derived issuance
 def _issuance_frame(project: str, supply_now: float, burn: float | None):
     rows = [{"date": pd.Timestamp("2026-09-14"), "project": project, "metric": "total_supply",
@@ -4549,9 +4918,23 @@ def test_world_mobile_inflation_budget_and_the_schedule_that_does_not_close():
         "the stated 29% target must sit BETWEEN the naive yearly and monthly readings"
     assert "t_in_years" in oq["time_unit_ambiguous"] and "t_in_months" in oq["time_unit_ambiguous"]
     assert oq["base_is_aggregate_not_circulating"]["finding"].startswith("'relative to aggregate supply'")
-    assert "not_yet_resolved" in curve
+    # ===== AND THE PARAMETERISATION IS NOW CLOSED, BY THE SAME STEP THAT CLOSES BOTH. =====
+    # Read the rate as the DERIVATIVE of a supply curve rather than a percentage of a base:
+    #     dS/S = k dt/(t+1)  =>  S(t) = S0 (t+1)^k,  and S(20) = cap pins S0 = cap / 21^k.
+    # ** THAT REPRODUCES THE 29% THE NAIVE READINGS COULD NOT. ** Nothing was tuned: the only
+    # inputs are k, the horizon and the cap, all three quoted from the whitepaper.
+    assert curve.get("resolved_on") == "2026-09-22"
+    c = config.issuance_curve("World Mobile")
+    s0 = config.issuance_curve_s0(c)
+    assert abs(s0 - 1_413_073_572.18) < 1.0, s0
+    minted = cap - s0
+    assert 0.29 <= minted / cap <= 0.30, f"{minted / cap:.4f} must land on the stated 29%"
+    assert months_pct < minted / cap < years_pct, \
+        "the integrated reading lands between the two naive ones, which is why it is the right one"
+    # S0 IS COMPUTED, NOT STORED. Writing it beside the three inputs is how the four drift.
+    assert "s0" not in c and "S0" not in c
     print("World Mobile ok: 580m/20yr certain, the TGE anchor falsifies the old percentage test by "
-          ">2x, decay curve confirmed hyperbolic with the base/time-unit parameterisation open")
+          ">2x, and the integrated curve reproduces the 29% target from k, the horizon and the cap")
 
 
 def test_ultrasound_total_supply_is_a_crosscheck_and_cannot_anchor_on_a_component():

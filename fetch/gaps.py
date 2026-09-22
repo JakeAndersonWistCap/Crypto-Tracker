@@ -153,6 +153,20 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     m = config.METRICS[metric]
     tiers = m.get("tiers", [])
 
+    # ===== A BLOCKED ROUTE IS NOT A MISSING SOURCE. Added 2026-09-22. =====
+    # Morpho's utilisation_pct was going to come from DefiLlama's protocol data until the adapter
+    # was read and it turned out not to publish the denominator. "no source configured" would
+    # send the next reader to do that same search again; the block says what was looked at, why
+    # it does not answer, and what would.
+    blocked = project.get(f"{metric}_blocked")
+    if blocked:
+        return (f"{blocked.get('status', 'blocked')} — WANTED: {blocked.get('wanted')}. "
+                f"{blocked.get('why_not_defillama') or blocked.get('why') or ''} "
+                f"(established from {blocked.get('source_url')}, read "
+                f"{blocked.get('source_date')})",
+                blocked.get("route_that_would_work")
+                or "See this project's config entry for what would answer it.")
+
     if metric in PRO_PAYWALLED:
         # ===== THE PAYWALL IS THE LAST EXPLANATION, NOT THE FIRST. Fixed 2026-09-23. =====
         # This branch returned "DefiLlama emissions/unlocks is Pro tier only" for every project,

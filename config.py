@@ -667,6 +667,11 @@ def metric_label(project_name: str, metric: str) -> str:
     """
     p = PROJECT_BY_NAME.get(project_name) or {}
     override = (p.get("metric_labels") or {}).get(metric)
+    if not override:
+        # A RESTATED COLUMN CARRIES ITS RESTATEMENT'S LABEL, so the caveat about being the same
+        # series as another column arrives at the cell rather than living in config. Declared on
+        # the restatement so the two cannot be edited apart.
+        override = (metric_restatements(project_name).get(metric) or {}).get("label")
     return override or (METRICS.get(metric) or {}).get("label", metric)
 
 
@@ -874,6 +879,64 @@ def strip_source_annotations(source: str) -> str:
     flipped — blanking the series for a change that never happened.
     """
     return _SOURCE_ANNOTATION.sub("", str(source or ""))
+
+
+def metric_restatements(project_name: str) -> dict:
+    """Columns that ARE another column, declared so the sheet says it rather than sitting empty.
+
+    ** AN EMPTY CELL SAYS "WE COULD NOT FIND THIS". ** Twice that was wrong and the truth was
+    "it is the cell next door": GEODNET's customer_revenue_usd is its fees_usd (DefiLlama
+    computes those fees as the on-chain burn / 0.8, which IS the gross end-user spend), and
+    Morpho's is its fees_usd too (borrower interest, with no protocol cut taken).
+
+    A RESTATEMENT IS NOT A DERIVATION AND NOT A CROSS-CHECK. Nothing new is computed and nothing
+    is confirmed — the same series is written under a second name because two archetypes ask for
+    it under two names. The `label` carries the whole caveat to the cell, because the cell is
+    where the reader is.
+    """
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("metric_restatement") or {}
+
+
+def issuance_curve(project_name: str) -> dict | None:
+    """A declared issuance MODEL — a rate law integrated into a supply curve — or None.
+
+    Distinct from issuance_schedule, which is a table of per-day token counts, and distinct again
+    from a measured flow. A curve is evaluated, and what it produces is a model's output wearing
+    a source string that says so.
+    """
+    curve = (PROJECT_BY_NAME.get(project_name) or {}).get("issuance_curve")
+    if not curve or curve.get("status") != "confirmed":
+        return None
+    return curve
+
+
+def issuance_curve_s0(curve: dict) -> float:
+    """S0 = cap / (horizon+1)^k, computed rather than stored.
+
+    Writing S0 down beside the three inputs it comes from is how the four drift apart when
+    somebody edits one of them. It is 1,413,073,572 for World Mobile and nobody needs to know
+    that to check the entry.
+    """
+    return float(curve["cap"]) / (float(curve["horizon_years"]) + 1.0) ** float(curve["k"])
+
+
+def chain_burn_from_revenue(project_name: str) -> dict | None:
+    """The declaration that this chain's DefiLlama Revenue IS its burned fees, or None.
+
+    ** THE FIGURE WAS ALREADY IN THE STORE UNDER ANOTHER NAME. ** Both chains in the portfolio
+    gapped gross_burn_tokens asking for a source, while revenue_usd sat beside it carrying exactly
+    that quantity — because "Revenue" for a CHAIN means something different from "Revenue" for a
+    protocol, and nothing on the row said so.
+
+    ** DECLARED FROM THE ADAPTER, NEVER INFERRED FROM THE RATIO. ** NEAR's revenue/fees is 0.700
+    because the adapter multiplies by 0.7, so reading the ratio and concluding "that must be the
+    burn share" is reading our own arithmetic back. The entries carry the adapter's source URL and
+    the date it was read, and status must be 'confirmed' before anything is derived.
+    """
+    decl = (PROJECT_BY_NAME.get(project_name) or {}).get("chain_burn_from_revenue")
+    if not decl or decl.get("status") != "confirmed":
+        return None
+    return decl
 
 
 def dune_query_declared(project_name: str, metric: str) -> int | None:
@@ -1394,6 +1457,39 @@ PROJECTS = [
         "is_chain": True,
         "name": "Ethereum", "symbol": "ETH",
         "coingecko_id": "ethereum",
+        # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
+        # DefiLlama's chain Revenue for Ethereum is the BURNED ETH, not a share of fees, and that
+        # is not an inference from the ratio — it is what the adapter computes. Read on
+        # 2026-09-22 from the adapter's own source:
+        #
+        #     dailyRevenue.addGasToken(baseFeesWei,  METRIC.TRANSACTION_BASE_FEES);
+        #     dailyRevenue.addGasToken(blobFeesWei,  METRIC.TRANSACTION_BLOB_FEES);
+        #   methodology.Revenue:
+        #     "Amount of ETH burned — base fees plus blob fees (both are permanently burned,
+        #      accruing to no proposer)"
+        #
+        # Priority fees are in Fees and NOT in Revenue, which is why the two differ and why the
+        # ratio is not a constant — so there is no ratio gate here, and none is wanted: a gate on
+        # a number that legitimately moves is a gate that gets widened until it means nothing.
+        "chain_burn_from_revenue": {
+            "status": "confirmed",
+            "share_of_fees": None,
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/"
+                          "master/fees/ethereum/index.ts",
+            "source_date": "2026-09-22",
+            "components": "base fees + blob fees (EIP-1559 and EIP-4844); priority fees excluded",
+            # ** A SANITY BAND, AND IT DOES NOT AGREE TODAY. ** The stored 30-day revenue of
+            # $2,950,523 at $2,745/ETH is ~1,075 ETH, about 36 ETH/day, against 50-70/day from
+            # research. The derivation still runs — the adapter is unambiguous about what the
+            # number IS — and the disagreement is raised as a review row rather than resolved by
+            # picking whichever figure is preferred. Either the research is from a
+            # higher-activity period or the stored revenue is short, and a flag is how that gets
+            # looked at instead of assumed.
+            "expect_daily_tokens": (50.0, 70.0),
+            "expect_source": "research figure carried into the 2026-09-22 review; not from a "
+                             "primary source on file, which is itself part of why this is a flag "
+                             "and not a rejection",
+        },
         "defillama_fees_slug": "ethereum", "defillama_protocol": None, "defillama_chain": "Ethereum",
         "archetypes": [1, 4], "archetypes_held": [],
         # ===== B4: EIP-1559 DESTROYS, IT DOES NOT SEND. =====
@@ -1661,6 +1757,72 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        # ===== STAKED NEAR, FROM THE CHAIN. Added 2026-09-22. =====
+        # locked_tokens gapped asking for a lock contract. There is not one: NEAR's staking is
+        # protocol-level and spread across one staking-pool contract PER VALIDATOR, so any single
+        # address is one validator's stake and not the network's. The `validators` JSON-RPC
+        # method returns every current validator with its stake INCLUDING delegations, and the
+        # sum is the figure — which is why this is a node read and not a contract read.
+        #
+        # ** THE EXPONENT IS 24, AND IT IS SOURCED. ** `stake` is a decimal string in yoctoNEAR.
+        # NEAR_NOMINATION_EXP = 24 in NEAR's own JavaScript SDK (near/near-api-js), read
+        # 2026-09-22. Assuming the EVM's 18 would report a 600m NEAR stake as 600 BILLION — which
+        # the structural bound would catch — and an exponent too large would report it as 600,
+        # which the bound would NOT catch. That direction is held by this URL, not by arithmetic.
+        "node_api": {
+            "kind": "near_validators",
+            "metric": "locked_tokens",
+            "endpoints": [
+                "https://rpc.mainnet.near.org",
+                "https://near.lava.build",
+                "https://1rpc.io/near",
+            ],
+            "method": "validators",
+            "params": [None],
+            "list_path": "result.current_validators",
+            "sum_field": "stake",
+            "yocto_exponent": 24,
+            "exponent_source_url": "https://raw.githubusercontent.com/near/near-api-js/"
+                                   "master/packages/utils/src/format.ts",
+            "exponent_source_date": "2026-09-22",
+            # A JUDGEMENT, AND IT FLAGS RATHER THAN REFUSES — see fetch/near.py. It exists
+            # because it is the only place an exponent too LARGE would show.
+            "expect_min_share_of_supply": 0.10,
+            "note": "current_validators only. next_validators and current_proposals are the NEXT "
+                    "epoch's seats and are not additional stake; summing them would double-count "
+                    "every validator that carries over, which is nearly all of them.",
+        },
+        # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
+        # DefiLlama's chain Revenue for NEAR is the BURNED NEAR. From the adapter's own source,
+        # read 2026-09-22:
+        #
+        #     dailyRevenue.addCGToken('near', totalFees * 0.7, 'Burned NEAR');
+        #   methodology.Revenue:
+        #     "70% of every gas fee is permanently burned, reducing NEAR supply. The other 30% is
+        #      paid to contract developers, so only 70% is protocol revenue."
+        #
+        # ** THE 0.700 RATIO IS THE ADAPTER'S CONSTANT, NOT AN OBSERVATION. ** revenue is
+        # literally fees * 0.7, so the ratio holding proves nothing about the figure and the gate
+        # below can never fail on today's methodology. What it IS, is a tripwire on the
+        # METHODOLOGY: the day DefiLlama changes that split, the ratio moves and the derivation
+        # stops rather than quietly meaning something else. Recorded as such so nobody reads it
+        # as corroboration.
+        #
+        # The tolerance is tight on purpose. Both legs are the same token amount priced by the
+        # same price on the same day, so the USD ratio is 0.7 to rounding — there is no real
+        # variation for a wider band to absorb, only a changed constant for it to hide.
+        "chain_burn_from_revenue": {
+            "status": "confirmed",
+            "share_of_fees": 0.70,
+            "share_tolerance": 0.001,
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/"
+                          "master/fees/near/index.ts",
+            "source_date": "2026-09-22",
+            "components": "70% of gas fees, burned at the protocol level; the 30% developer "
+                          "rebate is DefiLlama's SupplySideRevenue and is not burned",
+            "expect_daily_tokens": None,
+            "expect_source": None,
+        },
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
         "archetypes": [1, 3, 4], "archetypes_held": [],
@@ -2863,10 +3025,59 @@ PROJECTS = [
                                 "primary source, not moving and not undocumented.",
                 },
             },
-            "not_yet_resolved": "the emission START DATE (same gap as before) and the base/compounding "
-                                "reconciliation above. issuance_schedule stays None until both close — "
-                                "a confirmed shape with an unresolved parameterisation cannot yet drive "
-                                "a per-period token count.",
+            # ===== RESOLVED 2026-09-22. BOTH OF THEM, AND BY THE SAME STEP. =====
+            # The two open questions above — the base/compounding reconciliation and the missing
+            # start date — both dissolve once the rate is read as the DERIVATIVE OF A SUPPLY
+            # CURVE rather than as a percentage applied to a base:
+            #
+            #     rate(t) = k / (t+1),  k = 0.1141          [the whitepaper's own words]
+            #     dS/S    = k dt/(t+1)  =>  S(t) = S0 (t+1)^k
+            #     S(20) = 2bn (the stated year-20 target)  =>  S0 = 2bn / 21^k = 1,413,073,572
+            #
+            # ** AND THAT REPRODUCES THE 29%, WHICH THE NAIVE READINGS COULD NOT. ** Total minted
+            # over the 20 years is S(20) - S(0) = 2,000,000,000 - 1,413,073,572 = 586,926,428, or
+            # 29.35% of aggregate supply — against the whitepaper's stated 29% and the
+            # inflation_budget block's 580,000,000. The years reading gave 41%, the months reading
+            # 5.8%. That agreement is not a fit: nothing here was tuned to produce it, the only
+            # inputs are k, the horizon and the cap, all three quoted from the source.
+            #
+            # ** THE START DATE IS NO LONGER NEEDED TO EVALUATE THE CURVE. ** The model is
+            # invertible: an observed supply gives its own t.
+            #     (t+1) = (S/S0)^(1/k),   annual issuance = k S / (t+1)
+            # So the route runs off total_supply_gross and reports the IMPLIED launch date as a
+            # finding for Jake to confirm — which is a stronger position than before, because the
+            # date is now a testable output rather than a missing input. See issuance_curve.
+            "resolved_on": "2026-09-22",
+        },
+        # ===== THE DECLARED ISSUANCE ROUTE, FROM THE CURVE ABOVE. Added 2026-09-22. =====
+        #
+        # A DERIVED MODEL, LABELLED AS ONE. Nothing here is measured: it is the whitepaper's rate
+        # law integrated, evaluated at whatever t the observed supply implies. The source string
+        # says so, and the figure must never be read as an observation of tokens minted.
+        #
+        # ** IT INHERITS total_supply_gross's PARTIALITY. ** The gross figure sums the EVM
+        # deployments and EXCLUDES Cardano, where WMT originated. So S is understated, which
+        # understates t, which RAISES the implied rate k/(t+1) while LOWERING the base it is
+        # applied to — the two pull in opposite directions and the net error does not have a
+        # known sign. The row is marked PARTIAL for exactly that reason and the reason travels
+        # with it.
+        "issuance_curve": {
+            "status": "confirmed",
+            "metric": "emissions_tokens",
+            "supply_metric": "total_supply_gross",
+            "shape": "S(t) = S0 * (t+1)^k",
+            "k": 0.1141,
+            "horizon_years": 20,
+            "cap": 2_000_000_000,
+            # S0 is NOT stored as a literal. It is 2bn / 21^k, and writing the number down beside
+            # the inputs is how the two drift when somebody edits one of them.
+            "source_url": "https://worldmobiletoken.com/WhitePaper.pdf",
+            "source_section": "Section XI, Inflation Mechanics",
+            "source_date": "2026-09-18",
+            "partial_reason": "total_supply_gross sums the EVM deployments only — Cardano, where "
+                              "WMT originated, is excluded. The model is evaluated at the t that "
+                              "an understated supply implies.",
+            "report_implied_launch": True,
         },
         "inflation_budget": {
             "tokens": 580_000_000,
@@ -3558,11 +3769,34 @@ PROJECTS = [
         # difference is 8.8% of a headline number — too big to average away and too small to be
         # obviously wrong, which is the range where a silent choice does the most damage.
         #
-        # AND IT IS WHY NO DERIVED customer_revenue_usd IS ADDED HERE. DefiLlama's own adapter
+        # AND IT IS WHY NO DERIVED customer_revenue_usd IS COMPUTED HERE. DefiLlama's own adapter
         # computes fees as burn/0.8 (see defillama_fees_evidence), so the slug wired above
         # already serves that arithmetic under fees_usd and revenue_usd. A second column deriving
         # the same quotient would not be a cross-check — it would be the same number twice, with
         # the 8.8% question still unasked.
+        #
+        # ** REVISED 2026-09-22: THE COLUMN IS FILLED BY RESTATEMENT, NOT BY A SECOND DERIVATION. **
+        # The refusal above was right about the arithmetic and wrong about the consequence. It
+        # left an archetype-2 column empty while the number it wants was sitting in fees_usd, and
+        # an empty cell says "we could not find this" when the truth is "it is the cell next
+        # door". So customer_revenue_usd is fees_usd, copied, and the LABEL carries the whole
+        # caveat — including that it is burn/0.8 and therefore not an independent measurement,
+        # and that the 8.8% question above is still open. See metric_restatement.
+        "metric_restatement": {
+            "customer_revenue_usd": {
+                "equals": "fees_usd",
+                "why": "DefiLlama's GEODNET adapter computes fees as the on-chain burn / 0.8, "
+                       "which IS the gross end-user spend the 80% is a share of. There is no "
+                       "second quantity to derive and no independent source to cross-check it "
+                       "against — so this column is the same series, said plainly.",
+                "label": "End-user revenue — THE SAME SERIES AS fees_usd. Derived from the "
+                         "on-chain burn / 0.8, which is DefiLlama's own formula, not an "
+                         "independent revenue measurement. The 0.80 split itself is unreconciled "
+                         "— see revenue_split_reconciliation, which puts the observed share at "
+                         "0.8706.",
+                "recorded_on": "2026-09-22",
+            },
+        },
         "revenue_split_reconciliation": {
             "burn_usd_august": 754_542,
             "declared_share": 0.80,
@@ -5259,6 +5493,65 @@ PROJECTS = [
                     "the emission schedule and does not establish this one.",
         },
         "name": "Morpho", "symbol": "MORPHO",
+        # ===== THE ARCHETYPE-2 REVENUE COLUMN IS fees_usd, SAID PLAINLY. Added 2026-09-22. =====
+        # Morpho is archetype 2, so fees_usd is not one of its columns — but it IS fetched, and
+        # customer_revenue_usd sat empty beside it every run. Borrower interest paid IS the
+        # end-user revenue for a lending protocol; there is no second quantity to source.
+        "metric_restatement": {
+            "customer_revenue_usd": {
+                "equals": "fees_usd",
+                "why": "for a lending protocol the fees ARE what borrowers paid, which is what "
+                       "this column asks for. Morpho's revenue_usd is hardcoded to 0 by protocol "
+                       "design on both the parent and the child adapters — the protocol takes no "
+                       "cut — so fees and end-user revenue are the same number and nothing is "
+                       "lost by saying so.",
+                "label": "End-user revenue — THE SAME SERIES AS fees_usd (borrower interest). "
+                         "Morpho takes no protocol cut, so revenue_usd is 0 by design and this "
+                         "is the whole of what users paid.",
+                "recorded_on": "2026-09-22",
+            },
+        },
+        # ===== utilisation_pct CANNOT COME FROM DefiLlama'S PROTOCOL DATA. Established 2026-09-22.
+        #
+        # The plan was borrowed / supplied off /protocol/morpho. Read the adapter and it does not
+        # give that. From DefiLlama-Adapters/projects/morpho-blue/index.js, read 2026-09-22:
+        #
+        #   tvl      = sumTokens2({ api, owner: morphoBlue, tokens, ... })
+        #              — the balance the Morpho Blue contract actually HOLDS. Borrowed assets have
+        #                left the contract, so they are not in it. But `tokens` is built from
+        #                BOTH loanToken AND collateralToken of every market, so tvl also holds
+        #                every borrower's posted COLLATERAL.
+        #   borrowed = sum of market.totalBorrowAssets across markets.
+        #
+        # So tvl + borrowed is (loan liquidity + COLLATERAL) + borrowed, and
+        # borrowed / (tvl + borrowed) is not utilisation — it is a ratio whose denominator
+        # carries collateral that was never available to lend. It would be understated by
+        # whatever is posted as collateral, which for a lending protocol is most of the balance
+        # sheet, and it would look entirely plausible on the sheet.
+        #
+        # ** THE DENOMINATOR EXISTS AND IS NOT PUBLISHED. ** The same adapter reads
+        # market.totalSupplyAssets on the line above — it uses it only to cap borrowed — and
+        # exports the borrow side alone. So the figure is one contract read away and zero
+        # aggregator calls away.
+        "utilisation_pct_blocked": {
+            "status": "blocked — no route that does not change what the column means",
+            "wanted": "totalBorrowAssets / totalSupplyAssets, summed across markets",
+            "why_not_defillama": "DefiLlama publishes `borrowed` but not `supplied`; its `tvl` "
+                                 "is the contract's held balance INCLUDING collateral, so "
+                                 "borrowed/(tvl+borrowed) has a denominator that was never "
+                                 "lendable and is a different quantity wearing this column's name.",
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/DefiLlama-Adapters/"
+                          "main/projects/morpho-blue/index.js",
+            "source_date": "2026-09-22",
+            "route_that_would_work": "enumerate markets from CreateMarket logs on Morpho Blue "
+                                     "(0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb on Ethereum), "
+                                     "call market(id) for each, and sum totalBorrowAssets and "
+                                     "totalSupplyAssets. That is a tier-2 read across every "
+                                     "market on every chain Morpho runs on, and it is a piece of "
+                                     "work rather than a wiring change — NOT started without a "
+                                     "decision on whether one blended ratio across markets with "
+                                     "different loan tokens is even the number wanted.",
+        },
         "coingecko_id": "morpho",
         "defillama_fees_slug": "morpho", "defillama_protocol": "morpho", "defillama_chain": None,
         # ARCHETYPE 2 ONLY. The fee switch is OFF, so there is no revenue reaching the token and

@@ -31,6 +31,7 @@ from .gaps import detect as detect_gaps
 from .hypercore import HyperCoreInfo
 from .llama import DefiLlama
 from .schedule import Schedule
+from .near import NearNode
 from .tron import TronNode
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
@@ -49,6 +50,7 @@ TIER_ORDER = [
                                    prior_delta=ctx["prior_delta"])),
     ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                           prior_delta=ctx["prior_delta"])),
+    ("near_rpc", 2, lambda ctx: NearNode(prior_values=ctx["prior_values"])),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),
@@ -424,6 +426,283 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
                     f"date ({len(priced)} row(s))", 2)
 
 
+def _restate_metrics(out: FetchOutput, projects: list[dict]) -> None:
+    """Write a column that IS another column, under the name its archetype asks for.
+
+    ** AN EMPTY CELL SAYS "WE COULD NOT FIND THIS", AND TWICE THAT WAS WRONG. ** GEODNET's and
+    Morpho's customer_revenue_usd both sat blank while the number they wanted was in fees_usd on
+    the same row — GEODNET because DefiLlama computes its fees AS the burn / 0.8, which is the
+    gross end-user spend, and Morpho because it is archetype 2, so fees_usd is fetched for it and
+    has no column of its own.
+
+    NOTHING IS COMPUTED HERE. The value is copied and the source says which column it came from,
+    so a reader comparing the two is never surprised to find them identical. The caveats live on
+    the label, which is what travels to the cell.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    have = {(r.project, r.metric) for r in frame[["project", "metric"]]
+            .drop_duplicates().itertuples(index=False)}
+
+    for p in projects:
+        name = p["name"]
+        for metric, spec in config.metric_restatements(name).items():
+            source_metric = spec["equals"]
+            if (name, metric) in have:
+                out.skipped(SOURCE_DERIVED, name,
+                            f"{metric}: NOT restated — the column already has a figure this run, "
+                            f"and a restatement beside a measurement is a second measuring point.",
+                            tier=2)
+                continue
+            rows = frame[(frame.project == name) & (frame.metric == source_metric)]
+            if rows.empty:
+                out.skipped(SOURCE_DERIVED, name,
+                            f"{metric}: it IS {source_metric}, which produced nothing this run. "
+                            f"Not a separate gap: see {source_metric}.", tier=2)
+                continue
+            copy = rows.copy()
+            copy["metric"] = metric
+            copy["source"] = f"{SOURCE_DERIVED}:={source_metric}"
+            out.add(copy, SOURCE_DERIVED, name,
+                    f"{metric} = {source_metric} ({len(copy)} row(s)), restated not recomputed: "
+                    f"{spec['why']}", 2)
+            have |= {(name, metric)}
+
+
+def _derive_curve_issuance(out: FetchOutput, projects: list[dict]) -> None:
+    """Issuance from a declared rate law, evaluated at the t the observed supply implies.
+
+    ** THE MODEL IS INVERTIBLE, WHICH IS WHY THIS NEEDS NO LAUNCH DATE. ** World Mobile's
+    whitepaper gives rate(t) = k/(t+1). Integrated, that is S(t) = S0 (t+1)^k, and the year-20
+    target pins S0 = cap / (horizon+1)^k. An observed supply therefore gives its own t:
+
+        (t+1) = (S / S0) ^ (1/k)        annual issuance = k * S / (t+1)
+
+    The missing emission START DATE blocked this for weeks. It is no longer an input — it is an
+    OUTPUT, reported as the launch date the observed supply implies, for Jake to confirm against
+    the actual one. A testable output is a better position than a missing input.
+
+    A DERIVED MODEL, LABELLED AS ONE. Nothing here is measured. The source string says
+    schedule:curve so the figure can never be read as an observation of tokens minted, and it
+    carries PARTIAL wherever the supply it is evaluated on is partial.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    have = {(r.project, r.metric) for r in frame[["project", "metric"]]
+            .drop_duplicates().itertuples(index=False)}
+
+    for p in projects:
+        name = p["name"]
+        curve = config.issuance_curve(name)
+        if not curve:
+            continue
+        metric = curve["metric"]
+        if (name, metric) in have:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{metric}: NOT derived from the curve — the metric already has a figure "
+                        f"this run, and a model beside a measurement is a second measuring point.",
+                        tier=2)
+            continue
+
+        supply_metric = curve["supply_metric"]
+        rows = frame[(frame.project == name) & (frame.metric == supply_metric)].sort_values("date")
+        if rows.empty:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{metric}: the curve is evaluated at whatever t the observed "
+                        f"{supply_metric} implies, and {supply_metric} produced nothing this run. "
+                        f"Not a separate gap: see {supply_metric}.", tier=2)
+            continue
+
+        k = float(curve["k"])
+        s0 = config.issuance_curve_s0(curve)
+        latest = rows.iloc[-1]
+        supply = float(latest.value)
+        if supply <= s0:
+            # BELOW THE CURVE'S OWN ORIGIN there is no t to solve for: the model says the supply
+            # cannot have been smaller than S0 since emission began. Refused rather than clamped
+            # — a clamp would report year zero's rate for ever and look like a reading.
+            out.gap(name, metric,
+                    reason=(f"the curve cannot be evaluated: {supply_metric} is {supply:,.0f}, at "
+                            f"or below the model's own origin S0 = {s0:,.0f} (= cap / "
+                            f"(horizon+1)^k). Solving for t would need the logarithm of a number "
+                            f"at or below one."),
+                    tiers_attempted="1, 2",
+                    suggestion=(f"Check {supply_metric} first — for this project it is PARTIAL "
+                                f"({curve.get('partial_reason')}), so a missing deployment moves "
+                                f"it. Do NOT lower S0 to fit: it is fixed by the cap and the "
+                                f"horizon, both quoted from {curve['source_url']}."))
+            continue
+
+        t_plus_1 = (supply / s0) ** (1.0 / k)
+        annual = k * supply / t_plus_1
+        daily = annual / 365.25
+        src = f"schedule:curve"
+        if curve.get("partial_reason"):
+            src = config.mark_source(src, "PARTIAL")
+        when = latest.date
+        out.add(point(name, metric, daily, src, 1, when), SOURCE_DERIVED, name,
+                f"{metric}={daily:,.2f}/day — the whitepaper's rate law k/(t+1) integrated to "
+                f"S(t)=S0(t+1)^k, evaluated at the t that {supply_metric}={supply:,.0f} implies: "
+                f"t={t_plus_1 - 1:.2f}y, rate={100 * k / t_plus_1:.4f}%/yr, "
+                f"{annual:,.0f} tokens/yr. A DERIVED MODEL, not an observation.", 1)
+
+        if curve.get("partial_reason"):
+            out.review_item(name, metric, "supply_partial", "stored_flagged", value=daily,
+                            date=when, source=src, tier=1,
+                            basis=(f"the model is evaluated on {supply_metric}, which is PARTIAL: "
+                                   f"{curve['partial_reason']} An understated supply understates "
+                                   f"t, which RAISES the rate k/(t+1) and LOWERS the base it "
+                                   f"applies to — the two pull opposite ways, so the net error "
+                                   f"has no known sign and cannot be corrected for by direction."))
+
+        if curve.get("report_implied_launch"):
+            launch = pd.Timestamp(str(when)[:10]) - pd.Timedelta(days=(t_plus_1 - 1) * 365.25)
+            out.gap(name, f"[confirm] {metric} — the launch date the curve implies",
+                    reason=(f"{supply_metric}={supply:,.0f} puts the model at t={t_plus_1 - 1:.2f} "
+                            f"years since emission began, which implies emission started on "
+                            f"{launch.date()}. That is an OUTPUT of the curve, not an input to it "
+                            f"— the figure above does not depend on it — but it is the one "
+                            f"independent test of the parameterisation available, and it is "
+                            f"consistent with the TGE of July-August 2021 having preceded "
+                            f"emission rather than coincided with it."),
+                    tiers_attempted="1",
+                    suggestion=("Jake supplies the actual emission start date. If it matches "
+                                "within a few months the curve is corroborated; if it is out by "
+                                "more than a year, k or the horizon is wrong and the whole route "
+                                "comes down — do NOT adjust S0 to close a gap."))
+
+
+def _derive_chain_burn(out: FetchOutput, projects: list[dict]) -> None:
+    """gross_burn_tokens for a chain whose DefiLlama Revenue IS its burned fees.
+
+    ** THE FIGURE WAS ALREADY IN THE STORE UNDER ANOTHER NAME. ** Ethereum and Near both gapped
+    gross_burn_tokens asking for a source, while revenue_usd sat on the row above carrying exactly
+    that quantity. For a CHAIN, DefiLlama's "Revenue" is not a share of fees taken by a protocol —
+    it is the part of the fees that no one receives, because it was destroyed.
+
+    CONFIRMED FROM THE ADAPTER, NOT FROM THE RATIO. Ethereum's adapter adds base fees and blob
+    fees to dailyRevenue and says "Amount of ETH burned"; NEAR's adds fees * 0.7 and says "70% of
+    every gas fee is permanently burned". Both were read from DefiLlama's own repository on
+    2026-09-22 and the URLs are on the config entries. Reading NEAR's 0.700 ratio and concluding
+    the same thing would have been reading our own arithmetic back — see chain_burn_from_revenue.
+
+    PRICED ON THE FLOW'S OWN DATE. A July burn valued at September's price is not what was
+    destroyed, and across a 30-day window the error compounds the whole way.
+
+    A SOURCED SERIES WINS AND THIS IS SKIPPED — never ranked against one. Two figures for one
+    burn is a measuring-point change, which blanks the column; that is what the GEODNET
+    actual_buyback_usd rows had to be deleted for.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    have = {(r.project, r.metric) for r in frame[["project", "metric"]]
+            .drop_duplicates().itertuples(index=False)}
+    price_on = {(r.project, str(r.date)[:10]): float(r.value)
+                for r in frame[frame.metric == "price_usd"].itertuples(index=False)}
+
+    for p in projects:
+        name = p["name"]
+        decl = config.chain_burn_from_revenue(name)
+        if not decl:
+            continue
+        if (name, "gross_burn_tokens") in have:
+            out.skipped(SOURCE_DERIVED, name,
+                        "gross_burn_tokens: NOT derived from revenue — the metric already has a "
+                        "figure this run. A derivation beside a measurement is a second measuring "
+                        "point, and the two alternating blank the column.", tier=2)
+            continue
+
+        rev = frame[(frame.project == name) & (frame.metric == "revenue_usd")]
+        if rev.empty:
+            out.skipped(SOURCE_DERIVED, name,
+                        "gross_burn_tokens: revenue_usd produced nothing this run, so there is "
+                        "nothing to convert. Not a separate gap: see revenue_usd.", tier=2)
+            continue
+        fees_on = {str(r.date)[:10]: float(r.value)
+                   for r in frame[(frame.project == name)
+                                  & (frame.metric == "fees_usd")].itertuples(index=False)}
+
+        share = decl.get("share_of_fees")
+        tol = float(decl.get("share_tolerance") or 0.001)
+        rows, unpriced, off_ratio = [], [], []
+        for r in rev.sort_values("date").itertuples(index=False):
+            day = str(r.date)[:10]
+            # ===== THE RATIO GATE IS A TRIPWIRE ON THE METHODOLOGY, NOT A CHECK ON THE FIGURE. =====
+            # NEAR's revenue IS fees * 0.7, so this can only fail if DefiLlama CHANGES that split
+            # — at which point revenue stops being the burn and the derivation must stop with it.
+            # It proves nothing about today's number and is not counted as corroborating anything.
+            if share is not None:
+                fee = fees_on.get(day)
+                if fee is None or fee <= 0:
+                    off_ratio.append(f"{day} (no fees_usd to check against)")
+                    continue
+                got = float(r.value) / fee
+                if abs(got - share) > tol:
+                    off_ratio.append(f"{day} ({got:.4f})")
+                    continue
+            px = price_on.get((name, day))
+            if px is None or px <= 0:
+                unpriced.append(day)
+                continue
+            rows.append((r.date, float(r.value) / px))
+
+        if off_ratio:
+            out.review_item(
+                name, "gross_burn_tokens", "burn_share_changed", "rejected",
+                value=len(off_ratio), prior_value=share, date=off_ratio[-1].split(" ")[0],
+                source=decl["source_url"], tier=2,
+                basis=(f"{len(off_ratio)} day(s) where revenue_usd / fees_usd is not "
+                       f"{share} within {tol}: {', '.join(off_ratio[:5])}"
+                       f"{'...' if len(off_ratio) > 5 else ''}. That ratio is DefiLlama's own "
+                       f"constant — the adapter computes revenue as fees x {share} — so a day "
+                       f"that misses it means the methodology moved, and revenue is no longer the "
+                       f"burn. Those days are NOT converted. Re-read {decl['source_url']} "
+                       f"(last read {decl['source_date']}) before changing anything here."))
+        if unpriced:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"gross_burn_tokens: {len(unpriced)} revenue row(s) have no price_usd on "
+                        f"their own date ({', '.join(unpriced[:5])}"
+                        f"{'...' if len(unpriced) > 5 else ''}) and were NOT converted at the "
+                        f"latest price — that would report what the burn would cost today, not "
+                        f"what was destroyed.", tier=2)
+        if not rows:
+            continue
+
+        out.add(pd.concat([point(name, "gross_burn_tokens", v,
+                                 f"{SOURCE_DERIVED}:defillama_burned_fee_revenue/price", 2, d)
+                           for d, v in rows], ignore_index=True),
+                SOURCE_DERIVED, name,
+                f"gross_burn_tokens = revenue_usd / price_usd on each day's own price "
+                f"({len(rows)} row(s)) — derived from DefiLlama burned-fee revenue "
+                f"({decl['components']})", 2)
+
+        # ** THE SANITY BAND, WHICH ETHEREUM DOES NOT MEET. ** Raised, not resolved: the adapter
+        # is unambiguous about what the number is, so the derivation runs; the disagreement with
+        # the researched level is a question for a human, and silently preferring either figure
+        # is how a wrong one gets believed.
+        band = decl.get("expect_daily_tokens")
+        if band and rows:
+            daily = sorted(v for _, v in rows)
+            median = daily[len(daily) // 2]
+            lo, hi = band
+            if not (lo <= median <= hi):
+                out.review_item(
+                    name, "gross_burn_tokens", "outside_expected_band", "stored_flagged",
+                    value=median, prior_value=(lo + hi) / 2.0, date=str(rows[-1][0])[:10],
+                    source=f"{SOURCE_DERIVED}:defillama_burned_fee_revenue/price", tier=2,
+                    basis=(f"the median derived daily burn over {len(rows)} day(s) is "
+                           f"{median:,.2f} tokens, against an expected {lo:,.0f}-{hi:,.0f}/day. "
+                           f"STORED ANYWAY: the adapter says plainly that Revenue is the burned "
+                           f"amount, so the figure is what DefiLlama reports and the question is "
+                           f"which input is wrong, not which to believe. "
+                           f"Expectation's provenance: {decl.get('expect_source')}. Check the "
+                           f"stored revenue_usd and price_usd for the same days before changing "
+                           f"the band — widening it to fit is how this stops being a check."))
+
+
 def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict, prior_dates: dict) -> None:
     """Derive gross_issuance_tokens from the supply change, keyed on the burn mechanism.
 
@@ -714,6 +993,14 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     _resolve_period_overlaps(out)
     # AFTER the collision guards, so a derivation can never displace a measured figure, and so the
     # burn it consumes is the deduped one rather than a double-counted month.
+    # BEFORE the issuance derivation, not after. Both chains burn at the protocol level, so
+    # issuance is d(total_supply) + burn — and without the burn in the frame first, _derive_issuance
+    # gaps them for want of a figure that is one division away.
+    _derive_chain_burn(out, projects)
+    _derive_curve_issuance(out, projects)
+    # AFTER the derivations, so a restatement copies the settled series rather than one that is
+    # about to be superseded, and BEFORE the checks, so the restated column is validated too.
+    _restate_metrics(out, projects)
     _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"])
     # AFTER issuance, so both lock figures are certainly in the frame by now.
     _derive_lock_ratio(out, projects, ctx["prior_values"])
