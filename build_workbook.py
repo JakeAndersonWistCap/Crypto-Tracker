@@ -871,7 +871,18 @@ def threshold_gated(project: dict, expr: str) -> str:
     return f'="{label}"'
 
 
-def base_gated(project: dict, expr: str) -> str:
+def _leg(project: dict, key: str, build) -> str:
+    """Render one documented allocation leg, or an empty cell where the project declares none.
+
+    EMPTY, NOT ZERO AND NOT "n/a": a project without a declared multi-leg allocation has not
+    failed to report one — the question does not arise for it. A 0 here would enter the
+    comparison columns as a measured nothing.
+    """
+    leg = next((l for l in config.stage_split_legs(project["name"]) if l["key"] == key), None)
+    return build(leg["share"]) if leg else ""
+
+
+def base_gated(project: dict, expr: str, window: str | None = None) -> str:
     """Suppress a derived buyback where the SHARE is confirmed but the BASE it multiplies is not.
 
     threshold_gated's twin, same shape: a project-level dict, absent for every project this does
@@ -889,6 +900,35 @@ def base_gated(project: dict, expr: str) -> str:
     b = project.get("revenue_base_uncertain")
     if not b or b.get("status") == "confirmed":
         return expr
+
+    # ===== THE GREY LIFTS WHERE THE RIGHT BASE IS SOURCED AND THE WINDOW IS IN SCOPE. =====
+    # Not because a mapping between the two quantities was found — there is none, and
+    # revenue_base_uncertain gives two independent reasons why there never will be — but because
+    # the formula now multiplies the base the protocol actually names. config.revenue_base says
+    # which metric that is and FROM WHEN.
+    #
+    # A WINDOW THAT ENDS BEFORE THE BASE TAKES EFFECT STAYS GREY, and a window that SPANS the
+    # boundary stays grey too. Sky's 27.5/22.5/5 allocation is Stage 2's and Stage 2 began
+    # 2026-09-14; before it the 55% figure was a per-cycle internal split of what the Smart Burn
+    # Engine had already received, not a share of surplus. Applying an NPS base to those windows
+    # multiplies the right number by a share that did not exist yet — which is the same class of
+    # confidently-wrong figure this gate was built to stop, pointing the other way.
+    base = config.revenue_base(project["name"])
+    if base:
+        effective = str(base.get("effective_from") or "")
+        if not effective:
+            return expr
+        start_iso, end_iso = _WINDOWS.get(window or "q0", ("", ""))
+        if not start_iso:
+            # The window bounds are not resolved — which happens when base_gated is called
+            # outside a build. Say so rather than guessing a side of the boundary: a message
+            # asserting the window "ends before" a date nobody computed would be a made-up fact
+            # in the one place this function exists to prevent them.
+            return '="window not resolved — cannot tell if the base applies"'
+        if start_iso >= effective:
+            return expr
+        return (f'="base applies from {effective} — this window '
+                f'{"spans that date" if end_iso >= effective else "ends before it"}"')
     return '="base unconfirmed"'
 
 
@@ -1269,6 +1309,11 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             meta = spec[5] if len(spec) > 5 else {}
             # A cell whose figure — or whose only input — was chased and closed says so, instead
             # of showing "n/a" next to twenty real ones and reading as missing data.
+            # metric_fn: the metric this cell reads is PER PROJECT. Sky's implied-buyback base is
+            # net_protocol_surplus_usd and everyone else's is revenue_usd, so a fixed "metric" tag
+            # would attach the wrong series' confidence, coverage and staleness to the cell.
+            if meta.get("metric_fn"):
+                meta = dict(meta, metric=meta["metric_fn"](p["name"]))
             dep = meta.get("closed_with") or meta.get("metric")
             closed = config.unavailable_for(p["name"], dep) if dep else None
             if closed:
@@ -1508,7 +1553,12 @@ def write_a3(ws, R: Refs, data_by_key: dict):
                                         "Grey = split unconfirmed (derived figure suppressed), OR split confirmed but its BASE unconfirmed (hover for which). Orange status = paused.")
     ann = ANN
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
-    rev = lambda r, w="q0": R.D(r, "revenue_usd", w)  # noqa: E731
+    # THE BASE IS PER PROJECT, not a constant "revenue_usd". Almost everywhere it still is —
+    # config.revenue_base_metric defaults to it — but Sky's documented shares are shares of Net
+    # Protocol Surplus, which is a different quantity that cannot be derived from revenue_usd.
+    # Pointing the formula at the metric the protocol actually names is what lets base_gated stop
+    # greying the cell; see config.revenue_base.
+    rev = lambda r, p, w="q0": R.D(r, config.revenue_base_metric(p["name"]), w)  # noqa: E731
     circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
     # The split that applied to each window — NEVER the current split applied backwards.
     share = lambda r, w="q0": R.C(r, WINDOW_SHARE_COL[w])  # noqa: E731
@@ -1525,22 +1575,27 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Status of that window's split", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"gate_window": "q0"}),
         ("Current documented share (may differ from the window above)", lambda r, p: pull(R.C(r, "Share of revenue to buyback")), FMT_PCT, "pull"),
         ("Per-product split (never collapsed into one number)", lambda r, p: pull(R.C(r, "Per-product split (never collapsed)")), FMT_TEXT, "pull"),
-        ("Revenue Q0 ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull", False, {"metric": "revenue_usd"}),
+        # THE ROW IS NAMED FOR WHAT IT HOLDS, per project. For Sky it is Net Protocol Surplus,
+        # and calling it "Revenue" would put the exact confusion this whole thread is about back
+        # on the sheet. The metric tag follows too, so the coverage and confidence lookups read
+        # the series the figure actually came from.
+        ("Base for the implied buyback ($) — revenue, or the metric the protocol's share names",
+         lambda r, p: pull(rev(r, p)), FMT_USD, "pull", False, {"metric_fn": config.revenue_base_metric}),
         ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
-        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: base_gated(p, gated(st(r), f"{rev(r)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
+        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
-        ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: base_gated(p, gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
+        ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
         ("Circulating supply", lambda r, p: pull(circ(r)), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)))),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)))),
          FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "actual_buyback_tokens"}),
         ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}*{ann}/{circ(r)}"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r)))),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r)))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
         ("Net absorption Q0 (tokens) = actual buyback − emissions",
@@ -1549,9 +1604,36 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          FMT_NUM, "calc", True, {"supply_additive": True}),
         ("Net absorption, implied basis (tokens)",
          lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), net_absorption(
-             p, f"{rev(r)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")), share(r)))),
+             p, f"{rev(r, p)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")), share(r)))),
          FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
-        ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r)}"), FMT_X, "calc"),
+        # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
+        # Blank for every project that declares none, which is all of them but Sky. The legs
+        # carry their own effect on supply, because a single "implied buyback" figure is right
+        # as buy pressure and wrong as supply reduction by the ratio between the two legs, and
+        # nothing on a row of numbers tells a reader which they are looking at.
+        ("Implied SKY purchased, both legs ($) — buy pressure, NOT supply reduction",
+         lambda r, p: _leg(p, "sky_buying", lambda sh: base_gated(
+             p, gated(st(r), f"{rev(r, p)}*{sh}", share(r)))), FMT_USD, "calc", False,
+         {"gate": "fee_split", "base": True}),
+        ("Implied BURN ($) — the only leg that removes supply",
+         lambda r, p: _leg(p, "burn", lambda sh: base_gated(
+             p, gated(st(r), f"{rev(r, p)}*{sh}", share(r)))), FMT_USD, "calc", False,
+         {"gate": "fee_split", "base": True}),
+        ("Implied burn (tokens) = burn $ ÷ avg price",
+         lambda r, p: _leg(p, "burn", lambda sh: base_gated(
+             p, gated(st(r), f"{rev(r, p)}*{sh}/{price(r)}", share(r)))), FMT_NUM, "calc", False,
+         {"gate": "fee_split", "base": True}),
+        # C3: THE IMPLIED BURN AGAINST THE BURN THAT ACTUALLY HAPPENED. Same comparison the tab
+        # makes for buybacks two rows up, on the one leg where an on-chain figure exists — Sky's
+        # burn is read from Transfer-to-zero events, so the actual is a measurement and not
+        # another derivation. A persistent gap is a finding about the base, the share, or the
+        # read; it is not an error in any of them by itself.
+        ("Implied burn − ACTUAL burn (tokens) — the 5% leg against the chain",
+         lambda r, p: _leg(p, "burn", lambda sh: base_gated(
+             p, gated(st(r), f"{rev(r, p)}*{sh}/{price(r)}-{R.D(r, 'gross_burn_tokens', 'q0')}",
+                      share(r)))), FMT_NUM, "calc", False,
+         {"gate": "fee_split", "base": True, "metric": "gross_burn_tokens"}),
+        ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r, p)}"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Tokens locked (ve)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
         ("Lock rate = locked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
@@ -1588,9 +1670,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Umbrella staked $ (Aave only) — protocol risk cover, NOT AAVE supply, excluded from every float figure",
          lambda r, p: pull(R.D(r, "umbrella_staked_usd", "now")), FMT_USD, "pull", False, {"metric": "umbrella_staked_usd"}),
         *_trajectory(R, "revenue_usd", "Revenue"),
-        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: gated(st(r, 'q1'), f"{rev(r, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/{circ(r)}", share(r, 'q1')), FMT_PCT, "calc", False, {"gate_window": "q1"}),
-        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: gated(st(r, 'q2'), f"{rev(r, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/{circ(r)}", share(r, 'q2')), FMT_PCT, "calc", False, {"gate_window": "q2"}),
-        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: gated(st(r, 'q3'), f"{rev(r, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/{circ(r)}", share(r, 'q3')), FMT_PCT, "calc", False, {"gate_window": "q3"}),
+        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: base_gated(p, gated(st(r, 'q1'), f"{rev(r, p, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/{circ(r)}", share(r, 'q1')), window='q1'), FMT_PCT, "calc", False, {"gate_window": "q1"}),
+        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: base_gated(p, gated(st(r, 'q2'), f"{rev(r, p, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/{circ(r)}", share(r, 'q2')), window='q2'), FMT_PCT, "calc", False, {"gate_window": "q2"}),
+        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: base_gated(p, gated(st(r, 'q3'), f"{rev(r, p, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/{circ(r)}", share(r, 'q3')), window='q3'), FMT_PCT, "calc", False, {"gate_window": "q3"}),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("fee_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],

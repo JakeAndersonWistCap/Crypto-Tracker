@@ -638,6 +638,43 @@ def read_portfolio(path) -> tuple[list[str], list[str]]:
     return names, unknown
 
 
+# ===== WHICH FIGURE A DOCUMENTED SHARE IS A SHARE *OF*. =====
+#
+# The archetype 3 pipeline is revenue x share = implied buyback, and "revenue" means DefiLlama's
+# revenue_usd for almost every project. Sky states its Stage 2 allocation as percentages of
+# monthly NET PROTOCOL SURPLUS — a different quantity, permanently, not merely unmapped: NPS
+# subtracts the Sky Savings Rate, the security and maintenance distribution and operating costs,
+# and its share of gross revenue moved 18 points in one quarter (49.06% in Q1 2026 to ~31% in Q2).
+# Applying 27.5% to revenue_usd could overstate the implied buyback threefold.
+#
+# base_gated() has been greying those cells since 2026-09-18 for exactly that reason. THIS IS
+# WHAT LIFTS THE GREY: not a mapping between the two figures, which does not exist, but the right
+# base being sourced in its own right and the formula pointed at it.
+def revenue_base(project_name: str) -> dict | None:
+    """The metric this project's documented share applies to, when it is NOT revenue_usd."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return p.get("revenue_base")
+
+
+def stage_split_legs(project_name: str) -> list[dict]:
+    """The named legs of a documented allocation, each with its own effect on supply.
+
+    ** ONE ROW PER LEG, NEVER A COLLAPSED TOTAL. ** Sky's Stage 2 allocates 27.5% of Net
+    Protocol Surplus to BUYING SKY, split 22.5% to staking rewards and 5% to buy-and-burn. Only
+    the 5% removes supply. A single "implied buyback" figure at 27.5% is correct as buy pressure
+    and wrong by 5.5x as supply reduction, and which of the two a reader takes it for depends on
+    the column it happens to sit in. So the legs are rendered separately with their effects
+    named, the same discipline this file applies to every yield-versus-burn split.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return list(p.get("split_legs") or [])
+
+
+def revenue_base_metric(project_name: str) -> str:
+    """The base metric name, defaulting to revenue_usd — which is right for every other project."""
+    return (revenue_base(project_name) or {}).get("metric") or "revenue_usd"
+
+
 def declared_handover(project_name: str, metric: str) -> dict | None:
     """A series deliberately STITCHED from two measuring points, one after the other.
 
@@ -6741,6 +6778,58 @@ PROJECTS = [
         # "uses the foundation for the bottom line, and DefiLlama to cross-check the savings cost."
         # That is the right structure — protocol's own figure as primary, DefiLlama to validate one
         # component — and is the model to follow once NPS has a recurring source.
+        # ===== THE BASE IS RESOLVED, AND ONLY FROM 2026-09-14. =====
+        # revenue_base_uncertain below says the implied-buyback formula multiplies the wrong
+        # quantity for Sky, and says why the two can never be mapped to one another. This is the
+        # fix it names: the formula now multiplies net_protocol_surplus_usd, which is sourced in
+        # its own right (manual_quarterly, from Sky's own reporting — see manual_overrides.csv).
+        #
+        # ** EFFECTIVE FROM 2026-09-14 AND NOT ONE DAY EARLIER. ** The 27.5%/22.5%/5% allocation
+        # is Stage 2's, and Stage 2 began that day. Before it the 55% Smart Burn Engine regime
+        # applied and it was NOT an NPS share — it is a per-cycle internal split of what the SBE
+        # had already received (see sbe_allocation_layers). Applying an NPS base to a window that
+        # ended before Stage 2 would multiply the right number by a share that did not exist yet,
+        # so those windows STAY GREY. A window spanning the boundary is greyed by the same rule:
+        # it is part one regime and part the other, and no single share describes it.
+        # ===== THE TWO LEGS, RENDERED SEPARATELY. =====
+        # 27.5% of NPS buys SKY; of that, 22.5 points go to staking rewards and 5 points are
+        # burned. Only the burn leg removes supply. A single 27.5% figure is right as BUY
+        # PRESSURE and wrong by 5.5x as SUPPLY REDUCTION, and nothing on a row of numbers tells a
+        # reader which one they are looking at — so both are on the sheet with their effects
+        # named, and neither is netted into the other.
+        "split_legs": [
+            {"key": "sky_buying", "share": 0.275,
+             "label": "Implied SKY purchased (27.5% of NPS) — buy pressure, BOTH legs",
+             "effect": "buy_pressure",
+             "note": "the whole of what Stage 2 spends on SKY. NOT a supply reduction: 22.5 of "
+                     "these 27.5 points are distributed to stakers and stay in circulation."},
+            {"key": "burn", "share": 0.05,
+             "label": "Implied burn (5% of NPS) — THE ONLY supply reduction",
+             "effect": "supply_reduction",
+             "cross_check_metric": "gross_burn_tokens",
+             "note": "the buy-and-burn leg. This is the figure to compare against the burn "
+                     "actually observed on chain (burn_address_balance's delta, from the "
+                     "Transfer-to-zero read) — implied against actual, the same comparison the "
+                     "A3 tab makes everywhere else."},
+        ],
+        "revenue_base": {
+            "metric": "net_protocol_surplus_usd",
+            "effective_from": "2026-09-14",
+            "why": "Sky states Stage 2's shares as percentages of monthly Net Protocol Surplus, "
+                   "which is a different quantity from DefiLlama's revenue_usd and cannot be "
+                   "mapped to it — see revenue_base_uncertain for the evidence and the two "
+                   "independent reasons.",
+            "source": "manual_quarterly — Sky's own quarterly reporting, seeded in "
+                      "manual_overrides.csv. A recurring source is still not wired: "
+                      "financial.skyeco.com remains unreachable from here (403 on the CONNECT "
+                      "tunnel, re-checked 2026-09-22), and this project does not promote a source "
+                      "to primary without first confirming it fetches on a live run.",
+            "granularity_caveat": "NPS is QUARTERLY and the archetype 3 windows are 30/90-day. A "
+                                  "quarterly figure landing in a 30-day window is the whole "
+                                  "quarter's surplus, not a month of it. The window-coverage "
+                                  "disclosure already on the row says how much of the window the "
+                                  "series covers; read it before reading the ratio.",
+        },
         "revenue_base_uncertain": {
             "status": "confirmed_different",
             "share_source": "Sky's own Stage 2 thread, 2026-09-14 — the SHARE, not the base",

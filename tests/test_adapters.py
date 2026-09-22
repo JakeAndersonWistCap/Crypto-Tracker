@@ -4411,13 +4411,45 @@ def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share
     assert b is not None, "Sky must declare revenue_base_uncertain while the mapping is unresolved"
     assert b["status"] == "confirmed_different"
 
-    # THE IMPLIED FIGURE IS SUPPRESSED — this is the visible flag Jake asked for.
-    formula = bw.base_gated(sky, "REVENUE*SHARE")
-    assert formula == '="base unconfirmed"', f"Sky's implied buyback must render as unconfirmed: {formula!r}"
+    # ** THE GREY LIFTS NOW, AND NOT BECAUSE THE MAPPING WAS FOUND. CHANGED 2026-09-22. **
+    # It could not be found and never will be: revenue_base_uncertain gives two independent
+    # reasons, and its status stays 'confirmed_different' precisely to say so. What changed is
+    # that the RIGHT base is sourced in its own right — net_protocol_surplus_usd, from Sky's own
+    # quarterly reporting — and the formula now multiplies THAT. The old behaviour is still the
+    # behaviour for any project that declares the uncertainty without declaring a base.
+    base = config.revenue_base("Sky")
+    assert base["metric"] == "net_protocol_surplus_usd" and base["effective_from"] == "2026-09-14"
+    assert b["status"] == "confirmed_different", \
+        "the two quantities are still different — resolving the base does not map them together"
 
-    # COMPOSED WITH threshold_gated exactly as the real A3 columns do it.
-    composed = bw.base_gated(sky, bw.threshold_gated(sky, "REVENUE*SHARE/PRICE"))
-    assert composed == '="base unconfirmed"'
+    try:
+        # A WINDOW WHOLLY INSIDE STAGE 2: the figure is computed.
+        bw._WINDOWS["q0"] = ("2026-09-15", "2026-10-15")
+        assert bw.base_gated(sky, "NPS*SHARE") == "NPS*SHARE"
+
+        # A WINDOW THAT ENDS BEFORE STAGE 2: still grey, and for the new reason. The 27.5/22.5/5
+        # allocation did not exist then — applying an NPS base to it would multiply the right
+        # number by a share that had not been announced.
+        bw._WINDOWS["q1"] = ("2026-05-01", "2026-08-01")
+        out = bw.base_gated(sky, "NPS*SHARE", window="q1")
+        assert "2026-09-14" in out and "ends before it" in out, out
+
+        # A WINDOW THAT SPANS THE BOUNDARY: grey too, and it says which. Part one regime and part
+        # the other; no single share describes it.
+        bw._WINDOWS["q2"] = ("2026-09-01", "2026-10-01")
+        spanning = bw.base_gated(sky, "NPS*SHARE", window="q2")
+        assert "spans that date" in spanning, spanning
+
+        # COMPOSED WITH threshold_gated exactly as the real A3 columns do it.
+        bw._WINDOWS["q0"] = ("2026-09-15", "2026-10-15")
+        composed = bw.base_gated(sky, bw.threshold_gated(sky, "NPS*SHARE/PRICE"))
+        assert composed == bw.threshold_gated(sky, "NPS*SHARE/PRICE")
+    finally:
+        bw._WINDOWS.clear()
+
+    # AND WITH NO WINDOW RESOLVED IT REFUSES TO GUESS. Saying a window "ends before" a date
+    # nobody computed would be a made-up fact in the one function built to prevent them.
+    assert "window not resolved" in bw.base_gated(sky, "NPS*SHARE")
 
     # THE SHARE ITSELF IS UNTOUCHED. fee_split_v2 stays confirmed and primary-sourced — the split
     # and its application to a base are two different claims, and only one is in doubt.
@@ -5496,6 +5528,45 @@ def test_the_chainlink_reserve_inflow_is_derived_and_a_fall_is_reported_not_swal
         "the stock is a good reading whatever the flow does"
     print("chainlink reserve ok: inflow derived from the delta, a fall reported by name, "
           "same-day re-run derives nothing")
+
+
+def test_skys_stage_2_legs_render_separately_and_the_burn_leg_is_checked_against_the_chain():
+    """C2 and C3. 27.5% of NPS buys SKY; of that, 22.5 points go to staking rewards and 5 points
+    are burned. ONLY THE BURN LEG REMOVES SUPPLY.
+
+    A single 27.5% figure is correct as BUY PRESSURE and wrong by 5.5x as SUPPLY REDUCTION, and
+    nothing on a row of numbers tells a reader which one they are looking at — it depends on the
+    column it happens to sit in. So both legs are on the sheet with their effects named, and
+    neither is netted into the other. That is the same discipline this codebase applies to every
+    yield-versus-burn split; Sky is where it would be easiest to skip, because the two legs share
+    a base and a source.
+    """
+    legs = {l["key"]: l for l in config.stage_split_legs("Sky")}
+    assert set(legs) == {"sky_buying", "burn"}
+    assert legs["sky_buying"]["share"] == 0.275 and legs["burn"]["share"] == 0.05
+    assert legs["sky_buying"]["effect"] == "buy_pressure"
+    assert legs["burn"]["effect"] == "supply_reduction"
+    # THE ARITHMETIC THAT MAKES THE SEPARATION LOAD-BEARING, asserted rather than described.
+    assert abs(legs["sky_buying"]["share"] / legs["burn"]["share"] - 5.5) < 1e-9, \
+        "reading the 27.5% figure as supply reduction overstates it by exactly this factor"
+    v2 = config.PROJECT_BY_NAME["Sky"]["fee_split_v2"]
+    assert v2["splits"]["sky_buyback_for_staking_rewards"] + legs["burn"]["share"] \
+        == legs["sky_buying"]["share"], "22.5 + 5 must be the 27.5 — the legs cannot drift apart"
+
+    # C3: THE BURN LEG HAS AN ACTUAL TO BE CHECKED AGAINST, and it is a measurement rather than
+    # another derivation — Sky's burn is read from Transfer-to-zero events.
+    assert legs["burn"]["cross_check_metric"] == "gross_burn_tokens"
+    assert config.cumulative_flow_for("Sky", "burn_address_balance") == "gross_burn_tokens"
+
+    # NO OTHER PROJECT ACQUIRES LEGS BY DEFAULT. The row must be empty where the question does
+    # not arise — not 0, which would enter the comparison columns as a measured nothing.
+    import build_workbook as bw
+    for name in ("Maple", "Chainlink", "Aerodrome", "Uniswap"):
+        assert config.stage_split_legs(name) == [], name
+        assert bw._leg(config.PROJECT_BY_NAME[name], "burn", lambda sh: "SHOULD NOT RENDER") == ""
+    assert bw._leg(config.PROJECT_BY_NAME["Sky"], "burn", lambda sh: f"x{sh}") == "x0.05"
+    print("sky legs ok: 27.5 and 5 rendered apart, 5.5x separation asserted, burn leg checked "
+          "against the chain read, other projects untouched")
 
 
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
