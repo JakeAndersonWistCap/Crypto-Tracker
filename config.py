@@ -2385,6 +2385,27 @@ PROJECTS = [
     {
         "name": "World Mobile", "symbol": "WMTX",
         "coingecko_id": "world-mobile-token",
+        # ===== NOT ON DEFILLAMA, as far as DefiLlama's own adapter repositories go. =====
+        # Checked 2026-09-23 by reading the repos rather than guessing slugs against a blocked
+        # API: DefiLlama/dimension-adapters (fees) and DefiLlama/DefiLlama-Adapters (TVL), six
+        # candidate slugs each — world-mobile, worldmobile, world-mobile-token, wmtx,
+        # world-mobile-chain, worldmobiletoken. No adapter under any of them, with the probe
+        # proven against known-good controls (fees/geodnet.ts and projects/uniswap/index.js both
+        # 200 by the same method).
+        #
+        # SO THE FOUR DEFILLAMA-SERVED METRICS ARE NOT-TRACKED RATHER THAN UNSOURCED, and that is
+        # a different row on the Gap Report: nobody has to go looking for a slug. A telecom
+        # operator with fiat revenue and no on-chain protocol for DefiLlama to index is exactly
+        # the shape that would not be listed.
+        "defillama_listing_checked": {
+            "status": "absent",
+            "checked_on": "2026-09-23",
+            "repos": ("DefiLlama/dimension-adapters", "DefiLlama/DefiLlama-Adapters"),
+            "slugs_tried": ("world-mobile", "worldmobile", "world-mobile-token", "wmtx",
+                            "world-mobile-chain", "worldmobiletoken"),
+            "control": "the same probe returns 200 for fees/geodnet.ts and "
+                       "projects/uniswap/index.js, so an absent result is absence, not a bad probe",
+        },
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 3], "archetypes_held": [],
         # MECHANISM CONFIRMED, DESTINATION NOT. Fiat telecom revenue buys WMTx on exchanges — that
@@ -3201,7 +3222,48 @@ PROJECTS = [
     {
         "name": "GEODNET", "symbol": "GEOD",
         "coingecko_id": "geodnet",
-        "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
+        # ===== GEODNET IS ON DEFILLAMA. WIRED 2026-09-23, FROM DEFILLAMA'S OWN ADAPTER. =====
+        # The slug was confirmed by reading the adapter source rather than by trying names against
+        # the API: DefiLlama/dimension-adapters, fees/geodnet.ts. Its `methodology.HoldersRevenue`
+        # is, word for word, the "80% of the fees are used to repurchase GEOD tokens from the open
+        # market and remove them from circulation" note this file has been citing since
+        # 2026-09-15 — so the note and the listing are the same source, as suspected.
+        #
+        # ** AND READING THE ADAPTER CHANGED WHAT THE SERIES IS WORTH. ** DefiLlama does not
+        # measure GEODNET's fees. It measures the BURN and divides:
+        #
+        #     dailyHoldersRevenue = GEOD Transfer(*, 0x...dead) logs, valued       (the burn)
+        #     dailyFees           = dailyHoldersRevenue / 0.8                      (inferred)
+        #     dailyRevenue        = dailyFees                                      (the same object)
+        #
+        # Three consequences, each of which would otherwise be discovered as a puzzle later:
+        #   (1) fees_usd AND revenue_usd ARE THE SAME SERIES. The adapter returns one object for
+        #       both. Two identical columns, not a fee/revenue split.
+        #   (2) holders_revenue_usd IS THE BUYBACK RESTATED. It is the same burn already read
+        #       from Polygon and the Dune stitch, valued by DefiLlama's price rather than ours.
+        #   (3) DERIVING customer_revenue_usd AS buyback/0.8 WOULD NOT CROSS-CHECK IT. That is
+        #       DefiLlama's own formula, so the two can only ever differ by how the burn was
+        #       measured and priced. See customer_revenue_usd below for what is done instead.
+        #
+        # WHAT IT IS STILL GOOD FOR, and it is not nothing: DefiLlama reads the burn on POLYGON
+        # AND SOLANA (the incinerator, mint 7JA5eZ...mKHu, from 2024-09-24), so holders_revenue
+        # against our own burn series is a COVERAGE cross-check on the Solana leg — a real
+        # question, since our chain read is Polygon-only and only the Dune stitch spans both.
+        "defillama_fees_slug": "geodnet",
+        "defillama_fees_evidence": {
+            "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/geodnet.ts",
+            "read_on": "2026-09-23",
+            "methodology_quote": "80% of the fees are used to repurchase GEOD tokens from the "
+                                 "open market and remove them from circulation.",
+            "fees_are_derived_from_the_burn": True,
+            "formula": "dailyFees = dailyHoldersRevenue / 0.8; dailyRevenue = dailyFees",
+            "chains_read": ("polygon", "solana"),
+            "solana_start": "2024-09-24",
+            "consequence": "fees_usd and revenue_usd are ONE series under two names, and "
+                           "holders_revenue_usd is the burn restated. None of the three is "
+                           "independent of the burn we already read.",
+        },
+        "defillama_protocol": None, "defillama_chain": None,
         # ===== COINGECKO'S total_supply IS NET OF BURN HERE. THE CLEANEST CONFIRMATION OF THE =====
         # ===== FOUR: the difference matches the burn balance TO THE TOKEN, not approximately. =====
         #   contract totalSupply   1,000,000,000.00
@@ -4905,6 +4967,37 @@ PROJECTS = [
     {
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
+        # ===== TOTAL STAKED HYPE: CHECKED AGAINST HYPERLIQUID'S OWN SOURCE, AND NOT WIRED. =====
+        # Proposed 2026-09-23 as a quick win — "locked_tokens from the same info API already in
+        # use, via validator stake summaries". Every staking endpoint in Hyperliquid's OWN Python
+        # SDK (hyperliquid-dex/hyperliquid-python-sdk, hyperliquid/info.py, read 2026-09-23) takes
+        # a USER ADDRESS and answers about that user:
+        #     delegatorSummary  {"type": ..., "user": <addr>}   delegated / undelegated
+        #     delegations       {"type": ..., "user": <addr>}   per-validator amounts
+        #     delegatorRewards / delegatorHistory               also per user
+        # The full list of 36 request types in that file contains no network-wide staking total,
+        # and the Rust SDK's InfoRequest enum has no staking variant at all.
+        #
+        # SO THE FIGURE CANNOT BE ASSEMBLED FROM WHAT IS CONFIRMED. Summing per-user calls needs
+        # the delegator set, which nothing on file enumerates. `validatorSummaries` is the likely
+        # candidate and it appears in NEITHER SDK — it would have to come from the API reference
+        # at hyperliquid.gitbook.io, which is not reachable from this environment.
+        #
+        # NOT GUESSED. A request type invented from a plausible name either 422s or, worse,
+        # returns a differently-shaped number that reads as a staked total. See
+        # not_applicable/gap handling for how locked_tokens reports this.
+        "hyperliquid_staking_sourcing": {
+            "status": "blocked_on_docs",
+            "checked": ("hyperliquid-dex/hyperliquid-python-sdk hyperliquid/info.py",
+                        "hyperliquid-dex/hyperliquid-rust-sdk src/info/info_client.rs"),
+            "checked_on": "2026-09-23",
+            "finding": "every staking request type in both official SDKs is PER-USER and takes a "
+                       "`user` address; no network-wide staked total is exposed by either",
+            "candidate": "validatorSummaries — named in neither SDK",
+            "what_would_settle_it": "the request type and response shape from Hyperliquid's own "
+                                    "API reference (hyperliquid.gitbook.io), which is not "
+                                    "reachable from this environment. One line once it is read.",
+        },
         "defillama_fees_slug": "hyperliquid", "defillama_protocol": "hyperliquid", "defillama_chain": "Hyperliquid L1",
         # ===== ARCHETYPE 4 ADDED 2026-09-22. It was missing, and nothing new was needed to add it.
         # Hyperliquid had 47.3m HYPE confirmed burned and did not appear on the A4 tab, because it

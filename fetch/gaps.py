@@ -72,6 +72,13 @@ def _priority(project_name: str, metric: str, reason: str, severity: int | None 
     # Filing both at P6 made the to-do list longer than the work it represents.
     if "deliberately disabled in sources.yaml" in reason.lower():
         return P_SUPPRESSED
+    # SETTLED ABSENCE IS NOT AN UNCOVERED METRIC. Added 2026-09-23. "Not tracked by DefiLlama"
+    # with a date and the slugs that were tried is a question someone answered — the same
+    # category as a config-suppressed figure, and not the same as a metric nobody has looked at.
+    # Filing it at P6 puts finished work at the bottom of the to-do list, where the next person
+    # repeats the search.
+    if "not tracked by defillama — checked" in reason.lower():
+        return P_SUPPRESSED
     if any(k in reason.lower() for k in ACTIONABLE_SIGNALS):
         return P_ACTIONABLE_HEADLINE if metric in HEADLINE_METRICS else P_ACTIONABLE
     return P_UNCOVERED
@@ -152,6 +159,19 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         api, field = TIER1_SOURCE[metric]
         if not project.get(field):
             if api == "DefiLlama":
+                # ** "ADD A SLUG IF DEFILLAMA COVERS IT" IS THE WRONG INSTRUCTION ONCE SOMEONE HAS
+                # LOOKED. ** It reads as unfinished work on a project that has been checked and is
+                # not listed, and the next person repeats the search. Where the check has been
+                # done and recorded, the row says so and names what was tried.
+                checked = project.get("defillama_listing_checked") or {}
+                if checked.get("status") == "absent":
+                    return (f"NOT TRACKED BY DEFILLAMA — checked {checked.get('checked_on')}, not "
+                            f"a missing config field. DefiLlama's own adapter repositories "
+                            f"({', '.join(checked.get('repos') or ())}) carry no adapter under "
+                            f"any of {', '.join(checked.get('slugs_tried') or ())}.",
+                            f"Nothing to add here. If {name} publishes this figure itself, a "
+                            f"sources.yaml entry for {name}/{metric} is the route; otherwise this "
+                            f"metric has no source and that is the settled answer.")
                 return (f"not tracked by DefiLlama — no {field} in config",
                         f"If the protocol publishes this itself, add a sources.yaml entry for {name}/{metric}. "
                         f"Otherwise set {field} in config.py if DefiLlama does cover it.")
@@ -187,6 +207,23 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"Add a sources.yaml entry for {name}/{metric} pointing at the chain-data or dashboard "
                     f"source that publishes it. Do NOT add a burn-address contract entry — reading a dead "
                     f"address here returns other people's discarded tokens, not the protocol burn.")
+
+    # ===== A SOURCE THAT EXISTS BUT WHOSE REQUEST SHAPE IS NOT ESTABLISHED. Added 2026-09-23. =====
+    # Hyperliquid's locked_tokens is the worked case. The info API is already in use for the burn
+    # balance, so "no source configured" is plainly wrong — and so is "add a contract", because
+    # HYPE staking is not an ERC-20 escrow. Every staking request type in BOTH official SDKs is
+    # per-user and takes an address; the network-wide total is in the API reference, which is not
+    # reachable here. That is a specific, finishable piece of work and the row should say it
+    # rather than send the reader to build a scraper.
+    blocked = project.get("hyperliquid_staking_sourcing")
+    if blocked and metric == "locked_tokens" and blocked.get("status") == "blocked_on_docs":
+        return (f"THE SOURCE EXISTS AND ITS REQUEST SHAPE IS NOT ESTABLISHED — "
+                f"{blocked['finding']} (checked {blocked['checked_on']}: "
+                f"{', '.join(blocked.get('checked') or ())}). Not guessed: a request type "
+                f"invented from a plausible name either fails outright or returns a "
+                f"differently-shaped number that reads as a staked total.",
+                f"{blocked['what_would_settle_it']} The candidate to confirm is "
+                f"{blocked['candidate']}.")
 
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:

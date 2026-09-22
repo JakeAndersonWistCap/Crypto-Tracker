@@ -8356,3 +8356,103 @@ def test_portfolio_scope_applies_to_the_build_and_not_only_to_the_fetch(tmp_path
         raise AssertionError("an unknown name in the build scope must refuse")
     print(f"build scope ok: {len(held)} drawn, Gap Report narrowed, --all restores all "
           f"{len(bw.PROJECTS)}, parked history intact")
+
+
+# ============================================================================================
+# CONFIG WINS: ONE SLUG READ FROM THE SOURCE, AND TWO SOURCES CHECKED AND REFUSED
+# ============================================================================================
+
+def test_geodnets_defillama_slug_is_wired_and_says_what_the_series_actually_is():
+    """** THE 80% METHODOLOGY NOTE THIS FILE HAS BEEN CITING SINCE 2026-09-15 IS DEFILLAMA'S OWN
+    GEODNET PAGE. ** So the listing exists, and the slug was confirmed by reading DefiLlama's
+    adapter source rather than by trying names against an API.
+
+    AND READING IT CHANGED WHAT THE SERIES IS WORTH. DefiLlama does not measure GEODNET's fees:
+    it measures the BURN and divides by 0.8. dailyRevenue IS dailyFees — one object returned
+    twice — and dailyHoldersRevenue is the burn itself. None of the three is independent of the
+    burn already read, which is exactly the thing a cross-check has to be.
+    """
+    geo = config.PROJECT_BY_NAME["GEODNET"]
+    assert geo["defillama_fees_slug"] == "geodnet"
+    ev = geo["defillama_fees_evidence"]
+    assert "dimension-adapters" in ev["source_url"] and "fees/geodnet.ts" in ev["source_url"]
+    assert ev["read_on"] == "2026-09-23"
+    assert ev["fees_are_derived_from_the_burn"] is True
+    assert ev["formula"] == "dailyFees = dailyHoldersRevenue / 0.8; dailyRevenue = dailyFees"
+
+    # THE QUOTE TIES THE LISTING TO THE NOTE ALREADY ON FILE. If these ever diverge, one of them
+    # has been edited and the identification no longer holds.
+    quoted = ev["methodology_quote"]
+    na = geo["not_applicable"]["buyback_fund_balance"]
+    assert quoted.rstrip(".") in na, "the adapter's methodology and the cited note must match"
+
+    # AND THE ONE THING IT IS GENUINELY GOOD FOR is coverage, not revenue: DefiLlama reads the
+    # burn on Solana too, and our own chain read is Polygon-only.
+    assert set(ev["chains_read"]) == {"polygon", "solana"}
+    assert ev["solana_start"] == "2024-09-24"
+    print("geodnet slug ok: wired from DefiLlama's own adapter, and recorded as burn-derived")
+
+
+def test_hyperliquid_staked_hype_is_refused_until_the_request_type_is_confirmed():
+    """Proposed as a quick win — "the same info API we already use". Both of Hyperliquid's OWN
+    SDKs say otherwise: every staking request type takes a `user` address and answers about that
+    user. There is no network-wide total in either, and summing per-user calls needs a delegator
+    set nothing on file enumerates.
+
+    A request type invented from a plausible name either fails outright or returns a
+    differently-shaped number that reads as a staked total — which is the worse outcome, and the
+    reason this terminates in a gap rather than a guess.
+    """
+    from fetch.gaps import _tier_note
+
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    blocked = hl["hyperliquid_staking_sourcing"]
+    assert blocked["status"] == "blocked_on_docs"
+    assert len(blocked["checked"]) == 2 and blocked["checked_on"] == "2026-09-23"
+    assert "PER-USER" in blocked["finding"]
+    assert blocked["candidate"].startswith("validatorSummaries")
+
+    # THE GAP ROW SAYS THE RIGHT THING. "No source configured" is plainly wrong — the info API is
+    # already in use for the burn balance — and "add a contract" is wrong twice over, because
+    # HYPE staking is not an ERC-20 escrow. Either would send the reader to build the wrong thing.
+    reason, suggestion = _tier_note(hl, "locked_tokens", {})
+    assert "REQUEST SHAPE IS NOT ESTABLISHED" in reason
+    assert "no source configured" not in reason.lower()
+    assert "validatorSummaries" in suggestion and "gitbook" in suggestion
+    # AND IT IS FILED AS FIXABLE, not uncovered: reading one page settles it.
+    from fetch.gaps import _priority, P_UNCOVERED
+    assert _priority("Hyperliquid", "locked_tokens", reason) < P_UNCOVERED
+    print("hyperliquid staking ok: refused, with the exact page that would settle it")
+
+
+def test_a_defillama_listing_checked_and_absent_stops_asking_for_a_slug():
+    """** "ADD A SLUG IF DEFILLAMA COVERS IT" IS THE WRONG INSTRUCTION ONCE SOMEONE HAS LOOKED. **
+    It reads as unfinished work, so the next person repeats the search — four rows a run, for
+    ever, on a telecom operator with no on-chain protocol for DefiLlama to index.
+    """
+    from fetch.gaps import _tier_note, _priority, P_SUPPRESSED, P_UNCOVERED
+
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    checked = wm["defillama_listing_checked"]
+    assert checked["status"] == "absent" and len(checked["slugs_tried"]) == 6
+    # THE CONTROL IS WHAT MAKES ABSENCE MEAN ABSENCE rather than a bad probe.
+    assert "geodnet" in checked["control"] and "200" in checked["control"]
+
+    for metric in ("fees_usd", "revenue_usd", "holders_revenue_usd"):
+        reason, suggestion = _tier_note(wm, metric, {})
+        assert "NOT TRACKED BY DEFILLAMA — checked 2026-09-23" in reason, metric
+        assert "Otherwise set defillama_fees_slug" not in suggestion, metric
+        assert "Nothing to add here" in suggestion, metric
+        # SETTLED ABSENCE IS NOT AN UNCOVERED METRIC. P6 would file finished work at the bottom
+        # of the to-do list, which is where the repeated search comes from.
+        assert _priority("World Mobile", metric, reason) == P_SUPPRESSED, metric
+        assert _priority("World Mobile", metric, reason) != P_UNCOVERED
+
+    # A PROJECT THAT HAS NOT BEEN CHECKED STILL GETS THE ORIGINAL INSTRUCTION — this must not
+    # become a blanket excuse for every missing slug.
+    other = next(p for p in config.PROJECTS
+                 if not p.get("defillama_fees_slug") and not p.get("defillama_listing_checked"))
+    reason, suggestion = _tier_note(other, "fees_usd", {})
+    assert "checked" not in reason.lower() and "set defillama_fees_slug" in suggestion.lower()
+    print(f"defillama absence ok: World Mobile's four rows close as checked; {other['name']} "
+          f"still asks for the slug")
