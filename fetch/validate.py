@@ -324,6 +324,14 @@ def check_level_breaks(long: pd.DataFrame, out, asof: pd.Timestamp | None = None
     df["_d"] = pd.to_datetime(df["date"])
 
     for (project, metric), g in df.groupby(["project", "metric"]):
+        if metric not in config.LEVEL_BREAK_METRICS:
+            # ** SCOPED TO PROTOCOL FUNDAMENTALS, because on market flows this is noise. ** Run
+            # against every flow it raised World Mobile volume_usd down 50x, GEODNET up 11x and
+            # Near up 11x on 2026-09-22 — three true statements about trading volume, none of
+            # them a finding. The failure this check exists for is a provider's series quietly
+            # ceasing to be the thing it was, and that lives in what the protocol EARNED and what
+            # it DESTROYED. See config.LEVEL_BREAK_METRICS for what is out and why.
+            continue
         if config.METRICS.get(metric, {}).get("kind") != "flow":
             continue
         if config.series_granularity(project, metric) != "daily":

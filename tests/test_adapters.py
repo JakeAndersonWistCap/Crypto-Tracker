@@ -756,17 +756,23 @@ def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
     row = out.frame().query("metric == 'burn_address_balance'").iloc[0]
     assert "logs@20700000-" in row["source"] and "deployed@20700000" in row["source"], row["source"]
     assert _measuring_point(row["source"]) == "chain:ethereum:burn_logs", row["source"]
-    # THE SIBLING SERIES CARRY THEIR METRIC IN THE SOURCE and the Stage 2 one does not, which is
-    # deliberate rather than an inconsistency: one contract key emitting three parts would
-    # collide on a single label, so the two extra series are disambiguated. The Stage 2 leg keeps
-    # the plain contract key, which is the canonical form for a single-component read and is what
-    # every other contract on every other project produces.
+    # ** THE SIBLING SERIES NAME THEIR METRIC IN BRACKETS, AND THAT PLACEMENT IS THE POINT. **
+    # One contract key emitting three parts has to disambiguate them, and the first version did it
+    # with a fourth colon-delimited piece: chain:ethereum:burn_logs:governance_burn_balance. That
+    # is the slot every key parser takes the CONTRACT KEY from, so all three of these series would
+    # have rendered ORPHANED — "written by contract(s) governance_burn_balance, which are no
+    # longer in config" — the day this read stopped 403ing. Fourth instance of that one bug.
     gov = out.frame().query("metric == 'governance_burn_balance'").iloc[0]
-    assert _measuring_point(gov["source"]) == "chain:ethereum:burn_logs:governance_burn_balance"
-    # AND EVERY ONE OF THEM IS STABLE ACROSS RUNS. The scanned range moves every time; without
-    # the annotation stripper each series would blank itself for a change that never happened.
+    assert "[governance_burn_balance]" in gov["source"], gov["source"]
+    assert config.orphaned_contract_keys("Sky", gov["source"]) == [], gov["source"]
+    # THE THREE SHARE A MEASURING POINT, which is correct and not a collision: they are three
+    # metrics, and a measuring point is only ever compared against the same metric's own history.
+    # What it must not do is MOVE, and the scanned block range moves every run — so the range
+    # lives in brackets too, and the stripper is what keeps each series from blanking itself for
+    # a change that never happened.
+    assert _measuring_point(gov["source"]) == "chain:ethereum:burn_logs"
     assert _measuring_point(gov["source"]) == _measuring_point(
-        "chain:ethereum:burn_logs:governance_burn_balance[logs@1-2,deployed@1]")
+        "chain:ethereum:burn_logs[governance_burn_balance][logs@1-2,deployed@1]")
     print("scan ok: starts at the derived deployment block, 10k chunks, range is an annotation")
 
 
@@ -8154,6 +8160,13 @@ def test_an_rpc_that_refuses_one_method_falls_over_to_the_next_endpoint(monkeypa
     assert logs == [] and upper == 9_999 and chunk == 10_000
     assert [u for u, _ in stub.calls] == [urls[0], urls[1]], \
         "the refusing endpoint is tried once, then the next one — not hammered round the list"
+    # ** WHICH ENDPOINT SERVED IT, AND WHICH REFUSED FIRST. ** The run of 2026-09-22 reported
+    # Sky's burn read as "403 from publicnode" and the log could not say whether the failover then
+    # found a working endpoint or ran out of them. Those are different problems — one is nothing
+    # to do, the other needs RPC_ETHEREUM set — so the scan records both.
+    assert reader.log_endpoint_used["ethereum"] == urls[1]
+    assert reader.log_endpoints_refused["ethereum"][0].startswith(urls[0])
+    assert "403" in reader.log_endpoints_refused["ethereum"][0]
 
     # EVERY ENDPOINT REFUSING IS A DIFFERENT ANSWER FROM A NARROWER RANGE, and says so: the
     # remedy is an endpoint that serves logs, not a smaller chunk.
@@ -8162,12 +8175,53 @@ def test_an_rpc_that_refuses_one_method_falls_over_to_the_next_endpoint(monkeypa
     try:
         reader2._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []}, 0, 50_000, 10_000)
     except RuntimeError as e:
-        assert "every configured ethereum RPC refused eth_getLogs" in str(e)
+        assert "ALL 3 configured ethereum RPC endpoint(s) refused eth_getLogs" in str(e)
         assert "PER-METHOD refusal" in str(e) and "not a narrower range" in str(e)
+        # NAMED IN ORDER, WITH WHAT EACH ONE SAID. "403 from publicnode" was ambiguous precisely
+        # because it named one endpoint out of four and gave no verdict on the rest.
+        for u in urls:
+            assert u in str(e), f"{u} refused and is not named in the failure"
         assert len({u for u, _ in stub2.calls}) == 3, "each endpoint tried exactly once"
+        assert len(reader2.log_endpoints_refused["ethereum"]) == 3
+        assert "ethereum" not in reader2.log_endpoint_used, "nothing served it"
     else:
         raise AssertionError("all endpoints refusing must raise, not return an empty scan")
     print("rpc fallback ok: a per-method 403 moves to the next endpoint; all refusing says why")
+
+
+def test_an_http_403_is_already_a_per_method_refusal_and_not_an_unclassified_error():
+    """** THE PROPOSED MECHANISM FOR SKY'S FAILURE WAS NOT THE MECHANISM. **
+
+    The reading was that an HTTP 403 arrives as a requests.HTTPError rather than a JSON-RPC error
+    object, so its text would not match the refusal list and it would fall into "anything else
+    raises" — never reaching the failover. It does match. web3's session manager calls
+    raise_for_status(), and the exception it raises reads "403 Client Error: Forbidden for url:
+    ...", which contains both "403" and "forbidden".
+
+    So the failover WAS reached, and "403 from publicnode" in the run log means every Ethereum
+    endpoint in the list refused, not that one did and the code gave up. That is a different
+    problem with a different remedy — RPC_ETHEREUM pointing at a provider that serves logs — and
+    it is why the scan now records which endpoint served it and which refused first.
+
+    Pinned as a test because the next person to read that log entry will form the same hypothesis.
+    """
+    import requests
+    from fetch.chain import ChainReader
+
+    r = requests.Response()
+    r.status_code, r.reason = 403, "Forbidden"
+    r.url = "https://ethereum-rpc.publicnode.com"
+    try:
+        r.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        msg = str(e).lower()
+        assert any(sub in msg for sub in ChainReader.LOGS_ENDPOINT_REFUSED), msg
+        # AND IT IS NOT MISTAKEN FOR A RANGE PROBLEM, which would halve the chunk and retry the
+        # same refusing endpoint all the way down to the floor.
+        assert not any(sub in msg for sub in ChainReader.LOGS_RANGE_TOO_WIDE), msg
+    else:
+        raise AssertionError("raise_for_status did not raise on 403")
+    print("403 ok: an HTTPError classifies as a per-method refusal, not an unclassified error")
 
 
 def test_a_range_the_server_will_not_serve_is_narrowed_not_retried_blindly(monkeypatch):
@@ -9297,8 +9351,28 @@ def test_the_level_check_does_not_fire_on_the_things_it_must_not():
         lumpy.append(v)
     assert not flags(series("Maple", "fees_usd", lumpy, start="2026-05-05"), asof="2026-09-21"), \
         "a lumpy series' own booking cycle must not read as a level break"
-    print("level break ok: quiet on weekly cycles, outliers, stocks, sparse windows and lumpy "
-          "booking patterns")
+    # MAPLE'S THIRD LEG IS DECLARED TOO. holders_revenue_usd is the same booked fees split a
+    # different way, and it was left out of LUMPY_FLOWS when fees_usd and revenue_usd went in —
+    # so the one leg still on a 7-day window kept flagging the booking calendar as a fault.
+    assert config.level_break_windows("Maple", "holders_revenue_usd") == (30, 90)
+    assert not flags(series("Maple", "holders_revenue_usd", lumpy, start="2026-05-05"),
+                     asof="2026-09-21")
+
+    # ** A MARKET FLOW IS NOT CHECKED AT ALL, and that is scoping rather than tuning. ** The run
+    # of 2026-09-22 raised World Mobile volume_usd down 50x, GEODNET up 11x and Near up 11x —
+    # three true statements about trading volume and not one of them a finding. Three
+    # unactionable rows are how the Morpho-shaped row beside them stops being read.
+    collapse = [1_000_000.0] * 30 + [20_000.0] * 10
+    assert not flags(series("World Mobile", "volume_usd", collapse)), \
+        "volume is a market, not a feed: an order of magnitude in a month is a Tuesday"
+    assert not flags(series("GEODNET", "tx_count", collapse))
+    assert not flags(series("Aerodrome", "emissions_tokens", collapse)), \
+        "a schedule-driven series moves by design at an epoch boundary"
+    # AND THE FUNDAMENTALS STILL ARE. The same shape on the metrics the check was built for.
+    assert flags(series("Chainlink", "fees_usd", collapse)), "fees must still be checked"
+    assert flags(series("Chainlink", "gross_burn_tokens", collapse)), "burns must still be checked"
+    print("level break ok: quiet on weekly cycles, outliers, stocks, sparse windows, lumpy "
+          "booking patterns and market flows — and still loud on fees and burns")
 
 
 # ============================================================================================
@@ -9347,8 +9421,13 @@ def _morpho_summaries():
     # window the parent's chart sums to ~84% of its total, which looks unremarkable. The check
     # has to fire on the day of the break, not a month later.
     return {
+        # ** THE CHILD ENTRIES ARE OBJECTS, and this fixture used to pretend they were strings. **
+        # That pretence is why the check shipped passing its children's dict reprs into the URL:
+        # GET /summary/fees/{'name': 'Morpho Blue', ...} -> 404, eleven times in one run. The
+        # shape here is the shape the API returns — name and defillamaId, no slug.
         "morpho": {"name": "Morpho", "total30d": MORPHO_PARENT_30D,
-                   "childProtocols": ["morpho-blue", "morpho-midnight"],
+                   "childProtocols": [{"name": "Morpho Blue", "defillamaId": "5980"},
+                                      {"name": "Morpho Midnight", "defillamaId": "6321"}],
                    "totalDataChart": _chart(blue + mid)},
         "morpho-blue": {"name": "Morpho Blue", "parentProtocol": "parent#morpho",
                         "total30d": MORPHO_BLUE_30D, "childProtocols": [],
@@ -9447,9 +9526,99 @@ def test_the_restructure_check_is_quiet_on_everything_that_is_not_one():
     del broken["morpho-blue"]
     got, out = flags(broken)
     assert not got, "a child that could not be read must not decide the verdict"
-    assert [e for e in out.log if e.status == "failed" and "unreadable" in e.message], out.log
+    # ** SKIPPED, NOT FAILED. ** A child listing that will not answer is not a failure of this
+    # project's fetch — fees_usd came off the parent, and the run of 2026-09-22 turned exactly
+    # this into eleven red rows against eight healthy protocols. It still has to be VISIBLE,
+    # because an under-counted child sum is how a real restructure goes unreported.
+    assert not [e for e in out.log if e.status == "failed"], out.log
+    skips = [e for e in out.log if e.status == "skipped" and "INCOMPLETE" in e.message]
+    assert skips, out.log
+    assert "lower bound" in skips[0].message
     print("restructure ok: quiet on a healthy parent, a childless slug, a genuine collapse, and "
           "an unreadable child")
+
+
+def test_every_marker_the_code_can_emit_is_registered_and_none_is_appended_by_hand():
+    """** THE BUG THAT HAS NOW BITTEN FOUR TIMES, CLOSED AT THE POINT OF WRITING. **
+
+    `[tail@21bps]` blanked Aerodrome's issuance as ORPHANED. `:rederived` would have read as a
+    change of measuring point. `:as-buyback` put GEODNET's and Uniswap's actual_buyback_tokens on
+    the sheet as "written by contract(s) as-buyback, which are no longer in config" — a message
+    naming the wrong file for a contract that never existed. Sky's `:governance_burn_balance` was
+    the fourth and had not surfaced only because the read behind it is still 403ing.
+
+    Every time the marker was RIGHT and the registry entry was MISSING, and every time the
+    symptom appeared somewhere else entirely, days later, as a blank column. So the registry is
+    enforced where the marker is ATTACHED: config.mark_source refuses an unregistered one at the
+    emitting line. This test holds that door shut — no marker may be glued on by hand, because a
+    concatenation is exactly how the previous four got in.
+    """
+    import pathlib
+    import re
+
+    # (1) THE GUARD REFUSES what is not registered, and says what to do about it.
+    for bad in ("as_buyback", "AS-BUYBACK", "partial", "stitched"):
+        try:
+            config.mark_source("chain:base:minter", bad)
+        except ValueError as e:
+            assert "not a registered source marker" in str(e)
+            assert "SOURCE_MARKERS" in str(e), "the refusal has to say where to register it"
+        else:
+            raise AssertionError(f"{bad!r} was accepted as a marker")
+    for good in config.SOURCE_MARKERS:
+        assert config.mark_source("chain:base:minter", good) == f"chain:base:minter:{good}"
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    files = [f for f in root.glob("*.py")] + [f for f in (root / "fetch").glob("*.py")]
+
+    # (2) EVERY MARKER THE CODE ASKS FOR IS REGISTERED. Reads the literals out of the mark_source
+    # calls themselves, so a new one added without a registry line fails here rather than in a
+    # workbook.
+    asked = set()
+    for f in files:
+        asked |= set(re.findall(r'mark_source\([^()]*?,\s*"([^"]+)"\)', f.read_text()))
+    assert asked, "no mark_source call found — the guard has been routed around wholesale"
+    unregistered = asked - set(config.SOURCE_MARKERS)
+    assert not unregistered, f"emitted but not in SOURCE_MARKERS: {sorted(unregistered)}"
+
+    # (3) AND NONE IS APPENDED BY HAND. An f-string that builds a source ending in a marker is
+    # the shape all four bugs had; membership tests (`":PARTIAL" in src`) are not, and are how
+    # the workbook reads them back.
+    glued = re.compile(r'f"[^"]*:(' + "|".join(re.escape(m) for m in config.SOURCE_MARKERS) + r')(["}:\[])')
+    offenders = [f"{f.name}:{i}: {line.strip()}"
+                 for f in files
+                 for i, line in enumerate(f.read_text().splitlines(), 1)
+                 if glued.search(line)]
+    assert not offenders, ("a marker glued on by hand bypasses config.mark_source, which is the "
+                           "only thing checking the registry:\n" + "\n".join(offenders))
+    print(f"markers ok: {sorted(asked)} all registered, none glued on by hand")
+
+
+def test_a_child_listing_is_resolved_to_a_slug_and_never_to_its_dict_repr():
+    """** THE THIRD COST OF ASSUMING A PAYLOAD'S SHAPE. ** `childProtocols` holds OBJECTS with
+    `name` and `defillamaId`. The first version did `str(k)` on each and put the result in the
+    URL, so every parent in the portfolio asked DefiLlama for
+    /summary/fees/{'name': 'Chainlink Requests', ...} — 404 every time, 11 run-log failures
+    across eight healthy protocols, and the tier's wall clock 63s -> 125s.
+
+    DefiLlama's slug for a listing is its name lowercased with spaces hyphenated. The dot in
+    "ether.fi Stake" SURVIVES: the slug is ether.fi-stake, not etherfi-stake.
+    """
+    from fetch.llama import DefiLlama
+    cs = DefiLlama._child_slug
+
+    assert cs({"name": "Morpho Blue", "defillamaId": "5980"}) == "morpho-blue"
+    assert cs({"name": "ether.fi Stake", "defillamaId": "3001"}) == "ether.fi-stake"
+    assert cs({"name": "Chainlink Requests"}) == "chainlink-requests"
+    # A PAYLOAD THAT ALREADY CARRIES A SLUG IS BELIEVED over the derivation — the rule is the
+    # fallback, not the mechanism, so the day DefiLlama adds the field this stops guessing.
+    assert cs({"name": "Uniswap V3", "slug": "uniswap-v3"}) == "uniswap-v3"
+    # AND THE OLD SHAPE STILL WORKS, because nothing says the API cannot go back to strings.
+    assert cs("morpho-blue") == "morpho-blue"
+    # NOTHING RESOLVABLE RESOLVES TO NOTHING — never to "none" or to a repr that 404s.
+    for junk in ({"defillamaId": "6321"}, {}, None, 5980, {"name": "   "}):
+        assert cs(junk) is None, junk
+    print("restructure ok: child entries resolve by name, dots survive, junk yields no call")
 
 
 def test_morphos_restructure_is_a_confirmed_gap_not_a_slug_to_guess_at():

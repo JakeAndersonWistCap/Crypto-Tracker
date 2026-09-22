@@ -61,6 +61,20 @@ ERC20_ABI = [
     # would turn 67 bps into a vanishing fraction and the emission into zero. Read through
     # Reader.raw(), never scaled().
     {"constant": True, "inputs": [], "name": "tailEmissionRate", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # ** THE FUNCTION WAS RIGHT; THE ABI DID NOT CARRY IT. ** The run of 2026-09-22 reported
+    # "cooldownDuration was not found in this contract's abi" for Pendle, which reads as "we
+    # guessed the name". We did not: sPENDLE declares
+    #     function cooldownDuration() external view returns (uint24);
+    # in contracts/interfaces/IPStakedPendle.sol, backed by `uint24 public cooldownDuration` in
+    # contracts/LiquidityMining/sPendle/StakedPendle.sol — read from Pendle's own repository,
+    # pendle-finance/pendle-core-v2-public, on 2026-09-22. The contract at
+    # 0x999999999991E178D52Cd95AFd4b00d066664144 is that deployment: deployments/1-core.json
+    # names it under "sPendle".
+    #
+    # uint24, NOT uint256, and the width is taken from the interface rather than assumed. It
+    # returns SECONDS, so it goes through Reader.raw_call (unscaled) — dividing a 14-day notice
+    # period by 10^18 gives 1.2e-12 days, which reads as zero and is believable.
+    {"constant": True, "inputs": [], "name": "cooldownDuration", "outputs": [{"name": "", "type": "uint24"}], "type": "function"},
 ]
 
 # Metrics a contract read can produce, by contract kind.
@@ -154,6 +168,41 @@ def rpc_endpoints(chain: str) -> list[str]:
     return list(config.DEFAULT_RPC.get(chain, []))
 
 
+def _check_component_labels(project: dict, metric: str, components: list) -> None:
+    """A component label's last piece is a CONTRACT KEY, and nothing else may sit there.
+
+    ** THE FOURTH INSTANCE OF ONE BUG. ** `[tail@21bps]`, `:rederived`, `:as-buyback` each put
+    something in a source string that the key parsers then read as a contract, and each surfaced
+    days later as a column reading "written by contract(s) X, which are no longer in config" —
+    a message pointing at the wrong file, for a contract that was never meant to be named.
+
+    This is the fourth, and it had not bitten yet only because the read it belongs to has been
+    403ing: Sky's burn_transfer_logs decomposes into three metrics and labels each component
+    `{chain}:{key}:{metric}`, so `chain:ethereum:burn_logs:governance_burn_balance` names the
+    METRIC in the slot the key parsers take the key from. The day that read succeeds, all three
+    of Sky's burn series would have rendered ORPHANED.
+
+    ** CHECKED AGAINST THE PROJECT IN HAND, NOT GLOBAL CONFIG. ** The row is being written from
+    these contracts; whether some other copy of the config has them is a different question, and
+    asking it here would make a fixture's divergence look like a data fault.
+
+    It RAISES. A source that cannot be resolved back to the contract it was read from is not a
+    lower-confidence figure — it is a figure nothing downstream can interpret, and every previous
+    instance of this class was found by a human reading a blank cell weeks later.
+    """
+    contracts = project.get("contracts") or {}
+    for label, _ in components:
+        key = config.strip_source_annotations(label).split(":")[-1]
+        if key and key not in contracts:
+            raise ValueError(
+                f"{project['name']}/{metric}: component label {label!r} ends in {key!r}, which is "
+                f"not a contract in this project. The last colon-delimited piece of a source "
+                f"string is where every key parser looks for the contract — put anything else "
+                f"there (a metric name, a marker, a note) and the column renders ORPHANED against "
+                f"a contract that was never meant to be named. Use a bracketed annotation for "
+                f"anything that is not a key.")
+
+
 class ChainReader:
     """Holds one working web3 connection per chain, trying the fallback list in order."""
 
@@ -164,6 +213,13 @@ class ChainReader:
         # assumed: the configured size is a request, and a provider that narrows it silently
         # would make the scan cost a mystery.
         self.log_chunk_used: dict[str, int] = {}
+        # WHICH ENDPOINT SERVED THE SCAN, and which ones refused it first. The run of
+        # 2026-09-22 reported Sky's burn read as "403 from publicnode" and there was no way to
+        # tell from the log whether one endpoint refused and another served, or all four refused
+        # and the failover simply had nowhere left to go. Those are different problems with
+        # different fixes, and the log has to say which one happened.
+        self.log_endpoint_used: dict[str, str] = {}
+        self.log_endpoints_refused: dict[str, list[str]] = {}
 
     def web3(self, chain: str):
         if chain in self._w3:
@@ -310,6 +366,8 @@ class ChainReader:
             try:
                 logs = list(w3.eth.get_logs({**base, "fromBlock": block, "toBlock": upper}))
                 self.log_chunk_used[chain] = chunk
+                self.log_endpoint_used[chain] = getattr(
+                    getattr(w3, "provider", None), "endpoint_uri", "?")
                 return logs, upper, chunk
             except Exception as e:  # noqa: BLE001
                 msg = str(e).lower()
@@ -321,10 +379,14 @@ class ChainReader:
                 if not any(s in msg for s in self.LOGS_ENDPOINT_REFUSED):
                     raise
                 tried.append(getattr(getattr(w3, "provider", None), "endpoint_uri", "?"))
+                self.log_endpoints_refused.setdefault(chain, [])
+                if tried[-1] not in self.log_endpoints_refused[chain]:
+                    self.log_endpoints_refused[chain].append(f"{tried[-1]} ({str(e)[:60]})")
                 nxt = next((u for u in urls if u not in tried), None)
                 if nxt is None:
                     raise RuntimeError(
-                        f"every configured {chain} RPC refused eth_getLogs: {', '.join(tried)}. "
+                        f"ALL {len(tried)} configured {chain} RPC endpoint(s) refused "
+                        f"eth_getLogs, in order: {'; '.join(self.log_endpoints_refused[chain])}. "
                         f"Last error: {e}. These endpoints answer other methods, so this is a "
                         f"PER-METHOD refusal: the fix is an endpoint that serves logs "
                         f"(set RPC_{chain.upper()} in .env), not a narrower range.") from e
@@ -940,9 +1002,22 @@ class Chain:
         # fail the read it is describing. A reader that does not track the worked size simply
         # reports the asked one.
         worked = getattr(self.reader, "log_chunk_used", {}).get(chain, asked)
-        log.info("%s/%s: %d burn event(s) over blocks %d-%d in %d chunk(s) of %d%s",
+        # ** WHICH ENDPOINT SERVED IT. ** "403 from publicnode" in a run log does not say whether
+        # the failover then found a working endpoint or ran out of them — and on a read that has
+        # been failing for days, that is the whole question. Reported on success too, so the next
+        # refusal can be read against the endpoint that used to work.
+        served = getattr(self.reader, "log_endpoint_used", {}).get(chain, "?")
+        refused_by = getattr(self.reader, "log_endpoints_refused", {}).get(chain) or []
+        log.info("%s/%s: %d burn event(s) over blocks %d-%d in %d chunk(s) of %d%s — SERVED BY "
+                 "%s%s",
                  project["name"], key, len(events), first_blk, last_blk, chunks, worked,
-                 "" if worked == asked else f" (config asked for {asked:,}; the endpoint capped it)")
+                 "" if worked == asked else f" (config asked for {asked:,}; the endpoint capped it)",
+                 served,
+                 "" if not refused_by else f", after {len(refused_by)} refusal(s): {'; '.join(refused_by)}")
+        out.log.append(LogEntry(SOURCE, project["name"], 0, "ok",
+                                f"{key}: eth_getLogs served by {served}"
+                                + (f" after {len(refused_by)} refusal(s): {'; '.join(refused_by)}"
+                                   if refused_by else " (no endpoint refused it)"), TIER))
 
         by_sender: dict[str, float] = {}
         for e in events:
@@ -1013,14 +1088,22 @@ class Chain:
         for m, total in totals.items():
             if m == metric:
                 continue
-            parts[m].append((f"{chain}:{key}:{m}", total))
+            # ** THE METRIC GOES IN BRACKETS, NOT IN THE KEY'S SLOT. ** One contract read
+            # decomposes into three series, so the source has to say which one this is — but the
+            # last colon-delimited piece is where every parser looks for the CONTRACT KEY, and
+            # `chain:ethereum:burn_logs:governance_burn_balance` names a metric there. All three
+            # of Sky's burn series would have rendered ORPHANED ("written by contract(s)
+            # governance_burn_balance, which are no longer in config") the day this read stopped
+            # 403ing. A bracketed annotation is stripped by every one of those parsers and by
+            # _measuring_point, which is what the slot is for.
+            parts[m].append((f"{chain}:{key}[{m}]", total))
             source_suffix[m] = suffix
         # A SERIES WITH NO EVENTS IS STILL A SERIES, and a zero here is measured rather than
         # missing: the scan ran and found nothing from that sender. Emitted so the column reads
         # 0 rather than going stale and looking like a broken read.
         for m in set(named.values()) | {other_metric}:
             if m not in totals and m != metric:
-                parts[m].append((f"{chain}:{key}:{m}", 0.0))
+                parts[m].append((f"{chain}:{key}[{m}]", 0.0))
                 source_suffix[m] = suffix
         if unrecognised:
             out.review_item(project["name"], other_metric, "unrecognised_burn_sender",
@@ -1088,6 +1171,7 @@ class Chain:
             # runs inside one epoch collapse onto one row instead of accumulating.
             when = metric_when.get(metric, run_date)
             total = sum(v for _, v in components)
+            _check_component_labels(project, metric, components)
             if len(components) == 1:
                 label, _ = components[0]
                 src = f"{SOURCE}:{label}"
@@ -1132,7 +1216,7 @@ class Chain:
             is_partial = (metric in partial_metrics or bool(missing)
                           or (metric == "total_supply" and project.get("supply_is_partial")))
             if is_partial:
-                src += ":PARTIAL"
+                src = config.mark_source(src, "PARTIAL")
                 detail += " [PARTIAL]"
                 reason = (f"{len(missing)} component(s) refused: {'; '.join(missing)}" if missing
                           else (partial_reasons or {}).get(metric)
@@ -1156,7 +1240,7 @@ class Chain:
             flow_metric = config.cumulative_flow_for(name, metric)
             if flow_metric:
                 flow = derive_flow_from_cumulative(total, self.prior_delta.get((name, metric)), name,
-                                                   flow_metric, f"{src}:delta", TIER, when,
+                                                   flow_metric, config.mark_source(src, "delta"), TIER, when,
                                                    prior_date=self.prior_dates.get((name, metric)),
                                                    stock_metric=metric, out=out,
                                                    prior_source=self.prior_sources.get((name, metric)),
@@ -1170,7 +1254,8 @@ class Chain:
                     if comp.get("flow_is_recurring_only") and flow_metric == "gross_burn_tokens":
                         clean = flow.copy()
                         clean["metric"] = "burn_revenue_funded"
-                        clean["source"] = f"{src}:delta:recurring-only"
+                        clean["source"] = config.mark_source(
+                            config.mark_source(src, "delta"), "recurring-only")
                         out.add(clean, SOURCE, name,
                                 "burn_revenue_funded = the flow, which excludes the one-off by "
                                 "construction: it predates every observation held", TIER)

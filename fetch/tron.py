@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 
+import config
+
 from .base import Http, derive_flow_from_cumulative, json_path_get, point, today
 
 log = logging.getLogger("token_metrics.fetch.tron")
@@ -90,7 +92,7 @@ class TronNode:
             out.add(point(name, metric, value, src, TIER, when), SOURCE, name,
                     f"{metric}={value:,.4f} via {detail}", TIER)
             flow = derive_flow_from_cumulative(value, self.prior_delta.get((name, metric)), name,
-                                               "gross_burn_tokens", f"{src}:delta", TIER, when,
+                                               "gross_burn_tokens", config.mark_source(src, "delta"), TIER, when,
                                                prior_date=self.prior_dates.get((name, metric)),
                                                stock_metric=metric, out=out)
             if not flow.empty:

@@ -150,7 +150,8 @@ def rederive_flow_from_stock(conn: sqlite3.Connection, project: str, flow_metric
 
     for (d0, v0, s0, _), (d1, v1, s1, t1) in zip(stock, stock[1:]):
         pair = Pair(date=d1, prior_date=d0, value=None, prior_value=v0, stock_value=v1,
-                    source=f"{s1}:delta:{REDERIVED}", tier=t1)
+                    source=config.mark_source(config.mark_source(s1, "delta"), REDERIVED),
+                    tier=t1)
         if _measuring_point(s0) != _measuring_point(s1):
             pair.refusal = (f"the measuring point CHANGED — {d0} read {_measuring_point(s0)!r} "
                             f"and {d1} read {_measuring_point(s1)!r}. Differencing across that "

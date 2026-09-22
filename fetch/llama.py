@@ -75,6 +75,33 @@ class DefiLlama:
     def _summary_chart(self, slug: str, data_type: str):
         return self._chart(self._summary(slug, data_type))
 
+    # ===== A CHILD ENTRY IS NOT A SLUG. Fixed 2026-09-22 after it cost 11 run-log failures. =====
+    #
+    # `childProtocols` is a list of OBJECTS carrying `name` and `defillamaId` — not the strings
+    # the first version assumed. `str(k)` on one of them yields the dict's repr, which then went
+    # into the URL verbatim: GET /summary/fees/{'name': 'Chainlink Requests', ...} -> HTTP 404,
+    # for every child of every parent, on every run.
+    #
+    # DefiLlama's own slug for a listing is its name lowercased with spaces hyphenated, which is
+    # how "Morpho Blue" is morpho-blue and "ether.fi Stake" is ether.fi-stake — note that the dot
+    # is kept, because the slug is not sanitised beyond the space. The rule is APPLIED, NOT
+    # TRUSTED: a derived slug that does not resolve is logged and the child dropped (see the
+    # caller), and the totals_agree test means a slug that resolved to the WRONG listing cannot
+    # produce a false restructure report — its 30-day figure simply will not sum to the parent's.
+    # `slug` is preferred whenever the payload carries one, so the derivation is the fallback and
+    # not the mechanism.
+    @staticmethod
+    def _child_slug(entry) -> str | None:
+        if isinstance(entry, str):
+            return entry.strip() or None
+        if not isinstance(entry, dict):
+            return None
+        for key in ("slug", "name"):
+            v = entry.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip().lower().replace(" ", "-")
+        return None
+
     # ===== A PARENT WHOSE CHILDREN CARRY THE FEES. Added 2026-09-23. =====
     #
     # ** THE FAILURE THIS CATCHES LEAVES NO ERROR ANYWHERE. ** DefiLlama restructured Morpho on
@@ -117,31 +144,22 @@ class DefiLlama:
             log.info("%s: restructure check skipped, %s did not answer (%s)", name, slug, e)
             return
 
-        kids = [str(k) for k in (parent.get("childProtocols") or [])]
+        kids, unnamed = [], 0
+        for entry in (parent.get("childProtocols") or []):
+            k = self._child_slug(entry)
+            if k:
+                kids.append(k)
+            else:
+                unnamed += 1
+        if unnamed:
+            log.info("%s: %d child entr(ies) of %s carry no name to resolve a slug from",
+                     name, unnamed, slug)
         if not kids:
             return
         # A slug that is ITSELF a child is not a restructure — it is the state after one, and
         # config says so. Recorded rather than warned about.
         if parent.get("parentProtocol"):
             log.info("%s: slug %r is a CHILD of %s", name, slug, parent["parentProtocol"])
-
-        parent_30d = float(parent.get("total30d") or 0.0)
-        child_30d, child_rows, failed = 0.0, [], []
-        for kid in kids:
-            try:
-                k = self._summary(kid, "dailyFees")
-            except Exception as e:  # noqa: BLE001
-                failed.append(f"{kid} ({e})")
-                continue
-            v = float(k.get("total30d") or 0.0)
-            child_30d += v
-            chart = self._chart(k)
-            child_rows.append((kid, v, chart[-1][0].date().isoformat() if chart else None))
-        if failed:
-            out.fail(SOURCE, name, f"{slug}: {len(failed)} child listing(s) unreadable: "
-                                   f"{', '.join(failed)}", TIER)
-        if not child_rows or parent_30d <= 0:
-            return
 
         # ===== THE DISCRIMINATOR, AND THE FIRST VERSION OF IT WAS TOO SLOW. =====
         # Comparing the parent's 30-day CHART SUM against its 30-day TOTAL cannot fire until 30
@@ -157,20 +175,55 @@ class DefiLlama:
         # AND A GENUINE COLLAPSE PASSES THIS, which is the point. If the fees really stopped, the
         # TOTAL falls with the dailies and the two agree again: a protocol at $4,859/30d and
         # $106/day is consistent, unremarkable, and correctly left to level_break.
+        #
+        # ** IT IS COMPUTED BEFORE ANY CHILD IS CALLED, and that ordering is the second fix here.
+        # ** Having children is ORDINARY — most of the sixteen slugs that are parents have nothing
+        # wrong with them — and the first version read every child of every parent on every run to
+        # reach a conclusion the parent's own listing already settles. That doubled the tier's wall
+        # clock (63s -> 125s) and turned every unreadable child into a run-log failure against a
+        # healthy protocol. The children are corroboration for a collapse already seen, not a survey.
+        parent_30d = float(parent.get("total30d") or 0.0)
         pchart = self._chart(parent)
-        if not pchart:
+        if not pchart or parent_30d <= 0:
             return
         newest = pchart[-1][0]
         recent = sum(v for d, v in pchart if (newest - d).days < RESTRUCTURE_RECENT_DAYS)
         implied = parent_30d / 30.0 * RESTRUCTURE_RECENT_DAYS
-        level_gone = recent * RESTRUCTURE_FACTOR < implied
+        if recent * RESTRUCTURE_FACTOR >= implied:
+            return
+        parent_recent = recent
+
+        child_30d, child_rows, failed = 0.0, [], []
+        for kid in kids:
+            try:
+                k = self._summary(kid, "dailyFees")
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{kid} ({e})")
+                continue
+            v = float(k.get("total30d") or 0.0)
+            child_30d += v
+            chart = self._chart(k)
+            child_rows.append((kid, v, chart[-1][0].date().isoformat() if chart else None))
+        if failed:
+            # SKIPPED, NOT FAILED, and that distinction is the first fix here. A child listing
+            # that will not answer is not a failure of this project's fetch — fees_usd has
+            # already been read from the parent by fees(). What it does do is make the sum below
+            # an UNDER-count, so totals_agree can come out false and the check stay silent on a
+            # real restructure. This line puts that incompleteness on the record even when the
+            # conclusion cannot be reached.
+            out.skipped(SOURCE, name,
+                        f"{slug}: restructure check INCOMPLETE — {len(failed)} of {len(kids)} "
+                        f"child listing(s) unreadable ({', '.join(failed)}). The children's "
+                        f"30-day sum is a lower bound, so the check may stay silent.", TIER)
+        if not child_rows:
+            return
+
         # THE CHILDREN ARE WHERE THE MONEY WENT, and the totals agreeing is what proves it did
         # not simply stop. Without this a listing whose chart lags its total would be reported as
         # a restructure.
         totals_agree = abs(parent_30d - child_30d) <= max(parent_30d, child_30d) * 0.01
-        if not (level_gone and totals_agree):
+        if not totals_agree:
             return
-        parent_recent = recent
 
         listing = "; ".join(f"{k} 30d={v:,.0f}"
                             + (f", last point {d}" if d else ", NO DAILY POINTS")

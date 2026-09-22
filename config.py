@@ -842,7 +842,11 @@ def is_manual_quarterly(project_name: str, metric: str) -> bool:
 # tuple and treats whatever is left as a contract key. An unregistered marker would make a
 # rebuilt row read as a DIFFERENT measuring point from the live one, so the next run would refuse
 # to difference against it and report a change of address that never happened.
-SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived")
+# "as-buyback" marks a row RE-LABELLED from the burn it is identical to (_derive_buyback): where
+# a protocol buys its token and destroys it, the buyback and the burn are one event under two
+# names, and the marker says the actual_buyback_tokens row is the gross_burn_tokens row rather
+# than a second reading of it.
+SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -870,6 +874,50 @@ def strip_source_annotations(source: str) -> str:
     flipped — blanking the series for a change that never happened.
     """
     return _SOURCE_ANNOTATION.sub("", str(source or ""))
+
+
+def dune_query_declared(project_name: str, metric: str) -> int | None:
+    """The Dune query id that SOURCES this metric, or None if nothing does.
+
+    A slot with query_id None is a declared GAP, not a source — _dune() creates one per metric so
+    the Gap Report can name what is missing — so the id has to be present, not just the key.
+
+    ** WHAT THIS IS FOR: keeping a derivation out of a column something else measures. ** GEODNET
+    publishes actual_buyback_usd through query 8683175. _derive_buyback also computes it, from
+    tokens x price, and skipped itself only when the sourced rows happened to be in the SAME
+    RUN's frame. Tier 4 is a backfill — it does not run every day — so on every other day the
+    derivation wrote into a column that already had a measured series, and the two sources
+    alternating read as a MEASURING_POINT_CHANGED that blanked the column. Whether a source
+    exists is a fact about config, not about which tiers happened to run this morning.
+    """
+    slot = ((PROJECT_BY_NAME.get(project_name) or {}).get("dune_queries") or {}).get(metric)
+    return (slot or {}).get("query_id")
+
+
+def mark_source(source: str, marker: str) -> str:
+    """Append a marker to a source string, and REFUSE an unregistered one.
+
+    ** THIS CLASS OF BUG HAS NOW BITTEN THREE TIMES. ** `[tail@21bps]` blanked Aerodrome's
+    issuance as orphaned; `:rederived` would have read as a change of measuring point; `:as-buyback`
+    put GEODNET's and Uniswap's actual_buyback_tokens on the sheet as ORPHANED — "written by
+    contract(s) as-buyback, which are no longer in config". Every time, the marker was correct and
+    the REGISTRY entry was missing, and every time the symptom appeared somewhere else entirely,
+    days later, as a blank column.
+
+    The registry cannot be enforced where it is read — by then the string exists and the only
+    question is how to interpret it. It has to be enforced where the marker is ATTACHED, which is
+    here, and the failure is an exception at the emitting line rather than a blank cell in a
+    workbook. A marker that ought to exist is one line in SOURCE_MARKERS away; a marker that was a
+    typo never reaches the store.
+    """
+    if marker not in SOURCE_MARKERS:
+        raise ValueError(
+            f"{marker!r} is not a registered source marker, so appending it to {source!r} would "
+            f"make it read as a contract key: every parser that resolves keys out of a source "
+            f"string filters the colon-delimited pieces against SOURCE_MARKERS and treats what is "
+            f"left as one. Add it to config.SOURCE_MARKERS with a line saying what it means, or "
+            f"do not write it. Registered: {', '.join(SOURCE_MARKERS)}.")
+    return f"{source}:{marker}"
 
 
 def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
@@ -8079,8 +8127,19 @@ PROJECTS = [
                 purpose="Unstaking notice period, in SECONDS, as the contract enforces it. "
                         "Governance-settable, which is why it is read every run rather than "
                         "carried as a constant.",
-                note="Pendle's own sPENDLE docs give 14 days; this read is what keeps that true "
-                     "after a governance change rather than at the moment somebody last looked."),
+                note="THE FUNCTION NAME IS NOT A GUESS, and the run of 2026-09-22 made it look "
+                     "like one: 'cooldownDuration was not found in this contract's abi'. The "
+                     "function exists — IPStakedPendle.sol declares "
+                     "`function cooldownDuration() external view returns (uint24)` and "
+                     "StakedPendle.sol backs it with `uint24 public cooldownDuration`, both read "
+                     "from https://raw.githubusercontent.com/pendle-finance/"
+                     "pendle-core-v2-public/main/contracts/interfaces/IPStakedPendle.sol and "
+                     ".../contracts/LiquidityMining/sPendle/StakedPendle.sol on 2026-09-22. "
+                     "What was missing was the ABI "
+                     "fragment on OUR side (fetch/chain.ERC20_ABI), now added with the uint24 "
+                     "width the interface declares. Pendle's own sPENDLE docs give 14 days; this "
+                     "read is what keeps that true after a governance change rather than at the "
+                     "moment somebody last looked."),
             "spendle": _contract(
                 "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "ve_total_supply", "sPENDLE",
                 PENDLE_DEPLOYMENTS_1_CORE,
@@ -9485,7 +9544,48 @@ LUMPY_FLOWS = {
         "source": "follows fees_usd above",
         "recorded_on": "2026-09-23",
     },
+    ("Maple", "holders_revenue_usd"): {
+        "underlying_cadence": "irregular",
+        "observed_cadence": "daily",
+        "why": "the holders' share of the same booked fees. It was left out when fees_usd and "
+               "revenue_usd were declared on 2026-09-23, so the one leg of Maple's fee split "
+               "still on a daily comparison kept flagging the booking calendar as a fault.",
+        "source": "follows fees_usd above — same series, split three ways",
+        "recorded_on": "2026-09-22",
+    },
 }
+
+
+# ===== WHICH FLOWS THE LEVEL-BREAK CHECK IS ABOUT. Scoped 2026-09-22. =====
+#
+# ** IT WAS RUNNING ON EVERY FLOW, AND ON MARKET FLOWS IT IS NOISE. ** The run of 2026-09-22
+# raised World Mobile volume_usd down 50x, GEODNET up 11x and Near up 11x. All three are true
+# statements about trading volume and none of them is a finding: a token's volume moving an order
+# of magnitude in a month is a market, not a broken feed. Three unactionable rows are how the
+# Morpho-shaped row they sit next to stops being read.
+#
+# THE CHECK WAS BUILT FOR A SPECIFIC FAILURE: a provider's series quietly stopping being the
+# thing it was. That failure lives in the PROTOCOL FUNDAMENTALS — what the protocol earned, and
+# what it destroyed — where a tenfold move with no announcement is almost always the feed.
+#
+# DELIBERATELY OUT, and each for a reason rather than for being quiet:
+#   volume_usd, tx_count          market activity. An order of magnitude is a Tuesday.
+#   gross_issuance_tokens,        schedule-driven and lumpy by construction — an unlock or an
+#   emissions_tokens              epoch boundary moves them by design.
+#   actual_buyback_*              re-labelled from the burn they equal; the burn is already
+#                                 checked, and flagging both reports one break twice.
+#   customer_revenue_usd,         restatements of fees_usd or of each other. Same break, more
+#   net_protocol_surplus_usd,     rows.
+#   net_mint_monthly
+LEVEL_BREAK_METRICS = (
+    "fees_usd",
+    "revenue_usd",
+    "holders_revenue_usd",
+    "gross_burn_tokens",
+    "governance_burn_tokens",
+    "other_burn_tokens",
+    "burn_revenue_funded",
+)
 
 
 # ===== A BREAK IS VISIBLE FOR ONE DAY AND THEN INVISIBLE FOREVER. Added 2026-09-23. =====

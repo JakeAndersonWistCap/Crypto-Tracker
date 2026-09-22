@@ -349,8 +349,30 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
         name = p["name"]
         route = config.buyback_route(name)
 
+        # ===== A DECLARED SOURCE OWNS THE COLUMN, WHATEVER RAN TODAY. Fixed 2026-09-22. =====
+        # The `have` test below asks what is in THIS RUN's frame, and tier 4 is a backfill that
+        # does not run every day. So on the days GEODNET's Dune query did not run, the derivation
+        # wrote actual_buyback_usd from tokens x price into a column that already had a measured
+        # series — and the two sources alternating read as MEASURING_POINT_CHANGED, which blanked
+        # the column. Whether a source exists is a fact about config, not about which tiers
+        # happened to run this morning, so it is asked of config.
+        sourced = {m for m in ("actual_buyback_tokens", "actual_buyback_usd")
+                   if config.dune_query_declared(name, m)}
+        for m in sorted(sourced):
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{m}: NOT derived — Dune query "
+                        f"{config.dune_query_declared(name, m)} sources this column. A derivation "
+                        f"beside a measurement is a second measuring point, and the two "
+                        f"alternating blank the series.", tier=2)
+        # NO AUTOMATIC CROSS-CHECK AGAINST IT, and that is a refusal rather than an omission.
+        # GEODNET's sourced figure is MONTHLY and priced per transaction inside the query; the
+        # derivation would price a month's tokens at one day's price. The two disagreeing would
+        # say nothing about either, so a comparison here would generate a flag a human has to
+        # dismiss every month — which is how real flags stop being read.
+
         # (1) THE BURN ROUTE.
-        if route["route"] == "burn" and "actual_buyback_tokens" not in {m for n, m in have if n == name}:
+        if (route["route"] == "burn" and "actual_buyback_tokens" not in sourced
+                and "actual_buyback_tokens" not in {m for n, m in have if n == name}):
             src = frame[(frame.project == name) & (frame.metric == route["metric"])]
             if src.empty:
                 out.skipped(SOURCE_DERIVED, name,
@@ -361,14 +383,16 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
             else:
                 rows = src.copy()
                 rows["metric"] = "actual_buyback_tokens"
-                rows["source"] = rows["source"].astype(str) + ":as-buyback"
+                rows["source"] = rows["source"].astype(str).map(
+                    lambda s: config.mark_source(s, "as-buyback"))
                 out.add(rows, SOURCE_DERIVED, name,
                         f"actual_buyback_tokens = {route['metric']} ({len(rows)} row(s)) — one "
                         f"event, two names: the bought tokens are the burned tokens", 2)
                 have |= {(name, "actual_buyback_tokens")}
 
         # (2) THE USD TWIN, for whatever token series now exists.
-        if ("actual_buyback_usd" in {m for n, m in have if n == name}
+        if ("actual_buyback_usd" in sourced
+                or "actual_buyback_usd" in {m for n, m in have if n == name}
                 or "actual_buyback_tokens" not in {m for n, m in have if n == name}):
             continue
         toks = out.frame()

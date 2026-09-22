@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import logging
 
+import config
+
 from .base import Http, derive_flow_from_cumulative, json_path_get, parse_number, point, today
 
 log = logging.getLogger("token_metrics.fetch.hypercore")
@@ -247,7 +249,7 @@ class HyperCoreInfo:
             flow_metric = api.get("derive_flow_metric")
             if flow_metric:
                 flow = derive_flow_from_cumulative(value, self.prior_delta.get((name, metric)), name,
-                                                   flow_metric, f"{src}:delta", TIER, when,
+                                                   flow_metric, config.mark_source(src, "delta"), TIER, when,
                                                    prior_date=self.prior_dates.get((name, metric)),
                                                    stock_metric=metric, out=out)
                 if not flow.empty:

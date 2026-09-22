@@ -1923,3 +1923,51 @@ SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 -- COMMIT;
 
 -- U4. VERIFY — U1 returns nothing, and U2's count/dates are unchanged from before U3 ran.
+
+-- ========================================================================================
+-- V. GEODNET actual_buyback_usd ROWS WRITTEN BY THE DERIVATION.                     2026-09-22
+--    V1-V2 LOOK. V3 deletes, scoped to exactly the source string V1 shows.
+-- ========================================================================================
+-- WHAT HAPPENED: GEODNET's actual_buyback_usd is SOURCED — Dune query 8683175, usd_burned +
+-- sol_usd_burned. _derive_buyback also computes the column (actual_buyback_tokens x price_usd)
+-- and stood down only when the sourced rows were in the SAME RUN's frame. Tier 4 is a backfill
+-- and does not run every day, so on every other day the derivation wrote into a column that
+-- already had a measurement. The column then held two sources, and the build blanked it as
+-- MEASURING_POINT_CHANGED — which is the guard working correctly on rows that should never have
+-- been written.
+--
+-- FIXED AT WRITE TIME on 2026-09-22 (fetch/__init__.py, _derive_buyback): the derivation now
+-- asks config.dune_query_declared, which is a fact about config rather than about which tiers
+-- ran this morning, and stands down for good. THIS SECTION IS FOR ROWS ALREADY WRITTEN.
+--
+-- V1. THE DERIVED ROWS. Expect GEODNET actual_buyback_usd with source 'derived:tokens*price'
+--     only. Scoped to the exact source string so a sourced row can never be swept up.
+SELECT date, project, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET'
+   AND metric = 'actual_buyback_usd'
+   AND source LIKE 'derived:%'
+ ORDER BY date;
+
+-- V2. WHAT SURVIVES — the sourced series, which this section never touches. Run before and
+--     after V3; this one must not move.
+SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'GEODNET'
+   AND metric = 'actual_buyback_usd'
+   AND source NOT LIKE 'derived:%';
+
+-- V2b. ** IF V2 RETURNS ZERO ROWS, DO NOT RUN V3. ** That would mean the derived rows are the
+--      only ones there, and deleting them empties the column rather than un-blanking it. The
+--      answer then is to run tier 4 for GEODNET first and re-check.
+
+-- V3. THE DELETE. Deleted rather than left: they are a second measuring point on a column that
+--     has a measurement, and while they sit there the build correctly refuses to show either.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'GEODNET'
+--    AND metric = 'actual_buyback_usd'
+--    AND source LIKE 'derived:%';
+-- COMMIT;
+
+-- V4. VERIFY — V1 returns nothing, and V2's count/dates are unchanged from before V3 ran.

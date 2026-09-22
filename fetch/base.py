@@ -43,6 +43,7 @@ class LogEntry:
     tier: int | None = None
 
 
+
 @dataclass
 class FetchOutput:
     """Collects frames, log entries, review-queue items and gap-report items across every adapter."""
