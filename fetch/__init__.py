@@ -333,6 +333,22 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                     suggestion=supp.get("resolves_when", "see this project's config entry."))
             continue
 
+        # THE PROVIDER IS SERVING THE CAP. Refused before the mechanism is even looked at, and
+        # with its own reason rather than the generic one — "the burn mechanism's supply effect
+        # is not established" would send the reader to settle a question that is already settled
+        # and is not the problem. The problem is that the input does not move.
+        cap = config.supply_denominator_unusable(name)
+        if cap:
+            out.gap(name, "gross_issuance_tokens",
+                    reason=f"cannot be derived: {cap}",
+                    tiers_attempted="1, 2",
+                    suggestion=("Sum this project's token deployments into total_supply_gross — a "
+                                "contract's own totalSupply() is the minted amount and moves as it "
+                                "mints. Until then neither figure exists, which is correct: a "
+                                "derived 0 would render as measured and feed every downstream "
+                                "ratio as though nothing were being issued."))
+            continue
+
         mech = config.burn_mechanism(p)
         rule = config.issuance_supply_rule(p, mech.get("model"))
         # A TRANSFER BURN WITH AN UNDECLARED SUPPLY CONVENTION REFUSES, and says which test to

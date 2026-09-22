@@ -2587,6 +2587,53 @@ PROJECTS = [
                     "not disagreement.",
             "source_date": "2026-09-15",
         },
+        # ===== THE PROVIDER IS SERVING THE CAP AS THE SUPPLY. CONFIRMED 2026-09-21. =====
+        # CoinGecko returns total_supply = max_supply = 2,000,000,000 for WMTX — the same number,
+        # to the token. That is the ERC20Capped ceiling, which the deployed source enforces and
+        # max_supply_declared below records; it is not an amount anyone has minted.
+        #
+        # THE PROTOCOL'S OWN MATERIAL SAYS SO. The whitepaper's Section XI (Inflation Mechanics,
+        # Fig. 1) has aggregate supply RISING from roughly 1.42bn to 2bn across twenty years —
+        # so 2bn is where the curve ENDS, not where it is. And the Ethereum contract reads
+        # 1,493,853,279 today, which sits on that curve and nowhere near the cap.
+        #
+        # WHAT IT AFFECTS TODAY IS THE DISPLAY, AND THAT IS THE WHOLE OF IT. World Mobile is
+        # archetype 2 and 3, so gross_issuance_tokens is not one of its metrics and the issuance
+        # derivation never runs here — checked, not assumed. The live consequence is that the
+        # total_supply cell reads 2,000,000,000 where a reader is asking how many exist, and
+        # nothing about that number looks incomplete the way a PARTIAL marker would.
+        #
+        # THE DERIVATION GUARD IS STILL ADDED, AND IT IS LATENT ON PURPOSE.
+        # config.issuance_supply_rule refuses under this convention BEFORE it looks at the burn
+        # mechanism — the mechanism decides how a supply CHANGE maps to issuance, and here there
+        # is no change, so a mechanism-keyed rule would hand back 'delta_only' for this no-burn
+        # token and derive a confident 0 every run. That costs nothing while the metric is out of
+        # scope and is exactly what an archetype change would otherwise walk into: d(2,000,000,000)
+        # is 0 for ever, and a zero in an issuance column is indistinguishable from a measured
+        # "nothing was minted" on a token whose tokenomics is a twenty-year emission curve.
+        #
+        # THE CHAIN READ IS THE ROUTE OUT AND IT IS CURRENTLY PARTIAL — Ethereum only, of four
+        # EVM deployments, with Cardano outside the EVM read entirely. See the contracts block.
+        "total_supply_convention": "reports_cap",
+        "total_supply_convention_evidence": {
+            "test": "the provider's total_supply equals its max_supply exactly, and both equal the "
+                    "contract's ERC20Capped ceiling, while the Ethereum contract's own "
+                    "totalSupply() reads 1,493,853,279 — 506,146,721 below it.",
+            "reported": 2_000_000_000,
+            "provider_max_supply": 2_000_000_000,
+            "chain_read_ethereum": 1_493_853_279,
+            "gap_to_cap": 506_146_721,
+            "corroborating_source": "worldmobiletoken.com/WhitePaper.pdf Section XI Fig. 1 — "
+                                    "aggregate supply rises from ~1.42bn to 2bn over 20 years, so "
+                                    "the cap is the END of the curve, not its current value",
+            "confirmed_on": "2026-09-21", "by": "audit of run 20260921T204341Z-734e5f",
+            "provider": "CoinGecko",
+            "consequence": "the total_supply CELL is the cap and is labelled so. The issuance "
+                           "derivation is refused under this convention (config.issuance_supply_rule) "
+                           "but is inert here today: World Mobile is archetype 2/3 and has no "
+                           "gross_issuance_tokens metric. Either way it resolves when the four EVM "
+                           "deployments are summed into total_supply_gross, not before.",
+        },
         "max_supply_declared": {
             "value": 2_000_000_000,
             "source_url": "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
@@ -7531,6 +7578,52 @@ def bound_metric_for(project_name: str, greater: str, lesser: str) -> str:
     return sub
 
 
+# ===== A PROVIDER THAT REPORTS THE CAP AS THOUGH IT WERE THE SUPPLY. =====
+#
+# CoinGecko serves World Mobile total_supply = max_supply = 2,000,000,000, to the token. That is
+# the ERC20Capped ceiling read off the deployed source, not an amount anyone has minted: World
+# Mobile's own whitepaper (Section XI, Fig. 1) has aggregate supply RISING from roughly 1.42bn to
+# 2bn over twenty years, and the Ethereum contract reads 1,493,853,279 today.
+#
+# WHY IT NEEDS A NAME RATHER THAN A NOTE. The figure is not wrong as a number — 2bn really is the
+# cap — it is wrong as an ANSWER TO THE QUESTION the column asks. Every consumer of total_supply
+# on this project is asking "how many exist", and gets a constant. The dangerous one is the
+# issuance derivation: d(a constant) is 0 on every run, for ever, and a zero in an issuance column
+# is indistinguishable from a measured "nothing was minted this period" on a token that mints
+# continuously. That is the same failure mode net_of_burn was named for, in the other direction.
+REPORTS_CAP = "reports_cap"
+
+
+def supply_reports_cap(project_name: str) -> dict | None:
+    """The evidence block when this project's total_supply is the CAP, not the minted amount."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    if p.get("total_supply_convention") != REPORTS_CAP:
+        return None
+    return p.get("total_supply_convention_evidence") or {"test": "declared without evidence"}
+
+
+def supply_denominator_unusable(project_name: str) -> str | None:
+    """Why total_supply must not be used as a denominator or a differencing base here.
+
+    ** ONE PLACE, SO EVERY CONSUMER GETS THE SAME ANSWER. ** Today the live consumer is the
+    issuance derivation; no workbook ratio divides by total_supply at present. That is exactly
+    why this exists as a function rather than as a branch inside the derivation: the next ratio
+    someone adds — issuance as a share of supply, float as a share of supply, burn as a share of
+    supply — would otherwise be written against a constant and look entirely reasonable.
+    """
+    ev = supply_reports_cap(project_name)
+    if ev is None:
+        return None
+    return (f"total_supply for this project is the CAP, not the minted amount: the provider serves "
+            f"total_supply = max_supply = {ev.get('reported'):,} to the token, which is the "
+            f"contract's enforced ceiling rather than a supply that moves. "
+            f"{ev.get('test', '')} A ratio denominated by it divides by a constant, and a "
+            f"difference of it is 0 on every run for ever — which reads as a measured 'nothing "
+            f"was minted' on a token that mints continuously. Use the chain read "
+            f"(total_supply_gross) once its deployments are summed; until then there is no "
+            f"minted-supply figure for this project and that is the honest state.").replace("  ", " ")
+
+
 def _check_series_granularity() -> list[str]:
     """A declared granularity must be one we know how to date, and a tail rule must be sourced."""
     errs = []
@@ -7568,7 +7661,7 @@ def _check_total_supply_conventions() -> list[str]:
     selects the ISSUANCE FORMULA (see issuance_supply_rule). A wrong declaration here does not
     mislead, it computes.
     """
-    allowed = ("net_of_burn", "gross", "net_of_burn_and_cross_chain_lock")
+    allowed = ("net_of_burn", "gross", "net_of_burn_and_cross_chain_lock", "reports_cap")
     errs = []
     for p in PROJECTS:
         conv = p.get("total_supply_convention")
@@ -7624,6 +7717,12 @@ def issuance_supply_rule(project: dict, mech_model: str | None) -> str | None:
     Returns None for a transfer burn whose total_supply_convention is undeclared: the answer
     differs by the whole burn, so there is no safe default to fall back on.
     """
+    # THE CAP IS NOT A SUPPLY, WHATEVER THE BURN MECHANISM IS. Checked BEFORE the mechanism
+    # branch on purpose: the mechanism decides how a supply CHANGE maps to issuance, and here
+    # there is no change to map — d(a constant) is 0 for ever. A mechanism-keyed rule would hand
+    # back 'delta_only' for a no_burn token and derive a confident zero every run.
+    if project.get("total_supply_convention") == REPORTS_CAP:
+        return None
     if mech_model == "transfer_to_dead_address":
         conv = project.get("total_supply_convention")
         if conv == "net_of_burn":

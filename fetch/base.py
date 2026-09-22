@@ -76,10 +76,19 @@ class FetchOutput:
         self.log.append(LogEntry(source, project, 0, "skipped", message, tier))
 
     def review_item(self, project: str, metric: str, reason: str, action: str, value=None,
-                    prior_value=None, date=None, source=None, tier=None):
+                    prior_value=None, date=None, source=None, tier=None,
+                    prior_date=None, basis=None):
+        """prior_date and basis say WHAT the value was compared against, and why that one.
+
+        A change_threshold row without them states that something moved and leaves the reader to
+        guess the comparison. Twelve such flags on the run of 2026-09-21 were all the same
+        comparison — a Sunday against a Friday — and nothing on the row said so.
+        """
         self.review.append({"project": project, "metric": metric, "reason": reason, "action": action,
                             "value": value, "prior_value": prior_value,
                             "date": str(date)[:10] if date is not None else None,
+                            "prior_date": str(prior_date)[:10] if prior_date is not None else None,
+                            "basis": basis,
                             "source": source, "tier": tier})
 
     def gap(self, project: str, metric: str, reason: str, tiers_attempted="", suggestion=""):

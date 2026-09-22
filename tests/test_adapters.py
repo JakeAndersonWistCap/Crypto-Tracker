@@ -4785,6 +4785,153 @@ def test_but_a_real_step_change_between_two_complete_days_still_fires():
     print("S7 ok: partial day exempt, real step change between complete days still flags")
 
 
+def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
+    """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
+    That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:
+    the whitepaper's Fig. 1 has aggregate supply rising ~1.42bn -> 2bn across twenty years, and
+    the Ethereum contract reads 1,493,853,279.
+
+    THE NUMBER IS NOT WRONG, IT ANSWERS A DIFFERENT QUESTION — and nothing about 2,000,000,000
+    looks incomplete, so no PARTIAL marker would ever catch it. The consequence is arithmetic:
+    d(a constant) is 0 on every run for ever, and a zero in an issuance column is
+    indistinguishable from a measured "nothing was minted" on a token whose entire tokenomics is
+    a twenty-year emission curve.
+    """
+    import pandas as pd
+    from fetch import _derive_issuance
+    from fetch.base import LONG_COLUMNS
+    import build_workbook as bw
+
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    assert wm["total_supply_convention"] == "reports_cap"
+    ev = wm["total_supply_convention_evidence"]
+    assert ev["reported"] == ev["provider_max_supply"] == 2_000_000_000
+    assert ev["chain_read_ethereum"] == 1_493_853_279 and ev["confirmed_on"]
+
+    # REFUSED BEFORE THE MECHANISM IS CONSULTED. A mechanism-keyed rule hands back 'delta_only'
+    # for a no-burn token and derives a confident zero; the convention has to win first.
+    assert config.issuance_supply_rule(wm, "no_burn") is None
+    assert config.issuance_supply_rule(wm, "transfer_to_dead_address") is None
+
+    class _Out:
+        def __init__(self, rows):
+            self.rows, self.gaps, self.review, self.added = rows, [], [], []
+
+        def frame(self):
+            return pd.DataFrame(self.rows, columns=LONG_COLUMNS)
+
+        def add(self, df, source, project, detail, tier):
+            self.added.append((project, df))
+
+        def gap(self, project, metric, reason="", **kw):
+            self.gaps.append({"project": project, "metric": metric, "reason": reason, **kw})
+
+        def review_item(self, *a, **kw):
+            pass
+
+    # ** THE DERIVATION GUARD IS LATENT FOR THIS PROJECT AND THE TEST SAYS SO RATHER THAN
+    # IMPLYING OTHERWISE. ** World Mobile is archetype 2 and 3, so gross_issuance_tokens is not
+    # one of its metrics and _derive_issuance never reaches it. Driving the branch therefore
+    # needs a project that HAS the metric — which is the case the guard exists for: an archetype
+    # change would otherwise walk straight into d(a constant) = 0.
+    assert "gross_issuance_tokens" not in config.metrics_for_project(wm), \
+        "if this ever becomes true, the guard below stops being hypothetical — read it again"
+    as_a4 = dict(wm, archetypes=[1])
+    assert "gross_issuance_tokens" in config.metrics_for_project(as_a4)
+
+    row = {"date": pd.Timestamp("2026-09-21"), "project": "World Mobile", "metric": "total_supply",
+           "value": 2_000_000_000.0, "source": "coingecko", "tier": 1, "is_manual": False,
+           "entered_on": ""}
+    out = _Out([row])
+    _derive_issuance(out, [as_a4], {("World Mobile", "total_supply"): 2_000_000_000.0},
+                     {("World Mobile", "total_supply"): "2026-09-20"})
+    assert not out.added, "a constant must not derive a zero that renders as measured"
+    gap = [g for g in out.gaps if g["metric"] == "gross_issuance_tokens"]
+    assert gap, out.gaps
+    # ITS OWN REASON, not the generic one: "the burn mechanism's supply effect is not
+    # established" would send the reader to settle a question that is settled and irrelevant.
+    assert "CAP, not the minted amount" in gap[0]["reason"], gap[0]["reason"]
+    assert "burn mechanism" not in gap[0]["reason"], "wrong diagnosis attached to the right refusal"
+
+    # AND THE SHEET SAYS SO ON THE CELL ITSELF.
+    band, why = bw.confidence_for("World Mobile", "total_supply",
+                                  {"status": "ok", "source": "coingecko", "n_points": 9,
+                                   "covered_days": None, "window_days": None},
+                                  pd.Timestamp("2026-09-22"))
+    assert band == "AMBER" and "THIS IS THE CAP" in why, (band, why)
+
+    # THE SAME QUESTION ASKED OF EVERY OTHER PROJECT: nobody else is declared this way, so no
+    # other issuance derivation is silently switched off by this change.
+    others = [p["name"] for p in config.PROJECTS
+              if p is not wm and config.supply_denominator_unusable(p["name"])]
+    assert not others, f"reports_cap must be scoped to the project it was confirmed on: {others}"
+    print("reports_cap ok: 2bn is the cap, issuance refuses with its own reason, the cell discloses")
+
+
+def test_a_daily_flow_is_compared_against_the_same_weekday_not_the_day_before():
+    """Run 20260921T204341Z raised TWELVE change_threshold flags and every one was a 40-60% drop.
+    2026-09-20 was a Sunday. Protocol fees and revenue fall by roughly half at the weekend on
+    every chain in this universe, so an adjacent-day comparison flags the calendar.
+
+    THE TRAILING 7-DAY AVERAGE DOES NOT FIX IT, which is why the arithmetic is in the test and
+    not only in the comment: if a weekend day is half a weekday, the trailing mean is
+    (5W + 2x0.5W)/7 = 0.857W and Sunday at 0.5W still reads as a 42% drop against it. Every
+    weekend would still flag. Same weekday one week earlier is flat, because it removes the
+    weekly cycle rather than averaging over it.
+    """
+    import pandas as pd
+
+    # A fortnight of a flow with an ordinary weekly shape: weekdays 1,000,000, weekend 450,000.
+    # The threshold in config is well under 55%, so an adjacent comparison flags every Saturday.
+    def week(start):
+        out = []
+        for i in range(7):
+            d = pd.Timestamp(start) + pd.Timedelta(days=i)
+            v = 450_000.0 if d.weekday() >= 5 else 1_000_000.0
+            out.append((d, "Chainlink", "revenue_usd", v, "defillama:chainlink", 1))
+        return out
+
+    # 2026-09-07 is a Monday, so the series runs Mon..Sun, Mon..Sun and ends on a SUNDAY.
+    rows = week("2026-09-07") + week("2026-09-14")
+    assert pd.Timestamp(rows[-1][0]).day_name() == "Sunday", "the fixture must end on the bad day"
+
+    # THE ARITHMETIC THAT RULED OUT THE AVERAGE, asserted rather than asserted-in-prose.
+    trailing7 = sum(r[3] for r in rows[-8:-1]) / 7
+    assert abs(450_000.0 / trailing7 - 1) > 0.40, \
+        f"a trailing mean of {trailing7:,.0f} still makes Sunday a >40% drop — it is not the fix"
+
+    flags = _validated(rows, prior={("Chainlink", "revenue_usd"): 1_000_000.0})
+    assert not flags, f"Sunday against the previous Sunday is flat — nothing to flag: {flags}"
+
+    # AND THE COMPARISON IS ON THE RECORD. A real step change on the same weekday still fires,
+    # and the row says which two dates it used and why that pair.
+    broken = rows[:-1] + [(pd.Timestamp("2026-09-20"), "Chainlink", "revenue_usd", 9_000.0,
+                           "defillama:chainlink", 1)]
+    flags = _validated(broken, prior={("Chainlink", "revenue_usd"): 1_000_000.0})
+    assert len(flags) == 1, f"a genuine collapse must survive the weekday fix: {flags}"
+    f = flags[0]
+    assert f["prior_value"] == 450_000.0, \
+        f"compared against Sunday 2026-09-13, not Saturday the 19th: {f}"
+    assert str(f["prior_date"])[:10] == "2026-09-13", f"the prior DATE must be recorded: {f}"
+    assert "SAME WEEKDAY" in f["basis"] and "Sunday" in f["basis"], f["basis"]
+    print("weekday ok: the weekly cycle is removed, not averaged over, and both dates are recorded")
+
+
+def test_a_daily_flow_with_no_same_weekday_point_says_so_rather_than_pretending():
+    """The fallback has to be honest. A short series has no point seven days back, so the
+    comparison is adjacent-day and the weekly cycle is NOT removed — which is exactly the
+    condition that produced the twelve flags. The row has to say that, or the fix silently
+    reintroduces the problem on every series too young to have a week of history."""
+    import pandas as pd
+    rows = [(pd.Timestamp("2026-09-18"), "Chainlink", "revenue_usd", 1_000_000.0, "defillama:chainlink", 1),
+            (pd.Timestamp("2026-09-19"), "Chainlink", "revenue_usd", 450_000.0, "defillama:chainlink", 1)]
+    flags = _validated(rows, prior={("Chainlink", "revenue_usd"): 1_000_000.0})
+    assert len(flags) == 1, flags
+    basis = flags[0]["basis"]
+    assert "NO same-weekday point" in basis and "may be the calendar" in basis, basis
+    print("weekday fallback ok: says the cycle was not removed rather than implying it was")
+
+
 def test_a_flow_that_is_lumpy_by_design_is_not_change_checked_at_all():
     """GEODNET burns weekly; the chain read differences daily. A burn day carries a week of burn
     and the days between carry zero, so 35,000 -> 105,000 is the mechanism working. No threshold

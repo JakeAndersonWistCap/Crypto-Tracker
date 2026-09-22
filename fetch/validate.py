@@ -96,8 +96,49 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
                 row = complete.iloc[-1]
                 prior = prior_values.get((project, metric))
         else:
+            complete = g
             row = g.iloc[-1]
             prior = prior_values.get((project, metric))
+
+        prior_date = None
+        basis = ("the previous stored value of this series, whatever date it carries — the store "
+                 "holds one number per series and this run did not bring a comparable earlier one")
+        if len(complete) >= 2 and prior is not None and complete.iloc[-2]["value"] == prior:
+            prior_date = complete.iloc[-2]["date"]
+            basis = "the previous complete observation in this run's own series"
+
+        # (c) A DAILY FLOW HAS A WEEK IN IT. Run 20260921T204341Z raised twelve change_threshold
+        # flags and every one was a 40-60% drop. 2026-09-20 was a Sunday. Protocol fees, revenue
+        # and volume fall by roughly half at the weekend on every chain in this universe, so
+        # comparing Sunday against Friday flags the calendar, not the data — and a check that
+        # fires every weekend is a check nobody reads by the second weekend.
+        #
+        # SAME WEEKDAY, ONE WEEK EARLIER. The alternative — a trailing 7-day average — was worked
+        # through and does NOT fix this, which is worth writing down because it is the more
+        # obvious-looking option: if a weekend day is half a weekday, the trailing mean is
+        # (5W + 2*0.5W)/7 = 0.857W, and Sunday at 0.5W still reads as a 42% drop against it.
+        # Every weekend would still flag. Sunday against the previous Sunday is flat, which is
+        # the point: it removes the weekly cycle instead of averaging over it, and a real step
+        # change survives it because a real step change is still there seven days later.
+        #
+        # SCOPED TO DAILY FLOWS. A stock has no weekly cycle, and a weekly or monthly series has
+        # no same-weekday to find. Both keep the adjacent comparison, which is right for them.
+        if (config.METRICS.get(metric, {}).get("kind") == "flow"
+                and config.series_granularity(project, metric) == "daily"
+                and len(complete) >= 2):
+            latest_date = pd.Timestamp(row["date"])
+            week_ago = complete[pd.to_datetime(complete["date"]) == latest_date - pd.Timedelta(days=7)]
+            if not week_ago.empty:
+                prior = float(week_ago.iloc[-1]["value"])
+                prior_date = week_ago.iloc[-1]["date"]
+                basis = (f"the SAME WEEKDAY one week earlier ({latest_date:%A}), because a daily "
+                         f"flow carries a weekly cycle and an adjacent-day comparison flags the "
+                         f"calendar rather than the data")
+            else:
+                basis = (f"the previous complete observation — {latest_date:%A} the "
+                         f"{latest_date:%d %b} has NO same-weekday point one week back in this "
+                         f"run's series, so the weekly cycle is NOT removed from this comparison "
+                         f"and a weekend-against-weekday move may be the calendar")
 
         if prior is None or prior == 0:
             continue
@@ -112,7 +153,7 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
             # float() on value is doing the same job and was already here.
             out.review_item(project, metric, REASON_CHANGE, ACTION_FLAGGED,
                             value=float(row["value"]), prior_value=prior, date=row["date"],
-                            source=row["source"],
+                            prior_date=prior_date, basis=basis, source=row["source"],
                             tier=None if pd.isna(row["tier"]) else int(row["tier"]))
     return df
 

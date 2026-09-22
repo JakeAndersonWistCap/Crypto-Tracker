@@ -509,6 +509,13 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                    f"Do not net it against emissions like a burn, or count it as locked supply")
     if ":PARTIAL" in str(row.get("source") or ""):
         why.append("PARTIAL — summed over known components only, so it understates")
+    # THE CAP IN THE SUPPLY COLUMN. The number is right and answers a different question, which
+    # is failure mode 4 in a form no PARTIAL marker catches: nothing about 2,000,000,000 looks
+    # incomplete. Scoped to total_supply itself — the project's other metrics are unaffected.
+    if metric == "total_supply":
+        cap = config.supply_denominator_unusable(project)
+        if cap:
+            why.append(f"THIS IS THE CAP, NOT THE MINTED SUPPLY: {cap}")
     # AN ACCEPTED HANDOVER IS STILL TWO SOURCES, AND THE READER HAS TO KNOW WHERE THE SEAM IS.
     # The declaration stops the series being blanked; it does not make it a single measurement.
     # Where the legs also differ in WHAT they cover — GEODNET's backfill sums Polygon and Solana
@@ -1936,12 +1943,18 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
            "Values the validation layer would not accept silently. Out-of-bounds values were REJECTED and are not in the store. "
            "Large moves were STORED BUT FLAGGED — check them before trusting the cell. Unverified addresses were read under "
            "TOKEN_METRICS_ALLOW_UNVERIFIED. Bounds and thresholds are set per metric in config.py and per source in sources.yaml.")
-    headers = ["Project", "Metric", "Date", "Value", "Prior value", "Change", "Reason", "Action", "Source", "Tier"]
+    # "Compared against" and the prior DATE sit next to the prior VALUE deliberately. A
+    # change_threshold row used to say a number moved without saying against what, and twelve of
+    # them on one run were all the same comparison — a Sunday against a Friday. The two dates and
+    # the rule that picked them are the first thing a reader needs and the last thing they could
+    # reconstruct from the sheet.
+    headers = ["Project", "Metric", "Date", "Prior date", "Value", "Prior value", "Change",
+               "Reason", "Action", "Source", "Tier", "Compared against"]
     _header(ws, 4, headers)
     r = 5
     if review is None or review.empty:
         ws.cell(row=r, column=1, value="Nothing flagged this run.").font = F_BOLD
-        _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 18, "E": 18, "F": 11, "G": 18, "H": 15, "I": 26, "J": 6})
+        _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 13, "E": 18, "F": 18, "G": 11, "H": 18, "I": 15, "J": 26, "K": 6, "L": 64})
         return
     rv = review.sort_values(["reason", "project", "metric"])
     for row in rv.to_dict("records"):
@@ -1949,7 +1962,10 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
         ws.cell(row=r, column=1, value=row["project"]).font = F_BASE
         ws.cell(row=r, column=2, value=row["metric"]).font = F_BASE
         ws.cell(row=r, column=3, value=row.get("date") or "").font = F_BASE
-        for j, key, fmt in ((4, "value", FMT_NUM2), (5, "prior_value", FMT_NUM2)):
+        # BLANK, NOT "n/a": an out_of_bounds row has no prior date because it made no comparison,
+        # which is a different thing from a comparison whose prior date is unknown.
+        ws.cell(row=r, column=4, value=row.get("prior_date") or "").font = F_BASE
+        for j, key, fmt in ((5, "value", FMT_NUM2), (6, "prior_value", FMT_NUM2)):
             v = row.get(key)
             c = ws.cell(row=r, column=j)
             if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -1957,22 +1973,22 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
             else:
                 c.value, c.font, c.number_format = float(v), F_BASE, fmt
         # change is a formula so the reader can see the arithmetic
-        c = ws.cell(row=r, column=6, value=f"=IFERROR(D{r}/E{r}-1,{NA})")
+        c = ws.cell(row=r, column=7, value=f"=IFERROR(E{r}/F{r}-1,{NA})")
         _style(c, "calc", FMT_PCT)
-        for j, key in ((7, "reason"), (8, "action"), (9, "source")):
+        for j, key in ((8, "reason"), (9, "action"), (10, "source"), (12, "basis")):
             c = ws.cell(row=r, column=j, value=str(row.get(key) or ""))
             c.font = F_BASE
             c.number_format = FMT_TEXT
         t = row.get("tier")
-        ws.cell(row=r, column=10, value="" if t is None or pd.isna(t) else int(t)).font = F_BASE
+        ws.cell(row=r, column=11, value="" if t is None or pd.isna(t) else int(t)).font = F_BASE
         fill = FILL_STALE if rejected else FILL_REVIEW
-        for j in range(1, 11):
+        for j in range(1, 13):
             if not ws.cell(row=r, column=j).fill.fgColor.rgb or ws.cell(row=r, column=j).fill.patternType is None:
                 ws.cell(row=r, column=j).fill = fill
         r += 1
     ws.freeze_panes = "A5"
-    ws.auto_filter.ref = f"A4:J{r - 1}"
-    _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 18, "E": 18, "F": 11, "G": 18, "H": 15, "I": 26, "J": 6})
+    ws.auto_filter.ref = f"A4:L{r - 1}"
+    _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 13, "E": 18, "F": 18, "G": 11, "H": 18, "I": 15, "J": 26, "K": 6, "L": 64})
 
 
 def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: str | None, asof: pd.Timestamp, overrides_n: int):

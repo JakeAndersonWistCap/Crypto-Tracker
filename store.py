@@ -8,7 +8,8 @@ Tables
   manual_overrides  date, project, metric, value, source_note, entered_on    PK(date, project, metric)
   fetch_status      source, project, last_attempt_at, last_success_at, last_error, last_rows
   run_log           run_id, ts, source, tier, project, rows, status, message
-  review_queue      run_id, ts, project, metric, date, value, prior_value, reason, action, source, tier
+  review_queue      run_id, ts, project, metric, date, value, prior_value, prior_date, basis,
+                    reason, action, source, tier
   gap_report        run_id, ts, project, metric, tiers_attempted, reason, suggestion
 
 Overrides live in their own table so a later fetch can never clobber them; they win at read
@@ -133,7 +134,13 @@ CREATE TABLE IF NOT EXISTS review_queue (
     reason      TEXT NOT NULL,   -- out_of_bounds | change_threshold | address_unverified
     action      TEXT NOT NULL,   -- rejected | stored_flagged
     source      TEXT,
-    tier        INTEGER
+    tier        INTEGER,
+    -- WHICH TWO THINGS WERE COMPARED. A change_threshold flag says a value moved; without these
+    -- it does not say against WHAT, and twelve of them on one run turned out to be Sunday
+    -- against Friday. prior_date is the date of the number in prior_value; basis names the rule
+    -- that picked it, in words, so the row is readable without re-deriving the comparison.
+    prior_date  TEXT,
+    basis       TEXT
 );
 
 -- Figures a source returned that are deliberately NOT metrics: captured so they are not lost
@@ -173,7 +180,8 @@ def utcnow() -> str:
 def _migrate(conn: sqlite3.Connection):
     """Add columns introduced after the first release, so an existing metrics.db keeps its history."""
     for table, col, decl in (("metrics", "tier", "INTEGER"), ("run_log", "tier", "INTEGER"),
-                             ("gap_report", "priority", "INTEGER"), ("gap_report", "priority_label", "TEXT")):
+                             ("gap_report", "priority", "INTEGER"), ("gap_report", "priority_label", "TEXT"),
+                             ("review_queue", "prior_date", "TEXT"), ("review_queue", "basis", "TEXT")):
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if cols and col not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -363,12 +371,14 @@ class Store:
             return 0
         ts = utcnow()
         self.conn.executemany(
-            """INSERT INTO review_queue(run_id, ts, project, metric, date, value, prior_value, reason, action, source, tier)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO review_queue(run_id, ts, project, metric, date, value, prior_value, reason,
+                                        action, source, tier, prior_date, basis)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [(run_id, ts, i["project"], i["metric"], i.get("date"), i.get("value"), i.get("prior_value"),
               i["reason"], i["action"], i.get("source"),
               _int_or_none(i.get("tier"), "review_queue.tier",
-                           f"{i.get('project')}/{i.get('metric')} via {i.get('reason')}"))
+                           f"{i.get('project')}/{i.get('metric')} via {i.get('reason')}"),
+              i.get("prior_date"), i.get("basis"))
              for i in items],
         )
         self.conn.commit()
