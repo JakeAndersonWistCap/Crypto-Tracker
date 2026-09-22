@@ -114,6 +114,17 @@ METRIC_CONTRACT_KIND = {
     # their rows were reporting a missing registry entry rather than the real reason the read
     # produced nothing.
     "treasury_holding_tokens": "treasury_holding",
+    # ===== THE DECOMPOSED BURN SERIES, Sky only. Added 2026-09-22. =====
+    # All three come from ONE contract of kind burn_transfer_logs, split by the event's sender.
+    # Without these the gap detector reports "no source configured" for series that are read on
+    # every run — a to-do list item for work already done, which is how a real gap gets lost in
+    # noise. The two FLOWS are derived from their cumulatives and so have no contract of their
+    # own; they are mapped to the same kind because the question the detector asks is "is there a
+    # route to this figure", and there is.
+    "governance_burn_balance": "burn_transfer_logs",
+    "governance_burn_tokens": "burn_transfer_logs",
+    "other_burn_balance": "burn_transfer_logs",
+    "other_burn_tokens": "burn_transfer_logs",
     # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
     # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",

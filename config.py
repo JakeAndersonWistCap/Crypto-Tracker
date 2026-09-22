@@ -233,6 +233,40 @@ METRICS = {
     # name, with _resolve_tier_collisions keeping the provider's — and so is the remedy. The
     # LABEL is the one thing that does not fit, so it is overridden per project below.
         "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI", "World Mobile")},
+    # ===== ONE TOKEN, THREE BURN MECHANISMS, THREE SERIES. Added 2026-09-22. =====
+    # Sky.burn(from, value) emits Transfer(from, address(0), value) whoever calls it and for
+    # whatever reason — read from src/Sky.sol, not assumed. SKY is burned by mechanisms that mean
+    # different things and must not share a column:
+    #   the Stage 2 buy-and-burn   revenue-funded, recurring. THE archetype 4 figure, and the
+    #                              only one a rate can be computed from.
+    #   governance, from the Pause Proxy   a one-off decision destroying treasury SKY. Real
+    #                              supply reduction, NOT revenue-funded, and annualising it
+    #                              would report a single executive action as a run rate.
+    #   the MkrSky converter       burn(uint256) is auth-only and its own source says it is "for
+    #                              burning excess SKY due to MKR being burned" — a supply
+    #                              CORRECTION against MKR already destroyed, not a buyback.
+    # Summing them produces a figure that is none of the three, and the archetype 4 tab is asking
+    # for the first one. Scoped to Sky: no other project in the book has more than one burner.
+    "governance_burn_balance": {
+        "label": "Cumulative SKY destroyed by GOVERNANCE (from the Pause Proxy)",
+        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
+    "governance_burn_tokens": {
+        "label": "SKY destroyed by governance in the period — NOT revenue-funded, NOT a rate",
+        "kind": "flow", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
+    # SURFACED, NOT HIDDEN. A burner nobody has identified is the most interesting row on the
+    # tab, not the least: it is either a mechanism we do not know about or an address we have
+    # mislabelled. Folding it into the Stage 2 figure would overstate the recurring burn by
+    # whatever it is; dropping it would understate total destruction by the same amount.
+    "other_burn_balance": {
+        "label": "Cumulative SKY destroyed by an UNRECOGNISED sender — surfaced, not folded in",
+        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
+    "other_burn_tokens": {
+        "label": "SKY destroyed in the period by a sender we have not identified",
+        "kind": "flow", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
     # treasury_holding_tokens_chain_crosscheck RETIRED 2026-09-22. It existed for three days:
     # created 2026-09-18 when Maple's transparency page was promoted to the primary metric name
     # and the chain read was demoted by metric_override, and left unfed from 2026-09-21 when
@@ -6033,9 +6067,23 @@ PROJECTS = [
             # THE SHEET MUST NOT CLAIM AN ADDRESS HOLDS THESE TOKENS. The metric name is shared
             # with the transfer-burn projects because the QUANTITY is the same and every piece of
             # machinery downstream keys on it; the label is where the difference is stated.
-            "burn_address_balance": "Cumulative SKY destroyed — summed from Transfer-to-zero events. "
-                                    "A PROTOCOL burn: these tokens do not exist any more and no "
-                                    "address holds them, unlike a transfer burn's dead-address balance",
+            # AND IT IS NOW THE STAGE 2 LEG ALONE, not every SKY burn — see burn_logs.
+            "burn_address_balance": "Cumulative SKY destroyed by the STAGE 2 buy-and-burn only — "
+                                    "summed from Transfer-to-zero events whose sender is the Stage 2 "
+                                    "burner. A PROTOCOL burn: these tokens do not exist any more and "
+                                    "no address holds them. Governance and converter burns are "
+                                    "SEPARATE series, never added to this one",
+            "gross_burn_tokens": "SKY destroyed by the Stage 2 buy-and-burn in the period — the "
+                                 "revenue-funded, recurring leg, and the only one a rate can be "
+                                 "computed from",
+        },
+        # ===== EACH BURN SERIES DIFFERENCES INTO ITS OWN FLOW. =====
+        # burn_address_balance -> gross_burn_tokens is the global mapping and still applies. The
+        # other two are declared here because they exist only on this project, and because a
+        # global entry would create these metrics for every project that has a burn.
+        "cumulative_flow": {
+            "governance_burn_balance": "governance_burn_tokens",
+            "other_burn_balance": "other_burn_tokens",
         },
         # A3: the surplus passes THROUGH the Splitter and Flapper; only the Pause Proxy receives.
         # ===== burn_address_balance IS NO LONGER not_applicable HERE. CHANGED 2026-09-22. =====
@@ -6219,34 +6267,109 @@ PROJECTS = [
                         "balance: these tokens do not exist any more. See metric_labels.",
                 burn_logs={
                     "burn_to": "zero",
+                    # ===== THE WHOLE HISTORY, BECAUSE THE GOVERNANCE BURNS PREDATE STAGE 2. =====
+                    # Starting at Stage 2 would have captured the recurring leg and silently
+                    # missed every governance burn before it — including the documented
+                    # 2026-09-11 executive action burning SKY from the Pause Proxy, three days
+                    # BEFORE Stage 2 began. A burn series that starts after some of the burns is
+                    # not a shorter series, it is a wrong one.
+                    #
+                    # from_block IS NULL AND THAT IS NOT A GAP HERE: from_block_discover finds
+                    # the token's deployment block by binary search on eth_getCode, ~25 calls,
+                    # once. It is DERIVED rather than looked up because a block explorer is not
+                    # reachable from every environment this runs in, and derived rather than
+                    # estimated from a block time because a start after the events returns a
+                    # smaller, confident, entirely plausible number. The run prints what it found
+                    # so it can be written back here and the search skipped thereafter.
                     "from_block": None,
+                    "from_block_discover": "deployment",
+                    # 10,000 is what free endpoints generally serve for eth_getLogs. A full
+                    # history is roughly 2.6m blocks, so expect ~260 chunks on the first run; the
+                    # adapter logs the count and the chunk size every time.
                     "chunk_blocks": 10_000,
-                    "max_blocks_per_run": 250_000,
+                    # NO CEILING. max_blocks_per_run exists to refuse a silently-shortened scan,
+                    # and a full-history scan is the intent here rather than the accident it
+                    # guards against. Set it only if the scan is ever deliberately narrowed.
+                    "max_blocks_per_run": None,
+                    # ===== WHO BURNED IT. The decomposition key is the event's `from`. =====
+                    "named_senders": {
+                        # THE PAUSE PROXY, already a verified contract on this project (see
+                        # contracts.pause_proxy). Governance burning treasury SKY: a real supply
+                        # reduction, not revenue-funded, and annualising it would report one
+                        # executive action as a run rate.
+                        "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB": "governance_burn_balance",
+                    },
+                    "stage2_metric": "burn_address_balance",
+                    "other_metric": "other_burn_balance",
+                    # ===== THE STAGE 2 BURNER IS DISCOVERED FROM THE LOGS, NOT HARDCODED. =====
+                    # Its address is in no source on file. What IS known is the amount and the
+                    # date, so the scan finds the event matching them and takes its sender —
+                    # exactly one candidate or it refuses, because two matches or none is an
+                    # unresolved identification and picking one would put a whole series under an
+                    # address nobody checked. The block's DATE is confirmed too (one extra call):
+                    # a coincidental match of the same size on another day would otherwise name
+                    # the wrong address with no trace.
+                    "stage2_burner": {
+                        "address": None,
+                        "discover_by": {
+                            "approx_tokens": 2_860_000,
+                            "date": "2026-09-14",
+                            "tolerance_pct": 5,
+                            "source": "Sky's own Stage 2 thread, @SkyEcosystem 2026-09-14",
+                        },
+                        "write_back": "the run logs the discovered address. Put it in `address` "
+                                      "so later runs gate on it rather than rediscovering it — "
+                                      "and so a CHANGE of burner shows up as a discovery failure "
+                                      "rather than being silently absorbed.",
+                    },
+                    # AGAINST THE DECOMPOSED STAGE 2 FIGURE, NOT THE SCAN TOTAL. A full-history
+                    # scan legitimately includes governance and converter burns, so the total is
+                    # far above 2.86M and gating on it would reject a correct read every run.
+                    # A FLOOR, NOT AN EQUALITY, and the difference matters once the scan starts
+                    # at deployment: the Stage 2 cumulative grows past 2,860,000 the moment a
+                    # second burn happens, so an equality check would reject every correct read
+                    # after 2026-09-14. The failure worth catching is a scan that began too LATE
+                    # and returns too little, and only a floor catches that without also
+                    # rejecting growth. The EXACT 2.86M event is still checked — by the burner
+                    # discovery, which requires it on the right date.
                     "first_read_reference": {
                         "value": 2_860_000,
+                        "mode": "at_least",
                         "as_of": "2026-09-14",
-                        "what": "SKY burned as at 2026-09-14, the date Stage 2's 5% burn leg began",
+                        "what": "SKY burned by the Stage 2 leg as at 2026-09-14, its first day — "
+                                "the cumulative can only grow from here",
                         "source_url": "https://financial.skyeco.com/",
                         "tolerance_pct": 5,
                     },
-                    "how_to_set": ("Look up the Ethereum block height at the first SKY burn — the "
-                                   "Stage 2 activation on 2026-09-14 — and set from_block to it "
-                                   "with its source. It is NOT estimated from a block time: a "
-                                   "start after the burns returns a plausible small number and "
-                                   "nothing in the output would show it. Once set, the first read "
-                                   "must land within 5% of 2,860,000 SKY or it is reported rather "
-                                   "than stored."),
-                    "open_question": ("WHICH QUANTITY 2,860,000 IS has not been established: the "
-                                      "cumulative burned as at 2026-09-14, or the amount burned ON "
-                                      "that date. Under the first reading a scan from the Stage 2 "
-                                      "activation block should land ON it; under the second it "
-                                      "should land ABOVE it by everything burned since. The "
-                                      "reference gate is written for the first reading, so if the "
-                                      "scan comes back materially HIGHER the answer may be that "
-                                      "the reference is a daily figure — check before changing "
-                                      "anything."),
+                    # ===== THE THIRD MECHANISM, ANSWERED FROM THE CONVERTER'S OWN SOURCE. =====
+                    # Read 2026-09-22 from sky-ecosystem/sky src/MkrSky.sol:
+                    #   * THERE IS NO skyToMkr FUNCTION. The converter is ONE-DIRECTIONAL —
+                    #     mkrToSky only — so the SKY->MKR direction is not live because it does
+                    #     not exist in this contract. That answers the question as asked.
+                    #   * AND IT IS STILL A SKY BURN SOURCE, by a different route than expected:
+                    #     `function burn(uint256 skyAmt) external auth` calls
+                    #     sky.burn(address(this), skyAmt), so the `from` is the CONVERTER'S OWN
+                    #     address. Its own comment: "intended to be used when deactivating this
+                    #     contract or for burning excess SKY due to MKR being burned."
+                    #   * mkrToSky burns MKR (mkr.burn(msg.sender, mkrAmt)) and TRANSFERS SKY
+                    #     out. No SKY is burned on a conversion.
+                    # NOT ADDED TO named_senders, deliberately: the converter's deployed address
+                    # is not on file here, and adding an unverified address to a decomposition
+                    # key would put a series under something nobody checked. It will surface as
+                    # an unrecognised sender in other_burn_balance with its address named in the
+                    # Review Queue, which is the outcome that identifies it safely.
+                    "third_mechanism_note": (
+                        "MkrSky converter. One-directional (mkrToSky only, no skyToMkr), so the "
+                        "SKY->MKR direction does not exist. Its auth-only burn(uint256) does "
+                        "burn SKY with the converter itself as `from` — a supply correction "
+                        "against already-burned MKR, not a buyback. Left to surface as an "
+                        "unrecognised sender rather than keyed on an unverified address."),
                     "not_yet_run": "2026-09-22 — no RPC available in the environment this was "
-                                   "written in. The first live run is the confirmation.",
+                                   "written in. The first live run is the confirmation, and it "
+                                   "also answers the Pause Proxy's -5,815,668: if a "
+                                   "Transfer(pause_proxy -> 0x0) accounts for it, it lands in "
+                                   "governance_burn_balance; if it does not, the move was a "
+                                   "transfer out and the treasury was spent, not burned.",
                 }),
             # NO burn_zero ENTRY, AND NOT BECAUSE THE ADDRESS WAS WRONG.
             # It was removed 2026-09-14 after the ChainSecurity Dss Flappers audit (July 2026)

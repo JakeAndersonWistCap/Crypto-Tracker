@@ -552,12 +552,18 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     assert logs["address"] == sky["contracts"]["token"]["address"], \
         "the events are on the SKY token itself"
     cfg = logs["burn_logs"]
-    assert cfg["from_block"] is None and cfg["how_to_set"], \
-        "an unsourced start height is a declared gap, not a default"
+    # ** from_block IS NOW DERIVED RATHER THAN REQUIRED. CHANGED 2026-09-22. ** It was a declared
+    # gap — "an unsourced start height is not a default" — and that was right about not
+    # estimating it and wrong about the only alternative being to wait for someone to look it up.
+    # The deployment block is computable from the chain by binary search on eth_getCode, which is
+    # derivation rather than assumption, and it is what lets the scan cover the governance burns
+    # that predate Stage 2.
+    assert cfg["from_block"] is None and cfg["from_block_discover"] == "deployment"
     ref = cfg["first_read_reference"]
     assert ref["value"] == 2_860_000 and ref["as_of"] == "2026-09-14" and ref["tolerance_pct"] == 5
-    assert cfg["open_question"], \
-        "whether 2.86M is the cumulative or that day's burn is not established — it must be on file"
+    assert ref["mode"] == "at_least", \
+        "a full-history cumulative grows past the reference; an equality gate would reject every " \
+        "correct read after the first day"
 
     # even if somebody re-added a burn address, a refuted mechanism refuses the read
     probe = dict(sky)
@@ -585,75 +591,240 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     print("sky ok: burn address removed, refuted mechanism refuses balance AND event reads")
 
 
-def test_the_burn_log_read_refuses_a_first_result_that_misses_its_reference():
-    """A LOG SCAN CAN BE WRONG IN THREE WAYS THAT EACH PRODUCE A NUMBER, and only one of them is
-    the burn: the wrong topic read as the value (an address comes back as an amount, so the
-    figure is astronomically large), the wrong burn address (somebody else's discards), or a
-    from_block past the events (a confident, small, plausible total). None of them raises, none
-    of them looks wrong on the sheet, and a balance read has no equivalent exposure — balanceOf
-    on the wrong address at least returns the wrong address's real balance.
+PAUSE_PROXY = "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB"
+STAGE2 = "0x5555555555555555555555555555555555555555"     # discovered, never hardcoded in config
+CONVERTER = "0x7777777777777777777777777777777777777777"   # MkrSky — surfaces as unrecognised
+WAD = 10 ** 18
 
-    So the FIRST reading, the one nothing else can be compared against, has to clear a figure
-    established off-chain: 2,860,000 SKY as at 2026-09-14. Later readings are policed by the
-    ordinary machinery — the change threshold, the telescoping reconciliation, the burn <= supply
-    bound — all of which need a prior and therefore cannot police the first.
-    """
+
+def _sky_log_probe(**burn_logs_overrides):
+    """Sky with only the token and the burn-log reader, so nothing else competes for a metric."""
     sky = config.PROJECT_BY_NAME["Sky"]
+    spec = sky["contracts"]["burn_logs"]
+    cfg = dict(spec["burn_logs"], **burn_logs_overrides)
     probe = dict(sky)
     probe["contracts"] = {"token": sky["contracts"]["token"],
-                          "burn_logs": dict(sky["contracts"]["burn_logs"],
-                                            burn_logs=dict(sky["contracts"]["burn_logs"]["burn_logs"],
-                                                           from_block=23_400_000))}
+                          "burn_logs": dict(spec, burn_logs=cfg)}
+    return probe
 
-    class LogReader(StubReader):
-        def __init__(self, total):
-            super().__init__(symbol="SKY", supply=2.2e10)
-            self.total = total
 
-        def burn_transfer_total(self, chain, token, burn_to, from_block, chunk=10_000, max_blocks=None):
-            return self.total, 3, from_block, from_block + 57_000
+class _LogReader(StubReader):
+    """Returns a fixed event list, and records what it was asked for."""
 
-    # (a) A FIRST READ THAT MISSES THE REFERENCE IS NOT STORED.
+    def __init__(self, events, deployed=21_000_000, timestamps=None):
+        super().__init__(symbol="SKY", supply=2.2e10)
+        self.events, self.deployed = events, deployed
+        self.timestamps = timestamps or {}
+        self.asked = {}
+
+    def erc20(self, chain, address):
+        class _C:
+            class functions:
+                @staticmethod
+                def decimals():
+                    class _R:
+                        @staticmethod
+                        def call():
+                            return 18
+                    return _R()
+        return _C()
+
+    def deployment_block(self, chain, address):
+        self.asked["deployment"] = (chain, address)
+        return self.deployed
+
+    def block_timestamp(self, chain, block):
+        return self.timestamps.get(block, 1789344000)     # 2026-09-14T00:00:00Z
+
+    def burn_transfer_events(self, chain, token, burn_to, from_block, chunk=10_000, max_blocks=None):
+        self.asked["scan"] = {"from_block": from_block, "chunk": chunk, "burn_to": burn_to}
+        head = from_block + 2_600_000
+        chunks = (head - from_block) // chunk + 1
+        return list(self.events), from_block, head, chunks
+
+
+def test_sky_burns_are_decomposed_by_sender_into_three_separate_series():
+    """ONE EVENT SIGNATURE, THREE UNRELATED ECONOMIC FACTS. Sky.burn(from, value) emits
+    Transfer(from, address(0), value) whoever calls it — read from src/Sky.sol, not assumed — and
+    SKY is burned by the Stage 2 buy-and-burn (revenue-funded, recurring), by governance from the
+    Pause Proxy (a one-off executive action), and by the MkrSky converter's auth-only burn() (a
+    supply correction against already-burned MKR).
+
+    Summing them gives a figure that is none of the three, and the archetype 4 tab is asking for
+    the first. Annualising a governance burn would report one decision as a run rate.
+    """
+    events = [
+        {"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100},
+        {"from": STAGE2, "value": int(1_140_000 * WAD), "block": 23_450_000},
+        {"from": PAUSE_PROXY, "value": int(5_815_668 * WAD), "block": 23_380_000},
+        {"from": CONVERTER, "value": int(250_000 * WAD), "block": 22_000_000},
+    ]
     c = Chain(prior_values={}, prior_dates={})
-    c.reader = LogReader(41_000.0)                      # what a from_block past the burns looks like
+    c.reader = _LogReader(events)
     out = FetchOutput()
-    c.run([probe], None, out)
-    assert "burn_address_balance" not in set(out.frame().metric), \
-        "a first read that misses the reference must not reach the sheet"
+    c.run([_sky_log_probe()], None, out)
+    got = {r.metric: float(r.value) for r in out.frame().itertuples(index=False)}
+
+    # THE STAGE 2 LEG ALONE lands in the archetype 4 metric.
+    assert got["burn_address_balance"] == 4_000_000.0, got
+    # GOVERNANCE GETS ITS OWN SERIES. This is the Pause Proxy's -5,815,668 showing up as a BURN,
+    # which is the question the whole read was built to settle.
+    assert got["governance_burn_balance"] == 5_815_668.0, got
+    # AND THE UNRECOGNISED SENDER IS SURFACED, not folded into either.
+    assert got["other_burn_balance"] == 250_000.0, got
+    # ** THE SUM IS NOT ANY OF THEM, which is the point. **
+    assert got["burn_address_balance"] != sum(e["value"] for e in events) / WAD
+
+    flagged = [r for r in out.review if r["reason"] == "unrecognised_burn_sender"]
+    assert flagged and CONVERTER.lower() in flagged[0]["basis"].lower(), out.review
+    print("sky decomposition ok: Stage 2 4.0m, governance 5,815,668, unrecognised 250k flagged")
+
+
+def test_the_stage_2_burner_is_discovered_from_the_logs_and_refuses_an_ambiguous_match():
+    """Its address is in no source on file. What IS known is the amount and the date, so the scan
+    finds the event matching them and takes its sender.
+
+    EXACTLY ONE CANDIDATE OR IT REFUSES. Two matches or none is an unresolved identification, and
+    picking one would put a whole series under an address nobody checked — the same failure as
+    reading a balance from a guessed contract.
+    """
+    cfg = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]
+    assert cfg["stage2_burner"]["address"] is None, "the burner must not be hardcoded"
+    assert cfg["stage2_burner"]["discover_by"]["approx_tokens"] == 2_860_000
+
+    one = [{"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100}]
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = _LogReader(one)
+    out = FetchOutput()
+    c.run([_sky_log_probe()], None, out)
+    assert float(out.frame().query("metric == 'burn_address_balance'").value.iloc[0]) == 2_860_000.0
+
+    # TWO EVENTS OF THE SAME SIZE FROM DIFFERENT SENDERS — unresolved, so nothing is stored.
+    two = one + [{"from": PAUSE_PROXY, "value": int(2_870_000 * WAD), "block": 23_400_200}]
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = _LogReader(two)
+    out = FetchOutput()
+    c.run([_sky_log_probe()], None, out)
+    assert out.frame().query("metric == 'burn_address_balance'").empty
     gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
-    assert "DOES NOT MATCH THE REFERENCE" in gap["reason"] and "2,860,000" in gap["reason"], gap["reason"]
-    assert "Do NOT widen tolerance_pct" in gap["suggestion"]
-    assert any(r["reason"] == "first_read_disagrees_with_reference" for r in out.review), out.review
+    assert "COULD NOT BE IDENTIFIED" in gap["reason"] and "2 event(s) match" in gap["reason"], gap
+    assert "Do NOT widen" in gap["suggestion"]
+    # The senders it DID see are named, so the next step is reading a list rather than guessing.
+    assert PAUSE_PROXY.lower() in gap["reason"].lower()
 
-    # (b) A FIRST READ THAT MATCHES IS STORED, and its source carries the block range it covered.
+    # THE AMOUNT ALONE IS NOT THE IDENTIFICATION. A same-sized burn on another day is rejected.
     c = Chain(prior_values={}, prior_dates={})
-    c.reader = LogReader(2_871_400.0)                   # within the declared 5%
+    c.reader = _LogReader(one, timestamps={23_400_100: 1786752000})   # 2026-08-15
     out = FetchOutput()
-    c.run([probe], None, out)
-    rows = out.frame()
-    row = rows[rows.metric == "burn_address_balance"].iloc[0]
-    assert float(row["value"]) == 2_871_400.0
-    assert "logs@23400000-23457000" in row["source"], row["source"]
+    c.run([_sky_log_probe()], None, out)
+    gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
+    assert "WAS NOT CONFIRMED" in gap["reason"] and "2026-08-15" in gap["reason"], gap
+    print("burner discovery ok: one match accepted, two refused with the senders listed, "
+          "a same-size burn on the wrong date rejected")
 
-    # (c) THE BLOCK RANGE MOVES EVERY RUN AND MUST NOT READ AS A CHANGE OF MEASURING POINT.
-    # This is exactly what the bracketed-annotation stripper was built for: without it, every
-    # run's source would differ from the last and the series would blank itself for a change
-    # that never happened.
+
+def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
+    """THE GOVERNANCE BURNS PREDATE STAGE 2. The documented 2026-09-11 executive action burning
+    SKY from the Pause Proxy is three days BEFORE Stage 2 began, so a scan starting at Stage 2
+    would have captured the recurring leg and silently missed it. A burn series that starts after
+    some of the burns is not a shorter series, it is a wrong one.
+
+    from_block is DERIVED by binary search on eth_getCode rather than looked up — a block
+    explorer is not reachable from every environment this runs in — and rather than estimated
+    from a block time, because a start after the events returns a smaller, confident, entirely
+    plausible number.
+    """
+    cfg = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]
+    assert cfg["from_block"] is None and cfg["from_block_discover"] == "deployment"
+    assert cfg["max_blocks_per_run"] is None, \
+        "a full-history scan is the intent here, not the accident the ceiling guards against"
+
+    reader = _LogReader([{"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100}],
+                        deployed=20_700_000)
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = reader
+    out = FetchOutput()
+    c.run([_sky_log_probe()], None, out)
+    assert reader.asked["deployment"][1] == config.PROJECT_BY_NAME["Sky"]["contracts"]["token"]["address"]
+    assert reader.asked["scan"]["from_block"] == 20_700_000, reader.asked
+    assert reader.asked["scan"]["chunk"] == 10_000
+    assert reader.asked["scan"]["burn_to"] == config.BURN_ADDRESSES["zero"]
+
+    # THE SCANNED RANGE IS AN ANNOTATION, not a measuring point: it moves every run, and without
+    # the stripper the series would blank itself for a change that never happened.
     from fetch.base import _measuring_point
-    assert _measuring_point(row["source"]) == _measuring_point("chain:ethereum:burn_logs[logs@1-2]"), \
-        f"the scanned range is an annotation, not a measuring point: {row['source']}"
+    row = out.frame().query("metric == 'burn_address_balance'").iloc[0]
+    assert "logs@20700000-" in row["source"] and "deployed@20700000" in row["source"], row["source"]
+    assert _measuring_point(row["source"]) == "chain:ethereum:burn_logs", row["source"]
+    # THE SIBLING SERIES CARRY THEIR METRIC IN THE SOURCE and the Stage 2 one does not, which is
+    # deliberate rather than an inconsistency: one contract key emitting three parts would
+    # collide on a single label, so the two extra series are disambiguated. The Stage 2 leg keeps
+    # the plain contract key, which is the canonical form for a single-component read and is what
+    # every other contract on every other project produces.
+    gov = out.frame().query("metric == 'governance_burn_balance'").iloc[0]
+    assert _measuring_point(gov["source"]) == "chain:ethereum:burn_logs:governance_burn_balance"
+    # AND EVERY ONE OF THEM IS STABLE ACROSS RUNS. The scanned range moves every time; without
+    # the annotation stripper each series would blank itself for a change that never happened.
+    assert _measuring_point(gov["source"]) == _measuring_point(
+        "chain:ethereum:burn_logs:governance_burn_balance[logs@1-2,deployed@1]")
+    print("scan ok: starts at the derived deployment block, 10k chunks, range is an annotation")
 
-    # (d) ONCE A PRIOR EXISTS THE GATE IS OFF — it is a FIRST-read check, not a permanent bound.
-    # Leaving it armed would reject every real burn from the moment the total grew past 5%.
-    c = Chain(prior_values={("Sky", "burn_address_balance"): 2_871_400.0},
-              prior_dates={("Sky", "burn_address_balance"): "2026-09-21"})
-    c.reader = LogReader(9_400_000.0)
+
+def test_the_first_stage_2_read_is_gated_on_the_decomposed_figure_not_the_scan_total():
+    """A full-history scan legitimately includes governance and converter burns, so the total is
+    far above the 2,860,000 reference. Gating on the total would reject a correct read every run
+    — which is why the gate moved onto the decomposed Stage 2 leg when the decomposition landed.
+    """
+    events = [
+        {"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100},
+        {"from": PAUSE_PROXY, "value": int(40_000_000 * WAD), "block": 23_380_000},
+    ]
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = _LogReader(events)
     out = FetchOutput()
-    c.run([probe], None, out)
-    rows = out.frame()
-    assert float(rows[rows.metric == "burn_address_balance"].iloc[0]["value"]) == 9_400_000.0
+    c.run([_sky_log_probe()], None, out)
+    # The total is 42.86m and the Stage 2 leg is 2.86m. The gate passes on the leg.
+    assert float(out.frame().query("metric == 'burn_address_balance'").value.iloc[0]) == 2_860_000.0
     assert not [r for r in out.review if r["reason"] == "first_read_disagrees_with_reference"]
-    print("sky burn logs ok: first read gated on 2.86M, range annotation stripped, gate not permanent")
+
+    # AND IT STILL REFUSES A STAGE 2 LEG THAT MISSES — the gate is narrowed, not switched off.
+    bad = [{"from": STAGE2, "value": int(41_000 * WAD), "block": 23_400_100},
+           {"from": PAUSE_PROXY, "value": int(2_860_000 * WAD), "block": 23_380_000}]
+    c = Chain(prior_values={}, prior_dates={})
+    # 2.86m now belongs to the Pause Proxy, so discovery names IT as the burner and the leg it
+    # then reports is the governance burn — which is exactly the mis-identification the date
+    # check and this gate exist to catch between them.
+    c.reader = _LogReader(bad, timestamps={23_380_000: 1786752000})
+    out = FetchOutput()
+    c.run([_sky_log_probe()], None, out)
+    assert out.frame().query("metric == 'burn_address_balance'").empty
+    assert any("WAS NOT CONFIRMED" in g["reason"] or "DOES NOT MATCH THE REFERENCE" in g["reason"]
+               for g in out.gaps if g["metric"] == "burn_address_balance"), out.gaps
+    print("gate ok: measured on the Stage 2 leg, passes with a large total, still refuses a miss")
+
+
+def test_the_mkrsky_converter_question_is_answered_from_its_own_source():
+    """1(c). Read from sky-ecosystem/sky src/MkrSky.sol on 2026-09-22, not from memory.
+
+    THERE IS NO skyToMkr FUNCTION — the converter is one-directional, so the SKY->MKR direction
+    is not live because it does not exist. That answers the question as asked, and it is not the
+    end of it: `function burn(uint256 skyAmt) external auth` calls sky.burn(address(this),
+    skyAmt), so the converter IS a SKY burn source with itself as the sender. Its own comment
+    says it is "for burning excess SKY due to MKR being burned" — a supply correction against
+    already-destroyed MKR, not a buyback of any kind.
+    """
+    cfg = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]
+    note = cfg["third_mechanism_note"]
+    assert "no skyToMkr" in note and "does not exist" in note
+    assert "supply correction" in note
+    # NOT KEYED ON, and the reason is the standing rule rather than an oversight: the converter's
+    # deployed address is not on file, and a decomposition key pointing at an unverified address
+    # would put a series under something nobody checked. It surfaces as unrecognised instead.
+    assert all(a.lower() != CONVERTER.lower() for a in cfg["named_senders"]), \
+        "an unverified address must not become a decomposition key"
+    assert "unrecognised sender" in note
+    print("converter ok: one-directional confirmed from source, burn() still a source, "
+          "left to surface rather than keyed on an unverified address")
 
 
 UNI_ETH_ADDR = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"

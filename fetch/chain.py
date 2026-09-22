@@ -228,23 +228,59 @@ class ChainReader:
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
         return int(getattr(c.functions, call)(*args).call())
 
-    def burn_transfer_total(self, chain: str, token: str, burn_to: str, from_block: int,
-                            chunk: int = 10_000, max_blocks: int | None = None) -> tuple[float, int, int, int]:
-        """Sum every Transfer(*, burn_to, value) on `token` from `from_block` to the head.
+    def deployment_block(self, chain: str, address: str) -> int:
+        """The block this contract was deployed in, found by binary search on eth_getCode.
 
-        THE READ A PROTOCOL BURN NEEDS, AND THE ONE A BALANCE READ CANNOT GIVE. OpenZeppelin's
-        _burn emits Transfer(holder, address(0), amount) and destroys the tokens — so there is no
-        balance at address(0) to read afterwards, and the events are the only record. Sky burns
-        this way (SKY.burn() decrements totalSupply), which is why its burn_address_balance was
-        declared not applicable and why this kind exists.
+        ** DERIVED, NOT LOOKED UP AND NOT HARDCODED. ** A burn-log scan needs a start height, and
+        the start height is the one input where a wrong value fails invisibly: begin after the
+        events and the scan returns a smaller, confident, entirely plausible total. Etherscan
+        would answer it in one call and is not reachable from every environment this runs in, so
+        the number is computed from the chain itself — eth_getCode is empty before deployment and
+        non-empty after, which is monotonic and therefore searchable.
 
-        CHUNKED, BECAUSE PUBLIC RPCs CAP THE RANGE. Most free endpoints reject eth_getLogs over
-        more than ~10k blocks, and the ones that do not are slow. The chunk size is configurable
-        per contract and the default is deliberately conservative — being polite to a free
-        endpoint is a standing constraint of this project, not a performance preference.
+        Costs ~log2(head) calls, about 25 on mainnet, once. The caller records the answer so the
+        next run reads it from config instead of searching again.
+        """
+        w3 = self.web3(chain)
+        addr = self.checksum(address)
+        lo, hi = 0, int(w3.eth.block_number)
+        if not w3.eth.get_code(addr, block_identifier=hi):
+            raise RuntimeError(f"nothing deployed at {address} on {chain} at block {hi}")
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if w3.eth.get_code(addr, block_identifier=mid):
+                hi = mid
+            else:
+                lo = mid + 1
+        return lo
 
-        Returns (tokens, event_count, first_block, last_block). The block range comes back so the
-        caller can say what was actually covered rather than implying the whole history.
+    def block_timestamp(self, chain: str, block: int) -> int:
+        """Unix timestamp of one block. One call, used to DATE a single discovered event."""
+        return int(self.web3(chain).eth.get_block(int(block))["timestamp"])
+
+    def burn_transfer_events(self, chain: str, token: str, burn_to: str, from_block: int,
+                             chunk: int = 10_000, max_blocks: int | None = None
+                             ) -> tuple[list[dict], int, int, int]:
+        """Every Transfer(*, burn_to, value) on `token` from `from_block` to the head, UNAGGREGATED.
+
+        THE READ A PROTOCOL BURN NEEDS, AND THE ONE A BALANCE READ CANNOT GIVE. OpenZeppelin-style
+        _burn — and Sky's own Sky.burn(from, value), read from source — emits
+        Transfer(from, address(0), value) and destroys the tokens, so there is no balance at
+        address(0) afterwards and the events are the only record.
+
+        ** THE `from` IS RETURNED PER EVENT AND THAT IS THE POINT. ** One token can be burned by
+        several unrelated mechanisms, and summing them produces a figure that is not any of them.
+        On SKY: the Stage 2 buy-and-burn, governance burning from the Pause Proxy, and the
+        MkrSky converter's auth-only burn() are three different economic facts sharing one event
+        signature. Only the caller knows which is which, so this returns the raw facts and
+        decomposes nothing.
+
+        A MINT IS NOT CAUGHT BY THIS, and the filter is what guarantees it rather than luck:
+        Sky.mint emits Transfer(address(0), to, value) — address(0) in topic[1], the FROM slot.
+        The filter pins topic[2], the TO slot. Confirmed against src/Sky.sol, 2026-09-22.
+
+        CHUNKED, BECAUSE PUBLIC RPCs CAP THE RANGE. Returns the chunk COUNT alongside the events
+        so the caller can report what the scan actually cost.
         """
         from web3 import Web3
 
@@ -252,8 +288,7 @@ class ChainReader:
         head = int(w3.eth.block_number)
         if max_blocks is not None and head - from_block > max_blocks:
             # REFUSE, DO NOT TRUNCATE. A silently shortened window returns a smaller number that
-            # looks exactly like a quieter period. The caller turns this into a gap that says how
-            # far behind the read is and what to set.
+            # looks exactly like a quieter period.
             raise RuntimeError(
                 f"the log window is {head - from_block:,} blocks (from {from_block:,} to {head:,}), "
                 f"over the configured max_blocks_per_run of {max_blocks:,}. Refusing rather than "
@@ -263,21 +298,25 @@ class ChainReader:
 
         topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
-        decimals = int(self.erc20(chain, token).functions.decimals().call())
-        total_raw, events, block = 0, 0, from_block
+        events, block, chunks = [], from_block, 0
         while block <= head:
             upper = min(block + chunk - 1, head)
             logs = w3.eth.get_logs({"fromBlock": block, "toBlock": upper,
                                     "address": self.checksum(token),
                                     "topics": [topic, None, to_topic]})
+            chunks += 1
             for entry in logs:
                 # THE VALUE IS THE DATA WORD, not a topic: Transfer indexes from and to and leaves
                 # value unindexed. Reading a topic here would return an address as an amount.
-                total_raw += int(entry["data"].hex() if hasattr(entry["data"], "hex")
-                                 else str(entry["data"]), 16)
-                events += 1
+                data = entry["data"]
+                raw = int(data.hex() if hasattr(data, "hex") else str(data), 16)
+                sender = entry["topics"][1]
+                sender = sender.hex() if hasattr(sender, "hex") else str(sender)
+                events.append({"from": "0x" + sender[-40:],
+                               "value": raw,
+                               "block": int(entry["blockNumber"])})
             block = upper + 1
-        return float(total_raw) / (10 ** decimals), events, from_block, head
+        return events, from_block, head, chunks
 
     def scaled(self, chain: str, address: str, call: str, *args, decimals_from: str | None = None) -> float:
         """Call `call` on `address`, scaled by decimals().
@@ -602,68 +641,10 @@ class Chain:
                                 continue
                             source_suffix[metric] = note
                     elif kind == "burn_transfer_logs":
-                        logs_cfg = spec.get("burn_logs") or {}
-                        # ** from_block IS NOT GUESSABLE AND IS NOT GUESSED. ** A scan that starts
-                        # after the burns returns a confident, small, entirely plausible number,
-                        # and one that starts too early is slow and may exceed what a free
-                        # endpoint will serve. It is an absolute block height with a source, or
-                        # the read does not happen.
-                        if logs_cfg.get("from_block") is None:
-                            out.gap(name, metric,
-                                    reason=(f"{key!r} reads burns from Transfer events and its "
-                                            f"from_block is NOT SET. A log scan that starts after the "
-                                            f"burns returns a small, confident, plausible number — the "
-                                            f"failure is invisible in the output, so the start height "
-                                            f"is required rather than defaulted."),
-                                    tiers_attempted="2",
-                                    suggestion=(logs_cfg.get("how_to_set")
-                                                or "Set burn_logs.from_block to the block height of the "
-                                                   "first burn, with its source."))
-                            out.unconfigured(SOURCE, name, f"{key}: burn_logs.from_block not set", TIER)
-                            refused[metric].append(f"{key} ({chain}): from_block not set")
+                        value = self._burn_logs(chain, read_address, key, spec, p, metric,
+                                                parts, refused, source_suffix, when, out)
+                        if value is None:
                             continue
-                        value, events, first_blk, last_blk = self.reader.burn_transfer_total(
-                            chain, read_address,
-                            config.BURN_ADDRESSES[logs_cfg.get("burn_to", "zero")],
-                            int(logs_cfg["from_block"]),
-                            chunk=int(logs_cfg.get("chunk_blocks", 10_000)),
-                            max_blocks=logs_cfg.get("max_blocks_per_run"))
-                        source_suffix[metric] = f"logs@{first_blk}-{last_blk}"
-                        # ** THE FIRST READ IS CHECKED AGAINST A KNOWN FIGURE BEFORE IT IS KEPT. **
-                        # A log scan can be wrong in ways a balance read cannot: the wrong topic
-                        # ordering reads an address as an amount, the wrong burn address returns
-                        # somebody else's discards, a from_block after the event returns a
-                        # confident zero. All three produce a number, and only one of them is the
-                        # burn. So the first reading — the one with no prior to be compared
-                        # against by anything else — has to clear a figure established off-chain.
-                        ref = logs_cfg.get("first_read_reference")
-                        if ref and self.prior.get((name, metric)) is None:
-                            expect, tol = float(ref["value"]), float(ref.get("tolerance_pct", 5)) / 100.0
-                            if expect == 0 or abs(value - expect) / expect > tol:
-                                out.review_item(name, metric, "first_read_disagrees_with_reference",
-                                                "rejected", value=float(value), prior_value=expect,
-                                                date=when, source=f"{SOURCE}:{chain}:{key}", tier=TIER,
-                                                basis=f"{ref.get('what')} ({ref.get('as_of')}), "
-                                                      f"{ref.get('source_url')}")
-                                out.gap(name, metric,
-                                        reason=(f"THE FIRST LOG READ DOES NOT MATCH THE REFERENCE and was "
-                                                f"NOT stored. {events:,} Transfer events to "
-                                                f"{logs_cfg.get('burn_to', 'zero')} over blocks "
-                                                f"{first_blk:,}-{last_blk:,} sum to {value:,.4f}, against "
-                                                f"{expect:,.4f} expected ({ref.get('what')}, "
-                                                f"{ref.get('as_of')}). A log scan can be wrong in three "
-                                                f"ways that all produce a plausible number — wrong topic "
-                                                f"read as the value, wrong burn address, a from_block "
-                                                f"after the event — so a first reading that disagrees is "
-                                                f"reported rather than kept."),
-                                        tiers_attempted="2",
-                                        suggestion=(f"Check from_block ({logs_cfg['from_block']:,}) against "
-                                                    f"{ref.get('source_url') or 'the reference'}, then the "
-                                                    f"burn_to address. Do NOT widen tolerance_pct to make "
-                                                    f"this pass."))
-                                refused[metric].append(f"{key} ({chain}): first read {value:,.2f} "
-                                                       f"vs reference {expect:,.2f}")
-                                continue
                     else:
                         value = self.reader.scaled(chain, read_address, spec.get("call") or "totalSupply")
                 except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
@@ -785,6 +766,200 @@ class Chain:
                                 f"totalSupply {supply:,.2f} x {rate_bps} bps = {emission:,.2f}",
                                 TIER))
         return emission, f"tail@{rate_bps}bps"
+
+    def _burn_logs(self, chain, token, key, spec, project, metric, parts, refused,
+                   source_suffix, when, out):
+        """Scan Transfer-to-burn events, DECOMPOSE THEM BY SENDER, and emit one series per source.
+
+        ** ONE EVENT SIGNATURE, SEVERAL UNRELATED ECONOMIC FACTS. ** Sky.burn(from, value) emits
+        Transfer(from, address(0), value) whoever calls it and for whatever reason, and SKY is
+        burned by at least three mechanisms that mean different things:
+
+          Stage 2 buy-and-burn   revenue-funded, recurring, the archetype 4 figure.
+          Pause Proxy burns      governance destroying treasury SKY. Real supply reduction and
+                                 NOT revenue-funded — a one-off decision, not a rate.
+          MkrSky converter       burn(uint256) is auth-only and documented in the contract's own
+                                 source as "for burning excess SKY due to MKR being burned". A
+                                 supply CORRECTION, not a buyback of any kind.
+
+        Summing them gives a number that is none of the three, and it is the recurring one the
+        archetype 4 tab is asking for. So the sender is the key, the series are separate, and
+        anything unrecognised gets its own row rather than being folded into the answer.
+
+        THE STAGE 2 BURNER IS DISCOVERED, NOT HARDCODED. Its address is not in any source on
+        file; what IS known is that it burned ~2,860,000 SKY on 2026-09-14. The scan finds the
+        event matching that amount, takes its sender, and confirms the block's DATE before
+        accepting it — one extra call. Exactly one candidate or it refuses: two matches or none
+        is an unresolved identification, and guessing which is the whole failure this avoids.
+        """
+        cfg = spec.get("burn_logs") or {}
+        burn_to = config.BURN_ADDRESSES[cfg.get("burn_to", "zero")]
+
+        # ===== THE START HEIGHT, DERIVED WHEN IT IS NOT ON FILE. =====
+        # A scan that begins after the events returns a smaller, confident, entirely plausible
+        # total and nothing in the output shows it, so this is the one input that must not be
+        # estimated. Where config has no height, it is computed from the chain by binary search
+        # on eth_getCode rather than looked up in a block explorer that not every environment
+        # can reach — and the discovered value is printed so it can be written back.
+        from_block = cfg.get("from_block")
+        discovered_from = None
+        if from_block is None:
+            if cfg.get("from_block_discover") != "deployment":
+                out.gap(project["name"], metric,
+                        reason=(f"{key!r} reads burns from Transfer events and its from_block is "
+                                f"NOT SET. A scan starting after the burns returns a small, "
+                                f"confident, plausible number — the failure is invisible in the "
+                                f"output, so the start height is required rather than defaulted."),
+                        tiers_attempted="2",
+                        suggestion=cfg.get("how_to_set") or "Set burn_logs.from_block, with its source.")
+                out.unconfigured(SOURCE, project["name"], f"{key}: burn_logs.from_block not set", TIER)
+                refused[metric].append(f"{key} ({chain}): from_block not set")
+                return None
+            from_block = discovered_from = self.reader.deployment_block(chain, token)
+            log.info("%s/%s: from_block not on file — %s deployed at block %d (binary search on "
+                     "eth_getCode). Write this into config so the next run skips the search.",
+                     project["name"], key, token, from_block)
+
+        events, first_blk, last_blk, chunks = self.reader.burn_transfer_events(
+            chain, token, burn_to, int(from_block),
+            chunk=int(cfg.get("chunk_blocks", 10_000)),
+            max_blocks=cfg.get("max_blocks_per_run"))
+        # DECIMALS FROM THE TOKEN ITSELF, read directly rather than through scaled(): these are
+        # raw log data words, not a call return, so nothing has scaled them yet.
+        dec = int(self.reader.erc20(chain, token).functions.decimals().call())
+        log.info("%s/%s: %d burn event(s) over blocks %d-%d in %d chunk(s) of %d",
+                 project["name"], key, len(events), first_blk, last_blk, chunks,
+                 int(cfg.get("chunk_blocks", 10_000)))
+
+        by_sender: dict[str, float] = {}
+        for e in events:
+            by_sender[e["from"].lower()] = by_sender.get(e["from"].lower(), 0.0) + e["value"] / (10 ** dec)
+
+        # ===== WHO IS THE STAGE 2 BURNER? =====
+        stage2 = (cfg.get("stage2_burner") or {}).get("address")
+        disc = (cfg.get("stage2_burner") or {}).get("discover_by") or {}
+        if not stage2 and disc:
+            want, tol = float(disc["approx_tokens"]), float(disc.get("tolerance_pct", 5)) / 100.0
+            hits = [e for e in events
+                    if want and abs(e["value"] / (10 ** dec) - want) / want <= tol]
+            if len(hits) != 1:
+                out.gap(project["name"], metric,
+                        reason=(f"THE STAGE 2 BURNER COULD NOT BE IDENTIFIED and nothing was "
+                                f"stored. {len(hits)} event(s) match {want:,.0f} tokens within "
+                                f"{disc.get('tolerance_pct', 5)}%, and exactly one is required — "
+                                f"two matches or none is an unresolved identification, and "
+                                f"picking one would put a series under an address nobody checked. "
+                                f"Senders seen: "
+                                + ", ".join(f"{a} {v:,.0f}" for a, v in sorted(
+                                    by_sender.items(), key=lambda kv: -kv[1])[:8])),
+                        tiers_attempted="2",
+                        suggestion=("Identify the Stage 2 burner from Sky's own material and set "
+                                    "burn_logs.stage2_burner.address. Do NOT widen "
+                                    "discover_by.tolerance_pct to force a single match."))
+                refused[metric].append(f"{key} ({chain}): stage 2 burner unidentified")
+                return None
+            hit = hits[0]
+            # THE AMOUNT ALONE IS NOT THE IDENTIFICATION. Confirm the block's DATE too — one
+            # call — because a coincidental match of the same size on another day would
+            # otherwise name the wrong address with no trace.
+            got = time.strftime("%Y-%m-%d", time.gmtime(
+                self.reader.block_timestamp(chain, hit["block"])))
+            if disc.get("date") and got != disc["date"]:
+                out.gap(project["name"], metric,
+                        reason=(f"THE STAGE 2 BURNER WAS NOT CONFIRMED. An event of "
+                                f"{hit['value'] / (10 ** dec):,.0f} tokens was found from "
+                                f"{hit['from']}, but in block {hit['block']:,} dated {got}, not "
+                                f"{disc['date']}. A coincidental match of the same size on "
+                                f"another day would name the wrong address, so the date is "
+                                f"checked and the match is rejected."),
+                        tiers_attempted="2",
+                        suggestion="Re-check the reference date and amount against Sky's own thread.")
+                refused[metric].append(f"{key} ({chain}): burner date mismatch {got}")
+                return None
+            stage2 = hit["from"]
+            log.info("%s/%s: Stage 2 burner DISCOVERED as %s (%.0f tokens in block %d, %s). "
+                     "Write it into config so the next run gates on it instead of rediscovering.",
+                     project["name"], key, stage2, hit["value"] / (10 ** dec), hit["block"], got)
+
+        # ===== THE THREE SERIES. =====
+        named = {k.lower(): v for k, v in (cfg.get("named_senders") or {}).items()}
+        if stage2:
+            named[stage2.lower()] = cfg.get("stage2_metric", "burn_address_balance")
+        other_metric = cfg.get("other_metric", "other_burn_balance")
+        totals: dict[str, float] = {}
+        unrecognised: dict[str, float] = {}
+        for sender, amount in by_sender.items():
+            target = named.get(sender)
+            if target is None:
+                unrecognised[sender] = amount
+                target = other_metric
+            totals[target] = totals.get(target, 0.0) + amount
+
+        suffix = (f"logs@{first_blk}-{last_blk}"
+                  + (f",deployed@{discovered_from}" if discovered_from is not None else ""))
+        for m, total in totals.items():
+            if m == metric:
+                continue
+            parts[m].append((f"{chain}:{key}:{m}", total))
+            source_suffix[m] = suffix
+        # A SERIES WITH NO EVENTS IS STILL A SERIES, and a zero here is measured rather than
+        # missing: the scan ran and found nothing from that sender. Emitted so the column reads
+        # 0 rather than going stale and looking like a broken read.
+        for m in set(named.values()) | {other_metric}:
+            if m not in totals and m != metric:
+                parts[m].append((f"{chain}:{key}:{m}", 0.0))
+                source_suffix[m] = suffix
+        if unrecognised:
+            out.review_item(project["name"], other_metric, "unrecognised_burn_sender",
+                            "stored_flagged", value=float(sum(unrecognised.values())),
+                            date=when, source=f"{SOURCE}:{chain}:{key}", tier=TIER,
+                            basis="senders: " + ", ".join(
+                                f"{a} {v:,.2f}" for a, v in sorted(unrecognised.items(),
+                                                                   key=lambda kv: -kv[1])[:6]))
+
+        source_suffix[metric] = suffix
+        value = totals.get(metric, 0.0)
+
+        # ** THE FIRST READ OF THE STAGE 2 LEG IS CHECKED BEFORE IT IS KEPT. **
+        # Against the DECOMPOSED figure, not the total — a full-history scan picks up governance
+        # and converter burns too, so the total is legitimately far above the 2.86M reference and
+        # gating on it would reject a correct read every time.
+        # ** AND IT IS A FLOOR, NOT AN EQUALITY. Corrected 2026-09-22. **
+        # The gate was written against a scan that started AT Stage 2, where the cumulative and
+        # the reference were the same quantity on the same day. Scanning from deployment changes
+        # that: the Stage 2 cumulative legitimately grows past 2,860,000 the moment a second burn
+        # happens, so an equality check would reject every correct read after the first day —
+        # which is the opposite of what a gate is for. The failure it exists to catch is a scan
+        # that started too LATE and returns too little, and a floor catches exactly that while
+        # letting the series grow.
+        ref = cfg.get("first_read_reference")
+        if ref and self.prior.get((project["name"], metric)) is None:
+            expect, tol = float(ref["value"]), float(ref.get("tolerance_pct", 5)) / 100.0
+            floor = ref.get("mode", "at_least") == "at_least"
+            missed = (expect == 0 or (value < expect * (1 - tol) if floor
+                                      else abs(value - expect) / expect > tol))
+            if missed:
+                out.review_item(project["name"], metric, "first_read_disagrees_with_reference",
+                                "rejected", value=float(value), prior_value=expect, date=when,
+                                source=f"{SOURCE}:{chain}:{key}", tier=TIER,
+                                basis=f"{ref.get('what')} ({ref.get('as_of')}), {ref.get('source_url')}")
+                out.gap(project["name"], metric,
+                        reason=(f"THE FIRST STAGE 2 READ IS BELOW ITS FLOOR and was NOT stored. "
+                                f"{len(events):,} burn event(s) over blocks {first_blk:,}-"
+                                f"{last_blk:,} decompose to {value:,.4f} from the Stage 2 burner, "
+                                f"against a floor of {expect:,.4f} ({ref.get('what')}, "
+                                f"{ref.get('as_of')}). The cumulative can only GROW from that "
+                                f"date, so a figure below it means the scan began after some of "
+                                f"the burns — the one failure that leaves no other trace. "
+                                f"Measured on the DECOMPOSED figure, not the scan total, which "
+                                f"legitimately includes governance and converter burns."),
+                        tiers_attempted="2",
+                        suggestion=(f"Check the burner identification above, then from_block. Do "
+                                    f"NOT widen tolerance_pct to make this pass."))
+                refused[metric].append(f"{key} ({chain}): stage 2 first read {value:,.2f} "
+                                       f"vs reference {expect:,.2f}")
+                return None
+        return value
 
     def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out,
                     disputed: dict | None = None, source_suffix: dict | None = None,
