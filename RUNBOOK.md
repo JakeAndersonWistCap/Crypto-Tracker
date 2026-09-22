@@ -912,3 +912,98 @@ that decides what to do about a slow run — *which tier is slow*. Tier 2 is con
 public RPC and tier 4 is Dune; they have nothing in common and the remedy for one does nothing
 for the other. A source taking minutes and returning nothing is the most useful line in a slow
 run's log, and a rows-only summary cannot show it.
+
+---
+
+## 13. Mechanisms added 2026-09-22
+
+### `unreconciled_flow` — the eighth withheld mechanism
+
+A differenced flow whose values do not sum to its stock's move across the same span is blanked
+and RED. The identity is exact — consecutive differences of one stock telescope, every
+intermediate reading appearing once with each sign — so the tolerance is IEEE 754 and nothing
+else. It is not a "close enough" band and must not become one: a residual that survives it is
+tokens the flow column failed to report.
+
+Found it: Hyperliquid's burn address moved 231,934 across 2026-09-21 while `gross_burn_tokens`
+recorded 83,344. Nothing about the 83,344 looked wrong — right order, right address, right day,
+and about a third of the truth.
+
+### Every differenced flow anchors on `values_before`, not `latest_values`
+
+The value being subtracted and the date that guards it must come from the same row. `prior_values`
+is the newest reading of **any** date, which after the first run of a day is this morning's;
+`prior_dates` is the last **earlier-dated** row. Using one with the other's date passes the
+same-date guard while subtracting today's number, so each re-run writes only the increment since
+the last and overwrites it on the `(date, project, metric)` key.
+
+This was fixed for the chain adapter when PancakeSwap's 59,857,159.01 burn became 0.0123, and left
+standing in `hypercore`, `tron` and `scrape`. All four now take `prior_delta`, and a test asserts
+the second argument of every `derive_flow_from_cumulative` call across them — a fix applied to one
+call site and not its siblings is the shape of bug that produced this one.
+
+### `series_handover` — a deliberately stitched series
+
+`measuring_point_changed` blanks any series read from more than one place, which is right for an
+accident and wrong for a backfill handing over to a live read. A handover declares the ordered
+pair and **nothing else**: the no-overlap is re-checked against the stored dates on every build,
+and any third source blanks the column again. Run `python run_sql.py N` to read off the seam.
+
+Where the legs also differ in what they *cover* — GEODNET's Dune backfill sums Polygon and Solana
+burns while the live read is Polygon alone — that is a `composition_change` and renders as an
+AMBER disclosure. The declaration does not settle it and does not pretend to.
+
+### Daily flows compare against the same weekday
+
+A daily flow carries a weekly cycle, so an adjacent-day comparison flags the calendar. Run
+20260921T204341Z raised twelve `change_threshold` flags, all 40–60% drops, on a Sunday.
+
+A trailing 7-day average does **not** fix this and the arithmetic is in the test: if a weekend day
+is half a weekday, the mean is `(5W + 2×0.5W)/7 = 0.857W` and Sunday at `0.5W` still reads as a
+42% drop. Same weekday one week earlier removes the cycle instead of averaging over it, and a real
+step change survives because it is still there seven days later.
+
+The Review Queue now carries `prior_date` and a `basis` string naming the rule that picked it.
+Where no same-weekday point exists, the basis says the cycle was **not** removed rather than
+implying it was.
+
+### `reports_cap` — a provider serving the cap as the supply
+
+CoinGecko returns World Mobile `total_supply = max_supply = 2,000,000,000`, the ERC20Capped
+ceiling, not an amount anyone minted. The number is not wrong; it answers a different question,
+and nothing about it looks incomplete the way a `:PARTIAL` marker would. The cell says so, and
+`config.supply_denominator_unusable()` is the single place any future ratio denominated by
+`total_supply` must consult.
+
+### `metric_unit` — a label override that is not cosmetic
+
+The number format comes from the metric's unit, so relabelling a cell without overriding its unit
+leaves the format saying something else. 600 TB/day stored under `utilisation_pct` renders as
+60,000% however the column is captioned. Rare on purpose, and always with `non_comparable` beside
+it: a figure needing a different unit from the metric it sits in is by construction answering a
+different question from that column everywhere else.
+
+### `cumulative_flow` per project
+
+`burn_address_balance → gross_burn_tokens` is global, because a dead-address balance means the
+same thing everywhere and a transfer burn is monotonic by construction. Everything else is
+declared per project: Chainlink's Reserve only accumulates, so its delta is an inflow; Uniswap's
+TokenJar holds fee tokens that get swept, and GEODNET has no fund at all. A global entry for
+`buyback_fund_balance` would have derived a "buyback" on all three from whatever each balance
+happened to do.
+
+A **fall** in a cumulative is now reported by name rather than returning an empty frame in
+silence. That branch was harmless while its only caller was a dead-address balance, which cannot
+fall, and would have hidden the Reserve's premise breaking.
+
+### `revenue_base` — what a documented share is a share *of*
+
+Sky states its Stage 2 allocation as percentages of monthly Net Protocol Surplus, which is a
+different quantity from DefiLlama's `revenue_usd` and cannot be mapped to it. The implied-buyback
+formula now multiplies the metric the protocol actually names. Windows ending before — or
+spanning — the base's `effective_from` stay grey, because applying an NPS base to a window before
+Stage 2 multiplies the right number by a share that did not exist yet.
+
+`split_legs` renders the allocation's legs separately with their effects named. A single 27.5%
+figure is right as buy pressure and wrong by exactly 5.5× as supply reduction, and nothing on a
+row of numbers tells a reader which they are looking at.
