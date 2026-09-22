@@ -5057,6 +5057,32 @@ PROJECTS = [
         "coingecko_id": "uniswap",
         "defillama_fees_slug": "uniswap", "defillama_protocol": "uniswap", "defillama_chain": None,
         "archetypes": [4], "archetypes_held": [],
+        # ===== GENESIS SUPPLY, FROM UNISWAP'S OWN CONTRACT SOURCE. Recorded 2026-09-22. =====
+        # Fetched live from the Uniswap governance repository, not recalled:
+        #     uint public totalSupply = 1_000_000_000e18; // 1 billion Uni
+        # and the constructor assigns the whole of it to one account at deployment. UNI CAN be
+        # minted — there is a minter, a 2% mintCap and a 365-day minimum between mints — and
+        # mint() does `totalSupply = totalSupply + amount`, so a mint MOVES the figure. There is
+        # no _burn: a UNI burn is a transfer to the dead address and leaves totalSupply alone.
+        # Both halves are needed for the inference and both come from the same file.
+        "genesis_supply": {
+            "tokens": 1_000_000_000,
+            "source": "https://raw.githubusercontent.com/Uniswap/governance/master/contracts/Uni.sol",
+            "quote": "uint public totalSupply = 1_000_000_000e18; // 1 billion Uni",
+            "mint_moves_total_supply": True,
+            "mint_evidence": "mint(): totalSupply = safe96(SafeMath.add(totalSupply, amount), ...)",
+            # ONE DEPLOYMENT, so the chain read is the whole of the minted supply rather than a
+            # partial sum. Uni.sol is a plain ERC-20 with a fixed minter — no bridge, no OFT, no
+            # mint authority anywhere else. Compare PancakeSwap, where CAKE is a LayerZero OFT
+            # and the gross figure is a partial sum of the deployments that are read.
+            "gross_covers_all_deployments": True,
+            "coverage_evidence": "UNI is a single Ethereum mainnet deployment; Uni.sol has one "
+                                 "minter and no cross-chain mint path",
+            "burn_reduces_total_supply": False,
+            "burn_evidence": "no _burn in the contract — a burn is a transfer to the dead "
+                             "address, which totalSupply still counts",
+            "confirmed_on": "2026-09-22",
+        },
         # ===== COINGECKO'S total_supply IS NET OF BURN HERE. CONFIRMED ON LIVE DATA. =====
         # 1,000,000,000 (contract) - 888,114,418.92 (CoinGecko) = 111,885,581, against a
         # burn_address_balance of 111,953,581 — the small residual is read timing, not a
@@ -8516,6 +8542,81 @@ def bound_metric_for(project_name: str, greater: str, lesser: str) -> str:
     if sub not in metrics_for_project(p):
         return lesser
     return sub
+
+
+# ===== ONE READING CAN BE DECISIVE. Added 2026-09-22. =====
+#
+# Section L marked Uniswap's 220,000 issuance row "only one gross reading — cannot judge, leave
+# it". That verdict was too cautious, and the reason is arithmetic rather than judgement. UNI's
+# genesis supply is exactly 1,000,000,000, mint() adds to totalSupply, and nothing subtracts from
+# it (a UNI burn is a transfer, not a _burn). So total_supply_gross == genesis is not one sample
+# of a moving quantity — it is a proof that CUMULATIVE issuance since deployment is zero, and a
+# quantity that is zero over all time is zero over every window inside it. One reading settles it
+# where a delta needs two.
+#
+# WHAT THE INFERENCE ACTUALLY RESTS ON, so it cannot be applied where it does not hold:
+#
+#   1. A SOURCED GENESIS FIGURE. Not a remembered one. Same discipline as a contract address:
+#      a URL and a date, from the protocol's own source, or the rule does not fire.
+#   2. MINTING MOVES totalSupply UP. If mints were pre-allocated out of a fixed total — every
+#      token minted at deployment and released from a treasury — the figure would sit at genesis
+#      for ever while real distribution happened, and "issuance is zero" would be false in the
+#      sense the column means. That is GEODNET's shape exactly, and it is why the n/a there says
+#      "distribution from pre-minted wallets, not minting".
+#   3. NOTHING REDUCES totalSupply. If the contract had a real _burn, gross could return to
+#      genesis after minting and burning the same amount, and equality would prove nothing.
+#   4. THE GROSS FIGURE COVERS EVERY DEPLOYMENT. PancakeSwap's CAKE is a LayerZero OFT and only
+#      some deployments are summed, so its gross is a PARTIAL that can sit BELOW the truth — and
+#      a partial figure that happens to equal genesis is a coincidence, not a proof. This one is
+#      attested on the genesis entry itself (gross_covers_all_deployments) rather than inferred,
+#      because there is no structural marker that would tell a multi-chain token apart from a
+#      single-deployment one, and inferring it wrongly is what the whole rule is trying to avoid.
+#
+# EXACT EQUALITY, WITH NO TOLERANCE. Both sides are whole-token integers held exactly in a float
+# at this magnitude, so == is the right test and a tolerance would only let a real mint through.
+#
+# EVERY FIELD IS REQUIRED AND A MISSING ONE IS A REFUSAL, never a default. Three of the four
+# conditions are things a token CAN do; recording them as absent-means-false would turn "nobody
+# has looked" into "it does not happen".
+GENESIS_PROOF_REQUIRES = ("tokens", "source", "confirmed_on", "mint_moves_total_supply",
+                          "gross_covers_all_deployments")
+
+
+def genesis_supply(project_name: str) -> dict | None:
+    """The SOURCED genesis supply for this project, or None if it is not on file.
+
+    None means "not recorded", never "zero" and never "unknown but probably the round number in
+    the docs". Every caller treats None as a refusal to infer.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    g = p.get("genesis_supply")
+    if not g or any(not g.get(k) for k in GENESIS_PROOF_REQUIRES):
+        return None
+    return g
+
+
+def issuance_provably_zero(project_name: str, gross_supply: float | None) -> str | None:
+    """Why cumulative issuance is provably zero for this project, or None if it is not provable.
+
+    Returns a sentence rather than True, because the answer is only usable if the reason travels
+    with it: a stored issuance row being deleted on the strength of this needs the argument on
+    file next to the delete, not a boolean somebody has to reconstruct.
+    """
+    g = genesis_supply(project_name)
+    if g is None or gross_supply is None:
+        return None
+    if g.get("burn_reduces_total_supply"):
+        return None
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    if p.get("total_supply_convention") not in NET_OF_BURN_CONVENTIONS:
+        return None
+    if float(gross_supply) != float(g["tokens"]):
+        return None
+    return (f"total_supply_gross reads exactly {g['tokens']:,}, which is the genesis supply on "
+            f"file ({g['source']}, confirmed {g['confirmed_on']}). Minting adds to totalSupply "
+            f"and nothing subtracts from it, so any mint since deployment would have moved this "
+            f"figure off that number. It has not moved: CUMULATIVE issuance is zero, and a "
+            f"quantity that is zero over all time is zero over every window inside it.")
 
 
 # ===== A PROVIDER THAT REPORTS THE CAP AS THOUGH IT WERE THE SUPPLY. =====

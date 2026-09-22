@@ -998,39 +998,79 @@ SELECT rowid, project, metric, reason,
 -- run: metrics is keyed (date, project, metric), so a new run writes a NEW date and the old rows
 -- stay, feeding the 30-day issuance window and the burn/issuance ratio as if measured.
 --
--- L1. EVERY derived:d_supply+burn ISSUANCE ROW, and whether a gross reading for the same project
---     and date disagrees with it. A row whose gross delta is 0 while the stored issuance is not
---     is a phantom; a row where they agree was right by luck and is still better re-derived.
-SELECT m.date, m.project, m.value AS stored_issuance, m.source, m.tier,
-       g.value                                                   AS gross_supply_same_day,
-       (SELECT p.value FROM metrics p
-         WHERE p.project = m.project AND p.metric = 'total_supply_gross'
-           AND p.date < m.date ORDER BY p.date DESC LIMIT 1)      AS gross_supply_prior,
-       g.value - (SELECT p.value FROM metrics p
-                   WHERE p.project = m.project AND p.metric = 'total_supply_gross'
-                     AND p.date < m.date ORDER BY p.date DESC LIMIT 1)
-                                                                  AS gross_delta,
-       CASE WHEN g.value IS NULL THEN 'no gross reading — cannot judge, leave it'
-            WHEN (SELECT p.value FROM metrics p
-                   WHERE p.project = m.project AND p.metric = 'total_supply_gross'
-                     AND p.date < m.date ORDER BY p.date DESC LIMIT 1) IS NULL
-                 THEN 'only one gross reading — cannot judge, leave it'
-            WHEN ABS(m.value - (g.value - (SELECT p.value FROM metrics p
-                                            WHERE p.project = m.project AND p.metric = 'total_supply_gross'
-                                              AND p.date < m.date ORDER BY p.date DESC LIMIT 1))) > 1.0
-                 THEN 'PHANTOM — the contract does not agree'
-            ELSE 'agrees with the gross delta'
-       END                                                        AS verdict
-  FROM metrics m
-  LEFT JOIN metrics g
-    ON g.project = m.project AND g.metric = 'total_supply_gross' AND g.date = m.date
- WHERE m.metric = 'gross_issuance_tokens'
-   AND m.source = 'derived:d_supply+burn'
- ORDER BY m.project, m.date;
+-- L0. THE GENESIS SUPPLIES THE VERDICTS REST ON.                          ADDED 2026-09-22
+--     One row per project whose genesis supply is ON FILE WITH A SOURCE, mirroring
+--     config.genesis_supply. A test asserts these literals equal config's, so the two cannot
+--     drift — the SQL cannot run a Python function and a number copied by hand is exactly the
+--     kind of thing that goes stale silently.
+--
+--     UNISWAP, from Uniswap's own governance repository (Uni.sol, fetched 2026-09-22):
+--         uint public totalSupply = 1_000_000_000e18; // 1 billion Uni
+--     mint() does totalSupply = totalSupply + amount, and there is no _burn — a UNI burn is a
+--     transfer to the dead address, which totalSupply still counts. Both facts are needed and
+--     both are in that one file.
+--
+--     GEODNET IS DELIBERATELY ABSENT, and it is the project this rule must NOT be applied to.
+--     Its total_supply_gross also reads exactly 1,000,000,000, so the arithmetic would "work" —
+--     and the conclusion would be false in the sense the column means. GEOD is entirely
+--     pre-minted: emissions are DISTRIBUTION from mining wallets, so the figure would sit at
+--     genesis for ever while real tokens reached the market. The inference needs minting to MOVE
+--     totalSupply, which for GEOD it does not, and the genesis figure itself is not yet sourced
+--     from GEODNET's own documentation. Two independent reasons to leave it out; either is
+--     enough. Add it here only once BOTH are settled, from GEODNET's own docs.
+--
+-- L1. EVERY derived:d_supply+burn ISSUANCE ROW, with a verdict.          VERDICT WIDENED 2026-09-22
+--     A row whose gross delta is 0 while the stored issuance is not is a phantom; a row where
+--     they agree was right by luck and is still better re-derived.
+--
+--     ** ONE GROSS READING CAN BE DECISIVE, and the old verdict said it never was. ** Uniswap's
+--     220,000 row was marked "only one gross reading — cannot judge, leave it". But the single
+--     reading is EXACTLY the genesis supply, and minting is the only thing that moves that
+--     figure up while nothing moves it down. So cumulative issuance since deployment is zero —
+--     not "unmeasured", zero — and a quantity that is zero over all time is zero over every
+--     window inside it. A second reading would add nothing a proof already gives.
+WITH genesis(project, tokens) AS (
+    VALUES ('Uniswap', 1000000000.0)
+),
+judged AS (
+    SELECT m.date, m.project, m.metric, m.value AS stored_issuance, m.source, m.tier,
+           g.value                                                   AS gross_supply_same_day,
+           (SELECT p.value FROM metrics p
+             WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+               AND p.date < m.date ORDER BY p.date DESC LIMIT 1)      AS gross_supply_prior,
+           gen.tokens                                                 AS genesis_supply,
+           CASE
+             -- THE PROOF COMES FIRST, because it settles the rows the delta test cannot reach.
+             WHEN gen.tokens IS NOT NULL AND g.value = gen.tokens AND m.value > 0
+                  THEN 'PHANTOM — gross supply is EXACTLY the genesis supply, so cumulative '
+                    || 'issuance since deployment is zero and any positive figure is spurious'
+             WHEN g.value IS NULL THEN 'no gross reading — cannot judge, leave it'
+             WHEN (SELECT p.value FROM metrics p
+                    WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+                      AND p.date < m.date ORDER BY p.date DESC LIMIT 1) IS NULL
+                  THEN 'only one gross reading and no genesis on file — cannot judge, leave it'
+             WHEN ABS(m.value - (g.value - (SELECT p.value FROM metrics p
+                                             WHERE p.project = m.project AND p.metric = 'total_supply_gross'
+                                               AND p.date < m.date ORDER BY p.date DESC LIMIT 1))) > 1.0
+                  THEN 'PHANTOM — the contract does not agree'
+             ELSE 'agrees with the gross delta'
+           END                                                        AS verdict
+      FROM metrics m
+      LEFT JOIN metrics g
+        ON g.project = m.project AND g.metric = 'total_supply_gross' AND g.date = m.date
+      LEFT JOIN genesis gen ON gen.project = m.project
+     WHERE m.metric = 'gross_issuance_tokens'
+)
+SELECT date, project, stored_issuance, source, tier, gross_supply_same_day, gross_supply_prior,
+       genesis_supply,
+       gross_supply_same_day - gross_supply_prior AS gross_delta, verdict
+  FROM judged
+ WHERE source = 'derived:d_supply+burn'
+ ORDER BY project, date;
 
 -- L2. WHAT THE WORKBOOK IS SHOWING BECAUSE OF THEM. The 30-day issuance window and the
 --     burn/issuance ratio both read this metric, so the size of the error is the size of these
---     values relative to the real (gross) issuance, which for Uniswap and GEODNET is zero.
+--     values relative to the real (gross) issuance, which for Uniswap is PROVABLY zero.
 SELECT project,
        COUNT(*)      AS phantom_rows,
        MIN(date)     AS first_date,
@@ -1043,27 +1083,105 @@ SELECT project,
  ORDER BY project;
 
 -- L3. WHAT SURVIVES. Every OTHER route to this metric stays — a measured figure, a declared
---     schedule, or the new gross delta. Run this before and after L4 and only the
---     derived:d_supply+burn count should change.
+--     schedule, or the new gross delta. Run this before and after L4/L5 and only the counts the
+--     deletes name should change.
 SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
   FROM metrics
  WHERE metric = 'gross_issuance_tokens'
  GROUP BY source
  ORDER BY source;
 
--- L4. THE DELETE. Scoped to the metric AND the retired source string, so nothing measured and
---     nothing derived by the surviving route can be caught by it. Rows for a project with no
---     second gross reading are deleted too and that is deliberate: the formula that produced
---     them is retired, so the value has no route back to a source we would defend. The metric
---     re-derives from d(total_supply_gross) on the next run for every project that has two
---     gross readings, and correctly reports a gap for any that does not.
+-- L3b. THE ROWS THE GENESIS PROOF CONDEMNS, WHATEVER SOURCE THEY CAME FROM.    ADDED 2026-09-22
+--      This is the widening, and it is why the proof is worth recording rather than just
+--      arguing. L4's delete can only reach rows carrying the retired formula's source string. A
+--      positive issuance row for a project whose gross supply has never left genesis is spurious
+--      no matter which route wrote it, and this is the list. LOOK FIRST — L5 deletes exactly
+--      these rows and nothing else.
+--
+--      ZERO ROWS ARE LEFT ALONE on purpose: a stored 0 says the same thing the proof says, so
+--      there is nothing to correct and deleting it would only remove a true observation.
+--
+--      AND schedule:config ROWS ARE EXCLUDED, which is not a hedge. A schedule row is not an
+--      observation that went wrong — it is config asserting what WOULD be issued, rewritten from
+--      config on every run. Deleting it would remove a row that comes straight back and would
+--      hide the thing that actually needs fixing: a declared schedule contradicted by a contract
+--      that has never minted is a CONFIG ERROR, and L3c reports it as one.
+WITH genesis(project, tokens) AS (
+    VALUES ('Uniswap', 1000000000.0)
+)
+SELECT m.date, m.project, m.value AS stored_issuance, m.source, m.tier,
+       g.value AS gross_supply_same_day, gen.tokens AS genesis_supply,
+       'WOULD DELETE — issuance is provably zero' AS action
+  FROM metrics m
+  JOIN genesis gen ON gen.project = m.project
+  JOIN metrics g ON g.project = m.project AND g.metric = 'total_supply_gross'
+                AND g.date = m.date AND g.value = gen.tokens
+ WHERE m.metric = 'gross_issuance_tokens'
+   AND m.value > 0
+   AND m.source <> 'schedule:config'
+ ORDER BY m.project, m.date;
+
+-- L3c. THE CONTRADICTION THAT IS A CONFIG FIX, NOT A DELETE.                   ADDED 2026-09-22
+--      A declared issuance schedule producing positive figures for a project whose gross supply
+--      has never left genesis. Nothing here should be deleted: the rows regenerate from config
+--      on the next run, so the only durable remedy is in config. Expected to be empty today —
+--      Uniswap declares no issuance_schedule — and it exists so that adding one without
+--      noticing this cannot pass silently.
+WITH genesis(project, tokens) AS (
+    VALUES ('Uniswap', 1000000000.0)
+)
+SELECT m.project, COUNT(*) AS schedule_rows, MIN(m.date) AS first_date, MAX(m.date) AS last_date,
+       SUM(m.value) AS claimed_by_schedule,
+       'FIX CONFIG — the schedule says minted, the contract says never' AS action
+  FROM metrics m
+  JOIN genesis gen ON gen.project = m.project
+  JOIN metrics g ON g.project = m.project AND g.metric = 'total_supply_gross'
+                AND g.date = m.date AND g.value = gen.tokens
+ WHERE m.metric = 'gross_issuance_tokens'
+   AND m.value > 0
+   AND m.source = 'schedule:config'
+ GROUP BY m.project;
+
+-- L4. THE DELETE for the retired formula. Scoped to the metric AND the retired source string, so
+--     nothing measured and nothing derived by the surviving route can be caught by it. Rows for
+--     a project with no second gross reading are deleted too and that is deliberate: the formula
+--     that produced them is retired, so the value has no route back to a source we would defend.
+--     The metric re-derives from d(total_supply_gross) on the next run for every project that has
+--     two gross readings, and correctly reports a gap for any that does not.
 -- BEGIN;
 -- DELETE FROM metrics
 --  WHERE metric = 'gross_issuance_tokens'
 --    AND source = 'derived:d_supply+burn';
 -- COMMIT;
 
--- L5. VERIFY — L1 returns nothing, and L3 no longer lists derived:d_supply+burn.
+-- L5. THE DELETE the genesis proof licenses — the rows L3b listed, from ANY source. Run L3b
+--     first and read it; this deletes precisely what it printed.
+--
+--     THE EXISTS IS THE SCOPE. A row only qualifies if its project has a genesis figure on file
+--     AND a total_supply_gross reading ON THE SAME DATE that is exactly equal to it. No
+--     tolerance: both sides are whole-token integers, so a tolerance could only let a real mint
+--     through.
+--
+--     THE GENESIS FIGURE IS A CASE RATHER THAN THE CTE L3b USES, and the reason is the preview,
+--     not taste. run_sql previews a DELETE by reusing its WHERE clause verbatim against the
+--     table the statement names — a CTE defined above the DELETE would not travel with that
+--     clause, the preview would fail on a missing table, and the delete would be refused. This
+--     form is one table and one clause, so what is printed is exactly what goes. A project not
+--     named in the CASE yields NULL, and `g.value = NULL` is never true, so it is untouched.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE metric = 'gross_issuance_tokens'
+--    AND value > 0
+--    AND source <> 'schedule:config'
+--    AND EXISTS (SELECT 1 FROM metrics g
+--                 WHERE g.project = metrics.project
+--                   AND g.metric = 'total_supply_gross'
+--                   AND g.date = metrics.date
+--                   AND g.value = CASE metrics.project WHEN 'Uniswap' THEN 1000000000.0 END);
+-- COMMIT;
+
+-- L6. VERIFY — L1 returns nothing, L3b returns nothing, and L3 no longer lists
+--     derived:d_supply+burn.
 -- SELECT COUNT(*) AS should_be_zero FROM metrics
 --  WHERE metric = 'gross_issuance_tokens' AND source = 'derived:d_supply+burn';
 

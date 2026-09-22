@@ -7798,3 +7798,172 @@ def test_metrics_cannot_answer_how_many_runs_wrote_on_a_date(tmp_path):
     # DATES BEFORE THE LOG REACHES ARE ABSENT, not reported as zero runs.
     assert "2026-09-11" not in runs and "2026-09-12" not in runs
     print("run count ok: 2026-09-21 x4, 09-16/17/18 single-run, earlier dates have no log to read")
+
+
+# ============================================================================================
+# GENESIS SUPPLY: ONE READING THAT SETTLES CUMULATIVE ISSUANCE
+# ============================================================================================
+
+def test_one_gross_reading_at_genesis_proves_cumulative_issuance_is_zero():
+    """** SECTION L'S VERDICT WAS TOO CAUTIOUS, and the reason is arithmetic, not judgement. **
+
+    Uniswap's 219,999.99 issuance row was marked "only one gross reading — cannot judge, leave
+    it". But the single reading is EXACTLY the genesis supply, minting is the only thing that
+    moves that figure up, and nothing moves it down. Cumulative issuance since deployment is
+    therefore zero, and a quantity that is zero over all time is zero over every window inside
+    it. A second reading adds nothing a proof already gives.
+    """
+    why = config.issuance_provably_zero("Uniswap", 1_000_000_000.0)
+    assert why and "CUMULATIVE issuance is zero" in why
+    assert "1,000,000,000" in why and "Uni.sol" in why, "the argument travels with the answer"
+
+    # THE GENESIS FIGURE IS SOURCED, not recalled. Same discipline as a contract address.
+    g = config.genesis_supply("Uniswap")
+    assert g["tokens"] == 1_000_000_000
+    assert g["source"].startswith("https://raw.githubusercontent.com/Uniswap/governance/")
+    assert "1_000_000_000e18" in g["quote"], "the line from the contract, not a paraphrase"
+    assert g["confirmed_on"] == "2026-09-22"
+
+    # ONE TOKEN OFF AND IT IS NOT A PROOF. No tolerance: both sides are whole-token integers, so
+    # a tolerance could only let a real mint through.
+    assert config.issuance_provably_zero("Uniswap", 1_000_000_001.0) is None
+    assert config.issuance_provably_zero("Uniswap", 999_999_999.0) is None
+    assert config.issuance_provably_zero("Uniswap", None) is None
+    print("genesis ok: gross == 1,000,000,000 exactly, so cumulative UNI issuance is provably zero")
+
+
+def test_the_genesis_proof_refuses_every_project_it_does_not_hold_for():
+    """The inference rests on four things and each one can be false. A rule that fired without
+    them would turn a pre-minted token's flat supply into "nothing is being issued", which is the
+    exact inversion GEODNET's n/a reason exists to prevent."""
+    # GEODNET'S GROSS ALSO READS EXACTLY 1,000,000,000, so the arithmetic would "work" and the
+    # conclusion would be false in the sense the column means: GEOD is entirely pre-minted and
+    # emissions are DISTRIBUTION from mining wallets. Minting does not move its totalSupply, so
+    # the figure would sit at genesis for ever while real tokens reached the market.
+    assert config.genesis_supply("GEODNET") is None, \
+        "not on file — and it must not be added without BOTH a source and the minting question"
+    assert config.issuance_provably_zero("GEODNET", 1_000_000_000.0) is None
+    na = config.PROJECT_BY_NAME["GEODNET"]["issuance_derivation"]["na_reason"]
+    assert "DISTRIBUTION from pre-minted mining wallets, not minting" in na, \
+        "GEODNET already says why the equality proves nothing there"
+
+    # PANCAKESWAP: CAKE is a LayerZero OFT and the gross figure is a partial multi-chain sum, so
+    # a partial that happened to equal genesis would be a coincidence, not a proof.
+    assert config.genesis_supply("PancakeSwap") is None
+    assert config.issuance_provably_zero("PancakeSwap", 1_000_000_000.0) is None
+
+    # EVERY REQUIRED FIELD IS A REFUSAL WHEN MISSING, never a default — three of the four
+    # conditions are things a token CAN do, and absent-means-false would turn "nobody looked"
+    # into "it does not happen".
+    p = config.PROJECT_BY_NAME["Uniswap"]
+    whole = p["genesis_supply"]
+    try:
+        for field in config.GENESIS_PROOF_REQUIRES:
+            p["genesis_supply"] = {k: v for k, v in whole.items() if k != field}
+            assert config.issuance_provably_zero("Uniswap", 1_000_000_000.0) is None, \
+                f"{field} missing must refuse the inference, not default it"
+        # AND A REAL _burn WOULD BREAK IT: gross could return to genesis after minting and
+        # burning the same amount, so equality would prove nothing.
+        p["genesis_supply"] = {**whole, "burn_reduces_total_supply": True}
+        assert config.issuance_provably_zero("Uniswap", 1_000_000_000.0) is None
+    finally:
+        p["genesis_supply"] = whole
+    print("refusals ok: GEODNET, PancakeSwap and every missing condition each refuse the inference")
+
+
+def test_the_cleanup_sqls_genesis_literals_match_config(tmp_path):
+    """The SQL cannot call a Python function, so section L carries the genesis figure as a
+    literal — and a number copied by hand is exactly the kind of thing that goes stale silently.
+    Every occurrence is checked against config, so a change in one place fails here rather than
+    deleting the wrong rows later."""
+    section = _cleanup_sql_section("-- L. THE PHANTOM ISSUANCE ROWS")
+    pairs = set(re.findall(r"'([A-Za-z][A-Za-z .]*)',\s*(\d+\.\d+)", section))
+    assert pairs, "section L must carry its genesis figures as literals"
+    for project, tokens in pairs:
+        g = config.genesis_supply(project)
+        assert g is not None, f"section L names {project!r}, which has no sourced genesis in config"
+        assert float(tokens) == float(g["tokens"]), \
+            f"{project}: SQL says {tokens}, config says {g['tokens']}"
+    # AND EVERY SOURCED PROJECT IS PRESENT — a genesis recorded in config but absent from the SQL
+    # is a verdict that silently stays too cautious.
+    named = {p for p, _ in pairs}
+    for p in config.PROJECTS:
+        if config.genesis_supply(p["name"]):
+            assert p["name"] in named, f"{p['name']} has a sourced genesis that section L ignores"
+    # THE THREE PLACES IT APPEARS — L0/L3b, L3c and L5 — must all be there, so the delete cannot
+    # be scoped differently from the preview that licensed it.
+    assert section.count("1000000000.0") == 4, \
+        "L0, L3b, L3c and L5 each carry the figure; a count change means one was edited alone"
+    print(f"drift guard ok: section L's genesis literals match config for {sorted(named)}")
+
+
+def _seed_issuance_store(tmp_path):
+    """Uniswap pinned at genesis with phantom rows from two routes, plus two projects the proof
+    must not touch."""
+    import sqlite3
+    import store as store_mod
+    conn = sqlite3.connect(tmp_path / "iss.db")
+    conn.executescript(store_mod.SCHEMA)
+    conn.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)", [
+        ("2026-09-19", "Uniswap", "total_supply_gross", 1e9, "chain:ethereum:token", 2, "t"),
+        ("2026-09-20", "Uniswap", "total_supply_gross", 1e9, "chain:ethereum:token", 2, "t"),
+        ("2026-09-21", "Uniswap", "total_supply_gross", 1e9, "chain:ethereum:token", 2, "t"),
+        ("2026-09-21", "Uniswap", "gross_issuance_tokens", 219_999.99, "derived:d_supply+burn", 2, "t"),
+        ("2026-09-20", "Uniswap", "gross_issuance_tokens", 1_234.0, "derived:d_supply", 2, "t"),
+        ("2026-09-19", "Uniswap", "gross_issuance_tokens", 0.0, "derived:d_supply", 2, "t"),
+        ("2026-09-21", "GEODNET", "total_supply_gross", 1e9, "chain:polygon:token", 2, "t"),
+        ("2026-09-21", "GEODNET", "gross_issuance_tokens", 5_000.0, "derived:d_supply+burn", 2, "t"),
+        ("2026-09-21", "Venice AI", "total_supply_gross", 114_897_403.56, "chain:base:token", 2, "t"),
+        ("2026-09-21", "Venice AI", "gross_issuance_tokens", 900.0, "derived:d_supply+burn", 2, "t"),
+    ])
+    conn.commit()
+    return conn
+
+
+def test_section_l_reaches_its_decisive_verdict_and_the_delete_acts_on_it(tmp_path):
+    """The verdict is only worth widening if the DELETE follows it. L4 can only reach rows
+    carrying the retired formula's source string; the genesis proof condemns a positive issuance
+    row whatever route wrote it, so L5 is what turns the argument into a cleanup."""
+    import sqlite3
+    import run_sql
+    conn = _seed_issuance_store(tmp_path)
+    conn.row_factory = sqlite3.Row
+    section = _cleanup_sql_section("-- L. THE PHANTOM ISSUANCE ROWS")
+    selects = [run_sql.strip_comments(s) for s in run_sql.split_statements(section)
+               if run_sql.classify(s) == "select"]
+
+    verdicts = {r["project"]: r["verdict"] for r in conn.execute(selects[0])}
+    assert "PHANTOM — gross supply is EXACTLY the genesis supply" in verdicts["Uniswap"]
+    assert "cannot judge, leave it" in verdicts["GEODNET"], "no genesis on file, no verdict"
+    assert "cannot judge, leave it" in verdicts["Venice AI"]
+
+    condemned = [(r["project"], r["date"], r["source"])
+                 for r in conn.execute(next(s for s in selects if "WOULD DELETE" in s))]
+    assert ("Uniswap", "2026-09-21", "derived:d_supply+burn") in condemned
+    assert ("Uniswap", "2026-09-20", "derived:d_supply") in condemned, \
+        "the widening is the point — a phantom from the SURVIVING route is still a phantom"
+    assert not [c for c in condemned if c[0] in ("GEODNET", "Venice AI")]
+    assert not [c for c in condemned if c[1] == "2026-09-19"], "a true zero is left alone"
+
+    # AND THE DELETES RUN, with the preview run_sql would show. A DELETE whose WHERE clause
+    # cannot be previewed against its own table is refused by run_sql, so this also asserts the
+    # statement is shaped so that what is printed is what goes.
+    writes = [run_sql.strip_comments(s)
+              for s in run_sql.split_statements("\n".join(run_sql.uncommented_write(section)))
+              if run_sql.classify(s) == "write"]
+    assert len(writes) == 2, "L4 for the retired formula, L5 for the genesis proof"
+    for d in writes:
+        where = d[d.upper().index(" WHERE ") + 7:]
+        conn.execute(f"SELECT * FROM metrics WHERE {where}").fetchall()   # the preview must run
+        conn.execute(d)
+    conn.commit()
+
+    left = conn.execute("SELECT date, project, value FROM metrics"
+                        " WHERE metric='gross_issuance_tokens' ORDER BY project, date").fetchall()
+    assert [tuple(r) for r in left] == [("2026-09-19", "Uniswap", 0.0)], \
+        "only the true zero survives; Venice's row went with the retired formula, as L4 intends"
+    assert conn.execute("SELECT COUNT(*) FROM metrics"
+                        " WHERE metric='total_supply_gross'").fetchone()[0] == 5, \
+        "the supply readings are the evidence and are never touched"
+    conn.close()
+    print("section L ok: the verdict is decisive and both deletes act on exactly what they printed")
