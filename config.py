@@ -2222,6 +2222,55 @@ PROJECTS = [
         # requests served and value secured — real figures, none of which is tx_count. Wiring one
         # of them INTO tx_count would put an oracle-update count in a column that means
         # blockchain transactions everywhere else, which is worse than the gap it closes.
+        # ===== THE ~20x FEES GAP IS NOT A WRONG SLUG. INVESTIGATED 2026-09-23. =====
+        # Stored daily fees of $2,425-8,309 (~$0.2M/month) against a figure researched earlier at
+        # ~$4.76M fees / $4.47M revenue over 30 days on defillama.com/protocol/chainlink. The
+        # hypothesis was that config points at a CHILD product and should switch to the parent.
+        #
+        # ** IT IS THE OTHER WAY ROUND: `chainlink` IS THE PARENT, and its adapter is narrow on
+        # purpose. ** Read from DefiLlama's own source, fees/chainlink/index.ts:
+        #
+        #   dailyFees           = tokens received by the fee aggregator
+        #                         0xd6e39d42AceE7Abcc460E6Ea78a0844A0980E78f, ETHEREUM ONLY
+        #                         (chains: [CHAIN.ETHEREUM]), from 2025-02-21
+        #   dailyRevenue        = LINK from the PaymentAbstractionLayer 0x5680681E...9171d to the
+        #                         Reserve 0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6
+        #   dailyHoldersRevenue = the same transfers, tagged TOKEN_BUY_BACK
+        #
+        # THE RESERVE ADDRESS IN THAT ADAPTER IS THE ONE THIS ENTRY ALREADY HOLDS, to the
+        # character — so the slug is not merely right, it measures the exact mechanism this
+        # project's archetype 3 case rests on.
+        #
+        # WHAT THE WEBSITE SHOWS INSTEAD is a roll-up across the parent and its siblings.
+        # fees/chainlink-requests.ts sums "Chainlink Requests, Keepers, VRF V1, VRF V2, CCIP",
+        # and its own methodology says "All LINK payments go directly to the ORACLE NODE
+        # OPERATORS who fulfil the requests", returned as dailySupplySideRevenue. Those are
+        # payments to third parties, not protocol income.
+        #
+        # ** SO SWITCHING TO THE ROLL-UP WOULD BREAK THE THING THE COLUMN IS FOR. ** fees_usd
+        # feeds the implied-buyback pipeline; adding node-operator payments would multiply the
+        # implied buyback ~20x against an actual buyback that only ever sees the Reserve. That is
+        # the Aerodrome error in a different costume: money moving THROUGH a protocol to somebody
+        # else, counted as the protocol's own.
+        #
+        # AND revenue_usd READING 0 ON MOST DAYS IS THE MECHANISM, NOT A BREAK. The Reserve is
+        # fed by discrete PaymentAbstractionLayer transfers, and this entry already records a
+        # multi-day withdrawal timelock with transfers arriving episodically. A zero on a day
+        # with no transfer is correct. If that starts firing the change check it is what
+        # lumpy_flow is for; it is NOT what level_break is for, because the LEVEL has not moved.
+        "defillama_slug_investigated": {
+            "checked_on": "2026-09-23",
+            "source": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/chainlink/index.ts",
+            "verdict": "KEEP `chainlink` — it is the parent, and it measures the Reserve inflow "
+                       "this project's archetype 3 case rests on, at the address already on file",
+            "why_the_website_differs": "defillama.com rolls the parent up with chainlink-requests, "
+                                       "whose own methodology says the LINK goes to ORACLE NODE "
+                                       "OPERATORS (dailySupplySideRevenue) — third-party payments, "
+                                       "not protocol income",
+            "do_not": "do NOT switch fees_usd to the roll-up: it feeds the implied-buyback "
+                      "pipeline, and node-operator payments would inflate implied buyback ~20x "
+                      "against an actual buyback that only ever sees the Reserve",
+        },
         "is_chain": False,
         # ===== SOURCED: the whole supply was minted at genesis. =====
         # This file already relies on it — metrics_for_project's own docstring cites Chainlink as
