@@ -245,39 +245,6 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"source that publishes it. Do NOT add a burn-address contract entry — reading a dead "
                     f"address here returns other people's discarded tokens, not the protocol burn.")
 
-    # ===== A SOURCE THAT EXISTS BUT WHOSE REQUEST SHAPE IS NOT ESTABLISHED. Added 2026-09-23. =====
-    # Hyperliquid's locked_tokens is the worked case. The info API is already in use for the burn
-    # balance, so "no source configured" is plainly wrong — and so is "add a contract", because
-    # HYPE staking is not an ERC-20 escrow. Every staking request type in BOTH official SDKs is
-    # per-user and takes an address; the network-wide total is in the API reference, which is not
-    # reachable here. That is a specific, finishable piece of work and the row should say it
-    # rather than send the reader to build a scraper.
-    blocked = project.get("hyperliquid_staking_sourcing")
-    if blocked and metric == "locked_tokens" and blocked.get("status") == "blocked_on_docs":
-        return (f"THE SOURCE EXISTS AND ITS REQUEST SHAPE IS NOT ESTABLISHED — "
-                f"{blocked['finding']} (checked {blocked['checked_on']}: "
-                f"{', '.join(blocked.get('checked') or ())}). Not guessed: a request type "
-                f"invented from a plausible name either fails outright or returns a "
-                f"differently-shaped number that reads as a staked total.",
-                f"{blocked['what_would_settle_it']} The candidate to confirm is "
-                f"{blocked['candidate']}.")
-
-    # ===== A BUYBACK'S DESTINATION DECIDES WHY IT CANNOT BE MEASURED. Added 2026-09-23. =====
-    # "No buyback_fund_balance contract" was the wrong instruction on most of these: a buyback
-    # that BURNS has no fund to read, and tokens handed to stakers are in a staker's address, not
-    # the protocol's. config.buyback_route answers from the destination already on the entry.
-    if metric in config.BUYBACK_METRICS:
-        route = config.buyback_route(name)
-        if route["route"] in ("distribute", "treasury_inflow", "split"):
-            headline = {
-                "distribute": "DISTRIBUTED ON RECEIPT — there is no stock to difference",
-                "treasury_inflow": "HELD, so the figure is a fund INFLOW",
-                "split": "SPLIT ACROSS DESTINATIONS",
-            }[route["route"]]
-            return (f"{headline}. {route['reason']}",
-                    "Do NOT add a burn-address or generic fund contract for this — the reason "
-                    "above names what the mechanism actually needs.")
-
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:
         contracts = project.get("contracts") or {}

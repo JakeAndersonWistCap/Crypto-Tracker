@@ -8407,36 +8407,178 @@ def test_geodnets_defillama_slug_is_wired_and_says_what_the_series_actually_is()
     print("geodnet slug ok: wired from DefiLlama's own adapter, and recorded as burn-derived")
 
 
-def test_hyperliquid_staked_hype_is_refused_until_the_request_type_is_confirmed():
-    """Proposed as a quick win — "the same info API we already use". Both of Hyperliquid's OWN
-    SDKs say otherwise: every staking request type takes a `user` address and answers about that
-    user. There is no network-wide total in either, and summing per-user calls needs a delegator
-    set nothing on file enumerates.
+class _InfoStub:
+    """Hyperliquid's info endpoint: one POST, answered by request `type`."""
 
-    A request type invented from a plausible name either fails outright or returns a
-    differently-shaped number that reads as a staked total — which is the worse outcome, and the
-    reason this terminates in a gap rather than a guess.
+    def __init__(self, summaries, balances=None, wei_decimals=8, tokens=None):
+        self.summaries, self.calls = summaries, []
+        self.balances = balances if balances is not None else [{"coin": "HYPE", "total": "47387407.0"}]
+        # spotMeta is where Hyperliquid publishes the token's smallest-unit decimals. HYPE's
+        # weiDecimals is 8, NOT the EVM's 18 — which is the whole reason this is read rather
+        # than assumed.
+        self.tokens = tokens if tokens is not None else [
+            {"name": "USDC", "weiDecimals": 8, "index": 0},
+            {"name": "HYPE", "weiDecimals": wei_decimals, "szDecimals": 2, "index": 150},
+        ]
+
+    def post(self, url, json_body=None, headers=None):
+        self.calls.append(json_body.get("type"))
+        if json_body.get("type") == "validatorSummaries":
+            return self.summaries
+        if json_body.get("type") == "spotMeta":
+            return {"tokens": self.tokens, "universe": []}
+        return {"balances": self.balances}
+
+
+def _validator(stake, jailed=False):
+    return {"validator": "0x" + "a" * 40, "stake": stake, "isJailed": jailed,
+            "name": "v", "commission": "0.05"}
+
+
+def test_hyperliquid_staked_hype_is_summed_from_the_aggregate_the_sdks_do_not_expose():
+    """** THE REFUSAL WAS RIGHT ABOUT WHAT IT CHECKED AND WRONG ABOUT WHAT EXISTS. **
+
+    Both of Hyperliquid's OWN SDKs expose only PER-USER staking types — every one takes a `user`
+    address — and summing per-user calls needs a delegator set nothing enumerates. That much
+    holds. What the SDKs do not carry, the public API does: validatorSummaries returns every
+    validator with a `stake` field, so the network figure is one request and a sum.
+
+    An SDK is a convenience wrapper, not an inventory of an API. The lesson is on the entry.
     """
-    from fetch.gaps import _tier_note
+    from fetch.base import FetchOutput
+    from fetch.hypercore import HyperCoreInfo
 
     hl = config.PROJECT_BY_NAME["Hyperliquid"]
-    blocked = hl["hyperliquid_staking_sourcing"]
-    assert blocked["status"] == "blocked_on_docs"
-    assert len(blocked["checked"]) == 2 and blocked["checked_on"] == "2026-09-23"
-    assert "PER-USER" in blocked["finding"]
-    assert blocked["candidate"].startswith("validatorSummaries")
+    src = hl["hyperliquid_staking_sourcing"]
+    assert src["status"] == "wired" and src["endpoint_type"] == "validatorSummaries"
+    assert "chainstack" in src["source"] and "NOT the open-source node" in src["served_by"]
+    assert "not an inventory of an API" in src["lesson"]
 
-    # THE GAP ROW SAYS THE RIGHT THING. "No source configured" is plainly wrong — the info API is
-    # already in use for the burn balance — and "add a contract" is wrong twice over, because
-    # HYPE staking is not an ERC-20 escrow. Either would send the reader to build the wrong thing.
-    reason, suggestion = _tier_note(hl, "locked_tokens", {})
-    assert "REQUEST SHAPE IS NOT ESTABLISHED" in reason
-    assert "no source configured" not in reason.lower()
-    assert "validatorSummaries" in suggestion and "gitbook" in suggestion
-    # AND IT IS FILED AS FIXABLE, not uncovered: reading one page settles it.
-    from fetch.gaps import _priority, P_UNCOVERED
-    assert _priority("Hyperliquid", "locked_tokens", reason) < P_UNCOVERED
-    print("hyperliquid staking ok: refused, with the exact page that would settle it")
+    read = hl["node_api"]["extra_reads"][0]
+    assert read["metric"] == "locked_tokens" and read["request"] == {"type": "validatorSummaries"}
+    assert read["sum_field"] == "stake" and read["includes_jailed"] is True
+
+    # 400,000,000 HYPE across four validators, one of them jailed, in 8-decimal units.
+    stakes = [150_000_000, 120_000_000, 90_000_000, 40_000_000]
+    summaries = [_validator(int(s * 10 ** 8), jailed=(i == 3)) for i, s in enumerate(stakes)]
+    hc = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+                       prior_dates={}, prior_delta={})
+    hc.http = _InfoStub(summaries)
+    out = FetchOutput()
+    hc.run([hl], None, out)
+    df = out.frame()
+
+    locked = df[df.metric == "locked_tokens"]
+    assert len(locked) == 1, df.to_dict()
+    assert float(locked.value.iloc[0]) == 400_000_000.0, locked.to_dict()
+    assert locked.source.iloc[0] == "hypercore_info:validatorSummaries"
+    assert "validatorSummaries" in hc.http.calls and "spotClearinghouseState" in hc.http.calls
+
+    # ** JAILED STAKE IS IN THE TOTAL. ** Delegated HYPE is locked whatever the validator's
+    # status — a jailed validator's delegators cannot withdraw any faster than anyone else's —
+    # so excluding them would understate locked supply by whatever is delegated to the validators
+    # currently in trouble, which is exactly when that number moves.
+    assert float(locked.value.iloc[0]) == sum(stakes), "the jailed validator's 40m must be in"
+
+    # AND THE ACTIVE-ONLY FIGURE IS BESIDE IT, STAGED. It answers a different question (how much
+    # stake is securing the chain now) and nothing has chosen it for anything, so it is captured
+    # where nothing reads it rather than quietly driving a column.
+    staged = [s for s in out.staged if s["name"].startswith("locked_tokens_active")]
+    assert len(staged) == 1 and staged[0]["value"] == 360_000_000.0, out.staged
+    assert "3 of 4 validators not jailed" in staged[0]["note"]
+    print("hyperliquid staking ok: 400,000,000 HYPE summed including jailed, 360,000,000 active "
+          "staged beside it")
+
+
+def test_the_stake_scaling_is_sourced_from_the_metadata_and_gated_by_supply():
+    """** THE TWO ENDPOINTS DO NOT AGREE ON UNITS, AND ASSUMING 18 WOULD BE CATASTROPHIC. **
+
+    spotClearinghouseState returns `total` as a decimal string in human units;
+    validatorSummaries returns `stake` as an integer in the token's smallest unit — and
+    HyperCore's decimals are NOT the EVM convention. Assuming 18 would report a real 400m HYPE
+    stake as 0.0004, a number that reads as a rounding error rather than as a fault.
+
+    ** AN EARLIER DESIGN INFERRED THE DIVISOR BY TESTING CANDIDATES AGAINST THE SUPPLY BAND, AND
+    THIS TEST KILLED IT. ** For a genuine 400m stake against a 955m supply, THREE divisors pass:
+    10^8 gives 400m, 10^9 gives 40m, 10^18 gives 0.04, and every one is "above zero and under
+    supply". Demanding a unique match would have refused a perfectly good read; taking the
+    largest would have been choosing a number to make the answer look right.
+
+    So the divisor is READ from spotMeta, where Hyperliquid publishes it, and the band is kept as
+    a GATE. Sourced answer first, bound second.
+    """
+    from fetch.base import FetchOutput
+    from fetch.hypercore import HyperCoreInfo
+
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    read = hl["node_api"]["extra_reads"][0]
+    assert read["wei_decimals"] is None, "unset on purpose — it is read from the metadata"
+    assert read["decimals_from"]["request"] == {"type": "spotMeta"}
+    assert read["decimals_from"]["decimals_key"] == "weiDecimals"
+
+    # THE ARITHMETIC THAT RULED OUT INFERENCE, asserted rather than only described.
+    raw = 400_000_000 * 10 ** 8
+    passing = [d for d in (0, 6, 8, 9, 18) if 0 < raw / 10 ** d <= 955_000_000]
+    assert len(passing) == 3 and passing == [8, 9, 18], \
+        f"three divisors fit the band, which is why it cannot be the discriminator: {passing}"
+
+    # THE GATE IS A DIFFERENT JOB AND STILL DOES IT: a figure exceeding all supply is refused.
+    value, detail = HyperCoreInfo._apply_scale(raw, 8, 955_000_000.0)
+    assert value == 400_000_000.0 and "inside" in detail
+    value, detail = HyperCoreInfo._apply_scale(raw, 0, 955_000_000.0)
+    assert value is None and "FAILS ITS BOUND" in detail
+    assert "Nothing staked can exceed everything in existence" in detail
+    # ** THE GATE IS ASYMMETRIC, AND SAYING SO IS PART OF THE DESIGN. ** It catches a figure
+    # that is too LARGE, because nothing staked can exceed everything in existence. It CANNOT
+    # catch one that is too small: a declared 18 gives 0.04 HYPE, which is absurd as a network
+    # stake and still inside (0, supply]. There is no structural lower bound to test against —
+    # "a real network stakes at least X%" is a judgement, not a property — so the small side is
+    # held by the metadata being right, not by the gate. Recorded so nobody later reads the gate
+    # as protection it does not give.
+    value, detail = HyperCoreInfo._apply_scale(raw, 18, 955_000_000.0)
+    assert value == 0.04 and "inside" in detail, \
+        "the band cannot catch a too-small divisor — that is what the metadata is for"
+
+    # NO SUPPLY, NO ANSWER. Without a bound there is nothing to catch a changed decimals field.
+    value, detail = HyperCoreInfo._apply_scale(raw, 8, None)
+    assert value is None and "no total_supply in the store" in detail
+
+    # ** THE METADATA IS READ ONCE PER RUN AND THE VALUE COMES FROM IT. **
+    stub = _InfoStub([_validator(int(400_000_000 * 10 ** 8))], wei_decimals=8)
+    hc = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+                       prior_dates={}, prior_delta={})
+    hc.http = stub
+    out = FetchOutput()
+    hc.run([hl], None, out)
+    assert stub.calls.count("spotMeta") == 1, f"fetched once, not per read: {stub.calls}"
+    ok = out.frame()
+    assert float(ok[ok.metric == "locked_tokens"].value.iloc[0]) == 400_000_000.0
+
+    # A METADATA CHANGE IS CAUGHT BY THE GATE. If weiDecimals starts meaning something else, the
+    # scaled figure leaves the band and the run refuses with the raw number — which is the one
+    # failure the metadata cannot self-report.
+    stub2 = _InfoStub([_validator(int(400_000_000 * 10 ** 8))], wei_decimals=0)
+    hc2 = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+                        prior_dates={}, prior_delta={})
+    hc2.http = stub2
+    out2 = FetchOutput()
+    hc2.run([hl], None, out2)
+    assert out2.frame()[out2.frame().metric == "locked_tokens"].empty, "nothing stored"
+    gap = next(g for g in out2.gaps if g["metric"] == "locked_tokens")
+    assert "FAILS ITS BOUND" in gap["reason"] and "40,000,000,000,000,000" in gap["reason"]
+    assert "Do NOT assume 18" in gap["suggestion"]
+
+    # AND A TOKEN MISSING FROM THE METADATA REFUSES WITH WHAT IT DID SEE, rather than defaulting.
+    stub3 = _InfoStub([_validator(1)], tokens=[{"name": "USDC", "weiDecimals": 8}])
+    hc3 = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+                        prior_dates={}, prior_delta={})
+    hc3.http = stub3
+    out3 = FetchOutput()
+    hc3.run([hl], None, out3)
+    gap = next(g for g in out3.gaps if g["metric"] == "locked_tokens")
+    assert "HYPE not in the metadata" in gap["reason"] and "USDC" in gap["reason"]
+    print("stake scaling ok: weiDecimals read from spotMeta once per run, supply gate catches a "
+          "changed field, and the band is never used to pick a divisor")
 
 
 def test_a_defillama_listing_checked_and_absent_stops_asking_for_a_slug():

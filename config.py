@@ -5249,37 +5249,35 @@ PROJECTS = [
         },
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
-        # ===== TOTAL STAKED HYPE: CHECKED AGAINST HYPERLIQUID'S OWN SOURCE, AND NOT WIRED. =====
-        # Proposed 2026-09-23 as a quick win — "locked_tokens from the same info API already in
-        # use, via validator stake summaries". Every staking endpoint in Hyperliquid's OWN Python
-        # SDK (hyperliquid-dex/hyperliquid-python-sdk, hyperliquid/info.py, read 2026-09-23) takes
-        # a USER ADDRESS and answers about that user:
-        #     delegatorSummary  {"type": ..., "user": <addr>}   delegated / undelegated
-        #     delegations       {"type": ..., "user": <addr>}   per-validator amounts
-        #     delegatorRewards / delegatorHistory               also per user
-        # The full list of 36 request types in that file contains no network-wide staking total,
-        # and the Rust SDK's InfoRequest enum has no staking variant at all.
+        # ===== TOTAL STAKED HYPE — REFUSED 2026-09-23, WIRED THE SAME DAY ON A BETTER SOURCE. =====
+        # The refusal was right about what it checked and wrong about what exists. Both of
+        # Hyperliquid's OWN SDKs expose only PER-USER staking types — delegatorSummary,
+        # delegations, delegatorRewards, delegatorHistory, every one taking a `user` address —
+        # and summing per-user calls needs a delegator set nothing enumerates. That much holds.
         #
-        # SO THE FIGURE CANNOT BE ASSEMBLED FROM WHAT IS CONFIRMED. Summing per-user calls needs
-        # the delegator set, which nothing on file enumerates. `validatorSummaries` is the likely
-        # candidate and it appears in NEITHER SDK — it would have to come from the API reference
-        # at hyperliquid.gitbook.io, which is not reachable from this environment.
+        # WHAT THE SDKs DO NOT CARRY, THE PUBLIC API DOES. validatorSummaries returns every
+        # validator with a `stake` field, the total delegated to it, so the network figure is one
+        # request and a sum. Per docs.chainstack.com/reference/hyperliquid-info-validator-
+        # summaries, which also records that it is served ONLY by the official public API and not
+        # by the open-source node. Same endpoint already in use here for the Assistance Fund, so
+        # it costs no new dependency and no new politeness budget.
         #
-        # NOT GUESSED. A request type invented from a plausible name either 422s or, worse,
-        # returns a differently-shaped number that reads as a staked total. See
-        # not_applicable/gap handling for how locked_tokens reports this.
+        # ** THE LESSON IS RECORDED RATHER THAN THE REFUSAL DELETED. ** "Not in either SDK" was
+        # read as "not exposed". An SDK is a convenience wrapper, not an inventory of an API, and
+        # the next check of this kind reads the API reference rather than the client libraries.
         "hyperliquid_staking_sourcing": {
-            "status": "blocked_on_docs",
-            "checked": ("hyperliquid-dex/hyperliquid-python-sdk hyperliquid/info.py",
-                        "hyperliquid-dex/hyperliquid-rust-sdk src/info/info_client.rs"),
-            "checked_on": "2026-09-23",
-            "finding": "every staking request type in both official SDKs is PER-USER and takes a "
-                       "`user` address; no network-wide staked total is exposed by either",
-            "candidate": "validatorSummaries — named in neither SDK",
-            "what_would_settle_it": "the request type and response shape from Hyperliquid's own "
-                                    "API reference (hyperliquid.gitbook.io), which is not "
-                                    "reachable from this environment. One line once it is read.",
+            "status": "wired",
+            "endpoint_type": "validatorSummaries",
+            "field": "stake",
+            "source": "https://docs.chainstack.com/reference/hyperliquid-info-validator-summaries",
+            "wired_on": "2026-09-23",
+            "sdk_finding": "every staking request type in both official SDKs is PER-USER and "
+                           "takes a `user` address; the aggregate is API-only",
+            "served_by": "the official public API only — NOT the open-source node",
+            "lesson": "an SDK is a convenience wrapper, not an inventory of an API",
         },
+        "name": "Hyperliquid", "symbol": "HYPE",
+        "coingecko_id": "hyperliquid",
         "defillama_fees_slug": "hyperliquid", "defillama_protocol": "hyperliquid", "defillama_chain": "Hyperliquid L1",
         # ===== ARCHETYPE 4 ADDED 2026-09-22. It was missing, and nothing new was needed to add it.
         # Hyperliquid had 47.3m HYPE confirmed burned and did not appear on the A4 tab, because it
@@ -5460,6 +5458,63 @@ PROJECTS = [
             "note": "Free, unauthenticated, documented. The `user` address is lowercase because it is a JSON "
                     "request parameter to Hyperliquid's API, NOT an EVM call argument — no checksumming applies "
                     "and web3 never sees it.",
+            # ===== TOTAL STAKED HYPE, FROM THE SAME ENDPOINT. Added 2026-09-23. =====
+            # validatorSummaries returns every validator with a `stake` field — the total
+            # delegated to it — so the network figure is one request and a sum. This is the
+            # aggregate neither official SDK exposes (see hyperliquid_staking_sourcing above):
+            # every staking type in both of them takes a `user` address.
+            #
+            # ** wei_decimals IS DELIBERATELY UNSET AND THAT IS NOT AN OVERSIGHT. ** The two
+            # endpoints do not agree on units: spotClearinghouseState returns `total` as a
+            # decimal string in human units, validatorSummaries returns `stake` as an integer in
+            # the token's smallest unit — and HyperCore's decimals are NOT the EVM convention, so
+            # assuming 18 would report a real 400m HYPE stake as 0.0004. The adapter establishes
+            # the divisor from the response against the supply bound and REFUSES unless exactly
+            # one candidate fits, printing the whole table when it cannot. The first live run
+            # prints the answer; write it in here and the derivation stops.
+            "extra_reads": [{
+                "metric": "locked_tokens",
+                "shape": "sum_field",
+                "request": {"type": "validatorSummaries"},
+                "sum_field": "stake",
+                "jailed_key": "isJailed",
+                # ===== THE DIVISOR IS SOURCED, NOT INFERRED. =====
+                # Left unset so it is READ from Hyperliquid's own spot metadata every run, which
+                # is where the protocol publishes it. An earlier design inferred it by testing
+                # candidate powers of ten against the supply band; its own test killed that,
+                # because for a genuine 400m stake against a 955m supply THREE divisors pass
+                # (10^8 -> 400m, 10^9 -> 40m, 10^18 -> 0.04, all "above zero and under supply").
+                # A rule demanding a unique match would have refused a good read, and "take the
+                # largest" would be choosing a number to make the answer look right.
+                #
+                # Set this only to pin a value the metadata stops serving — and note the gate
+                # below still applies to a declared figure, so writing 18 here does not make it
+                # true.
+                "wei_decimals": None,
+                "decimals_from": {
+                    "request": {"type": "spotMeta"},
+                    "list_path": "tokens",
+                    "name_key": "name",
+                    "name": "HYPE",
+                    "decimals_key": "weiDecimals",
+                },
+                # THE GATE, which is a different job from the divisor. Nothing staked can exceed
+                # everything in existence and a real network stake cannot be zero, so the scaled
+                # figure is bounded by total_supply. It cannot tell one power of ten from the
+                # next — that is what the metadata is for — but it catches a decimals field that
+                # has changed meaning, which the metadata cannot.
+                "gate": "0 < value <= total_supply",
+                "source_url": "https://docs.chainstack.com/reference/hyperliquid-info-validator-summaries",
+                "source_date": "2026-09-23",
+                "served_by": "the official public API only — NOT the open-source node, which "
+                             "does not answer this request type",
+                # JAILED AND INACTIVE VALIDATORS ARE INCLUDED. Delegated HYPE is locked whatever
+                # the validator's status: a jailed validator's delegators cannot withdraw any
+                # faster than anyone else's, so excluding them would understate locked supply by
+                # whatever is delegated to the validators currently in trouble — which is exactly
+                # when that number moves. The active-only figure is staged beside it.
+                "includes_jailed": True,
+            }],
         },
         "buyback_destination": "burn",          # resolved — no longer disputed
         "destination_effect": "removed_from_supply",
