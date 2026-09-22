@@ -507,6 +507,15 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append(f"DESTINATION INDETERMINATE: repurchased tokens go to {ind['fund']}, whose stated "
                    f"uses include {', '.join(ind['stated_uses'])} — so {ind['why_indeterminate']}. "
                    f"Do not net it against emissions like a burn, or count it as locked supply")
+    # THE FINE SERIES DISAGREES WITH THE PROTOCOL'S OWN COARSE FIGURE. A real number, qualified:
+    # one of the two publications is wrong or a period has been mis-transcribed, and the stored
+    # series is the one every downstream figure is computed from. Not withheld — withholding it
+    # would leave the downstream cells with nothing, and the disagreement is what needs reading.
+    rec = row.get("reconciliation") or {}
+    if rec.get("status") == "disagrees":
+        bits = "; ".join(f"{d['period']}: months sum to {d['summed']:,.0f} against a published "
+                         f"{d['published']:,.0f}, off by {d['off_by']:+,.0f}" for d in rec["detail"])
+        why.append(f"DOES NOT RECONCILE WITH THE PUBLISHED PERIOD TOTAL — {bits}. {rec.get('why', '')}")
     if ":PARTIAL" in str(row.get("source") or ""):
         why.append("PARTIAL — summed over known components only, so it understates")
     # THE CAP IN THE SUPPLY COLUMN. The number is right and answers a different question, which
@@ -618,7 +627,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
                    "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
                    "flow_stock_move": None, "flow_accounted": None, "flow_residual": None,
-                   "flow_span": None, "point_spans": {},
+                   "flow_span": None, "point_spans": {}, "reconciliation": None,
                    "granularity": "daily", "period_label": "",
                    "covered_days": None, "window_days": None}
             if g is None or g.empty:
@@ -689,6 +698,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                         row["flow_residual"] = moved - accounted
                         row["flow_span"] = (starts.iloc[-1]["date"].strftime("%Y-%m-%d"),
                                             ends.iloc[-1]["date"].strftime("%Y-%m-%d"))
+            # ===== THE FINE SERIES MUST ADD UP TO THE COARSE PUBLISHED FIGURE. =====
+            # Only where every period of it is present: two months of a quarter compared against
+            # the quarter's own total is guaranteed to disagree, and flagging that would report a
+            # missing month as an error in the months that are there.
+            recon = config.period_reconciliation(name, metric)
+            if recon:
+                row["reconciliation"] = _reconcile_periods(name, metric, s, recon)
             row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))
@@ -869,6 +885,45 @@ def threshold_gated(project: dict, expr: str) -> str:
     label = ("below threshold" if t.get("status") == "below_threshold"
              else "threshold unconfirmed")
     return f'="{label}"'
+
+
+def _reconcile_periods(project: str, metric: str, s: pd.Series, recon: dict) -> dict | None:
+    """Sum the stored fine-grained series by coarse period and compare against the published one.
+
+    Returns None where nothing can be judged — no reference, or no coarse period whose parts are
+    ALL present. That is the common case early in a series' life and it is not a finding: it is
+    the check armed and correctly idle, the same state as a cross-check waiting on its primary.
+    """
+    p = config.PROJECT_BY_NAME.get(project) or {}
+    ref = (p.get(recon.get("reference") or "") or {}).get(recon.get("against") or "") or []
+    if s.empty or not ref:
+        return None
+    months = {pd.Period(d, freq="M"): float(v) for d, v in s.items()}
+    tol = float(recon.get("tolerance", 0.005))
+    checked, disagreed = [], []
+    for entry in ref:
+        try:
+            q = pd.Period(str(entry["period"]).replace("-Q", "Q"), freq="Q")
+        except ValueError:
+            continue                            # an annual reference has no month decomposition
+        parts = [m for m in months if m.asfreq("Q") == q]
+        want = [q.start_time.to_period("M") + i for i in range(3)]
+        if recon.get("requires_complete_period", True) and not all(w in months for w in want):
+            continue
+        got, expected = sum(months[m] for m in parts), float(entry["usd"])
+        checked.append(str(entry["period"]))
+        if expected and abs(got - expected) / abs(expected) > tol:
+            disagreed.append({"period": str(entry["period"]), "summed": got, "published": expected,
+                              "off_by": got - expected})
+    if not checked:
+        return {"status": "idle", "why": (
+            f"no complete {recon.get('against', 'period')} yet — the check needs every part of a "
+            f"period present before it can compare, because a partial sum against a published "
+            f"total is guaranteed to disagree. Armed and correctly silent.")}
+    if disagreed:
+        return {"status": "disagrees", "periods": checked, "detail": disagreed,
+                "why": recon.get("why", "")}
+    return {"status": "ok", "periods": checked}
 
 
 def _leg(project: dict, key: str, build) -> str:

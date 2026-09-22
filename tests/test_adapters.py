@@ -5847,6 +5847,82 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
           "H2 and H3 already present and confirmed")
 
 
+def test_nps_stores_months_only_and_reconciles_them_against_the_published_quarter():
+    """Item 2. Sky publishes NPS monthly AND quarterly, and the quarterly figure ALREADY CONTAINS
+    the months. Both in one flow series makes a 90-day window ending June sum May $9.71m + June
+    $10.81m + Q2 $33.29m = $53.81m against a true $33.29m — 62% over — and every implied-buyback
+    figure on the A3 tab is computed from it.
+
+    THE MECHANICAL HALF OF THE SAME PROBLEM: June's month-end and Q2's quarter-end are the same
+    calendar day, and the store keys on (date, project, metric). The two could never have
+    coexisted in the series at all.
+    """
+    import csv
+    from pathlib import Path
+    import build_workbook as bw
+
+    rows = [r for r in csv.DictReader(
+        line for line in (Path(__file__).resolve().parent.parent / "manual_overrides.csv")
+        .read_text(encoding="utf-8").splitlines() if not line.startswith("#"))
+        if r["metric"] == "net_protocol_surplus_usd"]
+    assert {r["date"] for r in rows} == {"2026-05-31", "2026-06-30"}, \
+        f"months only — the quarters and the year are references now: {[r['date'] for r in rows]}"
+    assert {float(r["value"]) for r in rows} == {9_710_000.0, 10_810_000.0}
+
+    ref = config.PROJECT_BY_NAME["Sky"]["net_protocol_surplus_reference"]
+    assert [q["usd"] for q in ref["quarterly"]] == [46_040_000, 33_290_000]
+    assert ref["annual"][0]["usd"] == 53_000_000
+    # APRIL IS DERIVED AND STAYS OUT OF THE SERIES. Stored as a flow it would be
+    # indistinguishable from a sourced figure, and it would make the quarter reconcile against
+    # itself — which is the one thing the reconciliation must not do.
+    apr = ref["april_2026_derived"]
+    assert apr["usd"] == 12_770_000 and abs(33_290_000 - 9_710_000 - 10_810_000 - apr["usd"]) < 1
+    assert "NOT STORED" in apr["status"]
+    assert not [r for r in rows if r["date"].startswith("2026-04")], "April must not be in the series"
+
+    # THE CADENCE IS DECLARED, because nothing else can say so: series_granularity resolves from
+    # a contract or a Dune date_col, and a hand-entered series has neither.
+    assert config.series_granularity("Sky", "net_protocol_surplus_usd") == "monthly"
+
+    # ===== THE RECONCILIATION. =====
+    recon = config.period_reconciliation("Sky", "net_protocol_surplus_usd")
+    assert recon and recon["requires_complete_period"] is True
+
+    def check(months):
+        s = pd.Series({pd.Timestamp(d): v for d, v in months.items()}).sort_index()
+        return bw._reconcile_periods("Sky", "net_protocol_surplus_usd", s, recon)
+
+    # AS THINGS STAND — May and June, no April — NO quarter is complete, so the check is ARMED
+    # AND IDLE. Two months of three against the quarter's own total is guaranteed to disagree,
+    # and flagging that reports a missing month as an error in the months that are there.
+    idle = check({"2026-05-31": 9_710_000, "2026-06-30": 10_810_000})
+    assert idle["status"] == "idle" and "guaranteed to disagree" in idle["why"], idle
+
+    # WITH APRIL PRESENT AND CORRECT, the quarter reconciles.
+    ok = check({"2026-04-30": 12_770_000, "2026-05-31": 9_710_000, "2026-06-30": 10_810_000})
+    assert ok["status"] == "ok" and ok["periods"] == ["2026-Q2"], ok
+
+    # AND A MIS-TRANSCRIBED MONTH IS CAUGHT, with the arithmetic on the row rather than a bare flag.
+    bad = check({"2026-04-30": 12_770_000, "2026-05-31": 97_100_000, "2026-06-30": 10_810_000})
+    assert bad["status"] == "disagrees", bad
+    assert bad["detail"][0]["off_by"] == pytest_approx(87_390_000), bad["detail"]
+    band, why = bw.confidence_for("Sky", "net_protocol_surplus_usd",
+                                  {"status": "manual", "source": "manual", "n_points": 3,
+                                   "covered_days": None, "window_days": None,
+                                   "entered_on": "2026-09-22", "reconciliation": bad},
+                                  pd.Timestamp("2026-09-22"))
+    assert band == "AMBER" and "DOES NOT RECONCILE" in why and "120,680,000" in why, (band, why)
+    print("NPS ok: months only, quarters as references, April derived and unstored, "
+          "reconciliation idle until a quarter is complete and loud when one disagrees")
+
+
+def pytest_approx(x, tol=1.0):
+    class _A:
+        def __eq__(self, other):
+            return abs(other - x) <= tol
+    return _A()
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:

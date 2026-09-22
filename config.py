@@ -690,6 +690,23 @@ def revenue_base(project_name: str) -> dict | None:
     return p.get("revenue_base")
 
 
+def period_reconciliation(project_name: str, metric: str) -> dict | None:
+    """A coarser published figure the stored finer-grained series must add up to.
+
+    ** THE FAILURE THIS EXISTS FOR IS DOUBLE-COUNTING, NOT DISAGREEMENT. ** Sky publishes Net
+    Protocol Surplus monthly AND quarterly, and the quarterly figure ALREADY CONTAINS the months.
+    Storing both in one flow series means a 90-day window sums May + June + Q2 = $53.81m against
+    a true $33.29m — 62% over, and every figure downstream of it inherits that. So the fine
+    series is what is stored and the coarse figure is a REFERENCE that it is checked against.
+
+    ONLY COMPLETE PERIODS ARE COMPARED. Two months of a quarter summed against the quarter's own
+    total is guaranteed to disagree, and reporting that as a discrepancy would be reporting the
+    absence of a month as an error in the months that are there.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return (p.get("period_reconciliation") or {}).get(metric)
+
+
 def stage_split_legs(project_name: str) -> list[dict]:
     """The named legs of a documented allocation, each with its own effect on supply.
 
@@ -6800,25 +6817,78 @@ PROJECTS = [
                     "payment to sUSDS holders and operating costs. Part of the reason NPS is "
                     "structurally smaller than DefiLlama's revenue_usd, not merely unmapped to it.",
         },
-        # MONTHLY NPS REFERENCE — the granularity Stage 2's shares actually apply to. NOT stored in
-        # manual_overrides.csv: net_protocol_surplus_usd's quarterly entries there are dated by
-        # quarter-end, and June 2026's month-end is the same calendar date as Q2 2026's quarter-end
-        # (both 2026-06-30) — the store's (date, project, metric) primary key cannot hold both
-        # values on one date. Recorded here as reference only, same convention as GEODNET's
-        # supply_units_reference.
-        "net_protocol_surplus_monthly_reference": {
-            "values": [
-                {"month": "2026-05", "usd": 9_710_000},
-                {"month": "2026-06", "usd": 10_810_000},
+        # ===== THE SERIES IS MONTHLY. THE QUARTERLY FIGURES ARE REFERENCES. 2026-09-22. =====
+        #
+        # ** THE FAILURE IS DOUBLE-COUNTING, AND IT IS NOT SUBTLE. ** Sky publishes NPS monthly
+        # AND quarterly, and the quarterly figure ALREADY CONTAINS the months. Both in one flow
+        # series makes a 90-day window ending June sum May $9.71m + June $10.81m + Q2 $33.29m =
+        # $53.81m against a true $33.29m — 62% over — and every implied-buyback figure on the A3
+        # tab is downstream of it. The earlier arrangement escaped this only by not storing the
+        # months at all, which cost the granularity Stage 2's shares are actually stated in.
+        #
+        # SO: MONTHS ARE STORED, QUARTERS AND THE YEAR ARE NOT. The coarse figures move here as
+        # references and the fine series is checked against them (period_reconciliation below).
+        # This also resolves the primary-key collision that kept the months out: June 2026's
+        # month-end and Q2 2026's quarter-end are the same calendar date, and only one row can
+        # exist on (2026-06-30, Sky, net_protocol_surplus_usd). Now only the month wants it.
+        "net_protocol_surplus_reference": {
+            "quarterly": [
+                {"period": "2026-Q1", "usd": 46_040_000, "gross_revenue_usd": 123_790_000,
+                 "margin": 0.4906},
+                {"period": "2026-Q2", "usd": 33_290_000, "gross_revenue_usd": 107_350_000,
+                 "margin": 0.31,
+                 "note": "fifth consecutive positive quarter; reserves $82.40m against $12.32bn "
+                         "protocol collateral"},
             ],
-            "source": "Sky Frontier Foundation's own monthly reporting (insights.skyeco.com)",
+            "annual": [
+                {"period": "FY2025", "usd": 53_000_000, "gross_revenue_usd": 338_000_000,
+                 "margin": 0.157},
+            ],
+            "source": "Sky Frontier Foundation's own reporting (insights.skyeco.com)",
             "source_date": "2026-09-18",
-            "note": "matches Stage 2's 'monthly Net Protocol Surplus' basis exactly. Sanity check: "
-                    "May + June = $20.52m against Q2 2026's $33.29m quarterly figure — consistent "
-                    "with April being the smallest of the three months, plausible immediately after "
-                    "the April 2026 treasury overhaul.",
-            "status": "REFERENCE ONLY — not a stored metric series, no source is configured to fetch "
-                      "it on a recurring monthly basis.",
+            "status": "REFERENCE ONLY — deliberately NOT a stored flow value. Storing a quarter "
+                      "beside its own months double-counts it into every window that spans both.",
+            # ** APRIL 2026 IS DERIVED AND IS NOT STORED. ** 33.29 - 9.71 - 10.81 = 12.77, which
+            # is arithmetic on two published figures and not a third published figure. It is
+            # recorded so the quarter reconciles on paper and so nobody re-derives it by hand,
+            # and it stays out of the series because a derived value stored as a flow is
+            # indistinguishable from a sourced one the moment it is in the store — and this one
+            # would then make the quarter reconcile against itself.
+            "april_2026_derived": {
+                "usd": 12_770_000,
+                "how": "Q2 2026 $33.29m - May $9.71m - June $10.81m",
+                "status": "DERIVED, NOT SOURCED, AND NOT STORED. Sky has published no April "
+                          "monthly figure on file. If one appears and disagrees with 12.77, the "
+                          "disagreement is the finding — which is only possible while this stays "
+                          "out of the series.",
+                "plausibility": "the smallest of the three months, immediately after the April "
+                                "2026 treasury overhaul that cut buybacks ~87% to rebuild "
+                                "reserves. Consistent, and consistency is not confirmation.",
+            },
+        },
+        # THE SERIES IS MONTHLY AND NOTHING ELSE CAN SAY SO. series_granularity resolves from a
+        # contract's granularity or a Dune query's date_col, and a hand-entered series has
+        # neither — so the cadence is declared here, which is the only possible source of truth
+        # for it. This is what makes the workbook report the latest COMPLETE month rather than
+        # whatever landed in a 30-day window, and what stops a 45-day-old monthly figure reading
+        # as stale. Same treatment as GEODNET's monthly buyback series.
+        "manual_granularity": {"net_protocol_surplus_usd": "monthly"},
+        # THE MONTHS MUST ADD UP TO THE QUARTER, where every month of it is present. Two months
+        # of three compared against the quarter's own total is guaranteed to disagree, and
+        # reporting that would be reporting a missing month as an error in the months that are
+        # there — so an incomplete quarter is skipped, not flagged.
+        "period_reconciliation": {
+            "net_protocol_surplus_usd": {
+                "granularity": "monthly",
+                "against": "quarterly",
+                "reference": "net_protocol_surplus_reference",
+                "tolerance": 0.005,
+                "requires_complete_period": True,
+                "why": "Sky publishes both, and the quarterly figure contains the months. If they "
+                       "disagree beyond half a percent, one of the two publications is wrong or a "
+                       "month has been mis-transcribed — and the stored series is the one every "
+                       "implied-buyback figure is computed from.",
+            },
         },
         "fee_split_v2": {
             "effective_date": "2026-09-14",
@@ -7050,7 +7120,17 @@ PROJECTS = [
              "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
                      "tolerance is flagged rather than one figure silently replacing the other."},
         ],
-        "manual_quarterly": ["net_protocol_surplus_usd"],
+        # ===== NO LONGER manual_quarterly. CHANGED 2026-09-22 WITH THE GRANULARITY. =====
+        # The flag buys a 120-day staleness allowance, which was right while the stored figures
+        # were the quarterly ones. The series is MONTHLY now — Sky publishes monthly and Stage 2
+        # states its shares against the monthly figure — so 120 days would let four missed
+        # publications pass as current. The monthly granularity's own 45-day allowance governs
+        # instead: one month plus a fortnight, long enough that a published month has been
+        # collected and short enough that a dead series still surfaces.
+        # ** THE ENTRY IS STILL MANUAL AND THAT IS STILL THE ANSWER. ** financial.skyeco.com is
+        # unreachable and manual entry is where the sourcing priority terminates; what changed is
+        # how often it has to be re-typed, not whether it is typed.
+        "manual_quarterly": [],
         "materiality": "high",
         "notes": "STAGE 2, live from 2026-09-14 (superseding the 13 Aug 2026 55/45 split — see "
                  "fee_split_v2): 50% of monthly Net Protocol Surplus, split 22.5% SKY buyback for SKY "
@@ -8258,6 +8338,16 @@ def series_granularity(project_name: str, metric: str) -> str:
         return "monthly"
     if str(q.get("date_col") or "").lower() == "week":
         return "weekly"
+    # ===== A HAND-ENTERED SERIES HAS NO READ TO RESOLVE FROM. Added 2026-09-22. =====
+    # The objection above — "not a third hand-maintained table, a granularity that disagreed
+    # with the query producing the rows would be worse than none" — is about series produced by
+    # a READ, where a declaration can contradict the thing actually generating the data. A
+    # manual series has no such thing to contradict: the cadence is a property of what the
+    # protocol publishes, and a declaration is the ONLY possible source of truth for it.
+    # Checked last, so it can never override a live read or a query's own date_col.
+    declared = (p.get("manual_granularity") or {}).get(metric)
+    if declared:
+        return declared
     return "daily"
 
 
