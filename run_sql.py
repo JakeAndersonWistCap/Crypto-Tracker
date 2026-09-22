@@ -280,18 +280,43 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path) -> int:
     # SHOW THE ROWS FIRST. A count is not enough — "47 rows" tells you nothing about whether they
     # are the right 47. The DELETE's own WHERE clause is reused verbatim so the preview cannot
     # drift from what will actually go.
+    #
+    # ** AND THE TABLE COMES FROM THE DELETE TOO. Fixed 2026-09-22. ** This read
+    # "SELECT date, project, metric, value, source FROM metrics WHERE {where}" with the table and
+    # the columns written out, which held for every section up to O because all of them delete
+    # from `metrics`. Section P deletes from gap_report and review_queue, whose WHERE clause
+    # names run_id — a column `metrics` does not have — so the preview failed with
+    # "no such column: run_id" and the delete was refused.
+    #
+    # THE REFUSAL WAS THE RIGHT BEHAVIOUR AND IS UNCHANGED: a preview that cannot run means the
+    # rows cannot be shown, and nothing is deleted unshown. What was wrong was preview-ing the
+    # wrong table. Same class as the J3 bug — a lookup keyed on something that does not match the
+    # shape of the data — and the same fix: resolve it from the statement instead of assuming it.
     total = 0
     for d in deletes:
         where = d[d.upper().index(" WHERE ") + 7:] if " WHERE " in d.upper() else "1=1"
+        m = re.search(r"DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)", d, re.I)
+        if not m:
+            print(f"\n  Could not tell which table this DELETE targets:\n    {d}")
+            print("  Refusing to delete something I cannot show you first.\n")
+            return 1
+        table = m.group(1)
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if not cols:
+            print(f"\n  Table {table!r} does not exist in this store.")
+            print("  Refusing to delete something I cannot show you first.\n")
+            return 1
+        # ORDER BY only on columns the table actually has, for the same reason.
+        order = [c for c in ("project", "metric", "date", "ts") if c in cols] or [cols[0]]
         try:
-            cur = conn.execute(f"SELECT date, project, metric, value, source FROM metrics WHERE {where}"
-                               f" ORDER BY project, metric, date")
+            cur = conn.execute(f"SELECT * FROM {table} WHERE {where} "
+                               f"ORDER BY {', '.join(order)}")
             rows = cur.fetchall()
         except sqlite3.Error as e:
             print(f"\n  Could not preview the rows: {e}")
             print("  Refusing to delete something I cannot show you first.\n")
             return 1
-        print(f"\n  Rows this would remove ({len(rows)}):")
+        print(f"\n  Rows this would remove from {table} ({len(rows)}):")
         print(render(cur, rows[:200]))
         if len(rows) > 200:
             print(f"    ... and {len(rows) - 200} more")
