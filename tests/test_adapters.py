@@ -939,6 +939,41 @@ def test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected():
     print("uniswap floor ok: a zero is rejected to the Review Queue, not stored")
 
 
+def test_a_stale_source_is_told_apart_from_a_stale_fetch():
+    """** "last point 2026-09-10; last successful fetch 2026-09-22" SENDS THE READER TO THE WRONG
+    PLACE. ** It reads as a pipeline that has fallen behind. For Ether.fi the fetch ran and
+    SUCCEEDED — Dune query 8683038's own data ends 2026-09-10 and no re-run produces a newer
+    point. That is the source ageing, and it needs a different action: chase the query, not the
+    run.
+
+    Derived from the two dates already on the row, never declared: a fetch that succeeded INSIDE
+    the staleness window while the data did not move can only mean the source had nothing newer.
+    """
+    import build_workbook as B
+
+    asof = pd.Timestamp("2026-09-22")
+    long = pd.DataFrame([{"date": pd.Timestamp("2026-09-10"), "project": "Ether.fi",
+                          "metric": "locked_tokens", "value": 100.0, "source": "dune:8683038",
+                          "tier": 4, "is_manual": 0, "entered_on": "", "source_note": ""}])
+    fresh = pd.DataFrame([{"source": "dune", "project": "Ether.fi",
+                           "last_success_at": "2026-09-22"}])
+    agg = B.aggregate(long, fresh, asof)
+    row = agg[(agg.project == "Ether.fi") & (agg.metric == "locked_tokens")].iloc[0]
+    assert row["status"] == "stale", row["status"]
+    assert "THE SOURCE IS STALE, NOT THE FETCH" in row["note"], row["note"]
+    assert "Chase the source, not the run" in row["note"]
+
+    # ** AND A FETCH THAT REALLY HAS FALLEN BEHIND IS NOT RELABELLED. ** The distinction is only
+    # drawn where the fetch itself is current; an old last_success means the run is the problem.
+    old = pd.DataFrame([{"source": "dune", "project": "Ether.fi", "last_success_at": "2026-07-01"}])
+    agg2 = B.aggregate(long, old, asof)
+    row2 = agg2[(agg2.project == "Ether.fi") & (agg2.metric == "locked_tokens")].iloc[0]
+    assert row2["status"] == "stale"
+    assert "THE SOURCE IS STALE" not in row2["note"], row2["note"]
+    print("staleness ok: a source that has stopped publishing reads differently from a fetch "
+          "that has stopped running")
+
+
 def test_a_column_that_is_another_column_says_so_instead_of_sitting_empty():
     """** AN EMPTY CELL SAYS "WE COULD NOT FIND THIS", AND TWICE THAT WAS WRONG. **
 
@@ -2484,6 +2519,17 @@ def test_hypercore_info_reads_the_assistance_fund_without_any_chain():
     assert rows["burn_address_balance"] == 48_420_000.0, rows
     assert rows["gross_burn_tokens"] == 420_000.0, "period burn is the delta against the prior reading"
     assert set(out.frame().tier) == {1}, "a free unauthenticated HTTP API is tier 1"
+    # ** AND IT IS A LOWER BOUND, WHICH THE ROW SAYS. ** The Assistance Fund is the
+    # fee-conversion burn and nothing else: Hyperliquid's own docs name HyperEVM base fees,
+    # HyperEVM priority fees, HyperCore order priority fees, HIP-3 slashing and HIP-1 deployment
+    # gas, none of which pass through 0xfefe...fe. A component presented as the whole is the
+    # exact shape of error this book labels rather than argues about.
+    burn_src = str(out.frame().query("metric == 'gross_burn_tokens'").source.iloc[0])
+    assert burn_src.endswith(":delta:PARTIAL"), burn_src
+    assert config.orphaned_contract_keys("Hyperliquid", burn_src) == [], burn_src
+    part = [g for g in out.gaps if g["metric"] == "gross_burn_tokens"]
+    assert part and "LOWER BOUND" in part[0]["reason"], out.gaps
+    assert "zero address's EVM balance" in part[0]["suggestion"], "the readable component is named"
 
     hype = config.PROJECT_BY_NAME["Hyperliquid"]
     assert hype["contracts"] == {}, "the contract route is replaced, not supplemented"
@@ -2491,6 +2537,86 @@ def test_hypercore_info_reads_the_assistance_fund_without_any_chain():
     assert "chain" not in api and not any("rpc" in k.lower() for k in api), \
         f"the info API must need no chain and no RPC: {sorted(api)}"
     print("hypercore ok: 48,420,000 HYPE read over plain HTTPS, no chain and no RPC involved")
+
+
+def test_token_details_settles_the_supply_convention_and_is_not_stored_as_a_metric():
+    """** gross_issuance_tokens HAS BEEN BLOCKED ON ONE QUESTION. ** Is the stored total_supply
+    NET of the Assistance Fund burn or GROSS of it? The two formulas differ by the ENTIRE burn,
+    so there is no safe default — and the test needs a supply figure from Hyperliquid ITSELF to
+    compare the provider's against.
+
+    tokenDetails is that figure, and it does return them: maxSupply, totalSupply and
+    circulatingSupply, as decimal strings in HUMAN units. Confirmed 2026-09-22 from the
+    documented example response and from a maintained SDK's typed response.
+
+    ** IT IS NOT STORED AS A METRIC. ** Hyperliquid's fees page says Assistance Fund HYPE is
+    "removing the tokens permanently from the circulating and total supply" — which taken
+    literally would make this figure net too, and whether it includes the fund is precisely the
+    question. Storing it under total_supply_gross would assert the answer. So the three numbers
+    and the subtraction are reported as EVIDENCE, once.
+    """
+    from fetch.hypercore import HyperCoreInfo
+
+    class ByType:
+        """Answers each info request type with its own payload, as the real endpoint does."""
+
+        def __init__(self, hl_total):
+            self.hl_total = hl_total
+
+        def post(self, url, json_body=None, headers=None):
+            t = (json_body or {}).get("type")
+            if t == "spotClearinghouseState":
+                return {"balances": [{"coin": "HYPE", "total": "48420000.0"}]}
+            if t == "spotMeta":
+                return {"tokens": [{"name": "USDC", "weiDecimals": 8, "tokenId": "0x" + "0" * 32},
+                                   {"name": "HYPE", "weiDecimals": 8,
+                                    "tokenId": "0x0d01dc56dcaaca66ad901c959b4011ec"}]}
+            if t == "tokenDetails":
+                assert json_body["tokenId"] == "0x0d01dc56dcaaca66ad901c959b4011ec", json_body
+                return {"name": "HYPE", "maxSupply": "1000000000.0",
+                        "totalSupply": self.hl_total, "circulatingSupply": "333000000.0",
+                        "szDecimals": 2, "weiDecimals": 8}
+            return {"error": f"unexpected type {t}"}
+
+    def run(hl_total, provider=951_580_000.0, af=48_420_000.0):
+        h = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): provider,
+                                        ("Hyperliquid", "burn_address_balance"): af})
+        h.http = ByType(hl_total)
+        out = FetchOutput()
+        h.run([config.PROJECT_BY_NAME["Hyperliquid"]], None, out)
+        return out
+
+    # NET OF BURN: Hyperliquid's figure exceeds the provider's by exactly the fund's balance.
+    out = run("1000000000.0")
+    ev = [r for r in out.review if r["reason"] == "supply_convention_evidence"]
+    assert len(ev) == 1, out.review
+    assert "VERDICT: net_of_burn" in ev[0]["basis"], ev[0]["basis"]
+    assert "issuance is d(supply) + burn" in ev[0]["basis"]
+    # ** NOT STORED. ** No metric row carries Hyperliquid's own supply figure.
+    frame = out.frame()
+    assert 1_000_000_000.0 not in set(frame.value), frame
+    assert "total_supply_gross" not in set(frame.metric)
+    assert "NOTHING IS DERIVED FROM THIS AUTOMATICALLY" in ev[0]["basis"]
+
+    # GROSS: the two agree, so neither subtracts the fund.
+    same = run("951580000.0")
+    ev2 = [r for r in same.review if r["reason"] == "supply_convention_evidence"]
+    assert "VERDICT: gross" in ev2[0]["basis"], ev2[0]["basis"]
+
+    # ** NEITHER, AND IT SAYS SO RATHER THAN PICKING THE CLOSER ONE. ** A difference that matches
+    # neither the burn nor zero means something else sits between the two figures, and choosing
+    # the nearer reading is how a wrong convention gets declared with confidence.
+    odd = run("970000000.0")
+    ev3 = [r for r in odd.review if r["reason"] == "supply_convention_evidence"]
+    assert "VERDICT: NEITHER" in ev3[0]["basis"] and "Do NOT pick the closer one" in ev3[0]["basis"]
+
+    # NO COMPARISON WITHOUT BOTH SIDES — and the skip says which side is missing.
+    lone = run("1000000000.0", provider=None)
+    assert not [r for r in lone.review if r["reason"] == "supply_convention_evidence"]
+    assert [e for e in lone.log if e.status == "skipped" and "supply convention" in e.message
+            and "total_supply is not there yet" in e.message]
+    print("tokenDetails ok: the three supply figures arrive, the subtraction names the "
+          "convention, and nothing is stored under a name that would assert it")
 
 
 def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_blanks():
@@ -2691,17 +2817,31 @@ def test_scrape_registry_reports_incomplete_entries_as_gaps():
     tmp = Path(tempfile.mkdtemp()) / "sources.yaml"
     tmp.write_text(yaml.safe_dump([
         {"project": "PancakeSwap", "metric": "net_mint_monthly", "tier": 3, "enabled": False, "url": None, "method": "dom"},
-        {"project": "Uniswap", "metric": "net_mint_monthly", "tier": 3, "enabled": True, "url": "https://x", "method": "dom"},
+        {"project": "Uniswap", "metric": "gross_burn_tokens", "tier": 3, "enabled": True, "url": "https://x", "method": "dom"},
+        # ** A STUB FOR A COLUMN THIS PROJECT DOES NOT HAVE. ** Uniswap publishes no net mint, so
+        # metrics_for_project excludes net_mint_monthly for it (requires_flag). This path was the
+        # one place that did not ask — it gapped on the mere existence of a registry line — and
+        # four projects carried "net_mint_monthly — EMPTY STUB" because of it, plus Ether.fi's
+        # staked_tokens, a metric that has been RETIRED.
+        {"project": "Uniswap", "metric": "net_mint_monthly", "tier": 3, "enabled": False, "url": None, "method": "dom"},
     ]))
     s = Scrape(registry_path=tmp)
     out = FetchOutput()
     s.run([{"name": "PancakeSwap"}, {"name": "Uniswap"}], None, out)
     assert len(out.gaps) == 2, out.gaps
-    reasons = {g["project"]: g["reason"] for g in out.gaps}
-    assert "disabled" in reasons["PancakeSwap"], reasons
-    assert "anchor" in reasons["Uniswap"], reasons
+    reasons = {(g["project"], g["metric"]): g["reason"] for g in out.gaps}
+    assert "disabled" in reasons[("PancakeSwap", "net_mint_monthly")], reasons
+    assert "anchor" in reasons[("Uniswap", "gross_burn_tokens")], reasons
+    assert ("Uniswap", "net_mint_monthly") not in reasons, \
+        "a stub for a column this project does not have is not a to-do item"
+    # ** AND IT IS NOT SILENT. ** The row says the entry was ignored and why, so nobody hunts for
+    # a source that was never wanted and nobody deletes a registry line that is a useful note.
+    skipped = [e for e in out.log if e.status == "skipped" and "does not apply" in e.message]
+    assert skipped and "net_mint_monthly" in skipped[0].message, out.log
+    assert "NOT a gap" in skipped[0].message
     assert out.frame().empty
-    print("tier 3 registry ok: incomplete entries become gap rows, nothing is guessed")
+    print("tier 3 registry ok: incomplete entries become gap rows, and a stub for a column the "
+          "project does not have is skipped with its reason instead")
 
 
 def test_later_tier_never_overwrites_an_earlier_one():

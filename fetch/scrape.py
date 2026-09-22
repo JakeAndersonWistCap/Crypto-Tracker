@@ -291,6 +291,29 @@ class Scrape:
 
         for e, why in deferred:
             proj, metric = e.get("project", "?"), e.get("metric", "?")
+            # ===== A STUB FOR A COLUMN THIS PROJECT DOES NOT HAVE IS NOT A GAP. Fixed 2026-09-22.
+            # ** THE APPLICABILITY RULES WERE BEING ROUTED AROUND ENTIRELY HERE. ** Every other
+            # path asks config.metrics_for_project first; this one gapped on the mere existence
+            # of a registry line. So four projects carried "net_mint_monthly — entry disabled in
+            # sources.yaml, EMPTY STUB" while metrics_for_project had already excluded it for all
+            # four (requires_flag: self_reported_net_mint — they do not publish a net mint), and
+            # Ether.fi carried one for staked_tokens, a metric that has been RETIRED.
+            #
+            # Those rows are the worst kind on a to-do list: they name a real file and a real
+            # line, so they look actionable, and the action is to delete the line. The registry
+            # entry is left alone — it is a note that the page exists — and the SKIPPED row says
+            # so without asking anyone to source a column that does not exist.
+            # THE PROJECT COMES FROM CONFIG, NOT FROM THIS RUN'S LIST. Applicability is a
+            # property of the project; a narrowed run that leaves it out of `projects` must not
+            # change the answer.
+            p = config.PROJECT_BY_NAME.get(proj)
+            if p is not None and metric not in config.metrics_for_project(p):
+                out.skipped(SOURCE, proj,
+                            f"{metric}: registry entry ignored — this metric does not apply to "
+                            f"{proj} (see config.metrics_for_project). The entry is left in "
+                            f"{self.registry_path} as a note that the page exists; it is NOT a "
+                            f"gap, because there is no column here to fill.", TIER)
+                continue
             out.unconfigured(SOURCE, proj, f"{metric}: {why}", TIER)
             out.gap(proj, metric, reason=why, tiers_attempted="3",
                     suggestion=f"Complete the entry in {self.registry_path} (url, method, and anchor or json_path), "

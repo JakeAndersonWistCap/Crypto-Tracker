@@ -25,7 +25,8 @@ import logging
 
 import config
 
-from .base import Http, derive_flow_from_cumulative, json_path_get, parse_number, point, today
+from .base import (Http, LogEntry, derive_flow_from_cumulative, json_path_get, parse_number,
+                   point, today)
 
 log = logging.getLogger("token_metrics.fetch.hypercore")
 
@@ -54,6 +55,9 @@ class HyperCoreInfo:
         self.prior_delta = prior_delta if prior_delta is not None else (prior_values or {})
         # spotMeta answers the same for every read in a run, so it is fetched once.
         self._decimals_cache: tuple | None = None
+        # The token's 34-character on-chain id, picked up from the same spotMeta entry as its
+        # decimals. tokenDetails needs it and nothing else publishes it.
+        self._token_id: str | None = None
 
     @staticmethod
     def _pick_balance(payload, api: dict) -> tuple[float | None, str]:
@@ -138,6 +142,10 @@ class HyperCoreInfo:
                 self._decimals_cache = (None, f"{want} found in the metadata but carries no "
                                               f"{spec.get('decimals_key', 'weiDecimals')!r}")
                 return self._decimals_cache
+            # THE TOKEN'S ID COMES FROM THE SAME CALL, and it has to: tokenDetails takes a
+            # 34-character hex id that appears nowhere else, and hard-coding one found on a
+            # third-party page is exactly the class of fact this file refuses to take on trust.
+            self._token_id = entry.get(spec.get("token_id_key", "tokenId"))
             self._decimals_cache = (int(d), f"weiDecimals={int(d)} read from "
                                             f"{spec.get('request', {}).get('type')} for {want}")
             return self._decimals_cache
@@ -248,12 +256,36 @@ class HyperCoreInfo:
                     f"{metric}={value:,.4f} via {detail}", TIER)
             flow_metric = api.get("derive_flow_metric")
             if flow_metric:
+                # ===== THE FUND IS ONE OF SEVERAL BURNS. Marked PARTIAL 2026-09-22. =====
+                # The Assistance Fund's balance is the fee-conversion burn and nothing else, and
+                # Hyperliquid's own documentation names at least three more, all of them HYPE and
+                # none of them passing through this address. A figure that is the whole burn in
+                # the reader's mind and one component in fact is the exact shape of error this
+                # book marks rather than argues about. See node_api.burn_partial.
+                partial = api.get("burn_partial") or {}
+                flow_src = config.mark_source(src, "delta")
+                if partial:
+                    flow_src = config.mark_source(flow_src, "PARTIAL")
                 flow = derive_flow_from_cumulative(value, self.prior_delta.get((name, metric)), name,
-                                                   flow_metric, config.mark_source(src, "delta"), TIER, when,
+                                                   flow_metric, flow_src, TIER, when,
                                                    prior_date=self.prior_dates.get((name, metric)),
                                                    stock_metric=metric, out=out)
                 if not flow.empty:
-                    out.add(flow, SOURCE, name, f"{flow_metric} derived from the {metric} delta", TIER)
+                    out.add(flow, SOURCE, name, f"{flow_metric} derived from the {metric} delta"
+                            + (" [PARTIAL]" if partial else ""), TIER)
+                    if partial:
+                        out.review_item(name, flow_metric, "supply_partial", "stored_flagged",
+                                        value=float(flow["value"].iloc[0]), date=when,
+                                        source=flow_src, tier=TIER,
+                                        basis=(f"the Assistance Fund is ONE of several HYPE "
+                                               f"burns: {partial['reason']}"))
+                if partial:
+                    out.gap(name, flow_metric,
+                            reason=(f"figure is PARTIAL — it is the Assistance Fund's balance "
+                                    f"delta, which captures the fee-conversion burn alone. "
+                                    f"{partial['reason']}"),
+                            tiers_attempted="1",
+                            suggestion=partial.get("route") or "No route on file.")
 
             # ===== EXTRA READS FROM THE SAME ENDPOINT. Added 2026-09-23. =====
             # One project, one endpoint, several questions. validatorSummaries is the aggregate
@@ -263,14 +295,102 @@ class HyperCoreInfo:
             for read in (api.get("extra_reads") or []):
                 self._extra_read(p, api, read, out, when)
 
+    # ===== THE SUPPLY CONVENTION, SETTLED BY ARITHMETIC RATHER THAN BY A READING. Added 2026-09-22.
+    #
+    # gross_issuance_tokens has been blocked on one question: is the stored total_supply NET of
+    # the Assistance Fund burn or GROSS of it? The two formulas differ by the ENTIRE burn, so
+    # there is no safe default, and the test config asks for needs a figure from the protocol
+    # itself to compare CoinGecko against.
+    #
+    # ** tokenDetails IS THAT FIGURE, and it was checked before anything was wired. ** It returns
+    # maxSupply, totalSupply and circulatingSupply as decimal strings in HUMAN units — confirmed
+    # twice on 2026-09-22, from Hyperliquid's own documented example response and from the typed
+    # response in nktkas/hyperliquid. Both URLs are on the config entry.
+    #
+    # ** AND IT IS NOT STORED AS A METRIC, DELIBERATELY. ** Whether Hyperliquid's own totalSupply
+    # INCLUDES the Assistance Fund balance is the very thing in question — their fees page says
+    # AF HYPE is "removing the tokens permanently from the circulating and total supply", which
+    # if taken literally would make this figure net and total_supply_gross the wrong name for it.
+    # Storing it under either name would be asserting the answer. So it is reported as EVIDENCE:
+    # the three numbers and the subtraction, for the convention to be declared from, once.
+    def _token_details(self, project: dict, api: dict, read: dict, payload, out, when) -> None:
+        name = project["name"]
+        fields = {k: parse_number(json_path_get(payload, k))
+                  for k in ("totalSupply", "circulatingSupply", "maxSupply")}
+        missing = [k for k, v in fields.items() if v is None]
+        if missing:
+            out.fail(SOURCE, name,
+                     f"tokenDetails answered but carried no number for {', '.join(missing)}. "
+                     f"Keys returned: {', '.join(sorted(payload)) if isinstance(payload, dict) else type(payload).__name__}",
+                     TIER)
+            return
+
+        total, circ, cap = fields["totalSupply"], fields["circulatingSupply"], fields["maxSupply"]
+        provider = self.prior.get((name, "total_supply"))
+        af = self.prior.get((name, "burn_address_balance"))
+        detail = (f"Hyperliquid's own tokenDetails: totalSupply={total:,.4f}, "
+                  f"circulatingSupply={circ:,.4f}, maxSupply={cap:,.4f}")
+        out.log.append(LogEntry(SOURCE, name, 0, "ok", detail, TIER))
+
+        if provider is None or af is None:
+            out.skipped(SOURCE, name,
+                        f"supply convention: {detail}. The comparison needs the provider's "
+                        f"total_supply and the Assistance Fund balance in the same run and "
+                        f"{'total_supply' if provider is None else 'burn_address_balance'} is "
+                        f"not there yet, so no verdict is offered.", TIER)
+            return
+
+        # THE WHOLE TEST, IN ONE SUBTRACTION. If Hyperliquid's figure exceeds the provider's by
+        # the fund's balance, the provider is subtracting the burn and the convention is
+        # net_of_burn. If the two agree, both are gross and the AF sits inside them.
+        gap = total - provider
+        tol = max(1.0, abs(total) * 0.001)
+        if abs(gap - af) <= tol:
+            verdict = ("net_of_burn — Hyperliquid's totalSupply EXCEEDS the provider's by the "
+                       "Assistance Fund balance, so the provider is subtracting the burn and "
+                       "issuance is d(supply) + burn")
+        elif abs(gap) <= tol:
+            verdict = ("gross — the two figures AGREE, so neither subtracts the Assistance Fund "
+                       "and issuance is the supply delta alone")
+        else:
+            verdict = ("NEITHER — the difference matches neither the burn nor zero, so something "
+                       "else is between the two figures and no convention can be declared from "
+                       "them. Do NOT pick the closer one")
+        out.review_item(
+            name, "total_supply", "supply_convention_evidence", "stored_flagged",
+            value=total, prior_value=provider, date=when,
+            source=f"{SOURCE}:tokenDetails", tier=TIER,
+            basis=(f"{detail}. Provider total_supply={provider:,.4f}, Assistance Fund "
+                   f"balance={af:,.4f}. Hyperliquid minus provider = {gap:,.4f}, against a fund "
+                   f"balance of {af:,.4f}. VERDICT: {verdict}. NOTHING IS DERIVED FROM THIS "
+                   f"AUTOMATICALLY — set total_supply_convention in config.py and "
+                   f"gross_issuance_tokens follows. The figures are not stored as a metric "
+                   f"because whether Hyperliquid's own totalSupply includes the fund is the "
+                   f"question being asked, and storing it under a name would assert the answer."))
+
     def _extra_read(self, project: dict, api: dict, read: dict, out, when) -> None:
         """One additional request against the same info endpoint, with its own shape."""
         name, metric = project["name"], read.get("metric")
         endpoint = read.get("endpoint") or api.get("endpoint")
-        request = read.get("request") or {}
+        request = dict(read.get("request") or {})
         if not metric or not endpoint or not request:
             out.unconfigured(SOURCE, name, f"extra read: metric, endpoint or request missing", TIER)
             return
+
+        # ===== A REQUEST THAT NEEDS AN ID NOBODY PUBLISHES. Added 2026-09-22. =====
+        # tokenDetails takes a 34-character on-chain token id. It appears in spotMeta and
+        # nowhere else this tool reads, and a value copied off a third-party page is exactly the
+        # class of fact that gets silently stale. So it is resolved from spotMeta — the same call
+        # that already supplies weiDecimals — and the request is completed here.
+        if read.get("token_id_from_meta"):
+            self._token_decimals(api, read)     # populates self._token_id as a side effect
+            if not self._token_id:
+                out.fail(SOURCE, name,
+                         f"{metric}: {request.get('type')} needs the token's on-chain id and "
+                         f"spotMeta did not supply one. Nothing was called: a request built "
+                         f"around a guessed id would answer about some other token.", TIER)
+                return
+            request[read.get("token_id_key", "tokenId")] = self._token_id
         try:
             payload = self.http.post(endpoint, json_body=request)
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
@@ -282,6 +402,9 @@ class HyperCoreInfo:
             return
 
         shape = read.get("shape", "sum_field")
+        if shape == "token_details":
+            self._token_details(project, api, read, payload, out, when)
+            return
         if shape != "sum_field":
             out.unconfigured(SOURCE, name, f"{metric}: unknown extra-read shape {shape!r}", TIER)
             return

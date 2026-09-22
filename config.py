@@ -881,6 +881,26 @@ def strip_source_annotations(source: str) -> str:
     return _SOURCE_ANNOTATION.sub("", str(source or ""))
 
 
+def open_question_covers(project_name: str, greater: str, lesser: str) -> bool:
+    """Is this impossible-relation already carried by an OPEN QUESTION for this project?
+
+    ** TWO P2 ROWS FOR ONE FACT IS HOW A TO-DO LIST STOPS BEING READ. ** NEAR's circulating vs
+    total contradiction appeared twice on the Gap Report: once as the open question, with the
+    whole investigation and an explicit "do not widen the tolerance", and once as the check's own
+    generic row. The generic one adds nothing next to the specific one.
+
+    The detection is untouched — check_impossible_relations still raises its Review Queue row
+    every run the figures contradict. What this removes is the duplicate ITEM, and only where a
+    question names the exact pair.
+    """
+    for q in OPEN_QUESTIONS:
+        if q.get("project") != project_name or q.get("status", "open") != "open":
+            continue
+        if tuple(q.get("covers_relation") or ()) == (greater, lesser):
+            return True
+    return False
+
+
 def metric_restatements(project_name: str) -> dict:
     """Columns that ARE another column, declared so the sheet says it rather than sitting empty.
 
@@ -1494,6 +1514,16 @@ PROJECTS = [
         "archetypes": [1, 4], "archetypes_held": [],
         # ===== B4: EIP-1559 DESTROYS, IT DOES NOT SEND. =====
         "not_applicable": {
+            # ===== THERE IS NO MAXIMUM. Declared 2026-09-22. =====
+            # ETH has no supply cap and never has: issuance is a function of how much is staked
+            # and the burn is a function of demand for blockspace, so the terminal supply is an
+            # outcome of the two and not a parameter anybody set. The provider returning nothing
+            # here is CORRECT, and "CoinGecko returned no data for this series" reads as a
+            # fetch fault on a figure that does not exist.
+            "max_supply":
+                "ETHEREUM HAS NO SUPPLY CAP. Issuance follows the staking curve and the base-fee "
+                "burn follows demand for blockspace, so terminal supply is an outcome of the two "
+                "rather than a declared parameter. Nothing to source. Declared 2026-09-22.",
             # ===== NO PROTOCOL TREASURY IS IN SCOPE. Declared 2026-09-23. =====
             # Ethereum has no protocol-controlled token treasury. The Ethereum Foundation holds
             # ETH and publishes a report, but that is one organisation's balance sheet, not a
@@ -1757,6 +1787,17 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        "not_applicable": {
+            # ===== THERE IS NO MAXIMUM. Declared 2026-09-22. =====
+            # NEAR mints validator rewards on an inflation curve and burns 70% of gas; neither
+            # side is capped, so terminal supply is an outcome rather than a parameter. The
+            # provider returning nothing is CORRECT — "CoinGecko returned no data for this
+            # series" reads as a fetch fault on a figure that does not exist.
+            "max_supply":
+                "NEAR HAS NO SUPPLY CAP. Validator rewards mint on an inflation curve and 70% of "
+                "every gas fee is burned, so terminal supply is the balance of the two rather "
+                "than a declared parameter. Nothing to source. Declared 2026-09-22.",
+        },
         # ===== STAKED NEAR, FROM THE CHAIN. Added 2026-09-22. =====
         # locked_tokens gapped asking for a lock contract. There is not one: NEAR's staking is
         # protocol-level and spread across one staking-pool contract PER VALIDATOR, so any single
@@ -2525,6 +2566,18 @@ PROJECTS = [
         # looked" must not render identically.
         # ===== B2: NO ISSUANCE HAS EVER BEEN POSSIBLE, AND NONE EVER WILL BE. =====
         "not_applicable": {
+            # ===== LINK IS NOT BURNED. Declared 2026-09-22. =====
+            # Chainlink's fee flow runs the other way: node operators are PAID in LINK, and the
+            # Reserve accumulates LINK bought with non-LINK revenue. Nothing in the design
+            # destroys LINK, and there is no burn address to read — which is why the gap read
+            # "no contract of kind 'burn_address_balance' declared in config", an instruction to
+            # add a contract that cannot exist.
+            "gross_burn_tokens":
+                "CHAINLINK DOES NOT BURN LINK. Fees are PAID to node operators in LINK and the "
+                "Reserve buys LINK with non-LINK revenue and HOLDS it — see buyback_route, which "
+                "routes to treasury_inflow rather than burn. There is no burn mechanism and no "
+                "burn address. Declared 2026-09-22.",
+
             "gross_issuance_tokens":
                 "THE ENTIRE 1,000,000,000 LINK WAS MINTED AT GENESIS IN 2017 and no new tokens can "
                 "ever be created. What looks like circulating-supply growth is VESTING of "
@@ -4036,6 +4089,18 @@ PROJECTS = [
         # (chain:polygon:burn_polygon, Dune 8683175). So this is not a fund address nobody has
         # found; it is a fund that structurally does not exist.
         "not_applicable": {
+            # ===== THERE IS NOTHING LOCKED IN A GEODNET CONTRACT. Declared 2026-09-22. =====
+            # protocol_tvl_usd is a DeFi figure: value deposited into a protocol's contracts.
+            # GEODNET is a physical network — base stations, not deposits — and DefiLlama does
+            # not list it as a protocol at all, which is why the gap read "not tracked by
+            # DefiLlama — no defillama_protocol in config" and sent the reader to add a slug for
+            # a listing that does not and should not exist.
+            "protocol_tvl_usd":
+                "NOTHING IS DEPOSITED INTO GEODNET. TVL measures value locked in a protocol's "
+                "contracts; GEODNET's network is physical base stations and its token contracts "
+                "hold no user deposits. DefiLlama carries a FEES adapter for it and no TVL "
+                "listing, which is the same fact from their side. Declared 2026-09-22.",
+
             # ===== CAPACITY UTILISATION DOES NOT APPLY. Declared 2026-09-23. =====
             "utilisation_pct":
                 "NOT A CAPACITY-CONSTRAINED NETWORK. utilisation_pct asks what fraction of a "
@@ -5493,6 +5558,18 @@ PROJECTS = [
                     "the emission schedule and does not establish this one.",
         },
         "name": "Morpho", "symbol": "MORPHO",
+        "not_applicable": {
+            # ===== NO EMISSION MECHANISM. Declared 2026-09-22. =====
+            # emissions_model already reads "none" — MORPHO is not emitted to suppliers or
+            # stakers — but a classified model is not the same as a scoped-out column, so the
+            # row kept appearing as a gap saying "NO EMISSION MECHANISM", which is an answer
+            # rather than a question. Declared here so it renders n/a and leaves the list.
+            "emissions_tokens":
+                "MORPHO IS NOT EMITTED. The protocol runs no supply-side or staking emission "
+                "programme — see emissions_model, model 'none' — so there is no flow to source. "
+                "If a programme is ever launched this declaration is what has to be removed "
+                "first, which is the point of recording the reason. Declared 2026-09-22.",
+        },
         # ===== THE ARCHETYPE-2 REVENUE COLUMN IS fees_usd, SAID PLAINLY. Added 2026-09-22. =====
         # Morpho is archetype 2, so fees_usd is not one of its columns — but it IS fetched, and
         # customer_revenue_usd sat empty beside it every run. Borrower interest paid IS the
@@ -5972,6 +6049,52 @@ PROJECTS = [
             "note": "Free, unauthenticated, documented. The `user` address is lowercase because it is a JSON "
                     "request parameter to Hyperliquid's API, NOT an EVM call argument — no checksumming applies "
                     "and web3 never sees it.",
+            # ===== THE ASSISTANCE FUND IS ONE HYPE BURN, NOT THE HYPE BURN. Marked 2026-09-22. ==
+            # This read is the fee-conversion burn and nothing else. Hyperliquid's own
+            # documentation names at least four more, every one of them HYPE and none of them
+            # passing through 0xfefe...fe, so nothing here can see them. Quoted, from the docs
+            # read on 2026-09-22:
+            #
+            #   HyperEVM base fees   "Base fees are burned as usual ... the burned fees are
+            #                         removed from the total EVM supply"
+            #   HyperEVM priority    "Unlike most other EVM chains, priority fees are also
+            #     fees                burned ... sent to the zero address's EVM balance"
+            #   HyperCore order      "order priority fees are burned"
+            #     priority fees
+            #   HIP-3 slashing       "the slashed stake by the deployer is burned"
+            #   HIP-1                "The supply may decrease over time due to spot order book
+            #                         fees or future burn mechanisms"; deployment gas is in HYPE
+            #
+            # ** ONE OF THOSE IS READABLE AND THE REST ARE NOT. ** The HyperEVM priority-fee burn
+            # goes to the zero address's EVM BALANCE, so it is a balance read on HyperEVM and
+            # would close that component. The base-fee burn is removed from supply with no
+            # address at all; the HyperCore and HIP-1/HIP-3 burns name no destination. NOT WIRED
+            # here — adding a HyperEVM RPC read is a piece of work, and the honest state until it
+            # is done is a labelled partial rather than a whole-looking number.
+            "burn_partial": {
+                "reason": "Hyperliquid's own docs name at least four other HYPE burns that do "
+                          "not pass through the Assistance Fund: HyperEVM base fees (removed "
+                          "from the total EVM supply), HyperEVM priority fees (sent to the zero "
+                          "address's EVM balance), HyperCore order priority fees, HIP-3 slashed "
+                          "deployer stake, and HIP-1 spot deployment gas. This figure is the "
+                          "fee-conversion burn alone and is therefore a LOWER BOUND.",
+                "route": "The HyperEVM priority-fee component IS readable — it accumulates at "
+                         "the zero address's EVM balance, so a balance read on HyperEVM "
+                         "(rpc.hyperliquid.xyz/evm, where HYPE has 18 decimals) would close it "
+                         "and could be differenced like any other cumulative. The base-fee burn "
+                         "has no address by construction, and the HyperCore burns name no "
+                         "destination, so those need a figure Hyperliquid publishes rather than "
+                         "a read. Do NOT sum the zero-address balance into this series without "
+                         "deciding first whether an EVM-side figure and a Core-side figure are "
+                         "the same quantity.",
+                "source_urls": [
+                    "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm",
+                    "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/priority-fees",
+                    "https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-1-native-token-standard",
+                    "https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-3-builder-deployed-perpetuals",
+                ],
+                "source_date": "2026-09-22",
+            },
             # ===== TOTAL STAKED HYPE, FROM THE SAME ENDPOINT. Added 2026-09-23. =====
             # validatorSummaries returns every validator with a `stake` field — the total
             # delegated to it — so the network figure is one request and a sum. This is the
@@ -6028,6 +6151,47 @@ PROJECTS = [
                 # whatever is delegated to the validators currently in trouble — which is exactly
                 # when that number moves. The active-only figure is staged beside it.
                 "includes_jailed": True,
+            },
+            # ===== THE SUPPLY CONVENTION'S MISSING SIDE. Added 2026-09-22. =====
+            # gross_issuance_tokens has been blocked on one question — is the stored total_supply
+            # NET of the Assistance Fund burn or GROSS of it — and the test needs a supply figure
+            # from the protocol ITSELF to compare the provider's against. tokenDetails is it.
+            #
+            # ** CHECKED BEFORE ANYTHING WAS WIRED, AND IT DOES RETURN THEM. ** maxSupply,
+            # totalSupply and circulatingSupply, as decimal strings in HUMAN units (not wei) —
+            # confirmed twice on 2026-09-22, from the documented example response and from the
+            # typed response in a maintained SDK. Both URLs below.
+            #
+            # ** THE FIGURE IS NOT STORED AS A METRIC. ** Hyperliquid's own fees page says
+            # Assistance Fund HYPE is "removing the tokens permanently from the circulating and
+            # total supply", which taken literally would make THIS figure net too — and whether
+            # it includes the fund is precisely the question being asked. Storing it under
+            # total_supply_gross would assert the answer. It is reported as evidence instead:
+            # the three numbers and the subtraction, once, for the convention to be declared from.
+            {
+                "metric": "total_supply",
+                "shape": "token_details",
+                "request": {"type": "tokenDetails"},
+                "token_id_from_meta": True,
+                "token_id_key": "tokenId",
+                "decimals_from": {
+                    "request": {"type": "spotMeta"},
+                    "list_path": "tokens",
+                    "name_key": "name",
+                    "name": "HYPE",
+                    "decimals_key": "weiDecimals",
+                    "token_id_key": "tokenId",
+                },
+                "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/"
+                              "api/info-endpoint/spot#retrieve-information-about-a-token",
+                "second_source": "https://raw.githubusercontent.com/nktkas/hyperliquid/main/"
+                                 "src/api/info/_methods/tokenDetails.ts",
+                "source_date": "2026-09-22",
+                "units": "HUMAN units, decimal strings — NOT wei. The documented example gives "
+                         "totalSupply '851681534.05516005' against weiDecimals 5.",
+                "note": "the 34-character tokenId is resolved from spotMeta in the same run and "
+                        "never hard-coded: it appears nowhere else this tool reads, and a value "
+                        "copied off a third-party page goes stale silently.",
             }],
         },
         "buyback_destination": "burn",          # resolved — no longer disputed
@@ -6059,6 +6223,34 @@ PROJECTS = [
     },
     {
         "name": "Uniswap", "symbol": "UNI",
+        # ===== WHEN THE FEE SWITCH TURNED ON, CHAIN BY CHAIN. Recorded 2026-09-22. =====
+        # RECORD ONLY — nothing reads this and nothing should read it yet. It is here because the
+        # fee switch is the single biggest discontinuity in Uniswap's fee series, and a reader
+        # looking at a step up in fees_usd or a burn that starts from nothing needs to be able to
+        # tell a switch-on from a break. Without the dates that is guesswork, and guesswork about
+        # a step change is how a real source fault gets explained away as "the fee switch".
+        #
+        # ** IT IS NOT A LEVEL-BREAK ACKNOWLEDGEMENT. ** Do NOT wire these into
+        # LEVEL_BREAK_ACKNOWLEDGED to pre-silence a rise: a tenfold move that coincides with a
+        # date on this list still deserves the flag, and the flag is where the comparison against
+        # this list happens.
+        "fee_switch_dates": {
+            "ethereum": "2025-12-28",
+            "optimism": "2026-03-08",
+            "arbitrum": "2026-03-08",
+            "base": "2026-03-08",
+            "zora": "2026-03-08",
+            "xlayer": "2026-03-08",
+            "polygon": "2026-06-02",
+            "bsc": "2026-06-02",
+            "celo": "2026-06-02",
+            "robinhood": "2026-07-27",
+            "v4": "2026-07-27",
+            "recorded_on": "2026-09-22",
+            "status": "RECORD ONLY — supplied in review, not re-confirmed against Uniswap "
+                      "governance posts here. Read as dated context for a step in the series, "
+                      "never as a parameter.",
+        },
         "coingecko_id": "uniswap",
         "defillama_fees_slug": "uniswap", "defillama_protocol": "uniswap", "defillama_chain": None,
         "archetypes": [4], "archetypes_held": [],
@@ -6331,6 +6523,30 @@ PROJECTS = [
                                "than half-built, so the cost is visible before anyone starts.",
         },
         "name": "Aerodrome", "symbol": "AERO",
+        # ===== "AERO LITE" ON ARC CHANGES NOTHING HERE, YET. Recorded 2026-09-22. =====
+        # Aerodrome has a deployment on Arc referred to as "Aero Lite". It has NO Voter and NO
+        # veAERO gauge, which is the whole of why it does not touch any figure in this book: the
+        # emission, the rebase and the lock rate are all functions of the Voter/veAERO machinery,
+        # and a deployment without it neither emits AERO nor locks it.
+        #
+        # RECORDED BECAUSE THE ABSENCE IS THE FINDING. A reader who hears "Aerodrome is on Arc"
+        # will reasonably ask whether the Minter read, the tail rate and the lock figures are now
+        # partial. They are not — AERO's mechanics remain Base-only — and without this line that
+        # question gets re-asked and possibly answered by summing something.
+        "arc_deployment": {
+            "name": "Aero Lite",
+            "chain": "arc",
+            "has_voter": False,
+            "has_ve_gauge": False,
+            "effect_on_metrics": "NONE. Emissions, the rebase and the lock rate all run through "
+                                 "Voter and veAERO, neither of which exists on Arc. Every AERO "
+                                 "figure in this book stays a Base-only read, and that is "
+                                 "COMPLETE rather than partial.",
+            "reconsider_when": "a Voter or a veAERO gauge is deployed on Arc. Then, and only "
+                               "then, the emission and lock reads become partial and this "
+                               "becomes a real piece of work.",
+            "recorded_on": "2026-09-22",
+        },
         "coingecko_id": "aerodrome-finance",
         "defillama_fees_slug": "aerodrome", "defillama_protocol": "aerodrome", "defillama_chain": None,
         # ARCHETYPE 3 ONLY, AND ARCHETYPE 4 IS REFUTED RATHER THAN MERELY ABSENT.
@@ -8350,7 +8566,29 @@ PROJECTS = [
                       "note": "APRIL 2026 TOKENOMICS: revenue-funded buyback distributed to sPENDLE holders, "
                               "replacing gauge-voting emissions. DISTRIBUTE, not burn. The revenue SHARE is "
                               "not documented — do not estimate it. Sanity bounds only: ~2m PENDLE "
-                              "repurchased in the first six months, ~$653,702 of fees over 30 days."},
+                              "repurchased in the first six months, ~$653,702 of fees over 30 days.",
+                      # ===== A LEAD, NOT A FIGURE. Recorded 2026-09-22. =====
+                      # Reported that since September 2025 Pendle directs 80% of protocol revenue
+                      # to sPENDLE holders and 20% to the treasury. If true, that is exactly the
+                      # share_to_buyback this entry says is undocumented.
+                      #
+                      # ** IT IS NOT WIRED AND programmed STAYS False. ** The lead did not come
+                      # from Pendle's own material, and share_to_buyback is the input to an
+                      # implied-buyback calculation across a whole tab: a number taken from a
+                      # secondary source and used as a programmed share is precisely how a
+                      # plausible wrong figure gets a confidence band it has not earned. It is
+                      # recorded so the next person checking the docs knows what to look for.
+                      "lead_80_20": {
+                          "claim": "80% of protocol revenue to sPENDLE holders, 20% to the "
+                                   "treasury, in effect since September 2025",
+                          "status": "UNCONFIRMED — not from Pendle's own material",
+                          "recorded_on": "2026-09-22",
+                          "what_would_settle_it": "docs.pendle.finance' tokenomics page, or a "
+                                                  "governance post stating the split. Until then "
+                                                  "share_to_buyback stays None and programmed "
+                                                  "stays False — do NOT populate either from "
+                                                  "this line.",
+                      }},
         "burn_split": None,
         # THE HARD SUPPLY CAP IS GONE. It was 258,446,028 and most trackers still show it, which is
         # stale. April 2026 replaced it with TERMINAL INFLATION OF 2%/YEAR.
@@ -8514,7 +8752,28 @@ PROJECTS = [
             "note": "if the vesting schedule has run out, a zero from here on is a FACT about "
                     "the schedule rather than a failed measurement — but the end date has to "
                     "come from Fluid's own schedule before this renders as a confident zero. "
-                    "Until then it is a gap whose reason is 'classified, not yet sourced'.",
+                    "See declared_zero: Jake declared it on 2026-09-22 and the end date is "
+                    "still unsourced, so the zero is stored and labelled as a DECLARATION.",
+        },
+        # ===== A DECLARED ZERO IS A FIGURE, AND IT SAYS WHO DECLARED IT. Added 2026-09-22. =====
+        # A gap reading "THE EMISSION HAS FINISHED" is an ANSWER wearing a question's clothes:
+        # it states the emission is zero and then leaves the cell empty, so the sheet shows
+        # nothing where the truth is 0. Jake declared the zero on 2026-09-22.
+        #
+        # ** IT IS NOT PROMOTED TO A MEASUREMENT BY BEING STORED. ** The end date still has not
+        # been read from Fluid's own schedule — their docs are not reachable from here — so the
+        # source string says schedule:config:declared and the confidence machinery treats it as
+        # what it is. The day the schedule is sourced, `sourced` flips and this note goes.
+        "declared_zero": {
+            "emissions_tokens": {
+                "why": "the FLUID emission has finished — the token's distribution was a vesting "
+                       "schedule that has run out, so zero from here on is a fact about the "
+                       "schedule rather than a failed read.",
+                "declared_by": "Jake, 2026-09-22 review",
+                "sourced": False,
+                "still_needed": "the schedule's end date, from Fluid's own material. Until then "
+                                "this is a declaration and not a measurement.",
+            },
         },
         "name": "Fluid", "symbol": "FLUID",
         "coingecko_id": "instadapp",
@@ -10757,7 +11016,19 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 OPEN_QUESTIONS = [
     # ---------------------------------------------------------------- GEODNET
     {
-        "project": "GEODNET", "topic": "WORMHOLE NTT BRIDGE MODEL — lock-and-mint or burn-and-mint?",
+        "project": "GEODNET", "topic": "CLOSED 2026-09-22 — WORMHOLE NTT BRIDGE MODEL: not settled, and no longer "
+                 "asked. The Polygon-only read and the PARTIAL label stand.",
+        "status": "closed",
+        "closed_by": "Jake, 2026-09-22 review",
+        "closed_note": "CLOSED BY DECISION, NOT BY EVIDENCE, and the difference matters. The "
+                       "bridge model is still unknown; what has been decided is that the current "
+                       "answer — read Polygon alone and label total_supply PARTIAL — is good "
+                       "enough to stop working on. That answer UNDERSTATES supply and understates "
+                       "it knowably, which is the safe direction: the alternative error was "
+                       "counting the same tokens two or three times. REOPEN THIS before adding "
+                       "any Solana or IoTeX deployment as a summed component; the reasoning "
+                       "below is why that cannot be done on an intuition that more chains means "
+                       "a more complete figure.",
         "severity": 1,
         "reason": "GEODNET bridges between Polygon and Solana using WORMHOLE NTT, which supports BOTH "
                   "models, and which one is in use decides whether summing chain supplies is correct or a "
@@ -11559,7 +11830,17 @@ OPEN_QUESTIONS = [
                       "snapshot table answering, and 'from Dune: 0' would mean it was skipped again.",
     },
     {
-        "project": "Ether.fi", "topic": "a tier-4-only series stops moving after its backfill",
+        "project": "Ether.fi", "topic": "CLOSED 2026-09-22 — a tier-4-only series stops moving after its backfill, and "
+                 "the visible staleness is accepted.",
+        "status": "closed",
+        "closed_by": "Jake, 2026-09-22 review",
+        "closed_note": "None of the three options is taken. (1) no contract read for staked "
+                       "sETHFI has been found, (2) and (3) both make a PAID API a daily "
+                       "dependency, which is the thing the tier order exists to avoid. So the "
+                       "series ages and the workbook marks it stale, which is the honest state "
+                       "rather than a hidden one. REOPEN if the staleness ever stops being "
+                       "visible on the sheet — that, not the age itself, is what would make "
+                       "this a fault again.",
         "severity": 1,
         "reason": "Query 8683038 is a DAILY HISTORY (794 rows dated by `day`), so it backfills like any "
                   "other tier 4 source and the 3/6/9-month trajectory comes from real history. But tier 4 "
@@ -11596,7 +11877,13 @@ OPEN_QUESTIONS = [
                       "private.",
     },
     {
-        "project": "GEODNET", "topic": "is the Polygon buyback wallet still relevant",
+        "project": "GEODNET", "topic": "CLOSED 2026-09-22 — the Polygon buyback wallet is not relevant post-migration.",
+        "status": "closed",
+        "closed_by": "Jake, 2026-09-22 review",
+        "closed_note": "The address stays on file and stays unverified and unread — it is a "
+                       "record of where the buyback used to run, and deleting it is how the "
+                       "next person rediscovers it and wonders. Nothing reads it, so nothing "
+                       "changes; what ends is the question.",
         "reason": "0xc327C048d75398Da9DB5254679bb84a4a9e42010 is on file as a Polygon-era buyback wallet but is "
                   "NOT referenced by the working burn query. It remains unverified and refused.",
         "suggestion": "Confirm whether it still matters post-migration; if not, delete the entry.",
@@ -11679,6 +11966,15 @@ OPEN_QUESTIONS = [
             "action_taken": "none, deliberately. The check is unchanged and the question stays "
                             "open — see suggestion.",
         },
+        # ===== THE RELATION THIS QUESTION COVERS. Added 2026-09-22. =====
+        # TWO P2 ROWS FOR ONE FACT. This question and check_impossible_relations' own
+        # "[data] circulating_supply exceeds total_supply, which is impossible" were both landing
+        # on the Gap Report, saying the same thing at the same priority — one with the whole
+        # investigation behind it and one without. Naming the relation here lets the check fold
+        # its gap row into this one. The check itself is UNCHANGED and still fires its Review
+        # Queue row every run the figures contradict: what is removed is the duplicate to-do
+        # item, not the detection.
+        "covers_relation": ("circulating_supply", "total_supply"),
         "suggestion": "DO NOT WIDEN THE TOLERANCE, and do not add a relation_exempt — including "
                       "now that the figures agree again. The exemption mechanism is for a "
                       "relation that is not an IDENTITY for a project; circulating <= total is an "

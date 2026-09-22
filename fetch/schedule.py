@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+import config
+
 from .base import LONG_COLUMNS, today
 
 SOURCE = "schedule:config"
@@ -19,6 +21,27 @@ class Schedule:
     def run(self, projects: list[dict], window_days, out):
         now = today()
         for p in projects:
+            # ===== A DECLARED ZERO IS A FIGURE, NOT AN EMPTY CELL. Added 2026-09-22. =====
+            # Fluid's emissions_tokens gapped with "THE EMISSION HAS FINISHED" — an ANSWER
+            # wearing a question's clothes. It states the flow is zero and then leaves the cell
+            # blank, so the sheet shows nothing where the truth is 0, and the row sits on a
+            # to-do list nobody can action. Where a project DECLARES the zero, it is stored.
+            #
+            # THE SOURCE STRING SAYS IT IS A DECLARATION. schedule:config:declared, so nothing
+            # downstream can mistake it for a measurement, and the confidence machinery reads
+            # the state rather than being told an opinion.
+            for metric, spec in (p.get("declared_zero") or {}).items():
+                if metric not in config.metrics_for_project(p):
+                    continue
+                out.add(pd.DataFrame({"date": [now], "project": [p["name"]], "metric": [metric],
+                                      "value": [0.0], "source": [f"{SOURCE}:declared"],
+                                      "tier": [TIER]})[LONG_COLUMNS],
+                        SOURCE, p["name"],
+                        f"{metric}=0, DECLARED not measured: {spec['why']} "
+                        f"(declared by {spec['declared_by']}"
+                        + ("" if spec.get("sourced") else
+                           f"; NOT yet sourced — {spec.get('still_needed')}") + ")", TIER)
+
             sched = p.get("issuance_schedule")
             if not sched or not sched.get("steps"):
                 continue

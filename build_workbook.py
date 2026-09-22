@@ -803,10 +803,30 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # against the 7-day global marked a perfectly current series stale forever.
                 row["status"] = "stale"
                 limit = config.stale_after_days(name, metric, stale_days)
+                # ===== WHOSE STALENESS IS IT? Added 2026-09-22. =====
+                # "last point 2026-09-10; last successful fetch 2026-09-22" reads as a pipeline
+                # that has fallen behind, and sends the reader to check the fetch. For Ether.fi
+                # the fetch ran and SUCCEEDED — Dune query 8683038's own data ends 2026-09-10,
+                # and no re-run produces a newer point. That is the source ageing, not us, and
+                # it needs a different action: chase the query, not the run.
+                #
+                # DERIVED FROM THE TWO DATES ALREADY ON THE ROW, never declared: a fetch that
+                # succeeded INSIDE the staleness window while the data did not move can only
+                # mean the source had nothing newer to give.
+                upstream = ""
+                try:
+                    if row["last_success"] and _age_in_days(
+                            pd.Timestamp(str(row["last_success"])[:10]), asof, "daily") <= limit:
+                        upstream = (" — ** THE SOURCE IS STALE, NOT THE FETCH. ** The last fetch "
+                                    "SUCCEEDED inside the window and returned nothing newer, so "
+                                    "the series has stopped at its publisher. Chase the source, "
+                                    "not the run.")
+                except (TypeError, ValueError):
+                    upstream = ""
                 row["note"] = (f"last point {row['latest_date']}; last successful fetch "
                                f"{row['last_success'] or 'never'}"
                                + (f"; {granularity} series, stale after {limit} days"
-                                  if granularity != "daily" else ""))
+                                  if granularity != "daily" else "") + upstream)
             else:
                 row["status"] = "ok"
             if (name, metric) in review_keys:

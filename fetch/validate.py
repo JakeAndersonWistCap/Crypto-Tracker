@@ -569,6 +569,15 @@ def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) ->
                             value=a[0], prior_value=b[0], date=a[1],
                             source=f"{greater} ({a[0]:,.2f} from {a[2]}) EXCEEDS {lesser} "
                                    f"({b[0]:,.2f} from {b[2]}) — {why}", tier=None)
+            # ===== ONE FACT, ONE TO-DO ITEM. Added 2026-09-22. =====
+            # ** THE DETECTION IS ABOVE AND IT IS UNCHANGED. ** The Review Queue row fires every
+            # run the figures contradict, which is the job. What is skipped here is the generic
+            # GAP row, and only where an open question already names this exact pair: NEAR
+            # carried both at P2, one with the whole investigation and an explicit "do not widen
+            # the tolerance", and one without. Two rows for one fact is how a to-do list stops
+            # being read, and the generic one is the one that adds nothing.
+            if config.open_question_covers(project, greater, lesser):
+                continue
             out.gap(project, f"[data] {greater} exceeds {lesser}, which is impossible",
                     reason=(f"{greater} reads {a[0]:,.2f} against {lesser} at {b[0]:,.2f}, and {why}. "
                             f"Both figures passed every check that looks at one number at a time — "
