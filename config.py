@@ -3474,6 +3474,27 @@ PROJECTS = [
         "issuance_derivation": {
             "suppressed": True,
             "suppressed_on": "2026-09-15",
+            # ===== IT RENDERS n/a, NOT RED. CHANGED 2026-09-22, ON NEW PROOF. =====
+            # The suppression is unchanged and correct. What changed is what we can now SAY about
+            # why: total_supply_gross reads exactly 1,000,000,000 and does not move, so GEOD is
+            # entirely pre-minted and nothing is being minted at all. "Suppressed" renders RED,
+            # which means "not a number: suppressed, refused or gapped" — a reader scanning for
+            # problems reads that as a wrong or missing figure and goes looking for a source.
+            # There is no source to find and no work to do: minting is zero by construction.
+            #
+            # ** AND A DERIVED 0 IS STILL THE WRONG ANSWER, which is why the suppression stays. **
+            # GEOD emissions are real — they are DISTRIBUTION from pre-minted mining wallets —
+            # and a zero in the issuance column would read as "no emissions" rather than "not
+            # minting". The quantity the column asks for is zero; the quantity a reader wants is
+            # unmeasured. Both facts have to survive, and n/a with this reason is what carries
+            # them where RED carried neither.
+            "renders_as": "n/a",
+            "na_reason": ("ALL SUPPLY PRE-MINTED — total_supply_gross is exactly 1,000,000,000 "
+                          "and does not move, so nothing is minted and this column's quantity is "
+                          "zero by construction. GEODNET's emissions are real and are "
+                          "DISTRIBUTION from pre-minted mining wallets, not minting: that is a "
+                          "different quantity and it is UNMEASURED. See "
+                          "emissions_proxy_declined for the route that would measure it."),
             "was_producing": "0 from derived:d_supply:MECHANISM_ASSUMED",
             "why": "issuance is schedule-based and PER-MINER — f(miner count, uptime, data quality, band "
                    "type, zone multipliers) — not a function of the supply delta. The derivation was "

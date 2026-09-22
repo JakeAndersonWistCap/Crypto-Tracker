@@ -3929,18 +3929,26 @@ def _maple_treasury_metric():
 
 
 def _fixture_counterfactuals():
-    """BOTH of the fixture's counterfactuals, imported from the script that generated them.
+    """ALL of the fixture's counterfactuals, imported from the script that generated them.
 
-    Two mechanisms now have no live example — disputed (Maple's resolved 2026-09-18) and refuted
-    (Sky's burn became real on 2026-09-22) — and the fixture holds a row for each. Entering them
-    together, through the generator's own definitions, is what keeps the committed JSON and the
-    tests that read it describing the same world.
+    THREE mechanisms now have no live example, and none of them lost one by being fixed away:
+      disputed    Maple's contract dispute resolved 2026-09-18 (new address, verified_by_label).
+      refuted     Sky's burn became real on 2026-09-22 — the refutation is KEPT on the mechanism
+                  block as refuted_prior_model, but the project's live status is confirmed.
+      suppressed  GEODNET's issuance suppression is still in force and still correct; it now
+                  renders n/a rather than RED, because the quantity is zero by construction
+                  rather than uncomputable (2026-09-22).
+    The fixture holds a row for each. Entering them together, through the generator's own
+    definitions, is what keeps the committed JSON and the tests that read it describing the same
+    world — and what stops a branch quietly ceasing to be tested the moment its live example
+    improves.
     """
     import contextlib as _c
     mod = _refresh_module()
     stack = _c.ExitStack()
     stack.enter_context(mod.forced_dispute())
     stack.enter_context(mod.forced_refutation())
+    stack.enter_context(mod.forced_plain_suppression())
     return stack
 
 
@@ -4288,11 +4296,26 @@ def test_geodnet_stale_derived_zero_is_not_served_as_ok_on_read():
                        gaps=pd.DataFrame(), review=pd.DataFrame())
     row = out[(out.project == "GEODNET") & (out.metric == "gross_issuance_tokens")].iloc[0]
 
-    assert row["status"] == "suppressed", f"a stored zero must not read 'ok': {row['status']}"
+    # ** IT READS n/a NOW, NOT 'suppressed'. CHANGED 2026-09-22, AND THE BLANKING IS UNCHANGED. **
+    # The stored zero is still withheld — that is the whole point of this test and it still
+    # holds. What changed is the BAND. total_supply_gross proved to be exactly 1,000,000,000 and
+    # unmoving, so GEOD is entirely pre-minted and this column's quantity is zero by
+    # construction, not uncomputable. RED means "not a number: suppressed, refused or gapped",
+    # which sends a reader looking for a source that does not exist. N/A is excluded from the
+    # confidence tally because there is no work to do.
+    #
+    # AND THE SUPPRESSION IS STILL RIGHT, which is the half that must not be lost: a derived 0
+    # would read as "no emissions" when GEOD emissions are real and are DISTRIBUTION from
+    # pre-minted wallets. The column's quantity is zero; the quantity a reader wants is
+    # unmeasured. The n/a reason carries both.
+    assert row["status"] == "n/a", f"a stored zero must not read 'ok': {row['status']}"
     assert pd.isna(row["now"]), "a false zero must be blank, not shown — it feeds the ratio"
     assert all(pd.isna(row[f]) for f in ("m1", "q0", "q1", "q2", "q3", "y1"))
-    assert row["confidence"] == "RED"
-    assert "suppressed" in row["note"].lower() and "per-miner" in row["note"].lower()
+    assert row["confidence"] == "N/A", \
+        "'not applicable' is the absence of a question, not a failed answer"
+    assert "PRE-MINTED" in row["note"] and "UNMEASURED" in row["note"], row["note"]
+    assert "distribution" in row["note"].lower(), \
+        "the reason must say what the real emissions ARE, or n/a reads as 'nothing happens here'"
 
     # THE CONTROL: the same metric on a project without the flag is served normally, so this
     # cannot pass because issuance broke for everyone.
@@ -5921,6 +5944,173 @@ def pytest_approx(x, tol=1.0):
         def __eq__(self, other):
             return abs(other - x) <= tol
     return _A()
+
+
+def _would_be_partial():
+    """Every (project, metric) the NARROWED refused-component rule would newly mark :PARTIAL.
+
+    THE RULE AS SCOPED: a metric is marked when a contract that is a DECLARED COMPONENT OF THAT
+    SAME METRIC is refused at the gate. "Same metric" is resolved exactly as the adapter resolves
+    it — metric_override or KIND_METRIC[kind] — so a contract serving a different metric never
+    contributes, whatever kind it is.
+
+    REFERENCE-ONLY KINDS CANNOT TRIGGER IT, and not by a special case: chain.py checks
+    REFERENCE_ONLY_KINDS *before* the gate, so a bridged_representation or burn_executor is never
+    refused because it is never offered. GEODNET's Solana mint and IoTeX deployment, PancakeSwap's
+    Base token and every burn executor are excluded by construction rather than by exception.
+
+    Returns (would_change, no_figure_at_all). The second is the case the narrow rule deliberately
+    does NOT touch: where every component is refused, no figure is emitted, so there is nothing
+    to mark partial and the metric is an honest gap.
+    """
+    from fetch.chain import BURN_READ_KINDS, METHOD_REQUIRED_KINDS, REFERENCE_ONLY_KINDS
+
+    def refused(project, spec):
+        if spec["kind"] in REFERENCE_ONLY_KINDS:
+            return None
+        if spec.get("ambiguous"):
+            return "ambiguous"
+        mech = config.burn_mechanism(project)
+        if spec["kind"] in BURN_READ_KINDS and mech.get("status") == "refuted":
+            return "mechanism_refuted"
+        if spec["kind"] == "burn_address_balance" \
+                and project.get("burn_read_method") not in ("transfer", None):
+            return "unreadable_burn_method"
+        if spec.get("chain") not in config.EVM_CHAINS:
+            return "chain_not_covered"
+        if spec["kind"] in METHOD_REQUIRED_KINDS and not spec.get("read_method"):
+            return "lock_method_unset"
+        if not spec.get("verified"):
+            return "unverified"
+        return None
+
+    served = {}
+    for p in config.PROJECTS:
+        for key, spec in (p.get("contracts") or {}).items():
+            if spec["kind"] in REFERENCE_ONLY_KINDS:
+                continue
+            m = spec.get("metric_override") or config.KIND_METRIC.get(spec.get("kind"))
+            if m:
+                served.setdefault((p["name"], m), []).append((key, spec))
+
+    change, no_figure = {}, {}
+    for (name, metric), comps in served.items():
+        proj = config.PROJECT_BY_NAME[name]
+        bad = {k: refused(proj, s) for k, s in comps if refused(proj, s)}
+        if not bad:
+            continue
+        reads = [k for k, s in comps if not refused(proj, s)]
+        already = any(s.get("supply_is_partial") for _, s in comps) or (
+            metric == "total_supply" and proj.get("supply_is_partial"))
+        if not reads:
+            no_figure[(name, metric)] = bad
+        elif not already:
+            change[(name, metric)] = {"reads": reads, "refused": bad}
+    return change, no_figure
+
+
+def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
+    """Item 3, DRY RUN — the rule is NOT applied. This records what it would do, so the list
+    cannot drift between being reported and being reviewed.
+
+    ** THE BLAST RADIUS IS ONE CELL. ** GEODNET's burn_address_balance sums burn_polygon and
+    would also sum burn_solana_token_account, which is on a chain the EVM adapter does not cover.
+    That is a genuinely incomplete sum, and it is the same incompleteness already recorded from
+    the other side: the Dune backfill covers Polygon AND Solana while the live read is Polygon
+    alone, which is GEODNET's declared composition_change. Marking it partial says on the cell
+    what the handover note says in prose.
+
+    FIVE OTHER METRICS HAVE A REFUSED COMPONENT AND ARE DELIBERATELY UNTOUCHED, because every one
+    of their components is refused: no figure is emitted at all, so there is nothing to mark
+    partial and the metric is an honest gap. A rule that marked those would be labelling an empty
+    cell as an understatement.
+    """
+    change, no_figure = _would_be_partial()
+
+    assert set(change) == {("GEODNET", "burn_address_balance")}, \
+        f"the dry run's list has moved — review it before applying: {sorted(change)}"
+    only = change[("GEODNET", "burn_address_balance")]
+    assert only["reads"] == ["burn_polygon"]
+    assert only["refused"] == {"burn_solana_token_account": "chain_not_covered"}
+
+    assert set(no_figure) == {
+        ("Aave", "locked_tokens"), ("Aave", "total_supply"),
+        ("GEODNET", "buyback_fund_balance"), ("OriginTrail", "total_supply"),
+        ("Venice AI", "buyback_fund_balance"),
+    }, f"the all-refused list has moved: {sorted(no_figure)}"
+
+    # AND THE EXCLUSION IS BY CONSTRUCTION, not by exception. Every reference-only contract is
+    # checked before the gate, so none of them can ever be a refused component.
+    from fetch.chain import REFERENCE_ONLY_KINDS
+    ref_only = [(p["name"], k) for p in config.PROJECTS
+                for k, c in (p.get("contracts") or {}).items()
+                if c["kind"] in REFERENCE_ONLY_KINDS]
+    assert len(ref_only) == 10, ref_only
+    for name, key in ref_only:
+        for (pn, _), d in change.items():
+            assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"
+    print(f"partial dry run ok: 1 metric would change (GEODNET/burn_address_balance), "
+          f"5 are all-refused and untouched, {len(ref_only)} reference-only excluded")
+
+
+def test_the_ultrasound_burn_entry_is_still_an_xhr_page_load_not_a_direct_json_fetch():
+    """Item 4. The question was whether this entry now fetches /api/fees/grouped-analysis-1 as a
+    DIRECT JSON request, so robots would be checked against the API path rather than the page.
+
+    IT DOES NOT, and the proof is one line: _scrape_one() opens with robots_allows(url) where
+    url is the entry's own `url` field — the ROOT PAGE — and then calls page.goto(url).
+    url_contains only FILTERS responses Playwright already intercepted from the loaded page.
+    There is no code path that requests an API URL on its own, for any method.
+
+    So confirming the endpoint from the frontend's source changed nothing about enableability:
+    the entry would still be refused on https://ultrasound.money/ whatever the API path permits,
+    and the API path's own robots status stays unknown and uncheckable from here.
+    """
+    import inspect
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    from fetch import scrape
+
+    entries = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "sources.yaml").read_text(encoding="utf-8"))
+    burn = next(e for e in entries
+                if e.get("project") == "Ethereum" and e.get("metric") == "gross_burn_tokens")
+    assert burn["method"] == "xhr", "if this ever says json, the mechanism was built — update this"
+    assert burn["url"] == "https://ultrasound.money/", \
+        "the url is the PAGE, and the url is what robots is checked against"
+    assert burn["url_contains"] == "/api/fees/grouped-analysis-1", \
+        "the endpoint IS correct — that was never what blocked it"
+    assert burn["enabled"] is False
+    assert "STILL AN XHR PAGE-LOAD" in burn["note"], \
+        "the answer must be at the entry, not only in a commit message"
+
+    # THE MECHANISM, ASSERTED FROM THE SOURCE rather than from the note. robots is checked
+    # against the entry's url before anything else happens, and the same url is what Playwright
+    # loads — so no method can reach an API path without the page.
+    src = inspect.getsource(scrape.Scrape._scrape_one)
+    head = src[:src.index("captured")]
+    assert re.search(r"robots_allows\(url\)", head), head[:400]
+    assert 'url = entry["project"], entry["metric"], entry["url"]' in src, \
+        "the url checked and loaded is the entry's own url field"
+    assert "page.goto(url" in src, "the same url is what gets loaded"
+
+    # AND url_contains IS ONLY EVER A FILTER ON WHAT CAME BACK, never a thing that is requested.
+    # Asserted over the whole module, not just _scrape_one: it is used in the response matcher,
+    # which is the only place it should ever appear.
+    mod = inspect.getsource(scrape)
+    for line in mod.splitlines():
+        if "url_contains" not in line:
+            continue
+        # HTTP calls specifically. entry.get("url_contains") is a dict lookup and is exactly
+        # what this should NOT match — narrowing the pattern rather than the assertion.
+        assert not re.search(r"(requests\.\w+|https?\.\w+|page\.goto)\s*\([^)]*url_contains", line), \
+            f"url_contains must never be fetched directly — if it is, the mechanism exists: {line}"
+    assert 'needle = entry.get("url_contains")' in mod, \
+        "it is a needle matched against intercepted responses, which is the whole point"
+    print("ultrasound ok: still xhr on the root page, endpoint correct but not what blocked it")
 
 
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():

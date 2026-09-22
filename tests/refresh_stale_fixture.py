@@ -85,6 +85,33 @@ def forced_refutation():
 
 
 @contextlib.contextmanager
+def forced_plain_suppression():
+    """Hold GEODNET's issuance suppression WITHOUT its renders_as, for the duration of the block.
+
+    THE SUPPRESSED BRANCH LOST ITS ONLY EXAMPLE ON 2026-09-22, and not because anything was
+    un-suppressed. GEODNET's issuance derivation is still switched off and still correct; what
+    changed is that total_supply_gross proved to be exactly 1,000,000,000 and unmoving, so the
+    quantity is zero by construction rather than uncomputable — and the row now renders n/a
+    instead of RED, because RED means "suppressed, refused or gapped" and a reader scanning for
+    problems goes looking for a source that does not exist.
+
+    The MECHANISM is unaffected and still has to be covered: any project can declare a plain
+    suppression tomorrow. Same treatment and the same reasoning as forced_dispute and
+    forced_refutation — the fixture covers the mechanism, not whichever project happens to
+    exercise it this week, and a branch with no example is the one that quietly stops being
+    tested.
+    """
+    geo = config.PROJECT_BY_NAME["GEODNET"]
+    previous = geo["issuance_derivation"]
+    geo["issuance_derivation"] = {k: v for k, v in previous.items()
+                                  if k not in ("renders_as", "na_reason")}
+    try:
+        yield
+    finally:
+        geo["issuance_derivation"] = previous
+
+
+@contextlib.contextmanager
 def forced_dispute():
     """Hold Maple's treasury contract disputed for the duration of the block.
 
@@ -355,7 +382,7 @@ def _evaluate(rows: list[dict]) -> dict:
                           "metric": r["metric"], "value": r["value"], "source": r["source"],
                           "tier": r["tier"], "is_manual": False, "entered_on": ""}
                          for r in rows])
-    with forced_dispute(), forced_refutation():
+    with forced_dispute(), forced_refutation(), forced_plain_suppression():
         out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(ASOF),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
     by_key = {(r["project"], r["metric"]): r for r in out.to_dict("records")}

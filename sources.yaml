@@ -284,7 +284,25 @@
   json_path: "feesBurned.feesBurned30d"
   added: 2026-09-15
   needs_first_run_check: true
-  note: "ENDPOINT CONFIRMED 2026-09-18 by reading ultrasoundmoney/frontend's own source
+  note: "** RE-CHECKED 2026-09-22, AND THE ANSWER IS NO: THIS IS STILL AN XHR PAGE-LOAD. **
+    The question asked was whether this entry now fetches /api/fees/grouped-analysis-1 as a
+    DIRECT JSON request, so robots would be checked against the API path rather than the page.
+    It does not. The proof is one line: fetch/scrape.py's _scrape_one() opens with
+    `if not robots_allows(url)` where `url` is the entry's own url field — the value directly above, the root
+    PAGE — and then calls page.goto(url). url_contains is only ever used to FILTER responses
+    Playwright already intercepted from the loaded page. There is no code path that requests an
+    API URL on its own, for any method.
+    SO THE ENDPOINT BEING CONFIRMED CHANGED NOTHING ABOUT ENABLEABILITY. url_contains and
+    json_path below are correct and were read from the frontend's own source; the entry would
+    still be refused on https://ultrasound.money/ whatever /api/fees/grouped-analysis-1 permits,
+    and the API path's own robots status remains unknown and uncheckable from here.
+    WHAT WOULD CHANGE IT is a `method: json` that requests the entry url directly with
+    requests.get and checks robots against THAT url — roughly: a branch in _scrape_one before
+    the browser is opened, the entry's url set to the API path, json_path applied to the
+    response body, and no Playwright involvement at all. It is a NEW FETCH MECHANISM rather than
+    a config change, so it is flagged here and not built unilaterally, the same as the two
+    previous rounds. ORIGINAL NOTE FOLLOWS.
+    ENDPOINT CONFIRMED 2026-09-18 by reading ultrasoundmoney/frontend's own source
     (src/mainsite/api/fees.ts and grouped-analysis-1's consumers) — url_contains and json_path
     above are no longer TODOs. STILL DISABLED: robots_allows() is checked against this entry's
     `url` (the ultrasound.money/ PAGE, which Playwright must load to intercept any xhr response)

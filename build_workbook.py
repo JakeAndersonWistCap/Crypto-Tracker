@@ -56,7 +56,16 @@ FILL_REVIEW = PatternFill("solid", fgColor="E4DFEC")      # flagged to the Revie
 FILL_GREEN = PatternFill("solid", fgColor="D6E9CE")
 FILL_AMBER = PatternFill("solid", fgColor="FDE9D0")
 FILL_RED = PatternFill("solid", fgColor="F4CCCC")
-CONFIDENCE_FILL = {"GREEN": FILL_GREEN, "AMBER": FILL_AMBER, "RED": FILL_RED}
+# "N/A" IS NOT A FOURTH GRADE OF CONFIDENCE, IT IS THE ABSENCE OF A QUESTION. Added 2026-09-22.
+# RED means "not a number: suppressed, refused or gapped" — every one of those is something
+# WRONG, and a reader scanning for problems is right to read it that way. "This quantity does not
+# exist for this project" is not a problem, and counting it as one inflates the RED figure with
+# rows that need no work and can never be fixed. It gets a grey fill and is left out of the
+# tally entirely, which is why it is absent from this map rather than pointing at a colour.
+CONFIDENCE_NA = "N/A"
+FILL_NA = PatternFill("solid", fgColor="F2F2F2")
+CONFIDENCE_FILL = {"GREEN": FILL_GREEN, "AMBER": FILL_AMBER, "RED": FILL_RED,
+                   CONFIDENCE_NA: FILL_NA}
 FILL_GAP = PatternFill("solid", fgColor="F2F2F2")         # unresolved — see the Gap Report
 FILL_SECTION = PatternFill("solid", fgColor="EDEDED")
 FILL_KEY = PatternFill("solid", fgColor="FFF2CC")           # headline figure cells
@@ -355,6 +364,8 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     # 3. DERIVATION SWITCHED OFF. Suppression stops NEW rows and cannot touch old ones — the same
     #    asymmetry that let Maple's 0.51 survive its dispute.
     supp = config.derivation_suppressed(project, metric)
+    if supp and supp.get("renders_as") == "n/a":
+        supp = None          # handled as n/a in aggregate — see the note there
     if supp:
         return "suppressed", (
             f"DERIVATION SUPPRESSED — this figure came from a derivation config has since switched "
@@ -478,10 +489,16 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     """
     # EMPTY OR NOT-APPLICABLE CELLS. These are states of the STORE, not verdicts on a figure —
     # there is no number here to be wrong — so they are kept apart from the withheld cases.
-    if row["status"] in ("missing", "gap", "n/a", "waiting"):
+    if row["status"] == "n/a":
+        # THE ONE BAND THAT IS NOT A VERDICT ON A FIGURE. There is no cell to fill here, so
+        # there is nothing to be right or wrong about — see CONFIDENCE_NA. The note carries the
+        # project's own reason where it declared one, because "not applicable" on its own sends
+        # a reader looking for the source that is missing.
+        return CONFIDENCE_NA, (str(row.get("note") or "").split(" | ")[0]
+                               or "not applicable to this project")
+    if row["status"] in ("missing", "gap", "waiting"):
         return "RED", {"missing": "no value in the store",
                        "gap": "unresolved — see the Gap Report",
-                       "n/a": "not applicable to this project",
                        # RED because the cell is empty, not because anything is wrong: the guard is
                        # armed and waiting on a suppressed primary. The note says which.
                        "waiting": "armed cross-check, waiting on a suppressed primary — see the note",
@@ -794,6 +811,20 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                                f"under a {window}-day header, not a short {window} days"
                                + (f" | {row['note']}" if row["note"] else ""))
 
+            # A SUPPRESSION WITH PROOF THAT THE QUANTITY IS ZERO IS NOT A WITHHELD FIGURE.
+            # GEODNET's issuance is the case: total_supply_gross reads exactly 1,000,000,000 and
+            # does not move, so nothing is minted — the derivation is switched off because a
+            # derived 0 would read as "no emissions" when emissions are real and are DISTRIBUTION
+            # from pre-minted wallets. RED there says "wrong number"; there is no number.
+            supp = config.derivation_suppressed(name, metric) or {}
+            if supp.get("renders_as") == "n/a":
+                row["status"] = "n/a"
+                row["note"] = supp.get("na_reason") or supp.get("why", "")
+                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                    row[col] = None
+                row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
+                rows.append(row)
+                continue
             withheld = withheld_for(name, metric, row)
             if withheld:
                 row["status"], reason = withheld
@@ -1341,7 +1372,8 @@ def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], da
         c.fill = CONFIDENCE_FILL[band]
     legend = ("GREEN = verified source, mechanism confirmed, no PARTIAL marker, more than one observation. Use it.   "
               "AMBER = a real number, qualified — hover the cell for why.   "
-              "RED = not a number: suppressed, refused or gapped.")
+              "RED = not a number: suppressed, refused or gapped.   "
+              "N/A = the quantity does not exist for this project — no work to do, and not counted above.")
     ws.cell(row=row + 4, column=1, value=legend).font = F_SUB
     return row + 6
 
