@@ -422,11 +422,23 @@ def pendle_spendle_virtual():
     for voting power. If either is inside totalSupply(), locked_tokens OVERSTATES real PENDLE
     locked — by up to 4x, which is the kind of error that still looks plausible on a sheet.
 
-    THE TEST IS A CEILING, NOT A MEASUREMENT. Real locked PENDLE cannot exceed PENDLE's total
-    supply. If sPENDLE.totalSupply() comes back ABOVE it, boosted or virtual balances are
-    definitely included and the metric is definitely wrong. Coming back BELOW proves nothing on
-    its own — a 4x boost on a small locked fraction still fits under the cap — so a pass here is
-    reported as "not refuted", never as confirmation.
+    TWO TESTS, AND THE SECOND ONE IS THE ANSWER. Added 2026-09-22.
+
+    THE CEILING (sPENDLE.totalSupply() vs PENDLE.totalSupply()) was the original and it is weak
+    by construction: real locked PENDLE cannot exceed PENDLE's total supply, so a figure ABOVE it
+    refutes, and a figure below proves nothing — a 4x boost on a small locked fraction still fits
+    under the cap. It is kept because a refutation is worth having whichever test produces it.
+
+    THE DIRECT TEST is sPENDLE.totalSupply() against PENDLE.balanceOf(sPENDLE): shares against
+    the ASSETS ACTUALLY HELD by the staking contract. Every real locked PENDLE is in that
+    balance. So shares materially above assets means the share count contains something that is
+    not locked PENDLE — which is exactly what a boosted or virtual balance is — and shares at or
+    below assets means it does not. This settles the question the ceiling could only fail to
+    refute, and it is the same shares-versus-assets comparison already running on Ether.fi.
+
+    ** BOTH READS PINNED TO ONE BLOCK. ** Two calls at "latest" can straddle a block boundary,
+    and for a ratio of two figures that is the difference between a measurement and a
+    coincidence. Same discipline as the Ether.fi read, which was pinned to block 25,982,077.
     """
     head("PENDLE — does sPENDLE.totalSupply() include boosted / virtual balances?")
     block, src = eth_block_number()
@@ -435,8 +447,12 @@ def pendle_spendle_virtual():
         return
     print(f"  pinned to block {block} ({int(block, 16):,}) via {src}\n")
 
+    # balanceOf(sPENDLE) — the selector plus the address left-padded to 32 bytes.
+    bal_of_spendle = SEL_BALANCE_OF + SPENDLE[2:].lower().rjust(64, "0")
+
     got = {}
     for name, to, data in (("sPENDLE.totalSupply()", SPENDLE, SEL_TOTAL_SUPPLY),
+                           ("PENDLE.balanceOf(sPENDLE)", PENDLE, bal_of_spendle),
                            ("PENDLE.totalSupply()", PENDLE, SEL_TOTAL_SUPPLY),
                            ("sPENDLE.decimals()", SPENDLE, SEL_DECIMALS),
                            ("PENDLE.decimals()", PENDLE, SEL_DECIMALS)):
@@ -448,6 +464,7 @@ def pendle_spendle_virtual():
         print(f"  {name:<24} {got[name]:,} raw")
 
     sp, pe = got.get("sPENDLE.totalSupply()"), got.get("PENDLE.totalSupply()")
+    held = got.get("PENDLE.balanceOf(sPENDLE)")
     ds, dp = got.get("sPENDLE.decimals()"), got.get("PENDLE.decimals()")
     if sp is None or pe is None or ds is None or dp is None:
         print("\n  VERDICT: NOT ESTABLISHED — a read did not return. Do not infer from the others.")
@@ -457,15 +474,47 @@ def pendle_spendle_virtual():
               f"same way would be wrong; no ratio is printed.")
         return
     locked, total = sp / (10 ** ds), pe / (10 ** dp)
-    print(f"\n  sPENDLE totalSupply  {locked:,.6f}")
+    print(f"\n  sPENDLE totalSupply  {locked:,.6f}   (shares)")
+    if held is not None:
+        assets = held / (10 ** dp)
+        print(f"  PENDLE held by it    {assets:,.6f}   (assets actually locked)")
     print(f"  PENDLE  totalSupply  {total:,.6f}")
-    print(f"  ratio                {locked / total:.6f}")
+    print(f"  ratio to supply      {locked / total:.6f}")
+
+    # ===== THE DIRECT TEST FIRST, because it can SETTLE the question where the ceiling below
+    # can only fail to refute it. Reported before the ceiling so a reader meets the answer
+    # before the weaker test that does not give one.
+    if held is not None:
+        assets = held / (10 ** dp)
+        if assets <= 0:
+            print("\n  VERDICT (direct): NOT ESTABLISHED — the staking contract holds no PENDLE, "
+                  "which means the lock is not custodied at this address and this comparison "
+                  "does not apply. Do not read it as 'shares exceed assets'.")
+        else:
+            ratio = locked / assets
+            print(f"  shares / assets      {ratio:.6f}")
+            if ratio > 1.01:
+                print(f"\n  VERDICT (direct): BOOSTED OR VIRTUAL BALANCES ARE INCLUDED. sPENDLE's "
+                      f"share count is {ratio:.2f}x the PENDLE the contract actually holds, and "
+                      f"every really-locked PENDLE is in that balance — so the excess is not "
+                      f"locked tokens. locked_tokens OVERSTATES by this factor and the "
+                      f"non_comparable flag is correct. THE ASSETS FIGURE IS THE ONE TO USE.")
+            else:
+                print(f"\n  VERDICT (direct): NOT INCLUDED — shares are {ratio:.4f}x assets, i.e. "
+                      f"one share is one locked PENDLE within a percent. The boosted balance is "
+                      f"therefore a VOTING-WEIGHT construct that totalSupply() does not carry, "
+                      f"and locked_tokens is measuring what its name says. This SETTLES the open "
+                      f"P1 where the ceiling test below could not.")
+    else:
+        print("\n  VERDICT (direct): NOT RUN — PENDLE.balanceOf(sPENDLE) did not return. The "
+              "ceiling test below is all that is left and it cannot settle the question.")
+
     if locked > total:
-        print(f"\n  VERDICT: INCLUDES BOOSTED/VIRTUAL — sPENDLE totalSupply EXCEEDS the entire "
+        print(f"\n  VERDICT (ceiling): INCLUDES BOOSTED/VIRTUAL — sPENDLE totalSupply EXCEEDS the entire "
               f"PENDLE supply by {locked / total:.2f}x, which is impossible for real locked "
               f"tokens. locked_tokens is overstated and the non_comparable flag is correct.")
     else:
-        print(f"\n  VERDICT: NOT REFUTED, AND NOT CONFIRMED — {locked / total:.2%} of PENDLE "
+        print(f"\n  VERDICT (ceiling): NOT REFUTED, AND NOT CONFIRMED — {locked / total:.2%} of PENDLE "
               f"supply. This is a CEILING test and it passed, which does not settle the question: "
               f"a 4x boost on a small locked fraction still fits under the cap. The "
               f"non_comparable flag stays until Pendle's own docs or a virtual-balance read "

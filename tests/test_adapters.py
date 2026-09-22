@@ -5621,6 +5621,61 @@ def test_the_hyperliquid_accrual_carries_its_trigger_date_and_stays_unbooked():
     print("hyperliquid ok: unbooked, trigger date on file, no action taken and the reason recorded")
 
 
+def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_block():
+    """H. Three checks, and two of them already existed — reported as found rather than rebuilt.
+
+    H2 (Uniswap Firepit threshold) and H3 (Sky want()/spotter() and the Splitter's live flapper
+    via the ChainLog) were already in check_offline_items.py, and H3's RPC order already puts
+    publicnode first with the reason recorded: llamarpc returned 525 for want() and spotter() on
+    two separate days while publicnode answered every other call in the same script.
+
+    H1 IS A REAL ADDITION, AND IT IS A DIFFERENT TEST FROM THE ONE THAT WAS THERE. The existing
+    Pendle check compared sPENDLE.totalSupply() against PENDLE.totalSupply() — a CEILING, which
+    refutes if exceeded and proves nothing if not, because a 4x boost on a small locked fraction
+    still fits under the cap. Comparing it against PENDLE.balanceOf(sPENDLE) compares shares
+    against the ASSETS ACTUALLY HELD, and every really-locked PENDLE is in that balance. That
+    settles the question the ceiling could only fail to refute.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "check_offline_items.py").read_text(encoding="utf-8")
+
+    # H1 — both reads, and PINNED TO ONE BLOCK. Two calls at "latest" can straddle a boundary,
+    # which for a ratio of two figures is the difference between a measurement and a coincidence.
+    pendle = src[src.index("def pendle_spendle_virtual"):src.index("def uniswap_firepit_threshold")]
+    assert "PENDLE.balanceOf(sPENDLE)" in pendle, "the direct shares-vs-assets read must be there"
+    assert "SEL_BALANCE_OF + SPENDLE[2:]" in pendle, "balanceOf must be called ON PENDLE, FOR sPENDLE"
+    assert "eth_block_number()" in pendle and pendle.count("eth_call(to, data, block)") >= 1, \
+        "both figures must come from the same pinned block"
+    assert "VERDICT (direct)" in pendle and "VERDICT (ceiling)" in pendle, \
+        "the two tests answer differently and must be reported apart"
+    assert pendle.index("VERDICT (direct)") < pendle.index("VERDICT (ceiling)"), \
+        "the test that can SETTLE the question is reported before the one that cannot"
+    # AND A ZERO BALANCE IS NOT READ AS 'SHARES EXCEED ASSETS' — it means the lock is not
+    # custodied at that address and the comparison does not apply.
+    assert "the lock is not custodied at this address" in pendle
+
+    # H2 — the Firepit threshold is governance STORAGE, so it cannot be read from source.
+    assert "def uniswap_firepit_threshold" in src and "SEL_THRESHOLD" in src
+    assert 'SEL_THRESHOLD = "0x42cde4e8"' in src, "keccak('threshold()')[:4]"
+
+    # H3 — want()/spotter() with publicnode FIRST, and the Splitter's flapper via the ChainLog
+    # rather than from a historical executive vote.
+    assert src.index('"https://ethereum-rpc.publicnode.com"') < src.index('"https://eth.llamarpc.com"'), \
+        "publicnode must be tried first — llamarpc 525'd on want() and spotter() twice"
+    assert '"want()": "0x1f1c827f"' in src and '"spotter()": "0xf3701da2"' in src
+    assert "def sky_chainlog" in src and "CHAINLOG_LIST" in src
+    assert "may not be \"MCD_SPLIT\"" in src, \
+        "the registry key is not guessed either — list() is printed in full first"
+
+    # ALL OF THEM ACTUALLY RUN. A check that exists and is not called is not a check.
+    main = src[src.index("def main():"):]
+    for fn in ("pendle_spendle_virtual", "uniswap_firepit_threshold", "sky_chainlog",
+               "sky_splitter", "sky"):
+        assert fn in main, f"{fn} is defined but never called from main()"
+    print("offline checks ok: H1 added as a direct shares-vs-assets read on one block, "
+          "H2 and H3 already present and confirmed")
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:
