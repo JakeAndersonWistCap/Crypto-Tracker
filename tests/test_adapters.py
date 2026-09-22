@@ -1484,23 +1484,36 @@ def test_several_contracts_serving_one_metric_are_summed():
 
 
 def test_a_component_on_an_uncovered_chain_is_refused_and_makes_the_sum_PARTIAL():
-    """The other half of the behaviour above, on a project that still spans chains.
+    """A component the adapter cannot reach must be REFUSED and the sum marked PARTIAL — never
+    silently dropped and the remainder reported as the whole.
 
-    GEODNET declares GEOD on Polygon, Solana and IoTeX. The EVM adapter covers Polygon; solana and
-    iotex have no RPC in DEFAULT_RPC. Those components must be REFUSED at the chain-coverage gate
-    and the resulting supply marked PARTIAL — never silently dropped and the remainder reported as
-    the whole. This matters more for GEODNET than for a missing endpoint: the Wormhole NTT bridge
-    model is unresolved, so summing the chains could be a double-count even if every read worked.
+    ** GEODNET WAS THE WORKED EXAMPLE HERE AND IS NO LONGER ONE. CHANGED 2026-09-22. ** Its
+    Polygon contract reads EXACTLY 1,000,000,000 GEOD, the entire declared cap, so there is
+    nothing outside it to be partial about; the Solana and IoTeX deployments are mirrors of
+    tokens locked on Polygon and are now declared bridged_representation. See the second half of
+    this test. The MECHANISM is unchanged and still needs covering, so it is exercised on a
+    synthetic project instead of on one whose facts have moved.
     """
-    geod = config.PROJECT_BY_NAME["GEODNET"]
-    POLY_GEOD = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+    import copy
+
+    POLY = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+    proj = copy.deepcopy(config.PROJECT_BY_NAME["GEODNET"])
+    # Put the remote deployments back to ordinary supply reads, which is what a project whose
+    # bridge model is genuinely open looks like, and restore the project-level partial flag.
+    proj["contracts"]["token_iotex"] = dict(proj["contracts"]["token_iotex"],
+                                            kind="erc20_total_supply",
+                                            metric_override="total_supply_gross")
+    proj["contracts"]["mint_solana"] = dict(proj["contracts"]["mint_solana"], kind="spl_mint")
+    proj["contracts"]["token_polygon"] = dict(proj["contracts"]["token_polygon"],
+                                              supply_is_partial=True,
+                                              partial_reason="synthetic: bridge model open")
 
     class PolygonOnlyStub:
         def has_code(self, chain, address):
             return True
 
         def symbol_matches(self, chain, address, expected):
-            ok = (chain, address) == ("polygon", POLY_GEOD)
+            ok = (chain, address) == ("polygon", POLY)
             return ok, "GEOD" if ok else ""
 
         def scaled(self, chain, address, call, *args):
@@ -1509,26 +1522,73 @@ def test_a_component_on_an_uncovered_chain_is_refused_and_makes_the_sum_PARTIAL(
     c = Chain()
     c.reader = PolygonOnlyStub()
     out = FetchOutput()
-    c.run([geod], None, out)
+    c.run([proj], None, out)
     df = out.frame()
 
-    # THE METRIC NAME COMES FROM CONFIG, not written out. GEODNET's token contracts carry
-    # metric_override="total_supply_gross" as of 2026-09-22 (the contract counts tokens at the
-    # dead address, CoinGecko does not), and a hardcoded "total_supply" would have quietly
-    # asserted that the PARTIAL-sum machinery still worked while testing an empty frame.
-    supply_metric = (geod["contracts"]["token_polygon"].get("metric_override")
+    supply_metric = (proj["contracts"]["token_polygon"].get("metric_override")
                      or config.KIND_METRIC["erc20_total_supply"])
     supply = df[df.metric == supply_metric]
     assert len(supply) == 1, f"one supply figure, summed from what could be read: {supply.to_dict()}"
     assert supply.source.iloc[0].endswith(":PARTIAL"), \
-        f"Solana and IoTeX were refused — the figure must say so: {supply.source.iloc[0]}"
-    assert "polygon:token_polygon" in supply.source.iloc[0]
-
+        f"the declared partial flag must reach the source string: {supply.source.iloc[0]}"
     reasons = " ".join(str(g.get("reason", "")) for g in out.gaps)
     assert "'solana'" in reasons and "'iotex'" in reasons, \
         f"both uncovered chains must be named specifically, not lumped together: {reasons}"
-    print("uncovered-chain refusal ok: GEOD supply is Polygon-only and marked PARTIAL, "
-          "with solana and iotex each named")
+
+    # ** A FINDING, ASSERTED SO IT CANNOT BE FORGOTTEN: THE GATE DOES NOT MARK THE SUM PARTIAL. **
+    # This test's previous version said an unreachable component "makes the resulting supply
+    # marked PARTIAL", and the PARTIAL it observed came from supply_is_partial on the contract —
+    # not from the refusal. fetch/chain.py's _gate returns False and the caller `continue`s
+    # without adding anything to `refused`, which is the only input _emit_parts reads for this.
+    # So a component refused for being unverified, on an uncovered chain, ambiguous, or on a
+    # refuted mechanism produces a Gap Report row and leaves the sum looking complete.
+    #
+    # NOT FIXED HERE, because the fix is not small in effect: every project holding an unverified
+    # contract would start rendering PARTIAL, which changes figures across the sheet and is
+    # Jake's call, not a side-effect of a GEODNET change. Reported instead, and pinned here so
+    # the next reader meets the real behaviour rather than the docstring's version of it.
+    bare = copy.deepcopy(proj)
+    bare["contracts"]["token_polygon"] = dict(bare["contracts"]["token_polygon"],
+                                              supply_is_partial=False, partial_reason="")
+    c = Chain()
+    c.reader = PolygonOnlyStub()
+    out2 = FetchOutput()
+    c.run([bare], None, out2)
+    bare_supply = out2.frame()
+    bare_supply = bare_supply[bare_supply.metric == supply_metric]
+    assert not bare_supply.source.iloc[0].endswith(":PARTIAL"), \
+        "if this ever starts passing, the gate has learnt to mark the sum partial — read the note above"
+
+    # ===== AND GEODNET AS IT NOW STANDS: COMPLETE, AND NEVER SUMMED. =====
+    geod = config.PROJECT_BY_NAME["GEODNET"]
+    assert geod["contracts"]["token_polygon"]["supply_is_partial"] is False, \
+        "a read of the entire 1,000,000,000 cap cannot be missing anything"
+    for key in ("token_iotex", "mint_solana"):
+        assert geod["contracts"][key]["kind"] == "bridged_representation", \
+            f"{key} must be reference-only BY DECLARATION, not because its chain lacks an adapter"
+    c = Chain()
+    c.reader = PolygonOnlyStub()
+    out = FetchOutput()
+    c.run([geod], None, out)
+    df = out.frame()
+    supply = df[df.metric == "total_supply_gross"]
+    assert len(supply) == 1 and float(supply.value.iloc[0]) == 1_000_000_000.0
+    assert not supply.source.iloc[0].endswith(":PARTIAL"), \
+        f"the PARTIAL marker was an inversion and must be gone: {supply.source.iloc[0]}"
+    # THE SUPPLY METRIC HAS NO COVERAGE GAP ANY MORE. A reference-only contract is a decision,
+    # not a to-do item, and the Gap Report is a to-do list. Scoped to the supply metric on
+    # purpose: burn_solana_token_account is STILL an uncovered-chain gap and must stay one — the
+    # Solana burn destination is a real component of the burn figure that nothing reads.
+    supply_gaps = " ".join(str(g.get("reason", "")) for g in out.gaps
+                           if g.get("metric") == "total_supply_gross")
+    assert "'solana'" not in supply_gaps and "'iotex'" not in supply_gaps, \
+        f"a mirror deployment is not a supply gap: {supply_gaps}"
+    burn_gaps = " ".join(str(g.get("reason", "")) for g in out.gaps
+                         if g.get("metric") in ("burn_address_balance", "gross_burn_tokens"))
+    assert "'solana'" in burn_gaps, \
+        "the Solana BURN destination is a real unread component and must stay on the Gap Report"
+    print("uncovered-chain refusal ok on a synthetic project; GEODNET reads the whole cap, "
+          "unmarked, with its mirrors declared reference-only")
 
 
 def test_components_sum_fully_once_every_chain_has_its_token():
@@ -3340,12 +3400,27 @@ def test_geodnet_sql_addresses_match_config_exactly():
         assert c["source_url"] == "https://docs.geodnet.com/geod-token/tokenomics", \
             f"{key}: provenance must be GEODNET's own docs, not an aggregator"
     assert contracts["token_iotex"]["chain"] == "iotex"
-    assert contracts["token_iotex"]["chain"] not in config.EVM_CHAINS, \
-        "iotex has no RPC, so the IoTeX deployment must stay unreadable until one is added"
-    assert contracts["token_polygon"]["supply_is_partial"], \
-        "Polygon is read alone while the bridge model is open — the figure must say it is partial"
-    print("geodnet addresses ok: all four match, Solana exactly, EVM modulo EIP-55 casing; "
-          "IoTeX recorded but unreadable, Polygon marked partial")
+    # ** THE READ IS REFUSED BY DECLARATION NOW, NOT BY A MISSING ADAPTER. CHANGED 2026-09-22. **
+    # This used to assert that iotex is absent from EVM_CHAINS, which kept the deployment
+    # unreadable — the right outcome for a reason that had nothing to do with GEOD. An iotex RPC
+    # added for any other purpose would have started summing it. The kind is what refuses it now,
+    # and the chain assertion is kept as a fact rather than as the safeguard.
+    assert contracts["token_iotex"]["kind"] == "bridged_representation", \
+        "the IoTeX deployment must be refused by its KIND, not by the absence of an RPC endpoint"
+    assert contracts["mint_solana"]["kind"] == "bridged_representation", \
+        "same for Solana — its old note admitted the missing adapter was a coincidence"
+    # AND THE PARTIAL MARKER IS GONE, which is the other half of the same finding. Polygon's
+    # totalSupply() reads EXACTLY 1,000,000,000 GEOD — the entire declared cap, to the token — so
+    # there is nothing outside it for the figure to be partial about. Not summing was always
+    # right; calling the result partial was the inversion, the same one corrected on PancakeSwap.
+    assert contracts["token_polygon"]["supply_is_partial"] is False, \
+        "a read of the whole cap cannot be missing a component"
+    assert contracts["token_polygon"]["metric_override"] == "total_supply_gross", \
+        "still the GROSS figure: the contract counts tokens at the dead address, CoinGecko does not"
+    assert "1,000,000,000" in contracts["token_polygon"]["note"], \
+        "the evidence for dropping the marker must travel with the contract"
+    print("geodnet addresses ok: all four match; the mirrors are reference-only by declaration "
+          "and Polygon reads the whole cap, unmarked")
 
 
 def test_dune_backfill_only():

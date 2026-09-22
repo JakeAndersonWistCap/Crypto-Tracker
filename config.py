@@ -2854,7 +2854,52 @@ PROJECTS = [
             "why_it_matters": "supply_units is BOTH the archetype 2 operating metric and the missing "
                               "input for network issuance, which per_miner_reward_schedule cannot be "
                               "turned into a network figure without a miner count.",
-            "status": "REFERENCE ONLY — not a stored metric. No source is configured to fetch it.",
+            "status": "SEEDED AS A METRIC 2026-09-22 — see manual_overrides.csv. Still no source "
+                      "is configured to FETCH it; the figure is entered by hand, dated to DePIN "
+                      "Scan's reference date rather than to the run, and it goes stale like any "
+                      "other manual quarterly. Manual entry is where the sourcing priority "
+                      "terminates here and that is an answer, not a failure: free API — none "
+                      "publishes it; contract read — a device count is not on chain; rendered "
+                      "page — GEODNET's console map has no fetchable endpoint on file; paid API — "
+                      "not on our tier.",
+        },
+        # ===== THE EMISSIONS PROXY FROM THE MINING WALLET IS DECLINED. 2026-09-22. =====
+        # The idea: mining_distribution_polygon's balance FALLS as rewards are paid, so the
+        # decline is network issuance as it happens — a measured figure where the alternative is
+        # modelling per-miner rates across an unknown miner count. It is the right instinct and
+        # the wrong reading, and config already contained the refutation before the proposal:
+        # see contracts.mining_distribution_polygon's note.
+        #
+        # ** A DISTRIBUTION WALLET'S BALANCE IS A FLOAT, NOT A CUMULATIVE. ** It rises on top-up
+        # and falls on payout, so differencing it reports NEGATIVE issuance on a top-up day and
+        # ZERO on a quiet one. Neither is a fact about emissions, and both would be stored as
+        # measured figures on the archetype 2 tab, feeding the customer-revenue-per-token-emitted
+        # ratio as a denominator. The zero is the worse of the two: it is indistinguishable from
+        # a measured "nothing was emitted".
+        #
+        # NO LABEL FIXES THAT. The offer was to wire it "labelled loudly", and a loud label on a
+        # number that is negative when the truth is positive is not a disclosure, it is a wrong
+        # figure with an apology attached — and this file's whole discipline is that a wrong
+        # number is worse than a gap.
+        #
+        # WHAT WOULD WORK is the OUTFLOW rather than the balance: sum Transfer(mining_distribution,
+        # *) over a window, which is one-directional and is issuance. That needs a transfer-log
+        # read on Polygon — the same shape as the burn_transfer_logs kind added for Sky on
+        # 2026-09-22, pointed at outflows from one address instead of inflows to zero. It is a
+        # real route and it is not wired: nothing here should be read as saying the proxy is
+        # impossible, only that the BALANCE version of it is not the thing.
+        "emissions_proxy_declined": {
+            "proposed": "difference mining_distribution_polygon's balance; the decline is issuance",
+            "declined_on": "2026-09-22",
+            "why": "the balance is a float, not a cumulative — it rises on top-up and falls on "
+                   "payout, so a difference is negative on top-up days and zero on quiet ones. "
+                   "A label does not make either figure true.",
+            "what_would_work": "sum outflows from the wallet (Transfer(mining_distribution, *)) "
+                               "over a window — one-directional, and it IS issuance. Needs a "
+                               "Polygon transfer-log read, the same shape as the burn_transfer_logs "
+                               "kind, pointed at outflows from one address. NOT wired.",
+            "see_also": "contracts.mining_distribution_polygon.note, which said this before the "
+                        "proxy was proposed",
         },
         # ===== B5 reference data: the burn trend, and a dated claim to test our own figures against.
         "burn_reference": {
@@ -3120,13 +3165,29 @@ PROJECTS = [
                 "0xAC0F66379A6d7801D7726d5a943356A172549Adb", "polygon", "erc20_total_supply", "GEOD",
                 "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-11",
                 provenance="GEODNET's own token docs; originally sourced from Dune query 8683175",
-                token_standard="erc20", supply_is_partial=True,
-                partial_reason="POLYGON ONLY, and deliberately not summed with Solana or IoTeX: the Wormhole "
-                               "NTT bridge model (lock-and-mint vs burn-and-mint) is not established, and "
-                               "the two answers differ by a double-count of the entire remote float.",
-                purpose="Polygon GEOD token — the PRIMARY supply read, and the token balanceOf is called "
-                        "on for the Polygon burn. Polygon remains the home chain: GIP-7 (Solana primary) "
-                        "is PROPOSED, not enacted.",
+                token_standard="erc20", supply_is_partial=False,
+                purpose="Polygon GEOD token — THE COMPLETE SUPPLY READ, and the token balanceOf is "
+                        "called on for the Polygon burn. Polygon remains the home chain: GIP-7 "
+                        "(Solana primary) is PROPOSED, not enacted.",
+                note="** THE PARTIAL MARKER WAS REMOVED 2026-09-22, AND THE BRIDGE MODEL IS WHY. **\n"
+                     "It read 'POLYGON ONLY, deliberately not summed with Solana or IoTeX: the "
+                     "Wormhole NTT bridge model is not established, and the two answers differ by a "
+                     "double-count of the entire remote float.' Not summing was right and calling "
+                     "the result PARTIAL was the inversion — the same mistake corrected on "
+                     "PancakeSwap a day earlier.\n"
+                     "THE LIVE READ SETTLES IT: this contract's totalSupply() returns EXACTLY "
+                     "1,000,000,000 GEOD, which is the entire declared cap to the token. There is "
+                     "nothing outside it to be partial about. A supply that is already the whole "
+                     "cap cannot be missing the Solana and IoTeX deployments; those deployments are "
+                     "therefore MIRRORS of tokens locked on Polygon, which is lock-and-mint, and "
+                     "summing them would double-count the remote float exactly as the old reason "
+                     "feared. The reason was right about the arithmetic and wrong about which side "
+                     "of it this figure sits on.\n"
+                     "SO: NEVER SUM. mint_solana and token_iotex are declared "
+                     "kind='bridged_representation' — reference-only, never read, never added — "
+                     "rather than being left unsummed because no adapter happens to exist for "
+                     "their chains. An accident that produces the right answer is not a decision, "
+                     "and the next adapter would have undone it silently.",
                 # GROSS of burn — the contract counts tokens at the dead
                 # address; CoinGecko does not. See METRICS["total_supply_gross"].
                 metric_override="total_supply_gross"),
@@ -3135,14 +3196,16 @@ PROJECTS = [
             # in DEFAULT_RPC, so nothing is read and nothing can be silently summed — which is the
             # correct outcome while the bridge model is open.
             "token_iotex": _contract(
-                "0x8E33229206f726993E4A7bF7dA2347F3743Bf8b4", "iotex", "erc20_total_supply", "GEOD",
+                "0x8E33229206f726993E4A7bF7dA2347F3743Bf8b4", "iotex", "bridged_representation", "GEOD",
                 "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-14",
                 provenance="GEODNET's own token docs", token_standard="erc20",
-                purpose="IoTeX GEOD deployment, named in GEODNET's own token documentation. Recorded for "
-                        "completeness; not summed into supply while the bridge model is unresolved.",
-                # GROSS of burn — the contract counts tokens at the dead
-                # address; CoinGecko does not. See METRICS["total_supply_gross"].
-                metric_override="total_supply_gross"),
+                purpose="IoTeX GEOD deployment — a MIRROR of GEOD locked on Polygon, not additional "
+                        "supply. Reference only: recorded, never read, never summed.",
+                note="KIND CHANGED FROM erc20_total_supply TO bridged_representation, 2026-09-22. It "
+                     "was previously left unread because iotex has no RPC endpoint in DEFAULT_RPC — "
+                     "the right outcome for the wrong reason, and one an added adapter would have "
+                     "reversed without anyone deciding to. Polygon's totalSupply() reads the entire "
+                     "1,000,000,000 cap, so everything represented here is already counted there."),
             "burn_polygon": _contract(
                 "0x000000000000000000000000000000000000dEaD", "polygon", "burn_address_balance", "GEOD",
                 GEODNET_BURN_QUERY, verified="2026-09-11",
@@ -3150,12 +3213,17 @@ PROJECTS = [
                 purpose="TRANSFER BURN — Polygon burn destination. IN SCOPE for the backfill, not historical-only: "
                         "the working query unions Polygon and Solana burns into one series."),
             "mint_solana": _contract(
-                "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu", "solana", "spl_mint", "GEOD",
+                "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu", "solana", "bridged_representation", "GEOD",
                 "https://docs.geodnet.com/geod-token/geod-token-introduction", verified="2026-09-14",
                 provenance="GEODNET's own token docs; originally sourced from Dune query 8683175",
-                purpose="Solana GEOD mint. NOT summed into supply while the Wormhole NTT bridge model "
-                        "is unresolved — the Solana adapter does not exist, which coincidentally gives "
-                        "the correct outcome, but the reason it must not be summed is the bridge model."),
+                purpose="Solana GEOD mint — a MIRROR of GEOD locked on Polygon, not additional supply. "
+                        "Reference only: recorded, never read, never summed.",
+                note="KIND CHANGED FROM spl_mint TO bridged_representation, 2026-09-22. The old note "
+                     "said outright that no Solana adapter exists, 'which coincidentally gives the "
+                     "correct outcome' — this replaces the coincidence with the decision. Polygon's "
+                     "totalSupply() reads the entire 1,000,000,000 cap, so this mint represents "
+                     "tokens already counted there. A Solana adapter arriving later must not change "
+                     "the supply figure, and now cannot."),
             "burn_solana_token_account": _contract(
                 "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED", "solana", "spl_token_account", "GEOD",
                 GEODNET_BURN_QUERY, verified="2026-09-11",
