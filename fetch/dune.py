@@ -97,6 +97,26 @@ class Dune:
         except (TypeError, ValueError):
             return None
 
+    def _queries_running(self, name: str, queries: dict) -> set:
+        """Query ids that WILL execute this run, because at least one metric they serve is due.
+
+        Computed before the per-metric loop because the answer is a property of the query and the
+        loop visits metrics. Without it the first metric of a shared query re-pulls and the rest
+        are skipped as "already have history" — beside a response that is already in memory.
+        """
+        running = set()
+        for metric, q in queries.items():
+            qid = q.get("query_id")
+            if not qid:
+                continue
+            refresh = q.get("refresh_days")
+            age = self._refresh_age_days(name, metric)
+            due = bool(refresh) and (age is None or age >= int(refresh))
+            first_time = (name, metric) not in self.has_history
+            if first_time or due or always_refetch() or q.get("snapshot") or q.get("ongoing"):
+                running.add(qid)
+        return running
+
     def _results(self, query_id: int) -> list[dict]:
         if query_id in self._cache:
             return self._cache[query_id]
@@ -152,7 +172,9 @@ class Dune:
             window_days = None
         for p in projects:
             name = p["name"]
-            for metric, q in (p.get("dune_queries") or {}).items():
+            queries = p.get("dune_queries") or {}
+            running = self._queries_running(name, queries)
+            for metric, q in queries.items():
                 qid = q.get("query_id")
                 if not qid:
                     out.unconfigured(SOURCE, name, f"{metric}: no query_id in config", TIER)
@@ -181,7 +203,20 @@ class Dune:
                 refresh = q.get("refresh_days")
                 age = self._refresh_age_days(name, metric)
                 due = bool(refresh) and (age is None or age >= int(refresh))
-                if not first_time and not always_refetch() and not ongoing and not due:
+                # ===== THE CADENCE IS A PROPERTY OF THE QUERY, NOT OF ONE METRIC. =====
+                # ** FIXED 2026-09-23, AND IT WAS LEAVING FRESH DATA UNUSED. ** Ether.fi's
+                # dune:8683038 serves three metrics from one response — locked_tokens_dashboard
+                # (refresh_days 7), lock_rate_pct and staker_count (no cadence of their own). The
+                # gate was evaluated per metric, so the 7-day cadence re-pulled the query, the
+                # first metric was written, and the other two were skipped with "store already
+                # holds a row" while their own newer values sat in the response already in memory.
+                # Two series stale by construction, and the query paid for regardless.
+                #
+                # A query that is going to execute anyway costs nothing more per metric — Dune
+                # bills the execution, not the rows — so once ANY metric it serves is due, every
+                # metric it serves is written.
+                carried = qid in running and not (first_time or due)
+                if not first_time and not always_refetch() and not ongoing and not due and not carried:
                     because = (f" Its refresh cadence is {int(refresh)} days and the newest stored "
                                f"row is {age} day(s) old." if refresh and age is not None else "")
                     out.skipped(SOURCE, name,
@@ -207,7 +242,15 @@ class Dune:
                 # trimming it to the trailing window would rewrite the last month, leave the
                 # older rows standing at their old values and report success. The query costs the
                 # same either way — Dune bills the execution, not the rows returned.
-                metric_window_days = None if (first_time or due) else window_days
+                if carried:
+                    log.info("%s/%s: no cadence of its own, but query %s is being re-pulled for "
+                             "another metric — writing this one from the same response rather "
+                             "than leaving it stale beside fresh data", name, metric, qid)
+                # A CARRIED METRIC TAKES THE WHOLE HISTORY TOO. The response already holds it,
+                # and trimming to the trailing window would rewrite the last month while leaving
+                # the older rows at their old values — the half-corrected series this file
+                # refuses everywhere else.
+                metric_window_days = None if (first_time or due or carried) else window_days
                 if first_time and window_days is not None:
                     log.info("%s/%s: first backfill for this metric — pulling full history, "
                              "ignoring the %d-day window", name, metric, window_days)

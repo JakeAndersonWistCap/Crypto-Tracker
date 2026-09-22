@@ -2462,13 +2462,26 @@ def test_dune_first_time_metric_ignores_the_trailing_window_even_on_an_increment
 
     burn = df[df.metric == "gross_burn_tokens"]
     buyback = df[df.metric == "actual_buyback_tokens"]
-    assert burn.empty, "gross_burn_tokens already has history — must be SKIPPED, not re-fetched"
     assert not buyback.empty, (
         "actual_buyback_tokens has never been fetched before — its first backfill must ignore "
         "the run's 30-day window and return its full history, not silently zero rows")
     assert buyback.value.iloc[0] == 600_000.0
+
+    # ** gross_burn_tokens IS WRITTEN TOO, AND THAT CHANGED ON 2026-09-23. ** It used to be
+    # skipped here: the gate was per metric, so "the store already holds a row" fired even though
+    # the query was executing anyway for its sibling. The skip exists to avoid PAYING for a
+    # query, and when the query runs regardless that reason is gone — the response is already in
+    # memory and writing the second metric from it costs nothing.
+    #
+    # THE LIVE CASE THIS WAS COSTING: Ether.fi's dune:8683038 serves three metrics and only one
+    # carries the 7-day cadence, so the weekly re-pull refreshed locked_tokens_dashboard and left
+    # lock_rate_pct and staker_count stale beside their own fresh values in the same response.
+    assert not burn.empty, (
+        "the query is executing for its sibling, so every metric it serves is written — leaving "
+        "one stale beside fresh data in the same response is the bug this replaced")
+    assert burn.value.iloc[0] == 600_000.0
     print("dune first-time-ignores-window ok: a brand-new metric sharing an already-backfilled "
-          "query still gets its own full history on an incremental run")
+          "query gets its full history, and the sibling is written from the same response")
 
 
 class _Rows:
@@ -2476,8 +2489,13 @@ class _Rows:
 
     def __init__(self, rows):
         self.rows = rows
+        self.calls = 0
 
     def get(self, url, params=None, headers=None):
+        # Counted, because "one execution serves every metric" is what makes carrying free —
+        # paying per metric would trade one bug for a more expensive one.
+        if (params or {}).get("offset", 0) == 0:
+            self.calls += 1
         return {"result": {"rows": self.rows if (params or {}).get("offset", 0) == 0 else []}}
 
 
@@ -2767,6 +2785,17 @@ def _etherfi_dune_metric():
                 and spec.get("value_col") == "staked_supply")
 
 
+def _shares_query(project, query_id):
+    """Every metric served by one Dune query — the unit the refresh cadence works on.
+
+    A fixture that states history for SOME of a query's metrics describes a store that cannot
+    exist: they are written together from one response. Listing them by hand is how two of these
+    tests came to assert a skip while silently exercising the first-time path for a sibling.
+    """
+    return {m for m, spec in (config.PROJECT_BY_NAME[project].get("dune_queries") or {}).items()
+            if spec.get("query_id") == query_id}
+
+
 def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     """8683038 publishes the same lock rate twice: perc_staked 0.17452 and perc_staked_cnt 17.452.
 
@@ -2819,7 +2848,11 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
     now = pd.Timestamp.now("UTC").tz_localize(None).normalize()
     rows = [dict(ETHERFI_ROW, day=f"{(now - pd.Timedelta(days=i)).date()} 00:00:00.000 UTC")
             for i in range(120)]
-    held = {("Ether.fi", _etherfi_dune_metric()), ("Ether.fi", "lock_rate_pct")}
+    # EVERY METRIC THE QUERY SERVES, not two of the three. They are written together from one
+    # response, so a store holding history for some and not others cannot arise — and a fixture
+    # that says otherwise makes the missing one first-time, which re-pulls the query and carries
+    # its siblings, exercising a path this test is not about.
+    held = {("Ether.fi", m) for m in _shares_query("Ether.fi", 8683038)}
 
     os.environ["TOKEN_METRICS_DUNE_ALWAYS"] = "1"
     try:
@@ -3606,11 +3639,23 @@ def test_dune_backfill_only():
     out = FetchOutput()
     du.run([p], None, out)
     df = out.frame()
-    assert set(df["metric"]) == {"staked_tokens"}, "a series with history must be skipped"
-    assert set(df["tier"]) == {4} and df.source.iloc[0] == "dune:123"
-    assert any(e.status == "skipped" and "backfill NOT run" in e.message for e in out.log)
+    # BOTH METRICS OF QUERY 123, because staked_tokens is first-time and so the query executes;
+    # gross_burn_tokens is then written from the SAME response rather than skipped beside it.
+    # Changed 2026-09-23 — see the Ether.fi case in the first-time test above.
+    assert set(df["metric"]) == {"staked_tokens", "gross_burn_tokens"}, set(df["metric"])
+    assert set(df["tier"]) == {4} and set(df.source) == {"dune:123"}
     assert any("no query_id" in e.message for e in out.log)
-    print("tier 4 ok: backfill only, skipped the series the store already covers")
+
+    # AND THE SKIP IS STILL THERE WHEN THE QUERY IS NOT RUNNING AT ALL. The rule is "a query that
+    # executes writes everything it serves", not "history no longer skips anything".
+    du2 = Dune(has_history={("Ethereum", "gross_burn_tokens"), ("Ethereum", "staked_tokens")})
+    du2.http = StubHttp({"/query/123/results": {"result": {"rows": []}}})
+    out2 = FetchOutput()
+    du2.run([p], None, out2)
+    assert out2.frame().empty, "nothing is due, so the query must not run"
+    assert len([e for e in out2.log if e.status == "skipped"
+                and "backfill NOT run" in e.message]) == 2
+    print("tier 4 ok: a running query writes every metric it serves; nothing due still skips")
 
 
 # ---------------------------------------------------------------------------- validation
@@ -5314,9 +5359,14 @@ def test_a_dune_cross_check_refreshes_on_its_cadence_and_a_pure_backfill_still_d
     assert q["refresh_days"] == 7 and q["refresh_rationale"]
 
     def skips(last_seen_days_ago, project="Ether.fi", metric="locked_tokens_dashboard"):
-        d = Dune(has_history={(project, metric)},
-                 last_dates={(project, metric): (pd.Timestamp.now().normalize()
-                                                 - pd.Timedelta(days=last_seen_days_ago)).date().isoformat()})
+        # THE WHOLE QUERY'S HISTORY, not this metric's alone — see _shares_query. The cadence is
+        # a property of the query, so a sibling left out of the fixture would be first-time, run
+        # the query, and carry this metric along with it.
+        siblings = {(project, m) for m in _shares_query(
+            project, (config.PROJECT_BY_NAME[project]["dune_queries"][metric] or {}).get("query_id"))}
+        seen = (pd.Timestamp.now().normalize()
+                - pd.Timedelta(days=last_seen_days_ago)).date().isoformat()
+        d = Dune(has_history=siblings, last_dates={k: seen for k in siblings})
         d.key = ""                                    # no key: the run stops before any HTTP
         out = FetchOutput()
         d.run([config.PROJECT_BY_NAME[project]], 30, out)
@@ -5331,7 +5381,7 @@ def test_a_dune_cross_check_refreshes_on_its_cadence_and_a_pure_backfill_still_d
     # arise; if it does, the choice is one paid query against a cross-check frozen for ever, and
     # the query is the cheaper mistake.
     from fetch.dune import Dune as _D
-    d = _D(has_history={("Ether.fi", "locked_tokens_dashboard")}, last_dates={})
+    d = _D(has_history={("Ether.fi", m) for m in _shares_query("Ether.fi", 8683038)}, last_dates={})
     d.key = ""
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
@@ -5578,13 +5628,27 @@ def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
     assert "not written here" not in config.WMTX_CARDANO_PARTIAL
     assert "SIZE THE EXCLUSION BY SUBTRACTION" in config.WMTX_CARDANO_PARTIAL
 
-    # THE BAND, AND WHAT EACH END MEANS. Below 1.4bn a component failed; above 1.7bn something is
-    # counted twice, which would be evidence against the filing rather than a bad read.
+    # ** THE BAND WAS 1.4-1.7bn AND IT REJECTED A CORRECT READ. WIDENED 2026-09-23. ** The live
+    # four-deployment sum came to 1,714,232,116 and was refused for being 14m over a ceiling
+    # picked by hand — "a bit above the 1.494bn Ethereum already reads", which is a guess about
+    # the other three chains, not a bound the design imposes. The figure sits squarely on the
+    # whitepaper's own Fig. 1 curve, so the read was right and the ceiling was wrong.
+    #
+    # BOTH ENDS NOW RULE OUT SOMETHING THAT CANNOT BE TRUE. 1.42bn is mainnet launch on that
+    # curve, so below it a component failed; 2.0bn is the ERC20Capped ceiling in the deployed
+    # source, so above it is impossible by construction. That is not tolerance added to a failing
+    # check — the band moved to figures the source documents state.
     lo, hi = config.sanity_bounds("World Mobile", "total_supply_gross")
-    assert (lo, hi) == (1_400_000_000, 1_700_000_000)
+    assert (lo, hi) == (1_420_000_000, 2_000_000_000)
     assert lo <= float(row.value.iloc[0]) <= hi
-    assert not (lo <= 2_000_000_000 <= hi), \
-        "the CAP must fail this band — it is a correct reading of a different quantity"
+    assert lo <= 1_714_232_116 <= hi, "the live sum that was wrongly rejected must now pass"
+    assert not (lo <= 2_000_000_001 <= hi), "above the contract's cap stays impossible"
+
+    # THE CAP CANNOT LEAK INTO THIS METRIC ANYWAY, and that is a STRUCTURAL guarantee rather
+    # than a band: total_supply_gross is written only by contract reads carrying metric_override,
+    # and CoinGecko's 2,000,000,000 goes to total_supply. The old band was standing in for this
+    # check by refusing any figure near the cap, which is why it also refused a real one.
+    assert all(c["metric_override"] == "total_supply_gross" for c in contracts.values())
     # AND THE BAND IS NOT ON total_supply, which legitimately holds that cap every run.
     cap_lo, cap_hi = config.sanity_bounds("World Mobile", "total_supply")
     assert cap_lo <= 2_000_000_000 <= (cap_hi or float("inf"))
@@ -7967,3 +8031,251 @@ def test_section_l_reaches_its_decisive_verdict_and_the_delete_acts_on_it(tmp_pa
         "the supply readings are the evidence and are never touched"
     conn.close()
     print("section L ok: the verdict is decisive and both deletes act on exactly what they printed")
+
+
+# ============================================================================================
+# BLOCKED READS: A PER-METHOD RPC REFUSAL, AND A GUARD THAT COULD NOT SEE A DERIVED FLOW
+# ============================================================================================
+
+class _RefusingLogs:
+    """An RPC that connects, answers everything else, and returns 403 to eth_getLogs.
+
+    That is not a hypothetical shape — it is ethereum-rpc.publicnode.com, the first entry in the
+    ethereum fallback list, which is why Sky's burn read failed with three working alternatives
+    sitting unused.
+    """
+
+    def __init__(self, refuse_urls, range_cap=None):
+        self.refuse_urls, self.range_cap = set(refuse_urls), range_cap
+        self.calls = []
+
+    class _Eth:
+        def __init__(self, outer, url):
+            self.outer, self.url = outer, url
+            self.block_number = 1_000_000
+
+        def get_logs(self, params):
+            span = params["toBlock"] - params["fromBlock"] + 1
+            self.outer.calls.append((self.url, span))
+            if self.url in self.outer.refuse_urls:
+                raise Exception("403 Client Error: Forbidden for url: " + self.url)
+            if self.outer.range_cap and span > self.outer.range_cap:
+                raise Exception("query returned more than 10000 results")
+            return []
+
+    def provider_for(self, url):
+        class _W3:
+            pass
+        w3 = _W3()
+        w3.eth = self._Eth(self, url)
+        w3.provider = type("P", (), {"endpoint_uri": url})()
+        return w3
+
+
+def _reader_with(monkeypatch, stub, urls):
+    """A real ChainReader wired to the stub, with the endpoint list under test."""
+    from fetch import chain as chain_mod
+    monkeypatch.setattr(chain_mod, "rpc_endpoints", lambda c: list(urls))
+    monkeypatch.setattr(chain_mod, "Web3", None, raising=False)
+    reader = chain_mod.ChainReader()
+    reader._w3["ethereum"] = stub.provider_for(urls[0])
+
+    import sys
+    import types
+    fake = types.ModuleType("web3")
+    fake.Web3 = lambda provider, **kw: stub.provider_for(provider)
+    fake.HTTPProvider = lambda url, **kw: url
+    monkeypatch.setitem(sys.modules, "web3", fake)
+    return reader
+
+
+def test_an_rpc_that_refuses_one_method_falls_over_to_the_next_endpoint(monkeypatch):
+    """** THE FALLBACK LIST WAS ONLY CONSULTED AT CONNECT TIME, WHICH IS THE WRONG MOMENT. **
+
+    ChainReader.web3 tries each endpoint until one answers is_connected() and then keeps it for
+    every call on that chain. publicnode serves eth_blockNumber, eth_call and eth_getCode and
+    returns 403 to eth_getLogs — so it is chosen, everything else on Ethereum works, and only the
+    log scan dies, with three usable providers in the list it never reaches.
+    """
+    urls = ["https://publicnode.example", "https://second.example", "https://third.example"]
+    stub = _RefusingLogs(refuse_urls={urls[0]})
+    reader = _reader_with(monkeypatch, stub, urls)
+
+    logs, upper, chunk = reader._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []},
+                                                    0, 50_000, 10_000)
+    assert logs == [] and upper == 9_999 and chunk == 10_000
+    assert [u for u, _ in stub.calls] == [urls[0], urls[1]], \
+        "the refusing endpoint is tried once, then the next one — not hammered round the list"
+
+    # EVERY ENDPOINT REFUSING IS A DIFFERENT ANSWER FROM A NARROWER RANGE, and says so: the
+    # remedy is an endpoint that serves logs, not a smaller chunk.
+    stub2 = _RefusingLogs(refuse_urls=set(urls))
+    reader2 = _reader_with(monkeypatch, stub2, urls)
+    try:
+        reader2._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []}, 0, 50_000, 10_000)
+    except RuntimeError as e:
+        assert "every configured ethereum RPC refused eth_getLogs" in str(e)
+        assert "PER-METHOD refusal" in str(e) and "not a narrower range" in str(e)
+        assert len({u for u, _ in stub2.calls}) == 3, "each endpoint tried exactly once"
+    else:
+        raise AssertionError("all endpoints refusing must raise, not return an empty scan")
+    print("rpc fallback ok: a per-method 403 moves to the next endpoint; all refusing says why")
+
+
+def test_a_range_the_server_will_not_serve_is_narrowed_not_retried_blindly(monkeypatch):
+    """Halving is a REPLY to what the server said, not a guess. The two failures are told apart
+    by the error text, because moving endpoint on a range error would ask four providers the same
+    oversized question, and narrowing on a 403 would shrink the scan for ever against a provider
+    that was never going to answer."""
+    from fetch import chain as chain_mod
+    urls = ["https://only.example"]
+    stub = _RefusingLogs(refuse_urls=set(), range_cap=2_500)
+    reader = _reader_with(monkeypatch, stub, urls)
+
+    logs, upper, chunk = reader._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []},
+                                                    0, 50_000, 10_000)
+    assert chunk == 2_500 and upper == 2_499, f"narrowed to {chunk}"
+    assert [span for _, span in stub.calls] == [10_000, 5_000, 2_500], \
+        "halved on each refusal — 10,000 then 5,000 then 2,500, not re-tried at the same size"
+    # AND THE SIZE THAT WORKED IS RECORDED, so the scan reports what it cost rather than what it
+    # asked for.
+    assert reader.log_chunk_used["ethereum"] == 2_500
+
+    # A FLOOR, NOT AN INFINITE CLIMB DOWN. A scan needing thousands of chunks is a configuration
+    # answer, not a retry answer, so below the floor it raises.
+    tiny = _RefusingLogs(refuse_urls=set(), range_cap=1)
+    reader2 = _reader_with(monkeypatch, tiny, urls)
+    try:
+        reader2._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []}, 0, 50_000, 10_000)
+    except Exception as e:
+        assert "query returned more than" in str(e), e
+    else:
+        raise AssertionError("narrowing must stop at the floor rather than shrink for ever")
+    assert min(span for _, span in tiny.calls) == chain_mod.ChainReader.MIN_LOG_CHUNK
+
+    # AND AN ERROR THAT IS NEITHER IS RAISED AT ONCE. A decoding fault must not be papered over
+    # by trying another provider, which turns one clear failure into four vague ones.
+    class _Broken(_RefusingLogs):
+        class _Eth(_RefusingLogs._Eth):
+            def get_logs(self, params):
+                self.outer.calls.append((self.url, 0))
+                raise ValueError("could not decode topic")
+    broken = _Broken(refuse_urls=set())
+    reader3 = _reader_with(monkeypatch, broken, urls * 3)
+    try:
+        reader3._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []}, 0, 50_000, 10_000)
+    except ValueError:
+        assert len(broken.calls) == 1, "raised on the first failure, not after a tour of the list"
+    else:
+        raise AssertionError("an unrecognised error must propagate")
+    print("range narrowing ok: halved on the server's own limit, floored, and unrelated errors raise")
+
+
+def test_a_contract_that_serves_a_derived_flow_is_not_read_as_withdrawn():
+    """** CHAINLINK'S BUYBACK RENDERED "MEASURING CONTRACT WITHDRAWN" ON A READ THAT WORKS. **
+
+    config._flow_parents was a literal list naming gross_burn_tokens and burn_revenue_funded,
+    both differenced from burn_address_balance, and knew about nothing else. Chainlink's
+    actual_buyback_tokens is differenced from buyback_fund_balance, so the Reserve contract —
+    which does serve the stock — was judged not to serve the flow.
+
+    This is the SAME hazard as build_workbook's DERIVED_FLOW_STOCK, fixed the day before, in a
+    second hand-maintained copy of the same relationship that was missed because it is spelled
+    differently and lives in another file. Both are derived from config.stock_for_flow now.
+    """
+    assert config.withdrawn_contract_keys(
+        "Chainlink", "actual_buyback_tokens", "chain:ethereum:reserve:delta") == []
+    assert config.withdrawn_contract_keys(
+        "Uniswap", "gross_burn_tokens", "chain:ethereum:burn_dead:delta") == []
+
+    # A GENUINE WITHDRAWAL STILL READS AS ONE. The token contracts were repointed to
+    # total_supply_gross by metric_override, so old total_supply rows must stay withheld.
+    assert config.withdrawn_contract_keys(
+        "Uniswap", "total_supply", "chain:ethereum:token") == ["token"]
+
+    # AND EVERY DECLARED FLOW RESOLVES, so this cannot go stale again the way the literal did.
+    for p in config.PROJECTS:
+        for stock, flow in {**config.CUMULATIVE_FLOW, **(p.get("cumulative_flow") or {})}.items():
+            assert stock in config._flow_parents(p["name"], flow), (p["name"], stock, flow)
+    print("withdrawn guard ok: a flow's stock contract serves the flow, for every declared pair")
+
+
+def test_one_contract_can_serve_several_metrics_and_the_guard_knows_it():
+    """** SKY'S FOUR DECOMPOSED SERIES WERE ALL ABOUT TO RENDER WITHDRAWN. **
+
+    The guard asked `metric_override or KIND_METRIC[kind]` and got ONE answer, which is right for
+    a balance read and wrong for burn_transfer_logs: one contract, one scan, split by the event's
+    sender into burn_address_balance, governance_burn_balance and other_burn_balance. Only the
+    first is what the KIND maps to, so the other two — and both flows derived from them — were
+    judged to be written by a contract that no longer serves them.
+
+    Latent rather than visible only because the read is currently 403ing, which is exactly the
+    kind of bug that surfaces the day something else starts working.
+    """
+    spec = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]
+    assert config.contract_serves(spec) == {
+        "burn_address_balance", "governance_burn_balance", "other_burn_balance"}
+    for metric in ("burn_address_balance", "governance_burn_balance", "governance_burn_tokens",
+                   "other_burn_balance", "other_burn_tokens", "gross_burn_tokens"):
+        assert config.withdrawn_contract_keys(
+            "Sky", metric, "chain:ethereum:burn_logs:delta") == [], metric
+
+    # THE DECOMPOSITION TARGETS COME FROM THE CONTRACT'S OWN BLOCK, so adding a named sender adds
+    # its metric here with nothing else to remember.
+    named = spec["burn_logs"]["named_senders"]
+    assert set(named.values()) <= config.contract_serves(spec)
+
+    # AN ORDINARY CONTRACT STILL SERVES EXACTLY ONE METRIC — this must not become a rule that
+    # lets anything through.
+    reserve = config.PROJECT_BY_NAME["Chainlink"]["contracts"]["reserve"]
+    assert config.contract_serves(reserve) == {"buyback_fund_balance"}
+    print("contract_serves ok: a decomposing read serves three metrics, a balance read serves one")
+
+
+def test_a_repulled_query_writes_every_metric_it_serves():
+    """** THE REFRESH CADENCE WAS A PROPERTY OF THE METRIC AND IT HAD TO BE THE QUERY'S. **
+
+    Ether.fi's dune:8683038 returns staked_supply, perc_staked and num_holders in ONE response,
+    mapped to three metrics. Only locked_tokens_dashboard carries refresh_days=7. The gate ran
+    per metric, so the weekly cadence re-pulled the query, wrote that one, and skipped
+    lock_rate_pct and staker_count with "store already holds a row" — while their own newer
+    values sat in the response already in memory. Two series stale by construction, and the paid
+    query bought a third of what it fetched.
+    """
+    import os
+    from fetch.dune import Dune
+
+    os.environ["DUNE_API_KEY"] = "test-key"
+    served = _shares_query("Ether.fi", 8683038)
+    assert served == {"locked_tokens_dashboard", "lock_rate_pct", "staker_count"}, served
+    cadences = {m: config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"][m].get("refresh_days")
+                for m in served}
+    assert sum(1 for v in cadences.values() if v) == 1, \
+        f"exactly one metric carries the cadence — that asymmetry is the bug's cause: {cadences}"
+
+    now = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    rows = [dict(ETHERFI_ROW, day=f"{(now - pd.Timedelta(days=i)).date()} 00:00:00.000 UTC")
+            for i in range(30)]
+    held = {("Ether.fi", m) for m in served}
+    # NINE DAYS OLD: past locked_tokens_dashboard's 7-day cadence, so the query is due. The other
+    # two have no cadence of their own and would each have been skipped.
+    stale = (now - pd.Timedelta(days=9)).date().isoformat()
+
+    d = Dune(has_history=held, last_dates={k: stale for k in held})
+    d.http = _Rows(rows)
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
+    df = out.frame()
+
+    written = set(df.metric)
+    assert served <= written, f"every metric the query serves must be written, got {written}"
+    for m in served:
+        assert len(df[df.metric == m]) == 30, \
+            f"{m}: a carried metric takes the whole history too, got {len(df[df.metric == m])}"
+    assert not [e for e in out.log if e.status == "skipped" and e.message.split(":")[0] in served], \
+        "nothing the query serves may be skipped while the query is executing"
+
+    # AND THE RESPONSE IS FETCHED ONCE. Three metrics, one execution — the cache is what makes
+    # carrying free, and paying three times would trade one bug for a worse one.
+    assert d.http.calls == 1, f"one execution for all three metrics, got {d.http.calls}"
+    print(f"query cadence ok: {len(served)} metrics written from one re-pull, 30 rows each")

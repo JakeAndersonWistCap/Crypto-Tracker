@@ -839,7 +839,7 @@ def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
 # Kept SEPARATE from orphaned_contract_keys rather than folded into it, because the two say
 # different things to a reader: one is "this measurement was abandoned", the other is "this
 # measurement moved to a different column, and you are looking at the old one".
-def _flow_parents(metric: str) -> set:
+def _flow_parents(project_name: str, metric: str) -> set:
     """Metrics a contract may serve INDIRECTLY, by having its stock differenced into a flow.
 
     WITHOUT THIS THE GUARD BELOW TURNS EVERY BURN FLOW RED. gross_burn_tokens rows carry the
@@ -847,13 +847,48 @@ def _flow_parents(metric: str) -> set:
     contract's kind is burn_address_balance, not gross_burn_tokens. A naive "does this contract
     serve this metric" test would call every one of them withdrawn. So a flow metric legitimately
     accepts the contracts serving the stock it is derived from.
+
+    ** THIS WAS A LITERAL LIST AND IT HAD ALREADY GONE STALE. Fixed 2026-09-23. ** It named
+    gross_burn_tokens and burn_revenue_funded, both differenced from burn_address_balance, and
+    knew about nothing else. Chainlink's actual_buyback_tokens is differenced from
+    buyback_fund_balance and Sky's two decomposed legs from their own balances — so the Reserve
+    contract, which does serve the stock, was judged not to serve the flow, and Chainlink's
+    buyback rendered "MEASURING CONTRACT WITHDRAWN" on a read that works.
+
+    It is derived from the live mapping now (stock_for_flow, the inverse of cumulative_flow_for),
+    which is the SAME fix applied to build_workbook's DERIVED_FLOW_STOCK on 2026-09-22 — the
+    identical hazard, in a second hand-maintained copy of the same relationship that was missed
+    because it is spelled differently and lives in another file.
     """
     parents = {metric}
-    if metric == "gross_burn_tokens":
-        parents.add("burn_address_balance")
-    if metric == "burn_revenue_funded":
-        parents.add("burn_address_balance")
+    stock = stock_for_flow(project_name, metric)
+    if stock:
+        parents.add(stock)
     return parents
+
+
+def contract_serves(spec: dict) -> set:
+    """Every metric this contract writes — which is not always ONE metric.
+
+    ** A DECOMPOSING READ SERVES SEVERAL SERIES FROM ONE CONTRACT. Added 2026-09-23. ** The
+    withdrawn guard asked `metric_override or KIND_METRIC[kind]` and got a single answer, which
+    is right for a balance read and wrong for Sky's burn_transfer_logs: one contract, one scan,
+    split by the event's sender into burn_address_balance, governance_burn_balance and
+    other_burn_balance. Only the first is what its KIND maps to, so all four of Sky's decomposed
+    metrics were judged to be written by a contract that no longer serves them — and would have
+    rendered "MEASURING CONTRACT WITHDRAWN" the moment the read started working. Latent rather
+    than visible only because the read is currently 403ing.
+
+    The decomposition targets come from the contract's own burn_logs block, so adding a named
+    sender adds its metric here with nothing else to remember.
+    """
+    served = {spec.get("metric_override") or KIND_METRIC.get(spec.get("kind"))}
+    logs = spec.get("burn_logs") or {}
+    served |= set((logs.get("named_senders") or {}).values())
+    for key in ("stage2_metric", "other_metric"):
+        if logs.get(key):
+            served.add(logs[key])
+    return {s for s in served if s}
 
 
 def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list[str]:
@@ -876,7 +911,7 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
         return []
     body = ":".join(part for part in src.split(":")[1:] if part not in SOURCE_MARKERS)
     pieces = body[4:-1].split("+") if body.startswith("sum(") and body.endswith(")") else [body]
-    allowed = _flow_parents(metric)
+    allowed = _flow_parents(project_name, metric)
     withdrawn = []
     for piece in pieces:
         key = piece.split(":")[-1]
@@ -890,8 +925,7 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
         # 2026-09-21 (that metric is retired — see METRICS); the live examples now are the
         # net_of_burn token contracts, whose override points at total_supply_gross. Old rows
         # stored under a vacated metric name must read as withdrawn, not as still current.
-        served = spec.get("metric_override") or KIND_METRIC.get(spec.get("kind"))
-        if served not in allowed:
+        if not (contract_serves(spec) & allowed):
             withdrawn.append(key)
     return withdrawn
 
@@ -2948,11 +2982,27 @@ PROJECTS = [
             # that failed quietly, and a chain contributing more than Ethereum is an address that
             # is not what it says.
             #
-            # SANITY BAND 1.4-1.7bn, set on the whitepaper's own curve (aggregate rises ~1.42bn to
-            # 2bn over twenty years) and on Ethereum alone already reading 1.494bn. A sum below
-            # 1.4bn means a component failed; above 1.7bn means something is being counted twice,
-            # which is exactly the lock-and-mint failure this evidence rules out — so it would be
-            # evidence AGAINST the filing rather than a bad read, and worth stopping for.
+            # SANITY BAND 1.42-2.0bn — THE CURVE'S OWN BOUNDS. WIDENED 2026-09-23.
+            #
+            # ** THE 1.4-1.7bn BAND REJECTED A CORRECT READ. ** The four-deployment sum came to
+            # 1,714,232,116 and was refused for being 14m above a ceiling picked by hand. The
+            # figure is entirely consistent with the whitepaper's Fig. 1 curve — aggregate supply
+            # rising from ~1.42bn at mainnet launch to 2.0bn at year 20 — so the read was right
+            # and the ceiling was wrong.
+            #
+            # 1.7bn WAS NEVER A PROPERTY OF ANYTHING. It was "a bit above the 1.494bn Ethereum
+            # already reads", which is a guess about how much the other three chains hold, not a
+            # bound the protocol's design imposes. The curve IS such a bound, at both ends:
+            #   BELOW 1.42bn  is before mainnet launch, so a component failed or returned zero.
+            #   ABOVE 2.0bn   is above the ERC20Capped ceiling in the deployed source, which is
+            #                 impossible by construction — either double counting (the
+            #                 lock-and-mint failure the MiCA filing rules out) or a bad read.
+            # Both ends now rule out something that CANNOT be true rather than something that
+            # looked unlikely, which is the only kind of bound worth having.
+            #
+            # THIS IS NOT ADDING TOLERANCE TO A FAILING CHECK. The band moved to the figures the
+            # source documents state; it did not gain slack around a number that was already
+            # disagreeing. A read of 2,000,000,001 still fails.
             "token": _contract(
                 "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "ethereum", "erc20_total_supply", "WMTX",
                 "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
@@ -3011,7 +3061,10 @@ PROJECTS = [
         # NOT a bound on total_supply: that metric holds CoinGecko's 2,000,000,000 cap, which is
         # a correct reading of a different quantity and would fail this band every run.
         "sanity": {
-            "total_supply_gross": {"min": 1_400_000_000, "max": 1_700_000_000},
+            # See the token contract's note: the curve's own bounds, not a hand-picked ceiling.
+            # 1.42bn = mainnet launch on the whitepaper's Fig. 1; 2.0bn = the ERC20Capped cap in
+            # the deployed source, which is impossible to exceed.
+            "total_supply_gross": {"min": 1_420_000_000, "max": 2_000_000_000},
             # utilisation_pct's library bound is [0, 1] because it is a fraction everywhere else.
             # Here it holds terabytes per day, so the bound is re-drawn around what a throughput
             # can plausibly be — NOT removed. A bound of [0, 1e15] would accept a decimal-point

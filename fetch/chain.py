@@ -160,6 +160,10 @@ class ChainReader:
     def __init__(self):
         self._w3: dict[str, object] = {}
         self._failed: dict[str, str] = {}
+        # The eth_getLogs chunk size that actually worked, per chain. Reported rather than
+        # assumed: the configured size is a request, and a provider that narrows it silently
+        # would make the scan cost a mystery.
+        self.log_chunk_used: dict[str, int] = {}
 
     def web3(self, chain: str):
         if chain in self._w3:
@@ -258,6 +262,77 @@ class ChainReader:
         """Unix timestamp of one block. One call, used to DATE a single discovered event."""
         return int(self.web3(chain).eth.get_block(int(block))["timestamp"])
 
+    # An endpoint that REFUSES eth_getLogs, and what it costs to find out at connect time.
+    # publicnode answers eth_blockNumber perfectly and returns 403 to eth_getLogs, so
+    # `is_connected()` picks it, every other read on the chain works, and only the log scan dies.
+    # These are the substrings that mean "this ENDPOINT will not serve this method" rather than
+    # "this REQUEST was wrong" — the first is fixed by moving to the next endpoint, the second is
+    # not, and treating them alike would hammer four providers with the same bad request.
+    LOGS_ENDPOINT_REFUSED = ("403", "forbidden", "unauthorized", "method not found",
+                             "not supported", "unsupported method", "429", "rate limit")
+    # And the substrings that mean "this RANGE is too wide for me" — the server naming its own
+    # limit. Halving answers what it said; it is not a blind retry of the same request.
+    LOGS_RANGE_TOO_WIDE = ("query returned more than", "block range", "too many results",
+                           "response size", "limit exceeded", "range is too large", "query timeout")
+    MIN_LOG_CHUNK = 500
+
+    def _get_logs_resilient(self, chain: str, base: dict, block: int, head: int,
+                            chunk: int) -> tuple[list, int, int]:
+        """One eth_getLogs chunk, falling over to the next endpoint on refusal, narrowing on range.
+
+        ** THE FALLBACK LIST WAS ONLY CONSULTED AT CONNECT TIME, WHICH IS THE WRONG MOMENT. **
+        ChainReader.web3 tries each endpoint until one answers is_connected() and then keeps it
+        for every call on that chain. A provider can be perfectly connected and still refuse ONE
+        method: ethereum-rpc.publicnode.com serves eth_blockNumber, eth_call and eth_getCode and
+        returns 403 to eth_getLogs. So Sky's burn read failed with three working alternatives
+        sitting unused in the list.
+
+        TWO FAILURES, TWO DIFFERENT ANSWERS, told apart by what the server SAID:
+          REFUSED BY THIS ENDPOINT -> move to the next one and retry the same range. Each
+            endpoint is tried at most once per chunk, so a request that is simply wrong fails
+            after one pass instead of being hammered round the list.
+          RANGE TOO WIDE -> halve the chunk and retry, down to MIN_LOG_CHUNK. The server named
+            its own limit and narrowing is a reply to that, not a guess. Below the floor it
+            raises: a scan needing thousands of chunks is a configuration answer, not a retry.
+        Anything else raises immediately. A decoding error or a bad topic must not be papered
+        over by trying another provider, which would turn one clear failure into four vague ones.
+
+        Returns (logs, last_block_covered, chunk_that_worked) so the caller advances by what was
+        actually read and reports the real chunk size rather than the one it asked for.
+        """
+        from web3 import HTTPProvider, Web3
+
+        tried: list[str] = []
+        urls = rpc_endpoints(chain)
+        w3 = self.web3(chain)
+        while True:
+            upper = min(block + chunk - 1, head)
+            try:
+                logs = list(w3.eth.get_logs({**base, "fromBlock": block, "toBlock": upper}))
+                self.log_chunk_used[chain] = chunk
+                return logs, upper, chunk
+            except Exception as e:  # noqa: BLE001
+                msg = str(e).lower()
+                if any(s in msg for s in self.LOGS_RANGE_TOO_WIDE) and chunk > self.MIN_LOG_CHUNK:
+                    chunk = max(self.MIN_LOG_CHUNK, chunk // 2)
+                    log.info("chain %s: eth_getLogs range refused (%s) — narrowing to %d blocks",
+                             chain, str(e)[:120], chunk)
+                    continue
+                if not any(s in msg for s in self.LOGS_ENDPOINT_REFUSED):
+                    raise
+                tried.append(getattr(getattr(w3, "provider", None), "endpoint_uri", "?"))
+                nxt = next((u for u in urls if u not in tried), None)
+                if nxt is None:
+                    raise RuntimeError(
+                        f"every configured {chain} RPC refused eth_getLogs: {', '.join(tried)}. "
+                        f"Last error: {e}. These endpoints answer other methods, so this is a "
+                        f"PER-METHOD refusal: the fix is an endpoint that serves logs "
+                        f"(set RPC_{chain.upper()} in .env), not a narrower range.") from e
+                log.info("chain %s: %s refused eth_getLogs (%s) — falling back to %s",
+                         chain, tried[-1], str(e)[:80], nxt)
+                w3 = Web3(HTTPProvider(nxt, request_kwargs={"timeout": 60}))
+                self._w3[chain] = w3
+
     def burn_transfer_events(self, chain: str, token: str, burn_to: str, from_block: int,
                              chunk: int = 10_000, max_blocks: int | None = None
                              ) -> tuple[list[dict], int, int, int]:
@@ -298,12 +373,10 @@ class ChainReader:
 
         topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
-        events, block, chunks = [], from_block, 0
+        base = {"address": self.checksum(token), "topics": [topic, None, to_topic]}
+        events, block, chunks, used = [], from_block, 0, chunk
         while block <= head:
-            upper = min(block + chunk - 1, head)
-            logs = w3.eth.get_logs({"fromBlock": block, "toBlock": upper,
-                                    "address": self.checksum(token),
-                                    "topics": [topic, None, to_topic]})
+            logs, upper, used = self._get_logs_resilient(chain, base, block, head, used)
             chunks += 1
             for entry in logs:
                 # THE VALUE IS THE DATA WORD, not a topic: Transfer indexes from and to and leaves
@@ -316,6 +389,7 @@ class ChainReader:
                                "value": raw,
                                "block": int(entry["blockNumber"])})
             block = upper + 1
+        self.log_chunk_used[chain] = used
         return events, from_block, head, chunks
 
     def scaled(self, chain: str, address: str, call: str, *args, decimals_from: str | None = None) -> float:
@@ -827,9 +901,17 @@ class Chain:
         # DECIMALS FROM THE TOKEN ITSELF, read directly rather than through scaled(): these are
         # raw log data words, not a call return, so nothing has scaled them yet.
         dec = int(self.reader.erc20(chain, token).functions.decimals().call())
-        log.info("%s/%s: %d burn event(s) over blocks %d-%d in %d chunk(s) of %d",
-                 project["name"], key, len(events), first_blk, last_blk, chunks,
-                 int(cfg.get("chunk_blocks", 10_000)))
+        # THE CHUNK SIZE REPORTED IS THE ONE THAT WORKED, not the one config asked for. A
+        # provider that caps the range makes the adapter narrow, and printing the request would
+        # misreport what the scan cost — and hide that the configured size is unusable here.
+        asked = int(cfg.get("chunk_blocks", 10_000))
+        # getattr, not attribute access: this is a REPORTING line and it must not be able to
+        # fail the read it is describing. A reader that does not track the worked size simply
+        # reports the asked one.
+        worked = getattr(self.reader, "log_chunk_used", {}).get(chain, asked)
+        log.info("%s/%s: %d burn event(s) over blocks %d-%d in %d chunk(s) of %d%s",
+                 project["name"], key, len(events), first_blk, last_blk, chunks, worked,
+                 "" if worked == asked else f" (config asked for {asked:,}; the endpoint capped it)")
 
         by_sender: dict[str, float] = {}
         for e in events:
