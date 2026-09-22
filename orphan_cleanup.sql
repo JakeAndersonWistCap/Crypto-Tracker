@@ -1782,3 +1782,89 @@ SELECT date, value, source, tier, fetched_at
   FROM metrics WHERE project = 'Morpho' AND metric IN ('fees_usd', 'revenue_usd')
    AND date >= date('now', '-45 day')
  ORDER BY metric, date;
+
+
+-- ========================================================================================
+-- T. PARTIAL CURRENT-DAY FLOW ROWS — written before the day was over.              2026-09-23
+--    T1-T2 LOOK. T3 deletes, and only rows a completed day has already outlived.
+-- ========================================================================================
+-- WHAT HAPPENED: a provider publishes the current day from the moment it starts, and the figure
+-- is near-empty rather than proportional — Sky's fees read $7,586 against a typical $909,801 at
+-- 12:40 UTC, past the halfway point; Morpho's read $139. Those rows sat inside every trailing-
+-- window figure until the next run replaced them.
+--
+-- FIXED AT WRITE TIME on 2026-09-23: a daily FLOW from DefiLlama or CoinGecko dated today is no
+-- longer stored at all (config.drop_current_day). Stocks are unaffected — a price or a balance
+-- is correct at any hour, and dropping it would throw away the only reading of the day.
+--
+-- ** THIS SECTION IS FOR ROWS ALREADY IN THE STORE, AND MOST OF THEM DO NOT NEED IT. ** The
+-- providers are called with a trailing window, so an ordinary run re-requests the whole span and
+-- upserts a complete figure over yesterday's partial one. Section S2 confirmed that: every
+-- 2026-09-21 row for the sixteen was re-written on 09-22. What survives is a partial day that
+-- NOTHING RE-FETCHED — a project parked before the next run, or a date that fell out of the
+-- trailing window before a run covered it.
+--
+-- T1. PARTIAL DAYS THAT NEVER HEALED. fetched_at is per-write: a row whose fetched_at is its own
+--     date was written during that day and never revisited. For a daily provider flow that is
+--     exactly the partial-day signature. A row re-written later IS the provider's own complete
+--     figure and must be left alone.
+SELECT m.date, m.project, m.metric, m.value, m.source, m.fetched_at,
+       ROUND(julianday(substr(m.fetched_at, 1, 10)) - julianday(m.date), 0) AS days_to_rewrite
+  FROM metrics m
+ WHERE m.metric IN ('fees_usd', 'revenue_usd', 'holders_revenue_usd', 'volume_usd',
+                    'customer_revenue_usd')
+   AND (m.source LIKE 'defillama%' OR m.source LIKE 'coingecko%')
+   AND substr(m.fetched_at, 1, 10) <= m.date
+   AND m.date < date('now')
+ ORDER BY m.date DESC, m.project;
+
+-- T2. HOW WRONG THEY ARE, so the delete is a judgement about size rather than about dates. A
+--     partial day is not merely low, it is near-empty: the observed cases were 0.0%-17.5% of
+--     typical. A row at 80% of its neighbours is a quiet day, not a partial one, and deleting it
+--     would remove a real observation.
+WITH neighbours AS (
+    SELECT m.date, m.project, m.metric, m.value,
+           (SELECT AVG(n.value) FROM metrics n
+             WHERE n.project = m.project AND n.metric = m.metric
+               AND n.date BETWEEN date(m.date, '-7 day') AND date(m.date, '-1 day')) AS typical
+      FROM metrics m
+     WHERE m.metric IN ('fees_usd', 'revenue_usd', 'holders_revenue_usd', 'volume_usd',
+                        'customer_revenue_usd')
+       AND (m.source LIKE 'defillama%' OR m.source LIKE 'coingecko%')
+       AND substr(m.fetched_at, 1, 10) <= m.date
+       AND m.date < date('now')
+)
+SELECT date, project, metric, value, typical,
+       ROUND(value * 100.0 / NULLIF(typical, 0), 2) AS pct_of_prior_week,
+       CASE WHEN typical IS NULL OR typical = 0 THEN 'NO NEIGHBOURS — cannot judge, leave it'
+            WHEN value < typical * 0.25 THEN 'PARTIAL — near-empty against its own prior week'
+            ELSE 'A QUIET DAY, not a partial one — leave it'
+       END AS verdict
+  FROM neighbours
+ ORDER BY date DESC, project;
+
+-- T3. THE DELETE. Scoped by all three conditions together — a daily provider flow, never
+--     re-written after its own date, and under a quarter of its own prior week. Any one of them
+--     alone would take real observations with it.
+--
+--     DELETED RATHER THAN RE-FETCHED, because there is nothing to re-fetch: these are dates the
+--     trailing window no longer reaches. A gap in a flow series is honest; a near-empty day
+--     presented as a measurement is not, and it is the one that feeds the 30-day sums.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE metric IN ('fees_usd', 'revenue_usd', 'holders_revenue_usd', 'volume_usd',
+--                   'customer_revenue_usd')
+--    AND (source LIKE 'defillama%' OR source LIKE 'coingecko%')
+--    AND substr(fetched_at, 1, 10) <= date
+--    AND date < date('now')
+--    AND value < 0.25 * (SELECT AVG(n.value) FROM metrics n
+--                         WHERE n.project = metrics.project AND n.metric = metrics.metric
+--                           AND n.date BETWEEN date(metrics.date, '-7 day')
+--                                          AND date(metrics.date, '-1 day'))
+--    AND (SELECT AVG(n.value) FROM metrics n
+--          WHERE n.project = metrics.project AND n.metric = metrics.metric
+--            AND n.date BETWEEN date(metrics.date, '-7 day')
+--                           AND date(metrics.date, '-1 day')) > 0;
+-- COMMIT;
+
+-- T4. VERIFY — T2 returns nothing verdicted PARTIAL.

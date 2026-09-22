@@ -34,7 +34,7 @@ from .schedule import Schedule
 from .tron import TronNode
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
-                       check_reference_values, validate_frame)
+                       check_level_breaks, check_reference_values, validate_frame)
 
 log = logging.getLogger("token_metrics.fetch")
 
@@ -632,6 +632,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
               known_absent: set | None = None,
               last_dates: dict | None = None,
               manual_keys: set | None = None,
+              stored_long=None,
               sources: list[str] | None = None) -> FetchOutput:
     """Run every tier in order and return one FetchOutput carrying frames, log, review and gaps.
 
@@ -698,6 +699,23 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)
+
+    # ===== THE LEVEL CHECK READS THE STORE, NOT THIS RUN. Added 2026-09-23. =====
+    # Every other check here works on what just arrived, which is exactly why none of them could
+    # see Morpho's break: the shape of the last month is not in a run's frame. The store's rows
+    # are concatenated with this run's so today's points are included — a break that happens
+    # today is caught today, not tomorrow.
+    if stored_long is not None and not getattr(stored_long, "empty", True):
+        fresh = out.frame()
+        cols = [c for c in ("date", "project", "metric", "value", "source", "tier")
+                if c in stored_long.columns]
+        history = pd.concat([stored_long[cols], fresh[cols]], ignore_index=True)
+        history = history.sort_values("date").drop_duplicates(
+            subset=["date", "project", "metric"], keep="last")
+        check_level_breaks(history, out)
+    else:
+        log.info("no stored history passed — the level-break check did not run. It compares a "
+                 "recent median against an older one, so it has nothing to say on a first run.")
 
     # BOTH STATES, NOT JUST THE BROKEN ONE. This used to record only the NOT-READY entries, so a
     # registry entry that was complete and armed looked, to the gap reporter, exactly like an

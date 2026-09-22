@@ -61,6 +61,35 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         return df
 
     df = df.copy()
+
+    # ===== THE CURRENT UTC DAY IS DROPPED FOR A DAILY PROVIDER FLOW. Added 2026-09-23. =====
+    # Not deferred, not flagged — not stored. A provider publishes the current day from the
+    # moment it starts and the figure is near-empty rather than proportional: Sky's fees read
+    # $7,586 against a typical $909,801 at 12:40 UTC, past the halfway point. Left in, that row
+    # sits inside every trailing-30-day "Now" figure until the next run replaces it.
+    #
+    # It costs nothing to drop: the providers are called with a TRAILING WINDOW, so tomorrow's
+    # run re-requests the same day complete and upserts it. Section S established that past days
+    # heal for exactly this reason.
+    #
+    # REPORTED, NOT SILENT. A row that vanishes without a word is how a real coverage gap gets
+    # mistaken for a quiet day, and this file's whole argument is that a skip must say so.
+    dropped = df[[bool(config.drop_current_day(r.project, r.metric, r.source))
+                  and str(r.date)[:10] >= str(pd.Timestamp.now("UTC").date())
+                  for r in df.itertuples(index=False)]]
+    if not dropped.empty:
+        for (project, metric), g in dropped.groupby(["project", "metric"]):
+            out.skipped(str(g["source"].iloc[0]).split(":")[0], project,
+                        f"{metric}: the row dated {str(g['date'].iloc[0])[:10]} is TODAY and was "
+                        f"NOT STORED. A daily flow from this provider is published from the "
+                        f"moment the day starts and is near-empty rather than proportional, so "
+                        f"it would sit inside every trailing-window figure until the next run. "
+                        f"The window is trailing, so tomorrow's run fetches this day complete.",
+                        tier=None if pd.isna(g["tier"].iloc[0]) else int(g["tier"].iloc[0]))
+        df = df.drop(dropped.index)
+    if df.empty:
+        return df
+
     keep = []
     for row in df.itertuples(index=False):
         lo, hi = config.sanity_bounds(row.project, row.metric)
@@ -260,6 +289,121 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
                             prior_date=prior_date, basis=basis, source=row["source"],
                             tier=None if pd.isna(row["tier"]) else int(row["tier"]))
     return df
+
+
+REASON_LEVEL_BREAK = "level_break"
+
+
+def check_level_breaks(long: pd.DataFrame, out, asof: pd.Timestamp | None = None) -> None:
+    """A flow series whose LEVEL has moved by an order of magnitude and stayed there.
+
+    ** change_threshold COMPARES TWO DAYS, SO A BREAK IS VISIBLE FOR ONE DAY AND THEN INVISIBLE. **
+    Morpho's fees ran $500-650K/day to 2026-09-11 and then $21.64, $0, $2.13, $2.99. Borrower
+    interest did not stop; the source changed. On the day it happened change_threshold fired once;
+    from the next day on every comparison was post-break against post-break, and $2.13 against
+    $2.99 is a quiet series. The trailing-30-day sum then decays toward zero over a month and
+    reads as a business collapse rather than as a broken feed.
+
+    That is a property of the comparison, not a threshold that needs tuning — so this compares
+    the LEVEL against the LEVEL. The ratio is unchanged the day after the break and the month
+    after it, which is what makes the flag PERSIST until somebody acknowledges it in config with
+    a reason.
+
+    READS THE STORE, NOT THE RUN'S FRAME. A run brings today's points; the break is in the shape
+    of the last month. Every other check here works on what just arrived, which is exactly why
+    none of them could see this.
+
+    MEDIANS, NOT MEANS OR SUMS: a single $1.9m booking moves a mean by a third and a median not
+    at all. The failure being caught is "every day is now three orders of magnitude smaller",
+    which no outlier can fake and no median can miss.
+    """
+    if long is None or long.empty:
+        return
+    asof = asof or pd.Timestamp(pd.Timestamp.now("UTC").date())
+    df = long.copy()
+    df["_d"] = pd.to_datetime(df["date"])
+
+    for (project, metric), g in df.groupby(["project", "metric"]):
+        if config.METRICS.get(metric, {}).get("kind") != "flow":
+            continue
+        if config.series_granularity(project, metric) != "daily":
+            # A weekly or monthly series has a handful of points in a month; a median of three
+            # numbers is not a level. Its breaks are visible in the period reconciliation.
+            continue
+        recent_days, baseline_days = config.level_break_windows(project, metric)
+        recent = g[(g["_d"] > asof - pd.Timedelta(days=recent_days)) & (g["_d"] <= asof)]
+        if len(recent) < recent_days * 0.6:
+            # A half-empty recent window has a lower median for want of data, which is a coverage
+            # gap wearing a level break's clothes.
+            continue
+        now = float(recent["value"].median())
+
+        # ===== THE BASELINE IS THE LEVEL THE SERIES USED TO RUN AT, NOT THE WINDOW BEFORE LAST. =====
+        # ** THE FIRST VERSION HAD THE SAME BLIND SPOT IT WAS BUILT TO REMOVE, JUST DELAYED. **
+        # Comparing a 7-day median against the 30 days before it works the week after a break and
+        # fails the month after: by then the baseline window is itself post-break, the ratio is
+        # 1.0, and the flag goes quiet with nothing fixed. The test caught it — a month after
+        # Morpho's break, the check said nothing.
+        #
+        # So the baseline is the series' own historical level: the rolling median FURTHEST from
+        # where it sits now, across everything older than the recent window inside the lookback.
+        # That does not decay as post-break days accumulate, which is what makes the flag persist
+        # for as long as the store remembers what the series used to do.
+        older = g[(g["_d"] > asof - pd.Timedelta(days=config.LEVEL_BREAK_LOOKBACK_DAYS))
+                  & (g["_d"] <= asof - pd.Timedelta(days=recent_days))]
+        if len(older) < baseline_days * 0.6:
+            continue
+        rolling = (older.sort_values("_d").set_index("_d")["value"]
+                   .rolling(f"{baseline_days}D", min_periods=int(baseline_days * 0.6)).median()
+                   .dropna())
+        if rolling.empty:
+            continue
+        # FURTHEST FROM NOW, in whichever direction: the highest past level tests a fall, the
+        # lowest tests a rise. A series that ever ran an order of magnitude away from where it
+        # sits today has either broken or genuinely changed, and those need different actions —
+        # which is why the row asks rather than decides.
+        before = float(rolling.max() if rolling.max() - now >= now - rolling.min()
+                       else rolling.min())
+        if before <= 0:
+            continue
+        # BOTH DIRECTIONS, stated plainly. A series that grows tenfold and stays there is the
+        # same class of event — a slug that started aggregating something new — and is just as
+        # wrong to miss as one that collapses.
+        factor = config.LEVEL_BREAK_FACTOR
+        fell = now * factor < before
+        rose = now > before * factor
+        if not (fell or rose):
+            continue
+
+        ack = config.level_break_ack(project, metric)
+        if ack:
+            continue
+        direction = "FELL" if now < before else "ROSE"
+        ratio = (before / now) if now > 0 else float("inf")
+        out.review_item(
+            project, metric, REASON_LEVEL_BREAK, ACTION_FLAGGED,
+            value=now, prior_value=before, date=str(recent["date"].max())[:10],
+            prior_date=str(older["date"].max())[:10],
+            basis=(f"the {recent_days}-day MEDIAN ({now:,.4f}) against the prior {baseline_days}-day "
+                   f"MEDIAN ({before:,.4f}) — the level {direction} by "
+                   f"{'more than 1,000' if ratio == float('inf') else f'{ratio:,.1f}'}x and STAYED "
+                   f"there. change_threshold compares two days, so a break is visible on the day "
+                   f"it happens and invisible afterwards: every later comparison is post-break "
+                   f"against post-break. This flag PERSISTS until it is acknowledged in "
+                   f"config.LEVEL_BREAK_ACKNOWLEDGED with a reason."),
+            source=str(g.sort_values("_d")["source"].iloc[-1]), tier=None)
+        out.gap(project, f"[data] {metric} level {direction} by an order of magnitude and stayed",
+                reason=(f"the {recent_days}-day median is {now:,.4f} against a historical "
+                        f"{baseline_days}-day median of {before:,.4f}. A source that restructures "
+                        f"— a slug split into parent and child listings, an adapter that starts "
+                        f"returning a residual — looks exactly like this, and so does a protocol "
+                        f"genuinely winding down. The two need different actions."),
+                tiers_attempted="1",
+                suggestion=("Check the source first: fetch the provider's own listing for this "
+                            "slug and look at whether it has been split or renamed. If the fall "
+                            "is real, acknowledge it in config.LEVEL_BREAK_ACKNOWLEDGED with the "
+                            "reason — do NOT widen LEVEL_BREAK_FACTOR, which turns the check off "
+                            "for every other series too."))
 
 
 def check_reference_values(df: pd.DataFrame, out, tolerance: float = 0.005) -> None:

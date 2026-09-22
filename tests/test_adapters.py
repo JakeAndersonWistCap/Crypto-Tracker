@@ -5199,13 +5199,16 @@ def test_a_series_older_than_the_window_is_not_flagged_for_coverage():
 
 
 class _Recorder:
-    """Captures review_item calls without needing the full FetchOutput."""
+    """Captures review_item and skipped calls without needing the full FetchOutput."""
 
     def __init__(self):
-        self.items = []
+        self.items, self.skips = [], []
 
     def review_item(self, project, metric, reason, action, **kw):
         self.items.append({"project": project, "metric": metric, "reason": reason, **kw})
+
+    def skipped(self, source, project, message, tier=None):
+        self.skips.append({"source": source, "project": project, "message": message})
 
 
 def _validated(rows, prior):
@@ -5235,6 +5238,37 @@ def test_a_providers_partial_current_day_is_not_compared_against_a_whole_one():
         (today, "Chainlink", "revenue_usd", 0.0, "defillama:chainlink", 1),   # hours old
     ], prior={("Chainlink", "revenue_usd"): 1_050_000.0})
     assert not flags, f"the partial day must not be change-checked: {flags}"
+
+    # ** AND SINCE 2026-09-23 IT IS NOT STORED EITHER. ** Excluding it from the change check
+    # stops a false flag and does nothing about the figure reaching the sheet: a near-empty
+    # today sits inside every trailing-window "Now" figure until the next run replaces it. The
+    # providers are called with a trailing window, so tomorrow's run fetches the day complete.
+    import pandas as pd
+    from fetch.validate import validate_frame
+    rows = pd.DataFrame([{"date": pd.Timestamp(d), "project": "Chainlink", "metric": "revenue_usd",
+                          "value": v, "source": "defillama:chainlink", "tier": 1}
+                         for d, v in [(before, 1_050_000.0), (yesterday, 1_105_263.0), (today, 0.0)]])
+    rec = _Recorder()
+    kept = validate_frame(rows, {}, rec)
+    assert str(today) not in set(kept["date"].astype(str).str[:10]), \
+        "today's provider flow row must not survive to the store"
+    assert len(kept) == 2 and str(yesterday) in set(kept["date"].astype(str).str[:10])
+    assert rec.skips and "was NOT STORED" in rec.skips[0]["message"], rec.skips
+    assert "trailing" in rec.skips[0]["message"], "the row must say why it costs nothing"
+
+    # A STOCK IS CORRECT AT ANY HOUR and is kept — dropping it would throw away the only
+    # reading of the day for no gain.
+    stocks = pd.DataFrame([{"date": pd.Timestamp(today), "project": "Chainlink",
+                            "metric": "price_usd", "value": 12.0, "source": "coingecko", "tier": 1}])
+    rec2 = _Recorder()
+    assert len(validate_frame(stocks, {}, rec2)) == 1 and not rec2.skips
+    # AND SO IS A CONTRACT READ — the rule is about providers that publish a day early, not
+    # about today.
+    chain_rows = pd.DataFrame([{"date": pd.Timestamp(today), "project": "Uniswap",
+                                "metric": "gross_burn_tokens", "value": 1_000.0,
+                                "source": "chain:ethereum:burn_dead:delta", "tier": 2}])
+    rec3 = _Recorder()
+    assert len(validate_frame(chain_rows, {}, rec3)) == 1 and not rec3.skips
 
 
 def test_but_a_real_step_change_between_two_complete_days_still_fires():
@@ -9155,3 +9189,113 @@ def test_a_governance_parameter_is_read_from_the_contract_and_not_scaled_as_a_to
         assert "cooldown_days" not in config.metrics_for_project(config.PROJECT_BY_NAME[other]), other
     print("cooldown ok: 1,209,600 seconds read raw = 14.0000 days, unscaled, and scoped to the "
           "one project whose contract enforces it")
+
+
+def _morpho_break_frame(break_on="2026-09-11", end="2026-09-21", start="2026-08-13"):
+    """Morpho's real shape: ~$500-650K/day, then near-zero from 2026-09-12."""
+    import pandas as pd
+    after = [21.64, 0.0, 2.13, 2.99, 23.02, 157.0, 4.1]
+    rows, d, i = [], pd.Timestamp(start), 0
+    while d <= pd.Timestamp(end):
+        v = (575_000.0 + (i % 5) * 20_000) if d <= pd.Timestamp(break_on) else after[i % len(after)]
+        rows.append({"date": d, "project": "Morpho", "metric": "fees_usd", "value": v,
+                     "source": "defillama:morpho", "tier": 1})
+        d, i = d + pd.Timedelta(days=1), i + 1
+    return pd.DataFrame(rows)
+
+
+def test_a_level_break_fires_on_morphos_real_shape_and_keeps_firing():
+    """** change_threshold COMPARES TWO DAYS, SO A BREAK IS VISIBLE FOR ONE DAY AND THEN NEVER. **
+
+    Morpho's fees ran $500-650K/day to 2026-09-11 and then $21.64, $0, $2.13, $2.99. Borrower
+    interest did not stop; the source changed. On the day it happened the daily check fired once;
+    from the next day on every comparison was post-break against post-break, and $2.13 against
+    $2.99 is a quiet series. The trailing-30-day sum then decays toward zero over a month and
+    reads as a business collapse rather than as a broken feed.
+
+    That is a property of the comparison, not a threshold needing tuning.
+    """
+    import pandas as pd
+    from fetch.base import FetchOutput
+    from fetch.validate import check_level_breaks, REASON_LEVEL_BREAK
+
+    out = FetchOutput()
+    check_level_breaks(_morpho_break_frame(), out, asof=pd.Timestamp("2026-09-21"))
+    flags = [r for r in out.review if r["reason"] == REASON_LEVEL_BREAK]
+    assert len(flags) == 1, f"Morpho's real shape must fire: {out.review}"
+    f = flags[0]
+    assert f["project"] == "Morpho" and f["metric"] == "fees_usd"
+    assert f["prior_value"] == 615_000.0 and f["value"] < 100, f
+    assert "7-day MEDIAN" in f["basis"] and "prior 30-day MEDIAN" in f["basis"]
+    assert "STAYED" in f["basis"] and "PERSISTS until it is acknowledged" in f["basis"]
+
+    # ** AND IT KEEPS FIRING — that is the whole point. ** A month after the break the ratio is
+    # unchanged, where the daily check has had thirty quiet days in a row.
+    out2 = FetchOutput()
+    check_level_breaks(_morpho_break_frame(end="2026-10-11"), out2, asof=pd.Timestamp("2026-10-11"))
+    assert [r for r in out2.review if r["reason"] == REASON_LEVEL_BREAK], \
+        "a month later the break must STILL be flagged — a one-day flag is what failed here"
+
+    # THE GAP ROW SAYS WHAT TO DO AND WHAT NOT TO DO.
+    gap = next(g for g in out.gaps if "level FELL" in g["metric"])
+    assert "slug split into parent and child" in gap["reason"]
+    assert "do NOT widen LEVEL_BREAK_FACTOR" in gap["suggestion"].replace("Do NOT", "do NOT")
+
+    # AN ACKNOWLEDGED BREAK GOES QUIET — a real wind-down is accepted in config with a reason,
+    # rather than by widening the factor, which would turn the check off for everything else.
+    config.LEVEL_BREAK_ACKNOWLEDGED[("Morpho", "fees_usd")] = {"why": "test"}
+    try:
+        out3 = FetchOutput()
+        check_level_breaks(_morpho_break_frame(), out3, asof=pd.Timestamp("2026-09-21"))
+        assert not [r for r in out3.review if r["reason"] == REASON_LEVEL_BREAK]
+    finally:
+        del config.LEVEL_BREAK_ACKNOWLEDGED[("Morpho", "fees_usd")]
+    print("level break ok: fires on Morpho's real shape, still fires a month later, and an "
+          "acknowledgement is the only thing that quiets it")
+
+
+def test_the_level_check_does_not_fire_on_the_things_it_must_not():
+    """A check that fires on ordinary variation is one nobody reads by the second week."""
+    import pandas as pd
+    from fetch.base import FetchOutput
+    from fetch.validate import check_level_breaks, REASON_LEVEL_BREAK
+
+    def flags(rows, asof="2026-09-21"):
+        out = FetchOutput()
+        check_level_breaks(pd.DataFrame(rows), out, asof=pd.Timestamp(asof))
+        return [r for r in out.review if r["reason"] == REASON_LEVEL_BREAK]
+
+    def series(project, metric, values, source="defillama:x", start="2026-08-13"):
+        return [{"date": pd.Timestamp(start) + pd.Timedelta(days=i), "project": project,
+                 "metric": metric, "value": v, "source": source, "tier": 1}
+                for i, v in enumerate(values)]
+
+    # ORDINARY VARIATION, including a weekend cycle and one huge outlier. A median is chosen
+    # precisely so a single $1.9m booking cannot fake a level.
+    ordinary = [450_000.0 if (pd.Timestamp("2026-08-13") + pd.Timedelta(days=i)).weekday() >= 5
+                else 1_000_000.0 for i in range(40)]
+    ordinary[20] = 9_000_000.0
+    assert not flags(series("Chainlink", "revenue_usd", ordinary)), "a weekly cycle is not a break"
+
+    # A STOCK IS NOT CHECKED. A supply figure that halves is a real event with its own guards,
+    # and a "level" is not what a stock has.
+    assert not flags(series("Chainlink", "total_supply", [1e9] * 30 + [1e6] * 10))
+
+    # A HALF-EMPTY RECENT WINDOW IS A COVERAGE GAP WEARING A BREAK'S CLOTHES — the median is
+    # lower for want of data, not because the level moved.
+    sparse = series("Chainlink", "revenue_usd", [1_000_000.0] * 33)
+    sparse = sparse[:31] + sparse[-1:]
+    assert not flags(sparse), "too few recent points to judge a level"
+
+    # A LUMPY SERIES USES WIDER WINDOWS. Maple books on settlement, so a 7-day median is often
+    # zero on an ordinary week — which would fire every time.
+    assert config.level_break_windows("Maple", "fees_usd") == (30, 90)
+    assert config.level_break_windows("Morpho", "fees_usd") == (7, 30)
+    lumpy = []
+    for i in range(140):
+        v = 1_900_000.0 if i % 7 == 3 else 8_000.0
+        lumpy.append(v)
+    assert not flags(series("Maple", "fees_usd", lumpy, start="2026-05-05"), asof="2026-09-21"), \
+        "a lumpy series' own booking cycle must not read as a level break"
+    print("level break ok: quiet on weekly cycles, outliers, stocks, sparse windows and lumpy "
+          "booking patterns")

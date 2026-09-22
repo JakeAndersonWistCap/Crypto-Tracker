@@ -9251,6 +9251,51 @@ STALE_AFTER_DAYS_BY_GRANULARITY = {"daily": None, "weekly": 14, "monthly": 45}
 PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD = ("defillama", "coingecko")
 
 
+# ===== THE CURRENT UTC DAY IS NOT A DAY YET, AND IT IS NOT PROPORTIONAL EITHER. Added 2026-09-23. =====
+#
+# Section S settled the half of this that could be settled offline: PAST days heal. Every
+# 2026-09-21 row for the sixteen was re-written on 09-22, because the providers are called with
+# a trailing window rather than an anchor, so every run re-requests and upserts the whole span.
+#
+# WHAT NEVER READS CORRECTLY IS TODAY. A provider publishes the current day from the moment it
+# starts, and the figure is not a fraction of a day's activity — it is near-empty and stays that
+# way until the day is over. Measured at 12:40 UTC on 2026-09-22, past the halfway point:
+#
+#     Sky fees        $7,586 against a typical $909,801        0.8%
+#     Morpho fees     $139                                     ~0%
+#     Ether.fi                                                 16.7%
+#     Fluid                                                    17.5%
+#
+# Those rows sit inside every trailing-30-day "Now" figure until the next run replaces them, so
+# the headline flow columns read low all day, every day, by an amount nobody can predict from
+# the clock.
+#
+# ** SO THEY ARE NOT STORED AT ALL. ** validate already drops the current day from the CHANGE
+# CHECK; that stops a false flag and does nothing about the figure reaching the sheet. Dropping
+# it at write time is the fix, and it costs nothing: the next run fetches the same day complete,
+# because the window is trailing.
+#
+# FLOWS ONLY. A stock is a snapshot and is CORRECT at any hour — price, supply, a balance, a
+# cumulative burn are all true as at the moment they were read, and dropping them would throw
+# away the only reading of the day for no gain. This is exactly the flow/stock distinction the
+# metric library already carries, used for the one thing it decides here.
+def drop_current_day(project_name: str, metric: str, source: str) -> bool:
+    """Should a row dated TODAY be discarded before it is stored?
+
+    True only for a daily FLOW from a provider that publishes the current period early. Anything
+    else — a stock, a weekly or monthly series, a contract read — is stored as normal.
+    """
+    m = METRICS.get(metric) or {}
+    if m.get("kind") != "flow":
+        return False
+    provider = str(source or "").split(":")[0].lower()
+    if provider not in PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD:
+        return False
+    # A WEEKLY OR MONTHLY SERIES HAS NO "CURRENT DAY" TO DROP. Its newest row is dated at the
+    # period boundary, and drop_current_period already handles the incomplete period for it.
+    return series_granularity(project_name, metric) == "daily"
+
+
 # SERIES WHOSE UNDERLYING PROCESS IS LUMPIER THAN THE OBSERVATION CADENCE, with the evidence.
 #
 # GEODNET burns WEEKLY. The chain read differences a cumulative balance DAILY, so most days show
@@ -9297,6 +9342,64 @@ LUMPY_FLOWS = {
         "recorded_on": "2026-09-23",
     },
 }
+
+
+# ===== A BREAK IS VISIBLE FOR ONE DAY AND THEN INVISIBLE FOREVER. Added 2026-09-23. =====
+#
+# Morpho's fees ran $500-650K/day through 2026-09-11 and then $21.64, $0, $2.13, $2.99, $23.02.
+# Borrower interest did not stop; the SOURCE changed. Chainlink looks like the same class: ~$0.2M
+# a month stored against a figure researched at ~$4.76M/30d, with revenue_usd reading 0 every day.
+#
+# ** NEITHER WAS CAUGHT, AND COULD NOT HAVE BEEN, BECAUSE change_threshold COMPARES TWO DAYS. **
+# On the day of the break it fires once; from the next day on, every comparison is post-break
+# against post-break, and $2.13 against $2.99 is a quiet series. The trailing-30-day sum then
+# decays toward zero over a month and reads as a business collapse rather than as a broken feed.
+# A daily check cannot hold on to a level change — that is a property of the comparison, not a
+# threshold that needs tuning.
+#
+# SO THE LEVEL IS CHECKED AGAINST THE LEVEL, AND THE FLAG PERSISTS. A recent median against an
+# older median: the ratio is unchanged the day after the break and the month after it, so the row
+# stays until somebody acknowledges it in config with a reason. That is the difference between a
+# check that catches a slug restructure and one that watches it scroll past.
+#
+# MEDIANS, NOT SUMS OR MEANS. A single $1.9m booking moves a mean by a third; it moves a median
+# not at all. The failure being caught is "every day is now three orders of magnitude smaller",
+# which no median can miss and no outlier can fake.
+#
+# 10x IS THE OPENING FACTOR AND IT IS DELIBERATELY BLUNT. This is not a sensitivity dial for
+# ordinary variation — a real series does not move ten-fold in a week and stay there. Narrowing
+# it would start catching seasonality, which change_threshold already covers.
+LEVEL_BREAK_FACTOR = 10.0
+LEVEL_BREAK_RECENT_DAYS = 7
+LEVEL_BREAK_BASELINE_DAYS = 30
+# A LUMPY SERIES NEEDS LONGER WINDOWS. Maple books fees on settlement, so a 7-day median can be
+# zero on an ordinary week — which would fire every time and teach the reader to ignore it. Its
+# own windows are wide enough to contain the booking cycle on both sides.
+LEVEL_BREAK_LUMPY_RECENT_DAYS = 30
+LEVEL_BREAK_LUMPY_BASELINE_DAYS = 90
+# HOW FAR BACK THE "LEVEL IT USED TO RUN AT" IS LOOKED FOR. The baseline is not the window
+# before last — that version had the same blind spot it was built to remove, just delayed a
+# month: once the baseline window is itself post-break the ratio is 1.0 and the flag goes quiet
+# with nothing fixed. It is the rolling median furthest from today within this lookback, which
+# does not decay as post-break days accumulate.
+LEVEL_BREAK_LOOKBACK_DAYS = 180
+
+# Breaks a human has looked at and accepted, with the reason. A level_break that is REAL — a
+# protocol genuinely winding down, a fee switch turned off — is acknowledged here rather than by
+# widening the factor, because widening it turns the check off for everything else too.
+LEVEL_BREAK_ACKNOWLEDGED: dict[tuple[str, str], dict] = {}
+
+
+def level_break_ack(project_name: str, metric: str) -> dict | None:
+    """Has this level break been looked at and accepted, and why?"""
+    return LEVEL_BREAK_ACKNOWLEDGED.get((project_name, metric))
+
+
+def level_break_windows(project_name: str, metric: str) -> tuple[int, int]:
+    """(recent_days, baseline_days) for this series — wider where the flow is lumpy by design."""
+    if lumpy_flow(project_name, metric):
+        return LEVEL_BREAK_LUMPY_RECENT_DAYS, LEVEL_BREAK_LUMPY_BASELINE_DAYS
+    return LEVEL_BREAK_RECENT_DAYS, LEVEL_BREAK_BASELINE_DAYS
 
 
 def lumpy_flow(project_name: str, metric: str) -> dict | None:

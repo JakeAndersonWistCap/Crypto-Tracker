@@ -221,6 +221,10 @@ def main(argv=None) -> int:
         last_dates=st.last_dates(),
         known_absent=absent,
         manual_keys=manual_keys,
+        # THE STORE'S OWN HISTORY, for the level-break check. Every other check works on what
+        # just arrived; a level break is in the shape of the last month, which is why none of
+        # them could see Morpho's source change after the day it happened.
+        stored_long=st.load_long(),
     )
 
     written = st.upsert(out.frame())
