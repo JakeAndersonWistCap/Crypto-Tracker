@@ -2862,6 +2862,28 @@ PROJECTS = [
                 "use": "sanity-bounding for archetype 3 figures once actual_buyback_usd/tokens are "
                        "wired — a derived figure far outside this trend is a bug in the read.",
                 "recorded": "2026-09-18",
+                # ===== FIRST MEASURED MONTH, CONFIRMED LIVE 2026-09-21. =====
+                # August 2026: 3,645,000 GEOD repurchased and burned, for $754,542. It is the
+                # first actual_buyback figure this project has produced, and it lands inside the
+                # trend above rather than needing it relaxed:
+                #   implied price            $754,542 / 3,645,000 = $0.207/GEOD
+                #   annualised burn spend    $754,542 x 12 ~= $9.05m against the 2026-07 ARR of
+                #                            $10.39m, i.e. ~87% of revenue — consistent with the
+                #                            declared 80% fee_split plus a month that ran above
+                #                            the annualised average, and NOT consistent with a
+                #                            misread of a cumulative figure, which would land an
+                #                            order of magnitude out.
+                # Recorded as a corroboration of the split, not as a bound: one month does not
+                # establish a rate, and the figure is monthly by construction (Dune 8683175 buckets
+                # to month) against a process GEODNET reports weekly — see cadence_mismatch below.
+                "first_measured_buyback": {
+                    "period": "2026-08", "tokens": 3_645_000, "usd": 754_542,
+                    "implied_price_usd": 0.207,
+                    "annualised_usd": 9_054_504,
+                    "against_arr_2026_07": 10_390_000,
+                    "share_of_arr": "~87%, against a declared 80% fee_split",
+                    "confirmed_on": "2026-09-21", "by": "run 20260921T204341Z-734e5f",
+                },
             },
             # ===== CADENCE MISMATCH: GEODNET REPORTS WEEKLY, OUR QUERY AGGREGATES MONTHLY. =====
             "cadence_mismatch": {
@@ -4977,19 +4999,26 @@ PROJECTS = [
                     # "As of April 2026, the current rate of AERO emissions is approximately
                     # 10.9% annualized" (aerodrome.finance/docs).
                     #
-                    # THE DOCS DO NOT SAY 10.9% OF WHAT, and that is recorded rather than resolved
-                    # by picking whichever reading is convenient:
-                    #     of TOTAL supply (~1.98bn)        -> ~4.15m AERO/wk, ~21 bps
-                    #     of CIRCULATING supply (~988m)    -> ~2.07m AERO/wk, ~10.5 bps of total
-                    # The tail formula's own base is totalSupply, so the first reading is the one
-                    # that matches the contract — but the docs are prose and the ambiguity is
-                    # real, so the band is set wide enough to contain BOTH: 10.9% of total is
-                    # 10.9% annualised, and 10.9% of circulating is ~5.4% of total.
+                    # ===== THE AMBIGUITY IS RESOLVED. LIVE READ, 2026-09-21. =====
+                    # tailEmissionRate() came back 21 bps, and that settles which base the docs
+                    # meant, because only one reading reproduces their figure:
+                    #     21 bps x 52 weeks = 10.92% of TOTAL supply per year   <- the docs' 10.9%
+                    #     the circulating reading would need ~10.5 bps, half of what the contract
+                    #     actually returns.
+                    # The tail formula's own base is totalSupply, so the contract and the docs now
+                    # agree rather than the contract merely being the tie-breaker. The implied
+                    # weekly emission is 1.98bn x 0.0021 ~= 4.16m AERO, which is the figure the
+                    # read produces.
                     #
-                    # 5-15% OF TOTAL SUPPLY PER YEAR. It excludes 67 bps (34.8% annualised), which
-                    # is the rate at tail activation — so this bound ASSERTS that the rate has
-                    # been nudged down since, consistent with the documented 10.9%. If a live read
-                    # comes back at 67 bps, that is a finding, not a pass.
+                    # THE BAND IS NOT TIGHTENED ON ONE OBSERVATION. 5-15% still spans both of the
+                    # old readings, and narrowing it around 10.92% now would make the next nudge()
+                    # — a governance action that moves the rate by design, up or down — read as a
+                    # fault. What the read has established is the BASE, which was the actual open
+                    # question; the rate itself is meant to move.
+                    #
+                    # It still excludes 67 bps (34.8% annualised), the rate at tail activation, so
+                    # the bound continues to assert that the rate has been nudged down since. That
+                    # assertion is now confirmed rather than expected.
                     #
                     # TAIL BRANCH ONLY, deliberately. The pre-tail schedule ran at 8,969,149/wk,
                     # which annualises to ~23.5% and would fail this band — correctly, because it
@@ -4997,15 +5026,25 @@ PROJECTS = [
                     # check. Applying the band pre-tail would refuse a legitimately scheduled
                     # emission.
                     #
-                    # TIGHTEN THIS once a live read establishes the actual rate. It is deliberately
-                    # loose while the rate is unobserved.
                     "annualised_share_bounds": [0.05, 0.15],
                     "annualised_share_source": {
                         "claim": "approximately 10.9% annualized, as of April 2026",
                         "source_url": "https://aerodrome.finance/docs",
-                        "ambiguity": "the docs do not state the BASE. Of total supply -> ~21 bps/wk; "
-                                     "of circulating -> ~10.5 bps of total. Both readings fall "
-                                     "inside the band, which is why the band is this wide.",
+                        "ambiguity_resolved": {
+                            "was": "the docs do not state the BASE. Of total supply -> ~21 bps/wk; "
+                                   "of circulating -> ~10.5 bps of total.",
+                            "settled_by": "the live read of tailEmissionRate(), 2026-09-21",
+                            "observed_bps": 21,
+                            "annualised": "21 bps x 52 = 10.92% of TOTAL supply, which reproduces "
+                                          "the documented 10.9%. The circulating reading would "
+                                          "require ~10.5 bps, half the observed rate.",
+                            "base": "total supply — the same base the tail formula itself uses",
+                            "implied_weekly": "1.98bn x 0.0021 ~= 4.16m AERO",
+                            "band_kept_wide_because": "one observation establishes the BASE, not "
+                                                      "the rate. nudge() moves the rate by design, "
+                                                      "so a band drawn tightly around 10.92% would "
+                                                      "read the next governance nudge as a fault.",
+                        },
                         "recorded_on": "2026-09-22",
                     },
                     # INDEPENDENTLY CONFIRMED, and it agrees with the contract replay exactly:
@@ -5054,7 +5093,14 @@ PROJECTS = [
                 note="Reads ONE WEEK BEHIND real time by design — see the block comment above. A "
                      "reading of exactly 0 on a week that should have emissions is worth checking "
                      "against activePeriod/epochCount on Minter before assuming the read is broken; "
-                     "it could mean updatePeriod() genuinely was not called that week."),
+                     "it could mean updatePeriod() genuinely was not called that week. "
+                     "** FIRST LIVE READING CONFIRMED CONSISTENT, 2026-09-21: 481,250 AERO against "
+                     "the same run's implied pool emission of ~4.16m, i.e. 11.6% of it. That is the "
+                     "right order for an anti-dilution rebase, which is scaled to the locked share "
+                     "of supply and is meant to be a fraction of the emission rather than a "
+                     "comparable stream. Recorded as a consistency check between two legs read from "
+                     "two different contracts, not as a bound: the ratio moves with the lock rate "
+                     "and nothing here asserts it should hold. **"),
         },
         # ===== HOW THIS PROJECT'S circulating_supply IS DEFINED. SETTLED ON LIVE DATA. =====
         # CoinGecko's circulating_supply for AERO EXCLUDES escrowed supply, which is its standard
@@ -7248,6 +7294,29 @@ PROJECTS = [
             # is scaled by — as long as the denominator is CONSISTENT with itself over time. If
             # the Dune column turns out to measure something else, the reconciliation changes
             # which series belongs in locked_tokens; it does not invalidate the direction test.
+            # ===== AND IT FIRED. FIRST LIVE VALUE, 2026-09-21: 1.2397. =====
+            # The prediction in the block above was that the first value would be ~1.2386 and not
+            # ~0.79. It came back 1.2397 — 0.09% above the 2026-09-14 baseline, seven days later,
+            # in the only direction the check permits. Three things are confirmed at once and
+            # none of them was confirmable before the run:
+            #   1. THE DERIVATION FIRES AT ALL. Its denominator used to be a tier-4 Dune series,
+            #      which never appears in a run's frame once the backfill has run, so this ratio
+            #      had never produced a value in its life. Both legs are chain reads now.
+            #   2. THE DENOMINATOR IS THE RIGHT ONE. 1.2397 sits on the chain-vs-chain baseline;
+            #      the Dune denominator would have put it near 0.79. The 1.58x Dune/chain
+            #      divergence is therefore a property of the Dune column, not of the contracts,
+            #      and it stays FLAGGED on locked_tokens_dashboard rather than resolved here.
+            #   3. THE DIRECTION IS RIGHT. Rising is what compounding looks like; the check flags
+            #      only a decrease, and 0.09% over a week is a rate of accrual, not a jump.
+            "first_live_value": {
+                "ratio": 1.2397, "as_of": "2026-09-21", "run": "20260921T204341Z-734e5f",
+                "baseline": 1.238611622166, "baseline_as_of": "2026-09-14",
+                "change_pct": "+0.09% over 7 days",
+                "predicted": "~1.2386, and explicitly NOT ~0.79 — see the block above",
+                "note": "a LEVEL is recorded here only because it confirms the denominator swap. "
+                        "The check itself is indifferent to level and always will be: 1.24 is not "
+                        "too high, and nor would 3.0 be.",
+            },
             "baseline_is_chain_vs_chain": True,
             "unreconciled": "Dune staked_supply 141,470,107.5 (2026-09-10) exceeds both on-chain "
                             "figures; see OPEN_QUESTIONS before reading the ratio's LEVEL as "
@@ -9069,12 +9138,46 @@ OPEN_QUESTIONS = [
             "rounding_at_the_provider": "ten tokens on 1.3bn is the twelfth significant figure; a "
                 "rounding difference between two independently rounded fields would do it.",
         },
-        "suggestion": "DO NOT WIDEN THE TOLERANCE, and do not add a relation_exempt. The exemption "
-                      "mechanism is for a relation that is not an IDENTITY for a project; "
-                      "circulating <= total is an identity for NEAR, and the figures really do "
-                      "contradict each other. The flag is doing its job by being visible. Settle "
-                      "it by establishing which of the two fields is wrong — compare both against "
-                      "NEAR's own published supply — and if CoinGecko's total proves to be the "
+        # ===== IT CLEARED ON ITS OWN. RUN 20260921T204341Z, THE SAME DAY. =====
+        # circulating 1,306,946,567 against total 1,306,946,587 — circulating now BELOW total by
+        # 20 NEAR, where hours earlier it was above by 10. The identity holds again and nothing
+        # was changed to make it hold.
+        #
+        # WHAT THAT SETTLES AND WHAT IT DOES NOT. It confirms the contradiction is TRANSIENT and
+        # on CoinGecko's side: a figure that is wrong by construction does not fix itself between
+        # two runs on one day, and nothing in this repo touched either field. That is consistent
+        # with the first explanation below — two upstream pipelines with different update lags
+        # inside one response — and it rules out the third, rounding, which would be stable
+        # rather than flipping sign. It does NOT establish which field lags, and it does not make
+        # the next occurrence acceptable.
+        #
+        # ** THE ZERO-TOLERANCE CHECK STAYS EXACTLY AS IT IS. ** A check that fires on a real
+        # contradiction and then stops firing when the contradiction goes away is a check
+        # working, not a check that needs quieting. Widening the epsilon so a 10-token overshoot
+        # passes would buy nothing — the flag costs one Review Queue row on the days it happens —
+        # and would cost the ability to see a provider's supply fields diverge at all. The
+        # Aerodrome buffer is the precedent: tolerance added for comfort is the check switched
+        # off.
+        "status_update": {
+            "observed_on": "2026-09-21", "run": "20260921T204341Z-734e5f",
+            "circulating": 1_306_946_567, "total": 1_306_946_587,
+            "relation": "circulating is now 20 NEAR BELOW total — the identity holds",
+            "was": "circulating 1,306,892,570 vs total 1,306,892,560, ten NEAR above",
+            "conclusion": "TRANSIENT provider inconsistency, not a persistent one. Rules out the "
+                          "rounding explanation (stable, would not flip sign); consistent with "
+                          "two upstream pipelines at different lags. Which field lags is still "
+                          "unestablished.",
+            "action_taken": "none, deliberately. The check is unchanged and the question stays "
+                            "open — see suggestion.",
+        },
+        "suggestion": "DO NOT WIDEN THE TOLERANCE, and do not add a relation_exempt — including "
+                      "now that the figures agree again. The exemption mechanism is for a "
+                      "relation that is not an IDENTITY for a project; circulating <= total is an "
+                      "identity for NEAR, and on the run where they contradicted each other they "
+                      "really did. The flag is doing its job by being visible on those runs and "
+                      "silent on the others. Settle it by establishing which of the two fields "
+                      "lags — compare both against NEAR's own published supply, which "
+                      "nearblocks.io serves — and if CoinGecko's total proves to be the "
                       "unreliable one, source total_supply elsewhere for this project rather than "
                       "silencing the comparison.",
     },

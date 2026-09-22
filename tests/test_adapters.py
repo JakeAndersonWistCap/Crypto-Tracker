@@ -5401,9 +5401,18 @@ def test_a_tail_rate_that_has_never_been_nudged_is_a_finding_not_a_pass():
 
 
 def test_the_annualised_band_contains_both_readings_of_an_ambiguous_doc():
-    """The docs say "approximately 10.9% annualized" without saying 10.9% OF WHAT. The band is
-    set wide enough to hold both readings rather than resolving the ambiguity by assumption —
-    which is the same discipline applied to World Mobile's decay curve and Sky's two-layer split.
+    """The docs said "approximately 10.9% annualized" without saying 10.9% OF WHAT, and the band
+    was set wide enough to hold both readings rather than resolving it by assumption.
+
+    ** THE LIVE READ OF 2026-09-21 SETTLED THE BASE AND THE BAND STAYS WIDE ANYWAY. **
+    tailEmissionRate() came back 21 bps: 21 x 52 = 10.92% of TOTAL supply, which reproduces the
+    documented figure, where the circulating reading would need ~10.5 bps — half the observed
+    rate. So the base is total supply, the same base the tail formula itself uses.
+
+    One observation establishes the BASE, not the RATE. nudge() moves the rate by design, up or
+    down, so a band redrawn tightly around 10.92% would read the next governance nudge as a
+    fault. The band's job was never to pin the rate; it was to catch a read off by an order of
+    magnitude, and it still does.
     """
     tail = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["minter"]["emission_tail"]
     lo, hi = tail["annualised_share_bounds"]
@@ -5414,9 +5423,14 @@ def test_the_annualised_band_contains_both_readings_of_an_ambiguous_doc():
     assert lo <= of_circulating <= hi, f"the circulating reading ({of_circulating:.1%}) must fit"
     assert lo <= of_total <= hi, f"the total-supply reading ({of_total:.1%}) must fit"
 
-    # And the ambiguity is RECORDED, not silently resolved by whichever reading was convenient.
-    assert "do not state the BASE" in tail["annualised_share_source"]["ambiguity"]
-    assert tail["annualised_share_source"]["source_url"]
+    # THE RESOLUTION IS ON FILE WITH ITS ARITHMETIC, and the question it answered is kept.
+    src = tail["annualised_share_source"]
+    res = src["ambiguity_resolved"]
+    assert "do not state the BASE" in res["was"], "the open question is kept, not overwritten"
+    assert res["observed_bps"] == 21 and res["base"].startswith("total supply")
+    assert "10.92%" in res["annualised"], res["annualised"]
+    assert abs(21 * 52 / 10_000 - 0.1092) < 1e-9, "the arithmetic, not just the claim"
+    assert res["band_kept_wide_because"] and src["source_url"]
 
     # The band still excludes the activation rate, or it would not be doing any work.
     assert not (lo <= 0.67 * 52 / 100 <= hi), "67 bps annualised must stay outside the band"
