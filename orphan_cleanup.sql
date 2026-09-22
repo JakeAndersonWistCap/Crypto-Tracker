@@ -1868,3 +1868,58 @@ SELECT date, project, metric, value, typical,
 -- COMMIT;
 
 -- T4. VERIFY — T2 returns nothing verdicted PARTIAL.
+
+-- ========================================================================================
+-- U. MORPHO'S PARENT-RESIDUAL fees_usd ROWS — 2026-09-12 onward.                    2026-09-23
+--    U1-U2 LOOK. U3 deletes, scoped tightly to exactly what U1/U2 showed.
+-- ========================================================================================
+-- WHAT HAPPENED: DefiLlama restructured `morpho` into a parent with two children on
+-- 2026-09-12. The parent slug kept answering 200 and kept returning a daily chart — it just
+-- stopped being the protocol's fees. Its post-break daily chart IS morpho-midnight's, to the
+-- cent, wearing Morpho's name. Every fees_usd row for Morpho dated 2026-09-12 or later is that
+-- residual, not a measurement of Morpho's fees.
+--
+-- A SECOND, 45-DAY PROBE CONFIRMED morpho-blue (the child that actually carries Morpho's fees)
+-- has reported NOTHING since 2026-09-11 — not truncated at 30 days, absent at 45 — and every
+-- commit touching the adapter since late August is dated and unrelated to the break. The most
+-- likely cause is a DefiLlama indexing failure on morpho-blue's own listing, not anything on
+-- our side. See config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"].
+--
+-- FIXED AT WRITE TIME on 2026-09-23 (fetch/llama.py, _fees_with_restructure_guard): the
+-- residual is no longer stored going forward, and the run auto-recovers — switching to
+-- sum(morpho-blue, morpho-midnight) with a full re-pull — the moment morpho-blue reports again,
+-- with no human step. THIS SECTION IS FOR ROWS ALREADY WRITTEN BEFORE THAT FIX LANDED.
+--
+-- U1. THE RESIDUAL ROWS, dated on or after the break. Expect Morpho fees_usd only — this is
+--     scoped to exactly the (project, metric, date, source-prefix) shape of the bug, so a
+--     legitimate row from an unrelated route can never be swept up by it.
+SELECT date, project, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Morpho'
+   AND metric = 'fees_usd'
+   AND source LIKE 'defillama%'
+   AND date >= '2026-09-12'
+ ORDER BY date;
+
+-- U2. WHAT SURVIVES — the genuine pre-break history, which this section never touches. Run
+--     before and after U3 and only the count above should change; this one should not move.
+SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'fees_usd' AND date < '2026-09-12';
+
+-- U3. THE DELETE. Deleted rather than left in place: a near-empty residual sitting beside good
+--     history feeds the 30-day sum and every trailing window the same way a real observation
+--     would, and there is no route to a better number for these specific dates — DefiLlama has
+--     not reported them, full stop. Once morpho-blue reports again, recovery re-pulls the WHOLE
+--     history (never window_days) and overwrites everything from 2026-09-12 forward with the
+--     real sum, so this delete does not need to be re-run after that happens; it simply has
+--     nothing left to find.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Morpho'
+--    AND metric = 'fees_usd'
+--    AND source LIKE 'defillama%'
+--    AND date >= '2026-09-12';
+-- COMMIT;
+
+-- U4. VERIFY — U1 returns nothing, and U2's count/dates are unchanged from before U3 ran.

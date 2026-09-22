@@ -101,6 +101,13 @@ class DefiLlama:
             # A pair the store has already seen 404 and never succeed is not called again here
             # either — the politeness rule is about the endpoint, not about which check wants it.
             return
+        if project.get("defillama_restructure"):
+            # ALREADY DIAGNOSED. This generic check exists to catch an UNDECLARED restructure —
+            # Morpho was the case it was built for. Once one has been investigated and recorded
+            # in config, _fees_with_restructure_guard is the specific mechanism that reports and
+            # auto-recovers it; running this generic check alongside it would raise a second,
+            # redundant flag for the same fact every run.
+            return
         try:
             parent = self._summary(slug, "dailyFees")
         except Exception as e:  # noqa: BLE001 — a failed check must not kill the run
@@ -201,7 +208,28 @@ class DefiLlama:
             return
         if self._absent(name, f"summary/fees/{slug}", out):
             return
-        for data_type, metric in (("dailyFees", "fees_usd"), ("dailyRevenue", "revenue_usd"),
+
+        # ===== A CONFIRMED, UNRESOLVED RESTRUCTURE ROUTES fees_usd DIFFERENTLY. Added 2026-09-23.
+        # Morpho's `morpho` slug kept answering 200 after DefiLlama split it into a parent with
+        # two children — it just stopped being the protocol's fees. See defillama_restructure and
+        # _fees_with_restructure_guard for what changes: the parent's post-break residual is
+        # never stored, every run re-checks the child that matters, and the fix applies itself
+        # the day that child reports again. revenue_usd and holders_revenue_usd are NOT affected
+        # by this — Morpho's revenue is hardcoded to 0 by protocol design on both the parent and
+        # the child adapters, unrelated to which listing carries the fees — so they keep the
+        # ordinary path below.
+        restructure = project.get("defillama_restructure")
+        if restructure and restructure.get("status") == "confirmed_gap":
+            self._fees_with_restructure_guard(project, slug, restructure, window_days, out)
+        else:
+            try:
+                rows = self._summary_chart(slug, "dailyFees")
+                out.add(window(tidy(rows, name, "fees_usd", SOURCE, TIER), window_days), SOURCE,
+                        name, f"{slug}:dailyFees", TIER)
+            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(SOURCE, name, f"{slug}:dailyFees: {e}", TIER)
+
+        for data_type, metric in (("dailyRevenue", "revenue_usd"),
                                   ("dailyHoldersRevenue", "holders_revenue_usd")):
             try:
                 rows = self._summary_chart(slug, data_type)
@@ -209,6 +237,103 @@ class DefiLlama:
                         f"{slug}:{data_type}", TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{slug}:{data_type}: {e}", TIER)
+
+    def _fees_with_restructure_guard(self, project: dict, slug: str, restructure: dict,
+                                     window_days, out) -> None:
+        """fees_usd for a project whose DefiLlama listing has a CONFIRMED, unresolved restructure.
+
+        THREE THINGS HAPPEN, every run, and none of them need a human:
+
+        (1) THE PARENT'S POST-BREAK RESIDUAL IS NEVER STORED. Morpho's parent slug answers 200
+            and returns a daily chart after the break — it is morpho-midnight's fees wearing
+            Morpho's name, to the cent. Storing it would put a wrong-but-plausible number in a
+            column a daily check no longer distinguishes from a real one. Only the PRE-BREAK
+            history, which is genuinely the protocol's fees, is kept.
+
+        (2) THE WATCH CHILD IS RE-CHECKED. Every run reads its chart and logs whether it has
+            reported anything on or after the break date, so a human reading the Run Log sees the
+            live state without re-running the probe by hand.
+
+        (3) RECOVERY APPLIES ITSELF. The day the watch child reports again, fees_usd switches to
+            the sum of the declared children, the FULL history is re-pulled (never window_days —
+            a trimmed re-pull would rewrite only the recent month and leave everything before the
+            switch at the old, broken value), and it is stored — replacing every prior fees_usd
+            row via the ordinary upsert. Nothing here is a slug swapped on a guess: it is exactly
+            the sum(blue, midnight) the probe evidence already showed reconstructs the series
+            (pre-break parent tracked blue to within a few dollars a day, so the join is
+            continuous), applied the moment the evidence for it exists rather than on suspicion.
+
+        THE LEVEL-BREAK FLAG NEEDS NO EXPLICIT CLEAR. It is computed fresh from the stored
+        numbers on every run (fetch.validate.check_level_breaks), so once recovery has stored a
+        real series again, the flag simply stops firing — there is no separate acknowledgement
+        step to remember.
+        """
+        name = project["name"]
+        watch = restructure["watch_child"]
+        break_date = pd.Timestamp(restructure["break_date"])
+
+        try:
+            watch_chart = self._chart(self._summary(watch, "dailyFees"))
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"{watch}: restructure recovery check failed: {e}", TIER)
+            watch_chart = None
+
+        recovered_from = None
+        if watch_chart is not None:
+            after = [d for d, v in watch_chart if pd.Timestamp(d.date()) >= break_date]
+            if after:
+                recovered_from = min(after).date().isoformat()
+        log.info("%s: restructure recovery check on %s — %s", name, watch,
+                 f"RECOVERED, reporting again from {recovered_from}" if recovered_from
+                 else f"still no data on or after {break_date.date()}")
+
+        if recovered_from is None:
+            try:
+                full = self._chart(self._summary(slug, "dailyFees"))
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{slug}:dailyFees: {e}", TIER)
+                return
+            pre_break = [(d, v) for d, v in full if pd.Timestamp(d.date()) < break_date]
+            if pre_break:
+                out.add(window(tidy(pre_break, name, "fees_usd", SOURCE, TIER), window_days),
+                        SOURCE, name, f"{slug}:dailyFees (pre-break history only)", TIER)
+            out.gap(name, "fees_usd", reason=restructure["gap_reason"], tiers_attempted="1",
+                    suggestion=f"Re-checked automatically every run against {watch}'s own "
+                              f"listing — no manual probe needed unless this persists for "
+                              f"months, at which point the DefiLlama listing itself, not just "
+                              f"this project's slug, should be re-examined.")
+            return
+
+        # RECOVERED. Sum the declared children over their FULL history and store it — replacing
+        # every stored fees_usd row for this project via the ordinary (date, project, metric)
+        # upsert, so the series is continuous rather than having a gap at the switch.
+        sum_slugs = restructure["recovery"]["sum_slugs"]
+        by_date: dict = {}
+        ok = True
+        for kid in sum_slugs:
+            try:
+                for d, v in self._chart(self._summary(kid, "dailyFees")):
+                    day = pd.Timestamp(d.date())
+                    by_date[day] = by_date.get(day, 0.0) + float(v)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{kid}: recovery re-pull failed: {e}", TIER)
+                ok = False
+        if not ok or not by_date:
+            return
+        rows = sorted(by_date.items())
+        out.add(tidy(rows, name, "fees_usd", SOURCE, TIER), SOURCE, name,
+                f"RECOVERED — {' + '.join(sum_slugs)}, full history re-pulled, {len(rows)} "
+                f"day(s)", TIER)
+        out.review_item(
+            name, "fees_usd", "source_restructure_recovered", "stored_flagged",
+            value=rows[-1][1], date=rows[-1][0].date().isoformat(),
+            basis=(f"{slug!r}'s restructure has RECOVERED: {watch} is reporting again from "
+                  f"{recovered_from}. fees_usd is now sum({', '.join(sum_slugs)}), full "
+                  f"history re-pulled so the series has no gap at the switch. No human step "
+                  f"was needed for the switch, the re-pull, or clearing the level-break flag — "
+                  f"that flag is computed from the stored numbers on every run, so a correct "
+                  f"series simply stops tripping it."),
+            source=f"{SOURCE}:recovered", tier=TIER)
 
     # ------------------------------------------------------------------ TVL
     def protocol_tvl(self, project: dict, window_days, out):

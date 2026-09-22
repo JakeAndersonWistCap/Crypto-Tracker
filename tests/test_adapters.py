@@ -9452,49 +9452,165 @@ def test_the_restructure_check_is_quiet_on_everything_that_is_not_one():
           "an unreadable child")
 
 
-def test_morphos_restructure_is_recorded_as_neither_case_and_the_switch_is_held():
-    """** THE EVIDENCE RULES OUT BOTH PROPOSED REMEDIES, WHICH IS WHY NOTHING WAS SWITCHED. **
+def test_morphos_restructure_is_a_confirmed_gap_not_a_slug_to_guess_at():
+    """** A SECOND, 45-DAY PROBE SETTLED IT: morpho-blue reports NOTHING after 2026-09-11. **
 
-    Case (a) was "morpho-blue is continuous across 2026-09-12 at the pre-break level" and case
-    (b) was "morpho-blue begins at 09-12". Blue does neither: it carries the full pre-break level
-    up to and including 09-11 and then has no point at all.
+    Not truncated at 30 days — absent at 45. Continuous ~$490-650K/day through 09-11 (last point
+    $614,631), then nothing. That is neither case (a) (blue continuous across the break) nor case
+    (b) (blue beginning at the break) — it rules both out, because there is no second series to
+    hand over to and no continuation to switch onto today.
 
-    Two independent signals agree, and the second is the decisive one — blue's own total30d is
-    EXACTLY the sum of its 2026-08-23..09-11 values, a window that also ends on the 11th.
+    AND IT IS NOT OUR CODE. Every commit touching the adapter since late August is dated and
+    unrelated: a blacklist entry, an added chain, a corrected start date — nothing on or before
+    the break. The likely cause is a DefiLlama indexing failure on morpho-blue's own listing.
     """
     r = config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]
-    assert r["status"].startswith("HELD")
+    assert r["status"] == "confirmed_gap"
     assert r["blue_last_daily_point"] == "2026-09-11"
     assert r["midnight_last_daily_point"] == "2026-09-22"
+    assert "45-day" in r["blue_45day_probe"] or "45 day" in r["blue_45day_probe"]
+    assert "$614,631" in r["blue_45day_probe"]
 
     # THE ARITHMETIC, asserted rather than only described: the children sum to the parent's
     # total to the cent, so the money moved rather than stopped.
     kids = r["children"]
     assert abs(sum(kids.values()) - r["parent_total30d"]) < 0.01
 
-    # AND THE 20-DAY WINDOW THAT PINS BLUE'S END DATE. If blue were still reporting, its
-    # total30d would be the trailing 30 days; instead it is exactly 2026-08-23..09-11.
-    blue_window = [545945, 615789, 1534428, 708803, 592886, 601593, 551006, 565284, 627417,
-                   576247, 621756, 566170, 647182, 610444, 576138, 649622, 618765, 610155,
-                   607012, 614631]
-    assert sum(blue_window) == kids["morpho-blue"], \
-        "blue's reported total30d is exactly its 2026-08-23..09-11 values — the window ends there"
-    assert len(blue_window) == 20, "twenty days, not thirty — the series stops before today"
+    # THE CODE-UNCHANGED EVIDENCE is on file, dated, so "likely cause" is not a shrug.
+    assert len(r["code_unchanged_at_break"]) == 3
+    assert all("2026-08" in c or "2026-09" in c for c in r["code_unchanged_at_break"])
+    assert "indexing failure" in r["likely_cause"] and "DefiLlama" in r["likely_cause"]
 
-    # ** BOTH PROPOSED REMEDIES WOULD REPRODUCE THE BUG. ** Summing the children, or handing over
-    # at 09-12, both give ~$150/day after 09-11 because blue contributes nothing there. Putting
-    # the same near-zero series on the sheet under a new label is worse than leaving it visibly
-    # broken, because a relabelled series reads as fixed.
-    assert "do NOT switch to sum(blue, midnight)" in r["do_not"]
-    assert "reproduce the same near-zero series" in r["do_not"]
-    assert r["settles_it"] == "python llama_probe.py morpho-blue --days 45"
+    # THE GAP REASON IS THE EXACT TEXT THE ROW MUST CARRY.
+    assert r["gap_reason"] == ("DefiLlama has not reported Morpho Blue fees since 2026-09-12; "
+                               "adapter code unchanged at that date and actively maintained — "
+                               "likely an indexing failure on DefiLlama's side.")
 
-    # THE LEVEL BREAK IS NOT CLEARED. Acknowledging it while the series is still wrong would be
-    # the false confirmation this book removed from GEODNET's implied-vs-actual row.
-    assert ("Morpho", "fees_usd") not in config.LEVEL_BREAK_ACKNOWLEDGED, \
-        "a break is acknowledged when the series is fixed, not when it is understood"
-    print("morpho ok: neither case, both remedies refused with the arithmetic, one probe named, "
-          "level_break left standing")
+    # THE AUTO-RECOVERY SCAFFOLD IS DECLARED, NOT HARDCODED IN THE ADAPTER.
+    assert r["watch_child"] == "morpho-blue"
+    assert r["recovery"] == {"target_metric": "fees_usd",
+                             "sum_slugs": ["morpho-blue", "morpho-midnight"]}
+    assert "automatically" in r["do_not"] and "BY HAND" in r["do_not"]
+    print("morpho ok: confirmed gap, code exonerated with dates, recovery scaffold declared")
+
+
+class _MorphoLlamaStub:
+    """DefiLlama's summary endpoint for Morpho's parent and two children."""
+
+    def __init__(self, blue_after_break=None):
+        import datetime as dt
+        self.calls = []
+        blue_pre = [(f"2026-08-{d:02d}", 575_000.0) for d in range(13, 32)] + \
+                   [(f"2026-09-{d:02d}", 610_000.0) for d in range(1, 12)]
+        blue = blue_pre + (blue_after_break or [])
+        mid = [(f"2026-09-{d:02d}", v) for d, v in
+              zip(range(12, 23), [21.64, 0.0, 2.13, 2.99, 23.02, 62.77, 122.0, 174.0, 178.0,
+                                  157.0, 112.0])]
+        self.summaries = {
+            "morpho": {"name": "Morpho", "total30d": 13_046_131.76,
+                      "childProtocols": ["morpho-blue", "morpho-midnight"],
+                      "totalDataChart": _chart(blue_pre + mid)},
+            "morpho-blue": {"name": "Morpho Blue", "parentProtocol": "parent#morpho",
+                           "total30d": sum(v for _, v in blue_pre), "childProtocols": [],
+                           "totalDataChart": _chart(blue)},
+            "morpho-midnight": {"name": "Morpho Midnight", "parentProtocol": "parent#morpho",
+                               "total30d": sum(v for _, v in mid), "childProtocols": [],
+                               "totalDataChart": _chart(mid)},
+        }
+
+    def get(self, url, params=None, headers=None):
+        slug = url.rstrip("/").split("/")[-1]
+        self.calls.append(slug)
+        if slug not in self.summaries:
+            raise RuntimeError(f"404 for {slug}")
+        return self.summaries[slug]
+
+
+def test_the_parents_post_break_residual_is_never_stored_while_the_gap_is_unresolved():
+    """** THE POST-BREAK RESIDUAL IS MORPHO-MIDNIGHT'S FEES WEARING MORPHO'S NAME. **
+
+    The parent's slug answers 200 after the break and returns a chart — it is midnight's fees,
+    to the cent. Storing it under Morpho's fees_usd would put a wrong-but-plausible number in a
+    column a daily check no longer distinguishes from a real one. Only the genuinely pre-break
+    history is kept, and the gap is reported with the exact reason config declares.
+    """
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    d = DefiLlama()
+    d.http = _MorphoLlamaStub()   # blue reports nothing after 09-11 — the confirmed state
+    out = FetchOutput()
+    d.fees(config.PROJECT_BY_NAME["Morpho"], None, out)
+
+    fees = out.frame()[out.frame().metric == "fees_usd"]
+    assert not fees.empty, "the genuine pre-break history must still be stored"
+    assert fees["date"].max() < pd.Timestamp("2026-09-12"), \
+        f"nothing dated on or after the break may be stored: {sorted(fees['date'].astype(str))}"
+    assert fees["date"].min() == pd.Timestamp("2026-08-13")
+
+    gap = next(g for g in out.gaps if g["metric"] == "fees_usd")
+    assert gap["reason"] == config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]["gap_reason"]
+    assert "morpho-blue" in gap["suggestion"]
+
+    # REVENUE AND HOLDERS' REVENUE ARE UNAFFECTED — Morpho's revenue is hardcoded to 0 by
+    # protocol design regardless of which listing carries the fees, so they keep the ordinary
+    # path and are not blanked by the guard.
+    assert not out.frame()[out.frame().metric == "revenue_usd"].empty
+    print("residual ok: only pre-break fees stored, the gap carries config's exact reason, "
+          "revenue untouched")
+
+
+def test_recovery_applies_itself_the_day_the_watch_child_reports_again():
+    """** NO HUMAN STEP. ** The day morpho-blue reports again, fees_usd becomes
+    sum(morpho-blue, morpho-midnight) over the FULL history — not a trimmed re-fetch, which
+    would rewrite only the recent month and leave everything before the switch at the old,
+    broken value — and a review row records the recovery. The level-break flag needs no separate
+    clearing: it is computed from the stored numbers each run, so a correct series just stops
+    tripping it.
+    """
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    d = DefiLlama()
+    # Blue reports again from 2026-09-12 onward, roughly at its pre-break level.
+    d.http = _MorphoLlamaStub(blue_after_break=[(f"2026-09-{d_:02d}", 605_000.0)
+                                                for d_ in range(12, 23)])
+    out = FetchOutput()
+    d.fees(config.PROJECT_BY_NAME["Morpho"], None, out)
+
+    fees = out.frame()[out.frame().metric == "fees_usd"].sort_values("date")
+    assert fees["date"].max() == pd.Timestamp("2026-09-22"), \
+        "the series must now extend through the latest recovered day"
+    assert fees["date"].min() == pd.Timestamp("2026-08-13"), "full history, not a trimmed re-pull"
+    # THE SWITCH-DAY VALUE IS THE SUM, not either child alone.
+    switch_day = fees[fees.date == pd.Timestamp("2026-09-12")]
+    assert abs(float(switch_day.value.iloc[0]) - (605_000.0 + 21.64)) < 0.01
+
+    recov = [r for r in out.review if r["reason"] == "source_restructure_recovered"]
+    assert len(recov) == 1, out.review
+    assert "RECOVERED" in recov[0]["basis"] and "morpho-blue" in recov[0]["basis"]
+    assert "No human step was needed" in recov[0]["basis"]
+    assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
+        "a recovered series must not also report a gap"
+    print("recovery ok: full history summed and stored, switch day sums both children, "
+          "recorded with no gap alongside it")
+
+
+def test_the_generic_restructure_check_stands_down_once_a_project_is_declared():
+    """Once a restructure has been investigated and recorded in config, the generic
+    check_restructure (built to catch an UNDECLARED one) must not also raise a duplicate flag
+    for the same fact every run."""
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    d = DefiLlama()
+    d.http = _MorphoLlamaStub()
+    out = FetchOutput()
+    d.check_restructure(config.PROJECT_BY_NAME["Morpho"], out)
+    assert not out.review and not out.gaps, \
+        "a project with a declared defillama_restructure must not also get the generic flag"
+    assert not d.http.calls, "the generic check should not even call the endpoint"
+    print("generic check ok: stands down for a project already diagnosed in config")
 
 
 def test_morphos_second_revenue_route_is_recorded_as_a_watch_item():

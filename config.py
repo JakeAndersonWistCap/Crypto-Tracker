@@ -5218,48 +5218,73 @@ PROJECTS = [
         # the archetype implies it is pending evidence, and the evidence is already in — the switch
         # is off, and it is off for legal/tax structuring reasons, not because Morpho decided
         # against paying holders. See reopen_condition.
-        # ===== THE 2026-09-12 RESTRUCTURE. EVIDENCE IN, SWITCH HELD. 2026-09-23. =====
+        # ===== THE 2026-09-12 RESTRUCTURE. CONFIRMED GAP, AUTO-RECOVERING. 2026-09-23. =====
         # DefiLlama split `morpho` into a parent with two children. The slug kept returning 200
         # and kept returning a daily series; it just stopped being the protocol's fees. Stored
         # fees fell from ~$575K/day to $2.13 and nothing noticed for eleven days.
         #
-        # WHAT THE PROBE ESTABLISHED, and the arithmetic is exact:
+        # WHAT THE FIRST PROBE ESTABLISHED, and the arithmetic is exact:
         #   parent total30d      13,046,131.76
         #   morpho-blue          13,041,273.00   ] sum to the parent's total to the CENT
         #   morpho-midnight           4,858.76   ]
         #   the parent's post-break daily series IS midnight's, to the cent on every date
         #     sampled (09-12 21.64, 09-13 0.00, 09-14 2.13, 09-15 2.99, 09-16 23.02, 09-21 157.00)
         #
-        # ** IT IS NEITHER OF THE TWO CASES THE REWIRE WAS SPECIFIED FOR, AND THAT IS WHY NOTHING
-        # HAS BEEN SWITCHED. ** Case (a) was "blue is continuous across 09-12" and case (b) was
-        # "blue begins at 09-12". Blue does neither: it carries the FULL pre-break level up to
-        # and including 2026-09-11 and then has NO POINT AT ALL. Two independent signals agree —
-        # the probe's last-30 slice ends 09-11 while midnight's ends 09-22, and blue's own
-        # total30d (13,041,273) is EXACTLY the sum of its 2026-08-23..09-11 values, a window that
-        # also ends on the 11th.
+        # WHAT A SECOND, 45-DAY PROBE SETTLED: morpho-blue has NO data after 2026-09-11 — not
+        # truncated at 30 days, absent at 45. Continuous ~$490-650K/day up to and including
+        # 09-11 (last point $614,631), nothing since. That rules out case (a) (blue continuous
+        # across the break) outright; it is not case (b) either (blue beginning AT the break),
+        # because blue simply stops rather than a second series beginning.
         #
-        # SO BOTH PROPOSED REMEDIES WOULD REPRODUCE THE BUG. sum(blue, midnight) collapses to
-        # ~$150/day after 09-11 because blue contributes nothing there; a handover at 09-12 hands
-        # over to a source with no data. Either would put the same near-zero series on the sheet
-        # under a new label, which is worse than leaving it visibly broken.
+        # AND IT IS NOT OUR CODE. Every commit touching fetch/morpho since late August is dated
+        # and unrelated to the break: 2026-08-31 (a market blacklist entry), 2026-09-16 (the Arc
+        # chain added), 2026-09-18 (Arc's start date corrected). Nothing changed in the adapter
+        # ON or before 2026-09-12. The likely cause is a DefiLlama INDEXING FAILURE on their
+        # side — morpho-blue's own listing has simply stopped accumulating days — not a fee
+        # switch, not a migration, not anything on our end or Morpho's.
         #
-        # ONE PROBE SETTLES IT: `python llama_probe.py morpho-blue --days 45`. If blue has points
-        # after 09-11 the chart was simply truncated and case (a) applies — switch and re-pull
-        # full history. If it does not, the fees are unreported by DefiLlama since 09-12 and the
-        # answer is a gap with that reason, NOT a slug swap.
+        # SO THE GAP IS REAL AND NOT OURS TO CLOSE BY GUESSING. Nothing is switched. Three
+        # things happen instead, and none of them need a human:
+        #   (1) the parent's post-break residual (morpho-midnight's fees, mislabelled as
+        #       Morpho's) is never stored — see fetch/llama._fees_with_restructure_guard;
+        #   (2) every run re-checks morpho-blue for data past the break and logs the result,
+        #       whichever way it comes out;
+        #   (3) the day morpho-blue reports again, fees_usd switches automatically to
+        #       sum(morpho-blue, morpho-midnight), the full history is re-pulled so the series
+        #       has no gap at the switch (the pre-break parent tracked blue to within a few
+        #       dollars a day, so the join is continuous), and the level-break flag clears on
+        #       its own — it is computed from the stored numbers each run, so correct numbers
+        #       simply stop tripping it.
         "defillama_restructure": {
             "detected_on": "2026-09-12",
             "investigated_on": "2026-09-23",
+            "confirmed_on": "2026-09-23",
+            "break_date": "2026-09-12",
             "parent_total30d": 13_046_131.76,
             "children": {"morpho-blue": 13_041_273.00, "morpho-midnight": 4_858.76},
             "parent_post_break_series_is": "morpho-midnight, to the cent",
             "blue_last_daily_point": "2026-09-11",
             "midnight_last_daily_point": "2026-09-22",
-            "status": "HELD — neither case (a) nor case (b); one probe settles it",
-            "settles_it": "python llama_probe.py morpho-blue --days 45",
-            "do_not": "do NOT switch to sum(blue, midnight) or declare a 09-12 handover on this "
-                      "evidence: blue contributes nothing after 09-11, so both reproduce the "
-                      "same near-zero series under a new label",
+            "blue_45day_probe": "continuous ~$490-650K/day through 09-11 ($614,631 on the last "
+                                "day), no point at all after it — checked on a 45-day window, "
+                                "not just 30, to rule out simple truncation",
+            "code_unchanged_at_break": ("2026-08-31 blacklist entry", "2026-09-16 Arc chain added",
+                                        "2026-09-18 Arc start date corrected"),
+            "likely_cause": "a DefiLlama indexing failure on morpho-blue's own listing, not a "
+                            "code change on our side, Morpho's side, or DefiLlama's adapter",
+            "status": "confirmed_gap",
+            "gap_reason": "DefiLlama has not reported Morpho Blue fees since 2026-09-12; "
+                          "adapter code unchanged at that date and actively maintained — likely "
+                          "an indexing failure on DefiLlama's side.",
+            # THE AUTO-RECOVERY SCAFFOLD. watch_child is re-checked every run; recovery.sum_slugs
+            # is what fees_usd becomes the moment it reports again. Nothing here is switched by
+            # hand — see fetch/llama._fees_with_restructure_guard for the mechanism.
+            "watch_child": "morpho-blue",
+            "recovery": {"target_metric": "fees_usd", "sum_slugs": ["morpho-blue", "morpho-midnight"]},
+            "do_not": "do NOT switch to sum(blue, midnight) or declare a 09-12 handover BY HAND: "
+                      "blue reports nothing since 09-11, so either would store a near-zero "
+                      "series under a new label today. The switch happens automatically, only "
+                      "once blue reports again.",
         },
         "archetypes": [2], "archetypes_held": [],
         "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.morpho.org/", "source_date": "2026-09-14",
