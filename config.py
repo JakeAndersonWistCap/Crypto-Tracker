@@ -543,6 +543,43 @@ def destination_indeterminate(project_name: str, metric: str) -> dict | None:
     return p.get("destination_indeterminate")
 
 
+# ===== WHICH PROJECTS A RUN COVERS. =====
+#
+# The book tracks 30 projects and the portfolio holds 16 of them. A full run is therefore
+# fetching roughly twice what a portfolio review reads, and the 14 parked names cost real time
+# against free endpoints that are also being asked to serve the ones that matter.
+#
+# ** THE LIST LIVES IN A FILE, NOT HERE, AND THAT IS DELIBERATE. ** Which 16 are held is Jake's
+# fact, it changes without any code changing, and guessing it has an asymmetric cost: a name
+# wrongly parked stops collecting silently, and a series that stops collecting cannot be
+# backfilled — CoinGecko serves total_supply as a current value only. So the scope is read from
+# portfolio.txt, one project name per line, the same shape as manual_overrides.csv, and a run
+# with no such file covers everything and says so rather than quietly narrowing.
+PORTFOLIO_FILE = "portfolio.txt"
+
+
+def read_portfolio(path) -> tuple[list[str], list[str]]:
+    """(names, unknown) from portfolio.txt. Blank lines and # comments ignored.
+
+    Returns the unknown names rather than raising: a typo should narrow nothing and be reported,
+    not stop the run and not silently drop a project. The caller decides.
+    """
+    from pathlib import Path as _P
+    p = _P(path)
+    if not p.exists():
+        return [], []
+    names, unknown = [], []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line in PROJECT_BY_NAME:
+            names.append(line)
+        else:
+            unknown.append(line)
+    return names, unknown
+
+
 def declared_handover(project_name: str, metric: str) -> dict | None:
     """A series deliberately STITCHED from two measuring points, one after the other.
 

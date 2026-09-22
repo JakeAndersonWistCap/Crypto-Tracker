@@ -51,6 +51,10 @@ class FetchOutput:
     review: list = field(default_factory=list)
     gaps: list = field(default_factory=list)
     staged: list = field(default_factory=list)
+    # Wall clock per source, filled by fetch_all. Not stored and not displayed on a tab: it is
+    # an operational fact about one run, not a figure about a project, and putting it in the
+    # store would make it look like one.
+    timings: list = field(default_factory=list)
 
     def add(self, df: pd.DataFrame | None, source: str, project: str | None, message: str = "", tier: int | None = None):
         n = 0 if df is None else len(df)

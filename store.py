@@ -23,7 +23,7 @@ from __future__ import annotations
 import numbers
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -109,6 +109,10 @@ CREATE TABLE IF NOT EXISTS fetch_status (
     last_success_at TEXT,
     last_error      TEXT,
     last_rows       INTEGER,
+    -- WHEN THIS PAIR FIRST 404'd WITHOUT EVER HAVING SUCCEEDED. Set by record_fetch, cleared by
+    -- any success. It is the only state known_absent() needs: a 404 on a pair with no history
+    -- of working is a resource that is not there, not a resource that is down.
+    absent_since    TEXT,
     PRIMARY KEY (source, project)
 );
 
@@ -181,7 +185,8 @@ def _migrate(conn: sqlite3.Connection):
     """Add columns introduced after the first release, so an existing metrics.db keeps its history."""
     for table, col, decl in (("metrics", "tier", "INTEGER"), ("run_log", "tier", "INTEGER"),
                              ("gap_report", "priority", "INTEGER"), ("gap_report", "priority_label", "TEXT"),
-                             ("review_queue", "prior_date", "TEXT"), ("review_queue", "basis", "TEXT")):
+                             ("review_queue", "prior_date", "TEXT"), ("review_queue", "basis", "TEXT"),
+                             ("fetch_status", "absent_since", "TEXT")):
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if cols and col not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -353,18 +358,66 @@ class Store:
         )
         if project is not None and status in ("ok", "failed"):
             existing = self.conn.execute(
-                "SELECT last_success_at FROM fetch_status WHERE source=? AND project=?", (source, project)
+                "SELECT last_success_at, absent_since FROM fetch_status WHERE source=? AND project=?",
+                (source, project)
             ).fetchone()
             last_success = ts if status == "ok" else (existing[0] if existing else None)
+            # ===== A 404 ON A PAIR THAT HAS NEVER WORKED IS AN ABSENT RESOURCE. =====
+            # Distinguished from every other failure on two conditions, both required:
+            #   404 SPECIFICALLY   a timeout, a 429 or a 5xx is a source that is down or busy,
+            #                      and retrying it tomorrow is the right thing. A 404 is the
+            #                      server saying the thing is not there, which is a definite
+            #                      answer — HttpError exists precisely to keep them apart.
+            #   NEVER SUCCEEDED    a pair that worked once and 404s now is a source that MOVED,
+            #                      which is a finding worth seeing every run, not something to
+            #                      stop asking about.
+            # Any success clears it, so a resource that appears later is picked straight back up.
+            absent = existing[1] if existing else None
+            if status == "ok":
+                absent = None
+            elif absent is None and last_success is None and "HTTP 404" in (message or ""):
+                absent = ts
             self.conn.execute(
-                """INSERT INTO fetch_status(source, project, last_attempt_at, last_success_at, last_error, last_rows)
-                   VALUES (?,?,?,?,?,?)
+                """INSERT INTO fetch_status(source, project, last_attempt_at, last_success_at,
+                                            last_error, last_rows, absent_since)
+                   VALUES (?,?,?,?,?,?,?)
                    ON CONFLICT(source, project) DO UPDATE SET
                      last_attempt_at=excluded.last_attempt_at, last_success_at=excluded.last_success_at,
-                     last_error=excluded.last_error, last_rows=excluded.last_rows""",
-                (source, project, ts, last_success, "" if status == "ok" else (message or "")[:500], rows),
+                     last_error=excluded.last_error, last_rows=excluded.last_rows,
+                     absent_since=excluded.absent_since""",
+                (source, project, ts, last_success, "" if status == "ok" else (message or "")[:500],
+                 rows, absent),
             )
         self.conn.commit()
+
+    # HOW LONG A KNOWN-ABSENT PAIR STAYS UNASKED. Fourteen days, not for ever: a protocol that
+    # gets a DefiLlama adapter, or a dashboard that gains an endpoint, should be picked up
+    # without anyone remembering to clear a flag. Short enough that the gap closes within a
+    # fortnight of the resource appearing; long enough that the call is not made 14 times for
+    # nothing in between.
+    ABSENT_RECHECK_DAYS = 14
+
+    def known_absent(self, recheck_days: int | None = None) -> set[tuple[str, str]]:
+        """(source, project) pairs whose resource 404'd, never worked, and are not due a recheck.
+
+        DERIVED, NEVER DECLARED. Nothing in config lists these: the list is whatever the store
+        has observed, so it cannot go stale against reality and there is no hand-maintained
+        register to disagree with the run log. A pair drops out the moment it succeeds, and comes
+        back up for a retry once the recheck interval has passed since the last ATTEMPT — which
+        is why a skip must not touch last_attempt_at.
+        """
+        days = self.ABSENT_RECHECK_DAYS if recheck_days is None else recheck_days
+        # ZERO MEANS RECHECK NOW, and it has to be handled rather than left to the comparison:
+        # timestamps are second-resolution, so a cutoff of exactly now still matches an attempt
+        # recorded this second and would park the pair it was meant to release.
+        if days <= 0:
+            return set()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = self.conn.execute(
+            """SELECT source, project FROM fetch_status
+                WHERE absent_since IS NOT NULL AND last_success_at IS NULL
+                  AND last_attempt_at >= ?""", (cutoff,)).fetchall()
+        return {(s, p) for s, p in rows}
 
     def record_review(self, run_id: str, items: list[dict]):
         if not items:

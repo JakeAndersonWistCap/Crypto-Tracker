@@ -48,7 +48,10 @@ class CoinGecko:
     NO_KEY = 6.0        # public tier is variable and lower (roughly 5-15/min); 10/min sits inside
                         # that band. 60 calls -> ~6 minutes, and no 429 storm on top.
 
-    def __init__(self):
+    def __init__(self, known_absent: set | None = None):
+        # (source, project) pairs whose endpoint 404'd and never worked — see store.known_absent.
+        # A coin id that CoinGecko does not have 404s on every call, every run, for ever.
+        self.known_absent = known_absent or set()
         key = os.environ.get("COINGECKO_API_KEY", "").strip()
         self.headers = {"x-cg-demo-api-key": key} if key else {}
         self.http = Http(min_interval=self.WITH_KEY if key else self.NO_KEY)
@@ -75,6 +78,16 @@ class CoinGecko:
             cid, name = p.get("coingecko_id"), p["name"]
             if not cid:
                 out.unconfigured(SOURCE, name, "no coingecko_id", TIER)
+                continue
+            if (SOURCE, name) in self.known_absent:
+                # skipped, not failed: no call was made, so there is no error — and not
+                # unconfigured either, because the coingecko_id IS configured and the coin is
+                # what is missing. Retried automatically once 14 days pass without an attempt.
+                out.skipped(SOURCE, name,
+                            f"{cid}: KNOWN ABSENT — this coin id 404'd and has never returned "
+                            f"anything. Not called. Retried after 14 days without an attempt "
+                            f"(store.ABSENT_RECHECK_DAYS); any success clears it permanently.",
+                            TIER)
                 continue
             try:
                 j = self.http.get(f"{API}/coins/{cid}/market_chart",

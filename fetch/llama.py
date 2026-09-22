@@ -21,6 +21,8 @@ from .base import Http, tidy, window
 log = logging.getLogger("token_metrics.fetch.llama")
 
 SOURCE = "defillama"
+# Named here so the skip message and store.ABSENT_RECHECK_DAYS cannot drift apart in prose.
+ABSENT_RECHECK_NOTE = "14 days without an attempt (store.ABSENT_RECHECK_DAYS)"
 TIER = 1
 API = "https://api.llama.fi"
 STABLES = "https://stablecoins.llama.fi"
@@ -32,9 +34,27 @@ PRO_ONLY = {
 
 
 class DefiLlama:
-    def __init__(self):
+    def __init__(self, known_absent: set | None = None):
         self.http = Http(min_interval=0.25)
         self._rwa_by_chain: pd.DataFrame | None = None
+        # (source, project) pairs whose endpoint 404'd and has never worked — see
+        # store.known_absent. DERIVED FROM THE STORE, not declared in config: the list is
+        # whatever has actually been observed, so it cannot go stale against reality and there
+        # is no hand-maintained register to disagree with the run log.
+        self.known_absent = known_absent or set()
+
+    def _absent(self, name: str, what: str, out) -> bool:
+        """True when this pair is a known-absent resource, and the skip is logged as one."""
+        if (SOURCE, name) not in self.known_absent:
+            return False
+        # skipped, NOT failed and NOT unconfigured. It produced no error because no call was
+        # made, and it is not a missing config entry — the entry is right and the resource is
+        # not there. The Run Log's SKIPPED column is what surfaces it.
+        out.skipped(SOURCE, name, f"{what}: KNOWN ABSENT — this endpoint 404'd and has never "
+                                  f"returned anything for this project. Not called. It is "
+                                  f"retried automatically after "
+                                  f"{ABSENT_RECHECK_NOTE}.", TIER)
+        return True
 
     # ------------------------------------------------------------------ fees & revenue
     def _summary_chart(self, slug: str, data_type: str):
@@ -45,6 +65,8 @@ class DefiLlama:
         slug, name = project.get("defillama_fees_slug"), project["name"]
         if not slug:
             out.unconfigured(SOURCE, name, "no defillama_fees_slug — not tracked by DefiLlama", TIER)
+            return
+        if self._absent(name, f"summary/fees/{slug}", out):
             return
         for data_type, metric in (("dailyFees", "fees_usd"), ("dailyRevenue", "revenue_usd"),
                                   ("dailyHoldersRevenue", "holders_revenue_usd")):

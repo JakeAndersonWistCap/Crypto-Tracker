@@ -817,3 +817,98 @@ entirely plausible.
 
 ### `recalc.py` reports `errors_found`
 A formula problem. Do not ship the workbook. Send me the `error_summary` from the JSON output.
+
+---
+
+## 12. Narrowing a run
+
+`python token_metrics.py` still does the whole job with no arguments. Four flags narrow it, and
+none of them changes what any figure means.
+
+### `--no-fetch` — rebuild the workbook, fetch nothing
+
+```
+python token_metrics.py --no-fetch
+```
+
+Every display rule in this project is read-time: the confidence bands, the eight withheld
+mechanisms, the labels, the window arithmetic. All of them are worked on against the store as it
+stands, so this is the loop for any of them — and it is the only way to rebuild without spending
+a day's politeness budget on the free endpoints, against a standing rule of one run a day.
+
+It passes no `run_id`, deliberately. Nothing was fetched, so there is no run to attribute the
+workbook to; dating it to the previous run would claim a freshness it does not have.
+
+### `--project NAME` — one project, repeatable
+
+```
+python token_metrics.py --project Sky --project Uniswap
+```
+
+Names are exact, as in `config.py`. A name it does not recognise is **refused with the list**
+rather than fetching nothing: a mistyped `--project` that quietly fetched nothing looks identical
+to a run where every source had nothing to add — same empty result, same clean exit, no error
+anywhere.
+
+### `portfolio.txt` — the default scope
+
+Put one project name per line in `portfolio.txt` (blank lines and `#` comments ignored) and the
+**default** run covers only those. `--all` restores the full thirty.
+
+```
+# holdings
+Sky
+Uniswap
+Ether.fi        # comments are fine
+```
+
+**A typo widens the run, it never narrows it**, and the run says loudly what it could not match.
+The asymmetry is deliberate: a name wrongly parked stops collecting silently, and a series that
+stops collecting cannot be backfilled — CoinGecko serves `total_supply` as a current value only,
+confirmed on a live call. Fetching a project that is no longer held costs one extra API call a
+day. On any doubt, the run widens.
+
+A narrowed run still builds the **whole** workbook. The store holds every project's history and
+the workbook is built from the store, so the projects that were not fetched render from what they
+already have and go stale in the ordinary way. Nothing is blanked for having been skipped, and
+nothing is reported as fresh that is not.
+
+### What the incremental window actually does
+
+"Later runs re-fetch a trailing 30-day window" is true of what reaches the **store** on every
+source. It is true of what goes over the **wire** on exactly one:
+
+| source | effect of the 30-day window |
+|---|---|
+| coingecko | `days=30` is in the request. Real, and it saves the transfer. |
+| defillama | full daily history downloaded, trimmed to 30 days locally — `/summary/fees/{slug}` has no date parameter. Saves storage and validation work, no network time. |
+| dune | the query executes in full; a Dune query has no incremental mode. A metric fetched for the first time ignores the window deliberately, so a backfill is never truncated. |
+| chain / hypercore / tron / scrape | accept the window and ignore it, correctly — they read a current value, not a series. |
+
+So the way to make a run faster is `--portfolio` or `--project`, not a shorter window.
+
+### Known-absent endpoints
+
+A `(source, project)` pair whose endpoint returns **404** and that has **never** succeeded is
+recorded in `fetch_status.absent_since` and is not called again for 14 days. Both conditions are
+required:
+
+- **404 specifically.** A timeout, a 429 or a 5xx is a source that is down or busy, and retrying
+  tomorrow is right. A 404 is the server saying the thing is not there.
+- **Never succeeded.** A pair that worked once and 404s now is a source that *moved*, which is a
+  finding worth seeing every run — not something to stop asking about.
+
+Any success clears it permanently, so a resource that appears later is picked straight back up.
+The 14 days are measured from the last *attempt*, and a skip does not count as one, so the pair
+offers itself for a retry on its own. The list is derived from the store, never declared in
+config: a hand-maintained register of absent resources goes stale against reality and nothing
+reconciles it back. Skips appear in the Run Log's SKIPPED column and say `KNOWN ABSENT`.
+
+### Where the time went
+
+Every run now prints wall clock per source, slowest first, with that source's row, failure and
+skip counts beside it. It is not a profile and does not try to be: it answers the one question
+that decides what to do about a slow run — *which tier is slow*. Tier 2 is contract reads over
+public RPC and tier 4 is Dune; they have nothing in common and the remedy for one does nothing
+for the other. A source taking minutes and returning nothing is the most useful line in a slow
+run's log, and a rows-only summary cannot show it.

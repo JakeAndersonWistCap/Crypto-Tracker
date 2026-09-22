@@ -17,6 +17,7 @@ flagged. A failed source is logged and reported as a gap; it never kills the run
 from __future__ import annotations
 
 import logging
+import time
 
 import pandas as pd
 
@@ -39,8 +40,8 @@ log = logging.getLogger("token_metrics.fetch")
 
 TIER_ORDER = [
     ("schedule:config", 1, lambda ctx: Schedule()),
-    ("defillama", 1, lambda ctx: DefiLlama()),
-    ("coingecko", 1, lambda ctx: CoinGecko()),
+    ("defillama", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"])),
+    ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
@@ -510,6 +511,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_dates: dict | None = None,
               prior_sources: dict | None = None,
               has_history: set | None = None,
+              known_absent: set | None = None,
               manual_keys: set | None = None,
               sources: list[str] | None = None) -> FetchOutput:
     """Run every tier in order and return one FetchOutput carrying frames, log, review and gaps.
@@ -521,6 +523,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
                   a single observation, and their difference is 0 whatever the truth is.
     has_history   (project, metric) pairs the store already has history for. Tier 4 skips these,
                   because Dune is a backfill dependency, not an ongoing one.
+    known_absent  (source, project) pairs whose endpoint 404'd and has never worked — see
+                  store.known_absent. Not called at all, and logged as SKIPPED rather than
+                  failed: no call was made, so there is no error to report.
     manual_keys   (project, metric) pairs covered by manual_overrides.csv, so the Gap Report
                   does not list something Jake has already entered by hand.
     """
@@ -531,7 +536,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
            "prior_delta": prior_values_for_delta if prior_values_for_delta is not None else (prior_values or {}),
            "prior_dates": prior_dates or {},
            "prior_sources": prior_sources or {},
-           "has_history": has_history or set()}
+           "has_history": has_history or set(),
+           "known_absent": known_absent or set()}
     out = FetchOutput()
 
     for name, tier, build in TIER_ORDER:
@@ -539,10 +545,18 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
             continue
         log.info("tier %d — %s (window=%s)", tier, name, window_days or "full history")
         before = len(out.frames)
+        # WALL CLOCK PER SOURCE, recorded whether it succeeds, crashes or does nothing. A source
+        # that takes two minutes and returns nothing is the single most useful line in a slow
+        # run's log, and it is exactly the one a rows-only summary cannot show.
+        t0 = time.monotonic()
         try:
             build(ctx).run(projects, window_days, out)
         except Exception as e:  # noqa: BLE001 — never let one source kill the run
             out.fail(name, None, f"adapter crashed: {e}", tier)
+        finally:
+            out.timings.append({"source": name, "tier": tier,
+                                "seconds": time.monotonic() - t0,
+                                "frames": len(out.frames) - before})
         # validate each tier's own output, so a rejection names the tier that produced it
         for i in range(before, len(out.frames)):
             out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out)

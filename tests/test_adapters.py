@@ -4885,6 +4885,255 @@ def test_but_a_real_step_change_between_two_complete_days_still_fires():
     print("S7 ok: partial day exempt, real step change between complete days still flags")
 
 
+# ======================================================================================
+# token_metrics.py — the run flags. All of them NARROW; none changes what a figure means.
+# ======================================================================================
+
+def test_the_run_scope_refuses_a_typo_rather_than_fetching_nothing():
+    """A mistyped --project that fetched nothing would look identical to a run where every source
+    had nothing to add — same empty result, same clean exit, no error anywhere."""
+    import logging
+    import token_metrics as tm
+
+    log = logging.getLogger("test")
+    assert len(tm.resolve_scope(tm.parse_args([]), log)) == len(config.PROJECTS), \
+        "with no portfolio.txt the default is unchanged: every project"
+    picked = tm.resolve_scope(tm.parse_args(["--project", "Sky", "--project", "Uniswap"]), log)
+    assert [p["name"] for p in picked] == ["Sky", "Uniswap"]
+
+    try:
+        tm.resolve_scope(tm.parse_args(["--project", "Skye"]), log)
+    except SystemExit as e:
+        assert "Skye" in str(e) and "Sky" in str(e), "the refusal must name the valid options"
+    else:
+        raise AssertionError("a name config does not know must not silently fetch nothing")
+    print("scope ok: an unknown --project is refused with the list, not run as an empty fetch")
+
+
+def test_a_typo_in_portfolio_txt_WIDENS_the_run_rather_than_parking_a_held_asset(tmp_path):
+    """THE ASYMMETRY IS THE WHOLE DESIGN. A name wrongly parked stops collecting silently, and a
+    series that stops collecting CANNOT be backfilled — CoinGecko serves total_supply as a
+    current value only, confirmed on a live call. Fetching a project that is no longer held
+    costs one extra API call a day. So on any doubt the run widens, loudly.
+    """
+    import logging
+    import token_metrics as tm
+
+    log = logging.getLogger("test")
+    pf = tmp_path / "portfolio.txt"
+    original = tm.PORTFOLIO_TXT
+    try:
+        tm.PORTFOLIO_TXT = pf
+        pf.write_text("# held\nSky\nUniswap\n", encoding="utf-8")
+        assert [p["name"] for p in tm.resolve_scope(tm.parse_args([]), log)] == ["Sky", "Uniswap"], \
+            "a clean portfolio.txt narrows the DEFAULT run — no flag needed"
+        assert len(tm.resolve_scope(tm.parse_args(["--all"]), log)) == len(config.PROJECTS), \
+            "--all overrides it"
+
+        pf.write_text("Sky\nUnswap\n", encoding="utf-8")     # one character wrong
+        widened = tm.resolve_scope(tm.parse_args([]), log)
+        assert len(widened) == len(config.PROJECTS), \
+            "a typo must widen the run, never narrow it to whatever happened to match"
+
+        # AND THE COMMENT/BLANK HANDLING IS REAL, not incidental — a commented-out name is how
+        # a project gets parked temporarily, and it must not read as an unknown name.
+        pf.write_text("# holdings\n\nSky\n  Uniswap  # keep\n", encoding="utf-8")
+        names, unknown = config.read_portfolio(pf)
+        assert names == ["Sky", "Uniswap"] and not unknown, (names, unknown)
+    finally:
+        tm.PORTFOLIO_TXT = original
+    print("portfolio ok: narrows by default, widens on a typo, comments and blanks ignored")
+
+
+def test_no_fetch_rebuilds_the_workbook_without_touching_a_single_source(tmp_path, monkeypatch):
+    """Every display rule here is READ-TIME, so all of them are worked on against the store as it
+    stands. Refetching to see a label change spends a day's politeness budget on free endpoints
+    for nothing, against a standing rule of one run a day."""
+    import token_metrics as tm
+
+    called = []
+    monkeypatch.setattr(tm.fetch, "fetch_all", lambda *a, **k: called.append(a) or (_ for _ in ()).throw(
+        AssertionError("--no-fetch must not reach any adapter")))
+    built = []
+    monkeypatch.setattr(tm, "build_workbook", lambda st, path, **kw: built.append((path, kw)) or path)
+    monkeypatch.setattr(tm, "WORKBOOK", tmp_path / "wb.xlsx")
+    monkeypatch.setattr(tm.store_mod, "DB_PATH", tmp_path / "m.db")
+
+    assert tm.main(["--no-fetch"]) == 0
+    assert not called and len(built) == 1, (called, built)
+    # NO run_id, deliberately: nothing was fetched, so there is no run to attribute the build to.
+    # Passing the previous one would date this workbook to a fetch it had no part in.
+    assert "run_id" not in built[0][1] or built[0][1]["run_id"] is None, built[0][1]
+    print("--no-fetch ok: workbook rebuilt, no adapter reached, no run_id invented")
+
+
+def test_a_404_that_never_worked_becomes_known_absent_and_a_5xx_never_does(tmp_path):
+    """A4. Two conditions, both required, and the distinction between them is the whole point.
+
+    404 SPECIFICALLY. A timeout, a 429 or a 5xx is a source that is down or busy; retrying it
+    tomorrow is right. A 404 is the server saying the thing is not there, which is a definite
+    answer — HttpError exists in this codebase precisely to keep the two apart.
+
+    NEVER SUCCEEDED. A pair that worked once and 404s now is a source that MOVED, and that is a
+    finding worth surfacing every single run, not something to stop asking about.
+
+    And any success clears it, so a resource that appears later is picked straight back up
+    without anyone remembering to clear a flag.
+    """
+    import store as store_mod
+
+    st = store_mod.Store(tmp_path / "m.db")
+    try:
+        st.record_fetch("r1", "defillama", "Plume", 0, "failed", "plume: HTTP 404 from api.llama.fi/x", 1)
+        st.record_fetch("r1", "defillama", "Zcash", 0, "failed", "zcash: HTTP 503 from api.llama.fi/x", 1)
+        st.record_fetch("r1", "coingecko", "Canton", 12, "ok", "", 1)
+        st.record_fetch("r2", "coingecko", "Canton", 0, "failed", "canton: HTTP 404 from api.coingecko.com", 1)
+
+        absent = st.known_absent()
+        assert ("defillama", "Plume") in absent, "a 404 with no history of working is absent"
+        assert ("defillama", "Zcash") not in absent, \
+            "a 5xx is a source that is DOWN — stopping the call would hide an outage as an absence"
+        assert ("coingecko", "Canton") not in absent, \
+            "a pair that worked and now 404s has MOVED, and that must stay visible every run"
+
+        # AND A SUCCESS CLEARS IT, permanently.
+        st.record_fetch("r3", "defillama", "Plume", 7, "ok", "", 1)
+        assert ("defillama", "Plume") not in st.known_absent()
+        st.record_fetch("r4", "defillama", "Plume", 0, "failed", "plume: HTTP 404 again", 1)
+        assert ("defillama", "Plume") not in st.known_absent(), \
+            "once it has worked, a later 404 is a move, not an absence"
+
+        # AND IT IS NOT PERMANENT. The recheck is measured from the last ATTEMPT, which a skip
+        # does not touch — so the pair comes back up on its own once the interval passes.
+        st.record_fetch("r5", "defillama", "Injective", 0, "failed", "HTTP 404", 1)
+        assert ("defillama", "Injective") in st.known_absent()
+        assert ("defillama", "Injective") not in st.known_absent(recheck_days=0), \
+            "with the interval elapsed the pair is offered for a retry rather than parked"
+    finally:
+        st.close()
+    print("known_absent ok: 404-and-never-worked only, cleared by success, retried after 14 days")
+
+
+def test_a_known_absent_pair_is_not_called_and_is_logged_as_skipped():
+    """A skip is not a success. It produces no error, no failure and no gap, so if it were logged
+    as anything softer it would read exactly like a source that ran and had nothing to add —
+    which is how a call that never happened gets reported as one that worked."""
+    from fetch.coingecko import CoinGecko
+    from fetch.llama import DefiLlama
+
+    calls = []
+
+    class Counting:
+        min_interval = 0.0
+
+        def get(self, url, params=None, headers=None):
+            calls.append(url)
+            return {}
+
+    cg = CoinGecko(known_absent={("coingecko", "Plume")})
+    cg.http = Counting()
+    out = FetchOutput()
+    cg.run([config.PROJECT_BY_NAME["Plume"]], 30, out)
+    assert not calls, f"a known-absent pair must not be called at all: {calls}"
+    skips = [e for e in out.log if e.status == "skipped"]
+    assert skips and "KNOWN ABSENT" in skips[0].message, out.log
+    assert not [e for e in out.log if e.status == "failed"], \
+        "no call was made, so there is no failure to report"
+
+    # AND THE PAIR BESIDE IT IS STILL CALLED — the skip is per project, not per source.
+    calls.clear()
+    cg.run([config.PROJECT_BY_NAME["Uniswap"]], 30, FetchOutput())
+    assert calls, "a project that is not absent must still be fetched"
+
+    # SAME ON DEFILLAMA, whose slug is a separate configured thing from the coin id.
+    calls.clear()
+    ll = DefiLlama(known_absent={("defillama", "Uniswap")})
+    ll.http = Counting()
+    out = FetchOutput()
+    ll.fees(config.PROJECT_BY_NAME["Uniswap"], 30, out)
+    assert not calls and [e for e in out.log if e.status == "skipped"], (calls, out.log)
+    print("known absent ok: not called, logged SKIPPED, scoped to the pair and not the source")
+
+
+def test_the_incremental_window_narrows_the_request_on_coingecko_and_only_trims_on_defillama():
+    """A5, and the answer is not the one the docstring at the top of token_metrics.py implied.
+
+    "Later runs extend the series and re-fetch a trailing 30-day window" is true of what REACHES
+    THE STORE on every source. It is true of what goes over the WIRE on exactly one of them:
+
+        coingecko   days=30 is in the request. The narrowing is real and saves the transfer.
+        defillama   the full daily history is downloaded and then trimmed to 30 days locally.
+                    fetch.base.window() is a DataFrame filter; there is no date parameter on
+                    /summary/fees/{slug} to pass. The window saves storage and validation work
+                    and NO network time.
+        dune        the query executes in full whatever the window says — a Dune query has no
+                    incremental mode — and the result is trimmed the same way. A metric being
+                    fetched for the FIRST time ignores the window entirely, deliberately.
+        chain / hypercore / tron / scrape
+                    accept window_days and ignore it, correctly: they read a current value, not
+                    a series, so there is no window to apply.
+
+    RECORDED RATHER THAN FIXED. Trimming after the fact is the right behaviour for a source with
+    no date parameter — the alternative is storing a year of history every day — and this test
+    exists so that "the window makes runs faster" is not carried forward as a belief about
+    DefiLlama when it is only true of CoinGecko.
+    """
+    import pandas as pd
+    from fetch.base import window as trim
+    from fetch.coingecko import CoinGecko
+    from fetch.llama import DefiLlama
+
+    # (1) COINGECKO PUTS IT IN THE REQUEST.
+    seen = []
+
+    class CgHttp:
+        min_interval = 0.0
+
+        def get(self, url, params=None, headers=None):
+            seen.append((url, dict(params or {})))
+            return {}
+
+    cg = CoinGecko()
+    cg.http = CgHttp()
+    cg.run([config.PROJECT_BY_NAME["Uniswap"]], 30, FetchOutput())
+    chart = [p for u, p in seen if "market_chart" in u]
+    assert chart and chart[0]["days"] == "30", chart
+    seen.clear()
+    cg.run([config.PROJECT_BY_NAME["Uniswap"]], None, FetchOutput())
+    assert [p for u, p in seen if "market_chart" in u][0]["days"] == "365", \
+        "a full backfill asks for the year; the window is not simply always 30"
+
+    # (2) DEFILLAMA DOWNLOADS EVERYTHING AND TRIMS LOCALLY.
+    import datetime as dt
+    days = 400
+    rows = [(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=i), 1000.0 + i) for i in range(days)]
+    fetched = []
+
+    class LlamaHttp:
+        min_interval = 0.0
+
+        def get(self, url, params=None, headers=None):
+            fetched.append(url)
+            return {"totalDataChart": [[int(d.timestamp()), v] for d, v in rows]}
+
+    ll = DefiLlama()
+    ll.http = LlamaHttp()
+    out = FetchOutput()
+    ll.fees(config.PROJECT_BY_NAME["Uniswap"], 30, out)
+    stored = out.frame()
+    assert fetched, "the request is still made"
+    # 400 days came back; at most 31 are kept. THE WIRE CARRIED 400.
+    per_metric = stored.groupby("metric").size().max()
+    assert per_metric <= 31, f"the window must trim to ~30 days, kept {per_metric}"
+    assert len(rows) == 400, "and the response really did carry the full history"
+
+    # (3) THE TRIM IS A LOCAL FILTER, which is what makes (2) unavoidable rather than an oversight.
+    df = pd.DataFrame({"date": [pd.Timestamp.now().normalize() - pd.Timedelta(days=i) for i in range(100)],
+                       "project": "x", "metric": "y", "value": 1.0, "source": "s", "tier": 1})
+    assert len(trim(df, 10)) == 11 and len(trim(df, None)) == 100
+    print("A5 ok: coingecko narrows the request, defillama and dune trim after the fact")
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:
