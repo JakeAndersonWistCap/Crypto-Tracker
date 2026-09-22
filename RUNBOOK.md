@@ -873,10 +873,32 @@ stops collecting cannot be backfilled — CoinGecko serves `total_supply` as a c
 confirmed on a live call. Fetching a project that is no longer held costs one extra API call a
 day. On any doubt, the run widens.
 
-A narrowed run still builds the **whole** workbook. The store holds every project's history and
-the workbook is built from the store, so the projects that were not fetched render from what they
-already have and go stale in the ordinary way. Nothing is blanked for having been skipped, and
-nothing is reported as fresh that is not.
+**A narrowed run builds a narrowed workbook.** *Changed 2026-09-23 — it used to draw all thirty.*
+The scope applies to the build as well as the fetch, on every tab including the Gap Report, and
+the Master title says so ("16 of 30 projects — portfolio scope; `--all` renders the rest").
+Drawing a project the run never touched put a frozen cell beside a fresh one with nothing to tell
+them apart, which is the failure this whole tool exists to avoid.
+
+Parked projects are **not** deleted. Their history stays in the store and comes back the moment
+they are named again.
+
+### Un-parking a project after more than 30 days
+
+**Force a full backfill the first time you un-park anything that has been parked longer than a
+month:**
+
+```
+TOKEN_METRICS_DUNE_ALWAYS=1 python token_metrics.py --project "Name"
+```
+
+A parked project's last stored day is usually a **partial** one: it stopped being fetched
+part-way through the day it was parked, and providers publish the current day from the moment it
+starts. Ordinarily that heals by itself, because the providers are called with a trailing 30-day
+window and the next run re-requests the whole span. Past 30 days it cannot: the partial day has
+fallen out of the window, so no ordinary run will ever ask for it again and it stays in the store
+looking like a real observation.
+
+Inside 30 days, just un-park it — the next run fixes it without being told.
 
 ### What the incremental window actually does
 
