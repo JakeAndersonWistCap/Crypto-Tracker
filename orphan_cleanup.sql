@@ -1661,3 +1661,45 @@ SELECT COUNT(*) AS gap_rows_for_retired_metric
 --     exactly what Q3 listed.
 -- SELECT metric, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects
 --   FROM metrics WHERE metric IN ('staked_tokens', 'locked_tokens') GROUP BY metric;
+
+
+-- ========================================================================================
+-- R. rwa_xyz_usd RETIRED — A CROSS-CHECK THAT COULD NEVER RUN.                     2026-09-23
+--    R1-R2 LOOK. R3 deletes, and only because there is nothing to keep.
+-- ========================================================================================
+-- WHAT HAPPENED: rwa_xyz_usd was a deliberate SECOND OPINION on rwa_defillama_usd — the right
+-- instinct, and the pattern this book uses everywhere it works. Here it never could: all eleven
+-- sources.yaml entries were disabled stubs with `url: null` and the note "RWA.xyz has no API on
+-- our tier". A cross-check that cannot run is not a cross-check; it is a gap row per chain per
+-- run for a number nobody can fetch, and a permanently empty column on the sheet.
+--
+-- RE-CREATING IT MEANS WRITING THE DOM SCRAPER FIRST, not re-adding the metric. That is the work
+-- the stub was standing in for and never became.
+--
+-- R1. IS THERE ANY DATA AT ALL? Expected to be none — the entries were never enabled — but a
+--     metric can acquire rows from a manual override or a one-off backfill, and "expected" is
+--     not "checked". IF THIS RETURNS ROWS, STOP: they are a measurement that was made, and they
+--     belong in section I's treatment (moved to a surviving metric) rather than deleted.
+SELECT project, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       GROUP_CONCAT(DISTINCT source) AS sources
+  FROM metrics WHERE metric = 'rwa_xyz_usd'
+ GROUP BY project ORDER BY project;
+
+-- R2. THE GAP AND REVIEW ROWS UNDER THE RETIRED NAME. These are the ones that actually exist,
+--     and they are report artefacts rather than measurements.
+SELECT 'gap_report' AS tbl, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects
+  FROM gap_report WHERE metric = 'rwa_xyz_usd'
+ UNION ALL
+SELECT 'review_queue', COUNT(*), COUNT(DISTINCT project)
+  FROM review_queue WHERE metric = 'rwa_xyz_usd';
+
+-- R3. THE DELETE — report artefacts only. RUN R1 FIRST AND READ IT: if R1 returned any metrics
+--     rows, do not run this half of it, and decide what those rows should become instead.
+--     Section P4 already sweeps non-current run_ids from both tables; this is scoped to the
+--     retired METRIC so it catches the current run's rows too, which P4 deliberately does not.
+-- BEGIN;
+-- DELETE FROM gap_report   WHERE metric = 'rwa_xyz_usd';
+-- DELETE FROM review_queue WHERE metric = 'rwa_xyz_usd';
+-- COMMIT;
+
+-- R4. VERIFY — R1 and R2 both return nothing.

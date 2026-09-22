@@ -1592,12 +1592,18 @@ def test_several_contracts_serving_one_metric_are_summed():
 
     class ChainAwareStub:
         DEPLOYED = {("ethereum", UNI_ETH): "UNI"}
+        # The governance Timelock joined this project on 2026-09-23 as the treasury holder, and
+        # a treasury_holding holder must be a deployed contract — so it belongs in CODE. It was
+        # the guard catching a stub that had not been updated, which is the guard working.
+        TIMELOCK = "0x1a9C8182C09F50C8318d769245beA52c32BE35BC"
         CODE = {("ethereum", "0xf38521f130fcCF29dB1961597bc5d2B60F995f85"),
                 ("ethereum", "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d"),
-                ("ethereum", "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721")}
+                ("ethereum", "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721"),
+                ("ethereum", TIMELOCK)}
         VALUES = {"0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
                   "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d": 1_500_000.0,
-                  "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721": 95_000_000.0}
+                  "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721": 95_000_000.0,
+                  TIMELOCK: 12_000_000.0}
 
         def has_code(self, chain, address):
             return (chain, address) in self.CODE
@@ -1628,6 +1634,11 @@ def test_several_contracts_serving_one_metric_are_summed():
         assert not s.endswith(":PARTIAL"), f"{metric} is mainnet-complete and must not be PARTIAL: {s}"
     assert "token_jar" in df[df.metric == "buyback_fund_balance"].source.iloc[0]
     assert "v3_fee_adapter" in df[df.metric == "buyback_fund_balance"].source.iloc[0]
+    # THE TREASURY IS ITS OWN METRIC AND IS NOT SUMMED INTO THE JARS. Governance-controlled UNI
+    # is redeployable supply; fees awaiting a burn election are not the same quantity, and adding
+    # them would report one as the other.
+    assert rows["treasury_holding_tokens"] == 12_000_000.0, rows
+    assert "treasury" in df[df.metric == "treasury_holding_tokens"].source.iloc[0]
     assert not [e for e in out.log if e.status == "failed"], \
         "every component is on mainnet, so nothing should fail"
     assert not any("unichain" in str(g.get("reason", "")) for g in out.gaps), \

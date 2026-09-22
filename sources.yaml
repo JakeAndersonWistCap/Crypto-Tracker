@@ -112,27 +112,7 @@
 # -------------------------------------------------------------------------------------
 
 # ---- Bitcoin (BTC) — archetypes 1
-- project: Bitcoin
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-
 # ---- Ethereum (ETH) — archetypes 1, 4
-- project: Ethereum
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-
 # =====================================================================================
 # ULTRASOUND.MONEY — the only end-to-end cross-check this tool has for ANY chain.
 #
@@ -338,15 +318,6 @@
 
 # ---- Solana (SOL) — archetypes 1, 4
 - project: Solana
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-- project: Solana
   metric: net_mint_monthly
   tier: 3
   enabled: false
@@ -358,15 +329,6 @@
 
 # ---- Tron (TRX) — archetypes 1, 4
 - project: Tron
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-- project: Tron
   metric: net_mint_monthly
   tier: 3
   enabled: false
@@ -377,15 +339,6 @@
   note: "Self-reported net mint — take it as published."
 
 # ---- Near (NEAR) — archetypes 1, 4
-- project: Near
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
 # =====================================================================================
 # B8 — NEARBLOCKS SUPPLY CHART. A NET-SUPPLY CROSS-CHECK, AND DELIBERATELY NOT A BURN FIGURE.
 #
@@ -452,15 +405,6 @@
 
 # ---- Canton (CC) — archetypes 1, 4
 - project: Canton
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-- project: Canton
   metric: net_mint_monthly
   tier: 3
   enabled: false
@@ -471,26 +415,7 @@
   note: "Self-reported net mint — take it as published."
 
 # ---- Plume (PLUME) — archetypes 1, 3
-- project: Plume
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-
 # ---- Injective (INJ) — archetypes 1, 4
-- project: Injective
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
 - project: Injective
   metric: net_mint_monthly
   tier: 3
@@ -502,16 +427,6 @@
   note: "Self-reported net mint — take it as published."
 
 # ---- Zcash (ZEC) — archetypes 1
-- project: Zcash
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-
 # ---- Chainlink (LINK) — archetypes 1, 3
 # ---- Maple (SYRUP) — archetype 3
 # Maple publishes live SSF SYRUP holdings and monthly protocol revenue on its own transparency
@@ -606,16 +521,6 @@
     because the buyback share is TIERED on monthly net revenue (10% below $1.5m, 20% from $1.5m-$2m,
     and an UNCONFIRMED tier above $2m) — the revenue figure decides which tier applies, so a month
     above $2m cannot be converted to a buyback figure at all until that tier is sourced."
-
-- project: Chainlink
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
 
 # ---- World Mobile (WMTX) — archetypes 2, 3
 - project: World Mobile
@@ -899,16 +804,6 @@
   anchor: null                                      # TODO the label text beside the figure
   added: 2026-09-11
   note: "End-user revenue in dollars, not token flow."
-- project: Hyperliquid
-  metric: rwa_xyz_usd
-  tier: 3
-  enabled: false
-  url: null                                         # TODO RWA.xyz chain page
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "RWA.xyz has no API on our tier."
-
 # ---- Uniswap (UNI) — archetypes 4
 - project: Uniswap
   metric: net_mint_monthly

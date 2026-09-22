@@ -175,7 +175,16 @@ METRICS = {
     "tvl_usd":                    {"label": "Chain TVL",                       "kind": "stock", "unit": "usd",    "archetypes": [1],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e12},
     "stablecoin_supply_usd":      {"label": "Stablecoin supply on chain",      "kind": "stock", "unit": "usd",    "archetypes": [1],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e12},
     "rwa_defillama_usd":          {"label": "RWA on chain (DefiLlama)",        "kind": "stock", "unit": "usd",    "archetypes": [1],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e12},
-    "rwa_xyz_usd":                {"label": "RWA on chain (RWA.xyz)",          "kind": "stock", "unit": "usd",    "archetypes": [1],          "tiers": [3],    "sanity_min": 0,    "sanity_max": 1e12},
+    # rwa_xyz_usd RETIRED 2026-09-23 — rwa_defillama_usd already carries the concept, and this
+    # never had a route. It was a deliberate SECOND OPINION on the same figure, which is a good
+    # instinct and the right pattern everywhere it works. Here it did not: every one of its
+    # sources.yaml entries is a disabled stub with url: null and the note "RWA.xyz has no API on
+    # our tier", so the second opinion was never going to arrive and the column was permanently
+    # empty. A cross-check that cannot run is not a cross-check; it is a gap row per chain per
+    # run for a number nobody can fetch.
+    #
+    # RE-CREATING IT MEANS WRITING THE DOM SCRAPER FIRST, not just re-adding the metric — which
+    # is the thing the stub was standing in for and never became. Stored rows: section R.
     # --- chain state / burn / issuance
     "tx_count":                   {"label": "Transactions",                    "kind": "flow",  "unit": "count",  "archetypes": [1],          "tiers": [3, 4], "sanity_min": 0,    "sanity_max": 1e10},
     "active_addresses":           {"label": "Active addresses (low weight)",   "kind": "stock", "unit": "count",  "archetypes": [1],          "tiers": [3, 4], "sanity_min": 0,    "sanity_max": 1e9},
@@ -1291,6 +1300,19 @@ PROJECTS = [
         "archetypes": [1, 4], "archetypes_held": [],
         # ===== B4: EIP-1559 DESTROYS, IT DOES NOT SEND. =====
         "not_applicable": {
+            # ===== NO PROTOCOL TREASURY IS IN SCOPE. Declared 2026-09-23. =====
+            # Ethereum has no protocol-controlled token treasury. The Ethereum Foundation holds
+            # ETH and publishes a report, but that is one organisation's balance sheet, not a
+            # governance-controlled protocol treasury — and putting it in this column would make
+            # it comparable with Sky's Pause Proxy or Maple's daoMultisig, which are voted on.
+            # There is no address for the protocol to hold ETH at: issuance goes to validators
+            # and fees are burned.
+            "treasury_holding_tokens":
+                "NO PROTOCOL TREASURY EXISTS. Ethereum's issuance goes to validators and its "
+                "base fee is burned; there is no protocol-controlled address holding ETH. The "
+                "Ethereum Foundation's holdings are one organisation's balance sheet, not a "
+                "governance-controlled treasury, and are not the same quantity this column "
+                "carries for Sky or Maple. Declared 2026-09-23.",
             "burn_address_balance":
                 "THERE IS NO ADDRESS. The EIP-1559 spec is explicit — 'the base fee is always burned "
                 "(i.e. it is destroyed by the protocol)' — so the burn is pure protocol accounting "
@@ -3527,6 +3549,14 @@ PROJECTS = [
         # (chain:polygon:burn_polygon, Dune 8683175). So this is not a fund address nobody has
         # found; it is a fund that structurally does not exist.
         "not_applicable": {
+            # ===== CAPACITY UTILISATION DOES NOT APPLY. Declared 2026-09-23. =====
+            "utilisation_pct":
+                "NOT A CAPACITY-CONSTRAINED NETWORK. utilisation_pct asks what fraction of a "
+                "finite capacity is in use — the right question for a compute or bandwidth "
+                "market. GEODNET is a reference-station network: adding a miner ADDS coverage "
+                "rather than consuming a shared pool, so there is no denominator. Its scale "
+                "measure is supply_units (station count), which is already carried. Declared "
+                "2026-09-23.",
             "buyback_fund_balance":
                 "NO INTERMEDIATE FUND EXISTS. DefiLlama's own revenue methodology for GEODNET: '80% "
                 "of the fees are used to repurchase GEOD tokens from the open market and remove them "
@@ -4528,6 +4558,19 @@ PROJECTS = [
         # DIRECTLY as of 2026-09-18 — see sources.yaml and cross_checks. Leaving this metric
         # applicable with no route left would report a permanent, unexplained gap every run.
         "not_applicable": {
+            # ===== ONE ADDRESS, ONE COLUMN. Declared 2026-09-23. =====
+            # Maple's buyback_destination is "hold" and the address it holds at IS the
+            # daoMultisig already read under treasury_holding_tokens (contracts.treasury,
+            # 0xd6d4...a196). Gapping both asks for two sources for one balance, and WIRING both
+            # would be worse: the same SYRUP would appear in a buyback-fund column and a treasury
+            # column, and any sum across them would count it twice.
+            "buyback_fund_balance":
+                "THE SAME ADDRESS AS treasury_holding_tokens. Maple buys SYRUP and HOLDS it in "
+                "the daoMultisig (contracts.treasury), which this book already reads under "
+                "treasury_holding_tokens. A separate buyback-fund column would read the same "
+                "balance twice and double-count it in any sum. The buyback FLOW is a different "
+                "question and is answered by buyback_route: it is the inflow of that holding, "
+                "and needs cumulative_flow declared on it. Declared 2026-09-23.",
             "buyback_fund_balance_dashboard":
                 "THE SAME PAGE READING NOW FEEDS treasury_holding_tokens DIRECTLY (promoted to "
                 "primary 2026-09-18 — see cross_checks and OPEN_QUESTIONS' Maple record). This "
@@ -5144,6 +5187,14 @@ PROJECTS = [
         # into an address nothing leaves, there is no intermediate fund to have a balance, and the
         # metric that captures the mechanism is the burn one — already wired.
         "not_applicable": {
+            # ===== NO PROTOCOL TREASURY IS IN SCOPE. Declared 2026-09-23. =====
+            "treasury_holding_tokens":
+                "NO PROTOCOL TREASURY HOLDS HYPE. The Assistance Fund's HYPE is permanently "
+                "burned, not held — recognised as such by the 2025-12-27 validator vote, which "
+                "is why this project is archetype 4. A treasury column would either duplicate "
+                "burn_address_balance or report retired tokens as redeployable. The future-"
+                "emissions pool is undistributed supply, which is a different quantity again "
+                "and is not governance-redeployable. Declared 2026-09-23.",
             "buyback_fund_balance":
                 "THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the "
                 "Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised "
@@ -5326,6 +5377,34 @@ PROJECTS = [
                 # GROSS of burn — the contract counts tokens at the dead
                 # address; CoinGecko does not. See METRICS["total_supply_gross"].
                 metric_override="total_supply_gross"),
+            # ===== THE TREASURY IS THE GOVERNANCE TIMELOCK'S UNI BALANCE. Wired 2026-09-23. =====
+            # Uniswap has no separate treasury contract: governance-controlled UNI sits in the
+            # Timelock, which is the admin of Governor Bravo and the address every successful
+            # proposal executes from.
+            #
+            # THE ADDRESS IS CONFIRMED FROM UNISWAP'S OWN SDK, not from a block explorer label:
+            #   Uniswap/sdk-core, src/addresses.ts, read 2026-09-23
+            #   export const TIMELOCK_ADDRESSES: AddressMap =
+            #       constructSameAddressMap('0x1a9C8182C09F50C8318d769245beA52c32BE35BC')
+            # sitting directly below GOVERNANCE_BRAVO_ADDRESSES, whose comment reads "the latest
+            # governor bravo that is currently admin of timelock" — so the SDK states the
+            # relationship as well as the address.
+            #
+            # READ AS A HOLDER BALANCE (UNI.balanceOf(timelock)), which is what treasury_holding
+            # means everywhere else in this file. Not totalSupply of anything: the Timelock is an
+            # ordinary contract holding tokens, not a share token.
+            "treasury": _contract("0x1a9C8182C09F50C8318d769245beA52c32BE35BC", "ethereum",
+                                  "treasury_holding", "UNI",
+                                  "https://github.com/Uniswap/sdk-core/blob/main/src/addresses.ts",
+                                  verified="2026-09-23",
+                                  provenance="Uniswap's own sdk-core TIMELOCK_ADDRESSES constant, "
+                                             "read from source 2026-09-23",
+                                  underlying="token",
+                                  purpose="Uniswap governance Timelock — admin of Governor Bravo "
+                                          "and the address proposals execute from. Its UNI "
+                                          "balance is the governance-controlled treasury: real "
+                                          "supply, redeployable by vote, and NOT locked or "
+                                          "burned."),
             "token_jar": _contract("0xf38521f130fcCF29dB1961597bc5d2B60F995f85", "ethereum", "buyback_fund_balance", "UNI",
                                    UNISWAP_FEE_DEPLOYMENTS, verified="2026-09-11", provenance="protocol docs",
                                    purpose="TokenJar (AssetSink), mainnet — where fees accumulate before holders elect to burn."),
@@ -5493,6 +5572,12 @@ PROJECTS = [
         "archetypes": [3], "archetypes_held": [],
         # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
         "not_applicable": {
+            # ===== NO PROTOCOL TREASURY IS IN SCOPE. Declared 2026-09-23. =====
+            "treasury_holding_tokens":
+                "NO PROTOCOL TREASURY HOLDS AERO. Emissions go to gauges and 100% of fees go to "
+                "veAERO voters in the pair's own tokens — nothing accumulates at a protocol-"
+                "controlled address. Confirmed against Aerodrome's own SPECIFICATION.md, the "
+                "same source that establishes there is no burn. Declared 2026-09-23.",
             "buyback_fund_balance":
                 "destination_effect is yield_payout: repurchased AERO passes straight through to "
                 "lockers and no fund accumulates, so there is no balance to read. The metric "
