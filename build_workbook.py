@@ -288,6 +288,36 @@ TELESCOPING_ABS_EPS = 1e-6
 TELESCOPING_REL_EPS = 1e-9
 
 
+def handover_refusal(project: str, metric: str, points, spans: dict) -> str | None:
+    """None when a multi-point series is a DECLARED, non-overlapping handover; else why not.
+
+    Three ways to fail, and all three keep the series blanked:
+      * nothing declared — the ordinary case, an accidental change of measuring point;
+      * the stored points are not the declared pair — a third source appeared, or one of the two
+        is not the one named. A declaration covers the pair it names and no other;
+      * the declared points OVERLAP in the store. This is the one the declaration cannot assert
+        away, and the one a re-run of a backfill actually causes: if the historical leg reaches
+        forward into the live period, the same burn is counted twice and the sum is wrong in the
+        direction that looks like a busier month.
+    """
+    decl = config.declared_handover(project, metric)
+    if not decl:
+        return "no handover is declared for this series"
+    ordered = tuple(decl.get("ordered_points") or ())
+    if set(points) != set(ordered):
+        extra = sorted(set(points) - set(ordered))
+        return (f"the stored series reads from {sorted(points)}, and the declared handover covers "
+                f"{list(ordered)}" + (f" — {extra} is outside it" if extra else ""))
+    for earlier, later in zip(ordered, ordered[1:]):
+        a, b = spans.get(earlier), spans.get(later)
+        if a is None or b is None:
+            return f"no stored dates for {earlier if a is None else later}"
+        if a[1] >= b[0]:
+            return (f"the declared legs OVERLAP: {earlier} runs to {a[1]:%Y-%m-%d} and {later} "
+                    f"starts {b[0]:%Y-%m-%d}. The overlapping period is counted twice")
+    return None
+
+
 def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None:
     """(status, reason) when config says this stored figure is wrong, else None.
 
@@ -344,13 +374,14 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     # 5. TWO MEASURING POINTS. A window spanning the change reports the move between two different
     #    addresses as though it were a flow.
     points = row.get("measuring_points") or ()
-    if len(points) > 1:
+    if len(points) > 1 and (refusal := handover_refusal(project, metric, points, row.get("point_spans") or {})):
         return "measuring_point_changed", (
             f"MEASURING POINT CHANGED — this series was read from {len(points)} different places "
             f"over its history ({', '.join(sorted(points))}). A window spanning the change reports "
             f"the move between two different addresses as though it were a flow. The figure is not "
             f"understated or overstated by a little; it is the gap between two unrelated "
-            f"measurements. Clear the superseded rows.")
+            f"measurements. Clear the superseded rows, or declare the pair a handover if the two "
+            f"legs are one continuous series — {refusal}.")
 
     # 6. ONE OBSERVATION IS TOO LARGE TO BE A FLOW — the read-time half of case 5.
     #
@@ -478,6 +509,16 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                    f"Do not net it against emissions like a burn, or count it as locked supply")
     if ":PARTIAL" in str(row.get("source") or ""):
         why.append("PARTIAL — summed over known components only, so it understates")
+    # AN ACCEPTED HANDOVER IS STILL TWO SOURCES, AND THE READER HAS TO KNOW WHERE THE SEAM IS.
+    # The declaration stops the series being blanked; it does not make it a single measurement.
+    # Where the legs also differ in WHAT they cover — GEODNET's backfill sums Polygon and Solana
+    # burns while the live read is Polygon alone — that difference is the disclosure, because a
+    # month-on-month comparison across the seam is the reading it breaks.
+    handover = config.declared_handover(project, metric)
+    if handover and len(row.get("measuring_points") or ()) > 1:
+        legs = " then ".join(handover.get("ordered_points") or ())
+        why.append(f"STITCHED SERIES: {legs}, handed over with no overlap"
+                   + (f". {handover['composition_change']}" if handover.get("composition_change") else ""))
     if int(row.get("n_points") or 0) < 2:
         why.append("a single observation — no trend, and nothing to validate it against")
     # A SHORT WINDOW IS NOT A SMALL NUMBER. A 10-day sum under a 30-day header understates by
@@ -570,7 +611,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
                    "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
                    "flow_stock_move": None, "flow_accounted": None, "flow_residual": None,
-                   "flow_span": None,
+                   "flow_span": None, "point_spans": {},
                    "granularity": "daily", "period_label": "",
                    "covered_days": None, "window_days": None}
             if g is None or g.empty:
@@ -607,6 +648,11 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # Every distinct place this series was read from. More than one means the window can
             # span a change of address, and the delta across it is not a flow.
             row["measuring_points"] = tuple({_measuring_point(v) for v in g["source"].dropna().unique()})
+            # WHEN each measuring point was in use. A declared handover is accepted only if the
+            # stored dates show no overlap, so the spans have to travel with the row.
+            row["point_spans"] = {
+                mp: (gg["date"].min(), gg["date"].max())
+                for mp, gg in g.groupby(g["source"].astype(str).map(_measuring_point))}
             # A DIFFERENCED FLOW IS BOUNDED BY THE STOCK IT CAME FROM. Captured here rather than
             # inside withheld_for because only aggregate() has the series; withheld_for sees one
             # row. Restricted to rows whose source carries the :delta marker, so a genuine

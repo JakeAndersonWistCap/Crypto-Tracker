@@ -524,9 +524,13 @@
     same anchor, same scrape, only the metric name changed. Maple's OWN publication is now what
     this tool treats as authoritative for the SYRUP treasury figure, not the daoMultisig chain
     read, which returned 23.09M against this page's 77.66M on its first live run and did not
-    reconcile — see config.py's Maple.cross_checks and OPEN_QUESTIONS. The chain read is KEPT as a
-    cross-check, stored under treasury_holding_tokens_chain_crosscheck via metric_override, so it
-    no longer collides with this entry under one metric key.
+    reconcile — see config.py's Maple.cross_checks and OPEN_QUESTIONS.
+    AND THAT RETARGETING WAS REVERSED 2026-09-21, which is why this entry is disabled: robots.txt
+    disallows this page, so it never fetched and the primary metric went blank. The chain read
+    serves treasury_holding_tokens again as a labelled PARTIAL, the published figure is entered by
+    hand under treasury_holding_tokens_reported, and the cross-check metric the chain read was
+    parked under (treasury_holding_tokens_chain_crosscheck) was retired on 2026-09-22. The two
+    figures stay visible under two names, which is what keeps the ~3x gap on the sheet.
     NO `scale` FIELD, DELIBERATELY. The page renders the figure as '77.66M' and parse_number()
     already handles the M suffix natively (77.66M -> 77,660,000, verified). Adding scale: 1000000
     would multiply a correctly-parsed figure by a further million.

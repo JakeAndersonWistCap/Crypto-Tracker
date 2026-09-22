@@ -194,15 +194,16 @@ METRICS = {
         "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
         "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI")},
-    # KEPT, though nothing writes it today. The chain read went back to serving
-    # treasury_holding_tokens directly on 2026-09-21 (robots.txt disallows the page that
-    # displaced it), so this metric is currently unfed. It is not deleted: if the page ever
-    # becomes fetchable the demotion is a one-line metric_override again, and deleting the
-    # metric would also delete the stored history of the period when it WAS the cross-check.
-    "treasury_holding_tokens_chain_crosscheck": {
-        "label": "Treasury holding — chain read (cross-check only, NOT the primary)",
-        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
-        "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
+    # treasury_holding_tokens_chain_crosscheck RETIRED 2026-09-22. It existed for three days:
+    # created 2026-09-18 when Maple's transparency page was promoted to the primary metric name
+    # and the chain read was demoted by metric_override, and left unfed from 2026-09-21 when
+    # robots.txt turned out to disallow that page and the chain read went back to serving
+    # treasury_holding_tokens directly. Kept for a day on the argument that re-applying the
+    # demotion would be one line — but an unfed metric is a permanent row on the Gap Report and
+    # a permanent not_applicable explanation, and the thing it would come back for is a page we
+    # do not fetch. Retired cleanly instead: config entry, bound, label, gap mapping and stored
+    # rows all go together (orphan_cleanup.sql section O). Re-creating it if the page ever
+    # becomes fetchable is the same one line it always was.
     # MAPLE'S OWN PUBLISHED TREASURY FIGURE, entered by hand. Its page is disallowed by
     # maple.finance/robots.txt, which we respect rather than route around, so manual entry is
     # where the sourcing priority terminates for it — a valid answer, not a failure. Kept under
@@ -542,6 +543,26 @@ def destination_indeterminate(project_name: str, metric: str) -> dict | None:
     return p.get("destination_indeterminate")
 
 
+def declared_handover(project_name: str, metric: str) -> dict | None:
+    """A series deliberately STITCHED from two measuring points, one after the other.
+
+    measuring_point_changed blanks any series read from more than one place, because a window
+    spanning the change reports the move between two unrelated balances as though it were a flow.
+    That is right for an accident — Uniswap's burn read moving from the Firepit to the dead
+    address mid-series — and wrong for a HANDOVER, which is the intended shape of a backfill: a
+    historical source covers the period before the live read existed, the live read covers the
+    period after, and the two never overlap.
+
+    WHAT THE DECLARATION BUYS, AND WHAT IT DOES NOT. It says which two points, and in which
+    order. It does NOT assert they do not overlap — that is checked against the stored dates on
+    every build, so a backfill re-run that reaches into the live period still blanks the series.
+    Nor does it cover a third point: anything outside the declared pair blanks. A declaration
+    that could silence the guard by itself would be the guard removed and renamed.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return (p.get("series_handover") or {}).get(metric)
+
+
 def is_manual_quarterly(project_name: str, metric: str) -> bool:
     p = PROJECT_BY_NAME.get(project_name) or {}
     return metric in (p.get("manual_quarterly") or ())
@@ -664,9 +685,11 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
             continue                    # removed, not re-purposed — orphaned_contract_keys has it
         # metric_override counts as re-purposing too: a contract whose write target moved away
         # from `metric` via the override is exactly the "still exists, no longer serves this
-        # metric" case this function exists to catch — e.g. Maple's chain read, moved from
-        # treasury_holding_tokens to treasury_holding_tokens_chain_crosscheck (2026-09-18). Old
-        # rows stored under the vacated metric name must read as withdrawn, not as still current.
+        # metric" case this function exists to catch. The worked example was Maple's chain read,
+        # moved to treasury_holding_tokens_chain_crosscheck on 2026-09-18 and moved back on
+        # 2026-09-21 (that metric is retired — see METRICS); the live examples now are the
+        # net_of_burn token contracts, whose override points at total_supply_gross. Old rows
+        # stored under a vacated metric name must read as withdrawn, not as still current.
         served = spec.get("metric_override") or KIND_METRIC.get(spec.get("kind"))
         if served not in allowed:
             withdrawn.append(key)
@@ -745,8 +768,8 @@ def destination_disputed(project_name: str, metric: str) -> dict | None:
         if c.get("destination_status") != "disputed":
             continue
         # metric_override redirects a contract's write target away from its kind's normal
-        # metric (Maple's chain read -> treasury_holding_tokens_chain_crosscheck, not
-        # treasury_holding_tokens — see 2026-09-18). Checking it here too, same as
+        # metric (a net_of_burn project's token contract serves total_supply_gross, not
+        # total_supply). Checking it here too, same as
         # fetch/gaps.py's METRIC_CONTRACT_KIND matching, so a disputed override target is not
         # mistaken for disputing the metric its kind would normally serve, or vice versa.
         if (c.get("metric_override") or KIND_METRIC.get(c.get("kind"))) != metric:
@@ -3163,6 +3186,44 @@ PROJECTS = [
                     "statement exists.",
         },
         "burn_read_method": "transfer",
+        # ===== A STITCHED HANDOVER, NOT AN ACCIDENTAL CHANGE OF MEASURING POINT. =====
+        # gross_burn_tokens reads from two places by design: Dune 8683175 backfills the monthly
+        # history from before this tool existed, and the Polygon dead-address delta carries it
+        # from the first live run onward. measuring_point_changed correctly blanks a series read
+        # from two places — that is Uniswap's Firepit-to-dead-address move, where the step
+        # between two unrelated balances was stored as one day's burn — and this is the other
+        # case: a handover, where the two never overlap and together they are one series.
+        #
+        # THE DECLARATION NAMES THE PAIR AND THE ORDER. IT DOES NOT ASSERT THE NO-OVERLAP.
+        # build_workbook checks that against the stored dates on every build, so a backfill
+        # re-run that reaches forward into the live period still blanks the column, and so does
+        # any third source. Run orphan_cleanup.sql section N to read off the actual boundary.
+        #
+        # ** AND THE TWO LEGS DO NOT MEASURE THE SAME SET OF CHAINS. ** Dune 8683175 sums Polygon
+        # AND Solana burns (value_cols: tokens_burned + sol_tokens_burned); the live read is
+        # chain:polygon:burn_polygon alone, because the Solana burn destination is a token
+        # account and no Solana adapter exists. So the historical leg is broader than the live
+        # one, and the series steps DOWN in composition at the boundary. That is a real,
+        # unresolved discrepancy and it is recorded here rather than smoothed over — it is not
+        # what the handover declaration is for and the declaration does not settle it. See
+        # composition_change below; it renders as an AMBER disclosure on the row.
+        "series_handover": {
+            "gross_burn_tokens": {
+                "ordered_points": ("dune:8683175", "chain:polygon:burn_polygon"),
+                "why": "Dune 8683175 is the monthly historical backfill; the Polygon dead-address "
+                       "delta is the live read. The backfill drops its current period "
+                       "(drop_current_period: True) precisely so the two do not meet.",
+                "composition_change": "THE LEGS COVER DIFFERENT CHAINS. The Dune leg sums Polygon "
+                                      "and Solana burns; the live leg reads Polygon only, because "
+                                      "burn_solana_token_account needs a Solana RPC adapter that "
+                                      "does not exist. The series therefore NARROWS at the "
+                                      "handover by the Solana burn rate, and a month-on-month "
+                                      "comparison across the boundary understates the later month "
+                                      "by that amount. Quantify it from the Dune query's "
+                                      "sol_tokens_burned column before comparing across it.",
+                "declared": "2026-09-22",
+            },
+        },
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
@@ -3733,16 +3794,6 @@ PROJECTS = [
                 "robots.txt turned out to disallow the page; the scrape is disabled and the "
                 "figure is entered by hand under treasury_holding_tokens_reported. This metric "
                 "still has no route either way.)",
-            "treasury_holding_tokens_chain_crosscheck":
-                "UNFED BY DESIGN since 2026-09-21, which is the exact reverse of the move that "
-                "created it. The chain read was given metric_override "
-                "'treasury_holding_tokens_chain_crosscheck' on 2026-09-18 so Maple's transparency "
-                "page could take over the primary metric name. maple.finance/robots.txt DISALLOWS "
-                "that page, so it never fetched, the primary went blank, and the chain read was "
-                "restored to treasury_holding_tokens — leaving this name with nothing writing to "
-                "it. KEPT rather than deleted: it holds the history of the days it WAS the "
-                "cross-check, and re-applying the demotion is one line if the page ever becomes "
-                "fetchable. Nothing is missing here.",
         },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
         # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
@@ -4019,9 +4070,6 @@ PROJECTS = [
             # two real balances — check_cross_checks is what is supposed to do that.
             "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000,
                                         "change_threshold_pct": 30},
-            # Unfed today (nothing writes this metric since the restoration), kept so the bound
-            # is already in place if the page becomes fetchable and the demotion is re-applied.
-            "treasury_holding_tokens_chain_crosscheck": {"min": 1_000_000, "max": 1_000_000_000},
             # THE MANUAL FIGURE GETS THE SAME FLOOR, deliberately. Manual entry is a valid
             # terminal answer, not a trusted one: a typo that drops a suffix lands in exactly the
             # range the floor exists to reject, and a hand-entered 77.66 would otherwise sail
@@ -4041,9 +4089,6 @@ PROJECTS = [
             "treasury_holding_tokens_reported": "SYRUP held per Maple's own transparency page "
                                                 "(maple.finance/transparency) — entered by hand, "
                                                 "because robots.txt disallows fetching that page",
-            "treasury_holding_tokens_chain_crosscheck": "SYRUP held at the daoMultisig chain address "
-                                                        "(unfed since 2026-09-21 — this read serves "
-                                                        "treasury_holding_tokens directly again)",
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
@@ -4127,9 +4172,12 @@ PROJECTS = [
                  "only 0.51 SYRUP). treasury_holding_tokens IS NOW SOURCED FROM MAPLE'S OWN "
                  "TRANSPARENCY PAGE DIRECTLY (2026-09-18), not the chain read — the daoMultisig's first "
                  "live balance (23.09M) did not reconcile against the page's 77.66M, an unexplained "
-                 "~3x gap (see OPEN_QUESTIONS). The chain read is kept as a cross-check under "
-                 "treasury_holding_tokens_chain_crosscheck, never as the primary, until the gap is "
-                 "explained. stSYRUP staking rewards ENDED November 2025 (MIP-019) — do not model "
+                 "~3x gap (see OPEN_QUESTIONS). THAT DEMOTION WAS REVERSED 2026-09-21: "
+                 "maple.finance/robots.txt disallows the transparency page, which we respect "
+                 "rather than route around, so the chain read serves treasury_holding_tokens "
+                 "again as a labelled PARTIAL and the published figure is entered by hand under "
+                 "treasury_holding_tokens_reported. The cross-check metric is retired (2026-09-22) "
+                 "and the ~3x gap stays visible as two separately named figures. stSYRUP staking rewards ENDED November 2025 (MIP-019) — do not model "
                  "ongoing staking yield.",
     },
     {

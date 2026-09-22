@@ -114,12 +114,6 @@ METRIC_CONTRACT_KIND = {
     # their rows were reporting a missing registry entry rather than the real reason the read
     # produced nothing.
     "treasury_holding_tokens": "treasury_holding",
-    # Maple-only, via metric_override on contracts.treasury — the chain read demoted to a
-    # cross-check secondary while the metric name "treasury_holding_tokens" itself is now sourced
-    # from a page scrape (see config.py, 2026-09-18). Same kind, different metric — the matching
-    # filter below also checks metric_override so this and treasury_holding_tokens are never
-    # confused for one another.
-    "treasury_holding_tokens_chain_crosscheck": "treasury_holding",
     # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
     # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",
@@ -186,9 +180,10 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:
         contracts = project.get("contracts") or {}
-        # metric_override redirects a contract's kind away from its normal metric (Maple's
-        # treasury read -> treasury_holding_tokens_chain_crosscheck, not treasury_holding_tokens
-        # — see config.py, 2026-09-18). Without this check, a kind match alone would credit BOTH
+        # metric_override redirects a contract's kind away from its normal metric (a net_of_burn
+        # project's token contract serves total_supply_gross, not total_supply; Maple's treasury
+        # read did the same thing for three days in September 2026). Without this check, a kind
+        # match alone would credit BOTH
         # metric names with the same contract: "(override or metric) == metric" is true only when
         # there is no override (an ordinary contract serves whatever its kind normally means) or
         # when the override explicitly targets THIS metric.

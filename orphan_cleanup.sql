@@ -421,19 +421,45 @@ SELECT source, COUNT(*) AS rows, MIN(date) AS first_seen, MAX(date) AS last_seen
 -- composition ever appears, the guard should not be firing at all — stop and re-check
 -- rather than deleting anything.
 
--- D3. THE DELETE. Run only after D1/D2 confirm which composition is the OLD one — copy its
---     EXACT source string(s) from D2 into the WHERE below before uncommenting. Do not use a
---     wildcard broad enough to also catch the current three-component sum: that would erase
---     the very rows this fix exists to keep. Left unfilled deliberately, because there is no
---     live store here to read the real composition strings from.
+-- D3. THE ROW, NAMED.                                                     answered 2026-09-22
+--     The placeholder source strings that used to sit in D4 are gone: the live run of
+--     2026-09-21 identified the offending row exactly — ONE row, dated 2026-09-17, carrying the
+--     two-wallet PARTIAL composition written while mining_distribution_polygon was still being
+--     refused by the existence check. Every row from 2026-09-18 onward carries the full
+--     three-wallet sum. So the delete is scoped by DATE, which is exact, with the PARTIAL marker
+--     as a second condition so a mis-typed date cannot reach a complete row.
+--
+--     RUN THIS FIRST AND READ IT. One row, dated 2026-09-17, source containing PARTIAL. If it
+--     returns anything else — two rows, a different date, a source without PARTIAL — the store
+--     does not match what this section was written against. Stop and report rather than deleting.
+SELECT date, project, metric, value, source, tier, fetched_at,
+       CASE WHEN date = '2026-09-17' AND source LIKE '%PARTIAL%'
+            THEN 'WOULD DELETE — the two-wallet PARTIAL row'
+            ELSE 'KEPT — the three-wallet composition' END AS action
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens'
+ ORDER BY date;
+
+-- D4. THE DELETE. One row. Scoped by date AND by the PARTIAL marker, so it cannot reach the
+--     complete three-wallet rows this fix exists to keep — that is the outcome D3's old
+--     placeholder wildcard was written to warn against.
+--
+--     WHAT IT RECOVERS: with one composition left in the history, measuring_point_changed stops
+--     firing and treasury_holding_tokens renders as an ordinary series again. The 2026-09-17
+--     figure itself is NOT recoverable — it measured two of three wallets and there is no route
+--     back to what the third held that day. The series starts on 2026-09-18 and says so.
+-- BEGIN;
 -- DELETE FROM metrics
 --  WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens'
---    AND source IN ('chain:sum(mining_polygon+ecosystem_polygon)', 'chain:mining_polygon');
+--    AND date = '2026-09-17'
+--    AND source LIKE '%PARTIAL%';
+-- COMMIT;
 
--- D4. Verify — only the current three-component composition should remain, and the next
---     build should render treasury_holding_tokens as an ordinary GREEN/AMBER series again
---     rather than RED/measuring_point_changed.
--- SELECT source, COUNT(*), MIN(date), MAX(date) FROM metrics
+-- D5. Verify — one composition, first date 2026-09-18, and the next build renders
+--     treasury_holding_tokens as an ordinary GREEN/AMBER series rather than
+--     RED/measuring_point_changed.
+-- SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+--   FROM metrics
 --  WHERE project = 'GEODNET' AND metric = 'treasury_holding_tokens' GROUP BY source;
 
 -- =======================================================================================
@@ -1139,3 +1165,124 @@ SELECT date, project, metric, value, source, tier, fetched_at, 'WOULD DELETE' AS
 --   FROM metrics WHERE project = 'Hyperliquid'
 --    AND metric IN ('burn_address_balance', 'gross_burn_tokens')
 --  GROUP BY metric;
+
+
+-- ========================================================================================
+-- N. THE GEODNET BURN HANDOVER — where the backfill stops and the live read starts.  2026-09-22
+--    LOOK ONLY. Nothing here deletes anything; the point is to read off the seam.
+-- ========================================================================================
+-- gross_burn_tokens is read from two places BY DESIGN: Dune 8683175 backfills the monthly
+-- history from before this tool existed, and chain:polygon:burn_polygon's delta carries it from
+-- the first live run onward. build_workbook's measuring_point_changed blanked the column for it,
+-- which is the guard doing exactly what it was built for on the shape it was built for —
+-- Uniswap's Firepit-to-dead-address move — and the wrong answer for a handover.
+--
+-- config now declares the pair (GEODNET's series_handover). THE DECLARATION NAMES THE PAIR AND
+-- THE ORDER AND NOTHING ELSE: the no-overlap is re-checked against these stored dates on every
+-- build, and any third source blanks the column again. So this section is what you run to see
+-- what the guard is checking.
+--
+-- N1. THE SEAM. Expect the Dune leg to end BEFORE the chain leg begins, with a clear gap — the
+--     Dune query sets drop_current_period, so its last month is a completed one.
+--     If last_date of the Dune leg >= first_date of the chain leg, the legs OVERLAP: the same
+--     burn is counted twice and the workbook will correctly blank the column again. The fix for
+--     that is deleting the overlapping Dune rows, NOT widening the declaration.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value, SUM(value) AS total
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- N2. THE COMPOSITION STEP, WHICH THE HANDOVER DECLARATION DOES NOT SETTLE.
+--     The Dune leg sums POLYGON AND SOLANA burns (value_cols tokens_burned + sol_tokens_burned);
+--     the live leg reads chain:polygon:burn_polygon ALONE, because the Solana burn destination
+--     is a token account and no Solana adapter exists. So the series NARROWS at the seam, and a
+--     month-on-month comparison across it understates the later month by the Solana burn rate.
+--
+--     This query cannot separate the two columns — they were summed before storage — so it gives
+--     the monthly totals either side of the seam instead. Read the Dune query's own
+--     sol_tokens_burned column to size the step before comparing across it.
+SELECT date, value, source,
+       CASE WHEN source LIKE 'dune:%' THEN 'Polygon + Solana' ELSE 'Polygon only' END AS covers
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ ORDER BY date DESC
+ LIMIT 12;
+
+-- N3. ANY THIRD SOURCE, which blanks the column whatever the declaration says. Expect exactly
+--     the two declared points. A Solana read appearing here is GOOD NEWS for the composition
+--     step above and still has to be added to series_handover before the column comes back.
+SELECT DISTINCT source FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ ORDER BY source;
+
+
+-- ========================================================================================
+-- O. A RETIRED METRIC'S ROWS — treasury_holding_tokens_chain_crosscheck.            2026-09-22
+--    O1-O2 LOOK. O3 deletes. O4 checks nothing else was retired and left behind.
+-- ========================================================================================
+-- THE METRIC LIVED THREE DAYS. Created 2026-09-18, when Maple's transparency page was promoted
+-- to the primary metric name and the daoMultisig chain read was demoted onto this one by
+-- metric_override. Left unfed 2026-09-21, when maple.finance/robots.txt turned out to disallow
+-- that page — which we respect rather than route around — so the page never fetched, the primary
+-- went blank, and the chain read was restored to treasury_holding_tokens.
+--
+-- IT WAS KEPT FOR A DAY ON THE ARGUMENT THAT RE-APPLYING THE DEMOTION WOULD BE ONE LINE. That is
+-- still true and it was the wrong trade: an unfed metric is a permanent Gap Report row, a
+-- permanent not_applicable explanation to maintain, and a column on the sheet that can only ever
+-- be empty — all of it standing by for a page this tool does not fetch. Retired 2026-09-22:
+-- config entry, sanity bound, label, gap-report kind mapping and these rows go together.
+--
+-- WHAT IS NOT LOST. The chain read's HISTORY is not in these rows alone — the same daoMultisig
+-- balance is written to treasury_holding_tokens before 2026-09-18 and again from 2026-09-21.
+-- What goes is the three-day window when it was stored under the other name. O2 shows whether
+-- those three days are also covered under the primary name before anything is deleted.
+--
+-- O1. THE ROWS. Expect a handful, all Maple, all dated 2026-09-18 to 2026-09-20, all sourced
+--     from the chain read. Anything outside that is not what this section was written against —
+--     stop and report rather than deleting.
+SELECT date, project, metric, value, source, tier, fetched_at, 'WOULD DELETE' AS action
+  FROM metrics
+ WHERE metric = 'treasury_holding_tokens_chain_crosscheck'
+ ORDER BY project, date;
+
+-- O2. WHAT THE PRIMARY NAME HOLDS OVER THE SAME DATES, so the loss is known before it is taken.
+--     A date present on the left and absent on the right is a day that disappears from the
+--     treasury series entirely. That is acceptable — it is three days of a metric whose figure
+--     is disputed against Maple's own publication by ~3x anyway — but it should be a decision,
+--     not a surprise.
+SELECT x.date,
+       x.value  AS crosscheck_value,
+       p.value  AS primary_value,
+       CASE WHEN p.value IS NULL THEN 'this date disappears from treasury_holding_tokens'
+            ELSE 'already covered under the primary name' END AS effect
+  FROM metrics x
+  LEFT JOIN metrics p
+    ON p.project = x.project AND p.date = x.date AND p.metric = 'treasury_holding_tokens'
+ WHERE x.metric = 'treasury_holding_tokens_chain_crosscheck'
+ ORDER BY x.date;
+
+-- O3. THE DELETE. Scoped to the metric name, which is exact: nothing else was ever written under
+--     it, and the name no longer exists in config so nothing can write it again.
+-- BEGIN;
+-- DELETE FROM metrics WHERE metric = 'treasury_holding_tokens_chain_crosscheck';
+-- DELETE FROM gap_report WHERE metric = 'treasury_holding_tokens_chain_crosscheck';
+-- DELETE FROM review_queue WHERE metric = 'treasury_holding_tokens_chain_crosscheck';
+-- COMMIT;
+
+-- O4. THE SAME QUESTION ASKED GENERALLY — every metric name in the store that config no longer
+--     declares. A retired metric that keeps its rows is invisible: nothing renders it, so nothing
+--     reports it, and it sits in the store being counted by every "how much history do we have"
+--     query. Cross-check the names this returns against config.METRICS before deleting any of
+--     them: a metric that is merely PROJECT-SCOPED (only_projects) is still declared and must not
+--     appear here, and if it does, read the list rather than the query.
+SELECT metric, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects,
+       MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ GROUP BY metric
+ ORDER BY metric;
+
+-- O5. VERIFY — O1 returns nothing.
+-- SELECT COUNT(*) AS should_be_zero FROM metrics
+--  WHERE metric = 'treasury_holding_tokens_chain_crosscheck';

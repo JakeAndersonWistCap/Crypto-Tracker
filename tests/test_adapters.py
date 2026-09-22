@@ -1776,6 +1776,63 @@ def test_hypercore_info_reads_the_assistance_fund_without_any_chain():
     print("hypercore ok: 48,420,000 HYPE read over plain HTTPS, no chain and no RPC involved")
 
 
+def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_blanks():
+    """GEODNET's gross_burn_tokens reads from two places BY DESIGN — Dune 8683175 backfills the
+    months before this tool existed, and the Polygon dead-address delta carries it from the first
+    live run. measuring_point_changed blanked the column for it, which is the guard doing exactly
+    what it was built to do on the shape it was built for (Uniswap's Firepit-to-dead-address move)
+    and the wrong answer for a handover.
+
+    THE DECLARATION IS NARROW ON PURPOSE. It names the pair and the order, and asserts nothing
+    else: the no-overlap is checked against the stored dates on every build, because a backfill
+    re-run reaching forward into the live period is the failure that actually happens, and it
+    double-counts. A declaration that could silence the guard by itself would be the guard removed
+    and given a friendlier name.
+    """
+    import build_workbook as bw
+
+    DUNE, CHAIN = "dune:8683175", "chain:polygon:burn_polygon"
+    decl = config.declared_handover("GEODNET", "gross_burn_tokens")
+    assert decl and tuple(decl["ordered_points"]) == (DUNE, CHAIN), decl
+    assert decl.get("composition_change"), \
+        "the legs cover different chains — that has to be stated, not left for the reader to find"
+
+    def spans(**kw):
+        return {k: (pd.Timestamp(v[0]), pd.Timestamp(v[1])) for k, v in kw.items()}
+
+    # ACCEPTED: the backfill stops before the live read starts.
+    clean = {DUNE: (pd.Timestamp("2025-01-01"), pd.Timestamp("2026-08-31")),
+             CHAIN: (pd.Timestamp("2026-09-14"), pd.Timestamp("2026-09-21"))}
+    assert bw.handover_refusal("GEODNET", "gross_burn_tokens", (DUNE, CHAIN), clean) is None
+
+    # REFUSED — THE LEGS OVERLAP. A backfill re-run that reaches into the live period counts the
+    # same burn twice, in the direction that looks like a busier month.
+    overlapped = dict(clean, **{DUNE: (pd.Timestamp("2025-01-01"), pd.Timestamp("2026-09-15"))})
+    why = bw.handover_refusal("GEODNET", "gross_burn_tokens", (DUNE, CHAIN), overlapped)
+    assert why and "OVERLAP" in why and "counted twice" in why, why
+
+    # REFUSED — A THIRD SOURCE. The declaration covers the pair it names and no other.
+    third = dict(clean, **{"chain:solana:burn_solana_token_account":
+                           (pd.Timestamp("2026-09-20"), pd.Timestamp("2026-09-21"))})
+    why = bw.handover_refusal("GEODNET", "gross_burn_tokens", tuple(third), third)
+    assert why and "outside it" in why, why
+
+    # REFUSED — NOTHING DECLARED. The ordinary case stays exactly as it was.
+    why = bw.handover_refusal("Uniswap", "gross_burn_tokens",
+                              ("chain:ethereum:fire_pit", "chain:ethereum:burn_dead"),
+                              spans(**{"chain:ethereum:fire_pit": ("2026-09-01", "2026-09-13"),
+                                       "chain:ethereum:burn_dead": ("2026-09-14", "2026-09-21")}))
+    assert why == "no handover is declared for this series", why
+
+    # AND THE ACCEPTED CASE STILL DISCLOSES. Not blanked, not silently clean.
+    row = {"status": "ok", "source": CHAIN, "n_points": 9, "measuring_points": (DUNE, CHAIN),
+           "point_spans": clean, "covered_days": None, "window_days": None}
+    band, reason = bw.confidence_for("GEODNET", "gross_burn_tokens", row, pd.Timestamp("2026-09-22"))
+    assert band == "AMBER", f"a stitched series is not a single measurement: got {band}"
+    assert "STITCHED SERIES" in reason and "Polygon and Solana" in reason, reason
+    print("handover ok: accepted with a disclosure; overlap, a third source and no declaration all blank")
+
+
 def test_a_same_day_rerun_differences_from_yesterday_not_from_its_own_earlier_row():
     """THE HYPERLIQUID UNDERSTATEMENT, REPRODUCED. Four runs on 2026-09-21; the burn address
     moved 231,934.0021 HYPE across the day and gross_burn_tokens recorded 83,344.4791.
@@ -2673,8 +2730,15 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     assert treasury["destination_status"] == "verified_by_label"
     assert treasury["address"] == "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", \
         "must be the daoMultisig / 'Maple Finance: DAO' address, not the old disputed fee treasury"
-    # And the metric the override vacated is explained, not left as a permanent unexplained gap.
-    assert config.not_applicable_reason("Maple", "treasury_holding_tokens_chain_crosscheck")
+    # AND THE VACATED METRIC IS GONE, not sitting unfed with an explanation attached.
+    # treasury_holding_tokens_chain_crosscheck lived from 2026-09-18 (the page promoted, the chain
+    # read demoted by metric_override) to 2026-09-21 (robots.txt disallows the page, the chain
+    # read restored). Retired 2026-09-22 rather than kept against a page we do not fetch: an
+    # unfed metric is a permanent Gap Report row and a permanent not_applicable entry, and
+    # re-creating it is the same one line it always was.
+    assert "treasury_holding_tokens_chain_crosscheck" not in config.METRICS
+    assert config.not_applicable_reason("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
+        "a retired metric needs no explanation — there is no cell for one to appear in"
     print("maple ok: page entry disabled on robots.txt, chain read restored as a PARTIAL primary, "
           "published figure carried manually, floor still rejects an unscaled 77.66")
 
@@ -2787,8 +2851,10 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
         f"a deliberately disabled entry must still name the page it is about: {why_maple}"
 
     # MAPLE-SPECIFIC: the waiting mechanism keys off a DISPUTED destination, and Maple's treasury
-    # contract is verified_by_label, not disputed — so it cannot apply here either way.
-    assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
+    # contract is verified_by_label, not disputed — so it cannot apply here either way. Asked on
+    # treasury_holding_tokens_reported, the manual figure, because the cross-check metric it used
+    # to be asked on was retired 2026-09-22.
+    assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_reported") is None, \
         "nothing is waiting on a disputed primary here — the treasury contract is not disputed"
 
     # (2) status must distinguish armed-and-idle from unbuilt — exercised on Chainlink, whose
@@ -2814,7 +2880,7 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
         other = out[(out.project == "Chainlink") & (out.metric == "locked_tokens_dashboard")].iloc[0]
         assert other["status"] != "waiting", \
             f"only a secondary blocked BY CONFIG waits; everything else is an honest gap: {other['status']}"
-        assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
+        assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_reported") is None, \
             "Maple's primary is not contract-based, so its secondary is never 'waiting'"
         print("waiting state ok: armed entry named with its url and selector, status 'waiting' not "
               "'gap' on Chainlink, and Maple correctly never waits post-flip")
@@ -2990,10 +3056,12 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
     is general, not specific to Maple's current state, so the dispute is forced back on
     temporarily to keep exercising it against the real historical 0.51253570332391 SYRUP reading.
 
-    METRIC RENAMED 2026-09-18: this contract writes to treasury_holding_tokens_chain_crosscheck
-    now (metric_override — see config.py), not treasury_holding_tokens, regardless of dispute
-    status. Both names are checked below: the new one absent for the real reason (disputed), the
-    old one absent because nothing on this project writes there via a contract read any more.
+    THE METRIC NAME MOVED TWICE AND CAME BACK. It was overridden to
+    treasury_holding_tokens_chain_crosscheck on 2026-09-18 when Maple's transparency page took
+    the primary name, and restored on 2026-09-21 when robots.txt turned out to disallow that
+    page; the cross-check metric was retired on 2026-09-22. The contract serves
+    treasury_holding_tokens again, and the mechanism under test — a disputed contract's reading
+    is staged as evidence and never stored as a figure — never depended on which name it was.
     """
     spec = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
     live_status = spec["destination_status"]
@@ -3029,8 +3097,7 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
         # AND NEITHER NAME APPEARS, whichever way the override currently points: the one the
         # contract serves is withheld because it is disputed, and the other because nothing on
         # this project writes there via a contract read.
-        for other in ("treasury_holding_tokens", "treasury_holding_tokens_chain_crosscheck"):
-            assert other not in set(df.metric), other
+        assert "treasury_holding_tokens" not in set(df.metric)
         staged = [s for s in out.staged if "treasury_holding_tokens" in str(s.get("name", ""))]
         assert staged and abs(float(staged[0]["value"]) - 0.51253570332391) < 1e-9, \
             f"the observation must survive as EVIDENCE, not vanish: {out.staged}"
@@ -3039,7 +3106,7 @@ def test_maple_treasury_is_disputed_so_a_dust_balance_is_never_stored_as_a_figur
 
         # THE GUARD FOR THE FIX: if the dispute is ever cleared against a still-wrong address, the
         # floor must reject the dust rather than let it back in quietly.
-        lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens_chain_crosscheck")
+        lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
         assert lo is not None and 0.51253570332391 < lo <= 75_780_000 <= (hi or float("inf")), \
             f"the floor must exclude dust and admit the reported ~75.78m, got ({lo}, {hi})"
         print("maple treasury ok: dust NOT stored, staged as evidence, gap explains it, floor guards the fix")
@@ -4519,7 +4586,8 @@ def test_the_chain_read_serves_the_primary_metric_again_and_says_it_is_partial()
         f"the chain read must serve the primary metric again; got {sorted(by)}"
     assert by["treasury_holding_tokens"] == 23_090_000.0
     assert "treasury_holding_tokens_chain_crosscheck" not in by, \
-        "the metric_override is gone — nothing should write the cross-check metric now"
+        "the metric_override is gone, and so is the metric — retired 2026-09-22"
+    assert "treasury_holding_tokens_chain_crosscheck" not in config.METRICS
 
     row = df[df["metric"] == "treasury_holding_tokens"].iloc[0]
     assert ":PARTIAL" in row["source"], f"must be labelled partial: {row['source']}"
