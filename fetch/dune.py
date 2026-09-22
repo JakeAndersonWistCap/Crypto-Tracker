@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, HttpError, tidy, window
+from .base import Http, HttpError, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.dune")
 
@@ -76,11 +76,26 @@ def always_refetch() -> bool:
 
 
 class Dune:
-    def __init__(self, has_history: set[tuple[str, str]] | None = None):
+    def __init__(self, has_history: set[tuple[str, str]] | None = None,
+                 last_dates: dict[tuple[str, str], str] | None = None):
         self.key = os.environ.get("DUNE_API_KEY", "").strip()
         self.http = Http(min_interval=0.5)
         self.has_history = has_history or set()
+        # The newest stored date per (project, metric), for refresh_days. A backfill's freshness
+        # is a property of the SERIES, not of when the query last ran: a query that executed
+        # yesterday and returned nothing new has not refreshed anything.
+        self.last_dates = last_dates or {}
         self._cache: dict[int, list[dict]] = {}   # two metrics can share one query; fetch it once
+
+    def _refresh_age_days(self, name: str, metric: str) -> int | None:
+        """How many days old the newest stored row for this series is, or None if unknown."""
+        seen = self.last_dates.get((name, metric))
+        if not seen:
+            return None
+        try:
+            return int((today().normalize() - pd.Timestamp(str(seen)[:10])).days)
+        except (TypeError, ValueError):
+            return None
 
     def _results(self, query_id: int) -> list[dict]:
         if query_id in self._cache:
@@ -150,11 +165,33 @@ class Dune:
                 # though, and the guard below is what catches that mistake, so both stay.
                 ongoing = bool(q.get("snapshot") or q.get("ongoing"))
                 first_time = (name, metric) not in self.has_history
-                if not first_time and not always_refetch() and not ongoing:
+                # ===== A BACKFILL THAT IS ALSO A LIVE CROSS-CHECK NEEDS A CADENCE. =====
+                # "Skip once the store has history" is right for a pure backfill and wrong for a
+                # series that is still the second opinion on a live figure: Ether.fi's Dune
+                # locked_tokens_dashboard exists to disagree with the contract read, and a
+                # disagreement frozen at the day it was first pulled stops being evidence about
+                # anything. refresh_days re-pulls it on a stated cadence instead — 7 for
+                # dune:8683038, which is a paid query asked once a week rather than once ever or
+                # once a day.
+                #
+                # MEASURED FROM THE NEWEST STORED ROW, not from when the query last ran. A query
+                # that executed yesterday and returned nothing new has refreshed nothing, and
+                # timing the cadence off the execution would keep paying for it while the series
+                # sat still.
+                refresh = q.get("refresh_days")
+                age = self._refresh_age_days(name, metric)
+                due = bool(refresh) and (age is None or age >= int(refresh))
+                if not first_time and not always_refetch() and not ongoing and not due:
+                    because = (f" Its refresh cadence is {int(refresh)} days and the newest stored "
+                               f"row is {age} day(s) old." if refresh and age is not None else "")
                     out.skipped(SOURCE, name,
-                                f"{metric}: store already holds a row — backfill NOT run. Set "
-                                f"TOKEN_METRICS_DUNE_ALWAYS=1 to force it.", TIER)
+                                f"{metric}: store already holds a row — backfill NOT run.{because} "
+                                f"Set TOKEN_METRICS_DUNE_ALWAYS=1 to force it.", TIER)
                     continue
+                if due and not first_time:
+                    log.info("%s/%s: newest stored row is %s day(s) old against a %d-day refresh "
+                             "cadence — re-pulling", name, metric,
+                             "unknown" if age is None else age, int(refresh))
                 # THIS METRIC'S OWN FIRST RUN NEEDS ITS OWN FULL HISTORY, regardless of the
                 # window_days the caller passed for the run as a whole. window_days is a global,
                 # per-RUN decision — trimmed once the SYSTEM has been running a while, so daily
@@ -166,7 +203,11 @@ class Dune:
                 # so a brand-new metric on a mature run silently got ZERO rows, not a partial
                 # backfill, and looked identical to a broken query. Same treatment as
                 # always_refetch: a first-time pull always takes the whole history.
-                metric_window_days = None if first_time else window_days
+                # A REFRESH TAKES THE WHOLE HISTORY, for the same reason a forced re-pull does:
+                # trimming it to the trailing window would rewrite the last month, leave the
+                # older rows standing at their old values and report success. The query costs the
+                # same either way — Dune bills the execution, not the rows returned.
+                metric_window_days = None if (first_time or due) else window_days
                 if first_time and window_days is not None:
                     log.info("%s/%s: first backfill for this metric — pulling full history, "
                              "ignoring the %d-day window", name, metric, window_days)

@@ -51,7 +51,7 @@ TIER_ORDER = [
                                           prior_delta=ctx["prior_delta"])),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
-    ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"])),
+    ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),
 ]
 
 
@@ -512,6 +512,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_sources: dict | None = None,
               has_history: set | None = None,
               known_absent: set | None = None,
+              last_dates: dict | None = None,
               manual_keys: set | None = None,
               sources: list[str] | None = None) -> FetchOutput:
     """Run every tier in order and return one FetchOutput carrying frames, log, review and gaps.
@@ -523,6 +524,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
                   a single observation, and their difference is 0 whatever the truth is.
     has_history   (project, metric) pairs the store already has history for. Tier 4 skips these,
                   because Dune is a backfill dependency, not an ongoing one.
+    last_dates    (project, metric) -> the newest stored date, for tier 4's refresh_days. A
+                  backfill's freshness is a property of the SERIES, not of when the query last
+                  ran: a query that executed yesterday and returned nothing new refreshed nothing.
     known_absent  (source, project) pairs whose endpoint 404'd and has never worked — see
                   store.known_absent. Not called at all, and logged as SKIPPED rather than
                   failed: no call was made, so there is no error to report.
@@ -537,7 +541,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
            "prior_dates": prior_dates or {},
            "prior_sources": prior_sources or {},
            "has_history": has_history or set(),
-           "known_absent": known_absent or set()}
+           "known_absent": known_absent or set(),
+           "last_dates": last_dates or {}}
     out = FetchOutput()
 
     for name, tier, build in TIER_ORDER:

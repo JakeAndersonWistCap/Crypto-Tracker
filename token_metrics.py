@@ -213,6 +213,7 @@ def main(argv=None) -> int:
         prior_dates=prior_dates,
         prior_sources=prior_sources,
         has_history=has_history,
+        last_dates=st.last_dates(),
         known_absent=absent,
         manual_keys=manual_keys,
     )

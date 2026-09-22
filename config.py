@@ -7393,6 +7393,29 @@ PROJECTS = [
                 "date_col": "day",
                 "value_col": "staked_supply",
                 "granularity": "daily",
+                # ===== RE-PULLED WEEKLY, BECAUSE A FROZEN CROSS-CHECK STOPS BEING EVIDENCE. =====
+                # The note above says "a frozen cross-check is still a cross-check", and that was
+                # right about STALENESS — the disagreement does not stop being a disagreement — and
+                # wrong about what the series is FOR. This column exists to disagree with the
+                # contract read; a disagreement pinned to 2026-09-10 says nothing about whether
+                # the gap is widening, closing, or was a one-day artefact of the day it was pulled,
+                # and those have different answers about which figure to trust.
+                #
+                # SEVEN DAYS, measured from the newest STORED ROW rather than from when the query
+                # last ran — a query that executed yesterday and returned nothing new has
+                # refreshed nothing. It is a paid query asked once a week instead of once ever
+                # (the tier-4 backfill default) or once a day (what removing the skip would do).
+                #
+                # ** THE 1.58x DIVERGENCE IS NOT WHAT THIS RESOLVES AND MUST NOT BE READ AS IT. **
+                # 141,470,107.5 against 89,748,241.27 sETHFI, and 30,306,893 more ETHFI than the
+                # staking contract holds. That stays FLAGGED as a cross-check disagreement, which
+                # is a standing question on the sheet. Refreshing the series tells us whether the
+                # gap moves; it does not tell us which side is right, and nothing here decides that.
+                "refresh_days": 7,
+                "refresh_rationale": "a cross-check frozen at its first pull cannot show whether "
+                                     "the 1.58x gap is widening, closing or was a one-day "
+                                     "artefact. Weekly is the cadence at which that is legible "
+                                     "without paying for the query daily.",
                 # No drop_current_period: staked_supply is a STOCK, and a stock read part-way
                 # through a day is a valid reading of it. Dropping the current period is for
                 # FLOWS, where an incomplete period understates the total.

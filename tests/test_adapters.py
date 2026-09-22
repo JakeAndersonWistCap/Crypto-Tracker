@@ -2621,15 +2621,21 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
     #                                    not forced and not an ongoing/snapshot query)
     #   no history yet (first time)   -> full history, unconditionally (this test's first block,
     #                                    and the dedicated first-time test above)
-    d = Dune(has_history=held)
+    # A CADENCE NEEDS A DATE TO MEASURE FROM, and these fixtures hand Dune a has_history set
+    # with no last_dates. In a real run those come from the same store and agree; here the
+    # series reads as age-unknown, which counts as DUE — one paid query beats a cross-check
+    # frozen for ever. So the fixture states the series is fresh, and the skip branch is
+    # exercised for the reason this test is about rather than for a missing date.
+    fresh = {k: now.date().isoformat() for k in held}
+    d = Dune(has_history=held, last_dates=fresh)
     d.http = _Rows(rows)
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
     locked = out.frame()
     locked = locked[locked.metric == _etherfi_dune_metric()]
     assert locked.empty, (
-        "an already-historied metric with no forcing flag must be SKIPPED, not fetched-and-"
-        f"trimmed — this codebase has no 'ordinary incremental re-fetch' path, got {len(locked)} rows")
+        "an already-historied metric INSIDE its refresh cadence must be SKIPPED, not fetched-"
+        f"and-trimmed — there is still no 'ordinary incremental re-fetch' path, got {len(locked)} rows")
     assert any(e.status == "skipped" and _etherfi_dune_metric() in e.message for e in out.log)
 
     d2 = Dune()   # has_history defaults to empty — this metric's OWN first run
@@ -2649,12 +2655,19 @@ def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
-    d = Dune(has_history={("Ether.fi", _etherfi_dune_metric()), ("Ether.fi", "lock_rate_pct"),
-                          ("Ether.fi", "staker_count")})
+    held = {("Ether.fi", _etherfi_dune_metric()), ("Ether.fi", "lock_rate_pct"),
+            ("Ether.fi", "staker_count")}
+    # A CADENCE NEEDS A DATE TO MEASURE FROM, and these fixtures hand Dune a has_history set
+    # with no last_dates. In a real run those come from the same store and agree; here the
+    # series reads as age-unknown, which counts as DUE — one paid query beats a cross-check
+    # frozen for ever. So the fixture states the series is fresh, and the skip branch is
+    # exercised for the reason this test is about rather than for a missing date.
+    today_iso = pd.Timestamp.now().normalize().date().isoformat()
+    d = Dune(has_history=held, last_dates={k: today_iso for k in held})
     d.http = _Rows([ETHERFI_ROW])
     out = FetchOutput()
     d.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
-    assert out.frame().empty, "a dated query the store already holds must be skipped"
+    assert out.frame().empty, "a dated query the store already holds, and is fresh, must be skipped"
     # and the skip is reported as a SKIP, not as a success with nothing to add
     skips = [e for e in out.log if e.status == "skipped"]
     assert len(skips) == 3, f"every skipped metric must be logged as skipped, got {len(skips)}"
@@ -4965,6 +4978,60 @@ def test_no_fetch_rebuilds_the_workbook_without_touching_a_single_source(tmp_pat
     # Passing the previous one would date this workbook to a fetch it had no part in.
     assert "run_id" not in built[0][1] or built[0][1]["run_id"] is None, built[0][1]
     print("--no-fetch ok: workbook rebuilt, no adapter reached, no run_id invented")
+
+
+def test_a_dune_cross_check_refreshes_on_its_cadence_and_a_pure_backfill_still_does_not():
+    """B. "Skip once the store has history" is right for a pure backfill and wrong for a series
+    that is still the second opinion on a live figure.
+
+    Ether.fi's Dune locked_tokens_dashboard exists to DISAGREE with the contract read. Frozen at
+    the day it was first pulled it cannot show whether the 1.58x gap is widening, closing, or was
+    a one-day artefact — and those have different answers about which figure to trust. So it
+    re-pulls weekly.
+
+    THE CADENCE IS MEASURED FROM THE NEWEST STORED ROW, not from when the query last ran. A query
+    that executed yesterday and returned nothing new has refreshed nothing, and timing off the
+    execution would keep paying for it while the series sat still.
+    """
+    from fetch.dune import Dune
+
+    q = config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"]["locked_tokens_dashboard"]
+    assert q["refresh_days"] == 7 and q["refresh_rationale"]
+
+    def skips(last_seen_days_ago, project="Ether.fi", metric="locked_tokens_dashboard"):
+        d = Dune(has_history={(project, metric)},
+                 last_dates={(project, metric): (pd.Timestamp.now().normalize()
+                                                 - pd.Timedelta(days=last_seen_days_ago)).date().isoformat()})
+        d.key = ""                                    # no key: the run stops before any HTTP
+        out = FetchOutput()
+        d.run([config.PROJECT_BY_NAME[project]], 30, out)
+        return [e for e in out.log if e.status == "skipped" and metric in e.message]
+
+    assert skips(3), "three days old is inside the cadence — still skipped"
+    assert "refresh cadence is 7 days" in skips(3)[0].message, skips(3)[0].message
+    assert not skips(9), "nine days old is past the cadence — the skip must not fire"
+
+    # AN UNDATEABLE SERIES COUNTS AS DUE, and the asymmetry is deliberate. In a real run
+    # has_history and last_dates come from the same store and agree, so this state should not
+    # arise; if it does, the choice is one paid query against a cross-check frozen for ever, and
+    # the query is the cheaper mistake.
+    from fetch.dune import Dune as _D
+    d = _D(has_history={("Ether.fi", "locked_tokens_dashboard")}, last_dates={})
+    d.key = ""
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["Ether.fi"]], 30, out)
+    assert not [e for e in out.log
+                if e.status == "skipped" and "locked_tokens_dashboard" in e.message], \
+        "a series whose age cannot be established is refreshed, not parked"
+
+    # AND A QUERY WITH NO refresh_days IS UNCHANGED. GEODNET's burn backfill is a pure
+    # historical fill: its live figure comes from the chain read, so re-pulling it buys nothing
+    # and costs a paid query.
+    geo = config.PROJECT_BY_NAME["GEODNET"]["dune_queries"]["gross_burn_tokens"]
+    assert "refresh_days" not in geo, "a pure backfill must not acquire a cadence by default"
+    assert skips(400, project="GEODNET", metric="gross_burn_tokens"), \
+        "a backfill stays skipped however old it is — that is what backfill-only means"
+    print("refresh_days ok: the cross-check re-pulls weekly, the backfill still never does")
 
 
 def test_a_404_that_never_worked_becomes_known_absent_and_a_5xx_never_does(tmp_path):
