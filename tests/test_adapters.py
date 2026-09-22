@@ -5569,6 +5569,58 @@ def test_skys_stage_2_legs_render_separately_and_the_burn_leg_is_checked_against
           "against the chain read, other projects untouched")
 
 
+def test_the_two_ultrasound_issuance_entries_are_closed_on_arithmetic_not_reachability():
+    """G2. The offer was to re-point these at /api/fees/grouped-analysis-1 or close them for good.
+    Re-pointing would not have helped, and reachability is the SECOND reason rather than the first.
+
+    ultrasound.money has no issuance endpoint and never did: its frontend computes issuance
+    client-side as delta(total_supply) + burn, which is the identical formula this tool uses. So
+    the figure would not be an independent check — it would be our own computation run twice,
+    reading as corroboration. grouped-analysis-1 serves BURN, so re-pointing an issuance metric at
+    it would have pointed the metric at the wrong quantity.
+
+    THE BURN ENTRY IS NOT CLOSED WITH THEM, and the difference is the whole point: feesBurned is a
+    real independently measured figure blocked on robots and reachability, which are circumstances
+    that can change. These two are blocked on arithmetic, which cannot.
+    """
+    for metric in ("gross_issuance_tokens", "net_mint_monthly"):
+        u = config.unavailable_for("Ethereum", metric)
+        assert u, f"{metric} must be closed, not left as an open gap"
+        assert u["closed_on"] == "2026-09-22"
+        assert "client-side" in u["summary"] or "client-side" in u["what_was_tried"], u["summary"]
+        # THE REOPEN CONDITION IS ABOUT THE METHOD, NOT ABOUT ACCESS. Reopening when the site
+        # becomes reachable would reopen it for the wrong reason and it would close again.
+        assert "same formula" in u["reopen_if"] or "OTHER than" in u["reopen_if"], u["reopen_if"]
+        # Mentioning reachability is fine and necessary — what matters is that it is RULED OUT
+        # as a trigger rather than offered as one. A bare "not in" check would fail the very
+        # sentence doing that job, which is the sentence worth having.
+        low = u["reopen_if"].lower()
+        if "reachab" in low:
+            assert "not on the site becoming reachable" in low or "not what blocks" in low, \
+                f"reachability must be ruled out, not offered as a trigger: {u['reopen_if']}"
+
+    assert config.unavailable_for("Ethereum", "gross_burn_tokens") is None, \
+        "the burn entry stays OPEN — it is a real figure blocked on circumstances that can change"
+    print("ultrasound ok: both issuance entries closed on arithmetic, burn left open")
+
+
+def test_the_hyperliquid_accrual_carries_its_trigger_date_and_stays_unbooked():
+    """G4. No action, and that is the answer rather than a deferral. AQAv2's first payment is not
+    due until 2026-10-03; anything done before then models a payment that has not happened.
+    booked=False already does the only correct thing, which is keep it out of every revenue
+    figure. The date is a TRIGGER — on 2026-10-03 there is a fact to check — not a reminder."""
+    q = next(q for q in config.OPEN_QUESTIONS
+             if q.get("project") == "Hyperliquid" and "AQAv2" in q.get("topic", ""))
+    assert q["recheck_on"] == "2026-10-03"
+    assert "Reviewed 2026-09-22" in q["no_action_because"]
+
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    aqa = next(r for r in hl["revenue_sources"] if "AQAv2" in r["name"])
+    assert aqa.get("booked") is False, \
+        "an accruing-but-unpaid leg must stay unbooked — that is what keeps it out of revenue"
+    print("hyperliquid ok: unbooked, trigger date on file, no action taken and the reason recorded")
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:

@@ -264,7 +264,7 @@
   url_contains: null                                # RE-CHARACTERISED 2026-09-18 — see note. No endpoint exists.
   json_path: null
   added: 2026-09-15
-  note: "RE-CHARACTERISED 2026-09-18, not merely still-TODO: read ultrasoundmoney/frontend's own
+  note: "** CLOSED PERMANENTLY 2026-09-22 — see config.py UNAVAILABLE (Ethereum/gross_issuance_tokens). ultrasound.money has NO issuance endpoint and never did: its frontend computes issuance client-side as delta(total_supply) + burn, the identical formula this tool uses, so the figure would not be an independent check — it would be our own computation run twice, reading as corroboration. Re-pointing this at /api/fees/grouped-analysis-1, the alternative offered this round, would have pointed an issuance metric at a burn figure. The entry is kept, disabled and closed, rather than deleted: the finding is the valuable part. THE BURN ENTRY IS NOT CLOSED WITH IT — feesBurned is a real independently measured figure blocked only on robots and reachability, which can change, where these two are blocked on arithmetic, which cannot. ORIGINAL NOTE FOLLOWS. RE-CHARACTERISED 2026-09-18, not merely still-TODO: read ultrasoundmoney/frontend's own
     source (src/mainsite/api/supply-changes.ts) and confirmed there is NO raw issuance field
     anywhere in their API. ultrasound.money computes issuance CLIENT-SIDE via
     delta(total_supply) + burn — the IDENTICAL formula this tool already uses for its own
@@ -308,7 +308,7 @@
   url_contains: null                                # RE-CHARACTERISED 2026-09-18 — see note. No endpoint exists.
   json_path: null
   added: 2026-09-11
-  note: "RE-CHARACTERISED 2026-09-18, same finding as gross_issuance_tokens above: net mint =
+  note: "** CLOSED PERMANENTLY 2026-09-22 — see config.py UNAVAILABLE (Ethereum/net_mint_monthly). ultrasound.money has NO issuance endpoint and never did: its frontend computes issuance client-side as delta(total_supply) + burn, the identical formula this tool uses, so the figure would not be an independent check — it would be our own computation run twice, reading as corroboration. Re-pointing this at /api/fees/grouped-analysis-1, the alternative offered this round, would have pointed an issuance metric at a burn figure. The entry is kept, disabled and closed, rather than deleted: the finding is the valuable part. THE BURN ENTRY IS NOT CLOSED WITH IT — feesBurned is a real independently measured figure blocked only on robots and reachability, which can change, where these two are blocked on arithmetic, which cannot. ORIGINAL NOTE FOLLOWS. RE-CHARACTERISED 2026-09-18, same finding as gross_issuance_tokens above: net mint =
     issuance - burn, and issuance has no raw field (computed client-side, identically to this
     tool's own method) — so net mint is equally a derived figure on ultrasound.money's side, not
     an independent published one. The old note's \"take it as published\" no longer applies;
@@ -404,6 +404,24 @@
     Ethereum. Pulled directly from the NEAR blockchain, so it is an independent construction
     rather than a second vendor quote. DO NOT derive a burn figure from it - it is net of
     issuance and burn and does not decompose. NEAR's burn metrics stay open.
+    RE-CHECKED 2026-09-22 AND STILL UNREACHABLE: api.nearblocks.io and nearblocks.io both return
+    403 on the CONNECT tunnel from this environment, so neither the page shape nor robots.txt can
+    be read. STAYS DISABLED - a guessed selector either extracts nothing or extracts the wrong
+    number quietly, and this project does not promote a source without confirming it fetches.
+    WHAT THIS ENTRY IS WORTH RIGHT NOW, stated so the reason to finish it is on the record rather
+    than in a chat: NEAR is the project whose circulating/total relation broke the zero-tolerance
+    identity check twice on 2026-09-21 - circulating 10 above total in the morning, 20 below by
+    the evening, with nothing changed either side. The open question is WHICH CoinGecko field
+    lags, and a supply figure built from the chain itself is what answers it. That makes this a
+    cross-check with a specific job, not a general second opinion.
+    ONE STEP TO FINISH IT, from a normal network: NearBlocks publishes a free REST API as well as
+    this chart page, and an API route would avoid the selector problem entirely - check
+    api.nearblocks.io for a stats endpoint carrying total supply, confirm the FIELD NAME from the
+    response rather than assuming it, and check robots.txt for the path actually used. Note the
+    architecture constraint that applies to ultrasound.money equally: fetch/scrape.py checks
+    robots against entry.url and loads it with Playwright even for method xhr, so an API path
+    cannot be fetched directly without new tooling. If the API is the right route it needs an
+    adapter, not a sources.yaml row.
 - project: Near
   metric: net_mint_monthly
   tier: 3

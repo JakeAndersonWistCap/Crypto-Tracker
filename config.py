@@ -8710,6 +8710,73 @@ UNAVAILABLE = [
             "only makes sense if the receiver HOLDS tokens rather than destroying them. So a Pause Proxy "
             "balance may be a TREASURY HOLDING, not a burn, and it is not added here on that basis."),
     },
+
+    # ---------------------------------------------------------------- Ethereum (ultrasound.money)
+    # ** CLOSED PERMANENTLY 2026-09-22, AND NOT FOR A REACHABILITY REASON. ** The offer this round
+    # was to re-point these at /api/fees/grouped-analysis-1 or close them for good. Re-pointing
+    # would not have helped, and reachability is the SECOND reason rather than the first:
+    #
+    # 1. ULTRASOUND.MONEY DOES NOT PUBLISH ISSUANCE. Read from ultrasoundmoney/frontend's own
+    #    source (src/mainsite/api/supply-changes.ts, via raw.githubusercontent.com — reachable
+    #    from here where github.com HTML is not): it computes issuance CLIENT-SIDE as
+    #    delta(total_supply) + burn. That is the IDENTICAL formula this tool already uses for its
+    #    own derived issuance. So there is no endpoint to point these at, and if there were, the
+    #    figure would not be an independent check — it would be our own computation run twice.
+    #    A cross-check that agrees by construction is worse than no cross-check, because it reads
+    #    as corroboration.
+    # 2. AND THE ROBOTS DEPENDENCY IS THE PAGE, NOT THE PATH. fetch/scrape.py checks
+    #    robots_allows(entry["url"]) before Playwright loads anything, and entry["url"] is the
+    #    root page for every ultrasound entry — an xhr capture still needs the page loaded first.
+    #    So the API sub-path's own robots status is never consulted and cannot be, without a
+    #    direct-HTTP-fetch mechanism outside the Playwright scraper. That would be new tooling,
+    #    which this project does not add unilaterally.
+    #
+    # THE BURN ENTRY IS NOT CLOSED WITH THEM, and the difference is the point: feesBurned is a
+    # real, independently measured figure with a named endpoint. It is blocked on robots and
+    # reachability alone, which are circumstances that can change. These two are blocked on
+    # arithmetic, which cannot.
+    {
+        "project": "Ethereum", "metric": "gross_issuance_tokens",
+        "closed_on": "2026-09-22",
+        "summary": "ultrasound.money has no issuance endpoint and never did — it derives issuance "
+                   "client-side from delta(supply) + burn, the same formula this tool uses.",
+        "what_was_tried": (
+            "The frontend's own source was read file-by-file from raw.githubusercontent.com "
+            "(2026-09-18) after github.com HTML, codeload and api.github.com all proved "
+            "unreachable. src/mainsite/api/supply-changes.ts computes the figure in the browser. "
+            "The four real endpoints were enumerated in the same read — grouped-analysis-1 "
+            "(burn), v2/fees/supply-parts (supply), v2/fees/supply-over-time, fees/scarcity "
+            "(cumulative burn) — and none of them serves issuance. Re-pointing this entry at "
+            "grouped-analysis-1, which was the alternative on the table this round, would have "
+            "pointed an issuance metric at a burn figure."),
+        "impact": (
+            "NONE on the issuance figure itself, which is derived here and unaffected. What is "
+            "lost is a second opinion on it — and the finding is that this particular second "
+            "opinion never existed, because it is the same computation. A cross-check that agrees "
+            "by construction would have read as corroboration."),
+        "reopen_if": (
+            "ultrasound.money publishes a raw issuance field, or another source computes issuance "
+            "from something OTHER than delta(supply) + burn. A different provider running the "
+            "same formula is not a reason to reopen this."),
+    },
+    {
+        "project": "Ethereum", "metric": "net_mint_monthly",
+        "closed_on": "2026-09-22",
+        "summary": "Same closure as gross_issuance_tokens above, for the same reason: net mint is "
+                   "issuance minus burn, and ultrasound.money derives the issuance half "
+                   "client-side from delta(supply) + burn.",
+        "what_was_tried": (
+            "Covered by the same source read of ultrasoundmoney/frontend on 2026-09-18. There is "
+            "no net-mint endpoint and no issuance endpoint to build one from."),
+        "impact": (
+            "NONE on any stored figure — nothing has ever been written to this metric for "
+            "Ethereum. It stops appearing on the Gap Report as open work that cannot be done."),
+        "reopen_if": (
+            "the same condition as gross_issuance_tokens above: a raw issuance field, or a source "
+            "computing issuance from something OTHER than delta(supply) + burn. Not on the site "
+            "becoming reachable — access is not what blocks this, and reopening on access would "
+            "reopen it for the wrong reason and close it again."),
+    },
 ]
 
 # Two kinds, kept strictly apart. "figure" means the number itself has no route, so the Gap
@@ -9472,6 +9539,17 @@ OPEN_QUESTIONS = [
         "reason": "AQAv2 went live 2026-08-26 and accrues on 30-day cycles, but the first payment is not expected "
                   "until 2026-10-03. Recorded with booked=False so the model cannot book revenue that has not landed.",
         "suggestion": "After 2026-10-03, confirm the first payment arrived, then set booked=True and add the source URL.",
+        # ===== NO ACTION TAKEN 2026-09-22, AND THAT IS THE ANSWER RATHER THAN A DEFERRAL. =====
+        # The first payment is not due for eleven more days. Anything done now would be modelling
+        # a payment that has not happened: booking it early, or estimating it, or "provisionally"
+        # entering the accrual, all put revenue in a cell that no money has reached. booked=False
+        # is already doing the only correct thing, which is keeping it out.
+        # THE DATE IS THE TRIGGER, NOT A REMINDER TO LOOK AGAIN. On 2026-10-03 there is a fact to
+        # check — did it land — and until then there is not one.
+        "recheck_on": "2026-10-03",
+        "no_action_because": "the first payment is not due until 2026-10-03. booked=False keeps "
+                             "the accrual out of every revenue figure, which is the whole of what "
+                             "is needed until there is a payment to confirm. Reviewed 2026-09-22.",
     },
     {
         "project": "Hyperliquid", "topic": "SETTLED 2026-09-17 — NOT FOUND. No second Assistance Fund exists.",

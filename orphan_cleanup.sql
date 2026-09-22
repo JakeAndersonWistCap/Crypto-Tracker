@@ -1286,3 +1286,64 @@ SELECT metric, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects,
 -- O5. VERIFY — O1 returns nothing.
 -- SELECT COUNT(*) AS should_be_zero FROM metrics
 --  WHERE metric = 'treasury_holding_tokens_chain_crosscheck';
+
+
+-- ========================================================================================
+-- P. STALE GAP REPORT AND REVIEW QUEUE ROWS — history that nothing reads.            2026-09-22
+--    P1-P3 LOOK. P4 deletes rows from runs that are not the latest.
+-- ========================================================================================
+-- BOTH TABLES ARE REBUILT PER RUN and both are read for the LATEST run only — store.gap_report
+-- and store.review_queue default to latest_run_id, fixed 2026-09-22 after the workbook was found
+-- showing rows from whichever run happened to sort last. So every row carrying an older run_id is
+-- inert: nothing renders it, nothing counts it, and it is not a stale FIGURE in the sense the
+-- other sections of this file deal with. It is old rows in a table that is meant to be current.
+--
+-- WHY CLEAR THEM AT ALL, then. Two reasons and neither is the workbook:
+--   1. "How many open gaps are there" is a question people ask of the STORE, and every such
+--      query has to know to filter by run_id or it counts the same gap once per run it was open.
+--   2. Two metrics were CLOSED PERMANENTLY on 2026-09-22 — Ethereum's gross_issuance_tokens and
+--      net_mint_monthly, see config.py UNAVAILABLE. Their rows stop being generated from the
+--      next run, and the old ones would otherwise sit here reading as open work that was
+--      answered.
+--
+-- P1. HOW MUCH OF EACH TABLE IS CURRENT. Expect one run_id to hold nearly everything and the
+--     rest to be a long tail. LOOK ONLY.
+SELECT 'gap_report' AS tbl, run_id, MIN(ts) AS first_written, COUNT(*) AS rows,
+       CASE WHEN run_id = (SELECT run_id FROM gap_report ORDER BY ts DESC, rowid DESC LIMIT 1)
+            THEN 'CURRENT — this is what the workbook reads' ELSE 'superseded' END AS status
+  FROM gap_report GROUP BY run_id
+UNION ALL
+SELECT 'review_queue', run_id, MIN(ts), COUNT(*),
+       CASE WHEN run_id = (SELECT run_id FROM review_queue ORDER BY ts DESC, rowid DESC LIMIT 1)
+            THEN 'CURRENT — this is what the workbook reads' ELSE 'superseded' END
+  FROM review_queue GROUP BY run_id
+ ORDER BY tbl, first_written;
+
+-- P2. THE PERMANENTLY-CLOSED METRICS, so their rows are seen before they go. These two are the
+--     reason this section exists now rather than at some tidier moment: a closed item whose rows
+--     stay on file reads as open work that was answered.
+SELECT run_id, project, metric, reason, suggestion
+  FROM gap_report
+ WHERE project = 'Ethereum'
+   AND metric IN ('gross_issuance_tokens', 'net_mint_monthly')
+ ORDER BY ts;
+
+-- P3. ANY GAP ROW WHOSE METRIC CONFIG NO LONGER DECLARES. The companion to section O4: a metric
+--     that was retired leaves gap rows behind exactly as it leaves metric rows behind, and
+--     nothing sweeps them. Cross-check what this returns against config.METRICS before deleting
+--     — a PROJECT-SCOPED metric (only_projects) is still declared and must not appear here.
+SELECT metric, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects, MAX(ts) AS last_written
+  FROM gap_report GROUP BY metric ORDER BY metric;
+
+-- P4. THE DELETE. Everything that is not the current run, in both tables. Scoped by run_id so
+--     the current run is untouched whatever else is in there, and deliberately NOT scoped by
+--     date: "older than N days" would delete the current run on a store that has not been run
+--     for N days, which is precisely when someone is most likely to be looking at it.
+-- BEGIN;
+-- DELETE FROM gap_report
+--  WHERE run_id <> (SELECT run_id FROM gap_report ORDER BY ts DESC, rowid DESC LIMIT 1);
+-- DELETE FROM review_queue
+--  WHERE run_id <> (SELECT run_id FROM review_queue ORDER BY ts DESC, rowid DESC LIMIT 1);
+-- COMMIT;
+
+-- P5. VERIFY — P1 shows one run_id per table, both CURRENT.
