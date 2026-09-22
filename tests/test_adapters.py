@@ -5276,6 +5276,156 @@ def test_the_incremental_window_narrows_the_request_on_coingecko_and_only_trims_
     print("A5 ok: coingecko narrows the request, defillama and dune trim after the fact")
 
 
+def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
+    """D1. The open question that kept WMTx to Ethereum alone — "lock-and-mint would make summing
+    a double-count, burn-and-mint would make summing correct" — is answered by World Mobile's own
+    MiCA regulatory whitepaper, which documents the contract's burn function as serving
+    cross-chain bridging. Burn-and-mint: the four deployments are disjoint and their sum is the
+    minted supply.
+
+    THE OPPOSITE CALL FROM GEODNET, MADE THE SAME DAY. GEOD's Polygon contract reads the entire
+    1,000,000,000 cap, which makes its remote deployments mirrors and summing a double-count.
+    WMTX's Ethereum contract reads 1,493,853,279 against a 2bn cap with three other live
+    deployments. The bridge model is read off each protocol's own material, not applied as a
+    house style, and these two protocols do different things.
+    """
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    contracts = wm["contracts"]
+    assert set(contracts) == {"token", "token_arbitrum", "token_bsc", "token_base"}
+    assert contracts["token"]["address"] == contracts["token_arbitrum"]["address"] \
+        == contracts["token_bsc"]["address"] == "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7"
+    assert contracts["token_base"]["address"] == "0x3e31966d4f81C72D2a55310A6365A56A4393E98D", \
+        "Base is the one with its own address — the shape that makes a copy-paste error invisible"
+    for key, c in contracts.items():
+        assert c["metric_override"] == "total_supply_gross", key
+        assert "CARDANO-NATIVE WMT IS NOT IN THIS SUM" in c["partial_reason"], key
+
+    class FourChainStub:
+        SUPPLY = {"ethereum": 1_493_853_279.0, "arbitrum": 4_100_000.0,
+                  "bsc": 7_250_000.0, "base": 2_900_000.0}
+
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            return True, "WMTX"
+
+        def scaled(self, chain, address, call, *args):
+            return self.SUPPLY[chain]
+
+    c = Chain()
+    c.reader = FourChainStub()
+    out = FetchOutput()
+    c.run([wm], None, out)
+    df = out.frame()
+    row = df[df.metric == "total_supply_gross"]
+    assert len(row) == 1, row.to_dict()
+    assert float(row.value.iloc[0]) == sum(FourChainStub.SUPPLY.values())
+
+    # ** EVERY COMPONENT IS NAMED, and that is the check asked for. ** A chain contributing zero
+    # is a read that failed quietly; a chain contributing more than Ethereum is an address that
+    # is not what it says. Neither is visible in the total.
+    src = row.source.iloc[0]
+    for key in ("ethereum:token", "arbitrum:token_arbitrum", "bsc:token_bsc", "base:token_base"):
+        assert key in src, f"{key} missing from {src}"
+    detail = " ".join(e.message for e in out.log if e.status == "ok")
+    assert "4 components" in detail and "1,493,853,279" in detail, detail
+
+    # THE CARDANO EXCLUSION KEEPS THE FIGURE PARTIAL, and it is sized by SUBTRACTION rather than
+    # by an estimate written into config — both terms exist, so a number nobody has computed does
+    # not get to become a fact.
+    assert src.endswith(":PARTIAL"), src
+    assert "not written here" not in config.WMTX_CARDANO_PARTIAL
+    assert "SIZE THE EXCLUSION BY SUBTRACTION" in config.WMTX_CARDANO_PARTIAL
+
+    # THE BAND, AND WHAT EACH END MEANS. Below 1.4bn a component failed; above 1.7bn something is
+    # counted twice, which would be evidence against the filing rather than a bad read.
+    lo, hi = config.sanity_bounds("World Mobile", "total_supply_gross")
+    assert (lo, hi) == (1_400_000_000, 1_700_000_000)
+    assert lo <= float(row.value.iloc[0]) <= hi
+    assert not (lo <= 2_000_000_000 <= hi), \
+        "the CAP must fail this band — it is a correct reading of a different quantity"
+    # AND THE BAND IS NOT ON total_supply, which legitimately holds that cap every run.
+    cap_lo, cap_hi = config.sanity_bounds("World Mobile", "total_supply")
+    assert cap_lo <= 2_000_000_000 <= (cap_hi or float("inf"))
+    print("world mobile ok: four deployments summed, every component named, Cardano excluded "
+          "and sized by subtraction, band excludes the cap")
+
+
+def test_a_relabelled_cell_gets_its_unit_overridden_too_or_the_label_is_cosmetic():
+    """D3. World Mobile publishes 600+ TB/day. The config note said it could not be stored
+    "because utilisation_pct is a FRACTION and 600 would render as 60,000%" — right about the
+    rendering, and the answer is not to leave a published operating figure out of the sheet.
+
+    ** A LABEL OVERRIDE ALONE WOULD NOT HAVE FIXED IT. ** The number format is taken from the
+    METRIC'S UNIT, so a cell captioned "Daily data processed (TB)" would still have rendered
+    60,000%. That is a wrong number wearing a better name — the same thing declined for GEODNET's
+    emissions proxy on the same day, and declining it there while accepting it here would make
+    the principle decorative. So the unit is overridden too, and the cell is declared
+    non-comparable on top, because a figure needing a different unit from the metric it sits in
+    is by construction answering a different question from that column everywhere else.
+    """
+    import build_workbook as bw
+
+    assert config.metric_unit("World Mobile", "utilisation_pct") == "units"
+    assert config.metric_unit("peaq", "utilisation_pct") == "pct", \
+        "the override is per project — every other project's utilisation is still a fraction"
+    assert "TB" in config.metric_label("World Mobile", "utilisation_pct")
+
+    nc = config.is_non_comparable("World Mobile", "utilisation_pct")
+    assert nc and "no denominator" in nc["why"], nc
+    band, why = bw.confidence_for("World Mobile", "utilisation_pct",
+                                  {"status": "manual", "source": "manual", "n_points": 2,
+                                   "covered_days": None, "window_days": None, "entered_on": "2026-09-22"},
+                                  pd.Timestamp("2026-09-22"))
+    assert band == "AMBER" and "NOT COMPARABLE" in why, (band, why)
+
+    # THE BOUND IS RE-DRAWN, NOT REMOVED. [0, 1] is right for a fraction and wrong for terabytes;
+    # [0, 1e15] would accept a decimal-point error, which is the failure a bound on a throughput
+    # is actually for.
+    lo, hi = config.sanity_bounds("World Mobile", "utilisation_pct")
+    assert lo <= 600 <= hi and hi < 1e6, (lo, hi)
+    assert not (lo <= 0.6 <= hi), "a fraction slipping in here would be caught, which is the point"
+
+    # AND THE REAL utilisation IS STILL MISSING. This does not fill it and must not read as if it does.
+    assert "capacity" in nc["use_instead"]
+    print("unit override ok: 600 TB/day stored, formatted as a number, flagged non-comparable, "
+          "and the real utilisation still declared absent")
+
+
+def test_world_mobiles_two_user_counts_disagree_and_neither_is_quietly_dropped():
+    """3,000,000 daily active users (2026-02) against 1,600,000 in a 24h window (2026-03): a
+    LATER date with a LOWER number, which is the shape that rules out growth as the explanation.
+    Either two different measures wearing similar words, or one is wrong. Nothing on file
+    decides, so nothing here decides — the later figure is seeded because a series takes its most
+    recent observation, and the earlier is kept where a reader will meet it."""
+    import csv
+    from pathlib import Path
+
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    users = [r for r in wm["operating_reference"] if r["metric"] == "active_addresses"]
+    assert len(users) == 2, "both counts must be on file"
+    by_date = {r["as_of"]: r for r in users}
+    assert by_date["2026-02"]["value"] == 3_000_000 and by_date["2026-03"]["value"] == 1_600_000
+    assert by_date["2026-02"]["superseded_by"] and by_date["2026-03"]["disagrees_with"], \
+        "the disagreement must be stated from both sides, or a reader meets only one of them"
+    assert "growth does not explain it" in by_date["2026-03"]["disagrees_with"]
+
+    rows = [r for r in csv.DictReader(
+        line for line in (Path(__file__).resolve().parent.parent / "manual_overrides.csv")
+        .read_text(encoding="utf-8").splitlines() if not line.startswith("#"))
+        if r["project"] == "World Mobile"]
+    seeded = {r["metric"]: r for r in rows}
+    assert set(seeded) == {"supply_units", "active_addresses", "utilisation_pct"}
+    assert seeded["active_addresses"]["date"] == "2026-03-01", "the later observation is the stored one"
+    assert "DISAGREES WITH THE FEBRUARY FIGURE" in seeded["active_addresses"]["source_note"]
+    # AND THE TWO '+' FIGURES ARE FLOORS, said in as many words on both.
+    for m in ("supply_units", "utilisation_pct"):
+        assert "FLOOR" in seeded[m]["source_note"], m
+    print("world mobile A2 ok: both user counts kept, the later one seeded, the '+' figures "
+          "labelled as floors")
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:

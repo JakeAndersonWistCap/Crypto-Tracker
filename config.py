@@ -54,6 +54,38 @@ import re
 
 BRIEF_DATE = "2026-09-11"
 GEODNET_BURN_QUERY = "https://dune.com/queries/8683175"
+
+# ===== WHY A FOUR-CHAIN SUM OF WMTX IS STILL PARTIAL. =====
+# Shared by all four WMTx contracts so the four cannot drift into saying different things about
+# the same exclusion.
+#
+# CARDANO IS THE ORIGINAL CHAIN AND IS NOT IN THE SUM. World Mobile's own chain list is Base,
+# Ethereum, BNB Chain and Cardano; WMT on Cardano is a native asset under a policy id, not an
+# ERC-20, so no EVM read reaches it and no Cardano policy id is on file. The four EVM
+# deployments are summed under burn-and-mint (see the block comment on contracts.token); the
+# Cardano leg is simply outside them.
+#
+# ** HOW BIG THE EXCLUSION IS, AND IT IS A SUBTRACTION RATHER THAN A GUESS. ** The whitepaper's
+# Section XI curve gives the AGGREGATE supply across all chains at a date; the EVM sum gives
+# what the four EVM chains hold. The difference is the Cardano-native residual:
+#     cardano_residual  =  aggregate(today)  -  sum(four EVM totalSupply)
+# Both terms are available — the curve is recorded in decay_curve_confirmed, the sum is what
+# this read produces — so the figure is computable on the first live run and is NOT written here,
+# because writing a number nobody has computed is how an estimate becomes a fact. Ethereum alone
+# already reads 1,493,853,279 against an aggregate around 1.5bn, so the residual is expected to
+# be small; "expected" is doing real work in that sentence and the subtraction is what settles it.
+WMTX_CARDANO_PARTIAL = (
+    "CARDANO-NATIVE WMT IS NOT IN THIS SUM. The four EVM deployments (Ethereum, Arbitrum and BSC "
+    "at 0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7; Base at "
+    "0x3e31966d4f81C72D2a55310A6365A56A4393E98D) ARE summed, and correctly: World Mobile's MiCA "
+    "regulatory whitepaper documents the contract's burn function as serving cross-chain "
+    "bridging, which is burn-and-mint, so the four are disjoint and their sum is the minted EVM "
+    "supply. Cardano is the ORIGINAL chain and sits outside it entirely — WMT there is a native "
+    "asset under a policy id, not an ERC-20, and no policy id is on file. SIZE THE EXCLUSION BY "
+    "SUBTRACTION, not by estimate: aggregate supply from the whitepaper's Section XI curve "
+    "(decay_curve_confirmed) minus this sum is the Cardano-native residual. Ethereum alone reads "
+    "1,493,853,279 against an aggregate around 1.5bn, so the residual is expected to be small — "
+    "and 'expected' is why the subtraction is the answer and this sentence is not.")
 TODAY_VERIFIED = "2026-09-11"
 UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"
 # Pendle's own deployment file — the primary source for every Pendle mainnet address.
@@ -193,7 +225,14 @@ METRICS = {
         "label": "Total supply, GROSS of burn (contract totalSupply — burned tokens still counted)",
         "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
-        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI")},
+    # WORLD MOBILE IS HERE FOR A DIFFERENT REASON AND THE SAME NEED. Added 2026-09-22. It has no
+    # dead-address burn, so "gross of burn" is not what separates the two figures for it: what
+    # separates them is that CoinGecko reports the CAP (see its total_supply_convention,
+    # "reports_cap") while the contracts report what has actually been minted. The collision is
+    # identical — a tier-1 provider figure and a tier-2 contract figure fighting over one metric
+    # name, with _resolve_tier_collisions keeping the provider's — and so is the remedy. The
+    # LABEL is the one thing that does not fit, so it is overridden per project below.
+        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI", "World Mobile")},
     # treasury_holding_tokens_chain_crosscheck RETIRED 2026-09-22. It existed for three days:
     # created 2026-09-18 when Maple's transparency page was promoted to the primary metric name
     # and the chain read was demoted by metric_override, and left unfed from 2026-09-21 when
@@ -523,6 +562,25 @@ def metric_label(project_name: str, metric: str) -> str:
     p = PROJECT_BY_NAME.get(project_name) or {}
     override = (p.get("metric_labels") or {}).get(metric)
     return override or (METRICS.get(metric) or {}).get("label", metric)
+
+
+def metric_unit(project_name: str, metric: str) -> str:
+    """The unit a metric carries FOR THIS PROJECT — which decides its number format.
+
+    ** A LABEL OVERRIDE WITHOUT THIS IS COSMETIC, AND THAT IS WHY IT EXISTS. ** Added 2026-09-22
+    for World Mobile's throughput figure. utilisation_pct is a FRACTION, rendered 0.0%, and
+    600 TB/day stored under it renders as 60,000% however the column is captioned. Relabelling a
+    cell whose format still says percent is a wrong number wearing a better name — the same thing
+    declined for GEODNET's emissions proxy on the same day, and it has to be declined here too or
+    the principle is decorative.
+
+    Rare on purpose, and always with is_non_comparable beside it: a project whose figure needs a
+    different UNIT from the metric it sits in is, by construction, answering a different question
+    from the same column on every other project.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    override = (p.get("metric_units") or {}).get(metric)
+    return override or (METRICS.get(metric) or {}).get("unit", "")
 
 
 def is_non_comparable(project_name: str, metric: str) -> dict | None:
@@ -2621,8 +2679,13 @@ PROJECTS = [
             "protocol_states": ["Base", "Ethereum", "BNB Chain", "Cardano"],
             "config_has": ["Ethereum", "Arbitrum", "BSC", "Base"],
             "arbitrum": "IN CONFIG, NOT IN THE PROTOCOL'S LIST. Kept — verified 2026-09-14 by direct "
-                        "source-code inspection on Arbiscan, and it holds no read slot so it contributes "
-                        "nothing. Resolve by asking World Mobile, not by deleting a verified deployment.",
+                        "source-code inspection on Arbiscan. ** IT NOW HOLDS A READ SLOT AND IS SUMMED, "
+                        "CHANGED 2026-09-22 **, so the old reassurance that 'it contributes nothing' no "
+                        "longer applies and the discrepancy has become load-bearing. That is the right "
+                        "way round: while it contributed nothing, nothing would ever have tested it. If "
+                        "the address is not WMTx the symbol check rejects it; if the chain holds no real "
+                        "supply it contributes a visible zero in the adapter's component line. Still "
+                        "resolve by asking World Mobile, not by deleting a verified deployment.",
             "cardano": "IN THE PROTOCOL'S LIST, NOT IN CONFIG. The original chain. NOT CAPTURED: there is "
                        "no Cardano adapter and no Cardano policy id on file, so its supply is outside the "
                        "partial Ethereum-only read entirely. This widens supply_is_partial beyond what "
@@ -2714,18 +2777,110 @@ PROJECTS = [
         # mint/burn/burnFrom functions, so remote supply CAN be minted independently — which is
         # exactly why the bridge model has to be settled before summing.
         "contracts": {
+            # ===== THE BRIDGE MODEL IS SETTLED: BURN-AND-MINT, SO SUMMING IS CORRECT. =====
+            # The open question that kept this to Ethereum alone — "lock-and-mint would make
+            # summing a double-count, burn-and-mint would make summing correct" — is answered by
+            # World Mobile's own MiCA regulatory whitepaper, which documents the contract's burn
+            # function as serving CROSS-CHAIN BRIDGING: burn on the source chain, mint on the
+            # destination. Under that model no chain's tokens are represented on another, the
+            # four totalSupply() figures are disjoint, and their sum is the minted supply.
+            #
+            # THE OPPOSITE CALL FROM GEODNET, ON THE SAME DAY, AND THE EVIDENCE IS WHY. GEOD's
+            # Polygon contract reads the entire 1,000,000,000 cap, which makes its remote
+            # deployments mirrors; WMTX's Ethereum contract reads 1,493,853,279 against a 2bn cap
+            # with three other live deployments, and the aggregate curve says the real figure is
+            # higher than any one chain. The bridge model is not a house style — it is read off
+            # each protocol's own material, and these two protocols do different things.
+            #
+            # ** READ EACH COMPONENT BEFORE TRUSTING THE SUM. ** The adapter's own log line names
+            # every component and its value ("from 4 components: ethereum:token 1,493,853,279 +
+            # arbitrum:token_arbitrum ... "), and the source string carries sum(...) with all four
+            # keys. Check that line on the first live run: a chain contributing zero is a read
+            # that failed quietly, and a chain contributing more than Ethereum is an address that
+            # is not what it says.
+            #
+            # SANITY BAND 1.4-1.7bn, set on the whitepaper's own curve (aggregate rises ~1.42bn to
+            # 2bn over twenty years) and on Ethereum alone already reading 1.494bn. A sum below
+            # 1.4bn means a component failed; above 1.7bn means something is being counted twice,
+            # which is exactly the lock-and-mint failure this evidence rules out — so it would be
+            # evidence AGAINST the filing rather than a bad read, and worth stopping for.
             "token": _contract(
                 "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "ethereum", "erc20_total_supply", "WMTX",
                 "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
                 verified="2026-09-14", provenance="deployed source code, inspected directly on Etherscan",
                 token_standard="erc20", supply_is_partial=True,
-                partial_reason="ETHEREUM ONLY. WMTx is deployed on four chains (Ethereum, Arbitrum and BSC "
-                               "all at 0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7; Base at "
-                               "0x3e31966d4f81C72D2a55310A6365A56A4393E98D). The BRIDGE MODEL is not "
-                               "established — lock-and-mint would make summing a double-count, "
-                               "burn-and-mint would make summing correct — so only Ethereum is read and "
-                               "the figure is labelled partial. Same open question as GEOD.",
-                purpose="WMTx on Ethereum — the PRIMARY supply read. ERC20Capped at 2,000,000,000."),
+                partial_reason=WMTX_CARDANO_PARTIAL,
+                purpose="WMTx on Ethereum. ERC20Capped at 2,000,000,000; summed with the other "
+                        "three EVM deployments under burn-and-mint.",
+                metric_override="total_supply_gross"),
+            "token_arbitrum": _contract(
+                "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "arbitrum", "erc20_total_supply", "WMTX",
+                "https://arbiscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
+                verified="2026-09-14", provenance="deployed source code, inspected directly on Arbiscan",
+                token_standard="erc20", supply_is_partial=True,
+                partial_reason=WMTX_CARDANO_PARTIAL,
+                purpose="WMTx on Arbitrum — same address as Ethereum.",
+                note="NOT IN THE PROTOCOL'S OWN CHAIN LIST (see chain_list_discrepancy), and kept "
+                     "anyway: the deployment was confirmed by direct source inspection on Arbiscan, "
+                     "and a contract the docs omit is a documentation gap at least as readily as a "
+                     "config error. It is now READ rather than merely recorded, so if that judgement "
+                     "is wrong the figure will say so — an address that is not WMTx fails the symbol "
+                     "check, and a chain with no real supply contributes a visible zero.",
+                metric_override="total_supply_gross"),
+            "token_bsc": _contract(
+                "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "bsc", "erc20_total_supply", "WMTX",
+                "https://bscscan.com/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
+                verified="2026-09-14", provenance="deployed source code, inspected directly on BscScan",
+                token_standard="erc20", supply_is_partial=True,
+                partial_reason=WMTX_CARDANO_PARTIAL,
+                purpose="WMTx on BNB Chain — same address as Ethereum. Named in the protocol's own "
+                        "chain list.",
+                metric_override="total_supply_gross"),
+            "token_base": _contract(
+                "0x3e31966d4f81C72D2a55310A6365A56A4393E98D", "base", "erc20_total_supply", "WMTX",
+                "https://basescan.org/address/0x3e31966d4f81C72D2a55310A6365A56A4393E98D#code",
+                verified="2026-09-14", provenance="deployed source code, inspected directly on BaseScan",
+                token_standard="erc20", supply_is_partial=True,
+                partial_reason=WMTX_CARDANO_PARTIAL,
+                purpose="WMTx on Base — a DIFFERENT address from the other three. Named in the "
+                        "protocol's own chain list.",
+                note="THE ONLY ONE WITH ITS OWN ADDRESS, which is worth noticing on the first live "
+                     "run: three chains sharing 0xDBB5... and one not is the shape that makes a "
+                     "copy-paste error invisible. The symbol check is what catches it.",
+                metric_override="total_supply_gross"),
+        },
+        # ===== THE BAND ON THE FOUR-CHAIN SUM, AND WHAT EACH END OF IT MEANS. =====
+        # Set on the whitepaper's own curve (aggregate rises ~1.42bn to 2bn over twenty years)
+        # and on Ethereum alone already reading 1,493,853,279.
+        #   BELOW 1.4bn  a component failed and the sum is short by a whole chain. The adapter
+        #               would normally mark that PARTIAL — but see the finding recorded on
+        #               GEODNET: a component refused at the gate does NOT set that marker today,
+        #               so this bound is the backstop that does not depend on it.
+        #   ABOVE 1.7bn  something is being counted twice, which is the lock-and-mint failure the
+        #               MiCA filing rules out. That is evidence AGAINST the filing rather than a
+        #               bad read, and it is worth stopping for rather than widening the band.
+        # NOT a bound on total_supply: that metric holds CoinGecko's 2,000,000,000 cap, which is
+        # a correct reading of a different quantity and would fail this band every run.
+        "sanity": {
+            "total_supply_gross": {"min": 1_400_000_000, "max": 1_700_000_000},
+            # utilisation_pct's library bound is [0, 1] because it is a fraction everywhere else.
+            # Here it holds terabytes per day, so the bound is re-drawn around what a throughput
+            # can plausibly be — NOT removed. A bound of [0, 1e15] would accept a decimal-point
+            # error, which is the failure a bound on a throughput is actually for.
+            "utilisation_pct": {"min": 1, "max": 100_000},
+        },
+        "metric_labels": {
+            # The shared label says "GROSS of burn (burned tokens still counted)", which is the
+            # right description for the transfer-burn projects that metric was built for and the
+            # wrong one here: WMTx's burn serves bridging, and what separates this figure from
+            # CoinGecko's is the cap, not a burn.
+            "total_supply_gross": "Minted supply — four EVM deployments summed (burn-and-mint), "
+                                  "EXCLUDING Cardano-native WMT. The contrast with total_supply "
+                                  "is cap vs minted, not gross vs net of burn",
+            "total_supply": "Total supply AS COINGECKO REPORTS IT — the 2,000,000,000 CAP, not "
+                            "the minted amount. See total_supply_convention 'reports_cap'",
+            "utilisation_pct": "Daily data processed (TB) — a THROUGHPUT, not a utilisation "
+                               "percentage. No capacity denominator exists for World Mobile",
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
@@ -2738,15 +2893,67 @@ PROJECTS = [
         # Operators/Staking allocation is the token leg and the only inflationary one.
         "operating_reference": [
             {"metric": "supply_units", "value": 100_000, "as_of": "2026-02",
-             "what": "AirNodes deployed (100,000+)", "source": "World Mobile's own reporting"},
+             "what": "AirNodes deployed (100,000+)", "source": "World Mobile's own reporting",
+             "seeded": "manual_overrides.csv, 2026-09-22 — the '+' is dropped, so the stored "
+                       "figure is a FLOOR and understates by an unknown amount"},
+            # ===== TWO USER COUNTS THAT DISAGREE, AND NEITHER IS PREFERRED. =====
+            # 3,000,000 daily active users (2026-02) against 1,600,000 users in 24h (2026-03) —
+            # a LATER date with a LOWER number, which is the shape that rules out growth as the
+            # explanation. They are either two different measures wearing similar words ("daily
+            # active" against "users in a 24h window" need not be the same population) or one of
+            # them is wrong. Nothing on file decides it.
+            # THE LATER ONE IS SEEDED, for the ordinary reason that a series takes the most
+            # recent observation, and the earlier one is KEPT here so the disagreement is visible
+            # rather than resolved by whichever was typed in last.
             {"metric": "active_addresses", "value": 3_000_000, "as_of": "2026-02",
-             "what": "daily active users", "source": "World Mobile's own reporting"},
-            {"metric": "utilisation_pct", "value": None, "as_of": "2026-02",
-             "what": "600+ TB/day processed — a THROUGHPUT figure, not a percentage. Recorded in words "
-                     "rather than stored because utilisation_pct is a FRACTION and 600 would render as "
-                     "60,000%. It needs a denominator (network capacity) before it can be a metric.",
-             "source": "World Mobile's own reporting"},
+             "what": "daily active users", "source": "World Mobile's own reporting",
+             "superseded_by": "the 2026-03 figure below — NOT reconciled with it"},
+            {"metric": "active_addresses", "value": 1_600_000, "as_of": "2026-03",
+             "what": "users in a 24-hour window (1.6M)", "source": "World Mobile's own reporting",
+             "seeded": "manual_overrides.csv, 2026-09-22",
+             "disagrees_with": "the 2026-02 figure of 3,000,000 daily active users — later date, "
+                               "lower number, so growth does not explain it. Either two different "
+                               "measures or one is wrong; nothing on file decides which."},
+            # ===== THE THROUGHPUT FIGURE IS NOW STORED, AND IT TOOK THREE OVERRIDES TO DO IT. =====
+            # The previous note said: "Recorded in words rather than stored because utilisation_pct
+            # is a FRACTION and 600 would render as 60,000%." That was right, and the answer is not
+            # to leave a published operating figure out of the sheet — it is to make the cell say
+            # what it holds:
+            #   metric_labels  "Daily data processed (TB)" — the caption
+            #   metric_units   "units" — the FORMAT. Without this the label is cosmetic and the
+            #                  cell still renders 60,000%; a relabelled wrong number is worse than
+            #                  an absent one, which is the reason GEODNET's emissions proxy was
+            #                  declined the same day.
+            #   non_comparable so the cell goes AMBER saying it is not the same question as the
+            #                  utilisation column on any other project. It is a throughput, and a
+            #                  throughput has no denominator.
+            # THE REAL utilisation_pct IS STILL MISSING and this does not fill it: that needs
+            # network CAPACITY, which nothing on file gives.
+            {"metric": "utilisation_pct", "value": 600, "as_of": "2026-02",
+             "what": "600+ TB/day processed — a THROUGHPUT, stored under utilisation_pct with "
+                     "label, unit and comparability all overridden. NOT a utilisation: that needs "
+                     "a capacity denominator nothing on file provides.",
+             "source": "World Mobile's own reporting",
+             "seeded": "manual_overrides.csv, 2026-09-22 — again a FLOOR, the '+' is dropped"},
         ],
+        "metric_units": {
+            # See metric_labels for the caption and non_comparable for the AMBER. Three overrides
+            # for one figure, and each does a different job — the unit is the one that stops the
+            # cell rendering 60,000%.
+            "utilisation_pct": "units",
+        },
+        "non_comparable": {
+            "utilisation_pct": {
+                "why": "this cell holds DAILY DATA THROUGHPUT in terabytes (600+ TB/day), not a "
+                       "capacity utilisation. Every other project's utilisation_pct is a fraction "
+                       "of available capacity; this is an absolute volume with no denominator, so "
+                       "it is not comparable with them and not comparable across time with a "
+                       "percentage.",
+                "use_instead": "the figure as a throughput in its own right. A true utilisation "
+                               "for World Mobile needs network capacity, which nothing on file "
+                               "provides.",
+            },
+        },
         "manual_quarterly": ["supply_units", "utilisation_pct"],
         "materiality": "low",
         # DISCREPANCY BETWEEN TWO OWN-SOURCE DOCUMENTS — recorded, not resolved by preference.

@@ -613,7 +613,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             g = groups.get((name, metric))
             row = {"key": f"{name}|{metric}", "project": name, "metric": metric,
                    "label": config.metric_label(name, metric),
-                   "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
+                   "kind": m["kind"], "unit": config.metric_unit(name, metric), "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
                    "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
                    "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
@@ -799,7 +799,9 @@ def monthly_table(long: pd.DataFrame, asof: pd.Timestamp) -> tuple[list[str], pd
         for metric in MONTHLY_METRICS:
             m = METRICS[metric]
             g = groups.get((p["name"], metric))
-            row = {"key": f"{p['name']}|{metric}", "label": f"{p['name']} — {m['label']}", "kind": m["kind"], "unit": m["unit"]}
+            row = {"key": f"{p['name']}|{metric}",
+               "label": f"{p['name']} — {config.metric_label(p['name'], metric)}",
+               "kind": m["kind"], "unit": config.metric_unit(p["name"], metric)}
             if g is not None and not g.empty:
                 per = g.assign(month=g["date"].dt.to_period("M").astype(str)).groupby("month")["value"]
                 agg = per.sum() if m["kind"] == "flow" else per.mean()
