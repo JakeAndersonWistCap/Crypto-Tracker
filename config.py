@@ -5218,12 +5218,82 @@ PROJECTS = [
         # the archetype implies it is pending evidence, and the evidence is already in — the switch
         # is off, and it is off for legal/tax structuring reasons, not because Morpho decided
         # against paying holders. See reopen_condition.
+        # ===== THE 2026-09-12 RESTRUCTURE. EVIDENCE IN, SWITCH HELD. 2026-09-23. =====
+        # DefiLlama split `morpho` into a parent with two children. The slug kept returning 200
+        # and kept returning a daily series; it just stopped being the protocol's fees. Stored
+        # fees fell from ~$575K/day to $2.13 and nothing noticed for eleven days.
+        #
+        # WHAT THE PROBE ESTABLISHED, and the arithmetic is exact:
+        #   parent total30d      13,046,131.76
+        #   morpho-blue          13,041,273.00   ] sum to the parent's total to the CENT
+        #   morpho-midnight           4,858.76   ]
+        #   the parent's post-break daily series IS midnight's, to the cent on every date
+        #     sampled (09-12 21.64, 09-13 0.00, 09-14 2.13, 09-15 2.99, 09-16 23.02, 09-21 157.00)
+        #
+        # ** IT IS NEITHER OF THE TWO CASES THE REWIRE WAS SPECIFIED FOR, AND THAT IS WHY NOTHING
+        # HAS BEEN SWITCHED. ** Case (a) was "blue is continuous across 09-12" and case (b) was
+        # "blue begins at 09-12". Blue does neither: it carries the FULL pre-break level up to
+        # and including 2026-09-11 and then has NO POINT AT ALL. Two independent signals agree —
+        # the probe's last-30 slice ends 09-11 while midnight's ends 09-22, and blue's own
+        # total30d (13,041,273) is EXACTLY the sum of its 2026-08-23..09-11 values, a window that
+        # also ends on the 11th.
+        #
+        # SO BOTH PROPOSED REMEDIES WOULD REPRODUCE THE BUG. sum(blue, midnight) collapses to
+        # ~$150/day after 09-11 because blue contributes nothing there; a handover at 09-12 hands
+        # over to a source with no data. Either would put the same near-zero series on the sheet
+        # under a new label, which is worse than leaving it visibly broken.
+        #
+        # ONE PROBE SETTLES IT: `python llama_probe.py morpho-blue --days 45`. If blue has points
+        # after 09-11 the chart was simply truncated and case (a) applies — switch and re-pull
+        # full history. If it does not, the fees are unreported by DefiLlama since 09-12 and the
+        # answer is a gap with that reason, NOT a slug swap.
+        "defillama_restructure": {
+            "detected_on": "2026-09-12",
+            "investigated_on": "2026-09-23",
+            "parent_total30d": 13_046_131.76,
+            "children": {"morpho-blue": 13_041_273.00, "morpho-midnight": 4_858.76},
+            "parent_post_break_series_is": "morpho-midnight, to the cent",
+            "blue_last_daily_point": "2026-09-11",
+            "midnight_last_daily_point": "2026-09-22",
+            "status": "HELD — neither case (a) nor case (b); one probe settles it",
+            "settles_it": "python llama_probe.py morpho-blue --days 45",
+            "do_not": "do NOT switch to sum(blue, midnight) or declare a 09-12 handover on this "
+                      "evidence: blue contributes nothing after 09-11, so both reproduce the "
+                      "same near-zero series under a new label",
+        },
         "archetypes": [2], "archetypes_held": [],
         "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.morpho.org/", "source_date": "2026-09-14",
                       "programmed": True, "status": "off",
                       "note": "FEE SWITCH IS OFF. 0.0 is the correct share, not a missing one — no protocol "
                               "revenue reaches MORPHO holders today. See reopen_condition for what would "
-                              "change it."},
+                              "change it, and midnight_fee_watch for a SECOND route that is designed in "
+                              "and currently disabled.",
+                      # ** A SECOND ROUTE TO PROTOCOL REVENUE, AND IT IS NOT THE FEE SWITCH. 2026-09-23. **
+                      # DefiLlama's morpho-midnight adapter states its own methodology: "Protocol
+                      # fees kept by Morpho: the settlement fee (taker-paid spread on each trade)
+                      # plus the continuous fee accrued on new lender credit. BOTH ARE DISABLED AT
+                      # LAUNCH, so Revenue is currently 0."
+                      #
+                      # Those fees are DESIGNED IN — a switch waiting to be thrown, not a
+                      # mechanism that would have to be built — and they are INDEPENDENT of the
+                      # Blue fee switch, which is blocked on legal and tax structuring. Two
+                      # separate routes, and this entry tracked only one.
+                      #
+                      # IF MIDNIGHT'S FEES ARE ENABLED, MORPHO GAINS PROTOCOL REVENUE and its
+                      # archetype 3 exclusion needs revisiting. WATCH ITEM, NOT WIRING:
+                      # revenue_usd stays 0 until then and that is CORRECT, not a gap — nothing
+                      # here should chase a figure the protocol has deliberately set to zero.
+                      "midnight_fee_watch": {
+                          "status": "designed_in_but_disabled",
+                          "fees": ("settlement fee — taker-paid spread on each trade",
+                                   "continuous fee — accrued on new lender credit"),
+                          "source": "DefiLlama morpho-midnight adapter methodology, read 2026-09-23",
+                          "independent_of": "the Morpho Blue fee switch, which is blocked on "
+                                            "legal/tax structuring",
+                          "if_enabled": "Morpho gains protocol revenue; revisit the archetype 3 "
+                                        "exclusion",
+                          "until_then": "revenue_usd = 0 is correct, not a gap",
+                      }},
         "burn_split": None,
         "issuance_schedule": None,
         # ONE SUPPLY READ, and the choice between the two MORPHO tokens matters.

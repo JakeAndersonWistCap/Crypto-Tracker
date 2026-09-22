@@ -27,6 +27,13 @@ TIER = 1
 API = "https://api.llama.fi"
 STABLES = "https://stablecoins.llama.fi"
 
+# How the parent/child restructure check reads "recently", and how far the daily level must
+# have fallen below what the reported total implies. Blunt on purpose: this is not a sensitivity
+# dial for ordinary variation — a listing does not report a month's fees and a near-empty week at
+# the same time unless something structural has happened to it.
+RESTRUCTURE_RECENT_DAYS = 7
+RESTRUCTURE_FACTOR = 10.0
+
 PRO_ONLY = {
     "emissions_tokens": "DefiLlama emissions/unlocks is Pro tier (separate API plan) — not fetched",
     "fees_by_version": "DefiLlama per-version fee breakdown is Pro tier — Uniswap implied burn needs it",
@@ -57,9 +64,135 @@ class DefiLlama:
         return True
 
     # ------------------------------------------------------------------ fees & revenue
+    def _summary(self, slug: str, data_type: str) -> dict:
+        return self.http.get(f"{API}/summary/fees/{slug}", params={"dataType": data_type})
+
+    @staticmethod
+    def _chart(j: dict):
+        return [(datetime.fromtimestamp(ts, tz=timezone.utc), v)
+                for ts, v in (j.get("totalDataChart") or [])]
+
     def _summary_chart(self, slug: str, data_type: str):
-        j = self.http.get(f"{API}/summary/fees/{slug}", params={"dataType": data_type})
-        return [(datetime.fromtimestamp(ts, tz=timezone.utc), v) for ts, v in (j.get("totalDataChart") or [])]
+        return self._chart(self._summary(slug, data_type))
+
+    # ===== A PARENT WHOSE CHILDREN CARRY THE FEES. Added 2026-09-23. =====
+    #
+    # ** THE FAILURE THIS CATCHES LEAVES NO ERROR ANYWHERE. ** DefiLlama restructured Morpho on
+    # 2026-09-12 into a parent with two children. The parent's slug kept working, kept returning
+    # 200, and kept returning a daily series — but that series was no longer the protocol's fees.
+    # It became morpho-midnight's alone, to the cent, while morpho-blue's ~$600K/day went to the
+    # child. Stored fees fell from ~$575K/day to $2.13, and the only thing that noticed was a
+    # human reading the sheet eleven days later.
+    #
+    # THE ARITHMETIC THAT EXPOSES IT: the parent's own total30d still equals the SUM of its
+    # children's — DefiLlama has not lost the money, it has moved where it is reported. So a
+    # parent whose DAILY chart no longer sums to its children's daily charts, while its TOTAL
+    # still does, has been restructured. Both halves are needed: the totals agreeing is what
+    # rules out "the protocol genuinely collapsed", and the dailies disagreeing is what rules out
+    # "nothing happened".
+    #
+    # IT REPORTS, IT DOES NOT REWIRE. Which child to take, and whether to declare a handover, is
+    # a decision about what a column MEANS — and a slug swapped automatically would silently
+    # redefine a series that already has a year of history under the old definition. The row
+    # names the children and their totals so the decision is made against numbers.
+    def check_restructure(self, project: dict, out) -> None:
+        slug, name = project.get("defillama_fees_slug"), project["name"]
+        if not slug or (SOURCE, name) in self.known_absent:
+            # A pair the store has already seen 404 and never succeed is not called again here
+            # either — the politeness rule is about the endpoint, not about which check wants it.
+            return
+        try:
+            parent = self._summary(slug, "dailyFees")
+        except Exception as e:  # noqa: BLE001 — a failed check must not kill the run
+            # ONE CAUSE, ONE ROW. fees() has just called the same endpoint and reported the same
+            # failure; a second Run Log entry for it would make one dead slug look like two
+            # problems. Logged so the check's own silence is explicable, not re-reported.
+            log.info("%s: restructure check skipped, %s did not answer (%s)", name, slug, e)
+            return
+
+        kids = [str(k) for k in (parent.get("childProtocols") or [])]
+        if not kids:
+            return
+        # A slug that is ITSELF a child is not a restructure — it is the state after one, and
+        # config says so. Recorded rather than warned about.
+        if parent.get("parentProtocol"):
+            log.info("%s: slug %r is a CHILD of %s", name, slug, parent["parentProtocol"])
+
+        parent_30d = float(parent.get("total30d") or 0.0)
+        child_30d, child_rows, failed = 0.0, [], []
+        for kid in kids:
+            try:
+                k = self._summary(kid, "dailyFees")
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{kid} ({e})")
+                continue
+            v = float(k.get("total30d") or 0.0)
+            child_30d += v
+            chart = self._chart(k)
+            child_rows.append((kid, v, chart[-1][0].date().isoformat() if chart else None))
+        if failed:
+            out.fail(SOURCE, name, f"{slug}: {len(failed)} child listing(s) unreadable: "
+                                   f"{', '.join(failed)}", TIER)
+        if not child_rows or parent_30d <= 0:
+            return
+
+        # ===== THE DISCRIMINATOR, AND THE FIRST VERSION OF IT WAS TOO SLOW. =====
+        # Comparing the parent's 30-day CHART SUM against its 30-day TOTAL cannot fire until 30
+        # days after the break: while the pre-break days are still inside the window the chart
+        # sums to ~84% of the total, which is unremarkable. A check that needs a month to notice
+        # a month-long problem is not a check. (Its own test caught that.)
+        #
+        # WHAT IS TRUE FROM THE FIRST DAY is that the parent's RECENT DAILY LEVEL has collapsed
+        # while its REPORTED TOTAL has not. Morpho's parent reports $13.05m over 30 days —
+        # $434,871/day — and its last seven days sum to about $743, which is $106/day. Those two
+        # numbers come from the same listing and cannot both describe it.
+        #
+        # AND A GENUINE COLLAPSE PASSES THIS, which is the point. If the fees really stopped, the
+        # TOTAL falls with the dailies and the two agree again: a protocol at $4,859/30d and
+        # $106/day is consistent, unremarkable, and correctly left to level_break.
+        pchart = self._chart(parent)
+        if not pchart:
+            return
+        newest = pchart[-1][0]
+        recent = sum(v for d, v in pchart if (newest - d).days < RESTRUCTURE_RECENT_DAYS)
+        implied = parent_30d / 30.0 * RESTRUCTURE_RECENT_DAYS
+        level_gone = recent * RESTRUCTURE_FACTOR < implied
+        # THE CHILDREN ARE WHERE THE MONEY WENT, and the totals agreeing is what proves it did
+        # not simply stop. Without this a listing whose chart lags its total would be reported as
+        # a restructure.
+        totals_agree = abs(parent_30d - child_30d) <= max(parent_30d, child_30d) * 0.01
+        if not (level_gone and totals_agree):
+            return
+        parent_recent = recent
+
+        listing = "; ".join(f"{k} 30d={v:,.0f}"
+                            + (f", last point {d}" if d else ", NO DAILY POINTS")
+                            for k, v, d in sorted(child_rows, key=lambda r: -r[1]))
+        out.review_item(
+            name, "fees_usd", "source_restructured", "stored_flagged",
+            value=parent_recent, prior_value=child_30d,
+            date=pchart[-1][0].date().isoformat() if pchart else None,
+            basis=(f"{slug!r} is a PARENT with {len(kids)} child listing(s) and has been "
+                   f"RESTRUCTURED. Its own total30d ({parent_30d:,.0f}) still equals its "
+                   f"children's ({child_30d:,.0f}) — the money has not gone — but its last "
+                   f"{RESTRUCTURE_RECENT_DAYS} days of daily chart sum to {parent_recent:,.2f}, "
+                   f"against the {implied:,.0f} that total implies. The fees are being reported "
+                   f"under the children and the parent's series has become a residual. "
+                   f"Children: {listing}. NOT REWIRED AUTOMATICALLY: which child to "
+                   f"take, and whether the switch needs a declared handover, decides what this "
+                   f"column MEANS, and a slug swapped on a guess silently redefines a series "
+                   f"that has history under the old definition."),
+            source=f"{SOURCE}:{slug}", tier=TIER)
+        out.gap(name, "[data] fees_usd — the DefiLlama listing has been restructured",
+                reason=(f"{slug!r} has {len(kids)} children and its daily chart no longer carries "
+                        f"their fees, while its 30-day total still matches their sum. "
+                        f"Children: {listing}"),
+                tiers_attempted="1",
+                suggestion=("Run `python llama_probe.py <child> --days 45` on each child and "
+                            "compare the daily series across the restructure date. If a child is "
+                            "backfilled across it, switch the slug and re-pull the full history. "
+                            "If it only begins at the restructure, declare a series_handover with "
+                            "no overlap. Do NOT leave the parent feeding the series either way."))
 
     def fees(self, project: dict, window_days, out):
         slug, name = project.get("defillama_fees_slug"), project["name"]
@@ -166,6 +299,11 @@ class DefiLlama:
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             self.fees(p, window_days, out)
+            # AFTER the fetch, so the check costs nothing when the fetch already failed — and
+            # runs on every project with a slug rather than only where somebody suspects one.
+            # Morpho's restructure sat unnoticed for eleven days precisely because nothing looked
+            # unless a human went looking.
+            self.check_restructure(p, out)
             self.protocol_tvl(p, window_days, out)
             self.chain_tvl(p, window_days, out)
             self.stablecoins(p, window_days, out)
