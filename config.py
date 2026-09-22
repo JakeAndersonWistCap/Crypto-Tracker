@@ -715,9 +715,9 @@ def derivation_suppressed(project_name: str, metric: str) -> dict | None:
 def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:
     """Contract entries serving this metric that were never checked against protocol docs."""
     p = PROJECT_BY_NAME.get(project_name) or {}
-    kinds = {"burn_address_balance": ("burn_address_balance", "spl_token_account"),
-             "gross_burn_tokens": ("burn_address_balance", "spl_token_account"),
-             "burn_revenue_funded": ("burn_address_balance", "spl_token_account"),
+    kinds = {"burn_address_balance": ("burn_address_balance", "spl_token_account", "burn_transfer_logs"),
+             "gross_burn_tokens": ("burn_address_balance", "spl_token_account", "burn_transfer_logs"),
+             "burn_revenue_funded": ("burn_address_balance", "spl_token_account", "burn_transfer_logs"),
              "total_supply": ("erc20_total_supply", "spl_mint"),
              "locked_tokens": ("ve_total_supply",),
              "buyback_fund_balance": ("buyback_fund_balance",)}.get(metric)
@@ -799,6 +799,15 @@ KIND_METRIC = {
     "stake_underlying": "locked_tokens_underlying",
     "spl_mint": "total_supply",
     "spl_token_account": "burn_address_balance",
+    # ADDED 2026-09-22 FOR SKY, and generic to any protocol-level burn. OpenZeppelin's _burn
+    # emits Transfer(holder, address(0), amount) and DESTROYS the tokens, so nothing is sitting
+    # at address(0) to read afterwards — the events are the only record. Summing them gives the
+    # cumulative destroyed, which is the same QUANTITY burn_address_balance holds for a transfer
+    # burn even though no address holds it; mapping it to that metric is what lets the existing
+    # cumulative-to-flow differencing, the telescoping reconciliation and the burn <= supply
+    # bound all work unchanged. The label is overridden per project so the sheet does not claim a
+    # balance exists — see Sky's metric_labels.
+    "burn_transfer_logs": "burn_address_balance",
     # ADDED 2026-09-18 for Aerodrome, generic to any ve(3,3) fork sharing the same Minter shape.
     # Minter.weekly() is a public state variable — the CURRENT epoch's planned emission, before
     # tail mode. A live figure, not a backfilled series: it changes at most once a week, so the
@@ -867,7 +876,7 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
               read_method=None, token_standard=None, underlying=None, call=None, call_arg=None,
               supply_is_partial=False, partial_reason="", holder_has_code=None,
               destination_status=None, destination_note="", metric_override=None,
-              granularity=None, emission_tail=None):
+              granularity=None, emission_tail=None, burn_logs=None):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -922,6 +931,13 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         # contract's ROLE for this project is in doubt. The adapter reads it, captures the value
         # to staging as evidence, and does NOT store it as a metric — labelling a balance
         # "cumulative burned" asserts a destination we are no longer confident about.
+        # For kind "burn_transfer_logs": where to start the eth_getLogs scan, which burn address
+        # to match, how big a chunk a free RPC will take, and the off-chain figure the FIRST read
+        # has to agree with before anything is stored. A log scan can be wrong in three ways that
+        # each produce a plausible number — the wrong topic read as the value, the wrong burn
+        # address, a from_block after the event — so the first reading clears a known figure or
+        # it is reported instead of kept.
+        "burn_logs": burn_logs,
         "destination_status": destination_status,
         "destination_note": destination_note,
         # HOW OFTEN THIS READ PRODUCES A GENUINELY NEW NUMBER. None means daily — a balance read
@@ -5574,23 +5590,30 @@ PROJECTS = [
             "figures_not_transcribed": "read from the live store, not copied here. Re-run the "
                                        "diagnostic for current figures.",
         },
+        "metric_labels": {
+            # THE SHEET MUST NOT CLAIM AN ADDRESS HOLDS THESE TOKENS. The metric name is shared
+            # with the transfer-burn projects because the QUANTITY is the same and every piece of
+            # machinery downstream keys on it; the label is where the difference is stated.
+            "burn_address_balance": "Cumulative SKY destroyed — summed from Transfer-to-zero events. "
+                                    "A PROTOCOL burn: these tokens do not exist any more and no "
+                                    "address holds them, unlike a transfer burn's dead-address balance",
+        },
         # A3: the surplus passes THROUGH the Splitter and Flapper; only the Pause Proxy receives.
+        # ===== burn_address_balance IS NO LONGER not_applicable HERE. CHANGED 2026-09-22. =====
+        # It was declared not applicable a day earlier, and the reasoning was right about the
+        # mechanism and wrong about the conclusion: there is indeed NO DEAD ADDRESS — SKY.burn()
+        # decrements totalSupply and the tokens cease to exist — but the burn is not therefore
+        # unreadable. OpenZeppelin's _burn emits Transfer(holder, address(0), amount), and summing
+        # those events gives the cumulative destroyed. That is the same QUANTITY the metric holds
+        # for a transfer burn; what differs is that no address holds it.
+        #
+        # SO THE METRIC IS KEPT AND THE LABEL IS OVERRIDDEN, rather than a new metric being
+        # invented. Keeping it is what makes the existing machinery apply unchanged — the
+        # cumulative-to-flow differencing that produces gross_burn_tokens, the telescoping
+        # reconciliation that checks the flows sum back to it, and the burn <= supply bound. The
+        # label (see metric_labels) says it is a running total of destroyed supply and not a
+        # balance, so the sheet never claims an address holds these tokens.
         "not_applicable": {
-            # ADDED 2026-09-22 with archetype 4. A protocol-level burn has no address: SKY.burn()
-            # decrements totalSupply and emits Transfer-to-zero, so the destroyed tokens are not
-            # sitting anywhere to be read. This is not "we have not found the address yet" — there
-            # is nothing for an address to hold, and leaving the metric applicable would report a
-            # permanent, unexplained gap on every run and send a reader hunting for a dead address
-            # that does not and cannot exist. gross_burn_tokens stays applicable: the FLOW is real
-            # and comes from a supply delta or an event index, which is the tier 3 route.
-            "burn_address_balance":
-                "NO DEAD ADDRESS EXISTS. Sky's burn (Stage 2's 5% leg, from 2026-09-14) is "
-                "PROTOCOL-LEVEL: SKY.burn() decrements totalSupply and emits "
-                "Transfer(from, address(0), value) — see burn_mechanism, confirmed from "
-                "sky-ecosystem/sky src/Sky.sol on 2026-09-22. The tokens cease to exist rather "
-                "than moving somewhere unspendable, so there is no balance to read and nothing is "
-                "missing here. Contrast Uniswap or PancakeSwap, where a transfer burn leaves the "
-                "tokens at 0x...dEaD and the balance IS the cumulative figure.",
             "buyback_fund_balance":
                 "NO BUYBACK FUND EXISTS. Sky's surplus passes through the Splitter (MCD_SPLIT) and "
                 "the Flapper (MCD_FLAP), both of which are EXECUTORS — config's own contract notes "
@@ -5727,6 +5750,65 @@ PROJECTS = [
                      "'SKY Governance Token', symbol 'SKY'. Codebase: https://github.com/sky-ecosystem/sky. "
                      "The other address that was circulating is WRONG and has been deleted "
                      "entirely rather than kept as a fallback."),
+            # ===== THE ARCHETYPE 4 READ. ADDED 2026-09-22, NOT YET RUN LIVE. =====
+            # Sky's burn is protocol-level, so there is no balance to read — but SKY.burn() runs
+            # through OpenZeppelin's _burn, which emits Transfer(holder, address(0), amount). The
+            # events ARE the record, and summing them from the first burn gives the cumulative
+            # destroyed. That feeds gross_burn_tokens through the ordinary cumulative-to-flow
+            # differencing; nothing bespoke follows this read.
+            #
+            # ** from_block IS DELIBERATELY None AND THE READ WILL REFUSE UNTIL IT IS SET. **
+            # A log scan that starts after the burns returns a small, confident, entirely
+            # plausible number — the failure leaves no trace in the output, which is precisely
+            # why the start height is required rather than estimated from a block time. It needs
+            # to be looked up, with a source, the same standard as an address.
+            #
+            # AND THE FIRST READ IS CHECKED BEFORE IT IS KEPT. 2,860,000 SKY is the figure on
+            # file for 2026-09-14; if the first scan does not land within 5% of it the value is
+            # NOT stored and the run reports the disagreement instead. A log scan can be wrong in
+            # three ways that each produce a number and only one of which is the burn: the wrong
+            # topic read as the value (an address comes back as an amount), the wrong burn
+            # address, or a from_block past the event. Widening tolerance_pct to make it pass
+            # would be defeating the only check this read has.
+            "burn_logs": _contract(
+                "0x56072C95FAA701256059aa122697B133aDEd9279", "ethereum", "burn_transfer_logs", "SKY",
+                "https://github.com/sky-ecosystem/sky/blob/master/src/Sky.sol",
+                verified="2026-09-22",
+                provenance="the SKY token contract itself — same address as contracts.token, "
+                           "confirmed against Sky's developer docs 2026-09-11",
+                purpose="CUMULATIVE SKY DESTROYED, summed from Transfer(*, address(0)) events. Not a "
+                        "balance: these tokens do not exist any more. See metric_labels.",
+                burn_logs={
+                    "burn_to": "zero",
+                    "from_block": None,
+                    "chunk_blocks": 10_000,
+                    "max_blocks_per_run": 250_000,
+                    "first_read_reference": {
+                        "value": 2_860_000,
+                        "as_of": "2026-09-14",
+                        "what": "SKY burned as at 2026-09-14, the date Stage 2's 5% burn leg began",
+                        "source_url": "https://financial.skyeco.com/",
+                        "tolerance_pct": 5,
+                    },
+                    "how_to_set": ("Look up the Ethereum block height at the first SKY burn — the "
+                                   "Stage 2 activation on 2026-09-14 — and set from_block to it "
+                                   "with its source. It is NOT estimated from a block time: a "
+                                   "start after the burns returns a plausible small number and "
+                                   "nothing in the output would show it. Once set, the first read "
+                                   "must land within 5% of 2,860,000 SKY or it is reported rather "
+                                   "than stored."),
+                    "open_question": ("WHICH QUANTITY 2,860,000 IS has not been established: the "
+                                      "cumulative burned as at 2026-09-14, or the amount burned ON "
+                                      "that date. Under the first reading a scan from the Stage 2 "
+                                      "activation block should land ON it; under the second it "
+                                      "should land ABOVE it by everything burned since. The "
+                                      "reference gate is written for the first reading, so if the "
+                                      "scan comes back materially HIGHER the answer may be that "
+                                      "the reference is a daily figure — check before changing "
+                                      "anything."),
+                    "not_yet_run": "2026-09-22 — no RPC available in the environment this was "
+                                   "written in. The first live run is the confirmation.",
+                }),
             # NO burn_zero ENTRY, AND NOT BECAUSE THE ADDRESS WAS WRONG.
             # It was removed 2026-09-14 after the ChainSecurity Dss Flappers audit (July 2026)
             # and Sky's own dss-flappers repo established that Sky's burn is NOT a
@@ -5760,7 +5842,25 @@ PROJECTS = [
                         "OUT of it — which is the proof that it is redeployable, not retired.",
                 note="NEVER gross_burn_tokens and never burn_address_balance. Tokens here still exist "
                      "and governance can spend them, so counting this as burned would overstate "
-                     "permanent supply destruction by the entire balance."),
+                     "permanent supply destruction by the entire balance.",
+                # ===== AN UNEXPLAINED 5.82M OUTFLOW. OBSERVED, NOT DIAGNOSED. 2026-09-21. =====
+                # The Pause Proxy's SKY balance moved 39,029,892 -> 33,214,224 since 2026-09-17,
+                # a fall of 5,815,668. Three readings of it are possible and they have opposite
+                # meanings for every supply figure on this project:
+                #   BURNED      a Transfer(pause_proxy, address(0)) would make it permanent
+                #               destruction, and it would ALSO have to appear in the burn_logs
+                #               read — the two are the same event seen from either side.
+                #   REDEPLOYED  a transfer to any other address is governance spending treasury,
+                #               which changes float and destroys nothing.
+                #   REBASED     a change in what the read measures rather than in what is held.
+                # ** NOTHING IS ASSUMED HERE AND NOTHING IS WIRED OFF IT. ** The burn_logs read
+                # settles it on its own the moment it runs: if the 5,815,668 is a burn it is in
+                # the Transfer-to-zero sum, and if it is not, it is not. Recorded so the figure
+                # is not re-discovered as a surprise, and so that a later reader does not reach
+                # for the obvious explanation — a treasury falling by 5.8m on a project that has
+                # just acquired a burn is exactly the coincidence that invites an assumption.
+                destination_note="",
+                ),
             "lssky": _contract(
                 "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C", "ethereum", "ve_total_supply", "lssky",
                 "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",

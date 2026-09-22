@@ -131,6 +131,13 @@ def holder_should_have_code(spec: dict) -> bool:
 # either is unsafe, so read_method None means refuse.
 METHOD_REQUIRED_KINDS = {"ve_total_supply"}
 
+# Kinds that claim to measure a burn. A REFUTED MECHANISM REFUSES ALL OF THEM — the question a
+# refutation answers is "does this project burn the way we assumed", and the answer does not
+# depend on whether we were planning to read a balance or an event log. burn_transfer_logs was
+# added on 2026-09-22 and the gate was widened in the same change; scoping the refutation check
+# to balance reads alone would have let a refuted mechanism through the new door.
+BURN_READ_KINDS = {"burn_address_balance", "burn_transfer_logs"}
+
 
 def allow_unverified() -> bool:
     return os.environ.get("TOKEN_METRICS_ALLOW_UNVERIFIED", "").strip() in ("1", "true", "yes")
@@ -218,6 +225,57 @@ class ChainReader:
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
         return int(getattr(c.functions, call)(*args).call())
 
+    def burn_transfer_total(self, chain: str, token: str, burn_to: str, from_block: int,
+                            chunk: int = 10_000, max_blocks: int | None = None) -> tuple[float, int, int, int]:
+        """Sum every Transfer(*, burn_to, value) on `token` from `from_block` to the head.
+
+        THE READ A PROTOCOL BURN NEEDS, AND THE ONE A BALANCE READ CANNOT GIVE. OpenZeppelin's
+        _burn emits Transfer(holder, address(0), amount) and destroys the tokens — so there is no
+        balance at address(0) to read afterwards, and the events are the only record. Sky burns
+        this way (SKY.burn() decrements totalSupply), which is why its burn_address_balance was
+        declared not applicable and why this kind exists.
+
+        CHUNKED, BECAUSE PUBLIC RPCs CAP THE RANGE. Most free endpoints reject eth_getLogs over
+        more than ~10k blocks, and the ones that do not are slow. The chunk size is configurable
+        per contract and the default is deliberately conservative — being polite to a free
+        endpoint is a standing constraint of this project, not a performance preference.
+
+        Returns (tokens, event_count, first_block, last_block). The block range comes back so the
+        caller can say what was actually covered rather than implying the whole history.
+        """
+        from web3 import Web3
+
+        w3 = self.web3(chain)
+        head = int(w3.eth.block_number)
+        if max_blocks is not None and head - from_block > max_blocks:
+            # REFUSE, DO NOT TRUNCATE. A silently shortened window returns a smaller number that
+            # looks exactly like a quieter period. The caller turns this into a gap that says how
+            # far behind the read is and what to set.
+            raise RuntimeError(
+                f"the log window is {head - from_block:,} blocks (from {from_block:,} to {head:,}), "
+                f"over the configured max_blocks_per_run of {max_blocks:,}. Refusing rather than "
+                f"scanning a shortened window, which would return a smaller total that reads as a "
+                f"quieter period. Raise max_blocks_per_run, or move from_block forward and carry "
+                f"the earlier total as a declared starting point.")
+
+        topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+        to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
+        decimals = int(self.erc20(chain, token).functions.decimals().call())
+        total_raw, events, block = 0, 0, from_block
+        while block <= head:
+            upper = min(block + chunk - 1, head)
+            logs = w3.eth.get_logs({"fromBlock": block, "toBlock": upper,
+                                    "address": self.checksum(token),
+                                    "topics": [topic, None, to_topic]})
+            for entry in logs:
+                # THE VALUE IS THE DATA WORD, not a topic: Transfer indexes from and to and leaves
+                # value unindexed. Reading a topic here would return an address as an amount.
+                total_raw += int(entry["data"].hex() if hasattr(entry["data"], "hex")
+                                 else str(entry["data"]), 16)
+                events += 1
+            block = upper + 1
+        return float(total_raw) / (10 ** decimals), events, from_block, head
+
     def scaled(self, chain: str, address: str, call: str, *args, decimals_from: str | None = None) -> float:
         """Call `call` on `address`, scaled by decimals().
 
@@ -296,19 +354,23 @@ class Chain:
         # address was a real address, verified against real docs, and entirely beside the point:
         # Sky burns through a Splitter and an AMM Flapper, never through a dead address.
         mech = config.burn_mechanism(project)
-        if spec["kind"] == "burn_address_balance" and mech.get("status") == "refuted":
+        if spec["kind"] in BURN_READ_KINDS and mech.get("status") == "refuted":
             out.gap(name, metric,
                     reason=f"the burn MECHANISM is refuted, not merely the address: this project does not "
-                           f"burn by {mech.get('model')!r} in the way an address balance could measure. "
+                           f"burn by {mech.get('model')!r} in the way a {spec['kind']} read could measure. "
                            f"{mech.get('note', '')}".strip(),
                     tiers_attempted="2",
-                    suggestion=f"Do not substitute another address — no balance read models this. Establish "
-                               f"the real mechanism first; see {mech.get('source_url') or 'the protocol docs'} "
+                    suggestion=f"Do not substitute another address or another event — no chain read models "
+                               f"this. Establish the real mechanism first; see "
+                               f"{mech.get('source_url') or 'the protocol docs'} "
                                f"and OPEN_QUESTIONS for this project.")
-            out.unconfigured(SOURCE, name, f"{key}: burn mechanism refuted, address read refused", TIER)
+            out.unconfigured(SOURCE, name, f"{key}: burn mechanism refuted, chain read refused", TIER)
             return False
 
         # 2b. Is the READ METHOD one this adapter can serve? A protocol-level burn has no address.
+        #     SCOPED TO BALANCE READS ONLY, unlike 2a. A protocol-level burn is exactly what
+        #     burn_transfer_logs exists to read: the tokens are destroyed and the Transfer-to-zero
+        #     events are the record. Refusing it here would refuse the one read that works.
         method = project.get("burn_read_method")
         if spec["kind"] == "burn_address_balance" and method not in READABLE_BURN_METHODS:
             out.gap(name, metric,
@@ -536,6 +598,69 @@ class Chain:
                                 refused[metric].append(f"{key} ({chain}): {note}")
                                 continue
                             source_suffix[metric] = note
+                    elif kind == "burn_transfer_logs":
+                        logs_cfg = spec.get("burn_logs") or {}
+                        # ** from_block IS NOT GUESSABLE AND IS NOT GUESSED. ** A scan that starts
+                        # after the burns returns a confident, small, entirely plausible number,
+                        # and one that starts too early is slow and may exceed what a free
+                        # endpoint will serve. It is an absolute block height with a source, or
+                        # the read does not happen.
+                        if logs_cfg.get("from_block") is None:
+                            out.gap(name, metric,
+                                    reason=(f"{key!r} reads burns from Transfer events and its "
+                                            f"from_block is NOT SET. A log scan that starts after the "
+                                            f"burns returns a small, confident, plausible number — the "
+                                            f"failure is invisible in the output, so the start height "
+                                            f"is required rather than defaulted."),
+                                    tiers_attempted="2",
+                                    suggestion=(logs_cfg.get("how_to_set")
+                                                or "Set burn_logs.from_block to the block height of the "
+                                                   "first burn, with its source."))
+                            out.unconfigured(SOURCE, name, f"{key}: burn_logs.from_block not set", TIER)
+                            refused[metric].append(f"{key} ({chain}): from_block not set")
+                            continue
+                        value, events, first_blk, last_blk = self.reader.burn_transfer_total(
+                            chain, read_address,
+                            config.BURN_ADDRESSES[logs_cfg.get("burn_to", "zero")],
+                            int(logs_cfg["from_block"]),
+                            chunk=int(logs_cfg.get("chunk_blocks", 10_000)),
+                            max_blocks=logs_cfg.get("max_blocks_per_run"))
+                        source_suffix[metric] = f"logs@{first_blk}-{last_blk}"
+                        # ** THE FIRST READ IS CHECKED AGAINST A KNOWN FIGURE BEFORE IT IS KEPT. **
+                        # A log scan can be wrong in ways a balance read cannot: the wrong topic
+                        # ordering reads an address as an amount, the wrong burn address returns
+                        # somebody else's discards, a from_block after the event returns a
+                        # confident zero. All three produce a number, and only one of them is the
+                        # burn. So the first reading — the one with no prior to be compared
+                        # against by anything else — has to clear a figure established off-chain.
+                        ref = logs_cfg.get("first_read_reference")
+                        if ref and self.prior.get((name, metric)) is None:
+                            expect, tol = float(ref["value"]), float(ref.get("tolerance_pct", 5)) / 100.0
+                            if expect == 0 or abs(value - expect) / expect > tol:
+                                out.review_item(name, metric, "first_read_disagrees_with_reference",
+                                                "rejected", value=float(value), prior_value=expect,
+                                                date=when, source=f"{SOURCE}:{chain}:{key}", tier=TIER,
+                                                basis=f"{ref.get('what')} ({ref.get('as_of')}), "
+                                                      f"{ref.get('source_url')}")
+                                out.gap(name, metric,
+                                        reason=(f"THE FIRST LOG READ DOES NOT MATCH THE REFERENCE and was "
+                                                f"NOT stored. {events:,} Transfer events to "
+                                                f"{logs_cfg.get('burn_to', 'zero')} over blocks "
+                                                f"{first_blk:,}-{last_blk:,} sum to {value:,.4f}, against "
+                                                f"{expect:,.4f} expected ({ref.get('what')}, "
+                                                f"{ref.get('as_of')}). A log scan can be wrong in three "
+                                                f"ways that all produce a plausible number — wrong topic "
+                                                f"read as the value, wrong burn address, a from_block "
+                                                f"after the event — so a first reading that disagrees is "
+                                                f"reported rather than kept."),
+                                        tiers_attempted="2",
+                                        suggestion=(f"Check from_block ({logs_cfg['from_block']:,}) against "
+                                                    f"{ref.get('source_url') or 'the reference'}, then the "
+                                                    f"burn_to address. Do NOT widen tolerance_pct to make "
+                                                    f"this pass."))
+                                refused[metric].append(f"{key} ({chain}): first read {value:,.2f} "
+                                                       f"vs reference {expect:,.2f}")
+                                continue
                     else:
                         value = self.reader.scaled(chain, read_address, spec.get("call") or "totalSupply")
                 except Exception as e:  # noqa: BLE001 — a failed source must not kill the run

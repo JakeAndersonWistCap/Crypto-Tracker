@@ -531,9 +531,33 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     assert prior["status"] == "refuted" and prior["model"] == "amm_swap_to_receiver"
     assert "chainsecurity" in (prior["source_url"] or "").lower()
 
-    # A protocol-level burn has no address to hold the tokens, so the metric is not merely empty.
-    assert config.not_applicable_reason("Sky", "burn_address_balance"), \
-        "an applicable-but-unfillable metric reports a permanent unexplained gap every run"
+    # ** THE METRIC IS APPLICABLE AGAIN, AND THAT REVERSES A CALL MADE ONE DAY EARLIER. **
+    # "A protocol-level burn has no address to hold the tokens" was right about the mechanism and
+    # wrong about the conclusion. SKY.burn() runs through OpenZeppelin's _burn, which emits
+    # Transfer(holder, address(0), amount); the events are the record even though no address ends
+    # up holding anything. Summing them gives the same QUANTITY the metric holds everywhere else,
+    # which is what lets the cumulative-to-flow differencing, the telescoping reconciliation and
+    # the burn <= supply bound all apply here unchanged.
+    assert config.not_applicable_reason("Sky", "burn_address_balance") is None, \
+        "the events are readable, so declaring the metric inapplicable withholds a real figure"
+    label = config.metric_label("Sky", "burn_address_balance")
+    assert "Cumulative SKY destroyed" in label and "no address holds them" in label, \
+        f"the sheet must not claim an address holds these tokens: {label}"
+
+    # THE READ IS WIRED AND REFUSES UNTIL ITS START HEIGHT IS SOURCED. A log scan that begins
+    # after the burns returns a small, confident, plausible number and nothing in the output
+    # would show it, so from_block is required rather than estimated from a block time.
+    logs = sky["contracts"]["burn_logs"]
+    assert logs["kind"] == "burn_transfer_logs"
+    assert logs["address"] == sky["contracts"]["token"]["address"], \
+        "the events are on the SKY token itself"
+    cfg = logs["burn_logs"]
+    assert cfg["from_block"] is None and cfg["how_to_set"], \
+        "an unsourced start height is a declared gap, not a default"
+    ref = cfg["first_read_reference"]
+    assert ref["value"] == 2_860_000 and ref["as_of"] == "2026-09-14" and ref["tolerance_pct"] == 5
+    assert cfg["open_question"], \
+        "whether 2.86M is the cumulative or that day's burn is not established — it must be on file"
 
     # even if somebody re-added a burn address, a refuted mechanism refuses the read
     probe = dict(sky)
@@ -550,10 +574,86 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     c.run([probe], None, out)
     assert "burn_address_balance" not in set(out.frame().metric), \
         "a refuted mechanism must refuse the read whatever the address says"
+    refusals = [g for g in out.gaps if "MECHANISM is refuted" in g["reason"]]
+    assert refusals, [g["reason"][:60] for g in out.gaps]
+    assert all("Do not substitute another address or another event" in g["suggestion"] for g in refusals)
+    # ** AND IT REFUSES THE LOG READ TOO. ** The gate was scoped to balance reads until
+    # burn_transfer_logs was added on 2026-09-22; a refutation answers "does this project burn
+    # the way we assumed", which does not depend on which door the read comes through.
+    assert any("burn_transfer_logs read could measure" in g["reason"] for g in refusals), \
+        f"a refuted mechanism must refuse the event read as well: {[g['reason'][:80] for g in refusals]}"
+    print("sky ok: burn address removed, refuted mechanism refuses balance AND event reads")
+
+
+def test_the_burn_log_read_refuses_a_first_result_that_misses_its_reference():
+    """A LOG SCAN CAN BE WRONG IN THREE WAYS THAT EACH PRODUCE A NUMBER, and only one of them is
+    the burn: the wrong topic read as the value (an address comes back as an amount, so the
+    figure is astronomically large), the wrong burn address (somebody else's discards), or a
+    from_block past the events (a confident, small, plausible total). None of them raises, none
+    of them looks wrong on the sheet, and a balance read has no equivalent exposure — balanceOf
+    on the wrong address at least returns the wrong address's real balance.
+
+    So the FIRST reading, the one nothing else can be compared against, has to clear a figure
+    established off-chain: 2,860,000 SKY as at 2026-09-14. Later readings are policed by the
+    ordinary machinery — the change threshold, the telescoping reconciliation, the burn <= supply
+    bound — all of which need a prior and therefore cannot police the first.
+    """
+    sky = config.PROJECT_BY_NAME["Sky"]
+    probe = dict(sky)
+    probe["contracts"] = {"token": sky["contracts"]["token"],
+                          "burn_logs": dict(sky["contracts"]["burn_logs"],
+                                            burn_logs=dict(sky["contracts"]["burn_logs"]["burn_logs"],
+                                                           from_block=23_400_000))}
+
+    class LogReader(StubReader):
+        def __init__(self, total):
+            super().__init__(symbol="SKY", supply=2.2e10)
+            self.total = total
+
+        def burn_transfer_total(self, chain, token, burn_to, from_block, chunk=10_000, max_blocks=None):
+            return self.total, 3, from_block, from_block + 57_000
+
+    # (a) A FIRST READ THAT MISSES THE REFERENCE IS NOT STORED.
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = LogReader(41_000.0)                      # what a from_block past the burns looks like
+    out = FetchOutput()
+    c.run([probe], None, out)
+    assert "burn_address_balance" not in set(out.frame().metric), \
+        "a first read that misses the reference must not reach the sheet"
     gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
-    assert "MECHANISM is refuted" in gap["reason"]
-    assert "Do not substitute another address" in gap["suggestion"]
-    print("sky ok: burn address removed, refuted mechanism refuses any replacement")
+    assert "DOES NOT MATCH THE REFERENCE" in gap["reason"] and "2,860,000" in gap["reason"], gap["reason"]
+    assert "Do NOT widen tolerance_pct" in gap["suggestion"]
+    assert any(r["reason"] == "first_read_disagrees_with_reference" for r in out.review), out.review
+
+    # (b) A FIRST READ THAT MATCHES IS STORED, and its source carries the block range it covered.
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = LogReader(2_871_400.0)                   # within the declared 5%
+    out = FetchOutput()
+    c.run([probe], None, out)
+    rows = out.frame()
+    row = rows[rows.metric == "burn_address_balance"].iloc[0]
+    assert float(row["value"]) == 2_871_400.0
+    assert "logs@23400000-23457000" in row["source"], row["source"]
+
+    # (c) THE BLOCK RANGE MOVES EVERY RUN AND MUST NOT READ AS A CHANGE OF MEASURING POINT.
+    # This is exactly what the bracketed-annotation stripper was built for: without it, every
+    # run's source would differ from the last and the series would blank itself for a change
+    # that never happened.
+    from fetch.base import _measuring_point
+    assert _measuring_point(row["source"]) == _measuring_point("chain:ethereum:burn_logs[logs@1-2]"), \
+        f"the scanned range is an annotation, not a measuring point: {row['source']}"
+
+    # (d) ONCE A PRIOR EXISTS THE GATE IS OFF — it is a FIRST-read check, not a permanent bound.
+    # Leaving it armed would reject every real burn from the moment the total grew past 5%.
+    c = Chain(prior_values={("Sky", "burn_address_balance"): 2_871_400.0},
+              prior_dates={("Sky", "burn_address_balance"): "2026-09-21"})
+    c.reader = LogReader(9_400_000.0)
+    out = FetchOutput()
+    c.run([probe], None, out)
+    rows = out.frame()
+    assert float(rows[rows.metric == "burn_address_balance"].iloc[0]["value"]) == 9_400_000.0
+    assert not [r for r in out.review if r["reason"] == "first_read_disagrees_with_reference"]
+    print("sky burn logs ok: first read gated on 2.86M, range annotation stripped, gate not permanent")
 
 
 UNI_ETH_ADDR = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
