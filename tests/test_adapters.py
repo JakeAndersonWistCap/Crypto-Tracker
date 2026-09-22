@@ -5426,6 +5426,78 @@ def test_world_mobiles_two_user_counts_disagree_and_neither_is_quietly_dropped()
           "labelled as floors")
 
 
+def test_the_chainlink_reserve_inflow_is_derived_and_a_fall_is_reported_not_swallowed():
+    """F. Chainlink's archetype 3 block had a fund BALANCE and no FLOW — the Reserve's LINK was
+    read, how much arrived in a period was not. The delta against the last earlier-dated reading
+    is that flow and it costs no extra call.
+
+    ** IT IS AN INFLOW BECAUSE THE RESERVE ONLY ACCUMULATES, AND THAT IS A CLAIM, NOT A FACT OF
+    ARITHMETIC. ** Chainlink routes revenue to two destinations that are separate from source:
+    the Reserve holds, the staking pools distribute from their own reward vault. Nothing draws on
+    the Reserve. If that premise ever breaks the balance falls, and the fall is REPORTED — that
+    branch of derive_flow_from_cumulative used to return an empty frame in silence, which was
+    harmless for a dead-address balance (it cannot fall) and would have hidden exactly this.
+    """
+    link = config.PROJECT_BY_NAME["Chainlink"]
+    assert config.cumulative_flow_for("Chainlink", "buyback_fund_balance") == "actual_buyback_tokens"
+    # PER PROJECT, not per metric. Uniswap's TokenJar holds fee tokens that get swept and GEODNET
+    # has no fund at all; a global entry would derive a "buyback" on all three from whatever each
+    # balance happened to do.
+    assert config.cumulative_flow_for("Uniswap", "buyback_fund_balance") is None
+    label = config.metric_label("Chainlink", "actual_buyback_tokens")
+    assert "EXCLUDES the staking-reward leg" in label, label
+
+    class ReserveStub:
+        def __init__(self, balance):
+            self.balance = balance
+
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            return True, expected
+
+        def scaled(self, chain, address, call, *args):
+            return self.balance if args else 0.0
+
+    def run(now, prior, prior_date="2026-09-20"):
+        c = Chain(prior_values={("Chainlink", "buyback_fund_balance"): prior},
+                  prior_dates={("Chainlink", "buyback_fund_balance"): prior_date},
+                  prior_sources={("Chainlink", "buyback_fund_balance"): "chain:ethereum:reserve"},
+                  prior_delta={("Chainlink", "buyback_fund_balance"): prior})
+        c.reader = ReserveStub(now)
+        out = FetchOutput()
+        c.run([link], None, out)
+        return out
+
+    # (a) THE ORDINARY CASE: the Reserve grew, and the growth is the inflow.
+    out = run(5_240_000.0, 5_180_000.0)
+    df = out.frame()
+    flow = df[df.metric == "actual_buyback_tokens"]
+    assert len(flow) == 1, f"the inflow must be derived: {sorted(set(df.metric))}"
+    assert abs(float(flow.value.iloc[0]) - 60_000.0) < 1e-6
+    assert ":delta" in flow.source.iloc[0]
+
+    # (b) THE PREMISE BREAKING: the balance fell. No flow, and the fall is NAMED.
+    out = run(5_100_000.0, 5_180_000.0)
+    df = out.frame()
+    assert df[df.metric == "actual_buyback_tokens"].empty, \
+        "a negative inflow is not a figure this metric can hold"
+    gap = [g for g in out.gaps if g["metric"] == "actual_buyback_tokens"]
+    assert gap and "FELL" in gap[0]["reason"], \
+        f"a fall must be reported, not returned as an empty frame: {[g['reason'][:60] for g in out.gaps]}"
+    assert "5,180,000" in gap[0]["reason"] and "5,100,000" in gap[0]["reason"], gap[0]["reason"]
+
+    # (c) SAME-DAY RE-RUN: no interval, so no flow — and the balance itself still stores.
+    out = run(5_240_000.0, 5_180_000.0, prior_date="2026-09-22")
+    df = out.frame()
+    assert df[df.metric == "actual_buyback_tokens"].empty
+    assert not df[df.metric == "buyback_fund_balance"].empty, \
+        "the stock is a good reading whatever the flow does"
+    print("chainlink reserve ok: inflow derived from the delta, a fall reported by name, "
+          "same-day re-run derives nothing")
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:

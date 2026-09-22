@@ -2055,9 +2055,25 @@ PROJECTS = [
             # `underlying`, because a staking pool is not an ERC-20 and has neither. Taking 18 on
             # faith instead would be exactly the kind of assumption that produced Maple's 0.51.
             # ===== B3: THE REWARD VAULT IS RECORDED AND DELIBERATELY NOT READ. =====
-            # actual_buyback_tokens IS already wired: it maps to contract kind
+            # ** THE PARAGRAPH THAT USED TO OPEN THIS BLOCK WAS FALSE, AND IT IS THE REASON
+            # actual_buyback_tokens CAME BACK EMPTY FROM TIER 2 ON EVERY RUN. ** It read:
+            # "actual_buyback_tokens IS already wired: it maps to contract kind
             # buyback_fund_balance, and Chainlink's only contract of that kind is the RESERVE
-            # above. So the answer to "is it wired" is yes, to the Reserve.
+            # above. So the answer to 'is it wired' is yes, to the Reserve."
+            #
+            # KIND_METRIC["buyback_fund_balance"] is "buyback_fund_balance". A kind maps to ONE
+            # metric, and that metric is the balance — never the flow. So the Reserve read was
+            # writing buyback_fund_balance, exactly as designed, and nothing at all was writing
+            # actual_buyback_tokens. The claim was read off the contract LIST without checking
+            # the MAPPING, which is the same shape of mistake as the PancakeSwap "we sum
+            # bsc:token + base:token_base" premise corrected on 2026-09-22: a config fact
+            # asserted from the half of the file that looked right.
+            #
+            # IT IS WIRED NOW, and by a different route: the metric is DERIVED from the Reserve
+            # balance's delta (see cumulative_flow on this project), not read from a contract.
+            # The empty tier-2 read is gone because the metric was never a tier-2 read to begin
+            # with. What remains is the ordinary first-observation case — a delta needs two dated
+            # readings — and that reports itself by name rather than rendering empty.
             #
             # ** IT MUST NOT ALSO READ THE REWARD VAULT, AND MUST NOT READ THE SUM. ** Chainlink
             # has TWO destinations with OPPOSITE signs on float — the Reserve HOLDS (locked
@@ -2170,6 +2186,34 @@ PROJECTS = [
              "note": "Prefer the contract read; the dashboard is the cross-check. A divergence beyond the "
                      "tolerance is flagged to the Review Queue rather than one figure being silently picked."},
         ],
+        # ===== actual_buyback_tokens = THE RESERVE'S INFLOW. WIRED 2026-09-22. =====
+        # Chainlink's archetype 3 block had a fund BALANCE and no FLOW: the Reserve's LINK was
+        # read, and how much arrived in a period was not. The delta against the last
+        # earlier-dated reading is that flow, and it costs no extra call — the balance is already
+        # read every run.
+        #
+        # ** IT IS AN INFLOW BECAUSE THE RESERVE ONLY ACCUMULATES, AND THAT IS A CLAIM. **
+        # Chainlink routes revenue to TWO destinations with opposite effects on float, and they
+        # are separate FROM SOURCE: the Reserve holds, the staking pools distribute. The pools do
+        # not draw on the Reserve — they have their own reward vault (see reward_streams) — so
+        # nothing takes LINK out of the Reserve and the balance is one-directional.
+        #
+        # THE CLAIM IS TESTED ON EVERY RUN RATHER THAN ASSERTED HERE. If the balance ever falls,
+        # derive_flow_from_cumulative stores no flow and reports the fall by name (that branch
+        # was made loud in the same change — it had been a silent return, which was harmless for
+        # a dead-address balance and would have hidden exactly this). A fall is either the
+        # premise breaking or a bad read, and both are findings.
+        #
+        # WHAT IT EXCLUDES, said on the label so no reader has to infer it: the staking-reward
+        # leg. This is the Reserve's inflow, not Chainlink's total Payment Abstraction revenue,
+        # and reading it as the latter would understate by whatever the pools receive.
+        "cumulative_flow": {
+            "buyback_fund_balance": "actual_buyback_tokens",
+        },
+        "metric_labels": {
+            "actual_buyback_tokens": "LINK inflow to Reserve (Payment Abstraction) — EXCLUDES the "
+                                     "staking-reward leg, which is a separate route from source",
+        },
         "sanity": {
             # Rising series: c.2.17m LINK (Feb 2026) -> c.5.2m LINK (Jul 2026). Bounded generously above
             # so continued growth is not rejected, but a wild value still is.
@@ -7883,6 +7927,25 @@ def _check_circulating_conventions() -> list[str]:
 CUMULATIVE_FLOW = {
     "burn_address_balance": "gross_burn_tokens",
 }
+
+
+def cumulative_flow_for(project_name: str, metric: str) -> str | None:
+    """The flow metric this stock's delta feeds, FOR THIS PROJECT.
+
+    Global for burn_address_balance, because a dead-address balance means the same thing
+    everywhere and a transfer burn is monotonic by construction — tokens do not leave.
+
+    PER PROJECT FOR EVERYTHING ELSE, and buyback_fund_balance is why. Chainlink's Reserve only
+    ever accumulates (the staking-reward leg is a SEPARATE route from source, and never draws on
+    it), so its delta is genuinely an inflow. Uniswap's TokenJar holds fee tokens that get swept,
+    and GEODNET has no fund at all. One global entry for the metric would have derived a
+    'buyback' figure on all three from whatever their balance happened to do.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    own = (p.get("cumulative_flow") or {}).get(metric)
+    if own is not None:
+        return own or None
+    return CUMULATIVE_FLOW.get(metric)
 
 SERIES_GRANULARITIES = ("daily", "weekly", "monthly")
 

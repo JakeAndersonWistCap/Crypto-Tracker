@@ -93,6 +93,9 @@ _WEEK_SECONDS = 7 * 86400
 # A cumulative stock that also yields a flow once differenced against the prior observation.
 # ALIASED FROM CONFIG, not redeclared — config.series_granularity needs the same table to know a
 # daily balance read is what feeds gross_burn_tokens, and two copies of it would drift.
+# The LOOKUP goes through config.cumulative_flow_for, which consults the project first: a
+# buyback fund's balance means different things on different projects, and a global entry would
+# derive a buyback figure from whatever each one's balance happened to do.
 CUMULATIVE_FLOW = config.CUMULATIVE_FLOW
 
 # Burn read methods this adapter can serve. Everything else is refused with an explanation,
@@ -862,7 +865,7 @@ class Chain:
             if metric == "burn_address_balance" and total == 0.0:
                 self._flag_burn_address_never_received(project, components, out, when)
 
-            flow_metric = CUMULATIVE_FLOW.get(metric)
+            flow_metric = config.cumulative_flow_for(name, metric)
             if flow_metric:
                 flow = derive_flow_from_cumulative(total, self.prior_delta.get((name, metric)), name,
                                                    flow_metric, f"{src}:delta", TIER, when,

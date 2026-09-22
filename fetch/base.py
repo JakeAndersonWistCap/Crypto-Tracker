@@ -253,6 +253,19 @@ def derive_flow_from_cumulative(cumulative_value: float, prior_cumulative: float
                  f"Differencing across that reports the change of address as though it were a flow")
         return pd.DataFrame(columns=LONG_COLUMNS)
     if cumulative_value < prior_cumulative:
+        # A FALL IN A CUMULATIVE IS REPORTED, NOT PASSED OVER IN SILENCE. Added 2026-09-22 with
+        # Chainlink's Reserve, and it matters most there: a dead-address balance cannot fall, so
+        # this branch was effectively dead code for the only caller that existed, and returning an
+        # empty frame with no explanation was harmless. The Reserve's whole premise is that it
+        # only accumulates — the staking-reward leg is a separate route from source and never
+        # draws on it — so a fall is either that premise breaking or a bad read, and both are
+        # findings. Silence would have rendered them as an ordinary quiet day.
+        _no_flow(out, project, metric, stock_metric,
+                 f"the cumulative figure FELL, from {prior_cumulative:,.4f} to "
+                 f"{cumulative_value:,.4f} ({cumulative_value - prior_cumulative:,.4f}). A flow "
+                 f"derived from it would be negative, which this metric cannot be, so none is "
+                 f"stored. A fall means the source rebased, the measuring point moved, or the "
+                 f"balance is not the one-directional quantity it was taken for")
         return pd.DataFrame(columns=LONG_COLUMNS)
     return point(project, metric, cumulative_value - prior_cumulative, source, tier, when)
 
