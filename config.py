@@ -8379,6 +8379,94 @@ PROJECTS = [
 PROJECT_BY_NAME = {p["name"]: p for p in PROJECTS}
 
 
+# ===== WHERE A BUYBACK'S TOKENS GO DECIDES HOW THE FLOW IS MEASURED. Added 2026-09-23. =====
+#
+# actual_buyback_tokens was gapping on seven projects with "no buyback_fund_balance contract",
+# which is the wrong instruction for most of them: a buyback that BURNS has no fund to read, and
+# a protocol that buys nothing has no flow to measure. The destination is already declared on
+# every entry as `buyback_destination`, so the route is derivable rather than a new fact:
+#
+#   burn       the bought tokens are destroyed. The buyback flow IS the burn flow — one event,
+#              two names — so it is taken from gross_burn_tokens rather than sourced again.
+#              Reading it twice from two places would let the two disagree.
+#   hold       the tokens sit in a fund or treasury. The flow is that stock's INFLOW, which is
+#              the cumulative_flow machinery already used for Chainlink's Reserve. Where no fund
+#              address is on file the gap names THAT, which is a findable thing.
+#   distribute the tokens are handed to stakers and leave the protocol's control immediately.
+#              There is no stock to difference and no burn to count, so it is a gap — but a gap
+#              whose reason is the mechanism, not a missing contract.
+#   split      more than one of the above at once. Sky: 27.5% buy pressure, 5% supply reduction.
+#              Handled by its own stage_split_legs, not here.
+#   n/a        no buyback mechanism exists. Not a gap at all.
+#
+# ** AERODROME IS "n/a", NOT "distribute", AND THE DIFFERENCE MATTERS. ** Its fee_split already
+# records it: 100% of trading fees go to veAERO voters PAID IN THE PAIR'S OWN TOKENS and never
+# converted to AERO. No AERO is ever bought, so actual_buyback_tokens is not an unmeasured flow —
+# it is a flow that does not exist, and reporting it as missing invites someone to go and find it.
+BUYBACK_METRICS = ("actual_buyback_tokens", "actual_buyback_usd")
+
+# Projects whose destination label needs correcting against their own recorded mechanism. Kept
+# as an explicit override rather than edited into buyback_destination, because that field also
+# describes what happens to the FEES and "distribute" is the right word for Aerodrome's fees.
+BUYBACK_ROUTE_OVERRIDE = {
+    "Aerodrome": ("none",
+                  "NO AERO IS BOUGHT AT ALL. 100% of trading fees go to the veAERO voters who "
+                  "voted for each pool, paid in the PAIR'S OWN TOKENS and never converted to "
+                  "AERO — there is no buy-then-distribute step. From Aerodrome's own contracts "
+                  "and SPECIFICATION.md; see fee_split.destination_model."),
+}
+
+
+def buyback_route(project_name: str) -> dict:
+    """How actual_buyback_tokens is measured for this project — {route, metric, reason}.
+
+    route is one of: burn, treasury_inflow, distribute, split, none. `metric` names the series
+    the figure comes from where one exists; `reason` says why it cannot be measured where it
+    cannot. Every branch answers; nothing falls through to silence.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    if project_name in BUYBACK_ROUTE_OVERRIDE:
+        route, reason = BUYBACK_ROUTE_OVERRIDE[project_name]
+        return {"route": route, "metric": None, "reason": reason}
+    dest = p.get("buyback_destination")
+    if dest in (None, "n/a"):
+        return {"route": "none", "metric": None,
+                "reason": "no buyback mechanism is declared for this project"}
+    if dest == "burn":
+        return {"route": "burn", "metric": "gross_burn_tokens",
+                "reason": "the bought tokens are burned, so the buyback flow and the burn flow "
+                          "are one event under two names — taken from gross_burn_tokens rather "
+                          "than sourced again, because two reads of one event can disagree"}
+    if dest == "hold":
+        stock = next((s for s, f in (p.get("cumulative_flow") or {}).items()
+                      if f == "actual_buyback_tokens"), None)
+        if stock:
+            return {"route": "treasury_inflow", "metric": stock,
+                    "reason": f"the bought tokens are held, so the flow is the INFLOW of "
+                              f"{stock} — already differenced by cumulative_flow"}
+        return {"route": "treasury_inflow", "metric": None,
+                "reason": "the bought tokens are HELD, so the flow is the inflow of whichever "
+                          "fund holds them — but no fund address is declared for this project. "
+                          "That is the findable thing: add the holding address as a contract of "
+                          "kind buyback_fund_balance (or treasury_holding where they are the "
+                          "same address) and declare cumulative_flow on it. A dashboard scrape "
+                          "would give the total but not the period flow"}
+    if dest == "distribute":
+        return {"route": "distribute", "metric": None,
+                "reason": "the bought tokens are DISTRIBUTED to stakers and leave the protocol's "
+                          "control on receipt, so there is no stock to difference and no burn to "
+                          "count. Not a missing contract: an address holding them would be a "
+                          "staker's, not the protocol's. It needs a transfer-history source "
+                          "(the distributor's outflow events), which is a Dune query rather than "
+                          "a balance read"}
+    if dest == "split":
+        return {"route": "split", "metric": None,
+                "reason": "more than one destination at once — see stage_split_legs, which "
+                          "separates the buy-pressure leg from the supply-reduction leg"}
+    return {"route": "none", "metric": None,
+            "reason": f"buyback_destination {dest!r} is not a route this function knows"}
+
+
 # ===== METRICS THAT ONLY A CHAIN HAS. Added 2026-09-23. =====
 # Archetype 1 is "Infrastructure", which is not the same thing as "is a blockchain". Chainlink is
 # archetype 1 and is an ORACLE NETWORK: it has no blocks, no transactions of its own, no TVL, no
@@ -8433,6 +8521,9 @@ def metrics_for_project(project: dict) -> list[str]:
         # A chain-only metric on something that is not a chain is not an unfilled gap — it is a
         # figure that does not exist. See CHAIN_ONLY_METRICS.
         if key in CHAIN_ONLY_METRICS and not chain:
+            continue
+        # A protocol that buys nothing has no buyback flow to be missing. See buyback_route.
+        if key in BUYBACK_METRICS and buyback_route(project["name"])["route"] == "none":
             continue
         only = m.get("only_projects")
         if only and project["name"] not in only:

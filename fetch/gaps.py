@@ -225,6 +225,22 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"{blocked['what_would_settle_it']} The candidate to confirm is "
                 f"{blocked['candidate']}.")
 
+    # ===== A BUYBACK'S DESTINATION DECIDES WHY IT CANNOT BE MEASURED. Added 2026-09-23. =====
+    # "No buyback_fund_balance contract" was the wrong instruction on most of these: a buyback
+    # that BURNS has no fund to read, and tokens handed to stakers are in a staker's address, not
+    # the protocol's. config.buyback_route answers from the destination already on the entry.
+    if metric in config.BUYBACK_METRICS:
+        route = config.buyback_route(name)
+        if route["route"] in ("distribute", "treasury_inflow", "split"):
+            headline = {
+                "distribute": "DISTRIBUTED ON RECEIPT — there is no stock to difference",
+                "treasury_inflow": "HELD, so the figure is a fund INFLOW",
+                "split": "SPLIT ACROSS DESTINATIONS",
+            }[route["route"]]
+            return (f"{headline}. {route['reason']}",
+                    "Do NOT add a burn-address or generic fund contract for this — the reason "
+                    "above names what the mechanism actually needs.")
+
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:
         contracts = project.get("contracts") or {}

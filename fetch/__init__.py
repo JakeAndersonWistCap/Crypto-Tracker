@@ -282,6 +282,96 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
                             source=f"{SOURCE_DERIVED}:ratio", tier=2)
 
 
+def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
+    """actual_buyback_tokens where the destination makes it a re-labelling, and its USD twin.
+
+    TWO DERIVATIONS, BOTH OF WHICH WERE BEING ASKED FOR AS SOURCES.
+
+    (1) A BURN-DESTINATION BUYBACK IS THE BURN. Where a protocol buys its token and destroys it,
+    the buyback flow and the burn flow are ONE EVENT under two names. It was gapping as
+    "no buyback_fund_balance contract", which is the wrong instruction — there is no fund,
+    because the tokens no longer exist. Taken from gross_burn_tokens rather than sourced again:
+    two reads of one event can disagree, and then the sheet shows a protocol that burned more
+    than it bought.
+
+    (2) THE USD FIGURE IS THE TOKEN FIGURE PRICED. actual_buyback_usd had ten gaps asking for a
+    source. It is not a separate observation — a buyback is one event with a token amount and a
+    price — so sourcing it separately invites a USD figure that disagrees with its own tokens.
+
+    ** A SOURCED SERIES ALWAYS WINS, AND THE DERIVATION IS SKIPPED RATHER THAN RANKED. ** GEODNET
+    publishes both legs through Dune 8683175. Emitting a derived row beside a measured one would
+    put the collision guard in charge of which survives, which is a rule about tiers, not about
+    evidence. Where the frame already holds the metric, nothing is derived and the skip says so.
+
+    PRICED ON THE FLOW'S OWN DATE, not on today's price. A burn that happened in July valued at
+    September's price is not what was spent, and for a monthly series the error compounds across
+    the whole window.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    have = set(map(tuple, frame[["project", "metric"]].drop_duplicates().to_numpy()))
+    price_on = {(r.project, str(r.date)[:10]): r.value
+                for r in frame[frame.metric == "price_usd"].itertuples(index=False)}
+    latest_price = {}
+    for r in frame[frame.metric == "price_usd"].sort_values("date").itertuples(index=False):
+        latest_price[r.project] = (r.value, str(r.date)[:10])
+
+    for p in projects:
+        name = p["name"]
+        route = config.buyback_route(name)
+
+        # (1) THE BURN ROUTE.
+        if route["route"] == "burn" and "actual_buyback_tokens" not in {m for n, m in have if n == name}:
+            src = frame[(frame.project == name) & (frame.metric == route["metric"])]
+            if src.empty:
+                out.skipped(SOURCE_DERIVED, name,
+                            f"actual_buyback_tokens: the buyback burns, so it equals "
+                            f"{route['metric']} — which produced nothing this run, so there is "
+                            f"nothing to re-label. Not a separate gap: see {route['metric']}.",
+                            tier=2)
+            else:
+                rows = src.copy()
+                rows["metric"] = "actual_buyback_tokens"
+                rows["source"] = rows["source"].astype(str) + ":as-buyback"
+                out.add(rows, SOURCE_DERIVED, name,
+                        f"actual_buyback_tokens = {route['metric']} ({len(rows)} row(s)) — one "
+                        f"event, two names: the bought tokens are the burned tokens", 2)
+                have |= {(name, "actual_buyback_tokens")}
+
+        # (2) THE USD TWIN, for whatever token series now exists.
+        if ("actual_buyback_usd" in {m for n, m in have if n == name}
+                or "actual_buyback_tokens" not in {m for n, m in have if n == name}):
+            continue
+        toks = out.frame()
+        toks = toks[(toks.project == name) & (toks.metric == "actual_buyback_tokens")]
+        if toks.empty:
+            continue
+        priced, unpriced = [], []
+        for r in toks.itertuples(index=False):
+            day = str(r.date)[:10]
+            px = price_on.get((name, day))
+            if px is None:
+                unpriced.append(day)
+                continue
+            priced.append((r.date, float(r.value) * float(px)))
+        if unpriced:
+            # NOT PRICED AT TODAY'S PRICE. A July burn valued in September is not what was spent,
+            # and on a monthly series the error compounds across the whole window. Saying which
+            # dates could not be priced is the honest answer.
+            out.skipped(SOURCE_DERIVED, name,
+                        f"actual_buyback_usd: {len(unpriced)} of {len(toks)} buyback row(s) have "
+                        f"no price_usd on their own date ({', '.join(unpriced[:5])}"
+                        f"{'...' if len(unpriced) > 5 else ''}). Valuing them at the latest price "
+                        f"would report what they would cost today, not what was spent.", tier=2)
+        if priced:
+            out.add(pd.concat([point(name, "actual_buyback_usd", v, f"{SOURCE_DERIVED}:tokens*price", 2, d)
+                               for d, v in priced], ignore_index=True),
+                    SOURCE_DERIVED, name,
+                    f"actual_buyback_usd = actual_buyback_tokens x price_usd on each flow's own "
+                    f"date ({len(priced)} row(s))", 2)
+
+
 def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict, prior_dates: dict) -> None:
     """Derive gross_issuance_tokens from the supply change, keyed on the burn mechanism.
 
@@ -574,6 +664,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"])
     # AFTER issuance, so both lock figures are certainly in the frame by now.
     _derive_lock_ratio(out, projects, ctx["prior_values"])
+    # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
+    # rather than a figure that is about to be superseded.
+    _derive_buyback(out, projects)
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)

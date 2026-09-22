@@ -8459,3 +8459,139 @@ def test_a_defillama_listing_checked_and_absent_stops_asking_for_a_slug():
     assert "checked" not in reason.lower() and "set defillama_fees_slug" in suggestion.lower()
     print(f"defillama absence ok: World Mobile's four rows close as checked; {other['name']} "
           f"still asks for the slug")
+
+
+# ============================================================================================
+# THE BUYBACK ROUTE: WHERE THE TOKENS GO DECIDES HOW THE FLOW IS MEASURED
+# ============================================================================================
+
+def test_the_buyback_route_is_derived_from_the_destination_already_on_file():
+    """actual_buyback_tokens was gapping with "no buyback_fund_balance contract" on seven
+    projects, and that is the wrong instruction for most of them: a buyback that BURNS has no
+    fund because the tokens no longer exist, and tokens handed to stakers sit in a staker's
+    address, not the protocol's.
+
+    The destination is already declared on every entry. Nothing new had to be established.
+    """
+    expected = {
+        "Hyperliquid": "burn", "GEODNET": "burn", "Uniswap": "burn",
+        "Chainlink": "treasury_inflow", "Maple": "treasury_inflow", "Fluid": "treasury_inflow",
+        "Ether.fi": "distribute", "Pendle": "distribute", "World Mobile": "distribute",
+        "Sky": "split", "Aerodrome": "none", "Morpho": "none",
+    }
+    for name, route in expected.items():
+        assert config.buyback_route(name)["route"] == route, name
+
+    # CHAINLINK RESOLVES TO ITS OWN FUND, because it declares cumulative_flow on the Reserve.
+    assert config.buyback_route("Chainlink")["metric"] == "buyback_fund_balance"
+    # MAPLE DOES NOT, and the reason names the findable thing rather than a generic contract.
+    assert config.buyback_route("Maple")["metric"] is None
+    assert "no fund address is declared" in config.buyback_route("Maple")["reason"]
+
+    # ** AERODROME IS "none", NOT "distribute", AND THE DIFFERENCE MATTERS. ** No AERO is ever
+    # bought: 100% of fees go to voters in the PAIR'S tokens. A "distribute" gap would invite
+    # someone to go and find a flow that does not exist.
+    aero = config.buyback_route("Aerodrome")
+    assert "NO AERO IS BOUGHT AT ALL" in aero["reason"]
+    applicable = set(config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"]))
+    assert not (applicable & set(config.BUYBACK_METRICS)), \
+        "a flow that does not exist must not be reported as missing"
+    # AND THE CLAIM IS THE PROJECT'S OWN, not this function's opinion.
+    assert config.PROJECT_BY_NAME["Aerodrome"]["fee_split"]["destination_model"] == "distribute_to_voters"
+
+    print("buyback routes ok: 12 projects routed from the destination already declared")
+
+
+def test_a_burn_destination_buyback_is_the_burn_and_its_usd_twin_is_priced_on_the_day():
+    """ONE EVENT, TWO NAMES. Where a protocol buys its token and destroys it, the buyback flow
+    IS the burn flow. Reading it twice from two places lets the two disagree, and then the sheet
+    shows a protocol that burned more than it bought.
+
+    And the USD figure is not a separate observation either — a buyback is one event with a token
+    amount and a price.
+    """
+    import fetch
+    from fetch.base import FetchOutput, point
+
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    out = FetchOutput()
+    out.add(pd.concat([point("Hyperliquid", "gross_burn_tokens", 1_000.0, "hypercore:x:delta", 2,
+                             pd.Timestamp("2026-09-20")),
+                       point("Hyperliquid", "gross_burn_tokens", 2_000.0, "hypercore:x:delta", 2,
+                             pd.Timestamp("2026-09-21"))], ignore_index=True),
+            "chain", "Hyperliquid", "burn", 2)
+    out.add(pd.concat([point("Hyperliquid", "price_usd", 40.0, "coingecko", 1,
+                             pd.Timestamp("2026-09-20")),
+                       point("Hyperliquid", "price_usd", 50.0, "coingecko", 1,
+                             pd.Timestamp("2026-09-21"))], ignore_index=True),
+            "coingecko", "Hyperliquid", "price", 1)
+
+    fetch._derive_buyback(out, [hl])
+    df = out.frame()
+    toks = df[df.metric == "actual_buyback_tokens"].sort_values("date")
+    usd = df[df.metric == "actual_buyback_usd"].sort_values("date")
+    assert list(toks.value) == [1_000.0, 2_000.0], toks.to_dict()
+    assert toks.source.iloc[0].endswith(":as-buyback"), "the re-labelling is visible in the source"
+
+    # PRICED ON EACH FLOW'S OWN DATE. Today's price on a July burn is not what was spent, and on
+    # a monthly series that error compounds across the whole window.
+    assert list(usd.value) == [40_000.0, 100_000.0], usd.to_dict()
+    assert usd.source.iloc[0] == "derived:tokens*price"
+
+    print("burn-route buyback ok: 1,000 and 2,000 HYPE, priced at 40 and 50 on their own days")
+
+
+def test_a_measured_buyback_series_is_never_displaced_by_the_derivation():
+    """** GEODNET PUBLISHES BOTH LEGS THROUGH DUNE 8683175. ** Emitting a derived row beside a
+    measured one would put the tier-collision guard in charge of which survives — a rule about
+    tiers, not about evidence. The derivation stands down instead, and says so."""
+    import fetch
+    from fetch.base import FetchOutput, point
+
+    geo = config.PROJECT_BY_NAME["GEODNET"]
+    assert config.buyback_route("GEODNET")["route"] == "burn"
+    out = FetchOutput()
+    out.add(point("GEODNET", "gross_burn_tokens", 900.0, "chain:polygon:burn_polygon:delta", 2,
+                  pd.Timestamp("2026-09-21")), "chain", "GEODNET", "burn", 2)
+    out.add(point("GEODNET", "actual_buyback_tokens", 777.0, "dune:8683175", 4,
+                  pd.Timestamp("2026-09-21")), "dune", "GEODNET", "measured", 4)
+    out.add(point("GEODNET", "actual_buyback_usd", 123.0, "dune:8683175", 4,
+                  pd.Timestamp("2026-09-21")), "dune", "GEODNET", "measured", 4)
+    out.add(point("GEODNET", "price_usd", 2.0, "coingecko", 1, pd.Timestamp("2026-09-21")),
+            "coingecko", "GEODNET", "price", 1)
+
+    fetch._derive_buyback(out, [geo])
+    df = out.frame()
+    assert list(df[df.metric == "actual_buyback_tokens"].value) == [777.0], \
+        "the measured Dune figure stands; nothing derived is emitted beside it"
+    assert list(df[df.metric == "actual_buyback_usd"].value) == [123.0], \
+        "and the sourced USD series wins over tokens x price"
+    print("sourced wins ok: GEODNET's measured legs are left alone, no derived twin emitted")
+
+
+def test_a_buyback_row_with_no_price_on_its_own_date_is_reported_not_valued_at_todays():
+    """A July burn valued at September's price is not what was spent. Saying which dates could
+    not be priced is the honest answer; carrying the latest price backwards is a confident wrong
+    number of exactly the kind this project keeps correcting."""
+    import fetch
+    from fetch.base import FetchOutput, point
+
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    out = FetchOutput()
+    out.add(pd.concat([point("Hyperliquid", "gross_burn_tokens", 1_000.0, "hypercore:x:delta", 2,
+                             pd.Timestamp("2026-07-01")),
+                       point("Hyperliquid", "gross_burn_tokens", 500.0, "hypercore:x:delta", 2,
+                             pd.Timestamp("2026-09-21"))], ignore_index=True),
+            "chain", "Hyperliquid", "burn", 2)
+    out.add(point("Hyperliquid", "price_usd", 50.0, "coingecko", 1, pd.Timestamp("2026-09-21")),
+            "coingecko", "Hyperliquid", "price", 1)
+
+    fetch._derive_buyback(out, [hl])
+    df = out.frame()
+    usd = df[df.metric == "actual_buyback_usd"]
+    assert list(usd.value) == [25_000.0], "only the day that has its own price is valued"
+    assert not any(v == 50_000.0 for v in usd.value), "the July row is NOT valued at September"
+    skipped = [e for e in out.log if e.status == "skipped" and "actual_buyback_usd" in e.message]
+    assert skipped and "2026-07-01" in skipped[0].message, skipped
+    assert "not what was spent" in skipped[0].message
+    print("pricing ok: the unpriced date is named and left out, not carried at today's price")
