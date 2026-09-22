@@ -7251,8 +7251,11 @@ def test_hyperliquid_holds_archetype_4_on_the_evidence_already_in_config():
         "the two-source basis is what makes this confirmed rather than assumed"
 
     # THE STAKING ELEMENT IS NOT AN ARCHETYPE. It is metrics, which this project already has.
+    # The metric is locked_tokens since 2026-09-23: staked_tokens was the same quantity under a
+    # second name with no route to it, and was merged into the one every contract read writes.
     assert set(config.ARCHETYPE_NAMES) == {1, 2, 3, 4}
-    assert "staked_tokens" in config.metrics_for_project(p)
+    assert "locked_tokens" in config.metrics_for_project(p)
+    assert "staked_tokens" not in config.METRICS
 
     # And the new burn metrics explain themselves rather than asking for an address: the figure
     # comes from the protocol's own API, which the node_api branch of the gap reporter knows.

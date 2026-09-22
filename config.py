@@ -296,7 +296,9 @@ METRICS = {
                                    "tiers": [2, 3, 4], "sanity_min": 0, "sanity_max": 1e12,
                                    "only_projects": ["Venice AI"]},
     "burn_address_balance":       {"label": "Cumulative burned (burn address)", "kind": "stock", "unit": "tokens", "archetypes": [4],         "tiers": [2],    "sanity_min": 0,    "sanity_max": 1e15},
-    "staked_tokens":              {"label": "Staked tokens",                   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3],    "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
+    # staked_tokens RETIRED 2026-09-23 — merged into locked_tokens above, which is the name every
+    # contract read already writes. Stored rows are moved, not dropped: orphan_cleanup.sql
+    # section Q. Re-creating it would re-create the empty column.
     "emissions_tokens":           {"label": "Emissions to suppliers/stakers",  "kind": "flow",  "unit": "tokens", "archetypes": [2, 3],       "tiers": [1, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
     "actual_buyback_usd":         {"label": "Actual buyback (observed)",       "kind": "flow",  "unit": "usd",    "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e11},
     "actual_buyback_tokens":      {"label": "Actual buyback tokens (observed)", "kind": "flow", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
@@ -333,7 +335,27 @@ METRICS = {
     # layer - deposits, which is a genuinely independent construction rather than a restatement of
     # the same vendor figure, so it cross-checks CoinGecko rather than duplicating it.
     "total_supply_dashboard":     {"label": "Total supply (protocol dashboard, cross-check)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near")},
-    "locked_tokens":              {"label": "Tokens locked (ve)",              "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
+    # ===== ONE CONCEPT, ONE NAME. staked_tokens MERGED IN HERE 2026-09-23. =====
+    # staked_tokens (archetypes 1,2,3) and locked_tokens (3) were the same quantity under two
+    # names, and the split was doing real harm: every chain read of a stake or escrow writes
+    # THIS metric — kinds ve_total_supply, stake_principal, stake_underlying all land here — so
+    # staked_tokens had no route at all. Its only wiring was tier-4 Dune slots, every one of them
+    # with query_id None. The result was a permanently empty column and one Gap Report row per
+    # project per run for a figure already on the sheet under the other name.
+    #
+    # THE SURVIVOR IS locked_tokens BECAUSE IT IS THE ONE THAT IS WIRED, and it takes the wider
+    # archetype set so nothing is lost: [1,2,3] is exactly staked_tokens' old coverage, and every
+    # project that had either metric still has this one. Ethereum's beacon-chain deposits and
+    # Morpho's staking are archetype 1 and 2 and would have been dropped by retiring the wider
+    # name instead.
+    #
+    # THE LABEL CANNOT SAY "(ve)" ANY MORE and that is not cosmetic: it would describe a
+    # cooldown stake (Chainlink), a share token (Ether.fi's sETHFI) and beacon-chain deposits as
+    # vote-escrow locks, which is a claim about withdrawal rights that none of them make. The
+    # shared label names the quantity; metric_labels says what it is per project.
+    "locked_tokens":              {"label": "Staked or locked tokens (escrowed, not circulating)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3],
+                                   "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
     # THE PROTOCOL'S OWN ACCOUNTING OF THE SAME THING, stored ALONGSIDE locked_tokens rather than
     # instead of it. locked_tokens is read as TOKEN.balanceOf(pool), which counts every token at
     # the pool address — staked principal plus anything stray or in transit — and is therefore an
@@ -1238,6 +1260,9 @@ _NO_SPLIT = {
 PROJECTS = [
     # ------------------------------------------------------------------ Archetype 1 (+4)
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. the original chain; tx_count and active_addresses are its native figures.
+        "is_chain": True,
         "name": "Bitcoin", "symbol": "BTC",
         "coingecko_id": "bitcoin",
         "defillama_fees_slug": "bitcoin", "defillama_protocol": None, "defillama_chain": "Bitcoin",
@@ -1257,6 +1282,9 @@ PROJECTS = [
         "notes": "Issuance schedule only. No burn, no buyback.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1.
+        "is_chain": True,
         "name": "Ethereum", "symbol": "ETH",
         "coingecko_id": "ethereum",
         "defillama_fees_slug": "ethereum", "defillama_protocol": None, "defillama_chain": "Ethereum",
@@ -1408,13 +1436,16 @@ PROJECTS = [
         "burn_read_note": "EIP-1559 destroys the base fee at the protocol level. No transfer occurs, so there is NO burn address to read. Needs a chain-data or dashboard source (ultrasound.money publishes it).",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
-        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
+        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "locked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "EIP-1559 base fee burn. Net issuance = validator issuance - base fee burn, and the "
                  "SIGN OF THAT SUBTRACTION VARIES — see net_supply_regime. Currently positive "
                  "(+0.83% to +0.85%/yr).",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1.
+        "is_chain": True,
         "name": "Solana", "symbol": "SOL",
         "coingecko_id": "solana",
         "defillama_fees_slug": "solana", "defillama_protocol": None, "defillama_chain": "Solana",
@@ -1440,11 +1471,14 @@ PROJECTS = [
         "burn_read_note": "Partial fee burn via the SPL burn instruction — supply is destroyed, not sent to a wallet. There is no burn address to read. Needs a chain-data or dashboard source.",   # not EVM — tier 2 web3 path does not apply
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
-        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
+        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "locked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "Partial fee burn — confirm current share. Non-EVM, so no tier 2 contract read.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1.
+        "is_chain": True,
         "name": "Tron", "symbol": "TRX",
         "coingecko_id": "tron",
         "defillama_fees_slug": "tron", "defillama_protocol": None, "defillama_chain": "Tron",
@@ -1487,12 +1521,15 @@ PROJECTS = [
                           "circulate are the wrong approach and have been removed.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
-        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
+        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "locked_tokens", "tx_count", "active_addresses"),
         "materiality": "high",
         "notes": "TVM, not EVM-compatible via web3.py standard JSON-RPC. Burn is read from the node API key BURN_TRX "
                  "(TIP #49), not from any black-hole address.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1.
+        "is_chain": True,
         "name": "Near", "symbol": "NEAR",
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
@@ -1767,7 +1804,7 @@ PROJECTS = [
                                "90% — see issuance_rate_declared.treasury_share",
             },
         },
-        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
+        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "locked_tokens", "tx_count", "active_addresses"),
         "revenue_reference": {
             "source": "DefiLlama", "as_of": "2026-09-14",
             "fees_30d_usd": 4_050_000, "revenue_30d_usd": 911_826,
@@ -1796,6 +1833,9 @@ PROJECTS = [
                  "disabled. Any source quoting 5% inflation is pre-October-2025, whatever date it carries.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1 — a privacy-enabled public chain. No DefiLlama chain slug, which is a coverage gap at DefiLlama, not evidence that it is not a chain.
+        "is_chain": True,
         "name": "Canton", "symbol": "CC",
         "coingecko_id": "canton-network",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
@@ -1865,6 +1905,9 @@ PROJECTS = [
         "notes": "Not on DefiLlama. Own dashboard (tier 3) + Dune page (tier 4). Verify the CoinGecko id.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1 (RWA-focused).
+        "is_chain": True,
         "name": "Plume", "symbol": "PLUME",
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",
@@ -2007,7 +2050,7 @@ PROJECTS = [
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
-        "dune_queries": _dune("gross_issuance_tokens", "staked_tokens", "emissions_tokens", "tx_count", "active_addresses"),
+        "dune_queries": _dune("gross_issuance_tokens", "locked_tokens", "emissions_tokens", "tx_count", "active_addresses"),
         # ARCHETYPE 1 IS PLUME'S REAL STRENGTH — keep these prominent rather than burying them
         # under a supply story the chain does not have.
         "operating_reference": [
@@ -2032,6 +2075,9 @@ PROJECTS = [
                  "largest chain by RWA participants.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1.
+        "is_chain": True,
         "name": "Injective", "symbol": "INJ",
         "coingecko_id": "injective-protocol",
         "defillama_fees_slug": "injective", "defillama_protocol": None, "defillama_chain": "Injective",
@@ -2056,11 +2102,14 @@ PROJECTS = [
         "burn_read_note": "The auction and Community BuyBack modules destroy INJ on-chain with no transfer. DO NOT USE the 0x1111...1111 address that circulates publicly — it is a contribution subaccount, NOT a burn destination, and reading it would return the wrong number entirely.",
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
-        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "staked_tokens", "tx_count", "active_addresses"),
+        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "locked_tokens", "tx_count", "active_addresses"),
         "materiality": "medium",
         "notes": "Monthly Community BuyBack: committed INJ permanently burned.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. L1. No DefiLlama chain slug — it carries no DeFi, which is a fact about the chain rather than a reason to reclassify it.
+        "is_chain": True,
         "name": "Zcash", "symbol": "ZEC",
         "coingecko_id": "zcash",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
@@ -2080,6 +2129,18 @@ PROJECTS = [
         "notes": "No burn. Issuance schedule read only.",
     },
     {
+        # ===== NOT A CHAIN, AND THIS IS THE ONE ARCHETYPE-1 PROJECT THAT IS NOT. =====
+        # Chainlink is an ORACLE NETWORK. It has no blocks of its own, no transactions, no TVL,
+        # no stablecoin supply and no RWAs — those figures do not exist for it, and it was
+        # collecting SIX Gap Report rows a run asking for them. Archetype 1 is "Infrastructure",
+        # which is not the same claim as "is a blockchain"; the six metrics key on this flag
+        # rather than on the archetype, because the archetype is right and was never the problem.
+        #
+        # ITS OWN NETWORK ACTIVITY IS A DIFFERENT QUANTITY. Chainlink publishes oracle updates,
+        # requests served and value secured — real figures, none of which is tx_count. Wiring one
+        # of them INTO tx_count would put an oracle-update count in a column that means
+        # blockchain transactions everywhere else, which is worse than the gap it closes.
+        "is_chain": False,
         "name": "Chainlink", "symbol": "LINK",
         "coingecko_id": "chainlink",
         "defillama_fees_slug": "chainlink", "defillama_protocol": "chainlink", "defillama_chain": None,
@@ -2364,7 +2425,7 @@ PROJECTS = [
             "locked_tokens": {"min": 0, "max": 60_000_000},
             "buyback_fund_balance_dashboard": {"min": 0, "max": 100_000_000, "change_threshold_pct": 40},
         },
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "staked_tokens", "emissions_tokens"),
+        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "locked_tokens", "emissions_tokens"),
         "materiality": "high",
         "notes": "The Reserve, not the LINK token contract, is the archetype 3 revenue input. Destination is HOLD: "
                  "a multi-day withdrawal timelock with no withdrawals expected for years, so accumulated LINK is "
@@ -4050,7 +4111,7 @@ PROJECTS = [
         "contracts": {},
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
-        "dune_queries": _dune("emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("emissions_tokens", "locked_tokens"),
         "materiality": "medium",
         "notes": "NOT archetype 3 — yield is emissions-funded, revenue capture unproven. ~70% staked is a float metric, not demand. "
                  "taostats has an API — the one archetype 2 name with a real programmatic source.",
@@ -4070,7 +4131,7 @@ PROJECTS = [
             "token": _contract("0xaA7a9CA87d3694B5755f213B5D04094b8d0F0A6F", "ethereum", "erc20_total_supply", "TRAC",
                                "https://docs.origintrail.io/"),
         },
-        "dune_queries": _dune("emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("emissions_tokens", "locked_tokens"),
         "materiality": "low",
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
@@ -4200,7 +4261,7 @@ PROJECTS = [
         },
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
-        "dune_queries": _dune("emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("emissions_tokens", "locked_tokens"),
         # Move annually, and cost more to automate than to type. A quarterly hand-entry is the
         # right answer for these, not a failure to automate one.
         "manual_quarterly": ["supply_units", "utilisation_pct"],
@@ -4413,7 +4474,7 @@ PROJECTS = [
         },
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
         "destination_effect": "removed_from_supply",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "gross_burn_tokens", "emissions_tokens", "locked_tokens"),
         # FAILURE MODE 4 — correct, and not comparable. ~99.5% of the cumulative is a one-off
         # March 2025 airdrop burn. The number is right; quoting it as buyback scale is not.
         "non_comparable": {
@@ -4451,7 +4512,7 @@ PROJECTS = [
         "issuance_schedule": None,
         "contracts": {},
         # The buyback slots are gone with the archetype: they measured agent tokens, not VIRTUAL.
-        "dune_queries": _dune("emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("emissions_tokens", "locked_tokens"),
         "materiality": "medium",
         "notes": "Agent launch and trading fees fund a buyback-and-burn OF AGENT TOKENS, not of VIRTUAL. "
                  "defillama_fees_slug is assumed to match defillama_protocol; confirm on DefiLlama, "
@@ -4776,7 +4837,7 @@ PROJECTS = [
         "destination_effect": "treasury_redeployable",
         "destination_source_url": "https://maple.finance/transparency",
         "destination_confirmed_date": "2026-09-14",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"),
         # DESTINATION INDETERMINATE — a sixth type, and it is neither of the two it resembles.
         # The purchased SYRUP goes to the SYRUP Strategic Fund, whose stated uses include working
         # capital, TOKEN LIQUIDITY, capital reserves and further buybacks. "Token liquidity" means
@@ -4965,6 +5026,9 @@ PROJECTS = [
                  "tokens. The switch is blocked on legal/tax structuring, not on a decision about holders.",
     },
     {
+        # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
+        # metrics apply. its own L1, plus HyperEVM.
+        "is_chain": True,
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
         # ===== TOTAL STAKED HYPE: CHECKED AGAINST HYPERLIQUID'S OWN SOURCE, AND NOT WIRED. =====
@@ -5188,7 +5252,7 @@ PROJECTS = [
                      "of revenue so the model cannot book money that has not landed. Flip booked to True "
                      "only once a payment is observed."},
         ],
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens", "tx_count", "active_addresses", "gross_issuance_tokens"),
+        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens", "tx_count", "active_addresses", "gross_issuance_tokens"),
         "materiality": "high",
         "notes": "DESTINATION RESOLVED: validators voted 27 Dec 2025, 85% of staked weight in favour, to formally "
                  "recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently "
@@ -6145,7 +6209,7 @@ PROJECTS = [
             {"period": "2026-06", "metric": "net_mint_monthly", "value": -1_749_587,
              "source": "PancakeSwap monthly CAKE Burn Report (June 2026)"},
         ],
-        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens", "staked_tokens"),
+        "dune_queries": _dune("gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens", "locked_tokens"),
         "materiality": "high",
         # ===== THE "4.99bn BURNED AGAINST A 400m CAP" PUZZLE — RESOLVED 2026-09-22. =====
         # Raised 2026-09-15 as "12.5x the entire possible supply" and treated ever since as a
@@ -7321,7 +7385,7 @@ PROJECTS = [
                         "then Sky has no burn figure at all, which is the correct state.",
             },
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "gross_issuance_tokens",
-                    "emissions_tokens", "staked_tokens"),
+                    "emissions_tokens", "locked_tokens"),
         },
                 "cross_checks": [
             {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
@@ -7873,7 +7937,7 @@ PROJECTS = [
         "buyback_destination": "distribute",   # to stakers — NOT in dispute
         "destination_effect": "yield_payout",
         "destination_split": None, "burn_execution": "n/a",
-        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "staked_tokens"),
+        "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"),
                 "cross_checks": [
             {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
              "secondary": "locked_tokens_dashboard", "secondary_source": "https://app.aave.com/safety-module/",
@@ -8315,6 +8379,33 @@ PROJECTS = [
 PROJECT_BY_NAME = {p["name"]: p for p in PROJECTS}
 
 
+# ===== METRICS THAT ONLY A CHAIN HAS. Added 2026-09-23. =====
+# Archetype 1 is "Infrastructure", which is not the same thing as "is a blockchain". Chainlink is
+# archetype 1 and is an ORACLE NETWORK: it has no blocks, no transactions of its own, no TVL, no
+# stablecoins and no RWAs. It was collecting six Gap Report rows a run for figures that do not
+# exist for it — the exact failure metrics_for_project's not_applicable block was written to stop,
+# arriving through a different door because the archetype looked close enough.
+#
+# DECLARED PER PROJECT, NOT INFERRED. is_chain is required on every archetype-1 project and
+# _check_is_chain refuses a run without it. An absent flag defaulting to False would silently
+# strip tx_count and active_addresses from Bitcoin the day someone added a project and forgot —
+# and a metric that vanishes is harder to notice than one that is wrongly present.
+CHAIN_ONLY_METRICS = ("tx_count", "active_addresses", "tvl_usd", "stablecoin_supply_usd",
+                      "rwa_defillama_usd", "rwa_xyz_usd")
+
+
+def is_chain(project: dict) -> bool:
+    """Is this project a blockchain, as opposed to a protocol or network that runs on one?"""
+    return bool(project.get("is_chain"))
+
+
+def _check_is_chain() -> list[str]:
+    """Every archetype-1 project must SAY whether it is a chain. See CHAIN_ONLY_METRICS."""
+    return [f"{p['name']}: archetype 1 but no is_chain declared — CHAIN_ONLY_METRICS cannot be "
+            f"scoped without it, and defaulting it either way is a silent answer"
+            for p in PROJECTS if 1 in p["archetypes"] and "is_chain" not in p]
+
+
 def metrics_for_project(project: dict) -> list[str]:
     """Metric keys that apply to a project, from its archetypes, MINUS its declared exclusions.
 
@@ -8334,9 +8425,14 @@ def metrics_for_project(project: dict) -> list[str]:
     """
     arch = set(project["archetypes"])
     na = project.get("not_applicable") or {}
+    chain = is_chain(project)
     out = []
     for key, m in METRICS.items():
         if key in na:
+            continue
+        # A chain-only metric on something that is not a chain is not an unfilled gap — it is a
+        # figure that does not exist. See CHAIN_ONLY_METRICS.
+        if key in CHAIN_ONLY_METRICS and not chain:
             continue
         only = m.get("only_projects")
         if only and project["name"] not in only:
@@ -10536,7 +10632,8 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
               + _check_relation_exemptions() + _check_circulating_conventions()
               + _check_total_supply_conventions()
               + _check_series_granularity()
-              + _check_open_question_status())
+              + _check_open_question_status()
+              + _check_is_chain())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

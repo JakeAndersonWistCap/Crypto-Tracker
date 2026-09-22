@@ -1582,3 +1582,82 @@ SELECT metric, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects, MAX(ts) AS
 -- COMMIT;
 
 -- P5. VERIFY — P1 shows one run_id per table, both CURRENT.
+
+
+-- ========================================================================================
+-- Q. staked_tokens RETIRED — MERGED INTO locked_tokens. THE ROWS MOVE.               2026-09-23
+--    Q1-Q3 LOOK. Q4 is an UPDATE, not a DELETE: the readings were correct, the column was
+--    duplicated. Nothing here destroys a figure.
+-- ========================================================================================
+-- WHAT HAPPENED: staked_tokens (archetypes 1,2,3) and locked_tokens (3) were the same quantity
+-- under two names. Every chain read of a stake or an escrow writes locked_tokens — the kinds
+-- ve_total_supply, stake_principal and stake_underlying all land there — so staked_tokens had no
+-- route at all. Its only wiring was tier-4 Dune slots, every one of them with query_id None. A
+-- permanently empty column, and one Gap Report row per project per run for a figure already on
+-- the sheet under the other name.
+--
+-- THE SURVIVOR IS locked_tokens BECAUSE IT IS THE WIRED ONE, widened to [1,2,3] so nothing is
+-- lost: that is exactly staked_tokens' old coverage. Ethereum's beacon-chain deposits and
+-- Morpho's staking are archetype 1 and 2 and would have been dropped by retiring the wider name.
+--
+-- Q1. WHAT IS STORED UNDER THE RETIRED NAME. Expected to be small or empty — the column never
+--     had a working source — but "expected" is not "checked", and a Dune query that was wired
+--     once and later unwired would have left real readings here.
+SELECT project, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       GROUP_CONCAT(DISTINCT source) AS sources
+  FROM metrics WHERE metric = 'staked_tokens'
+ GROUP BY project ORDER BY project;
+
+-- Q2. THE COLLISIONS, AND THEY DECIDE WHETHER THE MOVE IS SAFE. `metrics` is keyed
+--     (date, project, metric), so an UPDATE that renames staked_tokens to locked_tokens fails
+--     on any (project, date) that already holds a locked_tokens row — and a failed UPDATE inside
+--     a transaction rolls the whole move back rather than half-applying it.
+--
+--     A COLLISION IS ALSO A FINDING, not just an obstacle: the same project holding two
+--     different numbers for the same quantity on the same day means the two names were being fed
+--     by sources that disagree, and which one is right is a question, not a merge conflict to
+--     resolve by picking the newer row. READ THIS BEFORE RUNNING Q4.
+SELECT s.project, s.date, s.value AS staked_value, s.source AS staked_source,
+       l.value AS locked_value, l.source AS locked_source,
+       s.value - l.value AS difference
+  FROM metrics s
+  JOIN metrics l ON l.project = s.project AND l.date = s.date AND l.metric = 'locked_tokens'
+ WHERE s.metric = 'staked_tokens'
+ ORDER BY s.project, s.date;
+
+-- Q3. WHAT WOULD MOVE — every staked_tokens row with no locked_tokens row on the same date.
+--     If Q2 returned nothing, this is all of Q1.
+SELECT s.date, s.project, s.value, s.source, s.tier, 'WOULD MOVE to locked_tokens' AS action
+  FROM metrics s
+ WHERE s.metric = 'staked_tokens'
+   AND NOT EXISTS (SELECT 1 FROM metrics l
+                    WHERE l.project = s.project AND l.date = s.date
+                      AND l.metric = 'locked_tokens')
+ ORDER BY s.project, s.date;
+
+-- Q4. THE MOVE. An UPDATE, because the readings were correct and only the column was duplicated
+--     — the same treatment as section I's Ether.fi re-attribution, and for the same reason: a
+--     history is evidence and deleting it to tidy a rename throws away the only record of what
+--     the series used to say.
+--
+--     SCOPED TO NON-COLLIDING ROWS so it cannot fail on the primary key. Anything Q2 listed is
+--     LEFT WHERE IT IS, deliberately: two disagreeing numbers for one quantity need a decision
+--     about which source is right, and this file does not make that decision silently. Re-run Q1
+--     afterwards — what remains is exactly the collision set, and it is the to-do.
+-- BEGIN;
+-- UPDATE metrics SET metric = 'locked_tokens'
+--  WHERE metric = 'staked_tokens'
+--    AND NOT EXISTS (SELECT 1 FROM metrics l
+--                     WHERE l.project = metrics.project AND l.date = metrics.date
+--                       AND l.metric = 'locked_tokens');
+-- COMMIT;
+
+-- Q5. THE GAP ROWS UNDER THE RETIRED NAME, which section P3 also covers. Listed here so the
+--     retirement is finished in one place rather than half-done across two sections.
+SELECT COUNT(*) AS gap_rows_for_retired_metric
+  FROM gap_report WHERE metric = 'staked_tokens';
+
+-- Q6. VERIFY — Q1 returns only the collision set (or nothing), and locked_tokens has grown by
+--     exactly what Q3 listed.
+-- SELECT metric, COUNT(*) AS rows, COUNT(DISTINCT project) AS projects
+--   FROM metrics WHERE metric IN ('staked_tokens', 'locked_tokens') GROUP BY metric;
