@@ -763,7 +763,14 @@ def is_manual_quarterly(project_name: str, metric: str) -> bool:
 
 # Markers a source string carries that describe HOW a figure was produced, not WHAT was read.
 # Exact-match pieces between colons.
-SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only")
+# "rederived" marks a row REBUILT from the stock it was differenced from (rederive.py), after a
+# same-day re-run corrupted the original. It has to be registered here, not just written: every
+# parser that resolves contract keys out of a source string — and _measuring_point, which decides
+# whether two readings measured the same thing — filters the colon-delimited pieces against this
+# tuple and treats whatever is left as a contract key. An unregistered marker would make a
+# rebuilt row read as a DIFFERENT measuring point from the live one, so the next run would refuse
+# to difference against it and report a change of address that never happened.
+SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that

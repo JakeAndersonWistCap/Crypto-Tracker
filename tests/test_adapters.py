@@ -7610,3 +7610,191 @@ def test_issuance_prefers_the_single_source_gross_delta_over_net_plus_burn():
                      {("Uniswap", "total_supply"): "2026-09-20"})
     assert not out.added and any("NEGATIVE" in g["reason"] for g in out.gaps)
     print("issuance ok: gross delta preferred, divergence flagged, real mints still derive")
+
+
+# ============================================================================================
+# REBUILDING A DIFFERENCED FLOW FROM THE STOCK IT CAME FROM
+# ============================================================================================
+
+def _hyperliquid_store(tmp_path, flow_rows=None):
+    """Hyperliquid's real shape: a sound daily balance series under a corrupted flow series.
+
+    The balances are one surviving reading per date — the last run of each day — and were never
+    differenced, so the same-day re-run bug could not touch them. The flow row for 2026-09-21
+    holds only the LAST run's increment, because four runs that day each overwrote the one before.
+    """
+    import sqlite3
+    import store as store_mod
+    db = tmp_path / "hl.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(store_mod.SCHEMA)
+    src = "hypercore_info:spotClearinghouseState"
+    bal = [("2026-09-11", 47_155_473.0), ("2026-09-12", 47_180_000.0), ("2026-09-13", 47_205_000.0),
+           ("2026-09-16", 47_280_000.0), ("2026-09-17", 47_300_000.0), ("2026-09-18", 47_320_000.0),
+           ("2026-09-21", 47_387_407.0)]
+    rows = [(d, "Hyperliquid", "burn_address_balance", v, src, 1, "2026-09-21T18:00:00")
+            for d, v in bal]
+    flow = flow_rows if flow_rows is not None else [
+        ("2026-09-12", 24_527.0), ("2026-09-13", 25_000.0), ("2026-09-16", 75_000.0),
+        ("2026-09-17", 20_000.0), ("2026-09-18", 20_000.0), ("2026-09-21", 83_344.4791)]
+    rows += [(d, "Hyperliquid", "gross_burn_tokens", v, f"{src}:delta", 1, "2026-09-21T18:00:00")
+             for d, v in flow]
+    conn.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)", rows)
+    conn.executemany(
+        "INSERT INTO run_log(run_id, ts, source, tier, project, rows, status, message)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        [(f"r{i}", f"{d}T{h:02d}:00:00", "hypercore_info", 1, "Hyperliquid", 2, "ok", "")
+         for i, (d, h) in enumerate([("2026-09-16", 9), ("2026-09-17", 9), ("2026-09-18", 9),
+                                     ("2026-09-21", 9), ("2026-09-21", 12), ("2026-09-21", 15),
+                                     ("2026-09-21", 18)])])
+    conn.commit()
+    return conn
+
+
+def test_a_corrupted_flow_series_is_rebuilt_from_its_stock_not_deleted(tmp_path):
+    """** THE BALANCES WERE NEVER WRONG, so the history does not have to be thrown away. **
+
+    The cleanup proposed deleting all eight differenced rows and letting the next run recover the
+    span as a single figure. That is a real remedy and it costs the daily shape permanently. The
+    flow is redundant information — delta(d) = stock(d) - stock(previous stored d) — so it
+    rebuilds from readings the bug could not reach.
+    """
+    import rederive
+    conn = _hyperliquid_store(tmp_path)
+    plan = rederive.rederive_flow_from_stock(conn, "Hyperliquid", "gross_burn_tokens")
+
+    assert plan.stock_metric == "burn_address_balance", "taken from config, not from the caller"
+    assert plan.blocked is None and not plan.refusals
+    # 47,387,407 - 47,155,473. The identity the whole exercise exists to satisfy.
+    assert round(plan.new_total, 4) == 231_934.0
+    assert round(plan.new_total, 4) == round(47_387_407.0 - 47_155_473.0, 4)
+    assert round(plan.old_total, 4) == 247_871.4791, "what is stored over-counts"
+    # THE CORRUPTED DATE IS THE ONE THAT MOVES, and only it.
+    by_date = {p.date: p.value for p in plan.proposed}
+    assert round(by_date["2026-09-21"], 4) == 67_407.0, "the day's true move, not the last run's"
+    assert by_date["2026-09-16"] == 75_000.0, "an uncorrupted date rebuilds to what it already was"
+    # A DATE WITH NO FLOW ROW IS NOT INVENTED: the first balance has nothing before it.
+    assert "2026-09-11" not in by_date
+
+    removed, written = rederive.apply_plan(conn, plan)
+    assert removed == 6 and written == 6
+    after = dict(conn.execute("SELECT date, value FROM metrics WHERE project='Hyperliquid'"
+                              " AND metric='gross_burn_tokens' ORDER BY date").fetchall())
+    assert round(sum(after.values()), 4) == 231_934.0
+    assert round(after["2026-09-21"], 4) == 67_407.0
+    # THE BALANCES ARE UNTOUCHED — they are the evidence, and the rebuild reads them.
+    assert conn.execute("SELECT COUNT(*) FROM metrics WHERE project='Hyperliquid'"
+                        " AND metric='burn_address_balance'").fetchone()[0] == 7
+    print("rebuild ok: 231,934.0000 HYPE across the span, daily shape recovered, balances intact")
+
+
+def test_a_rebuilt_row_is_not_read_as_a_change_of_measuring_point():
+    """** THE MARKER HAS TO BE REGISTERED, NOT JUST WRITTEN. **
+
+    A rebuilt row carries ':rederived' so its provenance is on the row. Every parser that pulls
+    contract keys out of a source string filters the colon-delimited pieces against
+    config.SOURCE_MARKERS and treats what is left as a contract key — and _measuring_point, which
+    decides whether two readings measured the same thing, does the same. An unregistered piece
+    would make the rebuilt row a DIFFERENT measuring point from the live one, so the very next
+    run would refuse to difference against it and report a change of address that never happened:
+    the rebuild would disarm the series it just repaired.
+    """
+    from fetch.base import _measuring_point
+    assert "rederived" in config.SOURCE_MARKERS
+    live = "hypercore_info:spotClearinghouseState:delta"
+    rebuilt = "hypercore_info:spotClearinghouseState:delta:rederived"
+    assert _measuring_point(live) == _measuring_point(rebuilt)
+    assert not config.orphaned_contract_keys("Hyperliquid", rebuilt), \
+        "':rederived' must not be mistaken for a contract key that is no longer in config"
+    # AND IT STILL TELESCOPES: build_workbook finds differenced rows by containment, so the
+    # trailing marker does not hide the row from the check that would catch a bad rebuild.
+    assert ":delta" in rebuilt
+    print("marker ok: a rebuilt row measures the same point and is still checked as a delta")
+
+
+def test_the_rebuild_refuses_the_two_pairs_that_are_not_flows(tmp_path):
+    """A difference is only a flow if both readings measured the same thing, and only a flow if
+    the quantity moved in a direction it can move. Neither refusal is silent — a pair that yields
+    no row says why, because a missing row and a rejected row look identical once printed."""
+    import rederive
+    conn = _hyperliquid_store(tmp_path)
+    # THE MEASURING POINT MOVES mid-series: Uniswap's Firepit, in Hyperliquid's shape.
+    conn.execute("UPDATE metrics SET source='hypercore_info:otherAccount'"
+                 " WHERE project='Hyperliquid' AND metric='burn_address_balance'"
+                 " AND date='2026-09-17'")
+    # AND THE CUMULATIVE FALLS between two readings.
+    conn.execute("UPDATE metrics SET value=47100000.0 WHERE project='Hyperliquid'"
+                 " AND metric='burn_address_balance' AND date='2026-09-13'")
+    conn.commit()
+    plan = rederive.rederive_flow_from_stock(conn, "Hyperliquid", "gross_burn_tokens")
+    refused = {p.date: p.refusal for p in plan.refusals}
+    assert "the cumulative FELL" in refused["2026-09-13"], refused
+    assert "measuring point CHANGED" in refused["2026-09-17"], refused
+    # THE READING AFTER THE MOVED POINT IS REFUSED TOO — 09-18 differences against 09-17's new
+    # address, so the pair straddles the change from the other side.
+    assert "measuring point CHANGED" in refused["2026-09-18"], refused
+    assert all(p.value is None for p in plan.refusals), "a refused pair proposes NO value"
+    assert not any(p.value < 0 for p in plan.proposed), "no negative burn is ever proposed"
+    print("refusals ok: a changed measuring point and a falling cumulative each yield no row, with"
+          " the reason on the pair")
+
+
+def test_the_rebuild_leaves_rows_that_are_not_differences_alone(tmp_path):
+    """GEODNET's shape: a Dune backfill of real period totals stitched under a live chain delta.
+    Those rows are evidence, not arithmetic — rebuilding them from a stock would replace a
+    measured figure with a derived one and nothing on the sheet would say so."""
+    import rederive
+    conn = _hyperliquid_store(tmp_path)
+    conn.execute("INSERT INTO metrics VALUES ('2026-05-01','Hyperliquid','gross_burn_tokens',"
+                 "4000000.0,'dune:8683175',4,'2026-09-01T00:00:00')")
+    conn.commit()
+    plan = rederive.rederive_flow_from_stock(conn, "Hyperliquid", "gross_burn_tokens")
+    assert "2026-05-01" in plan.untouched and "2026-05-01" not in plan.existing
+    rederive.apply_plan(conn, plan)
+    kept = conn.execute("SELECT value, source FROM metrics WHERE project='Hyperliquid'"
+                        " AND metric='gross_burn_tokens' AND date='2026-05-01'").fetchone()
+    assert kept == (4_000_000.0, "dune:8683175"), "the backfilled period figure survives untouched"
+    print("scope ok: only :delta rows are replaced; a measured period total is left where it is")
+
+
+def test_the_rebuild_refuses_a_flow_config_does_not_declare_a_stock_for(tmp_path):
+    """The default comes from config.stock_for_flow, so a flow cannot be paired with a cumulative
+    it was never differenced from. Guessing one would produce a plausible series out of two
+    unrelated quantities."""
+    import rederive
+    conn = _hyperliquid_store(tmp_path)
+    plan = rederive.rederive_flow_from_stock(conn, "Maple", "actual_buyback_tokens")
+    assert plan.blocked and "no cumulative" in plan.blocked
+    try:
+        rederive.apply_plan(conn, plan)
+    except ValueError as e:
+        assert "blocked plan" in str(e)
+    else:
+        raise AssertionError("a blocked plan must never be applied")
+    print("pairing ok: the stock comes from config, and an undeclared flow is refused")
+
+
+def test_metrics_cannot_answer_how_many_runs_wrote_on_a_date(tmp_path):
+    """** THE ORIGINAL M1 COULD NEVER RETURN A ROW, and it returned "(no rows)" on the section
+    whose whole premise is four runs on one date. **
+
+    It grouped `metrics` by (project, metric, date) — the table's PRIMARY KEY — and kept groups
+    with more than one distinct fetched_at. Every group holds exactly one row, so the count is 1
+    by construction. The upsert is why, and it is the same fact the section is about: a second
+    run on one date overwrites the first, so `metrics` cannot hold the evidence of a re-run.
+    """
+    import rederive
+    conn = _hyperliquid_store(tmp_path)
+    dead = conn.execute(
+        """SELECT project, metric, date FROM metrics
+            WHERE metric = 'burn_address_balance'
+            GROUP BY project, metric, date
+           HAVING COUNT(DISTINCT fetched_at) > 1""").fetchall()
+    assert dead == [], "the old query is not merely empty here — it is empty by construction"
+
+    runs = rederive.runs_per_date(conn, "Hyperliquid", "burn_address_balance")
+    assert runs["2026-09-21"] == 4, "run_log still has what metrics destroyed"
+    assert runs["2026-09-16"] == runs["2026-09-17"] == runs["2026-09-18"] == 1
+    # DATES BEFORE THE LOG REACHES ARE ABSENT, not reported as zero runs.
+    assert "2026-09-11" not in runs and "2026-09-12" not in runs
+    print("run count ok: 2026-09-21 x4, 09-16/17/18 single-run, earlier dates have no log to read")

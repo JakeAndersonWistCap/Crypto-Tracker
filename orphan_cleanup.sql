@@ -1070,7 +1070,8 @@ SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 
 -- ========================================================================================
 -- M. THE SAME-DAY RE-RUN ROWS — a differenced flow anchored on its own earlier row.  2026-09-22
---    M1-M3 LOOK. M4 deletes the flow rows only; the balances they came from are untouched.
+--    M1-M3 LOOK. M4 REBUILDS the flow rows from the balances, which are untouched — it is a
+--    utility, rederive.py, not a DELETE. Nothing in this section deletes anything.
 -- ========================================================================================
 -- WHAT HAPPENED: Hyperliquid's burn_address_balance moved 231,934.0021 HYPE across 2026-09-21
 -- and gross_burn_tokens for that date recorded 83,344.4791 — about a third of it. Four runs
@@ -1092,18 +1093,37 @@ SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 -- AND A READ-TIME GUARD NOW CATCHES IT WHEREVER IT ALREADY HAPPENED: build_workbook's
 -- unreconciled_flow blanks any differenced flow whose values do not sum to its stock's move
 -- across the same span. So these rows are already withheld from the sheet — this section is for
--- clearing them so the column comes back, not for making the number safe.
+-- clearing them so the column comes back, not for making the number safe — and clearing them
+-- means REBUILDING them from the balances (M4), which recovers the daily shape rather than
+-- collapsing the span into one figure.
 --
--- M1. THE AFFECTED DATES — every date holding MORE THAN ONE run's worth of readings for a
---     cumulative balance. fetched_at is per-write, so several distinct fetched_at values on one
---     date is exactly the re-run signature. LOOK ONLY.
-SELECT project, metric, date, COUNT(DISTINCT fetched_at) AS writes_on_this_date,
-       MIN(fetched_at) AS first_write, MAX(fetched_at) AS last_write
-  FROM metrics
- WHERE metric IN ('burn_address_balance', 'buyback_fund_balance', 'treasury_holding_tokens')
- GROUP BY project, metric, date
-HAVING COUNT(DISTINCT fetched_at) > 1
- ORDER BY project, metric, date;
+-- M1. THE AFFECTED DATES — how many runs wrote on each date.            CORRECTED 2026-09-22
+--
+--     ** THE FIRST VERSION OF THIS QUERY COULD NEVER RETURN A ROW. ** It grouped `metrics` by
+--     (project, metric, date) and kept the groups with COUNT(DISTINCT fetched_at) > 1. That is
+--     the table's PRIMARY KEY, so every group holds exactly one row and the count is 1 by
+--     construction. It returned "(no rows)", which read as "no date was written twice" — the
+--     opposite of the truth, on the section whose entire premise is that four runs landed on
+--     2026-09-21.
+--
+--     THE UPSERT IS WHY, AND IT IS THE SAME FACT THE SECTION IS ABOUT: a second run on one date
+--     overwrites the first, so `metrics` cannot hold the evidence of a re-run. Asking it to is
+--     asking the wrong table. run_log keeps one row per run per source per project and does
+--     still have it.
+--
+--     Dates before the store had a run_log simply do not appear. That is honest — the log does
+--     not reach back — and it is why the rebuild in M4 reads the balances rather than this.
+SELECT substr(r.ts, 1, 10)        AS date,
+       r.project,
+       r.source,
+       COUNT(DISTINCT r.run_id)   AS runs_on_this_date,
+       MIN(r.ts)                  AS first_run,
+       MAX(r.ts)                  AS last_run
+  FROM run_log r
+ WHERE r.status = 'ok'
+ GROUP BY date, r.project, r.source
+HAVING COUNT(DISTINCT r.run_id) > 1
+ ORDER BY date DESC, r.project;
 
 -- M2. THE TELESCOPING IDENTITY, PER PROJECT.                          REWRITTEN 2026-09-22
 --     The first version returned a blank stock_at_start for five of six projects — GEODNET,
@@ -1210,35 +1230,55 @@ SELECT f.project, f.first_flow, f.last_flow, f.flow_rows, f.flows_recorded,
 --     no answer, silently. It is derived from config now (config.stock_for_flow), and a check
 --     that cannot run says why instead of skipping. That one WAS a lookup returning nothing.
 
--- M3. THE ROWS THAT WOULD GO, for the one project confirmed affected. Scoped to the :delta
---     source, so a burn figure from Dune or a dashboard — a real period total, not a difference
---     — is never caught by it.
-SELECT date, project, metric, value, source, tier, fetched_at, 'WOULD DELETE' AS action
+-- M3. THE ROWS THAT WOULD BE REPLACED. Scoped to the :delta source, so a burn figure from Dune
+--     or a dashboard — a real period total, not a difference — is never caught by it.
+SELECT date, project, metric, value, source, tier, fetched_at, 'WOULD BE REBUILT' AS action
   FROM metrics
  WHERE project = 'Hyperliquid'
    AND metric = 'gross_burn_tokens'
-   AND source LIKE 'hypercore_info:%:delta'
+   AND source LIKE 'hypercore_info:%:delta%'
  ORDER BY date;
 
--- M4. THE DELETE. THE BALANCES ARE NOT TOUCHED — burn_address_balance is a good reading on every
---     one of these dates and is what the flows re-derive from. Deleting only the flows means the
---     next run differences the current balance against the last stored balance and recovers the
---     whole span as one figure on the next run's date.
+-- M4. THE REMEDY IS A REBUILD, NOT A DELETE.                           REPLACED 2026-09-22
 --
---     WHAT YOU GET BACK IS NOT WHAT WAS LOST. The per-day split across 2026-09-21 cannot be
---     recovered — the intermediate readings were overwritten and are gone. One correct figure
---     spanning the gap replaces several wrong ones; the 30-day total becomes right and the daily
---     shape inside it does not come back. That is the honest outcome and there is no route to a
---     better one short of a transfer-history source.
--- BEGIN;
--- DELETE FROM metrics
---  WHERE project = 'Hyperliquid'
---    AND metric = 'gross_burn_tokens'
---    AND source LIKE 'hypercore_info:%:delta';
--- COMMIT;
+--     This section proposed deleting all eight differenced rows and letting the next run
+--     difference the current balance against the last stored one, recovering the span as a
+--     single figure. That works and it throws the history away: one number across ten days
+--     instead of ten daily numbers, and the daily shape never comes back. It was described here
+--     as "the honest outcome with no route to a better one". There is a better one.
+--
+--     THE BUG CORRUPTED THE FLOW ROWS. THE BALANCES ARE SOUND. burn_address_balance holds one
+--     surviving reading per date — the last run of each day — and those readings were never
+--     differenced, so nothing that went wrong touched them. A flow derived from a stock is
+--     redundant information: delta(d) = stock(d) - stock(previous stored d). The whole series
+--     rebuilds from readings that were never wrong, and the daily shape is recovered.
+--
+--     IT IS NOT SQL, because the refusals are not expressible as one. A pair yields no row if
+--     the measuring point changed between the two readings (Uniswap's Firepit) or if the
+--     cumulative fell, and each refusal has to be REPORTED per pair rather than dropped from a
+--     result set. So it is a utility, general over (project, flow_metric, stock_metric):
+--
+--         python rederive.py Hyperliquid gross_burn_tokens            -- look: prints the plan
+--         python rederive.py Hyperliquid gross_burn_tokens --apply    -- replace, one transaction
+--
+--     Plain mode writes nothing. It prints every stored row against its rebuilt value, the
+--     change, the run count for that date, and every refusal with its reason. --apply takes a
+--     typed REPLACE and swaps the differenced rows for the rebuilt ones in ONE transaction;
+--     non-differenced rows are never touched. The stock metric defaults to whatever config
+--     declares the flow was differenced from, so a flow cannot be rebuilt from a cumulative it
+--     never came from.
+--
+--     EXPECTED, against the balances as at 2026-09-21: 47,387,407 less the 2026-09-11 reading,
+--     which is roughly 231,934 HYPE across the span. Read the printed plan before applying.
+--
+--     NO DELETE IS SHIPPED HERE ANY MORE, commented out or otherwise. The rebuild replaces the
+--     rows itself, and leaving a delete in the file next to it invites doing both.
 
--- M5. VERIFY — M3 returns nothing, and the balance series is intact.
--- SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+-- M5. VERIFY — after the rebuild, the rows carry the :rederived marker and the balance series is
+--     untouched. Also re-run M2: the telescoping identity is what the rebuild is FOR, so it must
+--     now reconcile rather than merely look better.
+-- SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+--        SUM(value) AS total
 --   FROM metrics WHERE project = 'Hyperliquid'
 --    AND metric IN ('burn_address_balance', 'gross_burn_tokens')
 --  GROUP BY metric;
