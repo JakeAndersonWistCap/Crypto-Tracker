@@ -1105,33 +1105,110 @@ SELECT project, metric, date, COUNT(DISTINCT fetched_at) AS writes_on_this_date,
 HAVING COUNT(DISTINCT fetched_at) > 1
  ORDER BY project, metric, date;
 
--- M2. THE TELESCOPING IDENTITY, PER PROJECT, exactly as build_workbook computes it: the flows
---     must sum to the stock's move between the reading before the first flow and the reading on
---     the last. A non-zero residual is tokens the flow column never reported.
-SELECT f.project,
-       MIN(f.date)   AS first_flow_date,
-       MAX(f.date)   AS last_flow_date,
-       COUNT(*)      AS flow_rows,
-       SUM(f.value)  AS flows_recorded,
-       (SELECT e.value FROM metrics e
-         WHERE e.project = f.project AND e.metric = 'burn_address_balance'
-           AND e.date <= (SELECT MAX(x.date) FROM metrics x
-                           WHERE x.project = f.project AND x.metric = 'gross_burn_tokens'
-                             AND x.source LIKE '%:delta')
-         ORDER BY e.date DESC LIMIT 1)                     AS stock_at_end,
-       (SELECT b.value FROM metrics b
-         WHERE b.project = f.project AND b.metric = 'burn_address_balance'
-           AND b.date <  (SELECT MIN(x.date) FROM metrics x
-                           WHERE x.project = f.project AND x.metric = 'gross_burn_tokens'
-                             AND x.source LIKE '%:delta')
-         ORDER BY b.date DESC LIMIT 1)                     AS stock_at_start
-  FROM metrics f
- WHERE f.metric = 'gross_burn_tokens'
-   AND f.source LIKE '%:delta'
- GROUP BY f.project
+-- M2. THE TELESCOPING IDENTITY, PER PROJECT.                          REWRITTEN 2026-09-22
+--     The first version returned a blank stock_at_start for five of six projects — GEODNET,
+--     Hyperliquid, PancakeSwap, Tron and Venice AI — with only Uniswap computing.
+--
+--     ** THE FIRST DIAGNOSIS OF THAT WAS WRONG AND IS CORRECTED HERE. ** It was written up as a
+--     query fault of the J3 class — a correlated subquery nested two levels inside a GROUP BY,
+--     resolving to NULL. It is not. The old query was run against a store seeded with all six
+--     real source shapes and it resolved the anchor for every one of them. Nothing about the
+--     nesting was broken.
+--
+--     WHAT THE BLANKS ACTUALLY MEAN: for those five projects the store holds NO
+--     burn_address_balance reading dated strictly earlier than their first differenced flow row.
+--     There is no anchor to find, so the identity cannot be checked at all. Reproduced by
+--     truncating one project's stock series in the seeded store: that project blanks and the
+--     others still compute, which is exactly the shape that was observed.
+--
+--     THAT IS NOT A NULL RESULT — IT IS THE FINDING. A delta is computed from a reading STRICTLY
+--     EARLIER than itself, so at the moment each of these flow rows was written its anchor
+--     existed. Two things can put the store in this state and they have different remedies:
+--       (a) the stock rows were deleted, by an earlier cleanup or a rebuild — the flows are
+--           still checkable against whatever stock history remains further forward; or
+--       (b) the flow series REACHES BACK FURTHER than the stock series, because the early flow
+--           rows came from a different adapter or a backfill that never wrote a balance.
+--     first_stock below distinguishes them: under (b) the stock series simply starts later.
+--
+--     SO THE REWRITE IS NOT A FIX FOR A BROKEN LOOKUP. It is CTEs plus a `diagnostic` column, so
+--     that the answer "this could not be checked, and here is which step could not resolve"
+--     stops arriving as an empty cell indistinguishable from "checked, nothing wrong". That
+--     confusion is the actual defect, and it is the same one as J3 even though the cause is not.
+WITH flow AS (
+    -- Only DIFFERENCED rows telescope. GEODNET's series is stitched — a monthly Dune backfill
+    -- under a live chain delta — and the Dune rows are period figures, not differences, so they
+    -- are excluded here and the anchor is taken from the first DELTA rather than the first row.
+    SELECT project,
+           MIN(date)  AS first_flow,
+           MAX(date)  AS last_flow,
+           COUNT(*)   AS flow_rows,
+           SUM(value) AS flows_recorded
+      FROM metrics
+     WHERE metric = 'gross_burn_tokens'
+       AND source LIKE '%:delta%'          -- NOT '%:delta': a source can carry a trailing
+                                            -- marker (:recurring-only) or a bracketed
+                                            -- annotation, and an anchored LIKE misses both
+     GROUP BY project
+),
+stock_span AS (
+    SELECT project, MIN(date) AS first_stock, MAX(date) AS last_stock, COUNT(*) AS stock_rows
+      FROM metrics WHERE metric = 'burn_address_balance' GROUP BY project
+),
+stock_end AS (
+    SELECT f.project, b.value AS stock_at_end, b.date AS end_date
+      FROM flow f
+      JOIN metrics b ON b.project = f.project AND b.metric = 'burn_address_balance'
+                    AND b.date = (SELECT MAX(e.date) FROM metrics e
+                                   WHERE e.project = f.project
+                                     AND e.metric = 'burn_address_balance'
+                                     AND e.date <= f.last_flow)
+),
+stock_start AS (
+    SELECT f.project, b.value AS stock_at_start, b.date AS start_date
+      FROM flow f
+      JOIN metrics b ON b.project = f.project AND b.metric = 'burn_address_balance'
+                    AND b.date = (SELECT MAX(e.date) FROM metrics e
+                                   WHERE e.project = f.project
+                                     AND e.metric = 'burn_address_balance'
+                                     AND e.date < f.first_flow)
+)
+SELECT f.project, f.first_flow, f.last_flow, f.flow_rows, f.flows_recorded,
+       p.first_stock, p.stock_rows,
+       s.start_date, s.stock_at_start, e.end_date, e.stock_at_end,
+       e.stock_at_end - s.stock_at_start                        AS stock_moved,
+       (e.stock_at_end - s.stock_at_start) - f.flows_recorded   AS residual,
+       CASE
+         WHEN p.first_stock IS NULL
+              THEN 'NO STOCK SERIES AT ALL — the flows were differenced from something that is '
+                || 'not in the store under this name'
+         WHEN s.stock_at_start IS NULL AND p.first_stock >= f.first_flow
+              THEN 'CANNOT BE CHECKED — the stock series starts ' || p.first_stock
+                || ', on or after the first differenced flow ' || f.first_flow || '. Every delta '
+                || 'was computed from a reading STRICTLY EARLIER than itself, so the anchor '
+                || 'existed when the flow was written. Either those stock rows were deleted, or '
+                || 'the early flow rows came from an adapter or backfill that wrote no balance.'
+         WHEN s.stock_at_start IS NULL
+              THEN 'CANNOT BE CHECKED — no stock reading before ' || f.first_flow
+                || ' although the series starts ' || p.first_stock || '; the anchor row is '
+                || 'missing from inside the span'
+         WHEN e.stock_at_end IS NULL
+              THEN 'CANNOT BE CHECKED — no stock reading at or before ' || f.last_flow
+                || ': the stock series ends before the flow series does'
+         WHEN ABS((e.stock_at_end - s.stock_at_start) - f.flows_recorded) < 0.000001
+              THEN 'RECONCILES'
+         ELSE 'DOES NOT RECONCILE — the flows are short by the residual shown'
+       END                                                      AS diagnostic
+  FROM flow f
+  LEFT JOIN stock_span  p ON p.project = f.project
+  LEFT JOIN stock_start s ON s.project = f.project
+  LEFT JOIN stock_end   e ON e.project = f.project
  ORDER BY f.project;
---     Read it as: (stock_at_end - stock_at_start) - flows_recorded. Zero is the only passing
---     answer. Anything else is the residual, and its size is how much the burn column understates.
+--     ** THE PYTHON HAD A REAL FAULT OF ITS OWN, and it was found by checking rather than
+--     assumed from the SQL. ** build_workbook resolved a flow's stock through a hand-written
+--     literal dict that had already gone stale: Chainlink's Reserve inflow and Sky's two
+--     decomposed burn legs had no entry, so the telescoping check never ran for them AT ALL —
+--     no answer, silently. It is derived from config now (config.stock_for_flow), and a check
+--     that cannot run says why instead of skipping. That one WAS a lookup returning nothing.
 
 -- M3. THE ROWS THAT WOULD GO, for the one project confirmed affected. Scoped to the :delta
 --     source, so a burn figure from Dune or a dashboard — a real period total, not a difference

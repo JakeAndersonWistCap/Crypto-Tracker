@@ -270,10 +270,24 @@ WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed",
 # flow can never be a large fraction of every burn ever recorded. The mapping mirrors
 # config._flow_parents, inverted; it is small and explicit rather than derived, because getting it
 # wrong in the derived direction would silently disarm the guard.
-DERIVED_FLOW_STOCK = {
-    "gross_burn_tokens": "burn_address_balance",
-    "burn_revenue_funded": "burn_address_balance",
-}
+# ** THIS WAS A LITERAL DICT AND IT HAD ALREADY GONE STALE. Replaced 2026-09-22. **
+# It read {"gross_burn_tokens": "burn_address_balance", "burn_revenue_funded":
+# "burn_address_balance"}, written when burn_address_balance was the only cumulative in the book,
+# with a comment saying it was explicit "because getting it wrong in the derived direction would
+# silently disarm the guard".
+#
+# GETTING IT WRONG IN THE HAND-MAINTAINED DIRECTION IS WHAT HAPPENED. The moment per-project
+# mappings arrived — Chainlink's Reserve inflow on 2026-09-22, Sky's two decomposed burn legs the
+# same day — three flows had no entry here, so the telescoping check and the implausible-delta
+# check never ran for them AT ALL. Not a wrong answer: no answer, and nothing said so. The guard
+# built for Hyperliquid could not see two thirds of the flows that existed a day later.
+#
+# config.stock_for_flow INVERTS THE LIVE MAPPING, so it cannot drift from it. The only thing kept
+# by hand is the alias table for a flow that is a re-labelled copy of another (burn_revenue_funded),
+# and that is a fact about the labelling rather than a second copy of the mapping.
+def flow_stock(project: str, metric: str) -> str | None:
+    """The cumulative this flow was differenced from, for THIS project."""
+    return config.stock_for_flow(project, metric)
 
 # THE SHARE ABOVE WHICH A SINGLE OBSERVATION IS NOT A FLOW.
 # 25% is deliberately loose. The failure this catches is not a figure that is somewhat too high —
@@ -284,7 +298,7 @@ DERIVED_FLOW_STOCK = {
 IMPLAUSIBLE_DELTA_SHARE = 0.25
 
 # THE TELESCOPING IDENTITY, AND HOW MUCH OF IT IS FLOATING-POINT.
-# Every flow in DERIVED_FLOW_STOCK is a difference of two readings of its stock, so consecutive
+# Every flow with a stock (see flow_stock) is a difference of two readings of it, so consecutive
 # flows telescope: summing them over a span must give the stock's move across that span exactly,
 # because every intermediate reading appears once with each sign and cancels. The only slack is
 # IEEE 754: these are doubles holding figures up to ~1e10, where one ulp is ~2e-6.
@@ -417,7 +431,7 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     #    makes it the check that still works when the other two have been outmanoeuvred.
     cum, biggest = row.get("cumulative_ref"), row.get("max_single_delta")
     if cum and biggest and biggest > cum * IMPLAUSIBLE_DELTA_SHARE:
-        parent = DERIVED_FLOW_STOCK.get(metric, "the cumulative balance")
+        parent = flow_stock(project, metric) or "the cumulative balance"
         return "implausible_delta", (
             f"ONE OBSERVATION IS {biggest / cum:.0%} OF THE CUMULATIVE — not a flow. A single "
             f"reading of {biggest:,.0f} sits against a {parent} of {cum:,.0f}, so this window "
@@ -449,7 +463,7 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     if moved is not None and accounted is not None:
         residual = moved - accounted
         if abs(residual) > max(TELESCOPING_ABS_EPS, abs(moved) * TELESCOPING_REL_EPS):
-            parent = DERIVED_FLOW_STOCK.get(metric, "the cumulative balance")
+            parent = flow_stock(project, metric) or "the cumulative balance"
             span = row.get("flow_span") or ("?", "?")
             return "unreconciled_flow", (
                 f"THE FLOWS DO NOT SUM TO THE STOCK'S MOVE — {accounted:,.4f} recorded against "
@@ -528,6 +542,12 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     # one of the two publications is wrong or a period has been mis-transcribed, and the stored
     # series is the one every downstream figure is computed from. Not withheld — withholding it
     # would leave the downstream cells with nothing, and the disagreement is what needs reading.
+    # THE TELESCOPING CHECK DID NOT RUN. Not RED — nothing is known to be wrong — but not
+    # silent either: a flow whose reconciliation was skipped looks exactly like one that passed,
+    # and the five projects whose SQL preview came back blank are the argument for saying so.
+    blocked = row.get("flow_recon_blocked")
+    if blocked:
+        why.append(f"THE FLOW RECONCILIATION DID NOT RUN — {blocked}")
     rec = row.get("reconciliation") or {}
     if rec.get("status") == "disagrees":
         bits = "; ".join(f"{d['period']}: months sum to {d['summed']:,.0f} against a published "
@@ -645,6 +665,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
                    "flow_stock_move": None, "flow_accounted": None, "flow_residual": None,
                    "flow_span": None, "point_spans": {}, "reconciliation": None,
+                   "flow_recon_blocked": None,
                    "granularity": "daily", "period_label": "",
                    "covered_days": None, "window_days": None}
             if g is None or g.empty:
@@ -691,7 +712,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # row. Restricted to rows whose source carries the :delta marker, so a genuine
             # period figure from Dune or a dashboard is never measured against a balance it has
             # no arithmetic relationship to.
-            parent = DERIVED_FLOW_STOCK.get(metric)
+            parent = flow_stock(name, metric)
             if parent:
                 cumulative = latest_value.get((name, parent))
                 deltas = g[g["source"].astype(str).str.contains(":delta", na=False)].sort_values("date")
@@ -702,19 +723,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # stock's move across the same span — every intermediate reading cancels. The
                 # start point is the last stock reading STRICTLY BEFORE the first delta, because
                 # that is the number the first delta was differenced against.
-                stock = groups.get((name, parent))
-                if not deltas.empty and stock is not None and not stock.empty:
-                    st = stock.sort_values("date")
-                    first, last = deltas.iloc[0]["date"], deltas.iloc[-1]["date"]
-                    ends, starts = st[st["date"] <= last], st[st["date"] < first]
-                    if not ends.empty and not starts.empty:
-                        moved = float(ends.iloc[-1]["value"]) - float(starts.iloc[-1]["value"])
-                        accounted = float(deltas["value"].sum())
-                        row["flow_stock_move"] = moved
-                        row["flow_accounted"] = accounted
-                        row["flow_residual"] = moved - accounted
-                        row["flow_span"] = (starts.iloc[-1]["date"].strftime("%Y-%m-%d"),
-                                            ends.iloc[-1]["date"].strftime("%Y-%m-%d"))
+                row.update(telescoping(name, metric, parent, g, groups.get((name, parent))))
             # ===== THE FINE SERIES MUST ADD UP TO THE COARSE PUBLISHED FIGURE. =====
             # Only where every period of it is present: two months of a quarter compared against
             # the quarter's own total is guaranteed to disagree, and flagging that would report a
@@ -955,6 +964,58 @@ def _reconcile_periods(project: str, metric: str, s: pd.Series, recon: dict) -> 
         return {"status": "disagrees", "periods": checked, "detail": disagreed,
                 "why": recon.get("why", "")}
     return {"status": "ok", "periods": checked}
+
+
+def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
+    """Reconcile a differenced flow against the stock it came from, or say why it cannot be.
+
+    THE IDENTITY: consecutive differences of one stock telescope, so summing them over a span
+    must give the stock's move across that span exactly — every intermediate reading appears
+    once with each sign and cancels.
+
+    ** A CHECK THAT CANNOT RUN SAYS SO. ** This was an inline block with a silent `if`: no
+    anchor, no reconciliation, no trace. A row whose check never ran is indistinguishable on the
+    sheet from one that ran and passed, which is how a guard built for Hyperliquid could have
+    failed to see Hyperliquid. Every branch leaves a reason behind now, and it is a function
+    rather than four levels of nesting so the reasons can be tested.
+    """
+    deltas = series[series["source"].astype(str).str.contains(":delta", na=False)].sort_values("date")
+    if deltas.empty:
+        return {"flow_recon_blocked": (
+            f"no differenced rows: this {metric} series carries no source marked :delta, so "
+            f"there is nothing to telescope. A backfilled period figure is not a difference of "
+            f"two readings and is correctly exempt.")}
+    if stock is None or stock.empty:
+        return {"flow_recon_blocked": (
+            f"the stock series {parent!r} is EMPTY for this project, so the flows have nothing "
+            f"to be reconciled against. They were differenced from something; if that something "
+            f"is not in the store, the rows that produced them have been deleted or were written "
+            f"under another name.")}
+    st = stock.sort_values("date")
+    first, last = deltas.iloc[0]["date"], deltas.iloc[-1]["date"]
+    ends, starts = st[st["date"] <= last], st[st["date"] < first]
+    if starts.empty:
+        # THE ANCHOR IS THE NUMBER THE FIRST DELTA WAS SUBTRACTED FROM. Its absence cannot happen
+        # from a clean run — a delta needs a reading strictly earlier than itself, so that reading
+        # existed when the flow was written. Missing now means stock rows were removed.
+        return {"flow_recon_blocked": (
+            f"NO STOCK READING BEFORE THE FIRST FLOW. The earliest {metric} row is dated "
+            f"{pd.Timestamp(first):%Y-%m-%d} and the earliest {parent} row is "
+            f"{pd.Timestamp(st.iloc[0]['date']):%Y-%m-%d} — but a differenced flow is computed "
+            f"from a reading STRICTLY EARLIER than itself, so that reading existed when the flow "
+            f"was written and is not in the store now. The flows cannot be checked against a "
+            f"stock whose start has been cut off.")}
+    if ends.empty:
+        return {"flow_recon_blocked": (
+            f"no {parent} reading at or before the last {metric} row "
+            f"({pd.Timestamp(last):%Y-%m-%d}) — the stock series ends before the flow series does.")}
+    moved = float(ends.iloc[-1]["value"]) - float(starts.iloc[-1]["value"])
+    accounted = float(deltas["value"].sum())
+    return {"flow_stock_move": moved, "flow_accounted": accounted,
+            "flow_residual": moved - accounted,
+            "flow_span": (starts.iloc[-1]["date"].strftime("%Y-%m-%d"),
+                          ends.iloc[-1]["date"].strftime("%Y-%m-%d")),
+            "flow_recon_blocked": None}
 
 
 def _leg(project: dict, key: str, build) -> str:

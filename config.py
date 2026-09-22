@@ -8252,6 +8252,39 @@ CUMULATIVE_FLOW = {
 }
 
 
+# A FLOW THAT IS A RE-LABELLED COPY OF ANOTHER FLOW, so it shares that flow's stock.
+# chain.py emits burn_revenue_funded as a second copy of gross_burn_tokens where the cumulative
+# is contaminated by a one-off but the FLOW is not (see burn_composition.flow_is_recurring_only).
+# It is not a separate differencing of a separate stock, so stock_for_flow has to resolve it
+# through its parent rather than looking for a mapping that does not exist.
+DERIVED_FLOW_ALIASES = {"burn_revenue_funded": "gross_burn_tokens"}
+
+
+def stock_for_flow(project_name: str, flow_metric: str) -> str | None:
+    """The cumulative a differenced flow came FROM — the inverse of cumulative_flow_for.
+
+    ** DERIVED, BECAUSE THE HAND-MAINTAINED VERSION HAD ALREADY GONE STALE. ** build_workbook
+    kept this as a literal dict, written when burn_address_balance was the only cumulative in the
+    book, with a comment saying it was explicit "because getting it wrong in the derived
+    direction would silently disarm the guard". Getting it wrong is exactly what happened: the
+    moment per-project mappings arrived — Chainlink's Reserve inflow, Sky's two decomposed burn
+    legs — those three flows had no entry, so the telescoping check never ran for them at all.
+    Not a wrong answer: no answer, silently. Inverting the live mapping cannot drift from it.
+    """
+    flow_metric = DERIVED_FLOW_ALIASES.get(flow_metric, flow_metric)
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    own = p.get("cumulative_flow") or {}
+    for stock, flow in own.items():
+        if flow == flow_metric:
+            return stock
+    for stock, flow in CUMULATIVE_FLOW.items():
+        # A project may have OVERRIDDEN this stock to feed nothing, or to feed something else;
+        # the global entry only applies where the project has not said otherwise.
+        if flow == flow_metric and stock not in own:
+            return stock
+    return None
+
+
 def cumulative_flow_for(project_name: str, metric: str) -> str | None:
     """The flow metric this stock's delta feeds, FOR THIS PROJECT.
 

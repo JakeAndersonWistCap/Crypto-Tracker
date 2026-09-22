@@ -6127,6 +6127,253 @@ def test_the_ultrasound_burn_entry_is_still_an_xhr_page_load_not_a_direct_json_f
     print("ultrasound ok: still xhr on the root page, endpoint correct but not what blocked it")
 
 
+# THE SIX REAL SHAPES a stock/flow pair takes in this store, one per adapter that writes one.
+# Written out rather than generated, because the POINT is that they differ: the suffix ordering,
+# the annotation, the stitched backfill and the non-EVM source strings are exactly what a
+# resolution keyed on the wrong thing falls over on.
+SIX_SHAPES = [
+    ("Uniswap",     "chain:ethereum:burn_dead",              "chain:ethereum:burn_dead:delta"),
+    ("PancakeSwap", "chain:bsc:burn_dead",                   "chain:bsc:burn_dead:delta"),
+    ("Venice AI",   "chain:base:burn_zero",                  "chain:base:burn_zero:delta"),
+    ("Hyperliquid", "hypercore_info:spotClearinghouseState", "hypercore_info:spotClearinghouseState:delta"),
+    ("Tron",        "tron_node:getburntrx",                  "tron_node:getburntrx:delta"),
+    # GEODNET IS THE AWKWARD ONE ON PURPOSE: a Dune backfill with NO :delta marker sits under a
+    # live chain delta, so the flow series is stitched from two shapes and only one of them
+    # telescopes. The anchor must be the stock before the first DELTA row, not before the first
+    # row of the series — those are different dates and the Dune rows are months earlier.
+    ("GEODNET",     "chain:polygon:burn_polygon",            "chain:polygon:burn_polygon:delta"),
+]
+
+
+def _stock_flow_frame(project, stock_src, flow_src, stock_metric="burn_address_balance",
+                      flow_metric="gross_burn_tokens", dune_rows=False):
+    """A clean, telescoping stock/flow pair: three stock readings and the two deltas between."""
+    import pandas as pd
+    stock = [(f"2026-09-1{i}", 1_000_000.0 + i * 5_000) for i in (7, 8, 9)]
+    rows = [{"date": pd.Timestamp(d), "project": project, "metric": stock_metric, "value": v,
+             "source": stock_src, "tier": 2, "is_manual": False, "entered_on": ""}
+            for d, v in stock]
+    for (d0, v0), (d1, v1) in zip(stock, stock[1:]):
+        rows.append({"date": pd.Timestamp(d1), "project": project, "metric": flow_metric,
+                     "value": v1 - v0, "source": flow_src, "tier": 2,
+                     "is_manual": False, "entered_on": ""})
+    if dune_rows:
+        # Months earlier, no :delta marker — a backfilled period figure, not a difference.
+        rows.append({"date": pd.Timestamp("2026-05-01"), "project": project, "metric": flow_metric,
+                     "value": 4_000_000.0, "source": "dune:8683175", "tier": 4,
+                     "is_manual": False, "entered_on": ""})
+    return pd.DataFrame(rows)
+
+
+def test_the_telescoping_check_resolves_its_anchor_for_every_real_source_shape():
+    """The SQL preview came back blank for five of six projects — only Uniswap computed a
+    stock_at_start. This asserts the PYTHON mechanism resolves for all six, because a guard that
+    cannot see the project it was built for is worse than no guard: it reads as a pass.
+
+    All six shapes differ in ways a resolution keyed on the wrong thing falls over on — the
+    non-EVM source strings, and GEODNET's stitched series where a Dune backfill with no :delta
+    marker sits months under a live chain delta.
+    """
+    import build_workbook as bw
+
+    for project, stock_src, flow_src in SIX_SHAPES:
+        long = _stock_flow_frame(project, stock_src, flow_src,
+                                 dune_rows=(project == "GEODNET"))
+        flows = long[long.metric == "gross_burn_tokens"]
+        stock = long[long.metric == "burn_address_balance"]
+        got = bw.telescoping(project, "gross_burn_tokens", "burn_address_balance", flows, stock)
+        assert got["flow_recon_blocked"] is None, \
+            f"{project}: the check must RUN — {got['flow_recon_blocked']}"
+        assert got["flow_stock_move"] == 10_000.0, f"{project}: {got['flow_stock_move']}"
+        assert got["flow_accounted"] == 10_000.0, f"{project}: {got['flow_accounted']}"
+        assert got["flow_residual"] == 0.0, f"{project}: residual {got['flow_residual']}"
+        assert got["flow_span"] == ("2026-09-17", "2026-09-19"), f"{project}: {got['flow_span']}"
+        # AND IT REACHES THE SHEET: the same computation, run inside aggregate, leaves the row
+        # unblocked rather than silently skipped.
+        out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp("2026-09-20"),
+                           gaps=pd.DataFrame(), review=pd.DataFrame())
+        row = out[(out.project == project) & (out.metric == "gross_burn_tokens")].iloc[0]
+        assert "RECONCILIATION DID NOT RUN" not in str(row["why_amber"]), project
+    print(f"anchor ok: resolves for all {len(SIX_SHAPES)} shapes including GEODNET's stitched series")
+
+
+def test_a_blocked_telescoping_check_says_so_instead_of_reading_as_a_pass():
+    """** THE SILENT SKIP IS THE BUG, NOT THE MISSING ANCHOR. ** A row whose reconciliation never
+    ran is indistinguishable on the sheet from one that ran and passed, and that is precisely how
+    five of six projects could have shown nothing wrong while nothing had been checked."""
+    import build_workbook as bw
+
+    # THE ANCHOR CUT OFF: stock rows deleted from under a flow series that was derived from them.
+    # A delta is computed from a reading STRICTLY EARLIER than itself, so that reading existed
+    # when the flow was written — its absence is evidence of a deletion, not of a clean start.
+    long = _stock_flow_frame("Uniswap", "chain:ethereum:burn_dead", "chain:ethereum:burn_dead:delta")
+    cut = long[~((long.metric == "burn_address_balance") & (long.date == pd.Timestamp("2026-09-17")))]
+    got = bw.telescoping("Uniswap", "gross_burn_tokens", "burn_address_balance",
+                         cut[cut.metric == "gross_burn_tokens"],
+                         cut[cut.metric == "burn_address_balance"])
+    assert "flow_stock_move" not in got, "nothing can be computed without the anchor"
+    assert "NO STOCK READING BEFORE THE FIRST FLOW" in got["flow_recon_blocked"]
+    assert "not in the store now" in got["flow_recon_blocked"]
+    # AND IT REACHES THE READER, through the same path every other disclosure takes.
+    out = bw.aggregate(cut, pd.DataFrame(), pd.Timestamp("2026-09-20"),
+                       gaps=pd.DataFrame(), review=pd.DataFrame())
+    row = out[(out.project == "Uniswap") & (out.metric == "gross_burn_tokens")].iloc[0]
+    assert "THE FLOW RECONCILIATION DID NOT RUN" in str(row["why_amber"]), row["why_amber"]
+
+    # THE STOCK SERIES ABSENT ENTIRELY — a different cause, and it says which.
+    got = bw.telescoping("Uniswap", "gross_burn_tokens", "burn_address_balance",
+                         long[long.metric == "gross_burn_tokens"], long[long.metric == "nothing"])
+    assert "is EMPTY for this project" in got["flow_recon_blocked"], got
+
+    # AND A BACKFILLED PERIOD FIGURE IS CORRECTLY EXEMPT rather than reported as a failure: it is
+    # not a difference of two readings, so there is nothing to telescope.
+    dune = _stock_flow_frame("GEODNET", "chain:polygon:burn_polygon", "dune:8683175")
+    got = bw.telescoping("GEODNET", "gross_burn_tokens", "burn_address_balance",
+                         dune[dune.metric == "gross_burn_tokens"],
+                         dune[dune.metric == "burn_address_balance"])
+    assert "no differenced rows" in got["flow_recon_blocked"]
+    assert "correctly exempt" in got["flow_recon_blocked"]
+    print("blocked ok: cut-off anchor, absent stock and exempt backfill each named distinctly")
+
+
+def test_every_declared_flow_has_a_stock_the_check_can_find():
+    """THE HAND-MAINTAINED INVERSE HAD ALREADY GONE STALE, which is why it is derived now.
+
+    DERIVED_FLOW_STOCK was a literal dict written when burn_address_balance was the only
+    cumulative in the book, carrying a comment that it was explicit "because getting it wrong in
+    the derived direction would silently disarm the guard". Getting it wrong by hand is what
+    happened: Chainlink's Reserve inflow and Sky's two decomposed burn legs arrived on
+    2026-09-22 and had no entry, so the telescoping and implausible-delta checks never ran for
+    them at all. No answer, silently.
+    """
+    import build_workbook as bw
+
+    missing = []
+    for p in config.PROJECTS:
+        for stock, flow in {**config.CUMULATIVE_FLOW, **(p.get("cumulative_flow") or {})}.items():
+            if not flow:
+                continue
+            if bw.flow_stock(p["name"], flow) != stock:
+                missing.append((p["name"], stock, flow, bw.flow_stock(p["name"], flow)))
+    assert not missing, f"every declared flow must invert back to its own stock: {missing}"
+
+    # THE THREE THAT WERE INVISIBLE, named so this cannot regress quietly.
+    assert bw.flow_stock("Chainlink", "actual_buyback_tokens") == "buyback_fund_balance"
+    assert bw.flow_stock("Sky", "governance_burn_tokens") == "governance_burn_balance"
+    assert bw.flow_stock("Sky", "other_burn_tokens") == "other_burn_balance"
+    # AND THE ALIAS still resolves through its parent: burn_revenue_funded is a re-labelled copy
+    # of gross_burn_tokens, not a separate differencing of a separate stock.
+    assert bw.flow_stock("Venice AI", "burn_revenue_funded") == "burn_address_balance"
+    # A PROJECT THAT DECLARES NO SUCH FLOW gets None, not a global default that does not apply.
+    assert bw.flow_stock("Maple", "actual_buyback_tokens") is None
+    print("inverse ok: derived from the live mapping, all three previously-invisible flows found")
+
+
+def _m2_statement() -> str:
+    """Section M's telescoping SELECT, taken from the file rather than retyped here.
+
+    A test that keeps its own copy of the query proves nothing about the query that runs.
+    """
+    import run_sql
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    section = run_sql.parse_sections(sql)["M"]["text"]
+    stmts = [run_sql.strip_comments(s) for s in run_sql.split_statements(section)]
+    hits = [s for s in stmts if "stock_at_start" in s]
+    assert len(hits) == 1, f"expected exactly one telescoping SELECT in section M, found {len(hits)}"
+    return hits[0]
+
+
+def _seed_six_shapes(path) -> None:
+    """The same six source shapes the Python test uses, in a real store this time."""
+    import sqlite3
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE metrics (
+        date TEXT NOT NULL, project TEXT NOT NULL, metric TEXT NOT NULL, value REAL,
+        source TEXT NOT NULL, tier INTEGER, fetched_at TEXT NOT NULL,
+        PRIMARY KEY (date, project, metric))""")
+    rows = []
+    for project, stock_src, flow_src in SIX_SHAPES:
+        stock = [(f"2026-09-1{i}", 1_000_000.0 + i * 5_000) for i in (7, 8, 9)]
+        for d, v in stock:
+            rows.append((d, project, "burn_address_balance", v, stock_src, 2, "2026-09-20T00:00:00"))
+        for (d0, v0), (d1, v1) in zip(stock, stock[1:]):
+            rows.append((d1, project, "gross_burn_tokens", v1 - v0, flow_src, 2,
+                         "2026-09-20T00:00:00"))
+        if project == "GEODNET":
+            rows.append(("2026-05-01", project, "gross_burn_tokens", 4_000_000.0, "dune:8683175",
+                         4, "2026-09-20T00:00:00"))
+    conn.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def test_the_cleanup_sql_resolves_the_same_anchor_the_python_does(tmp_path):
+    """** THE FIRST DIAGNOSIS OF THE BLANK stock_at_start WAS WRONG, and this test is what
+    established that. **
+
+    Running section M against the live store returned a blank stock_at_start for five of six
+    projects — GEODNET, Hyperliquid, PancakeSwap, Tron and Venice AI — with only Uniswap
+    computing. That was written up as a query fault of the J3 class. It is not one: seeded with
+    all six real source shapes, the ORIGINAL query resolved the anchor for every one of them.
+
+    So the blanks are the answer, not a failure to produce one — those five have no
+    burn_address_balance reading dated strictly before their first differenced flow row. The
+    second half of this test reproduces the observed pattern by truncating one project's stock
+    series, and asserts the rewrite NAMES that cause instead of returning an empty cell, which
+    is the defect that was actually worth fixing.
+    """
+    db = tmp_path / "six.db"
+    _seed_six_shapes(db)
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    got = {r["project"]: dict(r) for r in conn.execute(_m2_statement())}
+
+    assert set(got) == {p for p, _, _ in SIX_SHAPES}, \
+        f"every shape must produce a row, missing {[p for p, _, _ in SIX_SHAPES if p not in got]}"
+    for project, _, _ in SIX_SHAPES:
+        r = got[project]
+        assert r["stock_at_start"] is not None, \
+            f"{project}: stock_at_start blank — {r['diagnostic']}"
+        assert r["start_date"] == "2026-09-17", f"{project}: anchored on {r['start_date']}"
+        assert r["stock_moved"] == 10_000.0, f"{project}: {r['stock_moved']}"
+        assert r["residual"] == 0.0, f"{project}: residual {r['residual']}"
+        assert r["diagnostic"] == "RECONCILES", f"{project}: {r['diagnostic']}"
+
+    # GEODNET'S STITCHED SERIES IS THE SHAPE THAT BREAKS A NAIVE ANCHOR. Its Dune backfill sits
+    # months before the first delta and carries no :delta marker, so a query that anchors on the
+    # first row of the flow series looks for a stock reading before 2026-05-01, finds none, and
+    # reports a blank. The anchor is the first DIFFERENCED row.
+    assert got["GEODNET"]["first_flow"] == "2026-09-18", got["GEODNET"]
+    assert got["GEODNET"]["flow_rows"] == 2, "the 4,000,000 Dune row must not be summed in"
+    assert got["GEODNET"]["flows_recorded"] == 10_000.0, got["GEODNET"]
+
+    # THE OBSERVED PATTERN, REPRODUCED: cut one project's stock series back to start ON its first
+    # flow date and that project blanks while the rest still compute. One project computing and
+    # five not is what a store in this state looks like — not what a broken lookup looks like.
+    conn.execute("DELETE FROM metrics WHERE project='Tron' AND metric='burn_address_balance'"
+                 " AND date='2026-09-17'")
+    after = {r["project"]: dict(r) for r in conn.execute(_m2_statement())}
+    assert after["Tron"]["stock_at_start"] is None
+    assert after["Uniswap"]["diagnostic"] == "RECONCILES", "only the truncated project blanks"
+
+    # AND THE BLANK IS NAMED. The two causes have different remedies, so the diagnostic reports
+    # where the stock series starts rather than asserting a deletion it cannot know about.
+    d = after["Tron"]["diagnostic"]
+    assert d.startswith("CANNOT BE CHECKED"), d
+    assert "the stock series starts 2026-09-18" in d, d
+    assert "first differenced flow 2026-09-18" in d, d
+    assert "deleted" in d and "wrote no balance" in d, "both causes named, neither asserted"
+    assert after["Tron"]["first_stock"] == "2026-09-18", "first_stock is what separates them"
+
+    # A STOCK SERIES ABSENT ALTOGETHER is a third, distinct answer.
+    conn.execute("DELETE FROM metrics WHERE project='Tron' AND metric='burn_address_balance'")
+    gone = {r["project"]: dict(r) for r in conn.execute(_m2_statement())}["Tron"]
+    assert "NO STOCK SERIES AT ALL" in gone["diagnostic"], gone["diagnostic"]
+    conn.close()
+    print(f"cleanup sql ok: anchor resolves for all {len(SIX_SHAPES)} shapes; each blank names its cause")
+
+
 def test_a_provider_that_serves_the_cap_as_the_supply_derives_no_issuance():
     """CoinGecko returns World Mobile total_supply = max_supply = 2,000,000,000, to the token.
     That is the ERC20Capped ceiling off the deployed source, not an amount anyone has minted:
