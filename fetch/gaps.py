@@ -151,7 +151,44 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     tiers = m.get("tiers", [])
 
     if metric in PRO_PAYWALLED:
-        return (PRO_PAYWALLED[metric],
+        # ===== THE PAYWALL IS THE LAST EXPLANATION, NOT THE FIRST. Fixed 2026-09-23. =====
+        # This branch returned "DefiLlama emissions/unlocks is Pro tier only" for every project,
+        # and it was the wrong obstacle on nearly all of them: it sends the reader to buy a
+        # $300/mo plan for a figure that either has a declared schedule already, is not minting
+        # at all, or does not exist. A reason that names the wrong obstacle is worse than none,
+        # because it looks actionable and somebody acts on it.
+        model = config.emissions_model(name)
+        if model:
+            caveat = ("" if model.get("sourced") else
+                      f" CLASSIFIED, NOT YET SOURCED — declared by "
+                      f"{model.get('declared_by', 'review')} and not re-confirmed against "
+                      f"{name}'s own material, so treat the model as the current best reading "
+                      f"rather than settled.")
+            note = model.get("note", "")
+            if model["model"] == "minted":
+                return (f"EMISSIONS ARE MINTING HERE, so this metric is the issuance route and "
+                        f"not a second source: see gross_issuance_tokens. {note}{caveat}",
+                        "Nothing to buy. If gross_issuance_tokens is itself unresolved, that is "
+                        "the one row to fix; this one follows from it.")
+            if model["model"] == "distributed_from_premint":
+                return (f"NOT MINTING — the supply already exists and is being RELEASED. {note} "
+                        f"Total supply does not move, so a supply delta cannot see it, and "
+                        f"DefiLlama's unlocks feed is the wrong shape for it too: the Pro tier "
+                        f"would not answer this question.{caveat}",
+                        "The route is the release schedule where one is published, or the "
+                        "holding wallet's OUTFLOW history (a Dune query, not a balance read). "
+                        "Do NOT derive it from total supply.")
+            if model["model"] == "vesting_complete":
+                return (f"THE EMISSION HAS FINISHED. {note}{caveat}",
+                        "Confirm the schedule's end date from the protocol's own material and "
+                        "record it; a zero from then on is a fact about the schedule rather "
+                        "than a measurement that failed.")
+            if model["model"] == "none":
+                return (f"NO EMISSION MECHANISM. {note}{caveat}",
+                        "Nothing to source. If this is wrong, the emission schedule is the thing "
+                        "to find — not an emissions feed.")
+        return (PRO_PAYWALLED[metric] + " (and this project has no emissions_model declared, so "
+                "no better explanation is available — classifying it is the first step)",
                 f"Add a sources.yaml entry pointing at the protocol's own emissions page, or a Dune query id "
                 f"in config.py under {name}.")
 

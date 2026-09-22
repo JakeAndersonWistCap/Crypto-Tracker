@@ -1552,6 +1552,16 @@ PROJECTS = [
         # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
         # metrics apply. L1.
         "is_chain": True,
+        # CLASSIFIED BY JAKE, 2026-09-23, NOT RE-CONFIRMED HERE. NEAR mints validator rewards on a declared inflation curve. Recorded so the Gap
+        # Report stops saying "DefiLlama Pro tier only" — which was the wrong obstacle — without
+        # promoting a review note to an established fact. sourced=False is what keeps that honest.
+        "emissions_model": {
+            "model": "minted",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "NEAR mints validator rewards on a declared inflation curve.",
+        },
         "name": "Near", "symbol": "NEAR",
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
@@ -2163,6 +2173,20 @@ PROJECTS = [
         # of them INTO tx_count would put an oracle-update count in a column that means
         # blockchain transactions everywhere else, which is worse than the gap it closes.
         "is_chain": False,
+        # ===== SOURCED: the whole supply was minted at genesis. =====
+        # This file already relies on it — metrics_for_project's own docstring cites Chainlink as
+        # the worked example of a metric that cannot exist ("minted its entire supply at
+        # genesis"), which is why gross_issuance_tokens is not a gap here.
+        "emissions_model": {
+            "model": "distributed_from_premint",
+            "sourced": True,
+            "source": "the genesis mint is the premise metrics_for_project already documents for "
+                      "this project; the staking reward vault RELEASES pre-minted LINK",
+            "note": "LINK does not mint. The reward vault pays staking rewards out of supply that "
+                    "already exists, so emissions are a release from a known address and total "
+                    "supply never moves. DefiLlama's unlocks feed is the wrong shape for it and "
+                    "the Pro tier would not answer the question.",
+        },
         "name": "Chainlink", "symbol": "LINK",
         "coingecko_id": "chainlink",
         "defillama_fees_slug": "chainlink", "defillama_protocol": "chainlink", "defillama_chain": None,
@@ -2466,6 +2490,16 @@ PROJECTS = [
     },
     # ------------------------------------------------------------------ Archetype 2 (+3/+4)
     {
+        # CLASSIFIED BY JAKE, 2026-09-23, NOT RE-CONFIRMED HERE. the whitepaper's Fig. 1 curve rises to the 2bn cap, which is minting. Recorded so the Gap
+        # Report stops saying "DefiLlama Pro tier only" — which was the wrong obstacle — without
+        # promoting a review note to an established fact. sourced=False is what keeps that honest.
+        "emissions_model": {
+            "model": "minted",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "the whitepaper's Fig. 1 curve rises to the 2bn cap, which is minting.",
+        },
         "name": "World Mobile", "symbol": "WMTX",
         "coingecko_id": "world-mobile-token",
         # ===== NOT ON DEFILLAMA, as far as DefiLlama's own adapter repositories go. =====
@@ -3303,6 +3337,21 @@ PROJECTS = [
                  "all supplier earnings as emissions.",
     },
     {
+        # ===== SOURCED FROM THIS FILE'S OWN ESTABLISHED FINDING. =====
+        # issuance_derivation.na_reason already settles it: total_supply_gross reads exactly
+        # 1,000,000,000 and does not move, so nothing is minted; the emissions are DISTRIBUTION
+        # from pre-minted mining wallets. The same fact that makes gross_issuance_tokens n/a
+        # makes emissions_tokens a release-schedule question, not a minting one.
+        "emissions_model": {
+            "model": "distributed_from_premint",
+            "sourced": True,
+            "source": "this entry's own issuance_derivation.na_reason and per_miner_reward_"
+                      "schedule, both established 2026-09-15/18 from GEODNET's own docs",
+            "note": "the base reward is per-miner and halves annually on 30 June, so the network "
+                    "total is f(miner count, uptime, band, zone) — not recoverable from supply "
+                    "at any sampling interval. The measurable route is the mining wallets' "
+                    "outflow history.",
+        },
         "name": "GEODNET", "symbol": "GEOD",
         "coingecko_id": "geodnet",
         # ===== GEODNET IS ON DEFILLAMA. WIRED 2026-09-23, FROM DEFILLAMA'S OWN ADAPTER. =====
@@ -4168,6 +4217,16 @@ PROJECTS = [
         "notes": "Materiality LOW: qualifies mechanically, not comparable to Aave or Hyperliquid. Also pull Publisher Conviction.",
     },
     {
+        # CLASSIFIED BY JAKE, 2026-09-23, NOT RE-CONFIRMED HERE. released from a pre-minted allocation. Recorded so the Gap
+        # Report stops saying "DefiLlama Pro tier only" — which was the wrong obstacle — without
+        # promoting a review note to an established fact. sourced=False is what keeps that honest.
+        "emissions_model": {
+            "model": "distributed_from_premint",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "released from a pre-minted allocation.",
+        },
         "name": "Aethir", "symbol": "ATH",
         "coingecko_id": "aethir",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
@@ -4549,6 +4608,16 @@ PROJECTS = [
                  "a wrong slug shows up as a 404 in the Run Log.",
     },
     {
+        # CLASSIFIED BY JAKE, 2026-09-23, NOT RE-CONFIRMED HERE. syrupDrip releases pre-minted SYRUP. Recorded so the Gap
+        # Report stops saying "DefiLlama Pro tier only" — which was the wrong obstacle — without
+        # promoting a review note to an established fact. sourced=False is what keeps that honest.
+        "emissions_model": {
+            "model": "distributed_from_premint",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "syrupDrip releases pre-minted SYRUP.",
+        },
         "name": "Maple", "symbol": "SYRUP",
         "coingecko_id": "syrup",
         "defillama_fees_slug": "maple", "defillama_protocol": "maple", "defillama_chain": None,
@@ -4967,6 +5036,18 @@ PROJECTS = [
                  "ongoing staking yield.",
     },
     {
+        # NO EMISSION MECHANISM per Jake's review, 2026-09-23, and it fits what this entry
+        # already records: the fee switch is OFF and share_to_buyback is 0.0. Still carried as
+        # unsourced, because "no emissions" is a claim about the token's schedule rather than
+        # about the fee switch, and those are different facts.
+        "emissions_model": {
+            "model": "none",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "consistent with the fee switch being off, but that is a different fact from "
+                    "the emission schedule and does not establish this one.",
+        },
         "name": "Morpho", "symbol": "MORPHO",
         "coingecko_id": "morpho",
         "defillama_fees_slug": "morpho", "defillama_protocol": "morpho", "defillama_chain": None,
@@ -5072,6 +5153,16 @@ PROJECTS = [
         # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
         # metrics apply. its own L1, plus HyperEVM.
         "is_chain": True,
+        # CLASSIFIED BY JAKE, 2026-09-23, NOT RE-CONFIRMED HERE. the future-emissions pool is pre-minted supply being released. Recorded so the Gap
+        # Report stops saying "DefiLlama Pro tier only" — which was the wrong obstacle — without
+        # promoting a review note to an established fact. sourced=False is what keeps that honest.
+        "emissions_model": {
+            "model": "distributed_from_premint",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "the future-emissions pool is pre-minted supply being released.",
+        },
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
         # ===== TOTAL STAKED HYPE: CHECKED AGAINST HYPERLIQUID'S OWN SOURCE, AND NOT WIRED. =====
@@ -5561,6 +5652,17 @@ PROJECTS = [
                  "mainnet's.",
     },
     {
+        # Aerodrome MINTS: the Minter contract emits AERO weekly on a declared curve, which this
+        # entry already reads (contracts.minter, gross_issuance_tokens). Emissions and issuance
+        # are the same event here.
+        "emissions_model": {
+            "model": "minted",
+            "sourced": True,
+            "source": "contracts.minter — Minter.weekly(), read every run and already serving "
+                      "gross_issuance_tokens from Aerodrome's own contracts/SPECIFICATION.md",
+            "note": "emissions_tokens is gross_issuance_tokens for this project; a second source "
+                    "would be a second reading of one event.",
+        },
         "name": "Aerodrome", "symbol": "AERO",
         "coingecko_id": "aerodrome-finance",
         "defillama_fees_slug": "aerodrome", "defillama_protocol": "aerodrome", "defillama_chain": None,
@@ -7507,6 +7609,16 @@ PROJECTS = [
                  "no current share is applied retroactively across the backfill.",
     },
     {
+        # CLASSIFIED BY JAKE, 2026-09-23, NOT RE-CONFIRMED HERE. the terminal 2%/yr emission is a mint, per Jake's review. Recorded so the Gap
+        # Report stops saying "DefiLlama Pro tier only" — which was the wrong obstacle — without
+        # promoting a review note to an established fact. sourced=False is what keeps that honest.
+        "emissions_model": {
+            "model": "minted",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "the terminal 2%/yr emission is a mint, per Jake's review.",
+        },
         "name": "Pendle", "symbol": "PENDLE",
         "coingecko_id": "pendle",
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
@@ -7661,6 +7773,19 @@ PROJECTS = [
                  "in deployments/1-core.json is the OLD emission model — historical, not current.",
     },
     {
+        # VESTING COMPLETE per Jake's review, 2026-09-23. NOT re-confirmed from Fluid's own
+        # material here — Fluid's docs are not reachable from this environment — so it is carried
+        # as a classification rather than an established fact, and the Gap Report says so.
+        "emissions_model": {
+            "model": "vesting_complete",
+            "sourced": False,
+            "source": None,
+            "declared_by": "Jake, 2026-09-23 review",
+            "note": "if the vesting schedule has run out, a zero from here on is a FACT about "
+                    "the schedule rather than a failed measurement — but the end date has to "
+                    "come from Fluid's own schedule before this renders as a confident zero. "
+                    "Until then it is a gap whose reason is 'classified, not yet sourced'.",
+        },
         "name": "Fluid", "symbol": "FLUID",
         "coingecko_id": "instadapp",
         "defillama_fees_slug": "fluid", "defillama_protocol": "fluid", "defillama_chain": None,
@@ -8462,6 +8587,58 @@ PROJECTS = [
 ]
 
 PROJECT_BY_NAME = {p["name"]: p for p in PROJECTS}
+
+
+# ===== "DefiLlama Pro tier only" WAS THE WRONG REASON ON NEARLY EVERY ROW. Added 2026-09-23. =====
+#
+# emissions_tokens carried one blanket explanation for all eleven of its gaps: DefiLlama's
+# emissions/unlocks endpoint is paywalled. True, and irrelevant for most of them — it sends the
+# reader to buy a $300/mo plan for a figure that either has a declared schedule already, is not
+# minting at all, or does not exist. A reason that names the wrong obstacle is worse than none:
+# it is actionable-looking, so somebody acts on it.
+#
+# FOUR MODELS, AND THEY NEED DIFFERENT THINGS:
+#   minted                     new tokens are created. emissions IS the issuance route, so the
+#                              answer is gross_issuance_tokens, not a second source.
+#   distributed_from_premint   the supply already exists and is being RELEASED from a wallet.
+#                              Not minting — total supply does not move — so a supply delta
+#                              cannot see it and DefiLlama's unlocks feed is the wrong shape
+#                              too. It needs the release schedule, or the wallet's outflow
+#                              history, and the gap says which.
+#   vesting_complete           the emission happened and has finished. Zero from here on is a
+#                              FACT about the schedule, not a measurement that failed.
+#   none                       there is no emission mechanism.
+#
+# ** PROVENANCE IS PER ENTRY AND `sourced` IS NOT DECORATION. ** Where this file already carries
+# the evidence, sourced=True names it. Where the classification came from Jake's review and has
+# not been re-confirmed against the protocol's own material from here, sourced=False — and the
+# Gap Report says "classified, not yet sourced" rather than presenting it as settled. The four
+# models are a good deal more useful than "Pro tier only" either way, but a claim about whether a
+# token mints is exactly the kind of thing this book does not get to assert casually.
+EMISSIONS_MODELS = ("minted", "distributed_from_premint", "vesting_complete", "none")
+
+
+def emissions_model(project_name: str) -> dict | None:
+    """How this project's emissions happen, or None if it has not been classified."""
+    m = (PROJECT_BY_NAME.get(project_name) or {}).get("emissions_model")
+    return m if m and m.get("model") in EMISSIONS_MODELS else None
+
+
+def _check_emissions_models() -> list[str]:
+    """A declared model must be one we know how to act on, and must say where it came from."""
+    errs = []
+    for p in PROJECTS:
+        m = p.get("emissions_model")
+        if not m:
+            continue
+        if m.get("model") not in EMISSIONS_MODELS:
+            errs.append(f"{p['name']}.emissions_model: {m.get('model')!r} is not one of {EMISSIONS_MODELS}")
+        if "sourced" not in m:
+            errs.append(f"{p['name']}.emissions_model: no `sourced` flag — a claim about whether "
+                        f"a token mints must say whether it has been checked")
+        if m.get("sourced") and not m.get("source"):
+            errs.append(f"{p['name']}.emissions_model: sourced=True with no `source` naming it")
+    return errs
 
 
 # ===== WHERE A BUYBACK'S TOKENS GO DECIDES HOW THE FLOW IS MEASURED. Added 2026-09-23. =====
@@ -10809,7 +10986,8 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
               + _check_total_supply_conventions()
               + _check_series_granularity()
               + _check_open_question_status()
-              + _check_is_chain())
+              + _check_is_chain()
+              + _check_emissions_models())
     if errors and raise_on_error:
         raise ConfigError("config.py has errors that would produce wrong numbers:\n  - " + "\n  - ".join(errors))
     return errors

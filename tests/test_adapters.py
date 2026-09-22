@@ -8606,3 +8606,61 @@ def test_a_buyback_row_with_no_price_on_its_own_date_is_reported_not_valued_at_t
     assert skipped and "2026-07-01" in skipped[0].message, skipped
     assert "not what was spent" in skipped[0].message
     print("pricing ok: the unpriced date is named and left out, not carried at today's price")
+
+
+def test_the_emissions_paywall_is_the_last_explanation_not_the_first():
+    """** "DefiLlama Pro tier only" WAS RETURNED FOR EVERY PROJECT, and it was the wrong obstacle
+    on nearly all of them. ** It sends the reader to buy a $300/mo plan for a figure that either
+    has a declared schedule already, is not minting at all, or does not exist. A reason that
+    names the wrong obstacle is worse than none: it looks actionable, so somebody acts on it.
+    """
+    from fetch.gaps import _tier_note, PRO_PAYWALLED
+
+    cases = {
+        "Aerodrome": ("EMISSIONS ARE MINTING HERE", "Nothing to buy"),
+        "GEODNET": ("NOT MINTING", "OUTFLOW history"),
+        "Chainlink": ("NOT MINTING", "OUTFLOW history"),
+        "Fluid": ("THE EMISSION HAS FINISHED", "end date"),
+        "Morpho": ("NO EMISSION MECHANISM", "Nothing to source"),
+    }
+    for name, (in_reason, in_suggestion) in cases.items():
+        reason, suggestion = _tier_note(config.PROJECT_BY_NAME[name], "emissions_tokens", {})
+        assert in_reason in reason, f"{name}: {reason[:120]}"
+        assert in_suggestion in suggestion, f"{name}: {suggestion[:120]}"
+        # The paywall must not be the HEADLINE obstacle. The premint reasons mention the Pro
+        # tier deliberately — to say it would not answer the question — which is the opposite of
+        # blaming it, so the test is on what the row leads with.
+        assert PRO_PAYWALLED["emissions_tokens"] not in reason, \
+            f"{name} still leads with the paywall: {reason[:120]}"
+
+    # ** THE PAYWALL SURVIVES WHERE IT IS ACTUALLY THE OBSTACLE. ** An unclassified project has
+    # no better explanation available, and saying so — plus that classifying it is the first
+    # step — is more useful than either the bare paywall or silence.
+    reason, _ = _tier_note(config.PROJECT_BY_NAME["Bitcoin"], "emissions_tokens", {})
+    assert PRO_PAYWALLED["emissions_tokens"] in reason
+    assert "no emissions_model declared" in reason
+    assert config.emissions_model("Bitcoin") is None
+
+    # ** AN UNSOURCED CLASSIFICATION SAYS SO ON THE ROW. ** A claim about whether a token mints
+    # is not something this book gets to assert casually, and a review note presented as an
+    # established fact is exactly the pattern that has bitten here before.
+    reason, _ = _tier_note(config.PROJECT_BY_NAME["Near"], "emissions_tokens", {})
+    assert "CLASSIFIED, NOT YET SOURCED" in reason and "Jake" in reason
+    assert config.emissions_model("Near")["sourced"] is False
+    # AND A SOURCED ONE DOES NOT CARRY THE CAVEAT.
+    reason, _ = _tier_note(config.PROJECT_BY_NAME["GEODNET"], "emissions_tokens", {})
+    assert "CLASSIFIED, NOT YET SOURCED" not in reason
+    assert config.emissions_model("GEODNET")["sourced"] is True
+
+    # THE CONFIG CHECK REFUSES A MODEL THAT DOES NOT SAY WHETHER IT WAS CHECKED.
+    geo = config.PROJECT_BY_NAME["GEODNET"]
+    whole = geo["emissions_model"]
+    try:
+        geo["emissions_model"] = {k: v for k, v in whole.items() if k != "sourced"}
+        assert any("no `sourced` flag" in e for e in config._check_emissions_models())
+        geo["emissions_model"] = {**whole, "source": None}
+        assert any("sourced=True with no `source`" in e for e in config._check_emissions_models())
+    finally:
+        geo["emissions_model"] = whole
+    print("emissions reasons ok: 11 projects classified, the paywall kept only where it is the "
+          "real obstacle, and unsourced classifications say so")
