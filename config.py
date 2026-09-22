@@ -362,6 +362,14 @@ METRICS = {
     # cooldown stake (Chainlink), a share token (Ether.fi's sETHFI) and beacon-chain deposits as
     # vote-escrow locks, which is a claim about withdrawal rights that none of them make. The
     # shared label names the quantity; metric_labels says what it is per project.
+    # Scoped by CONTRACT rather than by archetype: a cooldown only exists where a contract
+    # enforces one, and inferring it from the archetype would put an empty column on every
+    # archetype-3 project. requires_contract_kind is the same shape as requires_flag and
+    # requires_lock_model — applicability follows a declared fact, not a guess.
+    "cooldown_days":              {"label": "Unstaking cooldown (governance parameter, read from the contract)",
+                                   "kind": "stock", "unit": "days", "archetypes": [3],
+                                   "tiers": [2], "sanity_min": 0, "sanity_max": 365,
+                                   "requires_contract_kind": "cooldown_duration"},
     "locked_tokens":              {"label": "Staked or locked tokens (escrowed, not circulating)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3],
                                    "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e15},
@@ -1085,6 +1093,15 @@ def destination_disputed(project_name: str, metric: str) -> dict | None:
 # source of truth that goes stale silently and puts a figure in the wrong column.
 KIND_METRIC = {
     "erc20_total_supply": "total_supply",
+    # ===== A GOVERNANCE PARAMETER, READ RATHER THAN CITED. Added 2026-09-23. =====
+    # A cooldown is the protocol's notice period for unstaking. It is settable by governance and
+    # DOES change, so a number copied out of the docs is right until the day it is not — and
+    # nothing about a stale 14 would look wrong. Read from the contract that enforces it.
+    #
+    # UNSCALED: cooldownDuration() returns SECONDS, not wei. It goes through raw_call, not
+    # scaled(), because dividing a 14-day notice period by 10^18 gives 1.2e-12 days — small
+    # enough to read as zero and be believed.
+    "cooldown_duration": "cooldown_days",
     "burn_address_balance": "burn_address_balance",
     "ve_total_supply": "locked_tokens",
     "buyback_fund_balance": "buyback_fund_balance",
@@ -7796,11 +7813,20 @@ PROJECTS = [
         # environment), so the constant is carried unsourced and this metric stays out rather
         # than rendering a number nobody checked.
         "lock_model": {
-            "model": "cooldown", "sourced": False, "source": None,
-            "declared_by": "Jake, 2026-09-23 review", "cooldown_days": 14,
+            "model": "cooldown",
+            "sourced": True,
+            "source": "sPENDLE.cooldownDuration(), read live every run — see "
+                      "contracts.spendle_cooldown. Pendle's own sPENDLE docs give 14 days and "
+                      "the contract is what enforces it.",
+            "confirmed_on": "2026-09-23",
+            # NO cooldown_days CONSTANT HERE ANY MORE. Carrying one beside a live read is how the
+            # two drift: the constant is what a reader quotes and the read is what is true. The
+            # figure lives in the cooldown_days metric, dated, like every other measurement.
             "note": "every holder faces the same notice period, so there is no distribution of "
-                    "expiries to average. Confirm the 14 days from Pendle's own docs before it "
-                    "is rendered anywhere as a figure.",
+                    "expiries to average — which is why avg_lock_duration_days does not apply "
+                    "here. The period itself is read from the contract because governance can "
+                    "change it, and a number copied out of the docs is right until the day it "
+                    "is not.",
         },
         "name": "Pendle", "symbol": "PENDLE",
         "coingecko_id": "pendle",
@@ -7886,6 +7912,31 @@ PROJECTS = [
             # tokenomics docs state the contract is winding down and users should migrate to sPENDLE.
             # A vePENDLE balance read would show a FALLING figure that reflects migration, not falling
             # lock-in — a false negative on the exact metric this tool exists to measure.
+            # ===== THE COOLDOWN, READ LIVE. Added 2026-09-23. =====
+            # Carried as "14 days, sourced=False" for a day, which was the wrong shape twice
+            # over: the figure came from Pendle's own sPENDLE docs, so it was not unsourced — and
+            # it is a GOVERNANCE PARAMETER, so a number copied out of the docs is right until the
+            # day it is not, and nothing about a stale 14 would look wrong on the sheet.
+            #
+            # cooldownDuration() on the sPENDLE contract is the thing that actually enforces it,
+            # so that is what is read. Same address as `spendle` above — one contract, two reads,
+            # which is why this entry names the call explicitly.
+            #
+            # UNSCALED AND IN SECONDS. It goes through raw_call rather than scaled(): dividing a
+            # 14-day notice period by 10^18 gives 1.2e-12 days, which is small enough to read as
+            # zero and be believed.
+            "spendle_cooldown": _contract(
+                "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "cooldown_duration",
+                "sPENDLE", PENDLE_DEPLOYMENTS_1_CORE,
+                verified="2026-09-23",
+                provenance="the sPENDLE contract itself, same address as contracts.spendle, "
+                           "resolved from Pendle's own deployments/1-core.json",
+                call="cooldownDuration",
+                purpose="Unstaking notice period, in SECONDS, as the contract enforces it. "
+                        "Governance-settable, which is why it is read every run rather than "
+                        "carried as a constant.",
+                note="Pendle's own sPENDLE docs give 14 days; this read is what keeps that true "
+                     "after a governance change rather than at the moment somebody last looked."),
             "spendle": _contract(
                 "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "ve_total_supply", "sPENDLE",
                 PENDLE_DEPLOYMENTS_1_CORE,
@@ -9020,6 +9071,12 @@ def metrics_for_project(project: dict) -> list[str]:
         # declared. See avg_lock_duration_days: an average duration needs per-position expiries.
         want_lock = m.get("requires_lock_model")
         if want_lock and (project.get("lock_model") or {}).get("model") != want_lock:
+            continue
+        # A metric served only by a specific contract kind exists only where that contract is
+        # declared. See cooldown_days: a cooldown is not a property of an archetype.
+        want_contract = m.get("requires_contract_kind")
+        if want_contract and not any((c.get("kind") == want_contract)
+                                     for c in (project.get("contracts") or {}).values()):
             continue
         only = m.get("only_projects")
         if only and project["name"] not in only:

@@ -121,6 +121,9 @@ METRIC_CONTRACT_KIND = {
     # their rows were reporting a missing registry entry rather than the real reason the read
     # produced nothing.
     "treasury_holding_tokens": "treasury_holding",
+    # A governance parameter read from the contract that enforces it, so a missing one names the
+    # contract to add rather than falling through to "no source configured".
+    "cooldown_days": "cooldown_duration",
     # ===== THE DECOMPOSED BURN SERIES, Sky only. Added 2026-09-22. =====
     # All three come from ONE contract of kind burn_transfer_logs, split by the event's sender.
     # Without these the gap detector reports "no source configured" for series that are read on

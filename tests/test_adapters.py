@@ -8855,12 +8855,20 @@ def test_only_a_time_lock_has_an_average_duration():
         assert "avg_lock_duration_days" not in config.metrics_for_project(
             config.PROJECT_BY_NAME[name]), name
 
-    # AN UNSOURCED COOLDOWN CONSTANT IS NOT RENDERED ANYWHERE. Pendle's 14 days came from review
-    # and could not be re-confirmed from Pendle's own docs here; carrying it as a figure would be
-    # exactly the "confident number nobody checked" this book keeps removing.
+    # ** THE COOLDOWN IS READ, NOT CARRIED. ** It was held for a day as "14 days, sourced=False",
+    # which was the wrong shape twice over: the figure came from Pendle's own sPENDLE docs, so it
+    # was not unsourced — and it is a GOVERNANCE PARAMETER, so a constant is right until the day
+    # it is not and nothing about a stale 14 would look wrong on the sheet.
     pendle = config.PROJECT_BY_NAME["Pendle"]["lock_model"]
-    assert pendle["model"] == "cooldown" and pendle["sourced"] is False
-    assert pendle["cooldown_days"] == 14 and "Confirm the 14 days" in pendle["note"]
+    assert pendle["model"] == "cooldown" and pendle["sourced"] is True
+    assert "cooldownDuration()" in pendle["source"] and "read live every run" in pendle["source"]
+    # NO CONSTANT BESIDE THE LIVE READ — that is how the two drift, with the constant being what
+    # a reader quotes and the read being what is true.
+    assert "cooldown_days" not in pendle, "the figure lives in the dated metric, not in config"
+    cd = config.PROJECT_BY_NAME["Pendle"]["contracts"]["spendle_cooldown"]
+    assert cd["kind"] == "cooldown_duration" and cd["call"] == "cooldownDuration"
+    assert cd["address"] == config.PROJECT_BY_NAME["Pendle"]["contracts"]["spendle"]["address"], \
+        "one contract, two reads — the cooldown is enforced by the staking token itself"
     print("lock duration ok: veAERO is the one time-lock; ten cooldown stakes stop asking")
 
 
@@ -9081,3 +9089,69 @@ def test_a_revenue_figure_derived_from_our_own_burn_cannot_cross_check_it():
     assert rec["observed_share_against_reported_arr"] == 0.8706
     print("circular check ok: both implied-vs-actual rows blanked with their reason, three "
           "series relabelled, and the 0.87 ARR test stays the only independent one")
+
+
+def test_a_governance_parameter_is_read_from_the_contract_and_not_scaled_as_a_token():
+    """** A CONSTANT IS RIGHT UNTIL THE DAY IT IS NOT. **
+
+    Pendle's cooldown was carried for a day as "14 days, sourced=False", which was the wrong
+    shape twice over: the figure came from Pendle's own sPENDLE docs, so it was not unsourced —
+    and it is a governance parameter, so a number copied out of the docs stays on the sheet
+    looking entirely reasonable after governance changes it.
+
+    AND IT IS NOT A TOKEN AMOUNT. cooldownDuration() returns SECONDS. Through scaled() a 14-day
+    notice period becomes 1.2e-12 days — small enough to read as zero and be believed.
+    """
+    from fetch.base import FetchOutput
+    from fetch.chain import Chain
+
+    pendle = config.PROJECT_BY_NAME["Pendle"]
+    SPENDLE = "0x999999999991E178D52Cd95AFd4b00d066664144"
+    assert config.KIND_METRIC["cooldown_duration"] == "cooldown_days"
+
+    class _Stub:
+        def __init__(self):
+            self.raw, self.scaled_calls = [], []
+
+        def has_code(self, chain, address):
+            return True
+
+        def symbol_matches(self, chain, address, expected):
+            return True, "sPENDLE"
+
+        def raw_call(self, chain, address, call, *args):
+            self.raw.append((address, call))
+            return 14 * 86_400          # the contract's own units: seconds
+
+        def scaled(self, chain, address, call, *args, decimals_from=None):
+            self.scaled_calls.append((address, call))
+            return 1_000_000.0
+
+    c = Chain()
+    c.reader = _Stub()
+    out = FetchOutput()
+    c.run([pendle], None, out)
+    df = out.frame()
+
+    row = df[df.metric == "cooldown_days"]
+    assert len(row) == 1, df.to_dict()
+    assert float(row.value.iloc[0]) == 14.0, row.to_dict()
+
+    # ** THE UNSCALED PATH, AND ONLY FOR THIS KIND. ** The two paths are separate so neither can
+    # be reached by accident: the cooldown goes through raw_call, the supply read does not.
+    assert (SPENDLE, "cooldownDuration") in c.reader.raw, c.reader.raw
+    assert not [call for addr, call in c.reader.scaled_calls if call == "cooldownDuration"], \
+        "a seconds figure must never go through the decimals-scaling path"
+    assert c.reader.scaled_calls, "the ordinary reads on this project still use scaled()"
+
+    # WHAT SCALING IT WOULD HAVE DONE, asserted rather than only described.
+    assert (14 * 86_400) / 10 ** 18 / 86_400 < 1e-11, \
+        "through scaled() a 14-day cooldown reads as zero"
+
+    # THE METRIC EXISTS ONLY WHERE THE CONTRACT DOES — a cooldown is not a property of an
+    # archetype, and inferring it would put an empty column on every archetype-3 project.
+    assert "cooldown_days" in config.metrics_for_project(pendle)
+    for other in ("Sky", "Maple", "Aerodrome", "Chainlink", "Ether.fi"):
+        assert "cooldown_days" not in config.metrics_for_project(config.PROJECT_BY_NAME[other]), other
+    print("cooldown ok: 1,209,600 seconds read raw = 14.0000 days, unscaled, and scoped to the "
+          "one project whose contract enforces it")

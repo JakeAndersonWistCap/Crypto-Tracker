@@ -408,6 +408,19 @@ class ChainReader:
         decimals = dec_source.functions.decimals().call()
         return float(raw) / (10 ** int(decimals))
 
+    def raw_call(self, chain: str, address: str, call: str, *args) -> float:
+        """Call `call` and return the integer AS RETURNED — no decimals scaling.
+
+        ** NOT EVERY ON-CHAIN NUMBER IS A TOKEN AMOUNT. ** scaled() divides by decimals() because
+        every reader it was written for returns wei. A governance parameter does not:
+        sPENDLE.cooldownDuration() returns SECONDS, and dividing it by 10^18 would turn a 14-day
+        notice period into 1.2e-12 days — a number small enough to read as zero and be believed.
+        The two paths are separate so neither can be reached by accident.
+        """
+        c = self.erc20(chain, address)
+        args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
+        return float(getattr(c.functions, call)(*args).call())
+
 
 class Chain:
     """Tier 2 adapter. prior_values supplies the last stored figure for cumulative differencing."""
@@ -671,7 +684,25 @@ class Chain:
                                 tiers_attempted="2", suggestion="Re-check the address on the protocol's own docs.")
                         refused[metric].append(f"{key} ({chain}): symbol mismatch")
                         continue
-                    if holder:
+                    # ===== A GOVERNANCE PARAMETER IS NOT A TOKEN AMOUNT. Added 2026-09-23. =====
+                    # cooldownDuration() returns SECONDS. Through scaled() it would be divided by
+                    # the token's decimals, turning a 14-day notice period into 1.2e-12 days —
+                    # small enough to read as zero and be believed, on a metric whose whole point
+                    # is that governance can change it. The unit conversion is declared on the
+                    # kind rather than inferred from the size of the number.
+                    #
+                    # FIRST IN THE CHAIN, not nested inside the principal branch. Placed there
+                    # initially, it was unreachable — the read fell through to the generic
+                    # totalSupply path, which called cooldownDuration() and then scaled it, and
+                    # the test is what caught it. Kind dispatch belongs where every other kind is
+                    # decided.
+                    if kind == "cooldown_duration":
+                        seconds = self.reader.raw_call(chain, read_address,
+                                                       spec.get("call") or "cooldownDuration")
+                        value = seconds / 86_400.0
+                        log.info("%s/%s: %s() = %.0f seconds = %.4f days", name, key,
+                                 spec.get("call") or "cooldownDuration", seconds, value)
+                    elif holder:
                         value = self.reader.scaled(chain, read_address, "balanceOf", holder)
                     elif decimals_address:
                         # Only the principal path needs a separate decimals source, and the kwarg
