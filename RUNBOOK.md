@@ -862,7 +862,12 @@ Uniswap
 Ether.fi        # comments are fine
 ```
 
-**A typo widens the run, it never narrows it**, and the run says loudly what it could not match.
+Names must match `config.py`'s spelling; **case does not matter** (`sky` resolves to `Sky`) and a
+name listed twice is fetched once. Trailing `# comments`, full-line comments, blank lines and
+surrounding whitespace are all ignored.
+
+**A typo widens the run, it never narrows it**, and the run says loudly what it could not match —
+an ERROR naming every line it could not resolve, followed by the full list of valid names.
 The asymmetry is deliberate: a name wrongly parked stops collecting silently, and a series that
 stops collecting cannot be backfilled — CoinGecko serves `total_supply` as a current value only,
 confirmed on a live call. Fetching a project that is no longer held costs one extra API call a

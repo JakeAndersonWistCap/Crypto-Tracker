@@ -5254,6 +5254,20 @@ def test_a_typo_in_portfolio_txt_WIDENS_the_run_rather_than_parking_a_held_asset
         pf.write_text("# holdings\n\nSky\n  Uniswap  # keep\n", encoding="utf-8")
         names, unknown = config.read_portfolio(pf)
         assert names == ["Sky", "Uniswap"] and not unknown, (names, unknown)
+
+        # CASE DOES NOT MATTER AND SPELLING DOES. "sky" is never a different project from "Sky",
+        # so rejecting it would report a typo where there is none and widen the run over nothing.
+        # "Uniswapp" is a real typo and is still caught. The CANONICAL spelling comes back, so
+        # everything downstream keys on config's name whatever was typed.
+        pf.write_text("sky\nETHER.FI\nUniswapp\n", encoding="utf-8")
+        names, unknown = config.read_portfolio(pf)
+        assert names == ["Sky", "Ether.fi"], names
+        assert unknown == ["Uniswapp"], unknown
+
+        # A NAME LISTED TWICE IS NOT AN ERROR AND IS NOT FETCHED TWICE — that is the shape a
+        # hand-edited list takes after a revision or two.
+        pf.write_text("Sky\nUniswap\nSky\n", encoding="utf-8")
+        assert config.read_portfolio(pf)[0] == ["Sky", "Uniswap"]
     finally:
         tm.PORTFOLIO_TXT = original
     print("portfolio ok: narrows by default, widens on a typo, comments and blanks ignored")

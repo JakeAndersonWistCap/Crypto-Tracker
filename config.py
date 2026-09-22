@@ -660,15 +660,25 @@ def read_portfolio(path) -> tuple[list[str], list[str]]:
     p = _P(path)
     if not p.exists():
         return [], []
-    names, unknown = [], []
+    # MATCHED WITHOUT REGARD TO CASE, AND RETURNED IN CONFIG'S OWN SPELLING. "sky" is never a
+    # different project from "Sky", so rejecting it would report a typo where there is none —
+    # while "Uniswapp" is still unrecognised, because that is a real one. The canonical name is
+    # what comes back, so everything downstream keys on config's spelling whatever was typed.
+    canonical = {k.casefold(): k for k in PROJECT_BY_NAME}
+    names, unknown, seen = [], [], set()
     for line in p.read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        if line in PROJECT_BY_NAME:
-            names.append(line)
-        else:
+        hit = canonical.get(line.casefold())
+        if hit is None:
             unknown.append(line)
+        elif hit not in seen:
+            # A NAME LISTED TWICE IS NOT AN ERROR AND IS NOT FETCHED TWICE. It is the shape a
+            # hand-edited list takes after a couple of revisions, and refusing it would widen the
+            # run over something harmless.
+            seen.add(hit)
+            names.append(hit)
     return names, unknown
 
 
