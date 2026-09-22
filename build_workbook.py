@@ -1410,6 +1410,22 @@ def write_monthly(ws, months: list[str], monthly: pd.DataFrame):
 # ---------------------------------------------------------------------------------------
 # Archetype tabs — column specs. Each spec: (header, builder(r, p) -> value/formula, fmt, kind[, bold])
 # ---------------------------------------------------------------------------------------
+def circular_gated(p: dict, formula: str) -> str:
+    """Blank a comparison that is guaranteed zero for this project, and say why.
+
+    ** A STRUCTURAL ZERO IS WORSE THAN A BLANK. ** Where DefiLlama derives a protocol's fees FROM
+    its on-chain burn, "implied buyback minus actual buyback" is (burn/share) x share - burn: it
+    is zero however wrong either figure is, and that zero sits in the row a reader consults to
+    decide whether a declared split is being honoured. The most reassuring answer the sheet can
+    give, and it would survive the burn read breaking entirely.
+
+    The reason goes in the cell rather than in a comment, because a reader who finds an empty
+    cell where a difference used to be will otherwise assume a broken read.
+    """
+    why = config.implied_check_is_circular(p["name"])
+    return f'"{why[:250]}"' if why else formula
+
+
 def _net_change(R, r: int, p: dict, iss, burn) -> str:
     """Net supply change for one project.
 
@@ -1703,7 +1719,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{iss(r)}*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
-        ("Actual − implied burn (tokens)", lambda r, p: gated(R.C(r, "Burn status"), f"{burn(r)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), f"{burn(r)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
@@ -1771,7 +1787,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "actual_buyback_tokens"}),
         ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}*{ann}/{circ(r)}"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r)))),
+         lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
         ("Net absorption Q0 (tokens) = actual buyback − emissions",

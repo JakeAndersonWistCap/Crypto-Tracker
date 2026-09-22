@@ -9039,3 +9039,45 @@ def test_a_multi_day_delta_is_compared_per_day_not_as_a_big_day():
         f"raw {raw_move:.0%} against per-day {per_day:.0%} — the calendar was most of the move"
     print(f"span ok: 3-day delta annotated and normalised; raw move {raw_move:.0%} -> "
           f"per-day {per_day:.0%}")
+
+
+def test_a_revenue_figure_derived_from_our_own_burn_cannot_cross_check_it():
+    """** THE WORST CASE IS NOT THE USELESS ROW, IT IS THE FALSE CONFIRMATION. **
+
+    DefiLlama's GEODNET adapter does not measure fees: it measures the burn and divides by 0.8.
+    So A3's "Implied − actual ($)" computes (burn/0.8) × 0.8 − burn, which is zero however wrong
+    either figure is — and that row is the headline evidence for whether a declared split is
+    being honoured. A structural zero there is the most reassuring answer the sheet can give,
+    and it would survive the burn read breaking entirely.
+    """
+    import build_workbook as bw
+
+    why = config.implied_check_is_circular("GEODNET")
+    assert why and why.startswith("CIRCULAR BY CONSTRUCTION")
+    assert "zero however wrong either figure is" in why
+    assert "dailyFees = dailyHoldersRevenue / 0.8" in why, "the formula travels with the reason"
+    # ONLY WHERE IT IS ACTUALLY CIRCULAR. This must not become a blanket excuse.
+    for other in ("Sky", "Maple", "Hyperliquid", "Chainlink"):
+        assert config.implied_check_is_circular(other) is None, other
+
+    # THE CELL CARRIES THE REASON, NOT A FORMULA — a reader finding an empty cell where a
+    # difference used to be would otherwise assume a broken read.
+    geo = config.PROJECT_BY_NAME["GEODNET"]
+    out = bw.circular_gated(geo, "=A1-B1")
+    assert out.startswith('"CIRCULAR BY CONSTRUCTION') and "A1-B1" not in out
+    assert bw.circular_gated(config.PROJECT_BY_NAME["Sky"], "=A1-B1") == "=A1-B1"
+
+    # AND THE THREE SERIES SAY WHAT THEY ARE ON THE SHEET.
+    assert "DERIVED FROM THE ON-CHAIN BURN" in config.metric_label("GEODNET", "fees_usd")
+    assert "THE SAME SERIES AS fees_usd" in config.metric_label("GEODNET", "revenue_usd")
+    assert "THE BURN RESTATED" in config.metric_label("GEODNET", "holders_revenue_usd")
+    # A project whose fees are genuinely measured keeps the library label.
+    assert config.metric_label("Sky", "fees_usd") == config.METRICS["fees_usd"]["label"]
+
+    # ** AND IT IS NOT COUNTED AS CORROBORATING THE 80% SPLIT. ** The ARR-implied share stays the
+    # only independent test, and stays open.
+    rec = geo["revenue_split_reconciliation"]
+    assert rec["status"].startswith("OPEN")
+    assert rec["observed_share_against_reported_arr"] == 0.8706
+    print("circular check ok: both implied-vs-actual rows blanked with their reason, three "
+          "series relabelled, and the 0.87 ARR test stays the only independent one")

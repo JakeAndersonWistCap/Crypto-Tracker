@@ -3459,6 +3459,18 @@ PROJECTS = [
             "worked_on": "2026-09-23",
             "status": "OPEN — three readings, none chosen",
         },
+        "metric_labels": {
+            # ===== SAY ON THE SHEET WHAT THESE FIGURES ARE. Added 2026-09-23. =====
+            # All three come out of DefiLlama's burn-derived adapter, so a reader comparing them
+            # with the burn column is comparing a number with itself. The label is the only place
+            # that travels with the cell.
+            "fees_usd": "Fees — DEFILLAMA FIGURE DERIVED FROM THE ON-CHAIN BURN / 0.8, not an "
+                        "independent revenue measurement",
+            "revenue_usd": "Revenue — THE SAME SERIES AS fees_usd. DefiLlama's adapter returns "
+                           "one object for both; derived from the on-chain burn / 0.8",
+            "holders_revenue_usd": "Holders' revenue — THIS IS THE BURN RESTATED, valued by "
+                                   "DefiLlama. Not an independent measurement of it",
+        },
         "defillama_fees_slug": "geodnet",
         "defillama_fees_evidence": {
             "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/geodnet.ts",
@@ -8810,6 +8822,46 @@ def _check_emissions_models() -> list[str]:
         if m.get("sourced") and not m.get("source"):
             errs.append(f"{p['name']}.emissions_model: sourced=True with no `source` naming it")
     return errs
+
+
+# ===== A REVENUE FIGURE DERIVED FROM OUR OWN BURN CANNOT CROSS-CHECK IT. Added 2026-09-23. =====
+#
+# DefiLlama's GEODNET adapter does not measure fees. It measures the BURN and divides:
+#     dailyHoldersRevenue = GEOD Transfer(*, 0x...dead) logs, valued
+#     dailyFees           = dailyHoldersRevenue / 0.8
+#     dailyRevenue        = dailyFees
+# So fees_usd and revenue_usd are the burn series x 1.25, and holders_revenue_usd IS the burn.
+#
+# ** WHICH MAKES TWO ROWS ON THE SHEET GUARANTEED ZERO, NOT MEASURED ZERO. ** A3's
+# "Implied - actual ($)" computes revenue x share - actual_buyback_usd. For GEODNET that is
+# (burn/0.8) x 0.8 - burn, which is zero however wrong either figure is. A4's "Actual - implied
+# burn (tokens)" is the same identity in tokens. A zero there reads as "the protocol is doing
+# exactly what it said", and it would read that way if the burn read were broken.
+#
+# THE WORST CASE IS NOT THE USELESS ROW, IT IS THE FALSE CONFIRMATION. That row is the headline
+# evidence for whether a declared split is being honoured, and a structural zero is the most
+# reassuring answer it can give.
+#
+# NOT COUNTED AS CORROBORATION OF THE 80% SPLIT EITHER. The only independent test of that split
+# is the ARR-implied share (see GEODNET's revenue_split_reconciliation: 0.8706 against a
+# declared 0.80), and it stays OPEN.
+def implied_check_is_circular(project_name: str) -> str | None:
+    """Why an implied-vs-actual buyback comparison cannot mean anything here, or None.
+
+    Returns a SENTENCE, because a blanked cell needs its reason travelling with it — a reader
+    who finds an empty cell where a difference used to be will otherwise assume a broken read.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    ev = p.get("defillama_fees_evidence") or {}
+    if not ev.get("fees_are_derived_from_the_burn"):
+        return None
+    return (f"CIRCULAR BY CONSTRUCTION — not computed. DefiLlama's {project_name} adapter derives "
+            f"fees from the on-chain burn ({ev.get('formula')}), so implied buyback and actual "
+            f"buyback are the same number scaled by the same share: the difference is zero "
+            f"however wrong either figure is. A structural zero in this row would read as the "
+            f"protocol honouring its declared split exactly, which is the most reassuring answer "
+            f"it could give and would survive the burn read breaking entirely. "
+            f"See {ev.get('source_url')}.")
 
 
 # ===== WHERE A BUYBACK'S TOKENS GO DECIDES HOW THE FLOW IS MEASURED. Added 2026-09-23. =====
