@@ -1703,3 +1703,82 @@ SELECT 'review_queue', COUNT(*), COUNT(DISTINCT project)
 -- COMMIT;
 
 -- R4. VERIFY — R1 and R2 both return nothing.
+
+
+-- ========================================================================================
+-- S. THE PARTIAL-DAY HYPOTHESIS — LOOK ONLY. No delete, and none proposed yet.     2026-09-23
+-- ========================================================================================
+-- THE OBSERVATION: GEODNET volume on 2026-09-14 reads $385,770 against $12.45M on 09-21; World
+-- Mobile $491,448 against $13.86M. Both about 3% of normal, on a date the tool ran intraday.
+-- The proposed mechanism was that CoinGecko's incremental request starts AFTER the latest stored
+-- date, so an intraday capture is written once and never overwritten.
+--
+-- ** THAT MECHANISM DOES NOT EXIST, and checking the code settles half the question. ** The
+-- request is `market_chart?days=30&interval=daily` (fetch/coingecko.py) — a TRAILING WINDOW
+-- counted back from now, not anchored to anything in the store. Every run since 09-14 has asked
+-- for a range that contains 09-14 and would have upserted over it. So the value is not frozen
+-- for want of being re-requested.
+--
+-- WHAT IS TRUE, AND IS A DIFFERENT PROBLEM: the partial CURRENT day is excluded from the CHANGE
+-- CHECK (config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD) but is still WRITTEN to the store. So
+-- a partial figure does reach the sheet and does feed the 30-day window sums, for at least the
+-- rest of that day. It should be corrected by the next run, and the queries below say whether it
+-- is.
+--
+-- NOTHING IS FIXED HERE UNTIL THESE ARE READ. A re-pull would be the remedy if S2 shows the
+-- value is stuck; a write-time drop of the current day would be the remedy if S3 shows it keeps
+-- coming back. They are different changes and the data decides which.
+--
+-- S1. THE SUSPECT DAYS — every daily provider row that is under 20% of its own series' trailing
+--     median. Not "under 3%", which would only find the two already known: the question is
+--     whether this is a pattern and which dates it lands on.
+WITH med AS (
+    SELECT project, metric, AVG(value) AS typical
+      FROM (SELECT project, metric, value,
+                   ROW_NUMBER() OVER (PARTITION BY project, metric ORDER BY value) AS rn,
+                   COUNT(*) OVER (PARTITION BY project, metric) AS n
+              FROM metrics
+             WHERE metric IN ('volume_usd', 'fees_usd', 'revenue_usd')
+               AND date >= date('now', '-60 day'))
+     WHERE rn IN ((n + 1) / 2, (n + 2) / 2)
+     GROUP BY project, metric
+)
+SELECT m.date, m.project, m.metric, m.value, med.typical,
+       ROUND(m.value * 100.0 / NULLIF(med.typical, 0), 2) AS pct_of_typical,
+       m.source, m.fetched_at
+  FROM metrics m JOIN med ON med.project = m.project AND med.metric = m.metric
+ WHERE m.date >= date('now', '-60 day')
+   AND med.typical > 0
+   AND m.value < med.typical * 0.20
+ ORDER BY m.date DESC, m.project;
+
+-- S2. IS IT STUCK, OR DID IT HEAL? fetched_at is per-write. A suspect day whose fetched_at is
+--     its OWN date was written once and never revisited — which would be the frozen case. One
+--     whose fetched_at is LATER has been re-written since and is the provider's own figure.
+--     ** THIS IS THE QUERY THAT DECIDES WHICH FIX IS RIGHT. **
+SELECT date, project, metric, value, fetched_at,
+       CASE WHEN substr(fetched_at, 1, 10) <= date
+            THEN 'WRITTEN ON THE DAY AND NEVER REVISITED — the frozen case'
+            ELSE 'RE-WRITTEN on ' || substr(fetched_at, 1, 10) || ' — this IS the provider''s figure'
+       END AS verdict
+  FROM metrics
+ WHERE metric IN ('volume_usd', 'fees_usd', 'revenue_usd')
+   AND date >= date('now', '-60 day')
+ ORDER BY date DESC, project
+ LIMIT 200;
+
+-- S3. THE RUN DATES, so a suspect day can be read against whether a run even happened after it.
+--     A gap in this list is a day nothing was written, and a value cannot be corrected by a run
+--     that did not occur.
+SELECT substr(ts, 1, 10) AS day, COUNT(DISTINCT run_id) AS runs,
+       MIN(substr(ts, 12, 5)) AS first_run, MAX(substr(ts, 12, 5)) AS last_run
+  FROM run_log WHERE source = 'coingecko'
+ GROUP BY day ORDER BY day DESC LIMIT 30;
+
+-- S4. MORPHO'S FEES, the separate finding in the same review: $2.13 and $157 on individual days
+--     against a stored 30-day total of ~$16.5M. Three orders of magnitude apart, which is a
+--     different shape from a partial day and points at the slug or the series rather than timing.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics WHERE project = 'Morpho' AND metric IN ('fees_usd', 'revenue_usd')
+   AND date >= date('now', '-45 day')
+ ORDER BY metric, date;

@@ -9105,11 +9105,44 @@ LUMPY_FLOWS = {
                   "sources describe the burn as weekly; our Dune query 8683175 aggregates monthly",
         "recorded_on": "2026-09-21",
     },
+    # ===== MAPLE'S FEES ARE BOOKED, NOT ACCRUED. Added 2026-09-23. =====
+    # $1,949,229 on one day and $15,855 on another, from the same source with nothing wrong.
+    # Lending fees land when a loan settles rather than accruing evenly, so the daily series is
+    # a booking calendar. Day-on-day moves of two orders of magnitude are the mechanism.
+    #
+    # A SAME-WEEKDAY COMPARISON DOES NOT FIX THIS, which is why it needed its own entry: last
+    # Tuesday is exactly as lumpy as this Tuesday, so the weekday fix removes the weekly cycle
+    # and leaves the booking noise untouched. The week-against-week comparison is what absorbs
+    # it — see fetch/validate, which now compares two full 7-day windows for a lumpy series
+    # instead of exempting it from checking altogether.
+    ("Maple", "fees_usd"): {
+        "underlying_cadence": "irregular",
+        "observed_cadence": "daily",
+        "why": "lending fees are booked on settlement rather than accrued evenly, so a daily "
+               "series is a booking calendar. $1,949,229 against $15,855 on adjacent days is "
+               "the mechanism, not a fault, and no daily threshold separates the two.",
+        "source": "observed directly in run 20260922 — the two figures above are from the same "
+                  "DefiLlama series with no error in between",
+        "recorded_on": "2026-09-23",
+    },
+    ("Maple", "revenue_usd"): {
+        "underlying_cadence": "irregular",
+        "observed_cadence": "daily",
+        "why": "revenue is a share of fees_usd and inherits its booking pattern exactly.",
+        "source": "follows fees_usd above",
+        "recorded_on": "2026-09-23",
+    },
 }
 
 
 def lumpy_flow(project_name: str, metric: str) -> dict | None:
-    """Is this series lumpy BY DESIGN, so a period-on-period change check cannot mean anything?"""
+    """Is this series lumpy BY DESIGN, so a DAY-on-day change check cannot mean anything?
+
+    It no longer means "do not check". Since 2026-09-23 a lumpy series is compared week against
+    week instead (fetch/validate), because the lumpiness is in the daily shape and not in the
+    weekly total — so there IS a comparison that works, and an exemption was a check that never
+    ran on the series most likely to hide a source change.
+    """
     return LUMPY_FLOWS.get((project_name, metric))
 
 

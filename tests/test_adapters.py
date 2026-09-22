@@ -8745,3 +8745,155 @@ def test_geodnets_revenue_split_reconciles_at_87_not_80_and_that_is_left_open():
     assert ev["fees_are_derived_from_the_burn"] is True
     print(f"geodnet reconciliation ok: 80% implies ${rec['implied_annualised_at_declared']:,}, "
           f"87% implies ${rec['implied_annualised_at_observed']:,} against ${rec['reported_arr']:,}")
+
+
+def test_a_lumpy_series_is_compared_week_against_week_instead_of_being_exempted():
+    """** AN EXEMPTION IS A CHECK THAT NEVER RUNS. Changed 2026-09-23. **
+
+    Maple's fees read $1,949,229 on one day and $15,855 on another, from the same source with
+    nothing wrong: lending fees are booked on settlement rather than accrued evenly, so the daily
+    series is a booking calendar. The same-weekday fix does not touch this — last Tuesday is
+    exactly as lumpy as this Tuesday — and the old answer was to stop checking the series at all,
+    which is where a scraper redesign lands silently.
+
+    The lumpiness is in the DAILY shape, not in the weekly total, so two full weeks compare.
+    """
+    import pandas as pd
+
+    assert config.lumpy_flow("Maple", "fees_usd"), "Maple's fees must be declared lumpy"
+
+    # A fortnight of violently lumpy bookings whose WEEKLY TOTALS are nearly identical: nothing
+    # has changed about the business, only which day each loan settled on.
+    week_a = [2_000_000.0, 10_000.0, 15_000.0, 1_800_000.0, 20_000.0, 5_000.0, 150_000.0]
+    week_b = [8_000.0, 1_950_000.0, 12_000.0, 25_000.0, 1_790_000.0, 190_000.0, 25_000.0]
+    assert abs(sum(week_b) / sum(week_a) - 1) < 0.02, "the fixture's two weeks must be level"
+    rows = []
+    for i, v in enumerate(week_a + week_b):
+        rows.append((pd.Timestamp("2026-09-01") + pd.Timedelta(days=i), "Maple", "fees_usd", v,
+                     "defillama:maple", 1))
+    flags = _validated(rows, prior={("Maple", "fees_usd"): 150_000.0})
+    assert not flags, f"two level weeks must not flag, however lumpy the days: {flags}"
+
+    # A REAL LEVEL SHIFT STILL FIRES, and the row says which two windows it used.
+    quiet = [(pd.Timestamp("2026-09-08") + pd.Timedelta(days=i), "Maple", "fees_usd", v,
+              "defillama:maple", 1) for i, v in enumerate([1_000.0] * 7)]
+    flags = _validated(rows[:7] + quiet, prior={("Maple", "fees_usd"): 150_000.0})
+    assert len(flags) == 1, f"a week that collapsed must still flag: {flags}"
+    basis = flags[0]["basis"]
+    assert "TRAILING 7-DAY SUM" in basis and "PRIOR 7-DAY SUM" in basis, basis
+    assert "NOT a day against a trailing average" in basis, basis
+    assert flags[0]["prior_value"] == sum(week_a), flags[0]
+
+    # ** AND THE WINDOW COMPARISON IS SCOPED TO LUMPY SERIES ON PURPOSE. ** A seven-day sum is
+    # deliberately insensitive to ONE day — a collapse from 450,000 to 9,000 moves the sum by
+    # about 8%, under any threshold worth having — which is exactly the scraper-redesign failure
+    # the daily check exists to catch. Applying windows everywhere would trade false flags for a
+    # blind spot on the one thing that matters.
+    one_day = (450_000.0 - 9_000.0) / (6 * 1_000_000.0 + 450_000.0)
+    assert one_day < 0.10, (
+        f"a single-day collapse moves a weekly sum by only {one_day:.1%} — which is why "
+        f"non-lumpy series keep the same-weekday daily check")
+    assert not config.lumpy_flow("Chainlink", "revenue_usd")
+    print(f"lumpy ok: two level weeks pass, a collapsed week fires, and a one-day collapse only "
+          f"moves a weekly sum {one_day:.1%} — so daily series keep the daily check")
+
+
+def test_a_row_that_loses_a_tier_collision_is_not_also_flagged_as_a_change():
+    """** THE LOSER WAS ARRIVING IN THE REVIEW QUEUE AS A -92% COLLAPSE. **
+
+    validate_frame runs per TIER inside the fetch loop; collisions are resolved afterwards. So
+    Aethir's rejected chain read (3.45bn against CoinGecko's 42bn) had already been compared
+    against the stored series and flagged. That reads as "this series collapsed" when what
+    happened is "two sources disagree and we kept the other one" — a flag about a value nobody
+    will ever see, filed under the wrong reason, sitting beside the row that is the real finding.
+    """
+    import fetch
+    from fetch.base import FetchOutput, point
+    from fetch.validate import REASON_CHANGE
+
+    out = FetchOutput()
+    out.add(point("Aethir", "total_supply", 42_000_000_000.0, "coingecko", 1,
+                  pd.Timestamp("2026-09-21")), "coingecko", "Aethir", "provider", 1)
+    out.add(point("Aethir", "total_supply", 3_450_000_000.0, "chain:arbitrum:token", 2,
+                  pd.Timestamp("2026-09-21")), "chain", "Aethir", "contract", 2)
+    # The flag validate would have raised on the tier-2 row before the collision was known.
+    out.review_item("Aethir", "total_supply", REASON_CHANGE, "stored_flagged",
+                    value=3_450_000_000.0, prior_value=42_000_000_000.0,
+                    date=pd.Timestamp("2026-09-21"), source="chain:arbitrum:token", tier=2)
+
+    fetch._resolve_tier_collisions(out)
+    reasons = [r["reason"] for r in out.review]
+    assert REASON_CHANGE not in reasons, f"the loser's change flag must go: {out.review}"
+    assert "tier_collision" in reasons, "the disagreement IS the finding and must stay"
+
+    # THE WINNER'S OWN FLAGS ARE UNTOUCHED — this removes flags on rows that were dropped, not
+    # flags on the series.
+    out2 = FetchOutput()
+    out2.add(point("Aethir", "total_supply", 42_000_000_000.0, "coingecko", 1,
+                   pd.Timestamp("2026-09-21")), "coingecko", "Aethir", "provider", 1)
+    out2.review_item("Aethir", "total_supply", REASON_CHANGE, "stored_flagged",
+                     value=42_000_000_000.0, prior_value=1.0,
+                     date=pd.Timestamp("2026-09-21"), source="coingecko", tier=1)
+    fetch._resolve_tier_collisions(out2)
+    assert [r["reason"] for r in out2.review] == [REASON_CHANGE], \
+        "no collision, so nothing is dropped"
+    print("collision ok: the loser's change flag goes, the tier_collision row stays, the "
+          "winner's flags are untouched")
+
+
+def test_a_multi_day_delta_is_compared_per_day_not_as_a_big_day():
+    """** A THREE-DAY DELTA IS NOT A BIG DAY. **
+
+    Hyperliquid's rebuilt series compared a one-day delta of 17,366 against a three-day delta of
+    89,954 and the change check reported a 418% rise. That is entirely the calendar: a run that
+    misses a weekend writes a three-day delta, and nothing on the row said so.
+
+    The span travels with the row as a bracketed annotation, which is the slot that already
+    exists — config.strip_source_annotations removes it before resolving contract keys, and
+    _measuring_point uses the same stripper, so a span can never be mistaken for an address and
+    two rows with different spans are still the same measuring point.
+    """
+    import pandas as pd
+    from fetch.base import derive_flow_from_cumulative, _measuring_point
+    from fetch.validate import _span_days
+
+    three = derive_flow_from_cumulative(
+        1_089_954.0, 1_000_000.0, "Hyperliquid", "gross_burn_tokens", "hypercore_info:x:delta", 2,
+        when=pd.Timestamp("2026-09-21"), prior_date="2026-09-18",
+        stock_metric="burn_address_balance")
+    one = derive_flow_from_cumulative(
+        1_017_366.0, 1_000_000.0, "Hyperliquid", "gross_burn_tokens", "hypercore_info:x:delta", 2,
+        when=pd.Timestamp("2026-09-21"), prior_date="2026-09-20",
+        stock_metric="burn_address_balance")
+
+    assert three.source.iloc[0] == "hypercore_info:x:delta[span=3d]"
+    assert _span_days(three.source.iloc[0]) == 3
+    # AN ORDINARY DAILY DELTA IS NOT ANNOTATED — saying "span=1d" on every source string in the
+    # book would be noise to state the expected thing.
+    assert one.source.iloc[0] == "hypercore_info:x:delta" and _span_days(one.source.iloc[0]) == 1
+
+    # THE ANNOTATION CANNOT BREAK ANYTHING THAT READS THE SOURCE.
+    assert _measuring_point(three.source.iloc[0]) == _measuring_point(one.source.iloc[0]), \
+        "a span must not read as a change of measuring point"
+    assert not config.orphaned_contract_keys("Hyperliquid", three.source.iloc[0])
+    assert ":delta" in three.source.iloc[0], "it must still be recognised as a differenced row"
+
+    # AND THE COMPARISON NORMALISES. 89,954 over 3 days is 29,985/day against 17,366/day — a
+    # 73% rise rather than 418%, and whichever side of the threshold that lands, the row says
+    # what was actually compared.
+    rows = [(pd.Timestamp("2026-09-18"), "Hyperliquid", "gross_burn_tokens", 89_954.0,
+             "hypercore_info:x:delta[span=3d]", 2),
+            (pd.Timestamp("2026-09-19"), "Hyperliquid", "gross_burn_tokens", 17_366.0,
+             "hypercore_info:x:delta", 2)]
+    flags = _validated(rows, prior={("Hyperliquid", "gross_burn_tokens"): 89_954.0})
+    if flags:
+        b = flags[0]["basis"]
+        assert "NORMALISED TO PER DAY" in b and "3" in b, b
+        assert abs(flags[0]["prior_value"] - 89_954.0 / 3) < 0.01, flags[0]
+        assert abs(flags[0]["value"] - 17_366.0) < 0.01, flags[0]
+    raw_move = abs(89_954.0 - 17_366.0) / 17_366.0
+    per_day = abs(89_954.0 / 3 - 17_366.0) / 17_366.0
+    assert raw_move > 4.0 and per_day < 0.8, \
+        f"raw {raw_move:.0%} against per-day {per_day:.0%} — the calendar was most of the move"
+    print(f"span ok: 3-day delta annotated and normalised; raw move {raw_move:.0%} -> "
+          f"per-day {per_day:.0%}")

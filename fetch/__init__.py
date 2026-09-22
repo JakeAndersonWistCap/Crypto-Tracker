@@ -33,8 +33,8 @@ from .llama import DefiLlama
 from .schedule import Schedule
 from .tron import TronNode
 from .scrape import Scrape, entry_ready, load_registry
-from .validate import (check_cross_checks, check_impossible_relations, check_reference_values,
-                       validate_frame)
+from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
+                       check_reference_values, validate_frame)
 
 log = logging.getLogger("token_metrics.fetch")
 
@@ -100,6 +100,34 @@ def _resolve_tier_collisions(out: FetchOutput) -> None:
                     suggestion="One of these is pointing at the wrong metric. A deliberate second source should "
                                "be a cross-check stored under its own metric name (see cross_checks in config.py), "
                                "not written over the primary.")
+
+    # ===== A ROW THAT LOSES A COLLISION MUST NOT ALSO BE THRESHOLD-CHECKED. Added 2026-09-23. =====
+    # validate_frame runs per TIER, inside the fetch loop, and collisions are only resolved here
+    # afterwards — so the losing row has already been compared against the stored series and
+    # flagged. Aethir's rejected chain read (3.45bn against CoinGecko's 42bn) arrived in the
+    # Review Queue as a -92% change_threshold, which reads as "this series collapsed" when what
+    # actually happened is "two sources disagree and we kept the other one".
+    #
+    # That is doubly wrong: the number is not going to be stored, so a flag about how much it
+    # moved is a flag about a value nobody will see — and it is filed under the wrong reason, so
+    # the real finding (the disagreement, already recorded as tier_collision above) gets one row
+    # while the artefact gets another beside it.
+    #
+    # REMOVED HERE RATHER THAN PREVENTED EARLIER, because this is the first point at which the
+    # collision is known. The tier_collision row itself stays: that IS the finding.
+    losers = {(row["project"], row["metric"], str(row["date"])[:10], int(row["tier"]))
+              for (date, project, metric), group in dupes.groupby(key)
+              if (date, project, metric) in clashing
+              for _, row in group.sort_index().iloc[1:].iterrows()
+              if pd.notna(row["tier"])}
+    before = len(out.review)
+    out.review = [r for r in out.review
+                  if not (r["reason"] == REASON_CHANGE
+                          and (r["project"], r["metric"], r["date"], r["tier"]) in losers)]
+    if len(out.review) < before:
+        log.info("dropped %d change_threshold flag(s) on rows that lost a tier collision — the "
+                 "disagreement is recorded as tier_collision, which is the actual finding",
+                 before - len(out.review))
 
     deduped = frame.drop_duplicates(subset=key, keep="first")
     out.frames = [deduped]

@@ -267,6 +267,29 @@ def derive_flow_from_cumulative(cumulative_value: float, prior_cumulative: float
                  f"stored. A fall means the source rebased, the measuring point moved, or the "
                  f"balance is not the one-directional quantity it was taken for")
         return pd.DataFrame(columns=LONG_COLUMNS)
+    # ===== THE SPAN TRAVELS WITH THE ROW. Added 2026-09-23. =====
+    # A differenced flow covers the interval between two readings, and that interval is NOT
+    # always a day: a run that misses a weekend writes a three-day delta, and Hyperliquid's
+    # rebuilt series has several. Nothing on the row said so, so the change check compared a
+    # one-day delta (17,366) against a three-day one (89,954) and flagged a 418% rise that is
+    # entirely the calendar.
+    #
+    # WRITTEN AS A BRACKETED ANNOTATION because that slot already exists and every parser in the
+    # codebase already strips it: config.strip_source_annotations removes it before resolving
+    # contract keys, and _measuring_point uses that same stripper — so a span cannot be mistaken
+    # for an address, and two rows with different spans are still the same measuring point.
+    # Same mechanism as minter[tail@21bps].
+    #
+    # ONLY WHERE IT IS NOT ONE DAY. Annotating every ordinary daily delta would add noise to
+    # every source string in the book to say the expected thing.
+    span = None
+    if prior_date is not None and when is not None:
+        try:
+            span = (pd.Timestamp(str(when)[:10]) - pd.Timestamp(str(prior_date)[:10])).days
+        except (TypeError, ValueError):
+            span = None
+    if span and span > 1:
+        source = f"{source}[span={span}d]"
     return point(project, metric, cumulative_value - prior_cumulative, source, tier, when)
 
 

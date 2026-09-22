@@ -30,6 +30,21 @@ ACTION_REJECTED = "rejected"
 ACTION_FLAGGED = "stored_flagged"
 
 
+_SPAN = __import__("re").compile(r"\[span=(\d+)d\]")
+
+
+def _span_days(source) -> int:
+    """How many days a differenced flow row covers — 1 unless its source says otherwise.
+
+    ** A THREE-DAY DELTA IS NOT A BIG DAY. ** Hyperliquid's rebuilt series compared a one-day
+    delta of 17,366 against a three-day delta of 89,954 and the change check reported a 418%
+    rise, which is entirely the calendar. Normalising both sides to per-day is the comparison
+    that means something; comparing the raw figures is comparing a day with a long weekend.
+    """
+    m = _SPAN.search(str(source or ""))
+    return int(m.group(1)) if m else 1
+
+
 def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float], out) -> pd.DataFrame:
     """Return the frame with out-of-bounds rows removed, recording every judgement on `out`.
 
@@ -73,9 +88,15 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         # (a) LUMPY BY DESIGN. GEODNET burns weekly and the chain read differences daily, so a
         # burn day carries a week's burn and the days between carry zero. 35,000 -> 105,000 is the
         # mechanism, not a fault, and no threshold distinguishes it from one.
+        # (a) LUMPY BY DESIGN. GEODNET burns weekly and the chain read differences daily, so a
+        # burn day carries a week's burn and the days between carry zero. 35,000 -> 105,000 is the
+        # mechanism, not a fault, and no adjacent-day threshold distinguishes it from one.
+        #
+        # ** IT USED TO BE EXEMPTED ENTIRELY, AND THAT IS A CHECK THAT DOES NOT RUN. Changed
+        # 2026-09-23. ** A series nobody checks is a series where a scraper redesign lands
+        # silently. The lumpiness is in the DAILY shape, not in the weekly total, so comparing
+        # two full weeks removes it — and that is a real check rather than a shrug.
         lumpy = config.lumpy_flow(project, metric)
-        if lumpy:
-            continue
 
         g = g.sort_values("date")
         # (b) THE CURRENT DAY IS NOT A DAY YET. DefiLlama and CoinGecko publish it from the moment
@@ -123,7 +144,70 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         #
         # SCOPED TO DAILY FLOWS. A stock has no weekly cycle, and a weekly or monthly series has
         # no same-weekday to find. Both keep the adjacent comparison, which is right for them.
-        if (config.METRICS.get(metric, {}).get("kind") == "flow"
+        # (c0) ** A WEEK AGAINST A WEEK, WHERE THERE IS A WEEK TO USE. Added 2026-09-23. **
+        # Run 20260922 raised 29 change_threshold flags, all 2026-09-21 against 2026-09-14 and
+        # all moving the SAME DIRECTION across unrelated projects — the signature of an artefact.
+        # The same-weekday comparison below was already working; what it cannot fix is LUMPINESS.
+        # Maple books fees at $1,949,229 on one day and $15,855 on another, and last Sunday is
+        # exactly as lumpy as this Sunday, so a same-weekday comparison of a lumpy series flags
+        # the booking calendar instead of the weekday calendar.
+        #
+        # A TRAILING 7-DAY SUM AGAINST THE PRIOR 7-DAY SUM FIXES BOTH AT ONCE, and it is NOT the
+        # trailing average that was worked through and rejected. That one compared a single day
+        # against a mean — (5W + 2*0.5W)/7 = 0.857W, so Sunday at 0.5W still read as a 42% drop
+        # and every weekend still flagged. This compares two WINDOWS. Each contains one of every
+        # weekday, so the weekly cycle cancels on both sides rather than being averaged over; and
+        # a lumpy booking lands inside a window rather than being the whole of one side.
+        #
+        # IT NEEDS FOURTEEN COMPLETE DAYS AND BOTH WINDOWS FULL. A partial window is a smaller
+        # sum, which reads as a fall — exactly the artefact this is removing. Where the run's
+        # frame does not carry fourteen days (a chain read brings one point), it falls through to
+        # the same-weekday comparison below, which is the right answer for a series with no
+        # window to build.
+        # ** SCOPED TO LUMPY SERIES, AND THE SCOPING IS THE WHOLE DESIGN. ** A window comparison
+        # is deliberately insensitive to ONE day: a collapse from 450,000 to 9,000 on a single
+        # day moves a seven-day sum by about 8%, under any threshold worth having. That is
+        # exactly the scraper-redesign failure this guard exists to catch, so applying windows
+        # everywhere would trade 29 false flags for a blind spot on the one thing that matters.
+        # (Caught by test_a_daily_flow_is_compared_against_the_same_weekday_not_the_day_before,
+        # which is why this is scoped rather than global.)
+        #
+        # On a lumpy series the single-day check is USELESS ANYWAY — that is what "lumpy by
+        # design" means — so a window comparison there costs nothing and replaces an exemption.
+        window_basis = None
+        if (lumpy
+                and config.METRICS.get(metric, {}).get("kind") == "flow"
+                and config.series_granularity(project, metric) == "daily"
+                and len(complete) >= 14):
+            dated = complete.copy()
+            dated["_d"] = pd.to_datetime(dated["date"])
+            end = pd.Timestamp(row["date"])
+            cur = dated[(dated["_d"] > end - pd.Timedelta(days=7)) & (dated["_d"] <= end)]
+            prev = dated[(dated["_d"] > end - pd.Timedelta(days=14))
+                         & (dated["_d"] <= end - pd.Timedelta(days=7))]
+            if len(cur) == 7 and len(prev) == 7:
+                cur_sum, prev_sum = float(cur["value"].sum()), float(prev["value"].sum())
+                prior = prev_sum
+                prior_date = prev["date"].iloc[-1]
+                window_basis = (
+                    f"the TRAILING 7-DAY SUM ({cur_sum:,.4f}, {cur['date'].iloc[0]} to "
+                    f"{cur['date'].iloc[-1]}) against the PRIOR 7-DAY SUM ({prev_sum:,.4f}, "
+                    f"{prev['date'].iloc[0]} to {prev['date'].iloc[-1]}). Two full windows, so "
+                    f"each holds one of every weekday and the weekly cycle cancels on both "
+                    f"sides; a lumpy booking lands inside a window instead of being one side of "
+                    f"the comparison. NOT a day against a trailing average — that was worked "
+                    f"through and still flags every weekend")
+                row = row.copy()
+                row["value"] = cur_sum
+                basis = window_basis
+
+        if lumpy and window_basis is None:
+            # Not enough history in this run's frame to build two full weeks. The daily check is
+            # meaningless here by declaration, so there is nothing to fall back TO — and saying
+            # so beats flagging the mechanism.
+            continue
+
+        if window_basis is None and (config.METRICS.get(metric, {}).get("kind") == "flow"
                 and config.series_granularity(project, metric) == "daily"
                 and len(complete) >= 2):
             latest_date = pd.Timestamp(row["date"])
@@ -143,7 +227,27 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         if prior is None or prior == 0:
             continue
         threshold = config.change_threshold_pct(project, metric) / 100.0
-        move = abs(float(row["value"]) - prior) / abs(prior)
+
+        # ** PER DAY, WHERE THE TWO SIDES COVER DIFFERENT NUMBERS OF DAYS. ** Only for a
+        # DIFFERENCED flow, and only when the spans actually differ — dividing two one-day
+        # deltas by 1 changes nothing and would only add noise to every basis line.
+        value, span_note = float(row["value"]), ""
+        if config.METRICS.get(metric, {}).get("kind") == "flow" and window_basis is None:
+            cur_span = _span_days(row["source"])
+            prior_src = None
+            if prior_date is not None:
+                match = complete[complete["date"].astype(str).str[:10] == str(prior_date)[:10]]
+                prior_src = match["source"].iloc[-1] if not match.empty else None
+            prior_span = _span_days(prior_src)
+            if cur_span != prior_span:
+                value, prior = value / cur_span, prior / prior_span
+                span_note = (f" BOTH SIDES NORMALISED TO PER DAY: this row covers {cur_span} "
+                             f"day(s) and the one it is compared against covers {prior_span}. "
+                             f"A multi-day delta is not a big day, and comparing the raw figures "
+                             f"is comparing a day with a long weekend.")
+                basis = basis + span_note
+
+        move = abs(value - prior) / abs(prior)
         if move > threshold:
             # int(row["tier"]), NOT row["tier"]. A Series element from .iloc[] on a mixed-dtype
             # frame is a numpy scalar, and sqlite3 stores numpy.int64 as an 8-byte BLOB in an
@@ -152,7 +256,7 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
             # poisoned a review_queue row and killed the workbook build three layers away.
             # float() on value is doing the same job and was already here.
             out.review_item(project, metric, REASON_CHANGE, ACTION_FLAGGED,
-                            value=float(row["value"]), prior_value=prior, date=row["date"],
+                            value=value, prior_value=prior, date=row["date"],
                             prior_date=prior_date, basis=basis, source=row["source"],
                             tier=None if pd.isna(row["tier"]) else int(row["tier"]))
     return df
