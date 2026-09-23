@@ -12144,3 +12144,112 @@ def test_a_per_project_metric_row_still_counts_in_the_tab_confidence_tally():
     assert red.split()[1] != "0", (
         "Aerodrome's ve_locked_supply_tokens is RED and reachable only through metric_fn — a "
         f"tally of zero means the row was skipped: {red!r}")
+
+
+def test_the_four_cleanup_closures_use_the_mechanism_that_matches_their_facts():
+    """n/a says the figure CANNOT EXIST; a closure says it exists and has no route from here.
+
+    All four were asked for as "not_applicable". Two are — Ethereum and Plume have no lock
+    contract, so locked_tokens has nothing to read. Two are NOT: ultrasound.money publishes ETH
+    total supply (the endpoint was read out of its own source), and Plume's fee receiver is named
+    in config with the route declined on cost. Declaring either inapplicable would put a false
+    statement on the sheet and delete the row instead of recording why it is empty.
+    """
+    # (1) GENUINELY INAPPLICABLE — no escrow exists, so there is no balance to read.
+    for name in ("Ethereum", "Plume"):
+        pr = config.PROJECT_BY_NAME[name]
+        assert "locked_tokens" not in config.metrics_for_project(pr)
+        why = config.not_applicable_reason(name, "locked_tokens")
+        assert why and "NO LOCK CONTRACT" in why, why
+        assert config.unavailable_for(name, "locked_tokens") is None, \
+            "a metric that cannot exist is not ALSO a closure — two reasons on one cell"
+    # ** AND STAKED ETH MUST NOT QUIETLY BECOME THIS COLUMN LATER. **
+    assert "consensus-layer deposit" in config.not_applicable_reason("Ethereum", "locked_tokens")
+
+    # (2) CLOSURES, NOT n/a — the figure exists and the reopen condition is written down.
+    for name, metric in (("Ethereum", "total_supply_dashboard"), ("Plume", "fees_usd")):
+        u = config.unavailable_for(name, metric)
+        assert u, f"{name}/{metric} must be closed, not left an open gap"
+        for field in ("summary", "what_was_tried", "impact", "reopen_if", "closed_on"):
+            assert u.get(field), f"{name}/{metric} closure missing {field}"
+        assert config.not_applicable_reason(name, metric) is None, (
+            f"{name}/{metric} is sourceable in principle — calling it inapplicable would assert "
+            f"something false about the world")
+
+    # (3) THE robots CASE SAYS SO IN WORDS, because the rule is respected rather than routed
+    #     around and a later reader must not mistake it for an unsolved fetch bug.
+    eth = config.unavailable_for("Ethereum", "total_supply_dashboard")
+    assert "RESPECTED, NOT ROUTED AROUND" in eth["what_was_tried"]
+    # (4) AND PLUME'S CLOSURE ADMITS IT WAS NOT RE-VERIFIED LIVE, rather than implying a probe.
+    assert "NOT RE-VERIFIED LIVE" in config.unavailable_for("Plume", "fees_usd")["what_was_tried"]
+
+
+def test_morpho_supply_units_is_served_so_its_dead_scrape_stub_went_and_the_metric_stayed():
+    """The stub was retired; the METRIC was not. Confirmed populating before anything was deleted.
+
+    The brief said supply_units is served "under a different metric name/route". Different route,
+    SAME name — so there was never anything to declare n/a, and doing so would have removed a
+    live tier-1 column.
+    """
+    import yaml
+
+    from fetch.base import FetchOutput
+    from fetch.llama import MorphoBlueApi
+
+    entries = yaml.safe_load(open("sources.yaml"))
+    morpho = [e for e in entries if e.get("project") == "Morpho"]
+    assert not any(e["metric"] == "supply_units" for e in morpho), "the dead stub is gone"
+    # utilisation_pct's stub is deliberately LEFT — named so the two do not drift apart unnoticed.
+    assert any(e["metric"] == "utilisation_pct" for e in morpho)
+
+    # ** AND THE ROUTE REALLY WRITES IT. ** Not "status is confirmed", which is a flag: the
+    # adapter is driven and the row is read back, because a flag is an intention.
+    class Stub:
+        def post(self, url, json_body=None, **kw):
+            if "chains" in (json_body or {}).get("query", ""):
+                return {"data": {"chains": [{"id": 1}]}}
+            return {"data": {"markets": {"pageInfo": {"countTotal": 1}, "items": [
+                {"marketId": "0xa", "chain": {"id": 1}, "listed": True,
+                 "state": {"supplyAssetsUsd": 600.0, "borrowAssetsUsd": 528.0}}]}}}
+
+    a = MorphoBlueApi()
+    a.http = Stub()
+    out = FetchOutput()
+    a.run([config.PROJECT_BY_NAME["Morpho"]], None, out)
+    f = out.frame()
+    assert "supply_units" in set(f.metric), f"the stub was retired against a route that writes: {f}"
+    row = f[f.metric == "supply_units"].iloc[0]
+    assert row.source.startswith("morpho_api"), row.source
+    assert int(row.tier) == 1, "tier 1, not the tier-5 the stub sat at"
+    assert config.not_applicable_reason("Morpho", "supply_units") is None
+    assert "supply_units" in config.metrics_for_project(config.PROJECT_BY_NAME["Morpho"])
+
+
+def test_morphos_september_level_break_is_recorded_as_the_old_breaks_tail_with_its_probe_blocked():
+    """A 99.97% collapse must be explained or left open — never left to "it self-heals".
+
+    The explanation is arithmetic and is pinned here so it can be falsified on 09-24.
+    """
+    import statistics
+    import datetime as dt
+
+    rec = config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]
+    lb = rec["level_break_2026_09_23"]
+    assert rec["recovered_on"] == "2026-09-21" and rec["break_window_backfilled"] is False, \
+        "the explanation depends on the hole being recovered but NOT backfilled"
+
+    # THE ARITHMETIC, re-run rather than quoted: 4 of the 7 days to 09-23 are the absent hole.
+    hole = (dt.date(2026, 9, 12), dt.date(2026, 9, 20))
+    blue, low = 600_000.0, 176.0
+    def median_over(end, n):
+        return statistics.median([low if hole[0] <= end - dt.timedelta(days=i) <= hole[1] else blue
+                                  for i in range(n - 1, -1, -1)])
+    assert median_over(dt.date(2026, 9, 23), 7) == low
+    assert median_over(dt.date(2026, 9, 23), 30) == blue
+    # ** AND IT CLEARS IN ONE STEP, which is what makes it falsifiable. **
+    assert median_over(dt.date(2026, 9, 24), 7) == blue, lb["clears_on"]
+
+    # ** THE PROBE WAS RUN AND IS RECORDED AS BLOCKED, NOT AS A CLEAN 404. **
+    assert "BLOCKED" in lb["probe_result"] and "403" in lb["probe_result"]
+    assert lb["not_ruled_out"] and lb["settle_it_by"], \
+        "a best-supported reading must say what would still overturn it"

@@ -777,15 +777,20 @@
   anchor: null                                      # TODO the label text beside the figure
   added: 2026-09-11
   note: "Inference volume / subscription revenue."
-- project: Morpho
-  metric: supply_units
-  tier: 5
-  enabled: false
-  url: null                                         # TODO the network dashboard (node / hotspot / GPU count)
-  method: dom
-  anchor: null                                      # TODO the label text beside the figure
-  added: 2026-09-11
-  note: "Dune indexes chains, not business operations."
+# ---- RETIRED 2026-09-23: Morpho supply_units.
+# The stub here was a tier-5 placeholder with url: null and a boilerplate note copied from the
+# DePIN entries ("the network dashboard (node / hotspot / GPU count)") that never described
+# Morpho at all. supply_units is now SERVED, at tier 1, by Morpho's own GraphQL API via
+# fetch/llama.MorphoBlueApi, under the SAME metric name — $5,868,948,998 across 651 listed
+# markets, the confirmed figure on lending_api. A disabled tier-5 stub for a metric a tier-1
+# route already fills is dead text that reads as an unbuilt source.
+#
+# ** CONFIRMED POPULATING BEFORE THIS WAS REMOVED, not assumed. ** The adapter was driven with a
+# stubbed response on 2026-09-23 and wrote supply_units and utilisation_pct from
+# morpho_api:markets at tier 1. The metric is NOT declared not_applicable: it has a live source.
+# utilisation_pct's stub below is left in place deliberately — it is out of scope for this
+# change, and the two must not drift apart silently, so it is named here rather than left
+# unmentioned.
 - project: Morpho
   metric: utilisation_pct
   tier: 5

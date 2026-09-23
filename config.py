@@ -1794,6 +1794,24 @@ PROJECTS = [
             # outcome of the two and not a parameter anybody set. The provider returning nothing
             # here is CORRECT, and "CoinGecko returned no data for this series" reads as a
             # fetch fault on a figure that does not exist.
+            # ===== NO ESCROW EXISTS TO READ. Declared 2026-09-23. =====
+            # locked_tokens is the balance of a LOCK CONTRACT — a ve escrow or a staking vault
+            # this tool reads with escrow_balance_of. Ethereum has no such contract: there is no
+            # veETH, no protocol lock, and nothing with a balance that answers "how much ETH is
+            # locked". The metric survived on archetype membership alone, which says the
+            # archetype CAN have it, not that Ethereum does.
+            #
+            # ** STAKED ETH IS A REAL QUANTITY AND IS DELIBERATELY NOT THIS COLUMN. ** ~28% of
+            # supply sits in beacon-chain deposits, and it would be easy to "fix" this n/a later
+            # by plugging that in. It is a DIFFERENT measurement: consensus-layer deposits with
+            # an exit queue, not an escrow balance, and the lock-rate row beneath would then
+            # divide a consensus figure by circulating supply and call it a lock rate. If a
+            # staked-ETH column is wanted it should be its own metric with its own source, not
+            # this one repurposed.
+            "locked_tokens":
+                "ETHEREUM HAS NO LOCK CONTRACT. No veETH and no protocol escrow, so there is no "
+                "balance to read. Staked ETH is a consensus-layer deposit, not an escrow "
+                "balance, and belongs in its own column if it is wanted. Declared 2026-09-23.",
             "max_supply":
                 "ETHEREUM HAS NO SUPPLY CAP. Issuance follows the staking curve and the base-fee "
                 "burn follows demand for blockspace, so terminal supply is an outcome of the two "
@@ -2647,6 +2665,14 @@ PROJECTS = [
                     "address, not destroyed. No burn address, no protocol-level destruction.",
         },
         "not_applicable": {
+            # ===== SAME REASON AS ETHEREUM'S, AND NOT THE SAME AS ITS STAKING. Declared
+            # 2026-09-23. ===== Plume HAS staking — that is why archetype 3 was considered and
+            # REMOVED on 2026-09-14 — but its staking reward is emissions-funded, and there is no
+            # escrow contract whose balance is "PLUME locked". Nothing to read.
+            "locked_tokens":
+                "PLUME HAS NO LOCK CONTRACT. Its staking is emissions-funded with no ve escrow "
+                "or vault whose balance answers 'how much PLUME is locked'. See archetypes: "
+                "archetype 3 was removed for the same reason on 2026-09-14. Declared 2026-09-23.",
             "gross_burn_tokens":
                 "PLUME IS NOT BURNED. Plume's own mainnet registry (assets.plume.org) shows an "
                 "Arbitrum Orbit chain whose network and infrastructure fees are both COLLECTED "
@@ -6655,6 +6681,43 @@ PROJECTS = [
             "recovery_was_automatic": True,
             "level_break_cleared": "yes, by itself — the flag is recomputed from stored numbers "
                                    "every run, so a correct series simply stops tripping it.",
+            # ===== THE 2026-09-23 LEVEL BREAK IS THIS BREAK'S TAIL, NOT A NEW ONE. Investigated
+            # 2026-09-23, and the investigation is recorded because "it self-heals" was the wrong
+            # answer to reach for. =====
+            # OBSERVED: fees_usd 7-day median $176 against a 30-day median $596,604 — a 99.97% collapse
+            # that reads like a fresh DefiLlama restructuring of the same class as the 09-12 one.
+            #
+            # ** IT IS ONE SERIES SEEN THROUGH TWO WINDOWS, AND THE ARITHMETIC CLOSES EXACTLY. **
+            # Blue recovered on 09-21 (recovered_on, automatic) but 09-12..09-20 is still ABSENT
+            # because break_window_backfilled is False. The trailing 7-day window on 09-23 is
+            # 09-17..09-23: FOUR of its seven days (09-17..09-20) sit inside that unbackfilled hole and
+            # only three carry recovered Blue, so the median of seven lands on the 4th value — in the
+            # hole's regime. The 30-day window is 21 of 30 days healthy, so its median is Blue's own
+            # ~$600,000/day, which is what $596,604 is. Simulated on 2026-09-23 with those dates: it
+            # reproduces $176 and $600,000 on 09-23 and flips to $600,000/$600,000 on 09-24.
+            #
+            # ** FALSIFIABLE, AND CHECK IT RATHER THAN ASSUMING IT: ** the 7-day median returns to
+            # Blue's level on 2026-09-24, one day, not gradually. If it is still at the residual level
+            # on 09-24 or later, this explanation is WRONG and there is a second break.
+            #
+            # ** WHAT WAS NOT RULED OUT, AND THE PROBE IS WHY. ** llama_probe.py morpho and morpho-blue
+            # were both RUN on 2026-09-23 and both failed at the proxy (403 CONNECT tunnel), not at
+            # DefiLlama — so a 404 (restructure) and an unreachable host are INDISTINGUISHABLE from this
+            # container, and the probe's own "a 404 here is itself the finding" line cannot be used. A
+            # SECOND break on morpho-blue after 09-21 would produce the same stored shape as the tail
+            # above, and nothing offline separates them: recovered_on is already set and would not move.
+            # So this is the best-supported reading, not a confirmed one. Re-run the probe from a host
+            # that can reach api.llama.fi to settle it.
+            "level_break_2026_09_23": {
+                "observed": "fees_usd 7d median $176 vs 30d median $596,604",
+                "verdict": "the 09-12 break's unbackfilled window inside the 7-day lookback, not a new restructure",
+                "mechanism": "4 of the 7 days 09-17..09-23 are the absent hole; the median of 7 lands on the 4th",
+                "clears_on": "2026-09-24, in one step — a gradual recovery would falsify this",
+                "probe_run": "llama_probe.py morpho AND morpho-blue, 2026-09-23",
+                "probe_result": "BLOCKED, not answered — proxy 403 CONNECT, so 404-vs-unreachable is indistinguishable here",
+                "not_ruled_out": "a second break on morpho-blue after 2026-09-21 looks identical from stored numbers alone",
+                "settle_it_by": "re-running llama_probe.py from a host that can reach api.llama.fi",
+            },
             "break_window_backfilled": False,
             "hole": {"from": "2026-09-12", "to": "2026-09-20", "days": 9,
                      "state": "ABSENT, deliberately — not stored as midnight-only",
@@ -13141,6 +13204,82 @@ UNAVAILABLE = [
     # real, independently measured figure with a named endpoint. It is blocked on robots and
     # reachability alone, which are circumstances that can change. These two are blocked on
     # arithmetic, which cannot.
+    # ===== total_supply_dashboard — CLOSED ON THE ROUTE, NOT ON THE FIGURE. 2026-09-23. =====
+    # ** THIS IS A CLOSURE, NOT A not_applicable, AND THE DIFFERENCE IS LOAD-BEARING. ** The
+    # brief asked for "permanently not_applicable". not_applicable asserts the figure CANNOT
+    # EXIST, and this one plainly does: ultrasound.money publishes total ETH supply, and the
+    # endpoint was enumerated from the frontend's own source on 2026-09-18 (v2/fees/supply-parts).
+    # Declaring it inapplicable would put a false statement on the sheet and silently remove the
+    # row instead of recording why it is empty. A closure says what this actually is: chased, no
+    # route from here, with the condition that would reopen it written down.
+    #
+    # AND THE FILE ALREADY DRAWS THIS LINE, four entries below: the two ultrasound issuance
+    # metrics are closed because the arithmetic rules them out, and the BURN entry is explicitly
+    # NOT closed with them because it is "blocked on robots and reachability alone, which are
+    # circumstances that can change". total_supply_dashboard is in the burn entry's category, not
+    # the issuance entries'.
+    {
+        "project": "Ethereum", "metric": "total_supply_dashboard",
+        "closed_on": "2026-09-23",
+        "summary": "ultrasound.money publishes the figure, but every route to it from this tool "
+                   "is gated on robots.txt for the PAGE, which disallows it.",
+        "what_was_tried": (
+            "The endpoint exists and was identified from ultrasoundmoney/frontend's own source, "
+            "read file-by-file from raw.githubusercontent.com on 2026-09-18: "
+            "/api/v2/fees/supply-parts carries the supply components. It cannot be reached from "
+            "here because fetch/scrape.py evaluates robots_allows(entry['url']) against the PAGE "
+            "Playwright loads, for every method including xhr — an xhr capture still needs the "
+            "page loaded first — and the page is disallowed. The API sub-path's own robots status "
+            "is never consulted and cannot be without a direct-HTTP fetch mechanism outside the "
+            "Playwright scraper, which would be new tooling this project does not add on its own. "
+            "** THE robots.txt IS RESPECTED, NOT ROUTED AROUND. ** That is the reason this is "
+            "closed rather than solved."),
+        "impact": (
+            "NONE on Ethereum's total supply, which is sourced independently and unaffected. What "
+            "is lost is the second opinion on it. Unlike the two issuance entries below, this one "
+            "WOULD have been a genuine independent check — ultrasound.money builds supply from EVM "
+            "balances + beacon balances - beacon deposits, which is not how this tool gets it."),
+        "reopen_if": (
+            "ultrasound.money's robots.txt stops disallowing the page; OR a direct-HTTP fetch path "
+            "is built that can consult the API sub-path's own robots rules (a decision, not a "
+            "workaround); OR another source publishes an independently-constructed ETH supply. "
+            "Near already has one at nearblocks.io, so the shape is not hypothetical."),
+    },
+
+    # ---------------------------------------------------------------- Plume (fees)
+    # ===== CLOSED ON THE DefiLlama ROUTE, WHICH IS WHAT THE P6 GAP WAS. 2026-09-23. =====
+    # ** ALSO A CLOSURE RATHER THAN A not_applicable, AND HERE THE REASON IS STRONGER: A ROUTE
+    # EXISTS AND IS DELIBERATELY UNWIRED. ** Plume's own registry gives a fee receiver, recorded
+    # on the project entry above. Calling the metric inapplicable would contradict config's own
+    # record that a route is there and was declined on cost.
+    {
+        "project": "Plume", "metric": "fees_usd",
+        "closed_on": "2026-09-23",
+        "summary": "DefiLlama carries no fee series for Plume, and the on-chain route that would "
+                   "give one is a log scan nobody has costed.",
+        "what_was_tried": (
+            "The DefiLlama slug is configured ('plume', chain 'Plume Mainnet') and returns no fee "
+            "revenue — recorded on the project entry on 2026-09-14, and the reason archetype 3 was "
+            "removed. The on-chain alternative is known and named there too: native PLUME inflows "
+            "to the networkFeeReceiver / infrastructureFeeCollector at "
+            "0x6CBb552855CE5Eb70af49B76a8048be8E3799A05, from Plume's own mainnet registry at "
+            "assets.plume.org. It is NOT wired because a BALANCE is not a FLOW: the receiver's "
+            "balance nets every outflow, so the fees figure needs a log scan of inflows, not a "
+            "balance read. ** NOT RE-VERIFIED LIVE ON 2026-09-23: ** api.llama.fi is unreachable "
+            "from this container (proxy 403), so this closure rests on the 2026-09-14 finding "
+            "rather than a fresh probe, and says so rather than implying one was run."),
+        "impact": (
+            "Plume's fee-derived columns stay empty. Nothing else depends on it: Plume does not "
+            "burn (declared) and its staking is emissions-funded, so there is no fee-funded "
+            "buyback or burn leg whose base this would be."),
+        "reopen_if": (
+            "DefiLlama starts publishing a fees series for the chain — the slug is already "
+            "configured, so it would fill with no edit; OR the fee-receiver inflow scan is costed "
+            "and wired, which is a decision about scope rather than a missing source; OR "
+            "growthepie publishes a fee metric for Plume, whose origin_key is already confirmed "
+            "present there from the 2026-09-23 wiring."),
+    },
+
     {
         "project": "Ethereum", "metric": "gross_issuance_tokens",
         "closed_on": "2026-09-22",
