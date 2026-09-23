@@ -217,6 +217,128 @@ def test_a_holder_whose_symbol_differs_from_its_tokens_is_read_through_the_token
     assert any(addr == TOKEN and args for addr, _, args in c.reader.read_calls), c.reader.read_calls
 
 
+class _GtpStub:
+    """growthepie's fundamentals.json, in the shape the query implies — with the date and value
+    keys DELIBERATELY not called `date` and `value`, because that is the thing nobody has read
+    from a real row yet."""
+
+    def __init__(self, rows=None, doc=None):
+        self.calls = 0
+        self._doc = doc if doc is not None else (rows if rows is not None else [])
+
+    def get(self, url, params=None):
+        self.calls += 1
+        return self._doc
+
+
+def _gtp_rows(origin="ethereum", key="daa", n=3, dk="date", vk="value"):
+    return [{"origin_key": origin, "metric_key": key, dk: f"2026-09-{10+i:02d}",
+             vk: 400_000.0 + i} for i in range(n)]
+
+
+def test_growthepie_reports_the_field_names_instead_of_guessing_them():
+    """** origin_key AND metric_key ARE CONFIRMED. THE DATE AND VALUE KEYS ARE NOT. **
+
+    'ethereum' and 'plume' are both in the document and so are 'daa' and 'txcount' — those were
+    read from the live fundamentals.json. What was NEVER read from a sample row is what a row
+    calls its date and its value: that was inferred from the query shape.
+
+    A parser that assumed `date`/`value` would either work silently or produce something that
+    looks exactly like a missing series, and nothing on the sheet would say which happened. So
+    the adapter stores nothing while status is unconfirmed and REPORTS THE KEYS A REAL ROW HAS,
+    which settles it in one run.
+    """
+    from fetch.base import FetchOutput
+    from fetch.growthepie import GrowThePie
+
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    spec = eth["growthepie"]
+    assert spec["status"] == "unconfirmed"
+    assert spec["origin_key"] == "ethereum"
+    assert spec["metrics"] == {"active_addresses": "daa", "tx_count": "txcount"}
+    assert spec["date_field"] is None and spec["value_field"] is None, \
+        "the unread names must be None, not a guess"
+    # ROBOTS CHECKED AND DATED, because respecting it is a design requirement here.
+    assert "2026-09-23" in spec["robots_checked"] and "api.growthepie.com" in spec["robots_checked"]
+
+    def run(project, doc):
+        a = GrowThePie()
+        a.http = _GtpStub(doc=doc)
+        out = FetchOutput()
+        a.run([project], None, out)
+        return out, a
+
+    doc = _gtp_rows("ethereum", "daa", dk="day", vk="val") + \
+        _gtp_rows("ethereum", "txcount", dk="day", vk="val") + \
+        _gtp_rows("plume", "daa", dk="day", vk="val")
+    out, _ = run(eth, doc)
+    assert out.frame().empty, "nothing may be stored while the field names are unread"
+    msgs = [e.message for e in out.log if e.status == "skipped"]
+    assert len(msgs) == 2, msgs
+    m = msgs[0]
+    # ** IT REPORTS WHAT THE ROW ACTUALLY HAS. ** That is the whole point of the state.
+    assert "THE FILTER WORKS: 3 row(s)" in m, m
+    assert "'day'" in m and "'val'" in m, f"the real keys must be named: {m}"
+    assert "'origin_key', 'val'" in m or "keys ['day'" in m, m
+    assert "set status to 'confirmed'" in m
+
+    # ONE DOCUMENT, FETCHED ONCE. It carries every chain and metric, so a call per project would
+    # fetch the same megabytes repeatedly and be rude about it.
+    a = GrowThePie()
+    a.http = _GtpStub(doc=doc)
+    out2 = FetchOutput()
+    a.run([eth, config.PROJECT_BY_NAME["Plume"]], None, out2)
+    assert a.http.calls == 1, f"fetched {a.http.calls} times for two projects"
+
+    # ===== CONFIRMED: IT WRITES, and only then.
+    conf = dict(eth, growthepie=dict(spec, status="confirmed", date_field="day",
+                                     value_field="val"))
+    out3, _ = run(conf, doc)
+    got = out3.frame()
+    assert set(got.metric) == {"active_addresses", "tx_count"}, sorted(set(got.metric))
+    daa = got[got.metric == "active_addresses"].sort_values("date")
+    assert len(daa) == 3 and float(daa.value.iloc[0]) == 400_000.0
+    assert all(str(s).startswith("growthepie") for s in got.source)
+
+    # ** PLUME IS FILTERED OUT OF ETHEREUM'S SERIES. ** One document, many chains: a filter on
+    # metric_key alone would silently sum two chains into one column.
+    assert len(daa) == 3, "only the three ethereum daa rows, not plume's as well"
+
+    # ===== A MISSING COMBINATION SAYS WHICH HALF OF THE FILTER MISSED. Two different problems
+    # with two different fixes, and the document itself can tell them apart.
+    out4, _ = run(conf, _gtp_rows("ethereum", "daa", dk="day", vk="val"))   # no txcount rows
+    gaps = [g for g in out4.gaps if g["metric"] == "tx_count"]
+    assert gaps and "origin_key 'ethereum' IS present" in gaps[0]["reason"], gaps
+    assert "daa" in gaps[0]["reason"], "and it lists what that chain DOES carry"
+
+    out5, _ = run(conf, _gtp_rows("base", "daa", dk="day", vk="val"))       # chain absent
+    gaps = [g for g in out5.gaps if g["metric"] == "active_addresses"]
+    assert gaps and "is NOT in the document at all" in gaps[0]["reason"], gaps
+
+    # ===== A ROW THAT DOES NOT PARSE IS COUNTED, NEVER DROPPED SILENTLY. A partial series under
+    # a full-coverage header is the error this project keeps finding, and it is invisible unless
+    # the count is stated.
+    ragged = _gtp_rows("ethereum", "daa", n=3, dk="day", vk="val")
+    ragged[1]["val"] = None
+    ragged[2]["val"] = "not a number"
+    out6, _ = run(conf, ragged)
+    stored = out6.frame()
+    assert len(stored[stored.metric == "active_addresses"]) == 1
+    assert any("2 of 3 growthepie row(s) had no usable" in e.message for e in out6.log), out6.log
+
+    # AND IF NONE PARSE, THE FIELD NAMES IN CONFIG ARE WRONG — said plainly, nothing stored.
+    out7, _ = run(dict(eth, growthepie=dict(spec, status="confirmed", date_field="nope",
+                                            value_field="alsonope")), doc)
+    assert out7.frame().empty
+    assert any("field names in config are wrong" in e.message for e in out7.log), out7.log
+
+    # A DOCUMENT THAT IS NOT A LIST FAILS LOUDLY RATHER THAN LOOKING EMPTY.
+    out8, _ = run(conf, {"data": []})
+    assert any("expected a list of rows" in e.message for e in out8.log), out8.log
+    print("growthepie ok: field names reported not guessed, one fetch per run, both halves of a "
+          "missed filter named, ragged rows counted")
+
+
 def test_aerodromes_lock_duration_is_a_proxy_and_permanent_locks_come_off_both_sides():
     """** THE MODEL WAS CONFIRMED FROM SOURCE BEFORE IT WAS WIRED, AND IT HAD A TRAP IN IT. **
 

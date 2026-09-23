@@ -1595,6 +1595,36 @@ PROJECTS = [
         # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
         # metrics apply. L1.
         "is_chain": True,
+        # ===== CHAIN ACTIVITY — growthepie, free and unauthenticated. Added 2026-09-23. =====
+        # ROBOTS CHECKED, NOT ASSUMED: www.growthepie.com/robots.txt disallows only page paths
+        # (/embed/, /refactor, /gtpplayground, /debug/, /_next/*). No restriction on
+        # api.growthepie.com and no separate robots.txt for the API subdomain. Checked
+        # 2026-09-23. This project respects robots.txt rather than routing around it, so the
+        # check and its date are on file.
+        #
+        # ** origin_key AND metric_key ARE CONFIRMED FROM THE LIVE DOCUMENT. ** 'ethereum' and
+        # 'plume' are both present among 27 chains; 'daa' and 'txcount' are both present.
+        #
+        # ** THE DATE AND VALUE FIELD NAMES ARE NOT. ** They were inferred from the query shape,
+        # never read from a sample row — so status stays 'unconfirmed' and the adapter stores
+        # NOTHING while it is. It reports the keys a real row actually has, which settles it in
+        # one run. Guessing `date`/`value` would either work silently or look exactly like a
+        # missing series, and nothing on the sheet would say which happened.
+        "growthepie": {
+            "status": "unconfirmed",
+            "endpoint": "https://api.growthepie.com/v1/fundamentals.json",
+            "origin_key": "ethereum",
+            "metrics": {"active_addresses": "daa", "tx_count": "txcount"},
+            "date_field": None,
+            "value_field": None,
+            "robots_checked": "2026-09-23 — www.growthepie.com/robots.txt disallows page paths "
+                              "only; api.growthepie.com unrestricted, no separate robots.txt",
+            "confirmed_from_the_document": "origin_key 'ethereum' and metric_key 'daa' / "
+                                           "'txcount' are all present, 2026-09-23.",
+            "what_is_unconfirmed": "the row's DATE and VALUE key names. Run once, read them off "
+                                   "the skipped message, put them in date_field/value_field and "
+                                   "set status to 'confirmed'.",
+        },
         "name": "Ethereum", "symbol": "ETH",
         "coingecko_id": "ethereum",
         # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
@@ -2485,6 +2515,36 @@ PROJECTS = [
         # A CHAIN: tx_count, active_addresses, tvl_usd, stablecoin_supply_usd and the two RWA
         # metrics apply. L1 (RWA-focused).
         "is_chain": True,
+        # ===== CHAIN ACTIVITY — growthepie, free and unauthenticated. Added 2026-09-23. =====
+        # ROBOTS CHECKED, NOT ASSUMED: www.growthepie.com/robots.txt disallows only page paths
+        # (/embed/, /refactor, /gtpplayground, /debug/, /_next/*). No restriction on
+        # api.growthepie.com and no separate robots.txt for the API subdomain. Checked
+        # 2026-09-23. This project respects robots.txt rather than routing around it, so the
+        # check and its date are on file.
+        #
+        # ** origin_key AND metric_key ARE CONFIRMED FROM THE LIVE DOCUMENT. ** 'ethereum' and
+        # 'plume' are both present among 27 chains; 'daa' and 'txcount' are both present.
+        #
+        # ** THE DATE AND VALUE FIELD NAMES ARE NOT. ** They were inferred from the query shape,
+        # never read from a sample row — so status stays 'unconfirmed' and the adapter stores
+        # NOTHING while it is. It reports the keys a real row actually has, which settles it in
+        # one run. Guessing `date`/`value` would either work silently or look exactly like a
+        # missing series, and nothing on the sheet would say which happened.
+        "growthepie": {
+            "status": "unconfirmed",
+            "endpoint": "https://api.growthepie.com/v1/fundamentals.json",
+            "origin_key": "plume",
+            "metrics": {"active_addresses": "daa", "tx_count": "txcount"},
+            "date_field": None,
+            "value_field": None,
+            "robots_checked": "2026-09-23 — www.growthepie.com/robots.txt disallows page paths "
+                              "only; api.growthepie.com unrestricted, no separate robots.txt",
+            "confirmed_from_the_document": "origin_key 'plume' and metric_key 'daa' / "
+                                           "'txcount' are all present, 2026-09-23.",
+            "what_is_unconfirmed": "the row's DATE and VALUE key names. Run once, read them off "
+                                   "the skipped message, put them in date_field/value_field and "
+                                   "set status to 'confirmed'.",
+        },
         "name": "Plume", "symbol": "PLUME",
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",

@@ -30,6 +30,7 @@ from .coingecko import CoinGecko
 from .dune import Dune
 from .gaps import detect as detect_gaps
 from .hypercore import HyperCoreInfo
+from .growthepie import GrowThePie
 from .llama import DefiLlama, MorphoBlueApi
 from .schedule import Schedule
 from .near import NearNode
@@ -47,6 +48,8 @@ TIER_ORDER = [
     # API gives the unbiased figure, and DefiLlama's stands down once it is confirmed. The two
     # must never alternate — see DefiLlama.lending_supply.
     ("morpho_api", 1, lambda ctx: MorphoBlueApi()),
+    # Chain activity — daily active addresses and transaction count, free and unauthenticated.
+    ("growthepie", 1, lambda ctx: GrowThePie()),
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
