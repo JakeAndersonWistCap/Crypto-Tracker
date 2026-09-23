@@ -127,6 +127,138 @@ def _cake_project(verified=None):
     }
 
 
+class _HolderTokenReader:
+    """A HOLDER WHOSE OWN SYMBOL DIFFERS FROM THE TOKEN IT HOLDS — the sPENDLE/PENDLE shape.
+
+    One address answers symbol() with the vault's ticker and the other with the token's, and
+    balanceOf on the token returns the assets while totalSupply on the holder returns the shares.
+    That is the whole point: the two reads give DIFFERENT, both-plausible numbers, so which
+    contract is called and which is asked for its symbol are separate questions.
+    """
+
+    def __init__(self, holder, token, holder_symbol, token_symbol, shares, assets):
+        self.holder, self.token = holder.lower(), token.lower()
+        self.holder_symbol, self.token_symbol = holder_symbol, token_symbol
+        self.shares, self.assets = shares, assets
+        self.symbol_calls, self.read_calls = [], []
+
+    def _sym(self, address):
+        return self.token_symbol if str(address).lower() == self.token else self.holder_symbol
+
+    def symbol_matches(self, chain, address, expected):
+        self.symbol_calls.append((str(address).lower(), expected))
+        actual = self._sym(address)
+        return str(actual).lower() == str(expected).lower(), actual
+
+    def has_code(self, chain, address):
+        return True
+
+    def scaled(self, chain, address, call, *args):
+        self.read_calls.append((str(address).lower(), call, args))
+        # balanceOf(holder) on the TOKEN -> assets.  totalSupply() on the HOLDER -> shares.
+        return self.assets if args and args[0] else self.shares
+
+
+def test_a_holder_whose_symbol_differs_from_its_tokens_is_read_through_the_token():
+    """** THE RUN OF 20260923T095552Z REFUSED PENDLE'S ASSET READ ON A SYMBOL MISMATCH. **
+
+        FAILED chain / Pendle: spendle_underlying: symbol check FAILED —
+        0x9999...4144 reports 'sPENDLE', config expects 'PENDLE'.
+
+    For a balanceOf read the HOLDER is sPENDLE and the TOKEN is PENDLE, so checking the holder's
+    symbol against the token's is asking the wrong contract. Same shape as the Chainlink
+    staking-pool fix: the call is made on the holder, and symbol() and decimals() come from
+    `underlying`.
+
+    ** AND THE SYMBOL MISMATCH WAS THE SYMPTOM, NOT THE FAULT. ** The entry had no read_method,
+    so it was never a balanceOf read at all — it would have fallen through to totalSupply() on
+    the holder, returning 30,310,807 SHARES to be stored under locked_tokens, the ASSETS column.
+    Routing the symbol check through the token and stopping there would have made the gate pass
+    and written exactly the confusion the entry exists to remove, with nothing left to catch it.
+    So this pins both halves: the right contract is asked for its symbol, AND the right call is
+    made.
+    """
+    HOLDER, TOKEN = "0x9999999999", "0x8888888888"
+    SHARES, ASSETS = 30_310_807.38, 35_557_337.0
+    project = {
+        "name": "Pendle", "archetypes": [3],
+        "contracts": {
+            "token": {"address": TOKEN, "chain": "ethereum", "kind": "erc20_total_supply",
+                      "expected_symbol": "PENDLE", "source_url": "u", "verified": "2026-09-23"},
+            "spendle_underlying": {
+                "address": HOLDER, "chain": "ethereum", "kind": "stake_underlying",
+                "expected_symbol": "PENDLE", "source_url": "u", "verified": "2026-09-23",
+                "read_method": "escrow_balance_of", "underlying": "token",
+                "token_standard": "erc20", "holder_has_code": True,
+                "metric_override": "locked_tokens"},
+        },
+    }
+    c = Chain()
+    c.reader = _HolderTokenReader(HOLDER, TOKEN, "sPENDLE", "PENDLE", SHARES, ASSETS)
+    out = FetchOutput()
+    c.run([project], None, out)
+
+    got = out.frame()
+    got = got[got.metric == "locked_tokens"]
+    assert not got.empty, f"the read must no longer be refused: {out.log}"
+    # ** THE ASSETS, NOT THE SHARES. ** Both numbers are plausible and they differ by the
+    # accrued rate, which is exactly why the wrong one would never have looked wrong.
+    assert abs(float(got.value.iloc[0]) - ASSETS) < 1e-6, \
+        f"locked_tokens must be the ASSETS ({ASSETS:,.0f}), not the shares ({SHARES:,.0f})"
+    assert not [e for e in out.log if e.status == "failed"], out.log
+
+    # THE SYMBOL WAS ASKED OF THE TOKEN, NEVER OF THE HOLDER.
+    asked = {a for a, _ in c.reader.symbol_calls}
+    assert TOKEN in asked, c.reader.symbol_calls
+    assert HOLDER not in asked, \
+        f"the holder's own symbol is not the token's and must not be checked: {c.reader.symbol_calls}"
+    # AND THE CALL WAS MADE ON THE TOKEN WITH THE HOLDER AS ITS ARGUMENT — a balanceOf, not a
+    # totalSupply on the holder.
+    assert any(addr == TOKEN and args for addr, _, args in c.reader.read_calls), c.reader.read_calls
+
+
+def test_a_stake_underlying_entry_with_no_read_method_is_refused_not_guessed():
+    """THE CONTROL, and it is the half that matters more. A stake_underlying entry with no
+    read_method does not FAIL — it silently becomes a totalSupply read on the holder, which
+    returns the share count under an assets name. The symbol gate caught Pendle's only because
+    the holder and the token happen to be different contracts with different tickers; where a
+    vault IS its own underlying the symbol would match and the wrong quantity would be stored
+    with nothing to notice.
+
+    So the requirement is declared on the KIND rather than left to a symbol collision.
+    """
+    HOLDER, TOKEN = "0x9999999999", "0x8888888888"
+    project = {
+        "name": "Pendle", "archetypes": [3],
+        "contracts": {
+            "token": {"address": TOKEN, "chain": "ethereum", "kind": "erc20_total_supply",
+                      "expected_symbol": "PENDLE", "source_url": "u", "verified": "2026-09-23"},
+            "spendle_underlying": {
+                "address": HOLDER, "chain": "ethereum", "kind": "stake_underlying",
+                "expected_symbol": "PENDLE", "source_url": "u", "verified": "2026-09-23",
+                "underlying": "token", "token_standard": "erc20",
+                "metric_override": "locked_tokens"},          # <-- no read_method
+        },
+    }
+    c = Chain()
+    c.reader = _HolderTokenReader(HOLDER, TOKEN, "sPENDLE", "PENDLE", 30_310_807.38, 35_557_337.0)
+    out = FetchOutput()
+    c.run([project], None, out)
+
+    assert out.frame()[out.frame().metric == "locked_tokens"].empty, \
+        "nothing may be stored from an entry whose read method was never established"
+    gap = [g for g in out.gaps if g["metric"] == "locked_tokens"]
+    assert gap, out.gaps
+    # AND THE REASON NAMES THIS HAZARD, not the vote-escrow one. A reason that points at the
+    # wrong obstacle looks actionable, so somebody acts on it.
+    assert "the WRONG QUANTITY rather than a failure" in gap[0]["reason"], gap[0]["reason"]
+    assert "SHARE count" in gap[0]["reason"] and "ASSETS metric" in gap[0]["reason"]
+    assert "ERC-721" not in gap[0]["reason"], "that is the vote-escrow hazard and not this one"
+    assert "escrow_balance_of" in gap[0]["suggestion"]
+    print("stake_underlying ok: the token answers for the symbol, the holder is the argument, "
+          "and an unset read method is refused rather than silently becoming totalSupply")
+
+
 def test_chain_refuses_unverified_by_default():
     os.environ.pop("TOKEN_METRICS_ALLOW_UNVERIFIED", None)
     c = Chain()
@@ -1211,29 +1343,43 @@ def test_spendle_is_ethereum_only_so_the_multichain_candidate_is_ruled_out():
 
 
 def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
-    """** A ROUTE THAT REMOVES THE BIAS, AND A FLAG THAT KEEPS IT HONEST UNTIL IT IS PROVEN. **
+    """** CONFIRMED ON THE LISTED SUBSET, AND THE ROUTE TO GETTING THERE IS WHAT THIS PINS. **
 
     Morpho publishes per-market supplyAssetsUsd and borrowAssetsUsd — the figures morpho-blue's
     TVL adapter reads and discards. Summed, that is utilisation with NO collateral in the
     denominator: the figure itself rather than a labelled approximation.
 
-    The endpoint is egress-blocked from the environment this was written in, so it has NOT been
-    shown to answer. A source is not promoted to primary until it fetches on a live run — so the
-    adapter runs, reports exactly what it would have written, and stores nothing until the flag
-    is flipped on the strength of a run that worked.
+    THE FIRST LIVE RUN SUMMED THE WHOLE PERMISSIONLESS POPULATION: 7,868 markets, $39.47bn at
+    98.1% utilisation. Filtered to whitelisted markets it is 651 markets, $5.87bn, 0.8802 — and
+    every listed market individually sits at 0.89-0.90. The bar was never "it fetched": it was
+    "the number is explained", and the explanation is that 92% of the market count and 85% of
+    the raw supply is unlisted, with 78% of the total in four markets whose supply equals their
+    borrow to the dollar.
     """
     from fetch.base import FetchOutput
     from fetch.llama import DefiLlama, MorphoBlueApi
 
     api = config.PROJECT_BY_NAME["Morpho"]["lending_api"]
-    assert api["status"] == "unconfirmed", "it has not been shown to answer from here"
+    assert api["status"] == "confirmed", "the listed subset was confirmed on 2026-09-23"
+    assert api["confirmed_values"] == {"supply_units": 5_868_948_998.0,
+                                       "utilisation_pct": 0.8802, "listed_markets": 651}
+    lo, hi = api["plausible_utilisation"]
+    assert lo <= api["confirmed_values"]["utilisation_pct"] <= hi, \
+        "the confirmed figure must sit inside the band that refused the unfiltered one"
     assert api["endpoint"] == "https://blue-api.morpho.org/graphql"
     assert "DefiLlama" in api["schema_evidence"], "the supply field's provenance is named"
     assert "measuring-point change" in api["on_confirm"]
 
+    # ** THE FILTER IS IN THE QUERY, NOT APPLIED AFTERWARDS. ** Post-filtering would mean the
+    # $39.47bn is summed at least once in memory, one edit from being the number that ships.
+    assert "whitelisted:true" in api["markets_query"].replace(" ", ""), api["markets_query"]
+    assert api["filter_field"] == "whitelisted" and api["verify_field"] == "listed", \
+        "the FILTER input and the OUTPUT field have different names, and confusing them " \
+        "silently returns everything"
+
     class Stub:
-        def __init__(self, borrow_key="borrowAssetsUsd"):
-            self.borrow_key = borrow_key
+        def __init__(self, borrow_key="borrowAssetsUsd", listed=True):
+            self.borrow_key, self.listed = borrow_key, listed
 
         def post(self, url, json_body=None, **kw):
             if "chains" in (json_body or {}).get("query", ""):
@@ -1241,7 +1387,7 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
             st = {"supplyAssetsUsd": 600.0, self.borrow_key: 400.0}
             return {"data": {"markets": {"pageInfo": {"countTotal": 1},
                                          "items": [{"marketId": "0xa", "chain": {"id": 1},
-                                                    "state": st}]}}}
+                                                    "listed": self.listed, "state": st}]}}}
 
     def run(project, stub):
         a = MorphoBlueApi()
@@ -1251,14 +1397,81 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
         return out
 
     morpho = config.PROJECT_BY_NAME["Morpho"]
-    out = run(morpho, Stub())
-    # ** NOTHING STORED — and the skip carries the numbers, so ONE run settles it. **
+    unconfirmed = dict(morpho, lending_api=dict(api, status="unconfirmed"))
+
+    # THE UNCONFIRMED STATE STILL WORKS — it is how the next route will be judged.
+    out = run(unconfirmed, Stub())
     assert out.frame().empty, out.frame()
     msg = [e.message for e in out.log if e.status == "skipped"]
     assert msg and "THE FETCH PARSED" in msg[0], out.log
     assert "utilisation_pct=0.6667" in msg[0], msg[0]
     assert "stands DefiLlama's down" in msg[0]
     assert "Parsing is NOT the bar" in msg[0], msg[0]
+
+    # ===== ** A FILTER THE SERVER IGNORES IS NOT AN ERROR — IT IS A 200 CARRYING $39.47bn. **
+    # This is the one failure mode that would silently put the unfiltered population back, so
+    # every returned row is asked to confirm it is listed, and one that is not stops the read.
+    ignored = run(morpho, Stub(listed=False))
+    assert ignored.frame().empty, "nothing may be stored when the filter did not apply"
+    fmsg = [e.message for e in ignored.log if e.status == "failed"]
+    assert fmsg and "THE WHITELIST FILTER DID NOT APPLY" in fmsg[0], ignored.log
+    assert "NOTHING STORED" in fmsg[0] and "whitelisted:true" in fmsg[0], fmsg[0]
+
+    # ===== THE PARTIAL-FIELD PROBLEM, AND THE TWO ABSENCES THAT ARE NOT THE SAME THING. =====
+    # BOTH FIELDS ABSENT is an empty market: it contributes nothing to either side, so dropping
+    # it and summing it as zero are the same arithmetic. The probe settled this on the real
+    # population — of 1,117 markets with no borrowAssetsUsd, ZERO carried a supply figure.
+    assert api["partial_field_2026_09_23"]["of_those_carrying_supply"] == 0
+
+    class WithEmpties(Stub):
+        def post(self, url, json_body=None, **kw):
+            if "chains" in (json_body or {}).get("query", ""):
+                return {"data": {"chains": [{"id": 1}]}}
+            items = [{"marketId": "0xa", "chain": {"id": 1}, "listed": True,
+                      "state": {"supplyAssetsUsd": 600.0, "borrowAssetsUsd": 400.0}},
+                     {"marketId": "0xb", "chain": {"id": 1}, "listed": True, "state": {}}]
+            return {"data": {"markets": {"pageInfo": {"countTotal": 2}, "items": items}}}
+
+    ok = run(morpho, WithEmpties())
+    vals = {r.metric: float(r.value) for r in ok.frame().itertuples(index=False)}
+    assert vals["supply_units"] == 600.0 and abs(vals["utilisation_pct"] - 2 / 3) < 1e-9, vals
+    assert any("empty market(s) carried neither field" in e.message for e in ok.log), ok.log
+
+    # ** ONE PRESENT AND THE OTHER ABSENT STILL REFUSES THE WHOLE READ. ** Not observed on the
+    # real population, and the guard is kept because the day it happens there is no safe
+    # default — and the error would run in the direction of a too-low utilisation, which is the
+    # number this route exists to get right.
+    class Lopsided(Stub):
+        def post(self, url, json_body=None, **kw):
+            if "chains" in (json_body or {}).get("query", ""):
+                return {"data": {"chains": [{"id": 1}]}}
+            items = [{"marketId": "0xa", "chain": {"id": 1}, "listed": True,
+                      "state": {"supplyAssetsUsd": 600.0, "borrowAssetsUsd": 400.0}},
+                     {"marketId": "0xbad", "chain": {"id": 1}, "listed": True,
+                      "state": {"supplyAssetsUsd": 900.0}}]
+            return {"data": {"markets": {"pageInfo": {"countTotal": 2}, "items": items}}}
+
+    lop = run(morpho, Lopsided())
+    assert lop.frame().empty, "one side present without the other must stop the whole read"
+    lmsg = [e.message for e in lop.log if e.status == "failed"]
+    assert lmsg and "carry ONE of" in lmsg[0], lop.log
+    assert "not knowable from the absence itself" in lmsg[0], lmsg[0]
+
+    # ===== THE FINDINGS THAT JUSTIFIED CONFIRMING, recorded because they are facts about the
+    # ENDPOINT and not about our use of it: anyone summing it unfiltered gets ~85% not-Morpho.
+    split = api["listed_vs_unlisted_2026_09_23"]
+    assert split["listed"]["markets"] == 651 and split["unlisted"]["markets"] == 7_217
+    assert split["unlisted"]["utilisation"] == 0.9989, "self-dealt markets hold no idle liquidity"
+    assert len(split["four_markets_are_78pct_of_the_total"]) == 5, "four markets plus the signature"
+    assert "EXACTLY equal" in split["four_markets_are_78pct_of_the_total"]["signature"]
+
+    # ** AND THE TVL CROSS-CHECK IS INAPPLICABLE, NOT UNMET. ** It was written as the decider
+    # and it cannot decide: DefiLlama's tvl counts loanToken AND collateralToken while
+    # supplyAssetsUsd is the loan side alone, so no ratio between them says anything about the
+    # filter. Left on file as an unmet condition it reads as work outstanding, and someone
+    # eventually makes two different quantities agree by adjusting the one that is right.
+    assert "INAPPLICABLE" in api["tvl_cross_check"]["status"]
+    assert "Do not reinstate it as a gate" in api["tvl_cross_check"]["so"]
 
     # ===== ** A CLEAN FETCH THAT SUMS TO NONSENSE MUST NOT READ AS A SUCCESS. ** The first live
     # run came back with 7,868 markets, $39.47bn supplied and $38.73bn borrowed — 98.1%
@@ -1268,7 +1481,7 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
     # confirm, and it still stores nothing either way.
     assert api["plausible_utilisation"] == (0.40, 0.92), api.get("plausible_utilisation")
     first = api["first_run_2026_09_23"]
-    assert first["implied_utilisation"] == 0.981 and first["status_stays"] == "unconfirmed"
+    assert first["implied_utilisation"] == 0.981
     assert "PERMISSIONLESS" in first["leading_hypothesis"]
     assert "API_MIN_USD = 1000" in first["supporting_evidence"] and \
         "listed === true" in first["supporting_evidence"], "DefiLlama's own filter is the evidence"
@@ -1278,19 +1491,21 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
             if "chains" in (json_body or {}).get("query", ""):
                 return {"data": {"chains": [{"id": 1}]}}
             st = {"supplyAssetsUsd": 39_470_000_000.0, "borrowAssetsUsd": 38_730_000_000.0}
+            # listed TRUE deliberately: the band must fire on its own merits, not because the
+            # filter guard happened to reject the row first.
             return {"data": {"markets": {"pageInfo": {"countTotal": 1},
                                          "items": [{"marketId": "0xa", "chain": {"id": 1},
-                                                    "state": st}]}}}
+                                                    "listed": True, "state": st}]}}}
 
-    bad = run(morpho, Nonsense())
+    bad = run(unconfirmed, Nonsense())
     assert bad.frame().empty, "still nothing stored — the band reports, it does not filter"
     bmsg = [e.message for e in bad.log if e.status == "skipped"]
     assert bmsg and "DO NOT CONFIRM ON THIS" in bmsg[0], bmsg
     assert "0.9813" in bmsg[0] and "outside the plausible 0.40-0.92 band" in bmsg[0], bmsg[0]
     assert "Parsing is NOT the bar" not in bmsg[0], "the invitation must not survive alongside it"
 
-    # ONCE CONFIRMED IT WRITES, and the row says the bias is gone rather than merely named.
-    confirmed = dict(morpho, lending_api=dict(api, status="confirmed"))
+    # CONFIRMED, SO IT WRITES, and the row says the bias is gone rather than merely named.
+    confirmed = morpho
     out2 = run(confirmed, Stub())
     got = {r.metric: float(r.value) for r in out2.frame().itertuples(index=False)}
     assert got["supply_units"] == 600.0 and abs(got["utilisation_pct"] - 2 / 3) < 1e-9, got
@@ -1307,14 +1522,18 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
     assert out3.frame().empty
     assert [e for e in out3.log if e.status == "skipped" and "must not alternate" in e.message]
 
-    # ** A MISSING BORROW FIELD IS REPORTED, NEVER SUMMED AS ZERO. ** The field's spelling is the
-    # unconfirmed half, and a borrow side reading 0 gives utilisation 0.0000 on a lending
-    # protocol — a number, not a gap, and entirely plausible on a quiet day.
+    # ** A MISSPELT BORROW FIELD IS REPORTED, NEVER SUMMED AS ZERO. ** A borrow side reading 0
+    # gives utilisation 0.0000 on a lending protocol — a number, not a gap, and entirely
+    # plausible on a quiet day. It reaches the lopsided branch, which is exactly right: the
+    # market HAS a supply figure and its borrow side is unreadable, which is the one case with
+    # no safe default.
     out4 = run(confirmed, Stub(borrow_key="borrowAssetsUSD"))
     assert out4.frame().empty
     bad = [e for e in out4.log if e.status == "failed"]
-    assert bad and "borrowAssetsUsd absent" in bad[0].message, out4.log
-    assert "0.0000" in bad[0].message, "the reason names the number it refuses to produce"
+    assert bad and "carry ONE of" in bad[0].message, out4.log
+    assert "borrowAssetsUsd" in bad[0].message, "the expected spelling is named"
+    assert "understates utilisation" in bad[0].message, \
+        "the reason names the direction of the error it refuses to make"
     print("morpho api ok: reports what it would write and stores nothing until confirmed, "
           "stands DefiLlama's route down when it is, and refuses a missing borrow field")
 
@@ -1339,9 +1558,34 @@ def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
     spec = config.PROJECT_BY_NAME["Morpho"]["lending_supply"]
     assert spec["utilisation_formula"] == "borrowed / (tvl + borrowed)"
     assert "UNDERSTATES" in spec["bias"] and "collateral" in spec["bias"]
+
+    # ===== ** AND THE CAVEAT STOPPED TRAVELLING TO THE CELL WHEN THE ROUTE STOOD DOWN. ** =====
+    # Confirming blue-api on 2026-09-23 removed the collateral denominator entirely, so
+    # "THE DENOMINATOR INCLUDES COLLATERAL" became a false statement about a true figure. A
+    # warning that is wrong still gets acted on, and the action here is to mentally adjust a
+    # correct number upwards. The RECORD is kept — it says what the old route measured and what
+    # replaced it — and it returns automatically if the confirmation is reverted, because both
+    # are driven by the same flag.
+    raw = config.PROJECT_BY_NAME["Morpho"]["non_comparable"]
     for metric in ("utilisation_pct", "supply_units"):
-        nc = config.is_non_comparable("Morpho", metric)
-        assert nc and "COLLATERAL" in nc["why"].upper(), metric
+        assert "COLLATERAL" in raw[metric]["why"].upper(), metric
+        assert raw[metric]["superseded_when_confirmed"] == "lending_api", metric
+        assert config.is_non_comparable("Morpho", metric) is None, \
+            f"{metric}: the blue-api route has no collateral in it, so the caveat must not render"
+    reverted = dict(config.PROJECT_BY_NAME["Morpho"],
+                    lending_api=dict(config.PROJECT_BY_NAME["Morpho"]["lending_api"],
+                                     status="unconfirmed"))
+    saved = config.PROJECT_BY_NAME["Morpho"]
+    config.PROJECT_BY_NAME["Morpho"] = reverted
+    try:
+        for metric in ("utilisation_pct", "supply_units"):
+            nc = config.is_non_comparable("Morpho", metric)
+            assert nc and "COLLATERAL" in nc["why"].upper(), \
+                f"{metric}: reverting the confirmation must bring the caveat back"
+    finally:
+        config.PROJECT_BY_NAME["Morpho"] = saved
+    # A caveat with no supersession flag is untouched by any of this.
+    assert config.is_non_comparable("Uniswap", "buyback_fund_balance") is not None
     # THE EXACT ROUTE IS STILL ON FILE, and still honest about its cost.
     blocked = config.PROJECT_BY_NAME["Morpho"]["utilisation_pct_blocked"]
     assert "superseded" in blocked["status"]
@@ -1356,10 +1600,16 @@ def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
                         {"date": 1_758_000_000, "totalLiquidityUSD": 400.0},
                         {"date": 1_758_086_400, "totalLiquidityUSD": 300.0}]}}}
 
+    # ** THE ROUTE ITSELF IS EXERCISED AGAINST AN UNCONFIRMED COPY, because on the real project
+    # it now stands down entirely — that stand-down is asserted in the blue-api test. What is
+    # pinned here is what it DID and why it was replaced, which is not withdrawn.
+    legacy = dict(config.PROJECT_BY_NAME["Morpho"],
+                  lending_api=dict(config.PROJECT_BY_NAME["Morpho"]["lending_api"],
+                                   status="unconfirmed"))
     d = DefiLlama()
     d.http = Stub()
     out = FetchOutput()
-    d.lending_supply(config.PROJECT_BY_NAME["Morpho"], None, out)
+    d.lending_supply(legacy, None, out)
     got = out.frame()
     units = got.query("metric == 'supply_units'").sort_values("date")
     util = got.query("metric == 'utilisation_pct'").sort_values("date")
@@ -1380,7 +1630,7 @@ def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
     d2 = DefiLlama()
     d2.http = Ragged()
     out2 = FetchOutput()
-    d2.lending_supply(config.PROJECT_BY_NAME["Morpho"], None, out2)
+    d2.lending_supply(legacy, None, out2)
     u2 = out2.frame().query("metric == 'utilisation_pct'")
     assert len(u2) == 1 and float(u2.value.iloc[0]) == 0.3, u2
 
@@ -1393,7 +1643,7 @@ def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
     d3 = DefiLlama()
     d3.http = NoBorrow()
     out3 = FetchOutput()
-    d3.lending_supply(config.PROJECT_BY_NAME["Morpho"], None, out3)
+    d3.lending_supply(legacy, None, out3)
     assert out3.frame().empty
     assert [e for e in out3.log if e.status == "failed" and "Keys present: Ethereum, staking" in e.message], out3.log
     print("morpho capacity ok: stored with the collateral bias named and its direction stated, "

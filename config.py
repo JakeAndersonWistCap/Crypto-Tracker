@@ -707,8 +707,33 @@ def metric_unit(project_name: str, metric: str) -> str:
 
 
 def is_non_comparable(project_name: str, metric: str) -> dict | None:
+    """The caveat that travels to the cell — UNLESS the route it describes no longer runs.
+
+    ===== ** A CAVEAT ABOUT A RETIRED ROUTE IS A FALSE STATEMENT ON A TRUE FIGURE. ** =====
+    Morpho's utilisation_pct and supply_units carry "THE DENOMINATOR INCLUDES COLLATERAL",
+    which was exact while the figure came from DefiLlama's tvl + borrowed. Confirming the
+    blue-api route on 2026-09-23 removed that denominator entirely: the new figure is
+    sum(borrowAssetsUsd) / sum(supplyAssetsUsd) across listed markets, with no collateral in
+    it at all.
+
+    Leaving the caveat on the cell would tell a reader the number reads TOO SMALL when it does
+    not, and that it is "not comparable with a utilisation computed the ordinary way" when it
+    now IS one. ** THAT IS WORSE THAN AN UNCAVEATED FIGURE: ** a warning that is wrong still
+    gets acted on, and the action here is to mentally adjust a correct number upwards.
+
+    The entries are KEPT, not deleted — they are the record of what the old route measured and
+    why it was replaced, and `superseded_by` names what replaced it. They simply stop travelling
+    to the cell once the route they describe has stood down. If the confirmation is ever
+    reverted the caveat returns with it, because both are driven by the same flag.
+    """
     p = PROJECT_BY_NAME.get(project_name) or {}
-    return (p.get("non_comparable") or {}).get(metric)
+    nc = (p.get("non_comparable") or {}).get(metric)
+    if not nc:
+        return None
+    sup = nc.get("superseded_when_confirmed")
+    if sup and (p.get(sup) or {}).get("status") == "confirmed":
+        return None
+    return nc
 
 
 # Metrics that describe where a buyback's tokens END UP. Only these are affected by a
@@ -6003,13 +6028,57 @@ PROJECTS = [
         # rather than filling it from the other, because two sources taking turns is a
         # measuring-point change and blanks the series. See _resolve, which enforces it.
         "lending_api": {
-            "status": "unconfirmed",
+            # ===== ** CONFIRMED 2026-09-23, ON THE LISTED SUBSET AND NOT BEFORE. ** =====
+            # The probe answered the question the first run raised, and the answer was the
+            # permissionless tail. Filtered to whitelisted markets the route gives
+            # supply_units $5,868,948,998 and utilisation_pct 0.8802 — inside the declared
+            # 0.40-0.92 band, and every listed market individually sits at 0.89-0.90.
+            #
+            # ** THE BAR WAS "THE NUMBER IS EXPLAINED", AND IT NOW IS. ** Not "it fetched", not
+            # "both fields are present" — that was the old exit and it would have shipped 98%
+            # utilisation. What changed is that the $39.47bn has a mechanism: see
+            # first_run_2026_09_23 and listed_vs_unlisted_2026_09_23 below.
+            "status": "confirmed",
+            "confirmed_on": "2026-09-23",
+            "confirmed_values": {"supply_units": 5_868_948_998.0,
+                                 "utilisation_pct": 0.8802,
+                                 "listed_markets": 651},
             "endpoint": "https://blue-api.morpho.org/graphql",
             "chains_query": "{ chains { id } }",
+            # ===== ** THE FILTER IS IN THE QUERY, NOT APPLIED AFTERWARDS. ** =====
+            # Post-filtering would mean the unfiltered population is summed at least once, in
+            # memory, one edit away from being the number that ships — and the unfiltered number
+            # is $39.47bn of mostly fabricated supply. The API is asked for the right population
+            # instead.
+            #
+            # ** TWO DIFFERENT FIELD NAMES, AND CONFUSING THEM SILENTLY RETURNS EVERYTHING. **
+            # The FILTER input on `markets(where:)` is `whitelisted`; the OUTPUT field on a
+            # market is `listed`. Establishing which is which mattered: `where:{listed:true}`
+            # is not a valid filter, and a where-clause the server ignores returns the whole
+            # permissionless tail with a 200 and no error.
+            #
+            # CORROBORATED ACROSS SIX INDEPENDENT REPOSITORIES, read 2026-09-23 — among them a
+            # DefiLlama dimension-adapters fork using this exact paginated shape:
+            #   jwcheon/dimension-adapters-humanfi  fees/morpho/index.ts
+            #     markets(where: { chainId_in: [$chainId], whitelisted: true }, first:, skip:)
+            #   FactorDAO/factor-tokenlist  (ethereum, base, arbitrum)
+            #     markets(where:{whitelisted: true}, first: 1000)
+            #   naman1402/loopbox  names them together: "whitelisted (listed=true)"
+            #
+            # AND THE ADAPTER VERIFIES IT LANDED rather than trusting it — every returned market
+            # must come back with listed true, or the read is refused. A filter the server
+            # quietly drops is the one failure mode that would put the $39.47bn back with
+            # nothing to notice. See fetch.llama.MorphoBlueApi.
             "markets_query": ("query($c:[Int!],$skip:Int!,$first:Int!){ "
-                              "markets(first:$first, skip:$skip, where:{chainId_in:$c}){ "
-                              "pageInfo{countTotal} items{ marketId chain{id} "
+                              "markets(first:$first, skip:$skip, "
+                              "where:{chainId_in:$c, whitelisted:true}){ "
+                              "pageInfo{countTotal} items{ marketId chain{id} listed "
                               "state{ supplyAssetsUsd borrowAssetsUsd } } } }"),
+            "filter_field": "whitelisted",
+            "verify_field": "listed",
+            "filter_evidence": "six independent repositories use where:{whitelisted:true} on "
+                               "markets, including a DefiLlama dimension-adapters fork with "
+                               "this exact paginated shape. Read 2026-09-23.",
             "page_size": 1000,
             "supply_field": "supplyAssetsUsd",
             "borrow_field": "borrowAssetsUsd",
@@ -6098,11 +6167,98 @@ PROJECTS = [
                     "or whitelisted filter IN IT before the route is used. If the listed subset "
                     "is ALSO near 98%, the field does not mean total supplied and the route is "
                     "dead rather than filterable.",
-                "partial_field_stands_regardless":
-                    "borrowAssetsUsd was absent on 8 of 50. A missing borrow field is not a "
-                    "zero: summing it as 0 understates borrowing and dropping the market "
-                    "understates supply, and which is right is not knowable from the absence. "
-                    "This has to be answered even if the population question resolves.",
+            },
+            # ===== ** 92% OF THE MARKET COUNT AND 85% OF THE RAW SUPPLY FIGURE IS UNLISTED. **
+            # ** THAT IS WORTH KNOWING ABOUT ANY MORPHO AGGREGATE FROM THIS API, not just ours.
+            # ** Anyone summing this endpoint without a filter gets a number that is mostly not
+            # Morpho. Measured 2026-09-23:
+            #
+            #     listed === true    651 mkts   $5,868,948,998   util 0.8802
+            #     NOT listed       7,217 mkts  $33,611,022,130   util 0.9989
+            #
+            # ** AND 78% OF THE WHOLE FIGURE IS FOUR MARKETS WHOSE SUPPLY EQUALS THEIR BORROW TO
+            # ** THE DOLLAR. ** Supply == borrow exactly, on four separate markets, is not a
+            # coincidence and not a rounding artefact — it is one position lent to itself, which
+            # is what a permissionless market with a fabricated oracle looks like from outside:
+            #
+            #     K/USDC        on chain 42161   $10.49bn
+            #     PAXG/USDC     on chain 1       $10.01bn
+            #     sdeUSD/USDC                     $6.62bn
+            #     BONDUSD/USR                     $3.79bn
+            #
+            # The unlisted aggregate at 0.9989 against a listed 0.8802 is the same fact seen
+            # from the other end: real markets hold idle liquidity and self-dealt ones do not.
+            "listed_vs_unlisted_2026_09_23": {
+                "listed": {"markets": 651, "supply_usd": 5_868_948_998.0, "utilisation": 0.8802},
+                "unlisted": {"markets": 7_217, "supply_usd": 33_611_022_130.0,
+                             "utilisation": 0.9989},
+                "unlisted_share_of_count": 0.917,
+                "unlisted_share_of_supply": 0.851,
+                "four_markets_are_78pct_of_the_total": {
+                    "K/USDC (42161)": 10_490_000_000.0,
+                    "PAXG/USDC (1)": 10_010_000_000.0,
+                    "sdeUSD/USDC": 6_620_000_000.0,
+                    "BONDUSD/USR": 3_790_000_000.0,
+                    "signature": "supply EXACTLY equal to borrow, to the dollar, on all four",
+                },
+                "every_listed_market_sits_at": "0.89-0.90 utilisation",
+                "why_this_generalises": "it is a fact about the ENDPOINT, not about our use of "
+                                        "it. Any unfiltered sum of blue-api.morpho.org markets "
+                                        "is ~85% not-Morpho. Worth carrying even if this route "
+                                        "is later replaced.",
+            },
+            # ===== ** THE DEFILLAMA TVL CROSS-CHECK IS INAPPLICABLE, AND LEAVING IT AS AN UNMET
+            # ** CONDITION WOULD BE WORSE THAN DROPPING IT. ** It was written as the decider,
+            # and it cannot decide: morpho-blue's TVL sums the singleton's balance of every
+            # market's COLLATERAL token as well as its loan token — our own finding, recorded on
+            # lending_supply.bias and non_comparable.utilisation_pct. supplyAssetsUsd is the
+            # loan side alone. They are DIFFERENT QUANTITIES and will not reconcile at any
+            # filter level, so a ratio between them measures the collateral, not our filter.
+            #
+            # An unmet condition on file reads as work outstanding, and someone would eventually
+            # try to make two different quantities agree by adjusting the one that is right.
+            "tvl_cross_check": {
+                "status": "INAPPLICABLE — not unmet, and not outstanding",
+                "why": "DefiLlama's morpho-blue tvl counts loanToken AND collateralToken; "
+                       "supplyAssetsUsd is the loan side only. Different quantities.",
+                "so": "no ratio between them confirms or refutes anything about the filter. Do "
+                      "not reinstate it as a gate.",
+                "what_confirmed_the_route_instead": "the listed/unlisted split itself. The "
+                                                    "filtered population has a believable "
+                                                    "utilisation (0.8802, and 0.89-0.90 on "
+                                                    "every individual market) and the excluded "
+                                                    "one has a mechanism (supply == borrow to "
+                                                    "the dollar on the four largest). That is "
+                                                    "an explanation, which is the bar.",
+                "recorded_on": "2026-09-23",
+            },
+            # ===== ** THE PARTIAL-FIELD PROBLEM DISSOLVED, AND THE GUARD STAYS. ** =====
+            # The first run saw borrowAssetsUsd absent on 8 of 50 markets and the question was
+            # whether to sum the missing side as 0 (understates utilisation) or drop the market
+            # (understates supply). The full-population probe answered it: of the 1,117 markets
+            # with no borrowAssetsUsd, ZERO carry a supplyAssetsUsd. They are EMPTY MARKETS.
+            #
+            # So dropping them is safe, and it is safe for an arithmetic reason rather than a
+            # judgement: a market contributing nothing to either side changes neither sum. The
+            # two options that looked like a dilemma were the same answer all along.
+            #
+            # ** THE GUARD IS KEPT FOR THE CASE THAT WAS FEARED AND HAS NOT OCCURRED. ** A
+            # market with supply and no readable borrow side still has no safe default, and the
+            # adapter still refuses the whole read if it ever sees one. Removing the guard
+            # because the population happens not to trigger it today would make the next
+            # occurrence silent — and it would be silent in the direction of a too-low
+            # utilisation, which is the number this route exists to get right.
+            "partial_field_2026_09_23": {
+                "markets_missing_borrow": 1_117,
+                "of_those_carrying_supply": 0,
+                "verdict": "they are EMPTY markets and contribute nothing to either side, so "
+                           "dropping them and summing them as zero are the same arithmetic.",
+                "guard_kept_for": "a market with ONE field present and the other absent. Not "
+                                  "observed. The adapter refuses the entire read if it appears, "
+                                  "because summing the missing side as 0 understates "
+                                  "utilisation and dropping the market understates supply.",
+                "supersedes": "the 'borrowAssetsUsd absent on 8 of 50' concern from the first "
+                              "run — same fact, seen on 50 rows instead of 7,868.",
             },
         },
         "lending_supply": {
@@ -6132,6 +6288,13 @@ PROJECTS = [
                                "every market on every chain Morpho runs on, enumerated from "
                                "CreateMarket logs. See utilisation_pct_blocked.",
                 "recorded_on": "2026-09-23",
+                # ** SUPERSEDED 2026-09-23 — the blue-api route has NO collateral in its
+                # denominator, so this caveat stops travelling to the cell. Kept as the record
+                # of what the DefiLlama route measured, and it returns automatically if the
+                # confirmation is ever reverted. See is_non_comparable.
+                "superseded_when_confirmed": "lending_api",
+                "superseded_by": "lending_api — sum(borrowAssetsUsd) / sum(supplyAssetsUsd) "
+                                 "over LISTED markets, confirmed 2026-09-23 at 0.8802.",
             },
             "supply_units": {
                 "why": "tvl + borrowed, where tvl includes borrower COLLATERAL — so this is "
@@ -6141,6 +6304,11 @@ PROJECTS = [
                 "use_instead": "nothing yet. Same route as utilisation_pct: the per-market "
                                "totalSupplyAssets, which DefiLlama reads and does not export.",
                 "recorded_on": "2026-09-23",
+                # SUPERSEDED with utilisation_pct, and for the same reason — supplyAssetsUsd is
+                # the loan side alone, with no collateral added on top.
+                "superseded_when_confirmed": "lending_api",
+                "superseded_by": "lending_api — sum(supplyAssetsUsd) over LISTED markets, "
+                                 "confirmed 2026-09-23 at $5,868,948,998.",
             },
         },
         # ===== utilisation_pct CANNOT COME FROM DefiLlama'S PROTOCOL DATA. Established 2026-09-22.
@@ -9553,8 +9721,27 @@ PROJECTS = [
                 provenance="same address as contracts.spendle, already verified; this entry "
                            "reads PENDLE.balanceOf(sPENDLE) rather than sPENDLE.totalSupply()",
                 metric_override="locked_tokens", underlying="token", token_standard="erc20",
+                # ===== ** read_method WAS MISSING AND THE RUN OF 20260923T095552Z REFUSED THE
+                # ** ENTRY FOR IT. ** The symbol check reported 'sPENDLE' against an expected
+                # 'PENDLE' and rejected the address. The gate was right and the entry was wrong:
+                # without escrow_balance_of this is not a balanceOf read at all. It falls
+                # through to the generic totalSupply path, which calls sPENDLE.totalSupply() —
+                # the SHARE count — and stores it under locked_tokens, the assets name.
+                #
+                # ** SO THE SYMBOL MISMATCH WAS THE SYMPTOM AND NOT THE FAULT. ** Routing the
+                # symbol check through the token and leaving read_method unset would have made
+                # the gate pass and written 30,310,807 shares into the assets column: the exact
+                # confusion this whole entry exists to fix, now with nothing left to catch it.
+                # The failing run is the good outcome.
+                #
+                # escrow_balance_of is what makes the holder/token split explicit — the call is
+                # made ON sPENDLE and symbol() and decimals() come from the token, the same
+                # shape as contracts.sethfi and the Chainlink staking pool before it.
+                read_method="escrow_balance_of", holder_has_code=True,
                 purpose="PENDLE HELD BY THE sPENDLE CONTRACT — the assets actually locked, and "
-                        "the figure locked_tokens carries for this project.",
+                        "the figure locked_tokens carries for this project. Read as "
+                        "PENDLE.balanceOf(sPENDLE): the call is made on the HOLDER (sPENDLE) "
+                        "and symbol/decimals come from the TOKEN (PENDLE).",
                 note="SETTLED ON-CHAIN 2026-09-23 at block 26,039,143. shares 30,310,807.38, "
                      "assets 35,557,548.09, assets/share 1.1731. The boost hypothesis pointed "
                      "the other way and is refuted BY DIRECTION: a boosted share count would "
@@ -10766,9 +10953,17 @@ PROJECTS = [
                     "bad_read": "the 09-23 read is a single observation and not yet corroborated.",
                 },
                 "how_to_check": "orphan_cleanup.sql section Y — Y2 decomposes each window into "
-                                "the share-flow component and the residual, which separates the "
-                                "second candidate from the rest; Y3 says whether the daily rows "
-                                "needed for the first exist at all.",
+                                "the share-flow component and the residual and PRINTS THE "
+                                "VERDICT AS A COLUMN; Y3 says whether the daily rows needed for "
+                                "the lumpy-versus-smooth question exist at all.",
+                # ** THE VERDICT IS COMPUTED, NOT LEFT TO THE READER. Added 2026-09-23. **
+                # The exit/fee/share-burn case is the one that changes what the sheet MEANS —
+                # a rising ratio with no reward arriving — and it was implicit in two numeric
+                # columns. Asking someone at 9am to compare d_shares against residual and draw
+                # the inference is how the finding that matters gets missed by the person who
+                # ran the query. Y2 now names it in words, and all five branches are exercised.
+                "y2_verdicts": ("EXIT / FEE / SHARE BURN", "REWARDS ARRIVED",
+                                "REWARDS + INFLOW", "NO REWARD, NO EXIT", "RATIO FELL"),
                 "what_settles_it": "the next two or three points. If the rate regresses to "
                                    "~4-5%/yr the 09-23 interval straddled a deposit; if it holds "
                                    "near 100% the reward rate is the thing to look at.",
@@ -10776,6 +10971,32 @@ PROJECTS = [
                                                    "2-day window, quoted to say why this is "
                                                    "raised. It is not a yield and is not written "
                                                    "to any metric.",
+                # ===== ** THE FIGURES CARRIED HERE ARE THE CORRECTED ONES. ** The first report
+                # of this used a 3-day second window and gave 10x and 59.6%/yr. The window is
+                # TWO days — 09-21 to 09-23 — so it is 15.3x and 101.7%/yr. The earlier pair
+                # came from a dating error (reads stamped 09-24 that happened on 09-23) and is
+                # superseded outright, not averaged with these.
+                "superseded_figures": {"acceleration": "10x", "annualised": "59.6%/yr",
+                                       "why_wrong": "a 3-day window where the interval is 2",
+                                       "do_not_quote": True},
+                # AND THE PROPOSED assets-vs-shares TEST DOES NOT SEPARATE lumpy FROM smooth.
+                # In this vault shape organic accrual moves ASSETS ALONE, exactly as a batch
+                # deposit does, so the test separates rewards from USER FLOW. Both candidate
+                # explanations for the acceleration sit on the rewards side of that line.
+                # Granularity is what separates them, and three observations give one interval
+                # per window — an interval has no shape.
+                "proposed_test_does_not_discriminate": {
+                    "test": "batch deposit = assets step with shares flat; organic accrual "
+                            "moves them together",
+                    "why_not": "organic accrual does NOT move them together — that is why the "
+                               "ratio rises. Rewards move assets alone whether lumpy or "
+                               "streamed. What moves both together is user flow, which leaves "
+                               "the ratio unchanged.",
+                    "what_it_does_separate": "rewards from user flow, which is worth knowing "
+                                             "and is not the open question.",
+                    "what_actually_separates_them": "daily granularity. See Y3.",
+                    "acknowledged_on": "2026-09-23",
+                },
             },
             "baseline_is_chain_vs_chain": True,
             "unreconciled": "Dune staked_supply 141,470,107.5 (2026-09-10) exceeds both on-chain "

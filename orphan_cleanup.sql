@@ -2175,8 +2175,29 @@ SELECT date,
  GROUP BY date
  ORDER BY date;
 
--- Y2. THE DECOMPOSITION, window by window. `flow_assets` is what the share change accounts for
---     at the PREVIOUS ratio; `residual` is everything else, which is the reward-like inflow.
+-- Y2. THE DECOMPOSITION, window by window, WITH THE VERDICT AS A COLUMN.
+--
+-- ** THE VERDICT IS COMPUTED, NOT LEFT TO THE READER. ** The third mechanism — shares falling
+-- faster than assets, so the ratio rises with NO reward arriving — is the one that changes what
+-- the sheet MEANS, and it is invisible in the ratio and only implicit in two numeric columns.
+-- Asking a reader at 9am to compare d_shares against residual and draw the inference is how a
+-- finding that matters gets missed by the person who ran the query.
+--
+-- `flow_assets` is what the share change accounts for at the PREVIOUS ratio; `residual` is
+-- everything else, which is the reward-like inflow. The verdict reads them together:
+--
+--   EXIT / FEE / SHARE BURN     shares fell and the ratio ROSE. Holders left at a discount, or
+--                               an exit fee accrued to those who stayed. ** THE RISING RATIO IS
+--                               NOT ACCRUAL, and reading it as a yield is backwards. **
+--   REWARDS ARRIVED             shares roughly flat, residual positive. The ordinary case, and
+--                               the magnitude is the residual.
+--   REWARDS + INFLOW            shares grew AND residual is positive. Both happening; the ratio
+--                               move is still the residual's doing.
+--   NO REWARD, NO EXIT          residual is ~0 while the ratio moved. One of the two readings
+--                               is wrong — check sources and blocks before anything else.
+--
+-- The 1% band on `shares roughly flat` is a READING AID, not a measurement tolerance: it decides
+-- which sentence is printed, never which number is stored. Nothing here writes anything.
 WITH s AS (
   SELECT date,
          MAX(CASE WHEN metric = 'locked_tokens'            THEN value END) AS shares,
@@ -2204,7 +2225,26 @@ SELECT prev_date, date,
        ((assets - prev_assets)
          - (shares - prev_shares) * (prev_assets / prev_shares))
          / prev_assets * 100.0                                   AS residual_pct_of_assets,
-       (assets / shares) / (prev_assets / prev_shares) - 1.0      AS ratio_change
+       (assets / shares) / (prev_assets / prev_shares) - 1.0      AS ratio_change,
+       CASE
+         WHEN (assets / shares) <= (prev_assets / prev_shares)
+           THEN 'RATIO FELL — the direction check owns this, not the rate guard'
+         WHEN (shares - prev_shares) / prev_shares < -0.01
+           THEN 'EXIT / FEE / SHARE BURN — shares fell '
+                || CAST(ROUND((prev_shares - shares) / prev_shares * 100.0, 2) AS TEXT)
+                || '% while the ratio ROSE. The rise is NOT accrual: holders left at a discount '
+                || 'or an exit fee accrued to those who stayed. Do not read it as a yield.'
+         WHEN ABS((assets - prev_assets)
+                  - (shares - prev_shares) * (prev_assets / prev_shares))
+              / prev_assets < 0.0001
+           THEN 'NO REWARD, NO EXIT — the ratio moved with nothing behind it. One of the two '
+                || 'readings is wrong. Check sources and blocks before anything else.'
+         WHEN ABS((shares - prev_shares) / prev_shares) <= 0.01
+           THEN 'REWARDS ARRIVED — shares flat, residual positive. Ordinary accrual, and the '
+                || 'magnitude is the residual.'
+         ELSE 'REWARDS + INFLOW — shares grew and the residual is positive. Both happened, and '
+              || 'the ratio move is the residual''s doing, not the inflow''s.'
+       END                                                        AS verdict
   FROM w
  WHERE prev_date IS NOT NULL
  ORDER BY date;

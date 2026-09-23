@@ -685,7 +685,8 @@ class MorphoBlueApi:
                 continue
 
             supply, borrow, seen, skip = 0.0, 0.0, 0, 0
-            missing_fields = set()
+            empty, lopsided, unfiltered = 0, [], 0
+            verify = api.get("verify_field")
             try:
                 while True:
                     page = self._query(api["endpoint"], api["markets_query"],
@@ -694,15 +695,37 @@ class MorphoBlueApi:
                     node = (((page or {}).get("data") or {}).get("markets") or {})
                     items = node.get("items") or []
                     for it in items:
+                        seen += 1
+                        # ===== ** THE FILTER IS VERIFIED, NOT TRUSTED. ** A where-clause the
+                        # server does not understand is not an error — it comes back 200 with
+                        # the WHOLE permissionless population, which is $39.47bn of mostly
+                        # fabricated supply at 98% utilisation. Asking each row to confirm it is
+                        # listed is the only thing standing between a dropped filter and that
+                        # number being written to the sheet.
+                        if verify and it.get(verify) is not True:
+                            unfiltered += 1
                         st = it.get("state") or {}
                         sv, bv = st.get(api["supply_field"]), st.get(api["borrow_field"])
-                        if sv is None:
-                            missing_fields.add(api["supply_field"])
-                        if bv is None:
-                            missing_fields.add(api["borrow_field"])
-                        supply += float(sv or 0.0)
-                        borrow += float(bv or 0.0)
-                        seen += 1
+                        # ===== TWO KINDS OF ABSENCE, AND ONLY ONE OF THEM IS A PROBLEM. =====
+                        # ** BOTH FIELDS ABSENT: an empty market. ** It contributes nothing to
+                        # either side, so dropping it and summing it as zero are the same
+                        # arithmetic — the difference is only whether anyone is alarmed. The
+                        # 2026-09-23 probe settled this on the real population: of 1,117 markets
+                        # with no borrowAssetsUsd, ZERO carried a supply figure.
+                        #
+                        # ** ONE PRESENT AND THE OTHER ABSENT: refuse the whole read. ** That is
+                        # a market with supply and an unreadable borrow side, and there is no
+                        # safe default — summing the missing side as 0 understates utilisation,
+                        # and dropping the market understates supply. It has not been observed,
+                        # and the guard stays for the day it is.
+                        if sv is None and bv is None:
+                            empty += 1
+                            continue
+                        if sv is None or bv is None:
+                            lopsided.append(str(it.get("marketId"))[:18])
+                            continue
+                        supply += float(sv)
+                        borrow += float(bv)
                     total = (node.get("pageInfo") or {}).get("countTotal")
                     if not items or (total is not None and seen >= int(total)):
                         break
@@ -712,17 +735,31 @@ class MorphoBlueApi:
                          self.TIER)
                 continue
 
-            detail = (f"{seen} market(s) across {len(ids)} chain(s): "
-                      f"{api['supply_field']}={supply:,.0f}, {api['borrow_field']}={borrow:,.0f}")
-            if missing_fields:
-                # ** THE FIELD NAME IS THE UNCONFIRMED HALF, so a missing one is reported as
-                # exactly that rather than summed as zero. ** A borrow field that silently reads
-                # 0 gives a utilisation of 0.0000 on a lending protocol, which is a number.
+            detail = (f"{seen} listed market(s) across {len(ids)} chain(s): "
+                      f"{api['supply_field']}={supply:,.0f}, {api['borrow_field']}={borrow:,.0f}"
+                      + (f"; {empty} empty market(s) carried neither field and were dropped"
+                         if empty else ""))
+            if unfiltered:
                 out.fail(self.SOURCE, name,
-                         f"{api['endpoint']}: {', '.join(sorted(missing_fields))} absent from "
-                         f"state on at least one market. {detail}. NOTHING SUMMED INTO A "
-                         f"FIGURE — a borrow field reading 0 would give utilisation 0.0000, "
-                         f"which is a number and not a gap.", self.TIER)
+                         f"{api['endpoint']}: THE WHITELIST FILTER DID NOT APPLY — {unfiltered} "
+                         f"of {seen} market(s) came back with {verify} not true, although the "
+                         f"query asks for where:{{{api.get('filter_field')}:true}}. A filter the "
+                         f"server ignores returns the WHOLE permissionless population, which is "
+                         f"~$39.5bn at ~98% utilisation and mostly fabricated oracle prices. "
+                         f"NOTHING STORED. Re-check the filter's field name against the schema "
+                         f"before changing anything here.", self.TIER)
+                continue
+            if lopsided:
+                # ** ONE SIDE PRESENT WITHOUT THE OTHER. ** Not observed on the real population,
+                # and kept because the day it happens there is no safe default — see above.
+                out.fail(self.SOURCE, name,
+                         f"{api['endpoint']}: {len(lopsided)} market(s) carry ONE of "
+                         f"{api['supply_field']}/{api['borrow_field']} and not the other "
+                         f"({', '.join(lopsided[:5])}{'...' if len(lopsided) > 5 else ''}). "
+                         f"{detail}. NOTHING SUMMED INTO A FIGURE — summing the missing side as "
+                         f"0 understates utilisation and dropping the market understates supply, "
+                         f"and which is right is not knowable from the absence itself.",
+                         self.TIER)
                 continue
             if supply <= 0:
                 out.fail(self.SOURCE, name, f"{api['endpoint']}: supply summed to 0. {detail}",

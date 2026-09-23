@@ -629,15 +629,16 @@ def morpho_blue_api():
         print(f"    UNREACHABLE — {e}")
         print("    Without this the sum is unexplained, so the route stays unconfirmed.")
 
-    print("\n  WHAT TO DO WITH THIS, AND WHAT NOT TO:")
-    print("  * Do NOT set lending_api.status to 'confirmed' on both fields being present. That")
-    print("    was the old exit and it is why a 98% number nearly became the column.")
-    print("  * If the listed-only subset is the same order as llama's TVL and its utilisation is")
-    print("    believable (40-92%), the answer is the permissionless tail, and the route needs")
-    print("    where:{whitelisted:true} or a listed filter IN THE QUERY before it is confirmed.")
-    print("  * If the listed subset is ALSO at 98%, the field does not mean what we think and")
-    print("    the route is dead, not filterable.")
-    print("  * PASTE BACK the POPULATION block, the top-12 and the cross-check ratio.")
+    print("\n  ANSWERED 2026-09-23 — THIS PROBE SETTLED IT. Re-run it to re-check, not to decide.")
+    print("  The answer was the PERMISSIONLESS TAIL: 651 listed markets at $5.87bn and 0.8802,")
+    print("  against 7,217 unlisted at $33.61bn and 0.9989, with 78% of the whole figure in four")
+    print("  markets whose supply equals their borrow TO THE DOLLAR. config now filters with")
+    print("  where:{whitelisted:true} IN THE QUERY and lending_api.status is 'confirmed'.")
+    print("  * The DefiLlama TVL cross-check below is INAPPLICABLE, not unmet: their tvl counts")
+    print("    loanToken AND collateralToken, so it is a different quantity from supplyAssetsUsd")
+    print("    and will not reconcile at any filter level. Do not reinstate it as a gate.")
+    print("  * WHAT WOULD REOPEN THIS: the listed subset drifting outside 0.40-0.92, or the")
+    print("    listed/unlisted split moving sharply. Both are visible in the POPULATION block.")
 
 
 def sky():

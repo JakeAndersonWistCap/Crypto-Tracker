@@ -146,7 +146,23 @@ def holder_should_have_code(spec: dict) -> bool:
 # can be a fungible ERC-20 (totalSupply is the staked amount) or an NFT position (totalSupply is a
 # COUNT OF POSITIONS, wrong by orders of magnitude and entirely plausible-looking). Assuming
 # either is unsafe, so read_method None means refuse.
-METHOD_REQUIRED_KINDS = {"ve_total_supply"}
+#
+# ===== stake_underlying JOINED THEM 2026-09-23, AND IT IS THE SAME HAZARD. =====
+# ** A stake_underlying ENTRY WITH NO read_method IS NOT A BALANCE READ — IT IS A totalSupply
+# ** READ WEARING THE ASSETS NAME. ** Pendle's spendle_underlying was added without one, and the
+# generic path would have called sPENDLE.totalSupply() — 30,310,807 SHARES — and stored it as
+# locked_tokens, the ASSETS column. That is precisely the shares-for-assets confusion the entry
+# was created to fix, arriving through the door left open behind it.
+#
+# It was caught only by accident: the symbol gate rejected the holder for reporting 'sPENDLE'
+# where 'PENDLE' was expected. ** THAT GATE IS A CHECK ON THE ADDRESS, NOT ON THE READ METHOD,
+# and it happens to fail here only because the holder and the token are different contracts.**
+# Where they are the same address — a vault that is its own underlying — the symbol would match,
+# the entry would pass, and the wrong quantity would be stored with nothing to notice.
+#
+# So the requirement is declared on the KIND, where it holds for every entry, rather than relying
+# on a symbol collision to expose the next one.
+METHOD_REQUIRED_KINDS = {"ve_total_supply", "stake_underlying"}
 
 # Kinds that claim to measure a burn. A REFUTED MECHANISM REFUSES ALL OF THEM — the question a
 # refutation answers is "does this project burn the way we assumed", and the answer does not
@@ -520,7 +536,13 @@ class Chain:
     def _gate(self, project: dict, key: str, spec: dict, out) -> bool:
         """Every guard that must pass before an address is read. Returns True only if all do."""
         name = project["name"]
-        metric = KIND_METRIC.get(spec["kind"], key)
+        # ** metric_override FIRST, exactly as the read path resolves it. ** A gap filed under
+        # the KIND's default metric names a column this contract does not serve: Pendle's
+        # spendle_underlying is overridden to locked_tokens, and a refusal filed against
+        # locked_tokens_underlying lands on a metric the project has no route to — so the gap
+        # is invisible where the reader is looking and present where nothing was expected.
+        # Caught 2026-09-23 by the control test for the read-method gate.
+        metric = spec.get("metric_override") or KIND_METRIC.get(spec["kind"], key)
 
         # 1. AMBIGUOUS ADDRESS. Two or more candidates circulate and we have not established which
         #    is correct. Picking one on a guess would silently poison every figure downstream.
@@ -585,14 +607,28 @@ class Chain:
         # 4. LOCK READ METHOD. For a vote escrow, how the figure is read decides whether the cell
         #    holds tokens locked or a count of NFT positions. Never assumed.
         if spec["kind"] in METHOD_REQUIRED_KINDS and not spec.get("read_method"):
-            out.gap(name, metric,
-                    reason=f"lock read method for {key!r} is NOT ESTABLISHED — a vote escrow can be a fungible "
-                           f"ERC-20 (totalSupply is the staked amount) or an NFT position (totalSupply is a "
-                           f"COUNT OF POSITIONS, wrong by orders of magnitude). Neither is assumed.",
-                    tiers_attempted="2",
-                    suggestion=f"Establish whether {key!r} is ERC-20 or ERC-721, then set read_method to "
-                               f"'erc20_total_supply' or 'escrow_balance_of' (with `underlying`) and "
-                               f"token_standard in config.py.")
+            # TWO KINDS LAND HERE AND THE HAZARD IS NOT THE SAME ONE, so the reason says which.
+            # Sending a reader to "ERC-20 or ERC-721?" for a stake_underlying entry points at a
+            # question that is not the problem, and a reason that names the wrong obstacle is
+            # worse than none — it looks actionable, so somebody acts on it.
+            if spec["kind"] == "stake_underlying":
+                why = (f"read method for {key!r} is NOT ESTABLISHED, and for a stake_underlying "
+                       f"entry the default is the WRONG QUANTITY rather than a failure. Without "
+                       f"'escrow_balance_of' the generic path calls totalSupply() on the HOLDER "
+                       f"— the SHARE count — and stores it under an ASSETS metric. The two "
+                       f"differ by the accrued rate, so the number looks entirely plausible.")
+                fix = (f"Set read_method='escrow_balance_of' and `underlying` on {key!r} so the "
+                       f"call is made on the holder and symbol/decimals come from the token. "
+                       f"See contracts.sethfi for the same shape.")
+            else:
+                why = (f"lock read method for {key!r} is NOT ESTABLISHED — a vote escrow can be a "
+                       f"fungible ERC-20 (totalSupply is the staked amount) or an NFT position "
+                       f"(totalSupply is a COUNT OF POSITIONS, wrong by orders of magnitude). "
+                       f"Neither is assumed.")
+                fix = (f"Establish whether {key!r} is ERC-20 or ERC-721, then set read_method to "
+                       f"'erc20_total_supply' or 'escrow_balance_of' (with `underlying`) and "
+                       f"token_standard in config.py.")
+            out.gap(name, metric, reason=why, tiers_attempted="2", suggestion=fix)
             out.unconfigured(SOURCE, name, f"{key}: lock read method not established, read refused", TIER)
             return False
 
