@@ -592,7 +592,11 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
 
 
 PAUSE_PROXY = "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB"
-STAGE2 = "0x5555555555555555555555555555555555555555"     # discovered, never hardcoded in config
+# ** THE STAGE 2 BURNER IS THE PAUSE PROXY. ** Corrected 2026-09-23 from Sky's executive of
+# 2026-09-11 ("Execute the Monthly Settlement Cycle for August 2026 ... burn SKY from the Pause
+# Proxy balance"), executed 2026-09-13, with the 2.86M announced the next day. It is no longer
+# discovered from the logs and no longer a separate address.
+STAGE2 = PAUSE_PROXY
 CONVERTER = "0x7777777777777777777777777777777777777777"   # MkrSky — surfaces as unrecognised
 WAD = 10 ** 18
 
@@ -643,20 +647,26 @@ class _LogReader(StubReader):
         return list(self.events), from_block, head, chunks
 
 
-def test_sky_burns_are_decomposed_by_sender_into_three_separate_series():
-    """ONE EVENT SIGNATURE, THREE UNRELATED ECONOMIC FACTS. Sky.burn(from, value) emits
-    Transfer(from, address(0), value) whoever calls it — read from src/Sky.sol, not assumed — and
-    SKY is burned by the Stage 2 buy-and-burn (revenue-funded, recurring), by governance from the
-    Pause Proxy (a one-off executive action), and by the MkrSky converter's auth-only burn() (a
-    supply correction against already-burned MKR).
+def test_sky_burns_are_decomposed_by_sender_and_the_pause_proxy_leg_is_stage_2():
+    """** THE DECOMPOSITION HAD A CATEGORY THAT DOES NOT EXIST, AND IT HAD THE SIGN OF THE ERROR
+    BACKWARDS. ** Corrected 2026-09-23.
 
-    Summing them gives a figure that is none of the three, and the archetype 4 tab is asking for
-    the first. Annualising a governance burn would report one decision as a run rate.
+    It split Pause Proxy burns off as "governance" — a one-off executive action, explicitly not
+    to be annualised — and then went looking for a SEPARATE Stage 2 burner. There is not one.
+    Sky's executive of 2026-09-11, executed 2026-09-13, reads "Execute the Monthly Settlement
+    Cycle for August 2026 ... burn SKY from the Pause Proxy balance", and Sky announced the first
+    2.86M the next day. The monthly executive IS the mechanism and the Pause Proxy IS where it
+    burns from.
+
+    So Transfer(pause_proxy -> 0x0) is the RECURRING, revenue-funded 5%-of-NPS leg — and the old
+    classification called it the opposite. Both readings produce a number; only one of them is
+    the demand signal, and nothing on a row of numbers says which you are looking at.
+
+    Two series remain, not three: the Stage 2 leg, and everything else.
     """
     events = [
-        {"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100},
-        {"from": STAGE2, "value": int(1_140_000 * WAD), "block": 23_450_000},
-        {"from": PAUSE_PROXY, "value": int(5_815_668 * WAD), "block": 23_380_000},
+        {"from": PAUSE_PROXY, "value": int(2_860_000 * WAD), "block": 23_400_100},
+        {"from": PAUSE_PROXY, "value": int(1_140_000 * WAD), "block": 23_450_000},
         {"from": CONVERTER, "value": int(250_000 * WAD), "block": 22_000_000},
     ]
     c = Chain(prior_values={}, prior_dates={})
@@ -665,62 +675,70 @@ def test_sky_burns_are_decomposed_by_sender_into_three_separate_series():
     c.run([_sky_log_probe()], None, out)
     got = {r.metric: float(r.value) for r in out.frame().itertuples(index=False)}
 
-    # THE STAGE 2 LEG ALONE lands in the archetype 4 metric.
+    # THE PAUSE PROXY'S BURNS ARE THE STAGE 2 LEG, and land in the archetype 4 metric.
     assert got["burn_address_balance"] == 4_000_000.0, got
-    # GOVERNANCE GETS ITS OWN SERIES. This is the Pause Proxy's -5,815,668 showing up as a BURN,
-    # which is the question the whole read was built to settle.
-    assert got["governance_burn_balance"] == 5_815_668.0, got
-    # AND THE UNRECOGNISED SENDER IS SURFACED, not folded into either.
+    # AND THERE IS NO "GOVERNANCE" SERIES ANY MORE. There was never a second category, only a
+    # mislabelled first one.
+    assert "governance_burn_balance" not in got, got
+    # EVERYTHING NOT FROM THE PAUSE PROXY IS SURFACED, not folded in.
     assert got["other_burn_balance"] == 250_000.0, got
-    # ** THE SUM IS NOT ANY OF THEM, which is the point. **
+    # ** THE SUM IS NOT EITHER OF THEM, which is still the point. **
     assert got["burn_address_balance"] != sum(e["value"] for e in events) / WAD
 
     flagged = [r for r in out.review if r["reason"] == "unrecognised_burn_sender"]
     assert flagged and CONVERTER.lower() in flagged[0]["basis"].lower(), out.review
-    print("sky decomposition ok: Stage 2 4.0m, governance 5,815,668, unrecognised 250k flagged")
+    print("sky decomposition ok: the Pause Proxy's 4.0m IS Stage 2, unrecognised 250k flagged, "
+          "and the phantom governance category is gone")
 
 
-def test_the_stage_2_burner_is_discovered_from_the_logs_and_refuses_an_ambiguous_match():
-    """Its address is in no source on file. What IS known is the amount and the date, so the scan
-    finds the event matching them and takes its sender.
+def test_the_stage_2_burner_is_named_by_a_primary_source_and_the_discovery_is_retired():
+    """** THE DISCOVERY WAS THE RIGHT ANSWER TO A QUESTION THAT IS NOW SETTLED. **
 
-    EXACTLY ONE CANDIDATE OR IT REFUSES. Two matches or none is an unresolved identification, and
-    picking one would put a whole series under an address nobody checked — the same failure as
-    reading a balance from a guessed contract.
+    While the burner's address was in no source on file, finding the event matching a known
+    amount on a known date and taking its sender was the only honest route — and it refused
+    unless exactly one candidate matched, because picking one of two would have put a whole
+    series under an address nobody checked.
+
+    Sky's executive of 2026-09-11 names it: the burn comes "from the Pause Proxy balance". So the
+    address is primary-sourced, and the discovery is RETIRED rather than merely satisfied —
+    leaving it armed would let a failed match REFUSE a read we can identify directly, which is a
+    guard doing the opposite of its job.
     """
     cfg = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]
-    assert cfg["stage2_burner"]["address"] is None, "the burner must not be hardcoded"
-    assert cfg["stage2_burner"]["discover_by"]["approx_tokens"] == 2_860_000
+    assert cfg["stage2_burner"]["address"].lower() == PAUSE_PROXY.lower()
+    assert cfg["stage2_burner"]["discover_by"] is None, "the discovery must not still be armed"
+    assert "Pause Proxy balance" in cfg["stage2_burner"]["source_quote"]
+    assert cfg["stage2_burner"]["discovery_retired_on"] == "2026-09-23"
+    # THE ADDRESS IS THE ONE ALREADY VERIFIED ON THIS PROJECT, not a second copy of it.
+    assert (cfg["stage2_burner"]["address"]
+            == config.PROJECT_BY_NAME["Sky"]["contracts"]["pause_proxy"]["address"])
+    # AND named_senders IS EMPTY — the Pause Proxy is named as the burner, not as a third party.
+    # Two entries for one address is how a later edit changes one and not the other.
+    assert cfg["named_senders"] == {}, cfg["named_senders"]
 
-    one = [{"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100}]
+    # IT READS WITHOUT A DISCOVERY CALL. The event's sender is matched against config, and no
+    # amount or date is used to identify anybody.
+    one = [{"from": PAUSE_PROXY, "value": int(2_860_000 * WAD), "block": 23_400_100}]
     c = Chain(prior_values={}, prior_dates={})
     c.reader = _LogReader(one)
     out = FetchOutput()
     c.run([_sky_log_probe()], None, out)
     assert float(out.frame().query("metric == 'burn_address_balance'").value.iloc[0]) == 2_860_000.0
 
-    # TWO EVENTS OF THE SAME SIZE FROM DIFFERENT SENDERS — unresolved, so nothing is stored.
-    two = one + [{"from": PAUSE_PROXY, "value": int(2_870_000 * WAD), "block": 23_400_200}]
+    # ** A BURN FROM SOMEBODY ELSE STILL DOES NOT BECOME STAGE 2. ** That is what the discovery's
+    # refusal protected and it has to survive the discovery's removal: an unrecognised sender
+    # goes to other_burn_balance and is flagged, never absorbed into the recurring leg.
+    mixed = one + [{"from": CONVERTER, "value": int(2_870_000 * WAD), "block": 23_400_200}]
     c = Chain(prior_values={}, prior_dates={})
-    c.reader = _LogReader(two)
+    c.reader = _LogReader(mixed)
     out = FetchOutput()
     c.run([_sky_log_probe()], None, out)
-    assert out.frame().query("metric == 'burn_address_balance'").empty
-    gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
-    assert "COULD NOT BE IDENTIFIED" in gap["reason"] and "2 event(s) match" in gap["reason"], gap
-    assert "Do NOT widen" in gap["suggestion"]
-    # The senders it DID see are named, so the next step is reading a list rather than guessing.
-    assert PAUSE_PROXY.lower() in gap["reason"].lower()
-
-    # THE AMOUNT ALONE IS NOT THE IDENTIFICATION. A same-sized burn on another day is rejected.
-    c = Chain(prior_values={}, prior_dates={})
-    c.reader = _LogReader(one, timestamps={23_400_100: 1786752000})   # 2026-08-15
-    out = FetchOutput()
-    c.run([_sky_log_probe()], None, out)
-    gap = next(g for g in out.gaps if g["metric"] == "burn_address_balance")
-    assert "WAS NOT CONFIRMED" in gap["reason"] and "2026-08-15" in gap["reason"], gap
-    print("burner discovery ok: one match accepted, two refused with the senders listed, "
-          "a same-size burn on the wrong date rejected")
+    got = {r.metric: float(r.value) for r in out.frame().itertuples(index=False)}
+    assert got["burn_address_balance"] == 2_860_000.0, got
+    assert got["other_burn_balance"] == 2_870_000.0, got
+    assert [r for r in out.review if r["reason"] == "unrecognised_burn_sender"]
+    print("burner ok: named from Sky's own executive, discovery retired, and a stranger's burn "
+          "still cannot become the recurring leg")
 
 
 def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
@@ -762,8 +780,8 @@ def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
     # is the slot every key parser takes the CONTRACT KEY from, so all three of these series would
     # have rendered ORPHANED — "written by contract(s) governance_burn_balance, which are no
     # longer in config" — the day this read stopped 403ing. Fourth instance of that one bug.
-    gov = out.frame().query("metric == 'governance_burn_balance'").iloc[0]
-    assert "[governance_burn_balance]" in gov["source"], gov["source"]
+    gov = out.frame().query("metric == 'other_burn_balance'").iloc[0]
+    assert "[other_burn_balance]" in gov["source"], gov["source"]
     assert config.orphaned_contract_keys("Sky", gov["source"]) == [], gov["source"]
     # THE THREE SHARE A MEASURING POINT, which is correct and not a collision: they are three
     # metrics, and a measuring point is only ever compared against the same metric's own history.
@@ -772,7 +790,7 @@ def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
     # a change that never happened.
     assert _measuring_point(gov["source"]) == "chain:ethereum:burn_logs"
     assert _measuring_point(gov["source"]) == _measuring_point(
-        "chain:ethereum:burn_logs[governance_burn_balance][logs@1-2,deployed@1]")
+        "chain:ethereum:burn_logs[other_burn_balance][logs@1-2,deployed@1]")
     print("scan ok: starts at the derived deployment block, 10k chunks, range is an annotation")
 
 
@@ -781,9 +799,12 @@ def test_the_first_stage_2_read_is_gated_on_the_decomposed_figure_not_the_scan_t
     far above the 2,860,000 reference. Gating on the total would reject a correct read every run
     — which is why the gate moved onto the decomposed Stage 2 leg when the decomposition landed.
     """
+    # ** THE CONTAMINATING BURN IS THE CONVERTER'S, NOT THE PAUSE PROXY'S. ** It was the Pause
+    # Proxy's until 2026-09-23, when the Pause Proxy turned out to BE the Stage 2 burner — so
+    # that pairing stopped separating the leg from the total and the case tested nothing.
     events = [
-        {"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100},
-        {"from": PAUSE_PROXY, "value": int(40_000_000 * WAD), "block": 23_380_000},
+        {"from": PAUSE_PROXY, "value": int(2_860_000 * WAD), "block": 23_400_100},
+        {"from": CONVERTER, "value": int(40_000_000 * WAD), "block": 23_380_000},
     ]
     c = Chain(prior_values={}, prior_dates={})
     c.reader = _LogReader(events)
@@ -793,20 +814,26 @@ def test_the_first_stage_2_read_is_gated_on_the_decomposed_figure_not_the_scan_t
     assert float(out.frame().query("metric == 'burn_address_balance'").value.iloc[0]) == 2_860_000.0
     assert not [r for r in out.review if r["reason"] == "first_read_disagrees_with_reference"]
 
-    # AND IT STILL REFUSES A STAGE 2 LEG THAT MISSES — the gate is narrowed, not switched off.
-    bad = [{"from": STAGE2, "value": int(41_000 * WAD), "block": 23_400_100},
-           {"from": PAUSE_PROXY, "value": int(2_860_000 * WAD), "block": 23_380_000}]
+    # ** AND IT STILL REFUSES A STAGE 2 LEG THAT MISSES — the gate is narrowed, not switched off,
+    # and that matters more now that the discovery is gone. ** Until 2026-09-23 a scan that began
+    # too late was caught twice: by the burner discovery failing to find the 2.86M event, and by
+    # this floor. The discovery has been retired, so this floor is now the ONLY thing standing
+    # between a short scan and a confident, plausible, too-small cumulative.
+    #
+    # The Pause Proxy's leg is 41,000 here — the 2.86M sits with the converter, where it does not
+    # count — so the leg is below its floor and NOTHING is stored.
+    bad = [{"from": PAUSE_PROXY, "value": int(41_000 * WAD), "block": 23_400_100},
+           {"from": CONVERTER, "value": int(2_860_000 * WAD), "block": 23_380_000}]
     c = Chain(prior_values={}, prior_dates={})
-    # 2.86m now belongs to the Pause Proxy, so discovery names IT as the burner and the leg it
-    # then reports is the governance burn — which is exactly the mis-identification the date
-    # check and this gate exist to catch between them.
-    c.reader = _LogReader(bad, timestamps={23_380_000: 1786752000})
+    c.reader = _LogReader(bad)
     out = FetchOutput()
     c.run([_sky_log_probe()], None, out)
     assert out.frame().query("metric == 'burn_address_balance'").empty
-    assert any("WAS NOT CONFIRMED" in g["reason"] or "DOES NOT MATCH THE REFERENCE" in g["reason"]
-               for g in out.gaps if g["metric"] == "burn_address_balance"), out.gaps
-    print("gate ok: measured on the Stage 2 leg, passes with a large total, still refuses a miss")
+    gaps = [g for g in out.gaps if g["metric"] == "burn_address_balance"]
+    assert gaps and "BELOW ITS FLOOR" in gaps[0]["reason"].upper(), [g["reason"][:80] for g in gaps]
+    assert "Do NOT widen tolerance_pct" in gaps[0]["suggestion"].replace("do NOT", "Do NOT")
+    print("gate ok: measured on the Stage 2 leg, passes with a large total, and is now the only "
+          "thing catching a scan that began too late")
 
 
 def test_the_mkrsky_converter_question_is_answered_from_its_own_source():
@@ -6367,7 +6394,13 @@ def test_the_chainlink_reserve_inflow_is_derived_and_a_fall_is_reported_not_swal
     assert "5,180,000" in gap[0]["reason"] and "5,100,000" in gap[0]["reason"], gap[0]["reason"]
 
     # (c) SAME-DAY RE-RUN: no interval, so no flow — and the balance itself still stores.
-    out = run(5_240_000.0, 5_180_000.0, prior_date="2026-09-22")
+    # ** THE DATE IS TAKEN FROM THE CODE, NOT TYPED IN. ** It was the literal "2026-09-22", which
+    # meant "today" on the day it was written and meant "yesterday" the next morning — so this
+    # case silently stopped testing a same-day re-run and started testing an ordinary one-day
+    # delta, which of course derives a flow. A test whose premise is "the same day" has to ASK
+    # what day it is.
+    from fetch.base import today as _today
+    out = run(5_240_000.0, 5_180_000.0, prior_date=str(_today())[:10])
     df = out.frame()
     assert df[df.metric == "actual_buyback_tokens"].empty
     assert not df[df.metric == "buyback_fund_balance"].empty, \
@@ -6504,11 +6537,26 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
     assert "def uniswap_firepit_threshold" in src and "SEL_THRESHOLD" in src
     assert 'SEL_THRESHOLD = "0x42cde4e8"' in src, "keccak('threshold()')[:4]"
 
-    # H3 — want()/spotter() with publicnode FIRST, and the Splitter's flapper via the ChainLog
-    # rather than from a historical executive vote.
-    assert src.index('"https://ethereum-rpc.publicnode.com"') < src.index('"https://eth.llamarpc.com"'), \
-        "publicnode must be tried first — llamarpc 525'd on want() and spotter() twice"
-    assert '"want()": "0x1f1c827f"' in src and '"spotter()": "0xf3701da2"' in src
+    # ===== H3 — AND THE SELECTORS ARE CHECKED, NOT PINNED. Corrected 2026-09-23. =====
+    # ** THIS TEST USED TO PIN TWO WRONG VALUES. ** It asserted want() == 0x1f1c827f and
+    # spotter() == 0xf3701da2 — neither of which is keccak of anything on that contract — so it
+    # locked in the bug rather than catching it, and the resulting failures were attributed to
+    # llamarpc returning 525. A test that repeats a magic number back at the file it came from
+    # confirms only that nobody has retyped it.
+    #
+    # Now every selector in the script is derived and compared. flapper() on the Splitter was
+    # wrong too, which is worse: it is the one call that answers whether the splitter has been
+    # re-pointed, and a wrong selector there reads as an unreachable endpoint.
+    import check_offline_items as coi
+
+    from web3 import Web3
+    for table in (coi.SELECTORS, coi.SELECTORS_SPLITTER, coi.SELECTORS_SPLITTER_PARAMS):
+        for sig, sel in table.items():
+            assert sel == "0x" + Web3.keccak(text=sig).hex()[:8], sig
+    assert coi.SEL_THRESHOLD == "0x" + Web3.keccak(text="threshold()").hex()[:8]
+    # The endpoint order is LEFT ALONE — it costs nothing — but it is no longer justified by a
+    # diagnosis that has been superseded.
+    assert src.index('"https://ethereum-rpc.publicnode.com"') < src.index('"https://eth.llamarpc.com"')
     assert "def sky_chainlog" in src and "CHAINLOG_LIST" in src
     assert "may not be \"MCD_SPLIT\"" in src, \
         "the registry key is not guessed either — list() is printed in full first"
@@ -6516,7 +6564,7 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
     # ALL OF THEM ACTUALLY RUN. A check that exists and is not called is not a check.
     main = src[src.index("def main():"):]
     for fn in ("pendle_spendle_virtual", "uniswap_firepit_threshold", "sky_chainlog",
-               "sky_splitter", "sky"):
+               "sky_splitter", "sky_splitter_params", "sky_splitter_history", "sky"):
         assert fn in main, f"{fn} is defined but never called from main()"
     print("offline checks ok: H1 added as a direct shares-vs-assets read on one block, "
           "H2 and H3 already present and confirmed")
@@ -8830,20 +8878,31 @@ def test_one_contract_can_serve_several_metrics_and_the_guard_knows_it():
 
     The guard asked `metric_override or KIND_METRIC[kind]` and got ONE answer, which is right for
     a balance read and wrong for burn_transfer_logs: one contract, one scan, split by the event's
-    sender into burn_address_balance, governance_burn_balance and other_burn_balance. Only the
-    first is what the KIND maps to, so the other two — and both flows derived from them — were
-    judged to be written by a contract that no longer serves them.
+    sender into burn_address_balance and other_burn_balance. Only the first is what the KIND maps
+    to, so the rest — and the flows derived from them — were judged to be written by a contract
+    that no longer serves them.
 
     Latent rather than visible only because the read is currently 403ing, which is exactly the
     kind of bug that surfaces the day something else starts working.
+
+    (The decomposition was THREE series until 2026-09-23, when governance_burn_balance turned out
+    to be the Stage 2 leg mislabelled — see the decomposition test. The guard has to follow the
+    config rather than a remembered list, which is why this asserts against contract_serves and
+    not against a set typed out twice.)
     """
     spec = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]
-    assert config.contract_serves(spec) == {
-        "burn_address_balance", "governance_burn_balance", "other_burn_balance"}
-    for metric in ("burn_address_balance", "governance_burn_balance", "governance_burn_tokens",
-                   "other_burn_balance", "other_burn_tokens", "gross_burn_tokens"):
+    assert config.contract_serves(spec) == {"burn_address_balance", "other_burn_balance"}
+    for metric in ("burn_address_balance", "other_burn_balance", "other_burn_tokens",
+                   "gross_burn_tokens"):
         assert config.withdrawn_contract_keys(
             "Sky", metric, "chain:ethereum:burn_logs:delta") == [], metric
+    # ** AND A METRIC IT NO LONGER SERVES IS CORRECTLY JUDGED WITHDRAWN. ** governance_burn_balance
+    # was retired on 2026-09-23 — it was the Stage 2 leg under the wrong name — so any row still
+    # carrying it must read as written by a contract that has stopped serving it. That is the
+    # guard working, not a fault, and it is how stale rows from before the reclassification are
+    # kept off the sheet.
+    assert config.withdrawn_contract_keys(
+        "Sky", "governance_burn_balance", "chain:ethereum:burn_logs:delta") == ["burn_logs"]
 
     # THE DECOMPOSITION TARGETS COME FROM THE CONTRACT'S OWN BLOCK, so adding a named sender adds
     # its metric here with nothing else to remember.
@@ -8854,7 +8913,8 @@ def test_one_contract_can_serve_several_metrics_and_the_guard_knows_it():
     # lets anything through.
     reserve = config.PROJECT_BY_NAME["Chainlink"]["contracts"]["reserve"]
     assert config.contract_serves(reserve) == {"buyback_fund_balance"}
-    print("contract_serves ok: a decomposing read serves three metrics, a balance read serves one")
+    print("contract_serves ok: a decomposing read serves the metrics its own block names, "
+          "a balance read serves one, and a retired metric reads as withdrawn")
 
 
 def test_a_repulled_query_writes_every_metric_it_serves():

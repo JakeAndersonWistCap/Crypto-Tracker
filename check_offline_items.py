@@ -34,10 +34,48 @@ SKY_CHAINLOG = "0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F"
 CHAINLOG_LIST = "0x63b0c6b0"       # keccak("list()")[:4]
 CHAINLOG_GET = "0x21f8a721"        # keccak("getAddress(bytes32)")[:4]
 # keccak("receiver()")[:4] — SwapOnly exposes the address it sends bought SKY to.
-SELECTORS = {"receiver()": "0xf7260d3e", "pair()": "0xa8aa1b31", "want()": "0x1f1c827f",
-             "pip()": "0xd741e2f9", "spotter()": "0xf3701da2"}
-# keccak("flapper()")[:4] — on the SPLITTER, not on the flapper itself.
-SELECTORS_SPLITTER = {"flapper()": "0x5c94e4d2"}
+# ** TWO OF THESE WERE WRONG, AND THE SYMPTOM WAS BLAMED ON A PROVIDER. ** Corrected 2026-09-23
+# by _assert_selectors, which checks every one against keccak at import:
+#     want()     was 0x1f1c827f, is 0x1f1fcd51
+#     spotter()  was 0xf3701da2, is 0x2e77468d
+# Those are EXACTLY the two calls the Sky flapper question recorded as failing while every other
+# call in the same script answered — and the conclusion drawn was that llamarpc was unreliable
+# and should not be tried first. A selector that matches no function on the contract is a
+# sufficient explanation for a failure that is consistent, repeatable and confined to those two
+# calls, which is what was observed. The endpoint ordering is left as it is (it costs nothing),
+# but the diagnosis on the config entry is corrected.
+SELECTORS = {"receiver()": "0xf7260d3e", "pair()": "0xa8aa1b31", "want()": "0x1f1fcd51",
+             "pip()": "0xd741e2f9", "spotter()": "0x2e77468d"}
+# ** THE flapper() SELECTOR WAS WRONG. ** Corrected 2026-09-23: keccak("flapper()")[:4] is
+# 0x5ca0d723, not 0x5c94e4d2. The old value matches no function on the Splitter, so the call
+# would have reverted or returned empty and the check would have read "UNREACHABLE" — a network
+# answer to what was actually a typo. Every selector in this file is now machine-checked against
+# keccak at import; see _assert_selectors below.
+SELECTORS_SPLITTER = {"flapper()": "0x5ca0d723"}
+
+# Sky's Splitter (ChainLog MCD_SPLIT), from config — defaulted so the two new checks below run
+# without anyone having to remember to pass it.
+SKY_SPLITTER = "0xBF7111F13386d23cb2Fba5A538107A73f6872bCF"
+# A FLOOR FOR THE File SCAN, not an estimate of deployment. dss-flappers went live with the
+# Smart Burn Engine in mid-2023; 17,000,000 is comfortably before that and cheap to scan past.
+# Lower it rather than raise it if in doubt.
+SKY_SPLITTER_FROM_BLOCK = 17_000_000
+
+# ===== THE SPLITTER'S OWN PARAMETERS, AND ITS HISTORY. Added 2026-09-23. =====
+# `burn` is the WAD share of each SBE cycle sent to the flapper (SKY buybacks) rather than to the
+# reward farm. Sky's executive of 2026-08-13 set it to 55%, which reconciles exactly with the
+# three-way Stage 2 allocation of 50% of NPS: 27.5/50 = 0.55 to buybacks, 22.5/50 = 0.45 to the
+# LSSKY-USDS farm. A live read of 0.55e18 confirms that reading against the chain rather than
+# against a reading of a proposal.
+SELECTORS_SPLITTER_PARAMS = {"burn()": "0x44df8e70", "hop()": "0xb0b8579b"}
+SPLITTER_BURN_EXPECTED_WAD = 0.55
+
+# Splitter.file(bytes32 what, uint256 data) emits File(bytes32 indexed what, uint256 data).
+# EVERY change to `burn` and `hop` since deployment is in these logs — which makes the pre-August
+# split a matter of reading the chain rather than of finding a document nobody published.
+FILE_TOPIC_UINT = "0xe986e40cc8c151830d4f61050f4fb2e4add8567caad2d5f5496f9158e91fe4c7"
+WHAT_BURN = "0x6275726e" + "0" * 56      # bytes32("burn")
+WHAT_HOP = "0x686f70" + "0" * 58         # bytes32("hop")
 
 # Ether.fi's governance token and its staking contract. The open question is what sETHFI IS:
 # a 1:1 receipt, or a share that compounds against ETHFI the way a vault share does. It decides
@@ -56,6 +94,44 @@ MAPLE_DAO_MULTISIG = "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"
 PENDLE = "0x808507121B80c02388fAd14726482e061B8da827"
 SPENDLE = "0x999999999991E178D52Cd95AFd4b00d066664144"
 UNI_FIRE_PIT = "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721"
+
+
+def _assert_selectors() -> None:
+    """Every four-byte selector in this file, checked against keccak at import.
+
+    ** ONE OF THEM WAS WRONG AND THE FAILURE LOOKED LIKE A NETWORK PROBLEM. ** flapper() was
+    0x5c94e4d2, which matches no function on the Splitter, so the call returned nothing and the
+    check printed "UNREACHABLE" — a network answer to a typo. A selector is the one thing in this
+    script that can be verified without a network, so it is.
+
+    SKIPPED SILENTLY IF NO KECCAK IS INSTALLED. This script is meant to run on someone else's
+    machine with nothing but `requests`; refusing to start because a hashing library is missing
+    would cost more than the check is worth.
+    """
+    try:
+        from eth_utils import keccak                       # noqa: PLC0415
+    except ImportError:
+        try:
+            from Crypto.Hash import keccak as _k           # noqa: PLC0415
+
+            def keccak(text=b""):
+                h = _k.new(digest_bits=256)
+                h.update(text)
+                return h.digest()
+        except ImportError:
+            return
+    wrong = []
+    for table in (SELECTORS, SELECTORS_SPLITTER, SELECTORS_SPLITTER_PARAMS):
+        for sig, sel in table.items():
+            want = "0x" + keccak(sig.encode()).hex()[:8]
+            if want != sel:
+                wrong.append(f"{sig}: file has {sel}, keccak says {want}")
+    if wrong:
+        raise SystemExit("SELECTOR MISMATCH — fix these before running:\n  "
+                         + "\n  ".join(wrong))
+
+
+_assert_selectors()
 
 
 def head(title: str):
@@ -187,6 +263,147 @@ def sky_splitter(splitter: str | None):
         print("  The splitter has been re-pointed. Report this back: if the live flapper is a")
         print("  FlapperUniV2 rather than SwapOnly, the LP question reopens and Sky's archetype")
         print("  needs looking at again.")
+
+
+def eth_get_logs(address: str, topics: list, from_block: int, to_block: int, chunk: int = 50_000):
+    """Every matching log between two blocks, chunked, trying each endpoint.
+
+    CHUNKED BECAUSE PUBLIC ENDPOINTS CAP THE RANGE, and NARROWING on the server's own complaint
+    rather than blind-retrying: a range refusal is answered by halving, anything else moves to
+    the next endpoint. Same discipline as fetch/chain.py, kept simple because this script is a
+    one-shot and not part of a run.
+    """
+    out, block = [], from_block
+    while block <= to_block:
+        upper = min(block + chunk - 1, to_block)
+        got, errors = None, []
+        for url in ETH_RPCS:
+            try:
+                j = rpc(url, "eth_getLogs", [{"address": address, "topics": topics,
+                                              "fromBlock": hex(block), "toBlock": hex(upper)}])
+                if "result" in j:
+                    got = j["result"]
+                    break
+                errors.append(f"{url}: {j.get('error')}")
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{url}: {e}")
+        if got is None:
+            joined = "; ".join(errors).lower()
+            if chunk > 1_000 and any(w in joined for w in
+                                     ("range", "too many", "limit", "response size", "timeout")):
+                chunk //= 2
+                continue
+            return None, "; ".join(errors)[:400]
+        out.extend(got)
+        block = upper + 1
+    return out, f"{len(out)} log(s) over blocks {from_block:,}-{to_block:,}"
+
+
+def block_time(block_hex: str) -> str:
+    """UTC date of a block, so a parameter change is dated rather than merely ordered."""
+    import datetime as dt
+    for url in ETH_RPCS:
+        try:
+            j = rpc(url, "eth_getBlockByNumber", [block_hex, False])
+            ts = (j.get("result") or {}).get("timestamp")
+            if ts:
+                return dt.datetime.fromtimestamp(int(ts, 16), dt.timezone.utc).strftime("%Y-%m-%d")
+        except Exception:  # noqa: BLE001
+            continue
+    return "?"
+
+
+def sky_splitter_params(splitter: str | None):
+    """Does the Splitter's own `burn` parameter read 0.55e18, as the 2026-08-13 executive says?
+
+    ** THE 55/45 WAS READ AS A BURN/STAKER SPLIT AND IT IS NOT ONE. ** It is THIS parameter: the
+    share of each SBE cycle sent to the flapper for SKY buybacks rather than to the reward farm.
+    The corrected reading reconciles it with the three-way Stage 2 allocation of 50% of NPS —
+    27.5/50 = 0.55 to buybacks (22.5 staking + 5.0 burn), 22.5/50 = 0.45 to the LSSKY-USDS farm.
+
+    So this read is the one thing that can tell the corrected reading from the rejected one
+    against the chain rather than against somebody's reading of a proposal. 0.55e18 confirms it;
+    anything else means the executive was not applied as understood and the whole Stage 2
+    arithmetic goes back to the start.
+    """
+    head("SKY — does the Splitter's burn parameter read 0.55e18? (the 55/45, on-chain)")
+    if not splitter:
+        print("  SKIPPED — the Splitter's address is not on file and is NOT guessed here.")
+        return
+    for name, sel in SELECTORS_SPLITTER_PARAMS.items():
+        word, src = eth_call(splitter, sel)
+        if word is None:
+            print(f"  {name:<8} UNREACHABLE  {src[:110]}")
+            continue
+        raw = int(word, 16)
+        if name == "burn()":
+            wad = raw / 1e18
+            verdict = ("MATCHES the 2026-08-13 executive — 55% of each SBE cycle to SKY buybacks"
+                       if abs(wad - SPLITTER_BURN_EXPECTED_WAD) < 1e-9 else
+                       "*** DOES NOT MATCH the expected 0.55 ***")
+            print(f"  burn()   {raw} = {wad:.6f} WAD   {verdict}")
+            if abs(wad - SPLITTER_BURN_EXPECTED_WAD) >= 1e-9:
+                print("  PASTE BACK the figure. Do NOT adjust config to whatever it reads without")
+                print("  finding the executive that changed it — an unexplained parameter is a")
+                print("  question, not a new constant.")
+        else:
+            print(f"  hop()    {raw} seconds ({raw / 3600:.2f} hours between kicks)")
+
+
+def sky_splitter_history(splitter: str | None, from_block: int):
+    """The dated history of `burn` and `hop`, rebuilt from the Splitter's own File events.
+
+    ** THE PRE-AUGUST SPLIT WAS BEING TREATED AS AN UNDOCUMENTED FACT. ** It is not undocumented;
+    it is just not in prose. Every change to the parameter emitted File(what, data), so the whole
+    history is on chain, dated by block timestamp — a PRIMARY source, and a better one than a
+    governance post, because it is what the contract actually did rather than what a proposal
+    said it would do.
+
+    Layer 1 (the share of surplus reaching the Splitter at all) is separately known: 75% ->
+    7.5% interim in April 2026 -> Stage 2 from 2026-08-13. This rebuilds LAYER 2, the Splitter's
+    own division of what reaches it.
+    """
+    head("SKY — the Splitter's parameter history, from its own File events")
+    if not splitter:
+        print("  SKIPPED — the Splitter's address is not on file and is NOT guessed here.")
+        return
+    head_hex, _ = eth_block_number()
+    if not head_hex:
+        print("  UNREACHABLE — no endpoint answered eth_blockNumber.")
+        return
+    logs, detail = eth_get_logs(splitter, [FILE_TOPIC_UINT], from_block, int(head_hex, 16))
+    if logs is None:
+        print(f"  eth_getLogs UNREACHABLE  {detail}")
+        print("  If every endpoint refused the METHOD (403/unsupported), the remedy is an")
+        print("  endpoint that serves logs, not a narrower range.")
+        return
+    print(f"  {detail}")
+    if not logs:
+        print("  NO File EVENTS in range. Either the scan began after every change, or the")
+        print("  parameter has never been filed. Those are different facts: re-run with a")
+        print("  --splitter-from-block at or before the Splitter's deployment before concluding")
+        print("  anything. A history that starts too late is not a shorter history, it is a")
+        print("  wrong one.")
+        return
+    rows = []
+    for lg in logs:
+        topics = lg.get("topics") or []
+        if len(topics) < 2:
+            continue
+        what = topics[1].lower()
+        name = ("burn" if what == WHAT_BURN else "hop" if what == WHAT_HOP else what)
+        raw = int(lg.get("data") or "0x0", 16)
+        rows.append((int(lg["blockNumber"], 16), name, raw, lg["blockNumber"]))
+    rows.sort()
+    print(f"\n  {'block':>10}  {'date':<12} {'what':<8} {'raw':>22}  reading")
+    for blk, name, raw, blk_hex in rows:
+        when = block_time(blk_hex)
+        reading = (f"{raw / 1e18:.6f} WAD = {raw / 1e16:.2f}% to buybacks" if name == "burn"
+                   else f"{raw} s = {raw / 3600:.2f} h" if name == "hop" else "")
+        print(f"  {blk:>10,}  {when:<12} {name:<8} {raw:>22}  {reading}")
+    print("\n  PASTE BACK the whole table. Each row is one dated period boundary for Sky's")
+    print("  fee_split.history LAYER 2 — and the pre-2026-08-13 periods stop being 'unconfirmed'")
+    print("  the moment this table exists. Do NOT fill a period from the period after it.")
 
 
 def sky():
@@ -569,12 +786,20 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--splitter", help="Sky's Splitter address, to confirm which flapper is live")
+    ap.add_argument("--splitter", default=SKY_SPLITTER,
+                    help="Sky's Splitter address, to confirm which flapper is live and to read "
+                         "its burn/hop parameters and their File history")
+    ap.add_argument("--splitter-from-block", type=int, default=SKY_SPLITTER_FROM_BLOCK,
+                    help="first block to scan for the Splitter's File events. Set it at or "
+                         "BEFORE deployment — a history that starts too late is not a shorter "
+                         "history, it is a wrong one")
     args = ap.parse_args()
 
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
     for fn in (sky_chainlog, sky, lambda: sky_splitter(args.splitter),
+               lambda: sky_splitter_params(args.splitter),
+               lambda: sky_splitter_history(args.splitter, args.splitter_from_block),
                solana, injective, near, etherfi_sethfi,
                maple_dao_multisig, pendle_spendle_virtual, uniswap_firepit_threshold,
                beaconchain):

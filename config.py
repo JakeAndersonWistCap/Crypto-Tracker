@@ -7573,8 +7573,34 @@ PROJECTS = [
                     "allocation this single share cannot express.",
         },
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://docs.sky.money/", "source_date": BRIEF_DATE, "status": "active",
-                       "note": "Repurchased SKY is burned OR redistributed to LSSKY stakers per a GOVERNANCE PARAMETER, "
-                               "currently 55% burn / 45% stakers. Never net staking rewards against burn."},
+                       # ** THE 55/45 IS NOT A BURN/STAKER SPLIT, AND READING IT AS ONE WAS WRONG. **
+                       # CORRECTED 2026-09-23. The 55/45 is the SPLITTER's own `burn` parameter —
+                       # the share of each SBE cycle sent to SKY buybacks rather than to the
+                       # reward farm — and it lines up exactly with fee_split_v2's three-way
+                       # allocation of 50% of NPS:
+                       #     27.5 / 50 = 55%  -> SKY buybacks   (22.5 staking + 5.0 BURN)
+                       #     22.5 / 50 = 45%  -> USDS to LSSKY stakers
+                       # Both legs were set by the SAME executive of 2026-08-13 ("Increase
+                       # Buybacks", "Reactivate LSSKY-USDS Farm"), which is why they reconcile.
+                       #
+                       # SO THE BURN IS 5% OF NPS, NOT 55% OF IT, and the 45% never becomes SKY
+                       # at all. An earlier reading paired the 55 with buffer + burn; that fit is
+                       # REJECTED — it made the burn eleven times its real size.
+                       "reading_corrected_on": "2026-09-23",
+                       "share_of_nps_burned": 0.05,
+                       "share_of_repurchased_burned": 5.0 / 27.5,
+                       "splitter_burn_param_expected": 0.55,
+                       "cross_check_2026_09": "2,860,000 SKY at ~$0.06 is ~$171,000, which is 5% "
+                                              "of ~$3.4m of NPS. HEDGED, and deliberately: that "
+                                              "is consistent with a PARTIAL August cycle running "
+                                              "from 2026-08-13 rather than a full month, so it "
+                                              "corroborates the 5% reading without pinning the "
+                                              "cycle's length. Do NOT back an NPS figure out of it.",
+                       "note": "Repurchased SKY is SPLIT between staking rewards and the burn by "
+                               "a GOVERNANCE PARAMETER: of the 27.5% of NPS spent on buybacks, "
+                               "22.5 goes to LSSKY stakers as SKY and 5.0 is burned. Never net "
+                               "staking rewards against burn — the first is buy pressure without "
+                               "supply reduction, the second removes supply."},
         # THE SAME 13 AUGUST 2026 PROPOSAL that set the 55/45 split also normalised LSSKY-to-SKY
         # rewards: a 96,903,706 SKY stream vesting over 90 DAYS. That is 1,076,707.84 SKY/day, and
         # it is EMISSIONS — SKY newly distributed to stakers — so also_emissions is set and the same
@@ -7660,35 +7686,44 @@ PROJECTS = [
                     # guards against. Set it only if the scan is ever deliberately narrowed.
                     "max_blocks_per_run": None,
                     # ===== WHO BURNED IT. The decomposition key is the event's `from`. =====
-                    "named_senders": {
-                        # THE PAUSE PROXY, already a verified contract on this project (see
-                        # contracts.pause_proxy). Governance burning treasury SKY: a real supply
-                        # reduction, not revenue-funded, and annualising it would report one
-                        # executive action as a run rate.
-                        "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB": "governance_burn_balance",
-                    },
+                    # ===== THE PAUSE PROXY IS THE STAGE 2 BURNER. CORRECTED 2026-09-23. =====
+                    #
+                    # ** THE DECOMPOSITION HAD A CATEGORY THAT DOES NOT EXIST. ** It split Pause
+                    # Proxy burns off as "governance" — one-off treasury destruction, not
+                    # revenue-funded, explicitly not to be annualised — and then went looking for
+                    # a SEPARATE Stage 2 burner. There is not one. Sky's executive of 2026-09-11
+                    # (executed 2026-09-13) reads "Execute the Monthly Settlement Cycle for
+                    # August 2026 ... burn SKY from the Pause Proxy balance", and Sky announced
+                    # the first 2.86M burn the next day. The monthly executive IS the mechanism,
+                    # and the Pause Proxy IS where it burns from.
+                    #
+                    # So Transfer(pause_proxy -> 0x0) is the Stage 2 burn — the 5%-of-NPS leg,
+                    # recurring and revenue-funded — and the old classification had it as exactly
+                    # the opposite: a one-off nobody should annualise. Both readings produce a
+                    # number; only one of them is the demand signal.
+                    #
+                    # THE DISCOVERY IS RETIRED, not merely satisfied. Searching the logs for the
+                    # 2.86M event to LEARN the burner was the right answer while the address was
+                    # unknown; now it is named by a primary source, and leaving discovery armed
+                    # would let a failed match REFUSE a read we can identify directly.
+                    "named_senders": {},
                     "stage2_metric": "burn_address_balance",
                     "other_metric": "other_burn_balance",
-                    # ===== THE STAGE 2 BURNER IS DISCOVERED FROM THE LOGS, NOT HARDCODED. =====
-                    # Its address is in no source on file. What IS known is the amount and the
-                    # date, so the scan finds the event matching them and takes its sender —
-                    # exactly one candidate or it refuses, because two matches or none is an
-                    # unresolved identification and picking one would put a whole series under an
-                    # address nobody checked. The block's DATE is confirmed too (one extra call):
-                    # a coincidental match of the same size on another day would otherwise name
-                    # the wrong address with no trace.
                     "stage2_burner": {
-                        "address": None,
-                        "discover_by": {
-                            "approx_tokens": 2_860_000,
-                            "date": "2026-09-14",
-                            "tolerance_pct": 5,
-                            "source": "Sky's own Stage 2 thread, @SkyEcosystem 2026-09-14",
-                        },
-                        "write_back": "the run logs the discovered address. Put it in `address` "
-                                      "so later runs gate on it rather than rediscovering it — "
-                                      "and so a CHANGE of burner shows up as a discovery failure "
-                                      "rather than being silently absorbed.",
+                        "address": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
+                        "discover_by": None,
+                        "source_url": "https://vote.sky.money/executive",
+                        "source_date": "2026-09-23",
+                        "source_quote": "Execute the Monthly Settlement Cycle for August 2026 "
+                                        "... burn SKY from the Pause Proxy balance — executive "
+                                        "of 2026-09-11, executed 2026-09-13",
+                        "discovery_retired_on": "2026-09-23",
+                        "what_other_catches": "everything NOT from the Pause Proxy, which is now "
+                                              "the whole of the rest: the MkrSky converter's "
+                                              "auth-only burn() and anything unrecognised. "
+                                              "governance_burn_balance is no longer produced for "
+                                              "Sky — there was never a second category, only a "
+                                              "mislabelled first one.",
                     },
                     # AGAINST THE DECOMPOSED STAGE 2 FIGURE, NOT THE SCAN TOTAL. A full-history
                     # scan legitimately includes governance and converter burns, so the total is
@@ -7704,10 +7739,19 @@ PROJECTS = [
                         "value": 2_860_000,
                         "mode": "at_least",
                         "as_of": "2026-09-14",
+                        # THE EXECUTIVE EXECUTED ON 2026-09-13 AND SKY ANNOUNCED IT ON THE 14th,
+                        # so the floor is dated to the announcement and the event may sit on
+                        # either day. Recorded because a date that is off by one is the kind of
+                        # thing that gets "fixed" by widening a tolerance.
+                        "event_may_fall_on": ("2026-09-13", "2026-09-14"),
                         "what": "SKY burned by the Stage 2 leg as at 2026-09-14, its first day — "
                                 "the cumulative can only grow from here",
                         "source_url": "https://financial.skyeco.com/",
                         "tolerance_pct": 5,
+                        "still_applies": "YES, unchanged by the 2026-09-23 reclassification. The "
+                                         "leg it gates is now the Pause Proxy's rather than a "
+                                         "discovered burner's, and the floor is the same figure "
+                                         "from the same announcement.",
                     },
                     # ===== THE THIRD MECHANISM, ANSWERED FROM THE CONVERTER'S OWN SOURCE. =====
                     # Read 2026-09-22 from sky-ecosystem/sky src/MkrSky.sol:
@@ -11073,7 +11117,28 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Sky",
-        "topic": "does Stage 2 run THROUGH the Smart Burn Engine, or beside it?",
+        "topic": "ANSWERED 2026-09-23 — Stage 2 runs THROUGH the Smart Burn Engine, and the "
+                 "$350m/yr BEAM cap still bounds the buyback leg.",
+        "status": "answered",
+        "answered_on": "2026-09-23",
+        "answer": "THROUGH it, from Sky's own material and not from a search summary. Two "
+                  "sources: (1) Sky's X post of 2026-08-13 — 'The Stage 2 parameter changes are "
+                  "included in today's Executive Vote', the proposal being 'Initialize SBE BEAM, "
+                  "Monthly Settlement Cycle for July 2026, LSSKY-SKY Rewards Normalization, "
+                  "Increase Buybacks and Reactivate LSSKY-USDS Farm' — Stage 2 IS an SBE "
+                  "parameter change, in the same executive that initialises SBE BEAM. (2) Sky's "
+                  "blog, sky.money/blog/understanding-the-sky-token, 2026-08-18: staking rewards "
+                  "are funded 'through buybacks executed by the Smart Burn Engine'. So the "
+                  "executor contracts already in config ARE the ones executing Stage 2, and the "
+                  "Uniswap-Firepit failure mode this question was guarding against does not "
+                  "apply here.",
+        "cap_verdict": "THE $350m/yr BEAM CAP STILL APPLIES to the buyback leg. This is the half "
+                       "of the rejected claim that was WRONG — see rejected_claim_2026_09_18, "
+                       "which asserted both that Stage 2 runs on the existing contracts (right) "
+                       "and that the cap no longer applies (wrong). ** THAT IS THE WHOLE CASE "
+                       "FOR REFUSING UNSOURCED SUMMARIES. ** Acting on it would have carried a "
+                       "correct claim and a false one in on the same ticket, with nothing on the "
+                       "row to tell them apart, and the false one removes a bound.",
         "severity": 2,
         "reason":
             "Sky's Stage 2 thread never mentions the Smart Burn Engine by name. Config carries the "
@@ -11518,10 +11583,32 @@ OPEN_QUESTIONS = [
                       "reconfiguration HAS happened: pair() still matches the vote, but pip() reads "
                       "0xc2ffbbdccf1466eb8968a846179191cb881ecdff where the vote set "
                       "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437. Both are updated with their real "
-                      "status. STILL OUTSTANDING: want() and spotter() returned RPC 525 and must be "
-                      "retried, and the flapper address itself is still only the 2024 vote's — read the "
-                      "SPLITTER's flapper() to confirm it is still 0x374D9c3d..., because a different "
+                      "status. STILL OUTSTANDING: re-run want() and spotter() with the CORRECTED "
+                      "selectors, and read the SPLITTER's flapper() — also with a corrected "
+                      "selector — to confirm it is still 0x374D9c3d..., because a different "
                       "flapper could be FlapperUniV2 and would reopen the LP question.",
+        # ===== THE 525s WERE OURS. Corrected 2026-09-23. =====
+        # want() and spotter() were recorded as failing with an RPC 525 while every other call in
+        # the same script answered, and the conclusion drawn was that llamarpc was unreliable and
+        # should not be tried first. BOTH SELECTORS WERE WRONG: want() was 0x1f1c827f against
+        # keccak's 0x1f1fcd51, spotter() was 0xf3701da2 against 0x2e77468d. A selector matching no
+        # function on the contract is a sufficient explanation for a failure that is consistent,
+        # repeatable and confined to exactly those two calls — which is what was observed.
+        #
+        # ** AND flapper() ON THE SPLITTER WAS WRONG TOO **, which is worse: that check would have
+        # printed UNREACHABLE and been read as a network problem, on the one call that answers
+        # whether the splitter has been re-pointed at all.
+        #
+        # All three are fixed, and check_offline_items now verifies every selector against keccak
+        # at import — the one thing in that script that can be checked without a network.
+        "selector_correction_2026_09_23": {
+            "want()": {"was": "0x1f1c827f", "is": "0x1f1fcd51"},
+            "spotter()": {"was": "0xf3701da2", "is": "0x2e77468d"},
+            "flapper()": {"was": "0x5c94e4d2", "is": "0x5ca0d723"},
+            "supersedes": "the reading that llamarpc was returning 525 on those two calls. The "
+                          "endpoint ORDER is left alone — it costs nothing — but it is no longer "
+                          "offered as the explanation.",
+        },
     },
     {
         "project": "Venice AI", "topic": "the 20% protocol take on locked sVVV yield is not captured",
