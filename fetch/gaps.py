@@ -242,7 +242,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return _format_blocked(blocked)
 
     # ===== THE BUYBACK PAIR ANSWERS FROM ITS ROUTE, NEVER FROM "no contract of kind ...". =====
-    # Added 2026-09-24. Seven projects gapped on actual_buyback_* with variants of "no contract
+    # Added 2026-09-23. Seven projects gapped on actual_buyback_* with variants of "no contract
     # of kind 'buyback_fund_balance' declared", and for none of them was that the reason: Maple
     # HAS the fund address, Pendle's buyback has no wallet by design, GEODNET's is the burn.
     # The route already knows the answer (config.buyback_route); this makes the row say it.
@@ -336,7 +336,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # would be the wrong explanation entirely — the fix is a different SOURCE, not a missing address.
     if metric in ("gross_burn_tokens", "burn_address_balance"):
         # ===== A LOG-SCAN ROUTE EXISTS: SAY WHAT BLOCKS IT, NOT "add a sources.yaml entry". =====
-        # Added 2026-09-24. Sky's burn_read_method is protocol_level (no dead address to read),
+        # Added 2026-09-23. Sky's burn_read_method is protocol_level (no dead address to read),
         # which is TRUE and used to be the whole answer — until contracts.burn_logs was wired
         # to read the burn from Transfer-to-zero logs. With that route on file, the row was still
         # telling the reader to go and find a dashboard, while the actual blocker (the provider's

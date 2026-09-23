@@ -2573,7 +2573,7 @@ SELECT date, metric, value, source, tier, fetched_at
 
 -- AC2. WHAT SURVIVES — the morpho_api rows, which this section never touches. Run before
 --      and after; this must not move. (supply_units will be EMPTY until the run after the
---      per-project sanity bound landed on 2026-09-24 — it was rejected at validation, not
+--      per-project sanity bound landed on 2026-09-23 — it was rejected at validation, not
 --      stored and then lost.)
 SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
        MIN(value) AS min_value, MAX(value) AS max_value
@@ -2605,7 +2605,7 @@ SELECT DISTINCT source
  WHERE project = 'Morpho' AND metric = 'utilisation_pct';
 
 -- ========================================================================================
--- AD. GEODNET buyback_wallet_polygon_historical — RETIRED 2026-09-24; ANY ROWS IT WROTE.
+-- AD. GEODNET buyback_wallet_polygon_historical — RETIRED 2026-09-23; ANY ROWS IT WROTE.
 --     AD1 LOOKS. AD2 is the proposed delete, commented out.                    2026-09-23
 -- ========================================================================================
 -- The contract entry is gone from config (kept as retired_contracts on the GEODNET entry).

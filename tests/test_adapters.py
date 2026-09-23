@@ -1833,12 +1833,12 @@ def test_etherfis_two_addresses_have_two_roles_and_neither_is_read_as_a_balance(
     assert not any(c.get("address", "").lower() == bw["address"].lower()
                    for c in p["contracts"].values()), \
         "the buyback wallet must never be read as a balance"
-    # THE TREASURY WAS WIRED 2026-09-24 ON INSTRUCTION (as treasury_holding, a HOLDING — the
+    # THE TREASURY WAS WIRED 2026-09-23 ON INSTRUCTION (as treasury_holding, a HOLDING — the
     # right shape for a treasury, unlike the buyback flow). The basis is an aggregator plus the
     # instruction, and the contract entry says so rather than wearing a clean 'verified'.
     wired = [c for c in p["contracts"].values() if c.get("address", "").lower() == tr["address"].lower()]
     assert len(wired) == 1 and wired[0]["kind"] == "treasury_holding"
-    assert "AGGREGATOR-SOURCED" in wired[0]["provenance"] and tr["wired_on"] == "2026-09-24"
+    assert "AGGREGATOR-SOURCED" in wired[0]["provenance"] and tr["wired_on"] == "2026-09-23"
     print("ether.fi ok: buyback wallet and treasury told apart by three sources, and the "
           "buyback wallet's balance is explicitly not the buyback")
 
@@ -5457,7 +5457,7 @@ def test_geodnet_sql_addresses_match_config_exactly():
     # All three 2026-09-15 additions are UNVERIFIED, so the adapter refuses them and they appear in
     # the Gap Report by name. That is the point of recording them.
     added_2026_09_15 = {"mining_polygon", "mining_distribution_polygon", "ecosystem_polygon"}
-    # buyback_wallet_polygon_historical RETIRED 2026-09-24: unverified, model-knowledge, and it
+    # buyback_wallet_polygon_historical RETIRED 2026-09-23: unverified, model-knowledge, and it
     # served buyback_fund_balance on a project whose buyback burns. It lives on in
     # retired_contracts; any rows it wrote are section AD's. Listed here as the tripwire's record.
     retired = config.PROJECT_BY_NAME["GEODNET"]["retired_contracts"]
@@ -6637,7 +6637,7 @@ def test_geodnet_treasury_wallets_are_eoas_not_contracts_targeted_not_kind_wide(
     # THE CONTROL: real treasury contracts elsewhere must be COMPLETELY UNTOUCHED. This is what
     # proves the fix is per-address, not a change to the kind-wide default that would have
     # silently stopped checking Sky's, Maple's and NEAR's genuinely-contract treasuries too.
-    # NEAR's intents_treasury_base was retired to treasury_reference on 2026-09-24 (the metric
+    # NEAR's intents_treasury_base was retired to treasury_reference on 2026-09-23 (the metric
     # is n/a for NEAR), so it is no longer a control; the guard's per-address scope is proved by
     # the two that remain.
     controls = [("Sky", "pause_proxy"), ("Maple", "treasury")]
@@ -8156,7 +8156,7 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
     assert only["reads"] == ["burn_polygon"]
     assert only["refused"] == {"burn_solana_token_account": "chain_not_covered"}
 
-    # GEODNET/buyback_fund_balance LEFT this list on 2026-09-24: its only component was the
+    # GEODNET/buyback_fund_balance LEFT this list on 2026-09-23: its only component was the
     # retired buyback_wallet_polygon_historical, so there is no refused read to mark any more.
     assert set(no_figure) == {
         ("Aave", "locked_tokens"), ("Aave", "total_supply"),
@@ -11944,7 +11944,7 @@ def test_recovery_applies_itself_the_day_the_watch_child_reports_again():
 
     assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
         "a recovered series must not also report a gap"
-    # ===== ** UPDATED 2026-09-24: THIS SCENARIO NOW RAISES NO REVIEW ITEM. ** =====
+    # ===== ** UPDATED 2026-09-23: THIS SCENARIO NOW RAISES NO REVIEW ITEM. ** =====
     # morpho-blue covers 09-12..09-22 here, so `uncovered` is empty and there is nothing to
     # review — the series is sum(children), continuous and correct. This used to assert one
     # review row unconditionally, which is the behaviour that was narrowed: see
@@ -12036,7 +12036,7 @@ def test_the_hole_closes_by_itself_the_day_the_source_backfills_it():
             f"09-{day:02d} is backfilled upstream and must now be stored"
     assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
         "a filled window is not a gap, and nothing had to be edited to say so"
-    # ===== ** UPDATED 2026-09-24. THE FLAG CLEARING IS THE POINT OF THIS TEST NOW. ** =====
+    # ===== ** UPDATED 2026-09-23. THE FLAG CLEARING IS THE POINT OF THIS TEST NOW. ** =====
     # The window is filled, so the review flag that stood while the hole was open goes with it —
     # on the same run, with no human step, exactly like the gap row above. A flag that outlived
     # the hole it described would leave this row permanently marked for a problem that no longer
@@ -12302,7 +12302,7 @@ def test_the_morpho_level_break_verdict_is_recorded_as_falsified_not_quietly_rep
     re_ = rec["level_break_2026_09_23_REOPENED"]
     assert "FAILED" in re_["prediction_outcome"]
     assert "RULED OUT" in re_["single_break_explanation"]
-    # ** RESOLVED 2026-09-24 BY THE AB RESULTS, and resolved is not the same as explained. **
+    # ** RESOLVED 2026-09-23 BY THE AB RESULTS, and resolved is not the same as explained. **
     # The $13.3m is transient and not reproducible from the current series, so it stops being
     # chased — but the by_date summing was fixed WITHOUT being proved to be the cause, and the
     # record has to keep those two apart or the next reader will take the fix as the diagnosis.
@@ -12313,7 +12313,7 @@ def test_the_morpho_level_break_verdict_is_recorded_as_falsified_not_quietly_rep
     assert len(re_["hypotheses_eliminated"]) == 3, re_["hypotheses_eliminated"]
     assert re_["ab_results"]["AB3"].endswith("NOT cumulative")
     # AND THE SECOND BUG FOUND WHILE CONFIRMING THE WATCH IS ON THE RECORD TOO.
-    assert re_["partial_backfill_hole_fixed_on"] == "2026-09-24"
+    assert re_["partial_backfill_hole_fixed_on"] == "2026-09-23"
 
     # ** THE TWO THINGS RULED OUT ARE RULED OUT FROM THE CODE, so re-assert them against the
     # code rather than trusting the note. **
@@ -12324,7 +12324,7 @@ def test_the_morpho_level_break_verdict_is_recorded_as_falsified_not_quietly_rep
     from fetch.llama import DefiLlama
     src = inspect.getsource(DefiLlama._fees_with_restructure_guard)
     assert "total30d" not in src, "the recovery path must never read the parent's 30-day total"
-    # ** THE SUMMING KEYED ON .date() WAS REAL AND IS NOW FIXED (2026-09-24). ** This assertion
+    # ** THE SUMMING KEYED ON .date() WAS REAL AND IS NOW FIXED (2026-09-23). ** This assertion
     # used to pin the buggy line so the note could not describe code that had moved; it now pins
     # the opposite, because the line is gone. Summing ACROSS slugs is still the job — what must
     # never come back is accumulating two points from ONE slug on one date.
@@ -12585,7 +12585,7 @@ def test_two_points_on_one_date_are_reported_and_refused_not_silently_summed():
 
 
 def test_the_recovery_review_flag_tracks_the_hole_not_the_restructure():
-    """Narrowed 2026-09-24. It used to fire on every run for ever once a restructure recovered.
+    """Narrowed 2026-09-23. It used to fire on every run for ever once a restructure recovered.
 
     ** THE OVER-FLAGGING COST LANDS ON EVERY OTHER ROW, NOT THIS ONE. ** A reader who learns the
     review column carries rows needing nothing learns to skim the review column — and that is the
@@ -12624,7 +12624,7 @@ def test_the_recovery_review_flag_tracks_the_hole_not_the_restructure():
 
 
 # ======================================================================================
-# BIG ROUND, 2026-09-24 — three metric families across eleven projects, plus Morpho.
+# BIG ROUND, 2026-09-23 — three metric families across eleven projects, plus Morpho.
 # ======================================================================================
 
 def test_morphos_supply_units_passes_the_bound_that_used_to_reject_it_and_depin_bounds_are_untouched():
@@ -12750,7 +12750,7 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     assert set(w["wallets"]) == {
         "fefundsadmin.sputnik-dao.near", "1csfundsadmin.sputnik-dao.near", "buybacks.multisignature.near"}
     assert w["near_rpc_can_read_balances"] is True and "INFLOWS" in w["why_not_read"]
-    assert "moves" in w["reread_2026_09_24"]
+    assert "moves" in w["reread_2026_09_23"]
 
     # 1a — burn / split routes point at the burn row and carry ITS reason, so nobody builds a
     # second source for one event.
@@ -12775,9 +12775,9 @@ def test_the_five_treasury_cases_are_settled_the_way_the_facts_say():
     # 2b — wired, and the basis (an aggregator plus the instruction) is on the record, not hidden.
     c = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["treasury"]
     assert c["address"] == "0x0c83EAe1FE72c390A02E426572854931EefF93BA" and c["kind"] == "treasury_holding"
-    assert c["verified"] == "2026-09-24" and "AGGREGATOR-SOURCED" in c["provenance"]
+    assert c["verified"] == "2026-09-23" and "AGGREGATOR-SOURCED" in c["provenance"]
     assert "0x2f5301a3" in c["purpose"], "distinct from the buyback wallet, and says so"
-    assert config.PROJECT_BY_NAME["Ether.fi"]["treasury"]["wired_on"] == "2026-09-24"
+    assert config.PROJECT_BY_NAME["Ether.fi"]["treasury"]["wired_on"] == "2026-09-23"
     # 2c — two Pendle-authored sources.
     c = config.PROJECT_BY_NAME["Pendle"]["contracts"]["treasury"]
     assert c["address"] == "0x8270400d528c34e1596EF367eeDEc99080A1b592" and c["kind"] == "treasury_holding"
@@ -12825,7 +12825,7 @@ def test_the_research_round_records_answers_with_sources_and_never_wires_an_unve
     assert [q.get("status") for q in config.OPEN_QUESTIONS if q.get("project") == "Fluid"] == ["closed"]
     assert "locked_tokens" not in config.metrics_for_project(fl)
     # 4b — three addresses from Fluid's own repo; the decision is Jake's, so nothing is wired.
-    found = fl["buyback_contracts_found_2026_09_24"]
+    found = fl["buyback_contracts_found_2026_09_23"]
     assert found["buyback_proxy"] == "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1"
     assert found["treasury_address_hardcoded"] == "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"
     assert found["reserve_contract"] == "0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2"
@@ -12834,7 +12834,7 @@ def test_the_research_round_records_answers_with_sources_and_never_wires_an_unve
         "never wire an address whose role is not established — the closure stands until Jake decides"
     for m in ("actual_buyback_tokens", "actual_buyback_usd"):
         u = config.unavailable_for("Fluid", m)
-        assert u and "0x9Afb8C17" in u["reopen_candidate_2026_09_24"], "the closure stays, and says why it might not"
+        assert u and "0x9Afb8C17" in u["reopen_candidate_2026_09_23"], "the closure stays, and says why it might not"
     # 4c / 4e — searched and not found, with the search on record; nothing guessed.
     for name in ("Aethir", "GEODNET"):
         b = config.PROJECT_BY_NAME[name]["locked_tokens_blocked"]
@@ -13083,5 +13083,5 @@ def test_the_level_break_check_evaluates_only_real_days_once_section_u_has_run()
     # AND THE DAY IT FIRED — the 2026-09-23 run that produced the stale gap text.
     assert run(23, True)[0] == "fires"
     rec = (config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]
-           ["level_break_2026_09_23_REOPENED"]["sheet_trace_2026_09_24"])
+           ["level_break_2026_09_23_REOPENED"]["sheet_trace_2026_09_23"])
     assert "not evaluated" in rec["level_break_after_u3"]["rows_deleted"]

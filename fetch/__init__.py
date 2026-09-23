@@ -653,7 +653,7 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
 
         # (2) THE USD TWIN, for whatever token series now exists.
         # ===== THE SPLIT ROUTE: THE SUPPLY-REDUCTION LEG IS A BURN, SO IT RE-LABELS TOO. =====
-        # Added 2026-09-24 for Sky. Stage 2 spends 27.5% of NPS on SKY: 22.5 points go to
+        # Added 2026-09-23 for Sky. Stage 2 spends 27.5% of NPS on SKY: 22.5 points go to
         # stakers (distributed, unmeasured — no stock, no burn) and 5 points are bought and
         # BURNED. The burn leg is the same event as gross_burn_tokens, exactly as GEODNET's whole
         # buyback is, so it is taken from that series rather than sourced again — and marked

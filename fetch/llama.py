@@ -372,7 +372,7 @@ class DefiLlama:
             # each slug is read into its own dict, a repeated date there is REPORTED rather than
             # added, and only then is the slug folded into the total.
             #
-            # NOT CURRENTLY TRIGGERED — the 2026-09-24 store has no duplicate dates. It is fixed
+            # NOT CURRENTLY TRIGGERED — the 2026-09-23 store has no duplicate dates. It is fixed
             # anyway: a latent fault that happened not to fire is not a fixed one, and this
             # branch runs on every future restructure recovery, when a re-indexing provider is
             # exactly the thing most likely to emit a date twice.
@@ -477,7 +477,7 @@ class DefiLlama:
                                 f"{uncovered[0].date()}..{uncovered[-1].date()}, which this "
                                 f"check picks up on its own the next run. Do NOT fill them by "
                                 f"interpolation or by carrying the neighbouring days."))
-        # ===== ** THE FLAG IS SCOPED TO THE HOLE, AND THIS IS DELIBERATE. Narrowed 2026-09-24.
+        # ===== ** THE FLAG IS SCOPED TO THE HOLE, AND THIS IS DELIBERATE. Narrowed 2026-09-23.
         # DO NOT WIDEN IT BACK. ** =====
         # This fired unconditionally, so once a restructure had recovered, fees_usd read `review`
         # on EVERY subsequent run — for ever, including when the break window was fully

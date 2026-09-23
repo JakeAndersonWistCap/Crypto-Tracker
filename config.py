@@ -2091,11 +2091,11 @@ PROJECTS = [
             "wanted": "NEAR transferred INTO buybacks.multisignature.near per period (the buyback), excluding hops from the other two revenue wallets",
             "why": "the wallet is named in DefiLlama's near-intents adapter (from NEAR's own Dune query 6740088). NEAR RPC can read its balance via view_account, but a balance is inflow minus spending and the wallet exists to spend. The inflow needs NEAR receipt history, which is a Dune query over dune.near.dataset_near_intents_fees, not an RPC call.",
             "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/near-intents/index.ts",
-            "source_date": "2026-09-24",
+            "source_date": "2026-09-23",
             "route_that_would_work": "a Dune query mirroring the adapter's `moves` CTE filtered to wallet = 'buybacks.multisignature.near' with the same self-hop exclusion, on a daily bucket. The adapter's SQL is the specification.",
         },
         # ===== treasury_holding_tokens — n/a, and the Base contract entry is retired to a record.
-        # 2026-09-24. =====
+        # 2026-09-23. =====
         # The Intents Treasury on Base (0x2CfF890f...) holds a multi-asset basket. There is no
         # NEAR-equivalent token on Base on file, so "NEAR held" has nothing to read there — the
         # adapter's same-chain guard has been refusing it correctly every run. Declaring the
@@ -2106,7 +2106,7 @@ PROJECTS = [
             "chain": "base",
             "source_url": "https://docs.near-intents.org/security-compliance/treasury-addresses",
             "source_date": "2026-09-23",
-            "why_not_a_contract": "was contracts.intents_treasury_base (kind treasury_holding) until 2026-09-24; retired because treasury_holding_tokens is now not_applicable — a multi-asset basket with no NEAR-equivalent token on that chain has no 'NEAR held' figure. Six-chain treasury, ~$43.4m (June 2026); only the Base leg was ever on file.",
+            "why_not_a_contract": "was contracts.intents_treasury_base (kind treasury_holding) until 2026-09-23; retired because treasury_holding_tokens is now not_applicable — a multi-asset basket with no NEAR-equivalent token on that chain has no 'NEAR held' figure. Six-chain treasury, ~$43.4m (June 2026); only the Base leg was ever on file.",
         },
         # ===== THE INTENTS REVENUE WALLETS, AND WHAT intents.near IS NOT. Added 2026-09-23. =====
         #
@@ -2156,9 +2156,9 @@ PROJECTS = [
                             "measures INFLOWS to them; a balance delta nets out the spending, "
                             "and the buyback wallet's whole purpose is to spend. Reading it "
                             "would understate the buyback by the buyback.",
-            # Re-read 2026-09-24 for the buyback round: the same three wallets, the same
+            # Re-read 2026-09-23 for the buyback round: the same three wallets, the same
             # inflow rule. Two facts added, nothing above changed.
-            "reread_2026_09_24": "the adapter's `moves` CTE sums receipt deposits and wrap.near "
+            "reread_2026_09_23": "the adapter's `moves` CTE sums receipt deposits and wrap.near "
                                  "balance changes INTO these wallets and excludes hops between "
                                  "them; that SQL is the specification for any Dune query built "
                                  "to replace it.",
@@ -2171,17 +2171,17 @@ PROJECTS = [
                                      "dependency, not an RPC call.",
         },
         "not_applicable": {
-            # ===== NO NEAR TO READ IN THE TREASURY, AND NO PROTOCOL SLUG. Declared 2026-09-24. =====
+            # ===== NO NEAR TO READ IN THE TREASURY, AND NO PROTOCOL SLUG. Declared 2026-09-23. =====
             "treasury_holding_tokens":
                 "THE INTENTS TREASURY HOLDS A MULTI-ASSET BASKET ON BASE with no NEAR-equivalent "
                 "token on that chain, so there is nothing to read as 'NEAR held'. The address is "
-                "kept in treasury_reference. Declared 2026-09-24.",
+                "kept in treasury_reference. Declared 2026-09-23.",
             "protocol_tvl_usd":
                 "NEAR IS A CHAIN, NOT A PROTOCOL. protocol_tvl_usd needs a DefiLlama protocol "
                 "slug and there is none for the chain itself; the chain's TVL is tvl_usd, which "
                 "is applicable and sourced via defillama_chain. Hyperliquid keeps protocol_tvl "
                 "because it has a protocol listing (the DEX) as well as a chain. Declared "
-                "2026-09-24.",
+                "2026-09-23.",
             # ===== THERE IS NO MAXIMUM. Declared 2026-09-22. =====
             # NEAR mints validator rewards on an inflation curve and burns 70% of gas; neither
             # side is capped, so terminal supply is an outcome rather than a parameter. The
@@ -2493,7 +2493,7 @@ PROJECTS = [
         # holding ~$43.4m across six chains as of June 2026. Only the Base leg is read: the other
         # five are separate addresses not on file, so the figure is PARTIAL by construction.
         "contracts": {
-            # intents_treasury_base RETIRED 2026-09-24 — see treasury_reference above. It served
+            # intents_treasury_base RETIRED 2026-09-23 — see treasury_reference above. It served
             # treasury_holding_tokens, which is now not_applicable; a contract serving a metric
             # its project cannot have is the shape section AA of orphan_cleanup.sql documented.
             # (The original entry read 0x2CfF890f... on Base, verified 2026-09-23 against NEAR
@@ -3055,7 +3055,7 @@ PROJECTS = [
         # ===== B2: NO ISSUANCE HAS EVER BEEN POSSIBLE, AND NONE EVER WILL BE. =====
         "not_applicable": {
             # ===== THE RESERVE IS THE BUYBACK FUND; THERE IS NO SEPARATE TREASURY IN SCOPE.
-            # Declared 2026-09-24. =====
+            # Declared 2026-09-23. =====
             # Chainlink's LINK accumulates in the Reserve (contracts.reserve, kind
             # buyback_fund_balance, 0x9A709B7B...), which is read as the buyback fund. A second
             # column reading the same address as "treasury holding" would be the same balance
@@ -3065,7 +3065,7 @@ PROJECTS = [
                 "THE RESERVE IS THE BUYBACK FUND. Chainlink's LINK holding is contracts.reserve, "
                 "read as buyback_fund_balance; there is no separate treasury in scope, and "
                 "reading the same address twice under two names is not a second figure. "
-                "Declared 2026-09-24.",
+                "Declared 2026-09-23.",
             # ===== LINK IS NOT BURNED. Declared 2026-09-22. =====
             # Chainlink's fee flow runs the other way: node operators are PAID in LINK, and the
             # Reserve accumulates LINK bought with non-LINK revenue. Nothing in the design
@@ -3371,7 +3371,7 @@ PROJECTS = [
             "note": "the whitepaper's Fig. 1 curve rises to the 2bn cap, which is minting.",
         },
         "name": "World Mobile", "symbol": "WMTX",
-        # ===== THREE ROUTES, ONE REASON: THE ADDRESS IS NOT PUBLISHED. Recorded 2026-09-24. =====
+        # ===== THREE ROUTES, ONE REASON: THE ADDRESS IS NOT PUBLISHED. Recorded 2026-09-23. =====
         "actual_buyback_tokens_blocked": {
             "status": "NO READABLE DESTINATION — the Treasury wallet has never been published",
             "wanted": "WMTX Transfer events INTO the treasury the buyback pays into",
@@ -3389,7 +3389,7 @@ PROJECTS = [
             "route_that_would_work": "World Mobile publishing the address. This is a treasury_holding balance read, which IS the right shape for a holding (unlike the buyback flow above).",
         },
         # ===== locked_tokens — EarthNode staking IS a contract, and it is on CARDANO. Researched
-        # 2026-09-24. =====
+        # 2026-09-23. =====
         # worldmobilegroup/wmt-staking-plutus-smart-contract is World Mobile's own Plutus staking
         # validator: "allows WMT holders on Cardano to stake to an already registered EarthNode
         # operating on AyA". staking_terms.live_on says Base as well, but no Base (or Ethereum,
@@ -3400,9 +3400,9 @@ PROJECTS = [
         "locked_tokens_blocked": {
             "status": "NOT READABLE HERE — the staking contract found is a Cardano Plutus validator, not an EVM escrow",
             "wanted": "WMTX staked to EarthNodes, as an escrow balance",
-            "why": "World Mobile's own repository worldmobilegroup/wmt-staking-plutus-smart-contract is the EarthNode staking contract, and it is Cardano Plutus (validator address generated per instance — see its README). No EVM staking contract was found in any worldmobilegroup repository on 2026-09-24, and the docs site is unreachable from here. A Cardano validator balance needs a Cardano read, which this tool does not have.",
+            "why": "World Mobile's own repository worldmobilegroup/wmt-staking-plutus-smart-contract is the EarthNode staking contract, and it is Cardano Plutus (validator address generated per instance — see its README). No EVM staking contract was found in any worldmobilegroup repository on 2026-09-23, and the docs site is unreachable from here. A Cardano validator balance needs a Cardano read, which this tool does not have.",
             "source_url": "https://github.com/worldmobilegroup/wmt-staking-plutus-smart-contract",
-            "source_date": "2026-09-24",
+            "source_date": "2026-09-23",
             "route_that_would_work": "a Cardano-side read of the staking validator's WMT balance (Blockfrost/Koios), or World Mobile publishing a Base staking contract if the Base leg in staking_terms.live_on is on-chain rather than snapshot-based.",
         },
         "coingecko_id": "world-mobile-token",
@@ -4436,16 +4436,16 @@ PROJECTS = [
                     "outflow history.",
         },
         "name": "GEODNET", "symbol": "GEOD",
-        # ===== locked_tokens — SuperHex staking contract NOT FOUND. Researched 2026-09-24. =====
+        # ===== locked_tokens — SuperHex staking contract NOT FOUND. Researched 2026-09-23. =====
         "locked_tokens_blocked": {
             "status": "MECHANISM DOCUMENTED, CONTRACT NOT FOUND — see superhex_staking",
             "wanted": "GEOD staked into SuperHex positions (20,000 GEOD per full stake, pooled) on Polygon",
             "why": "GEODNET's own GIP repository (geodnet/GIP) carries GIP5 'SuperHex Bonus Rewards Requirement', which defines the staking success benchmark and RRR rules and names no contract. GitHub code search finds no GEODNET-authored staking contract; docs.geodnet.com is unreachable from here. No address is guessed.",
             "source_url": "https://raw.githubusercontent.com/geodnet/GIP/main/GIP202381733411309930.md",
-            "source_date": "2026-09-24",
+            "source_date": "2026-09-23",
             "route_that_would_work": "a GEODNET-authored page or GIP naming the SuperHex staking contract on Polygon; then an escrow_balance_of read on GEOD (contracts.token_polygon) against it.",
         },
-        # ===== buyback_wallet_polygon_historical RETIRED 2026-09-24. =====
+        # ===== buyback_wallet_polygon_historical RETIRED 2026-09-23. =====
         # It was a contract of kind buyback_fund_balance on a project whose buyback BURNS
         # (buyback_destination burn, archetype narrowed), so the metric it served is not one
         # GEODNET can have — the shape section AA of orphan_cleanup.sql found on Uniswap. It was
@@ -4456,7 +4456,7 @@ PROJECTS = [
             "buyback_wallet_polygon_historical": {
                 "address": "0xc327C048d75398Da9DB5254679bb84a4a9e42010",
                 "chain": "polygon", "kind_was": "buyback_fund_balance",
-                "retired_on": "2026-09-24",
+                "retired_on": "2026-09-23",
                 "why": "unverified (model-knowledge, no GEODNET source), served a metric the project cannot have (the buyback burns), and not referenced by the burn query that IS the buyback route.",
             },
         },
@@ -5053,7 +5053,7 @@ PROJECTS = [
                 provenance="Dune query 8683175 — the original documented source of this address",
                 purpose="TRANSFER BURN — Solana burn destination. This is a TOKEN-ACCOUNT read, not an "
                         "incinerator balance, so it needs a Solana RPC adapter rather than the EVM one."),
-            # buyback_wallet_polygon_historical RETIRED 2026-09-24 — see retired_contracts.
+            # buyback_wallet_polygon_historical RETIRED 2026-09-23 — see retired_contracts.
 
             # ============ THREE WALLETS FROM GEODNET'S OWN TOKENOMICS PAGE, ALL POLYGON ============
             # Added 2026-09-15 from docs.geodnet.com/geod-token/tokenomics — the same page as the
@@ -5413,13 +5413,13 @@ PROJECTS = [
             "note": "released from a pre-minted allocation.",
         },
         "name": "Aethir", "symbol": "ATH",
-        # ===== locked_tokens — RESEARCHED 2026-09-24, NOT FOUND, SEARCH RECORDED. =====
+        # ===== locked_tokens — RESEARCHED 2026-09-23, NOT FOUND, SEARCH RECORDED. =====
         "locked_tokens_blocked": {
             "status": "STAKING EXISTS, CONTRACT NOT IDENTIFIED — Aethir's docs are unreachable from here and nothing on GitHub names it",
             "wanted": "ATH staked by Checker Node operators and Cloud Hosts on Arbitrum, as an escrow balance",
             "why": "Aethir's docs index (docs.aethir.com, via two llms.txt mirrors on GitHub) has pages for 'Aethir Staking', 'Staking Key Information', 'Staking as Cloud Host' and 'Staking Parameters', so a staking mechanism is documented. The pages' content is not reachable from this environment and GitHub code search finds no Aethir-authored repository with the contract. No address is guessed.",
             "source_url": "https://raw.githubusercontent.com/reclear-io/llmref/main/registry/aethir/2026.07.02/llms.txt",
-            "source_date": "2026-09-24",
+            "source_date": "2026-09-23",
             "route_that_would_work": "read docs.aethir.com/aethir-staking/staking-key-information from a host that can reach it and take the Arbitrum contract from there; then an escrow_balance_of read on ATH (contracts.token_arbitrum) against it.",
         },
         "coingecko_id": "aethir",
@@ -5819,7 +5819,7 @@ PROJECTS = [
                     "distribution of expiries.",
         },
         "name": "Maple", "symbol": "SYRUP",
-        # ===== actual_buyback_tokens — FUND KNOWN, ROUTE BLOCKED. Recorded 2026-09-24. =====
+        # ===== actual_buyback_tokens — FUND KNOWN, ROUTE BLOCKED. Recorded 2026-09-23. =====
         # The gap used to read "no contract of kind buyback_fund_balance declared", which was
         # false: contracts.treasury (the daoMultisig, 0xd6d4Bcde...) IS the fund. What is missing
         # is not an address but the Transfer-event scan into it.
@@ -6262,7 +6262,7 @@ PROJECTS = [
         },
         "name": "Morpho", "symbol": "MORPHO",
         # ===== ** supply_units WAS REJECTED BY THE LIBRARY SANITY BOUND, NOT LOST IN TRANSIT. **
-        # Traced 2026-09-24. =====
+        # Traced 2026-09-23. =====
         # morpho_api reported "2 rows | 0 failed" and neither rendered. The Run Log was right:
         # the adapter DID emit both rows —
         #     (Morpho, supply_units,     morpho_api:markets)  value  5,868,948,998
@@ -6292,7 +6292,7 @@ PROJECTS = [
             "morpho_api; the unit override is the caveat that travels for the new route, via "
             "the column's own unit rather than a second free-text warning on a correct figure."),
         # ===== ** utilisation_pct IS STUCK ON measuring_point_changed, AND WILL STAY STUCK. **
-        # Traced 2026-09-24. =====
+        # Traced 2026-09-23. =====
         # The stored series holds rows from TWO sources — DefiLlama (0.3231, collateral-biased,
         # written before 2026-09-23) and morpho_api (0.8802) — and build_workbook's case 5 blanks
         # any series with more than one measuring point unless a series_handover is declared.
@@ -6302,7 +6302,7 @@ PROJECTS = [
         # clears them — this does NOT clear on the next run. See orphan_cleanup.sql section AC,
         # which shows the rows before proposing anything.
         "utilisation_pct_measuring_point_stuck": {
-            "traced_on": "2026-09-24",
+            "traced_on": "2026-09-23",
             "sources_in_store": ["defillama (0.3231, collateral in the denominator)",
                                  "morpho_api:markets (0.8802, listed markets)"],
             "why_not_a_handover": "different quantities, not two legs of one series",
@@ -6871,7 +6871,7 @@ PROJECTS = [
             # So this is the best-supported reading, not a confirmed one. Re-run the probe from a host
             # that can reach api.llama.fi to settle it.
             # ===== ** THE 09-23 VERDICT ABOVE WAS WRONG, AND ITS OWN PREDICTION IS WHAT KILLED IT. **
-            # Reopened 2026-09-24. =====
+            # Reopened 2026-09-23. =====
             # The prediction was that the 7-day median would snap back to Blue's ~$600,000 in ONE STEP on
             # 09-24. It did not. fees_usd now reads $13,302,020.60 — status review, source defillama —
             # about 22x the PRE-break level rather than a return to it. A single unbackfilled hole inside
@@ -6907,7 +6907,7 @@ PROJECTS = [
             # would be made worse by guessing. The store is the only place that series exists — it cannot
             # be fetched from this container (api.llama.fi answers 403 CONNECT at the proxy).
             "level_break_2026_09_23_REOPENED": {
-                "reopened_on": "2026-09-24",
+                "reopened_on": "2026-09-23",
                 "prediction_made": "7d median returns to ~$600,000 in one step on 2026-09-24",
                 "prediction_outcome": "FAILED — fees_usd reads $13,302,020.60, ~22x the pre-break level",
                 "single_break_explanation": "RULED OUT — a hole cannot push a median above the healthy level",
@@ -6921,7 +6921,7 @@ PROJECTS = [
                 "mechanism_to_check_first": (
                     "recovery sums by .date() — by_date[day] += v — so two points on one UTC date merge "
                     "silently. Unique to the recovery branch; the ordinary path passes pairs to tidy()."),
-                # ===== ** RESOLVED 2026-09-24 BY THE AB RESULTS — AND NOT THE WAY EITHER
+                # ===== ** RESOLVED 2026-09-23 BY THE AB RESULTS — AND NOT THE WAY EITHER
                 # HYPOTHESIS EXPECTED. ** =====
                 # AB1/AB2: 09-21 and 09-22 came back at 704,123 and 713,684, inside Blue's
                 # pre-break range; 09-12..09-20 still sit at the Midnight-only residual (0 to
@@ -6937,7 +6937,7 @@ PROJECTS = [
                 # it did not fire on what is stored now. Each slug is now read into its own dict
                 # and a repeated date is reported with both values, failing the project's fetch,
                 # rather than being added into a daily column.
-                "resolved_on": "2026-09-24",
+                "resolved_on": "2026-09-23",
                 "resolution": "TRANSIENT — superseded run; not reproducible from the current series",
                 "ab_results": {
                     "AB1_AB2": "09-21 = 704,123 and 09-22 = 713,684; 09-12..09-20 still residual (0-178); no 13.3m point",
@@ -6949,7 +6949,7 @@ PROJECTS = [
                     "parent/child double-count — mechanically excluded by sum_slugs",
                     "cumulative series — ruled out by AB3's ordinary daily step",
                 ],
-                "mechanism_fixed_on": "2026-09-24",
+                "mechanism_fixed_on": "2026-09-23",
                 "mechanism_was_the_cause": "NOT ESTABLISHED — fixed because it is real, not because it was proved",
                 # ** A SECOND, SEPARATE BUG FOUND WHILE CONFIRMING THE WATCH. ** The held-out
                 # window was bounded by `d < recovered_from`, and recovered_from is the EARLIEST
@@ -6958,10 +6958,10 @@ PROJECTS = [
                 # and let 09-16..09-20 through as Midnight's ~$2/day. The trigger is the very
                 # event this watch waits for. Fixed the same day; verified by driving the
                 # function — the old form stored five residual rows, the new one stores none.
-                "partial_backfill_hole_fixed_on": "2026-09-24",
-                # ===== THE SHEET-VS-STORE DISAGREEMENT, TRACED 2026-09-24. Three cells, three
+                "partial_backfill_hole_fixed_on": "2026-09-23",
+                # ===== THE SHEET-VS-STORE DISAGREEMENT, TRACED 2026-09-23. Three cells, three
                 # different causes, none of them a caching problem. =====
-                "sheet_trace_2026_09_24": {
+                "sheet_trace_2026_09_23": {
                     "fees_usd_displays_13302020": (
                         "NOT a daily point. The Data tab's column is headed 'Now (flow: trailing 30d "
                         "sum · stock: latest)' and fees_usd is a FLOW, so the cell is "
@@ -7003,7 +7003,7 @@ PROJECTS = [
                     "supply_units_and_utilisation": "see the Morpho project entry — sanity bound and measuring-point notes",
                 },
                 # ===== ** THE RECOVERY REVIEW FLAG IS SCOPED TO THE HOLE. DO NOT WIDEN IT BACK.
-                # Narrowed 2026-09-24. ** =====
+                # Narrowed 2026-09-23. ** =====
                 # source_restructure_recovered used to fire on EVERY run once a restructure had
                 # recovered, so fees_usd read `review` for ever — including with the break window
                 # fully backfilled and nothing whatever to look at. It now fires only while
@@ -7024,7 +7024,7 @@ PROJECTS = [
                 #
                 # The restructure is a permanent fact and it lives HERE, in config, which is where
                 # permanent facts belong. The review column is for things that need doing.
-                "review_flag_scoped_on": "2026-09-24",
+                "review_flag_scoped_on": "2026-09-23",
                 "review_flag_rule": "fires only while `uncovered` is non-empty; clears the run after the last absent day is backfilled",
                 "review_flag_do_not": "do NOT restore the unconditional flag — a recovered series with no hole has nothing to review, and a permanently flagged row teaches readers to skim the review column",
                 "blocked_on": "nothing — AB answered it",
@@ -10400,7 +10400,7 @@ PROJECTS = [
                     "is not.",
         },
         "name": "Pendle", "symbol": "PENDLE",
-        # ===== actual_buyback_tokens — NO READABLE DESTINATION. Recorded 2026-09-24. =====
+        # ===== actual_buyback_tokens — NO READABLE DESTINATION. Recorded 2026-09-23. =====
         "actual_buyback_tokens_blocked": {
             "status": "NO INTERMEDIATE WALLET PUBLISHED — the buyback distributes as sPENDLE to active holders",
             "wanted": "PENDLE bought each fortnight from protocol revenue, before distribution",
@@ -10587,7 +10587,7 @@ PROJECTS = [
             },
         },
         "contracts": {
-            # ===== THE TREASURY, FROM TWO PENDLE-AUTHORED SOURCES. Wired 2026-09-24. =====
+            # ===== THE TREASURY, FROM TWO PENDLE-AUTHORED SOURCES. Wired 2026-09-23. =====
             # (1) deployments/1-core.json in pendle-core-v2-public: network.treasury =
             #     0x8270400d528c34e1596EF367eeDEc99080A1b592 (the nested `network` object — the
             #     earlier read of this file listed only top-level keys, which is why the address
@@ -10600,10 +10600,10 @@ PROJECTS = [
             "treasury": _contract(
                 "0x8270400d528c34e1596EF367eeDEc99080A1b592", "ethereum", "treasury_holding", "PENDLE",
                 "https://raw.githubusercontent.com/pendle-finance/pendle-core-v2-public/main/deployments/1-core.json",
-                verified="2026-09-24",
+                verified="2026-09-23",
                 provenance="pendle-core-v2-public deployments/1-core.json (network.treasury) AND "
                            "pendle-finance/documentation Fees.md (Ethereum Fee Wallet Address) — "
-                           "two Pendle-authored sources agreeing, read 2026-09-24",
+                           "two Pendle-authored sources agreeing, read 2026-09-23",
                 purpose="PENDLE held by Pendle's treasury / fee wallet on Ethereum.",
                 note="the same address is the treasury on Ethereum only; other chains use "
                      "different wallets (Arbitrum 0xCbcb48e2..., BNB 0xd77E9062..., per the "
@@ -11054,7 +11054,7 @@ PROJECTS = [
             },
         },
         "name": "Fluid", "symbol": "FLUID",
-        # ===== THE BUYBACK CONTRACTS ARE IN FLUID'S OWN REPOSITORY. Found 2026-09-24. =====
+        # ===== THE BUYBACK CONTRACTS ARE IN FLUID'S OWN REPOSITORY. Found 2026-09-23. =====
         # Instadapp/fluid-contracts-public, contracts/periphery/buyback/SPEC.md: "Rebalancer-driven
         # FLUID buyback via an owned DSA; swaps protocol revenue -> FLUID and forwards to
         # treasury. It does NOT burn FLUID — bought tokens are later moved to TREASURY_ADDRESS by
@@ -11078,7 +11078,7 @@ PROJECTS = [
         # confirmed from source), and the flow is measurable from LogBuyback events on the proxy
         # — an event route, not a balance, exactly the inflow principle — blocked by the Ethereum
         # 10-block cap like every other log scan. Jake decides which address is the fund.
-        "buyback_contracts_found_2026_09_24": {
+        "buyback_contracts_found_2026_09_23": {
             "buyback_proxy": "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1",
             "buyback_implementation": "0xC27293043EF9B6c911AEf47e4A563baE8a91654f",
             "treasury_address_hardcoded": "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09",
@@ -11095,7 +11095,7 @@ PROJECTS = [
             ],
             "decision_needed": "confirm TREASURY_ADDRESS as buyback_fund_balance (and reopen the actual_buyback closures onto the LogBuyback route), or keep the closure. Not made here.",
         },
-        # ===== "DOES A FLUID STAKING OR LOCK MECHANISM EXIST" — ANSWERED 2026-09-24: NO. =====
+        # ===== "DOES A FLUID STAKING OR LOCK MECHANISM EXIST" — ANSWERED 2026-09-23: NO. =====
         # What exists in fluid-contracts-public is FluidLendingStakingRewards
         # (contracts/protocols/lending/stakingRewards/main.sol): a Synthetix-style pool that
         # stakes fTOKEN SHARES (fUSDC, fUSDT — lending receipts) for a reward token. Its own SPEC
@@ -11105,7 +11105,7 @@ PROJECTS = [
         # stays not_applicable, now with the repository as the source rather than an absence.
         "fluid_token_staking_checked": {
             "answer": "NO — no FLUID-token staking or lock contract exists in fluid-contracts-public. The staking that exists stakes fToken lending receipts (FluidLendingStakingRewards), which is a different thing.",
-            "checked_on": "2026-09-24",
+            "checked_on": "2026-09-23",
             "sources": [
                 "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/main/contracts/periphery/resolvers/stakingRewards/SPEC.md",
                 "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/main/contracts/periphery/resolvers/stakingMerkle/SPEC.md",
@@ -11654,14 +11654,14 @@ PROJECTS = [
             "source_date": "2026-09-23",
             "provenance": "the adapter's getMiscStakingRevenue targets it and its own breakdown "
                           "methodology calls it 'the protocol treasury'",
-            "wired_on": "2026-09-24",
+            "wired_on": "2026-09-23",
             "wired_as": "contracts.treasury, kind treasury_holding, on Jake's instruction — see the contract entry for the provenance caveat",
             "previously_not_wired": "recorded, not declared as a treasury_holding contract. What it HOLDS "
                          "has not been read, and a treasury column wants a balance in ETHFI "
                          "rather than the eETH and EIGEN this address is described as receiving.",
         },
         "name": "Ether.fi", "symbol": "ETHFI",
-        # ===== actual_buyback_tokens — WALLET KNOWN FROM THREE SOURCES, ROUTE BLOCKED. 2026-09-24.
+        # ===== actual_buyback_tokens — WALLET KNOWN FROM THREE SOURCES, ROUTE BLOCKED. 2026-09-23.
         "actual_buyback_tokens_blocked": {
             "status": "BLOCKED — buyback wallet known, inflow scan blocked by the provider cap",
             "wanted": "ETHFI Transfer events INTO the buyback wallet 0x2f5301a3D59388c509C65f8698f521377D41Fd0F (the CoW-swap taker in DefiLlama's adapter), summed per period",
@@ -11744,7 +11744,7 @@ PROJECTS = [
                                "available function is not a mechanism — destination stays DISTRIBUTE."},
         "issuance_schedule": None,
         "contracts": {
-            # ===== THE PROTOCOL TREASURY, WIRED 2026-09-24 ON JAKE'S INSTRUCTION. =====
+            # ===== THE PROTOCOL TREASURY, WIRED 2026-09-23 ON JAKE'S INSTRUCTION. =====
             # Distinct from the buyback wallet (0x2f5301a3..., see buyback_wallet): this is the
             # address DefiLlama's ether-fi-stake adapter routes miscellaneous staking revenue to
             # (eETH and EIGEN transfers, the protocol's ~11% of EigenLayer restaking rewards) and
@@ -11756,10 +11756,10 @@ PROJECTS = [
             "treasury": _contract(
                 "0x0c83EAe1FE72c390A02E426572854931EefF93BA", "ethereum", "treasury_holding", "ETHFI",
                 "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/ether-fi-stake/index.ts",
-                verified="2026-09-24",
+                verified="2026-09-23",
                 provenance="DefiLlama ether-fi-stake adapter (getMiscStakingRevenue targets it; "
                            "its breakdown text calls it 'the protocol treasury'), read "
-                           "2026-09-23; wired on Jake's instruction 2026-09-24. AGGREGATOR-SOURCED "
+                           "2026-09-23; wired on Jake's instruction 2026-09-23. AGGREGATOR-SOURCED "
                            "— not confirmed against an Ether.fi-authored page.",
                 purpose="ETHFI held by the protocol treasury. NOT the buyback wallet, which is "
                         "0x2f5301a3... and receives/distributes the bought ETHFI.",
@@ -13528,12 +13528,12 @@ UNAVAILABLE = [
     # A PERMANENT GAP, ACCEPTED. Five independent sources checked, none publishes the address.
     {
         "project": "Fluid", "metric": "actual_buyback_tokens",
-        # ** REOPEN CANDIDATE, 2026-09-24. ** The buyback contracts are in Fluid's own repository
-        # (see the project's buyback_contracts_found_2026_09_24): a proxy that emits LogBuyback
+        # ** REOPEN CANDIDATE, 2026-09-23. ** The buyback contracts are in Fluid's own repository
+        # (see the project's buyback_contracts_found_2026_09_23): a proxy that emits LogBuyback
         # and a hardcoded TREASURY_ADDRESS that receives the bought FLUID. Whether that address is
         # "the Reserve" this closure names is not established, so the closure stands until Jake
         # decides; but "never disclosed" is no longer the state of the world.
-        "reopen_candidate_2026_09_24": "Fluid's repo names the buyback proxy (0x9Afb8C17...) and the FLUID recipient (0x28849D2b...); decision needed on whether that is the Reserve",
+        "reopen_candidate_2026_09_23": "Fluid's repo names the buyback proxy (0x9Afb8C17...) and the FLUID recipient (0x28849D2b...); decision needed on whether that is the Reserve",
         "closed_on": "2026-09-14",
         "summary": "The Fluid Reserve address has never been disclosed by Fluid, in any source.",
         "what_was_tried": (
@@ -13553,12 +13553,12 @@ UNAVAILABLE = [
     },
     {
         "project": "Fluid", "metric": "actual_buyback_usd",
-        # ** REOPEN CANDIDATE, 2026-09-24. ** The buyback contracts are in Fluid's own repository
-        # (see the project's buyback_contracts_found_2026_09_24): a proxy that emits LogBuyback
+        # ** REOPEN CANDIDATE, 2026-09-23. ** The buyback contracts are in Fluid's own repository
+        # (see the project's buyback_contracts_found_2026_09_23): a proxy that emits LogBuyback
         # and a hardcoded TREASURY_ADDRESS that receives the bought FLUID. Whether that address is
         # "the Reserve" this closure names is not established, so the closure stands until Jake
         # decides; but "never disclosed" is no longer the state of the world.
-        "reopen_candidate_2026_09_24": "Fluid's repo names the buyback proxy (0x9Afb8C17...) and the FLUID recipient (0x28849D2b...); decision needed on whether that is the Reserve",
+        "reopen_candidate_2026_09_23": "Fluid's repo names the buyback proxy (0x9Afb8C17...) and the FLUID recipient (0x28849D2b...); decision needed on whether that is the Reserve",
         "closed_on": "2026-09-14",
         "summary": "Same as actual_buyback_tokens: the Reserve address was never disclosed.",
         "what_was_tried": "See the actual_buyback_tokens entry — five sources, none carrying an address.",
@@ -13660,21 +13660,21 @@ UNAVAILABLE = [
     # reachability alone, which are circumstances that can change. These two are blocked on
     # arithmetic, which cannot.
     # ---------------------------------------------------------------- Hyperliquid (RWA)
-    # ===== rwa_defillama_usd — CLOSED, NOT n/a, AND NOT LIVE-CONFIRMED. 2026-09-24. =====
+    # ===== rwa_defillama_usd — CLOSED, NOT n/a, AND NOT LIVE-CONFIRMED. 2026-09-23. =====
     # The brief asked for not_applicable. RWA on a chain is a thing that can come to exist, and
     # DefiLlama can start tracking it, so "cannot exist" would be false; this is a closure with
     # the reopen condition written down. And it rests on the run's own result ("DefiLlama
     # returned no data") rather than a fresh probe: api.llama.fi answers 403 CONNECT from this
-    # environment, so the listing was not inspected live on 2026-09-24. Said here so nobody reads
+    # environment, so the listing was not inspected live on 2026-09-23. Said here so nobody reads
     # this as a confirmation that was not performed.
     {
         "project": "Hyperliquid", "metric": "rwa_defillama_usd",
-        "closed_on": "2026-09-24",
+        "closed_on": "2026-09-23",
         "summary": "DefiLlama's RWA breakdown carries no entry for Hyperliquid L1 — the chain "
                    "has no tracked real-world-asset issuance.",
         "what_was_tried": (
             "The DefiLlama chain route (defillama_chain 'Hyperliquid L1') returns no RWA series, "
-            "run after run. NOT RE-VERIFIED LIVE on 2026-09-24: api.llama.fi is unreachable from "
+            "run after run. NOT RE-VERIFIED LIVE on 2026-09-23: api.llama.fi is unreachable from "
             "this environment (proxy 403), so this closure rests on the tool's own repeated "
             "'returned no data' result and on the absence of any RWA issuer on Hyperliquid in "
             "the round's research, not on a fresh inspection of the listing."),
@@ -13859,7 +13859,7 @@ POOL_RELEASE_ROUTES = {
     "Chainlink": {
         "wallet": "staking_reward_vault 0x996913c8c08472f584ab8834e925b06D0eb1D813",
         "chain": "ethereum", "wallet_known": True, "verified": "2026-09-17",
-        # ** BLOCKED BY THE SAME CAP AS EVERY OTHER ETHEREUM LOG SCAN. Stated 2026-09-24. **
+        # ** BLOCKED BY THE SAME CAP AS EVERY OTHER ETHEREUM LOG SCAN. Stated 2026-09-23. **
         "measured": "BLOCKED — Alchemy's free tier caps eth_getLogs at 10 blocks per request "
                     "(confirmed from the provider's error body, 2026-09-23), below MIN_LOG_CHUNK, "
                     "which is not lowered to force a result. Wiring is ready; the endpoint is not. "
@@ -13871,7 +13871,7 @@ POOL_RELEASE_ROUTES = {
         "wallet": "mining_polygon 0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F and "
                   "mining_distribution_polygon 0x8FB9dd00B9a3D893dA96d444817d0b77330d5478",
         "chain": "polygon", "wallet_known": True, "verified": "2026-09-17",
-        # ** THE PRECONDITION IS STILL UNCHECKED, AND CANNOT BE CHECKED FROM HERE. 2026-09-24. **
+        # ** THE PRECONDITION IS STILL UNCHECKED, AND CANNOT BE CHECKED FROM HERE. 2026-09-23. **
         # Whether polygon-bor-rpc.publicnode.com serves eth_getLogs AT ALL is unknown — every
         # Polygon endpoint answers 403 CONNECT at this environment's proxy, so a probe from here
         # says nothing about the provider. A flat method refusal and a range limit look alike in
@@ -13884,7 +13884,7 @@ POOL_RELEASE_ROUTES = {
         "derived": "live",
     },
     "Maple": {
-        # ===== syrupDrip IDENTIFIED 2026-09-24, FROM MAPLE'S OWN ADDRESS REGISTRY. =====
+        # ===== syrupDrip IDENTIFIED 2026-09-23, FROM MAPLE'S OWN ADDRESS REGISTRY. =====
         # maple-labs/address-registry: contracts/MapleAddressRegistryETH.sol declares
         # `address constant public syrupDrip = 0x509712F368255E92410893Ba2E488f40f7E986EA` and
         # MapleAddressRegistryETH.md lists the same. maple-labs/syrup-utils describes the
@@ -13892,7 +13892,7 @@ POOL_RELEASE_ROUTES = {
         # deadline, maxId) called by the governor and claims by users. That is the release pool:
         # SYRUP leaves it as holders claim, so its outflow (Transfer FROM it) is the release.
         "wallet": "syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA",
-        "chain": "ethereum", "wallet_known": True, "verified": "2026-09-24",
+        "chain": "ethereum", "wallet_known": True, "verified": "2026-09-23",
         "sources": [
             "https://raw.githubusercontent.com/maple-labs/address-registry/main/contracts/MapleAddressRegistryETH.sol",
             "https://raw.githubusercontent.com/maple-labs/address-registry/main/MapleAddressRegistryETH.md",
@@ -13908,7 +13908,7 @@ POOL_RELEASE_ROUTES = {
     "Hyperliquid": {
         "wallet": "future-emissions pool — on HyperCore, which has no eth_getLogs",
         "chain": "hypercore", "wallet_known": False,
-        # ** PERMANENT. Recorded 2026-09-24. ** Not 'likely impossible' — impossible by this
+        # ** PERMANENT. Recorded 2026-09-23. ** Not 'likely impossible' — impossible by this
         # route: HyperCore is not an EVM chain, exposes no eth_getLogs, and the tool reads it
         # through Hyperliquid's own info API, which publishes no pool-outflow series. The
         # derived figure is the figure.
@@ -13919,7 +13919,7 @@ POOL_RELEASE_ROUTES = {
     "Aethir": {
         "wallet": "emission / allocation wallets — NOT IDENTIFIED",
         "chain": "arbitrum", "wallet_known": False,
-        # ** RESEARCHED 2026-09-24 AND NOT FOUND, and what was searched is recorded so it is not
+        # ** RESEARCHED 2026-09-23 AND NOT FOUND, and what was searched is recorded so it is not
         # repeated. ** GitHub code search across all public repositories for Aethir's staking or
         # reward contracts returns only third-party mirrors (elizaOS partner docs, audit
         # listings for the Ethereum ATH token 0xbe0Ed413...). Aethir's own docs
@@ -14401,9 +14401,9 @@ OPEN_QUESTIONS = [
     },
     # ---------------------------------------------------------------- Fluid
     {
-        "project": "Fluid", "topic": "CLOSED 2026-09-24 — NO FLUID staking or lock contract exists; what exists stakes fToken receipts",
+        "project": "Fluid", "topic": "CLOSED 2026-09-23 — NO FLUID staking or lock contract exists; what exists stakes fToken receipts",
         "status": "closed",
-        "closed_on": "2026-09-24",
+        "closed_on": "2026-09-23",
         "closed_note": "settled from Instadapp/fluid-contracts-public: FluidLendingStakingRewards stakes fToken SHARES (fUSDC/fUSDT) for a reward token — its own SPEC says so — and no FLUID-token stake/lock/ve contract exists under contracts/protocols. See the project's fluid_token_staking_checked. The forum and 2026 announcements were NOT checked (unreachable); a not-yet-deployed proposal would not be in the repository.",
         "original_topic": "does a FLUID staking or lock mechanism exist at all?",
         "severity": 2,

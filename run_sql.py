@@ -44,7 +44,7 @@ DEFAULT_DB = HERE / "metrics.db"
 # headed inconsistently in the file — some open with "-- A. Title", some go straight to "-- D1." —
 # so both spellings are matched rather than relying on one convention the file does not keep.
 #
-# ===== ** TWO-LETTER LABELS. Fixed 2026-09-24, and the symptom was NOT a missing section. ** =====
+# ===== ** TWO-LETTER LABELS. Fixed 2026-09-23, and the symptom was NOT a missing section. ** =====
 # This was `([A-Z])` — exactly one letter — so when the file passed Z and went to AA, the new
 # markers stopped matching ENTIRELY. They were not reported as unknown; they were invisible, and
 # their SQL was absorbed into whichever section preceded them.
@@ -199,7 +199,7 @@ def parse_sections(sql: str) -> dict[str, dict]:
 
 
 # Prose in the SQL file that LOOKS like a section marker and is not. Each was checked by hand
-# on 2026-09-24. The list exists so that a NEW one has to be looked at rather than absorbed: see
+# on 2026-09-23. The list exists so that a NEW one has to be looked at rather than absorbed: see
 # _check_section_labels.
 KNOWN_NON_SECTIONS = {"FIX", "CAKE", "PENDLE"}
 
