@@ -13721,7 +13721,28 @@ OPEN_QUESTIONS = [
                       "burn path; the adapter already sums multiple paths.",
     },
     {
-        "project": "Uniswap", "topic": "release() burn threshold value",
+        "project": "Uniswap",
+        "topic": "ANSWERED 2026-09-23 — mainnet threshold() reads 4000e18 raw at block 26,039,143",
+        "status": "answered",
+        "answered_on": "2026-09-23",
+        "answer": "THE LIVE READ WAS MADE, which is what this asked for and what a documentary "
+                  "search could not supply. threshold() on the mainnet Fire Pit "
+                  "(0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721) returns "
+                  "4,000,000,000,000,000,000,000 raw at block 26,039,143. Recorded under "
+                  "governance_parameters.release_threshold_uni with the raw integer as the "
+                  "fact, the block, and 4,000 UNI labelled an ASSUMPTION — UNI's 18 decimals "
+                  "were not read in the same call, and this project has been burned by a "
+                  "decimals assumption before (the 20-30x Uniswap burn overstatement).",
+        "the_2000_figure_is_not_superseded": "It is a DIFFERENT DEPLOYMENT. Uniswap/"
+                                             "protocol-fees README.md gives 2,000 UNI under "
+                                             "'Cross-Chain UNI Burn (OP Stack L2s)' — the "
+                                             "bridged firepit's configuration, not mainnet's. "
+                                             "Both are correct at once. Do NOT reconcile them, "
+                                             "and do not file the difference as a mismatch.",
+        "still_true": "it remains governance STORAGE, not a constant. setThreshold() is gated "
+                      "on onlyThresholdSetter and the Timelock can appoint a different setter, "
+                      "so the figure is only as current as its read_on date. Re-read it when a "
+                      "Uniswap governance proposal touches the fee mechanism.",
         "severity": 3,
         "reason": "NARROWED 2026-09-14, and confirmed from Uniswap's own source rather than inferred. "
                   "src/base/ResourceManager.sol declares `uint256 public threshold;` with `setThreshold()` gated "

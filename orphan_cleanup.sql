@@ -2375,3 +2375,68 @@ SELECT date, metric, value, source
  WHERE project = 'Pendle'
    AND metric IN ('locked_tokens', 'locked_tokens_shares', 'lock_assets_per_share')
  ORDER BY metric, date DESC;
+
+-- ========================================================================================
+-- AA. UNISWAP'S `withdrawn` ROW — buyback_fund_balance, ORPHANED BY AN ARCHETYPE CHANGE.
+--     AA1-AA2 LOOK. AA3 deletes, scoped. AA4 verifies.                        2026-09-23
+-- ========================================================================================
+-- ** WHICH METRIC AND WHY, established from config rather than from the sheet. **
+-- buyback_fund_balance requires archetype 3. Uniswap's archetypes are now [4] ALONE, because
+-- its buyback destination is `burn` — the repurchased UNI is destroyed, so there is no fund to
+-- hold a balance. The metric is therefore not applicable to the project.
+--
+-- TWO CONTRACTS STILL DECLARE THAT KIND: contracts.token_jar and contracts.v3_fee_adapter, both
+-- kind buyback_fund_balance. Any row they wrote before the archetype narrowed is still in the
+-- store, pointing at a column the project cannot have — which is what renders as `withdrawn`.
+--
+-- ** THE ORPHAN CHECK DOES NOT SEE THIS CASE, AND THAT IS THE MORE USEFUL FINDING. **
+-- config.orphaned_contract_keys asks whether a contract serves the metric a row claims. It does
+-- not ask whether the PROJECT can have that metric at all, so a contract that serves a metric
+-- its own project has been narrowed out of passes cleanly. An audit across all projects finds
+-- exactly four such contracts:
+--
+--     GEODNET    buyback_wallet_polygon_historical -> buyback_fund_balance
+--     Uniswap    token_jar                         -> buyback_fund_balance
+--     Uniswap    v3_fee_adapter                    -> buyback_fund_balance
+--     Aerodrome  minter                            -> gross_issuance_tokens
+--
+-- Only Uniswap's are cleaned here. The other two projects are NOT touched: GEODNET's key is
+-- named `historical` and may be deliberate retention, and Aerodrome's minter may be suppressed
+-- rather than inapplicable. Each needs its own look, and a sweep that assumed they were all the
+-- same mistake would be the kind of unilateral cleanup this file exists to prevent.
+--
+-- AA1. THE ROWS, if any. Expect rows only if a run wrote them before the archetype narrowed.
+SELECT date, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Uniswap' AND metric = 'buyback_fund_balance'
+ ORDER BY date;
+
+-- AA2. WHAT SURVIVES — the burn series that IS the story for an archetype-4 project. Run before
+--      and after AA3; this must not move.
+SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Uniswap'
+   AND metric IN ('gross_burn_tokens', 'burn_address_balance', 'actual_buyback_tokens')
+ GROUP BY metric;
+
+-- AA3. THE DELETE. Only if AA1 returned rows. They are not a lower-confidence figure — they are
+--      a balance for a fund that does not exist, because the tokens were destroyed rather than
+--      held. There is no metric to MOVE them to: this is not a mislabelling like Pendle's
+--      shares, it is a quantity with no referent for this project.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Uniswap' AND metric = 'buyback_fund_balance';
+-- COMMIT;
+
+-- AA4. VERIFY — AA1 returns nothing and AA2 is unchanged.
+--      THEN THE CONFIG SIDE, which the delete does not fix and which will re-create the rows:
+--      contracts.token_jar and contracts.v3_fee_adapter still declare kind
+--      buyback_fund_balance. Leave them if they are wanted as reference contracts (the Fire Pit
+--      threshold read lives on one of them), but they must not serve a metric the project
+--      cannot have. config.metric_labels and config.non_comparable also still carry
+--      buyback_fund_balance entries for Uniswap — dead text describing a column that cannot
+--      exist. Neither is deleted here: retiring them is a config decision, not a store cleanup.
+SELECT metric, COUNT(*) AS rows
+  FROM metrics
+ WHERE project = 'Uniswap' AND metric = 'buyback_fund_balance'
+ GROUP BY metric;
