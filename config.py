@@ -445,6 +445,14 @@ METRICS = {
     #
     # requires_lock_model keys applicability on the declared lock shape: only a project whose
     # lock is time-based has this metric at all.
+    "ve_voting_power_tokens":     {"label": "veNFT voting power outstanding (decayed weight, NOT tokens locked)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
+                                   "sanity_min": 0, "sanity_max": 10_000_000_000,
+                                   "only_projects": ["Aerodrome"]},
+    "permanent_locked_tokens":    {"label": "Locked permanently (no unlock date — excluded from the duration average)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
+                                   "sanity_min": 0, "sanity_max": 10_000_000_000,
+                                   "only_projects": ["Aerodrome"]},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830, "requires_lock_model": "time_locked"},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
     #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
@@ -560,6 +568,20 @@ EVM_CHAINS = set(DEFAULT_RPC)
 LOCK_READ_METHODS = {
     "erc20_total_supply": "totalSupply() on a fungible staking token",
     "escrow_balance_of": "underlying.balanceOf(escrow) — the correct read for an NFT-based vote escrow",
+    # ===== A NAMED CALL ON THE ESCROW'S OWN STATE. Added 2026-09-23 for veAERO. =====
+    # NOT a supply read and NOT a balance read: a specific view function on the escrow, scaled
+    # by the UNDERLYING token's decimals because the escrow is an NFT and has none of its own.
+    # veAERO.totalSupply() (decayed voting weight) and veAERO.permanentLockBalance() are the
+    # two entries that use it.
+    #
+    # ** IT EXISTS SO THE erc721/erc20_total_supply REJECTION CAN STAY ABSOLUTE. ** A veNFT's
+    # totalSupply() usually IS the position count, and that check has earned its place. Rather
+    # than punching a per-project hole in it, an entry that reads escrow state says so, and the
+    # `call` field then has to name the function explicitly — which is a better record than a
+    # default of totalSupply() with an exemption beside it.
+    "escrow_self_call": "a named view call on the escrow itself (e.g. veAERO.totalSupply(), "
+                        "which Aerodrome OVERRIDES to return decayed voting weight, not a "
+                        "position count), scaled by the underlying token's decimals",
 }
 
 # A veNFT is ERC-721: its totalSupply() returns the NUMBER OF POSITIONS, not tokens locked.
@@ -706,7 +728,7 @@ def metric_unit(project_name: str, metric: str) -> str:
     return override or (METRICS.get(metric) or {}).get("unit", "")
 
 
-def is_non_comparable(project_name: str, metric: str) -> dict | None:
+def is_non_comparable(project_name: str, metric: str, source=None) -> dict | None:
     """The caveat that travels to the cell — UNLESS the route it describes no longer runs.
 
     ===== ** A CAVEAT ABOUT A RETIRED ROUTE IS A FALSE STATEMENT ON A TRUE FIGURE. ** =====
@@ -730,10 +752,28 @@ def is_non_comparable(project_name: str, metric: str) -> dict | None:
     nc = (p.get("non_comparable") or {}).get(metric)
     if not nc:
         return None
-    sup = nc.get("superseded_when_confirmed")
-    if sup and (p.get(sup) or {}).get("status") == "confirmed":
-        return None
-    return nc
+    sup = nc.get("superseded_by_source")
+    if not sup:
+        return nc
+    # ===== ** KEYED ON THE ROW'S SOURCE, NOT ON A CONFIG FLAG — AND THE FLAG VERSION WAS A BUG
+    # ** I SHIPPED ON 2026-09-23. ** The first version suppressed the caveat whenever
+    # lending_api.status was "confirmed". Confirming the route and having it actually WRITE are
+    # different things: Morpho's blue-api read then failed on a wrong filter field, nothing new
+    # was stored, DefiLlama's route had already stood down — and the STORE's older DefiLlama
+    # rows rendered with the caveat suppressed by the flag. utilisation_pct showed 0.3231, the
+    # collateral-inflated figure, as `ok` with nothing on it.
+    #
+    # ** A FLAG DESCRIBES AN INTENTION AND A SOURCE STRING DESCRIBES THE ROW IN FRONT OF YOU. **
+    # The caveat is a statement about HOW A NUMBER WAS COMPUTED, so only the number's own source
+    # can retire it. A DefiLlama row keeps it for ever, whatever the flag says; a morpho_api row
+    # never needed it.
+    #
+    # UNKNOWN SOURCE KEEPS THE CAVEAT. A caller that cannot say where the row came from gets the
+    # conservative answer: a caveat that is one release stale is a nuisance, and a missing one on
+    # a biased figure is the thing this whole field exists to prevent.
+    if not source:
+        return nc
+    return None if str(source).split(":")[0] == str(sup) else nc
 
 
 # Metrics that describe where a buyback's tokens END UP. Only these are affected by a
@@ -1306,6 +1346,13 @@ KIND_METRIC = {
     # scaled(), because dividing a 14-day notice period by 10^18 gives 1.2e-12 days — small
     # enough to read as zero and be believed.
     "cooldown_duration": "cooldown_days",
+    # ===== THE TWO EXTRA READS THE LOCK-DURATION PROXY NEEDS. Added 2026-09-23. =====
+    # ve_voting_power   veAERO.totalSupply() — the DECAYED voting weight, not a token count.
+    # permanent_locked  veAERO.permanentLockBalance() — the part of it that never decays.
+    # Both are scaled by the token's decimals; both are read on the escrow itself, so neither
+    # takes `underlying`. See lock_duration_proxy for why the second one is not optional.
+    "ve_voting_power": "ve_voting_power_tokens",
+    "permanent_locked": "permanent_locked_tokens",
     "burn_address_balance": "burn_address_balance",
     "ve_total_supply": "locked_tokens",
     "buyback_fund_balance": "buyback_fund_balance",
@@ -6051,34 +6098,51 @@ PROJECTS = [
             # is $39.47bn of mostly fabricated supply. The API is asked for the right population
             # instead.
             #
-            # ** TWO DIFFERENT FIELD NAMES, AND CONFUSING THEM SILENTLY RETURNS EVERYTHING. **
-            # The FILTER input on `markets(where:)` is `whitelisted`; the OUTPUT field on a
-            # market is `listed`. Establishing which is which mattered: `where:{listed:true}`
-            # is not a valid filter, and a where-clause the server ignores returns the whole
-            # permissionless tail with a 200 and no error.
+            # ===== ** THE FILTER FIELD IS `listed`, AND SIX REPOSITORIES SAID `whitelisted`. **
+            # The API settled it on a live call:
             #
-            # CORROBORATED ACROSS SIX INDEPENDENT REPOSITORIES, read 2026-09-23 — among them a
-            # DefiLlama dimension-adapters fork using this exact paginated shape:
-            #   jwcheon/dimension-adapters-humanfi  fees/morpho/index.ts
-            #     markets(where: { chainId_in: [$chainId], whitelisted: true }, first:, skip:)
-            #   FactorDAO/factor-tokenlist  (ethereum, base, arbitrum)
-            #     markets(where:{whitelisted: true}, first: 1000)
-            #   naman1402/loopbox  names them together: "whitelisted (listed=true)"
+            #     Field "whitelisted" is not defined by type "MarketFilters".
+            #     Did you mean "listed"?
             #
-            # AND THE ADAPTER VERIFIES IT LANDED rather than trusting it — every returned market
-            # must come back with listed true, or the read is refused. A filter the server
-            # quietly drops is the one failure mode that would put the $39.47bn back with
-            # nothing to notice. See fetch.llama.MorphoBlueApi.
+            # ** THE CORROBORATION WAS REAL AND STILL WRONG. ** Six independent repositories use
+            # where:{whitelisted:true} — including a DefiLlama dimension-adapters fork with this
+            # exact paginated shape — and the reasoning from them was sound: the OUTPUT field is
+            # `listed`, several projects filter on `whitelisted`, so they must be the input and
+            # output names of one concept. They were, on the `vaults` type. On `markets` the
+            # filter is `listed` and `whitelisted` does not exist. Some of those repositories
+            # query vaults, and the rest are presumably stale or unexercised.
+            #
+            # THE LESSON IS THE ONE THIS PROJECT KEEPS RELEARNING: SIX AGREEING SECONDARY
+            # SOURCES ARE STILL SECONDARY. The schema is the primary source and it was one call
+            # away. The guard is what made this cheap — a wrong field name came back as a named
+            # GraphQL error, not as a silently unfiltered $39.47bn.
+            #
+            # AND THE VERIFICATION STAYS, for the case the error does not cover: a where-clause
+            # the server ACCEPTS and does not apply returns the whole permissionless tail with a
+            # 200. Every returned market must come back listed, or the read is refused.
             "markets_query": ("query($c:[Int!],$skip:Int!,$first:Int!){ "
                               "markets(first:$first, skip:$skip, "
-                              "where:{chainId_in:$c, whitelisted:true}){ "
+                              "where:{chainId_in:$c, listed:true}){ "
                               "pageInfo{countTotal} items{ marketId chain{id} listed "
                               "state{ supplyAssetsUsd borrowAssetsUsd } } } }"),
-            "filter_field": "whitelisted",
+            "filter_field": "listed",
             "verify_field": "listed",
-            "filter_evidence": "six independent repositories use where:{whitelisted:true} on "
-                               "markets, including a DefiLlama dimension-adapters fork with "
-                               "this exact paginated shape. Read 2026-09-23.",
+            "filter_evidence": "the API's own schema error, 2026-09-23: 'Field \"whitelisted\" "
+                               "is not defined by type \"MarketFilters\". Did you mean "
+                               "\"listed\"?' — primary, and it overrides the six repositories "
+                               "that use whitelisted (which is the filter on `vaults`, not on "
+                               "`markets`).",
+            "rejected_field_2026_09_23": {
+                "field": "whitelisted",
+                "why_it_looked_right": "six independent repositories use it on markets, "
+                                       "including a DefiLlama dimension-adapters fork with this "
+                                       "exact paginated shape.",
+                "why_it_was_wrong": "MarketFilters has no such field. `whitelisted` is the "
+                                    "filter on the `vaults` type.",
+                "how_it_was_caught": "the API named it. Not by a wrong number — by an error, "
+                                     "because the query was sent as written rather than "
+                                     "post-filtering a population that had already been summed.",
+            },
             "page_size": 1000,
             "supply_field": "supplyAssetsUsd",
             "borrow_field": "borrowAssetsUsd",
@@ -6292,9 +6356,10 @@ PROJECTS = [
                 # denominator, so this caveat stops travelling to the cell. Kept as the record
                 # of what the DefiLlama route measured, and it returns automatically if the
                 # confirmation is ever reverted. See is_non_comparable.
-                "superseded_when_confirmed": "lending_api",
+                "superseded_by_source": "morpho_api",
                 "superseded_by": "lending_api — sum(borrowAssetsUsd) / sum(supplyAssetsUsd) "
-                                 "over LISTED markets, confirmed 2026-09-23 at 0.8802.",
+                                 "over LISTED markets, confirmed 2026-09-23 at 0.8802. A row "
+                                 "still sourced from defillama KEEPS this caveat.",
             },
             "supply_units": {
                 "why": "tvl + borrowed, where tvl includes borrower COLLATERAL — so this is "
@@ -6306,9 +6371,10 @@ PROJECTS = [
                 "recorded_on": "2026-09-23",
                 # SUPERSEDED with utilisation_pct, and for the same reason — supplyAssetsUsd is
                 # the loan side alone, with no collateral added on top.
-                "superseded_when_confirmed": "lending_api",
+                "superseded_by_source": "morpho_api",
                 "superseded_by": "lending_api — sum(supplyAssetsUsd) over LISTED markets, "
-                                 "confirmed 2026-09-23 at $5,868,948,998.",
+                                 "confirmed 2026-09-23 at $5,868,948,998. A row still sourced "
+                                 "from defillama KEEPS this caveat.",
             },
         },
         # ===== utilisation_pct CANNOT COME FROM DefiLlama'S PROTOCOL DATA. Established 2026-09-22.
@@ -7533,6 +7599,37 @@ PROJECTS = [
                                  "position count, the weight decays with time to expiry, and holders receive "
                                  "automatic weekly REBASES that increase their veAERO balance. Only "
                                  "AERO.balanceOf(escrow) gives the tokens actually locked."),
+            # ===== THE LOCK-DURATION PROXY'S TWO EXTRA READS. Added 2026-09-23. =====
+            # Both are calls ON THE ESCROW ITSELF, which is the opposite of `ve` above — and
+            # that is deliberate, not an inconsistency. `ve` reads AERO.balanceOf(escrow)
+            # because the tokens locked are an ERC-20 balance; these two read the escrow's own
+            # accounting, because voting weight and the permanent tranche are its state, not
+            # anybody's token balance.
+            "ve_voting_power": _contract(
+                "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "ve_voting_power", "AERO",
+                "https://github.com/aerodrome-finance/contracts/blob/main/contracts/VotingEscrow.sol",
+                verified="2026-09-23",
+                provenance="Aerodrome's own VotingEscrow.sol, read 2026-09-23",
+                read_method="escrow_self_call", token_standard="erc721", call="totalSupply",
+                underlying="token", holder_has_code=True,
+                purpose="veAERO.totalSupply() — the DECAYED voting weight of every position, "
+                        "summed. NOT a token count and NOT a position count.",
+                note="SCALED BY AERO's 18 DECIMALS, because bias is denominated in the locked "
+                     "token. Same address as `ve`, deliberately, and a different call: one "
+                     "reads the tokens locked and this reads what they currently vote."),
+            "ve_permanent": _contract(
+                "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "permanent_locked", "AERO",
+                "https://github.com/aerodrome-finance/contracts/blob/main/contracts/VotingEscrow.sol",
+                verified="2026-09-23",
+                provenance="VotingEscrow.sol line 566, `uint256 public permanentLockBalance`",
+                read_method="escrow_self_call", token_standard="erc721",
+                call="permanentLockBalance", underlying="token", holder_has_code=True,
+                purpose="The AERO locked PERMANENTLY — no unlock date, no decay.",
+                note="** NOT OPTIONAL, AND THE PROXY IS WRONG WITHOUT IT. ** "
+                     "BalanceLogicLibrary.supplyAt returns `bias + permanentLockBalance`, so a "
+                     "permanent position contributes its FULL amount to totalSupply for ever. "
+                     "Left in, it pulls the ratio toward 1.0 and the proxy reports 'nearly four "
+                     "years remaining' for locks that have no end date at all."),
             # ===== MINTER AND REWARDSDISTRIBUTOR — ACTUALLY WIRED 2026-09-18, NOT JUST DOCUMENTED. =====
             # THE PRIOR ROUND'S "added as reference contracts" LEFT BOTH METRICS EMPTY. That
             # phrasing meant added for documentation (kind burn_executor, REFERENCE_ONLY_KINDS —
@@ -7745,6 +7842,66 @@ PROJECTS = [
         # other tier-2-primary metric), not the primary source, and no Dune query for either
         # flow's history is on file yet — honest backfill stubs (see _dune's own docstring), not
         # fabricated figures.
+        # ===== THE LOCK-DURATION PROXY — CONFIRMED FROM SOURCE BEFORE WIRING. 2026-09-23. =====
+        # ** THE MODEL WAS CHECKED, NOT ASSUMED. ** Read from Aerodrome's own
+        # contracts/VotingEscrow.sol and contracts/libraries/BalanceLogicLibrary.sol:
+        #
+        #   line   26  "Vote weight decays linearly over time. Lock time cannot be more than
+        #              `MAXTIME` (4 years)."
+        #   line  549  uint256 internal constant MAXTIME = 4 * 365 * 86400;      // 1,460 days
+        #   line  603  uOld.slope = _oldLocked.amount / iMAXTIME;
+        #   line  604  uOld.bias  = uOld.slope * (_oldLocked.end - block.timestamp);
+        #   line 1087  function totalSupply() -> _supplyAt(block.timestamp)
+        #   BalanceLogicLibrary.supplyAt line 149:
+        #              return bias.toUint256() + _point.permanentLockBalance;
+        #
+        # So each position contributes amount x remaining / MAXTIME, and
+        #     totalSupply = SUM(amount_i x remaining_i) / MAXTIME  +  permanentLockBalance
+        # Dividing the decaying part by the decaying amount gives the AMOUNT-WEIGHTED mean
+        # remaining lock as a fraction of four years — two extra calls, no per-NFT enumeration.
+        #
+        # ** AND THE PERMANENT TRANCHE MUST COME OFF BOTH SIDES, WHICH THE NAIVE RATIO MISSES. **
+        # A permanent lock contributes its FULL amount to totalSupply for ever, so leaving it in
+        # pulls the ratio toward 1.0 and reports "nearly four years remaining" for positions
+        # that have no end date at all. That is not a small bias: it is a category error, and it
+        # runs in the direction that makes the protocol look most locked-in. This is exactly why
+        # the model was read from source rather than assumed.
+        "lock_duration_proxy": {
+            "metric": "avg_lock_duration_days",
+            "voting_power": "ve_voting_power_tokens",
+            "locked": "locked_tokens",
+            "permanent": "permanent_locked_tokens",
+            "max_days": 1460,
+            "formula": "(voting_power - permanent) / (locked - permanent) * 1460",
+            "is_a_proxy": True,
+            "what_it_is_not": "a measurement of any individual lock. It is the amount-weighted "
+                              "MEAN remaining duration across the decaying cohort, recovered "
+                              "from two aggregates. No distribution can be read off it: the "
+                              "same mean fits 'everyone at two years' and 'half at four, half "
+                              "at nothing'.",
+            "source_url": "https://github.com/aerodrome-finance/contracts/blob/main/contracts/"
+                          "VotingEscrow.sol",
+            "source_date": "2026-09-23",
+            "permanent_excluded_because": "supplyAt returns bias + permanentLockBalance, so a "
+                                          "permanent position never decays and would read as "
+                                          "a full-length lock.",
+            "sanity": {"min_days": 0, "max_days": 1460,
+                       "near_cap_means": "most of the DECAYING supply is close to max-locked. "
+                                         "It does NOT mean most supply is permanent — that is "
+                                         "the permanent_locked_tokens column, and the two are "
+                                         "deliberately separate."},
+            # FOLLOW-ON, FLAGGED AND NOT BUILT (asked for 2026-09-23): a lock DISTRIBUTION —
+            # how much is locked <1y, 1-2y, 2-4y — is more useful than a mean and costs the
+            # per-NFT enumeration this proxy exists to avoid. It needs every tokenId's
+            # locked(tokenId).end, so it is a Dune query or a log scan, not two eth_calls.
+            # Recorded as the next step rather than started.
+            "next_step": {
+                "want": "lock distribution by bucket (<1y, 1-2y, 2-4y), not just the mean",
+                "cost": "per-NFT enumeration — locked(tokenId) for every position",
+                "route": "Dune, or a CreateLock/Deposit log scan; NOT two eth_calls",
+                "status": "NOT STARTED — flagged 2026-09-23",
+            },
+        },
         "dune_queries": {
             **_dune("avg_lock_duration_days", "actual_buyback_usd", "actual_buyback_tokens"),
             "gross_issuance_tokens": dict(DUNE_QUERY_TEMPLATE,
@@ -13793,7 +13950,16 @@ def _check_lock_contracts() -> list[str]:
             # THE check this whole mechanism exists for. A veNFT is ERC-721, so its totalSupply()
             # returns the NUMBER OF POSITIONS, not tokens locked. Reading it as an ERC-20 supply
             # gives a number that is wrong by orders of magnitude and looks entirely normal.
-            if std == "erc721" and method == "erc20_total_supply":
+            # ** ONE DOCUMENTED EXCEPTION, AND IT IS NOT A WEAKENING OF THE RULE. ** A veNFT's
+            # totalSupply() normally returns the position count, which is the whole reason this
+            # check exists. Aerodrome OVERRIDES it: VotingEscrow.sol line 1087 returns
+            # `_supplyAt(block.timestamp)` — the decayed voting weight in AERO units — and the
+            # position count is not exposed under that name at all. The exception is keyed on
+            # read_method, so it covers only entries that have declared themselves a call on
+            # the escrow's own state rather than an ERC-20 supply read.
+            if std == "erc721" and method == "escrow_self_call":
+                pass
+            elif std == "erc721" and method == "erc20_total_supply":
                 errors.append(
                     f"{where}: token_standard 'erc721' with read_method 'erc20_total_supply' — "
                     f"totalSupply() on a veNFT returns a COUNT OF POSITIONS, not tokens locked. "

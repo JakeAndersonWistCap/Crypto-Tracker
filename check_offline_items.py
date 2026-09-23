@@ -13,7 +13,9 @@ Reads only. It touches no contract state, writes nothing to the store, and needs
 from __future__ import annotations
 
 import json
+import os
 import sys
+from urllib.parse import urlparse
 
 import requests
 
@@ -25,8 +27,43 @@ SKY_FLAPPER = "0x374D9c3d5134052Bc558F432Afa1df6575f07407"
 # ORDER MATTERS. llamarpc returned 525 for want() and spotter() on two separate days while
 # publicnode answered every other call in the same script, so that is not a transient and
 # llamarpc is no longer tried first.
-ETH_RPCS = ["https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com",
-            "https://rpc.ankr.com/eth", "https://cloudflare-eth.com", "https://eth.drpc.org"]
+_PUBLIC_ETH_RPCS = ["https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com",
+                    "https://rpc.ankr.com/eth", "https://cloudflare-eth.com",
+                    "https://eth.drpc.org"]
+
+
+def _rpc_host(url) -> str:
+    """Host only. ** A KEYED ENDPOINT CARRIES ITS KEY IN THE PATH, and this script PRINTS. **
+
+    Everything here goes to stdout to be pasted back into chat, so a full URL in an error line
+    is a key in a chat log. Degrades to a placeholder rather than to the raw string: falling
+    back to the raw string is how a redactor leaks.
+    """
+    try:
+        return urlparse(str(url)).hostname or "<unparseable endpoint>"
+    except Exception:  # noqa: BLE001 — a redactor must never raise
+        return "<unparseable endpoint>"
+
+
+def _eth_rpcs() -> list:
+    """ETHEREUM_RPC_URL first, the public list behind it. Same contract as fetch.chain.
+
+    PREPENDED, NOT SUBSTITUTED: the keyed endpoint is what serves eth_getLogs, and the public
+    ones answer everything else perfectly well. Losing four working endpoints to gain logs would
+    be a bad trade, and it is not one that has to be made.
+    """
+    keyed = os.environ.get("ETHEREUM_RPC_URL", "").strip()
+    urls = [u.strip() for u in keyed.split(",") if u.strip()] if keyed else []
+    urls += _PUBLIC_ETH_RPCS
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+ETH_RPCS = _eth_rpcs()
 
 # Sky's canonical on-chain registry. It exists precisely so integrators never hardcode an address
 # governance might change — which is the failure mode that produced a superseded pip in config.
@@ -191,9 +228,9 @@ def eth_call(to: str, selector: str, block: str = "latest"):
             j = rpc(url, "eth_call", [{"to": to, "data": selector}, block])
             if "result" in j:
                 return j["result"], url
-            errors.append(f"{url}: {j.get('error')}")
+            errors.append(f"{_rpc_host(url)}: {j.get('error')}")
         except Exception as e:  # noqa: BLE001
-            errors.append(f"{url}: {e}")
+            errors.append(f"{_rpc_host(url)}: {e}")
     return None, "; ".join(errors)
 
 
@@ -306,9 +343,9 @@ def eth_get_logs(address: str, topics: list, from_block: int, to_block: int, chu
                 if "result" in j:
                     got = j["result"]
                     break
-                errors.append(f"{url}: {j.get('error')}")
+                errors.append(f"{_rpc_host(url)}: {j.get('error')}")
             except Exception as e:  # noqa: BLE001
-                errors.append(f"{url}: {e}")
+                errors.append(f"{_rpc_host(url)}: {e}")
         if got is None:
             joined = "; ".join(errors).lower()
             if chunk > 1_000 and any(w in joined for w in

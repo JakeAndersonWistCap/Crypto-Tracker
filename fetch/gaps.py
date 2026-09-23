@@ -103,6 +103,10 @@ TIER1_SOURCE = {
 # — saying "the token address is ambiguous" about, say, average lock duration would send the
 # reader off to fix the wrong thing.
 METRIC_CONTRACT_KIND = {
+    # The lock-duration proxy's two inputs, so a missing one gets a specific reason rather than
+    # "no source configured for this metric".
+    "ve_voting_power_tokens": "ve_voting_power",
+    "permanent_locked_tokens": "permanent_locked",
     "burn_address_balance": "burn_address_balance",
     "gross_burn_tokens": "burn_address_balance",       # derived by differencing the balance
     "buyback_fund_balance": "buyback_fund_balance",

@@ -549,7 +549,11 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
 
     why = []
     # correct, and answering a different question from the column it sits in (failure mode 4)
-    nc = config.is_non_comparable(project, metric)
+    # ** THE ROW'S OWN SOURCE DECIDES. ** A caveat about how a figure was computed is retired
+    # by the figure changing source, not by a config flag saying a better route exists — a
+    # confirmed route that fails to write leaves the OLD rows on the sheet, and they still have
+    # the old bias. See config.is_non_comparable.
+    nc = config.is_non_comparable(project, metric, row.get("source"))
     if nc:
         why.append(f"NOT COMPARABLE: {nc['why']} Use {nc['use_instead']}")
     # A buyback whose destination is indeterminate cannot be read as retiring supply OR as

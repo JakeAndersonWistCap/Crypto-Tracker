@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from urllib.parse import urlparse
 import time
 from collections import defaultdict
 
@@ -98,7 +100,15 @@ REFERENCE_ONLY_KINDS = {"burn_executor", "bridged_representation"}
 
 # Kinds whose figure is read by calling the CONTRACT ITSELF rather than a token balance, and
 # which therefore need a separate token for symbol() and decimals().
-PRINCIPAL_KINDS = {"stake_principal", "emission_rate_current", "rebase_last_week"}
+# Kinds whose figure is read BY CALLING THE HOLDER, and scaled by the UNDERLYING TOKEN's
+# decimals. The holder is not an ERC-20 — a staking pool or a veNFT escrow — so symbol() and
+# decimals() on it would revert, and the read would fail for a reason unrelated to the figure.
+#
+# ve_voting_power / permanent_locked joined 2026-09-23. veAERO is ERC-721 and BOTH figures are
+# denominated in AERO: VotingEscrow.sol computes bias as `slope * (end - now)` where
+# `slope = amount / MAXTIME`, so the units are locked-token units throughout.
+PRINCIPAL_KINDS = {"stake_principal", "emission_rate_current", "rebase_last_week",
+                   "ve_voting_power", "permanent_locked"}
 
 # WEEK, in seconds — the ve(3,3) / Aerodrome-family epoch length. Used only to compute
 # call_arg "last_complete_week_unix"; not a general-purpose constant.
@@ -176,12 +186,82 @@ def allow_unverified() -> bool:
     return os.environ.get("TOKEN_METRICS_ALLOW_UNVERIFIED", "").strip() in ("1", "true", "yes")
 
 
+def rpc_host(url: str) -> str:
+    """The HOST of an endpoint, and never its path.
+
+    ===== ** AN API KEY LIVES IN THE PATH, AND THIS PROJECT LOGS ENDPOINTS BY NAME. ** =====
+    A keyed endpoint is https://<host>/v2/<key>, and every place that reported "which endpoint
+    served it" was printing `endpoint_uri` verbatim — the whole URL, key included — into the run
+    log, the Run Log tab and the failover messages. Those are read by a human and pasted into
+    chat. The host alone answers the only question anyone asks of that field, which is WHICH
+    PROVIDER, so nothing is lost by cutting the path off.
+
+    Defensive about shape on purpose: this runs inside logging paths, and a redactor that throws
+    on an odd URL would take down the read it was describing. Anything unparseable degrades to a
+    fixed placeholder rather than falling back to the raw string — falling back to the raw string
+    is how a redactor leaks.
+    """
+    try:
+        host = urlparse(str(url)).hostname
+    except Exception:  # noqa: BLE001 — a redactor must never raise
+        return "<unparseable endpoint>"
+    return host or "<unparseable endpoint>"
+
+
+_URL_RE = re.compile(r"https?://[^\s'\"<>)\]]+")
+
+
+def redact_urls(text) -> str:
+    """Replace every URL inside a message with its host.
+
+    ===== ** rpc_host IS NOT ENOUGH ON ITS OWN, BECAUSE THE ERROR TEXT CARRIES THE URL TOO. **
+    A provider's exception routinely embeds the request URI — "403 Client Error for url:
+    https://<host>/v2/<key>" — and that string is what gets appended to log_endpoints_refused,
+    put in the RuntimeError, and written to the Run Log. Redacting the endpoint field while
+    interpolating the raw exception beside it would have leaked the key anyway, one field over.
+    Its own test caught exactly that.
+
+    Deliberately blunt: ANY url in the message is cut to its host, not just the configured
+    endpoints. A redactor that only knows the list it was given misses the one that arrives from
+    somewhere else, and that is the one that matters.
+    """
+    try:
+        return _URL_RE.sub(lambda m: rpc_host(m.group(0)), str(text))
+    except Exception:  # noqa: BLE001 — a redactor must never raise
+        return "<unprintable>"
+
+
 def rpc_endpoints(chain: str) -> list[str]:
-    """Per-chain endpoint list: RPC_<CHAIN> in .env (comma-separated) overrides the defaults."""
+    """Per-chain endpoint list, most-preferred first.
+
+    THREE LAYERS, and they do different things:
+
+      <CHAIN>_RPC_URL   PREPENDED. A keyed endpoint (Alchemy/Infura/dRPC) goes here: it is tried
+                        first and the public list stays behind it as fallback, so one provider's
+                        outage or rate limit does not take the run down.
+      RPC_<CHAIN>       REPLACES. The escape hatch for "use exactly these and nothing else".
+      DEFAULT_RPC       the public fallbacks.
+
+    ** THE PREPEND IS THE POINT, AND REPLACE WAS THE ONLY OPTION BEFORE. ** The one method that
+    actually needs a keyed endpoint is eth_getLogs — publicnode answers eth_call and eth_getCode
+    perfectly and returns 403 to logs, which is why four Sky burn rows gapped for days. Replacing
+    the list to get logs would have thrown away four working endpoints for every other call.
+
+    DEDUPLICATED, ORDER PRESERVED: a keyed endpoint that also appears in DEFAULT_RPC is tried
+    once, in its preferred position, not twice.
+    """
     env = os.environ.get(f"RPC_{chain.upper()}", "").strip()
     if env:
         return [u.strip() for u in env.split(",") if u.strip()]
-    return list(config.DEFAULT_RPC.get(chain, []))
+    preferred = os.environ.get(f"{chain.upper()}_RPC_URL", "").strip()
+    urls = ([u.strip() for u in preferred.split(",") if u.strip()] if preferred else [])
+    urls += list(config.DEFAULT_RPC.get(chain, []))
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def _check_component_labels(project: dict, metric: str, components: list) -> None:
@@ -256,12 +336,13 @@ class ChainReader:
             try:
                 w3 = Web3(HTTPProvider(url, request_kwargs={"timeout": 30}))
                 if w3.is_connected():
-                    log.info("chain %s connected via %s", chain, url)
+                    # HOST ONLY — see rpc_host. A keyed endpoint carries its key in the path.
+                    log.info("chain %s connected via %s", chain, rpc_host(url))
                     self._w3[chain] = w3
                     return w3
-                errors.append(f"{url}: not connected")
+                errors.append(f"{rpc_host(url)}: not connected")
             except Exception as e:  # noqa: BLE001
-                errors.append(f"{url}: {e}")
+                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
         self._failed[chain] = f"all RPC endpoints failed for {chain}: {'; '.join(errors)}"
         raise RuntimeError(self._failed[chain])
 
@@ -382,8 +463,8 @@ class ChainReader:
             try:
                 logs = list(w3.eth.get_logs({**base, "fromBlock": block, "toBlock": upper}))
                 self.log_chunk_used[chain] = chunk
-                self.log_endpoint_used[chain] = getattr(
-                    getattr(w3, "provider", None), "endpoint_uri", "?")
+                self.log_endpoint_used[chain] = rpc_host(getattr(
+                    getattr(w3, "provider", None), "endpoint_uri", "?"))
                 return logs, upper, chunk
             except Exception as e:  # noqa: BLE001
                 msg = str(e).lower()
@@ -394,20 +475,24 @@ class ChainReader:
                     continue
                 if not any(s in msg for s in self.LOGS_ENDPOINT_REFUSED):
                     raise
-                tried.append(getattr(getattr(w3, "provider", None), "endpoint_uri", "?"))
+                tried.append(rpc_host(getattr(getattr(w3, "provider", None),
+                                              "endpoint_uri", "?")))
                 self.log_endpoints_refused.setdefault(chain, [])
                 if tried[-1] not in self.log_endpoints_refused[chain]:
-                    self.log_endpoints_refused[chain].append(f"{tried[-1]} ({str(e)[:60]})")
-                nxt = next((u for u in urls if u not in tried), None)
+                    self.log_endpoints_refused[chain].append(
+                        f"{tried[-1]} ({redact_urls(e)[:60]})")
+                nxt = next((u for u in urls if rpc_host(u) not in tried), None)
                 if nxt is None:
                     raise RuntimeError(
                         f"ALL {len(tried)} configured {chain} RPC endpoint(s) refused "
                         f"eth_getLogs, in order: {'; '.join(self.log_endpoints_refused[chain])}. "
-                        f"Last error: {e}. These endpoints answer other methods, so this is a "
+                        f"Last error: {redact_urls(e)}. These endpoints answer other methods, "
+                        f"so this is a "
                         f"PER-METHOD refusal: the fix is an endpoint that serves logs "
-                        f"(set RPC_{chain.upper()} in .env), not a narrower range.") from e
+                        f"(set {chain.upper()}_RPC_URL in .env — it is PREPENDED, so the "
+                        f"public endpoints stay as fallback), not a narrower range.") from e
                 log.info("chain %s: %s refused eth_getLogs (%s) — falling back to %s",
-                         chain, tried[-1], str(e)[:80], nxt)
+                         chain, tried[-1], redact_urls(e)[:80], rpc_host(nxt))
                 w3 = Web3(HTTPProvider(nxt, request_kwargs={"timeout": 60}))
                 self._w3[chain] = w3
 

@@ -741,7 +741,7 @@ class MorphoBlueApi:
                          if empty else ""))
             if unfiltered:
                 out.fail(self.SOURCE, name,
-                         f"{api['endpoint']}: THE WHITELIST FILTER DID NOT APPLY — {unfiltered} "
+                         f"{api['endpoint']}: THE LISTED FILTER DID NOT APPLY — {unfiltered} "
                          f"of {seen} market(s) came back with {verify} not true, although the "
                          f"query asks for where:{{{api.get('filter_field')}:true}}. A filter the "
                          f"server ignores returns the WHOLE permissionless population, which is "

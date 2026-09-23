@@ -217,6 +217,81 @@ def test_a_holder_whose_symbol_differs_from_its_tokens_is_read_through_the_token
     assert any(addr == TOKEN and args for addr, _, args in c.reader.read_calls), c.reader.read_calls
 
 
+def test_aerodromes_lock_duration_is_a_proxy_and_permanent_locks_come_off_both_sides():
+    """** THE MODEL WAS CONFIRMED FROM SOURCE BEFORE IT WAS WIRED, AND IT HAD A TRAP IN IT. **
+
+    VotingEscrow.sol line 26 states the decay is LINEAR with MAXTIME four years (line 549), and
+    lines 603-604 give each position's weight as amount/MAXTIME x (end - now). So the
+    amount-weighted mean remaining lock falls out of two aggregates.
+
+    ** BUT BalanceLogicLibrary.supplyAt RETURNS `bias + permanentLockBalance`. ** A permanent
+    position contributes its FULL amount to totalSupply for ever, so the naive
+    totalSupply/locked ratio reports "nearly four years remaining" for locks with no end date at
+    all — and the error runs in the direction that makes the protocol look most locked-in, which
+    is the direction nobody questions. That is why the source was read rather than assumed.
+    """
+    from fetch import _derive_lock_duration
+    from fetch.base import FetchOutput, LONG_COLUMNS
+
+    spec = config.PROJECT_BY_NAME["Aerodrome"]["lock_duration_proxy"]
+    assert spec["max_days"] == 1460 and spec["is_a_proxy"] is True
+    assert "VotingEscrow.sol" in spec["source_url"]
+
+    def run(vp, locked, perm, project="Aerodrome"):
+        out = FetchOutput()
+        rows = [{"date": pd.Timestamp("2026-09-23"), "project": project, "metric": m,
+                 "value": v, "source": "chain:base:x", "tier": 2}
+                for m, v in (("ve_voting_power_tokens", vp), ("locked_tokens", locked),
+                             ("permanent_locked_tokens", perm)) if v is not None]
+        out.add(pd.DataFrame(rows)[LONG_COLUMNS], "test", project, "", 2)
+        _derive_lock_duration(out, [config.PROJECT_BY_NAME[project]])
+        got = out.frame()
+        got = got[got.metric == "avg_lock_duration_days"]
+        return (float(got.value.iloc[0]) if not got.empty else None), out
+
+    # HALF THE MAXIMUM: 100m locked, none permanent, voting power exactly half -> 730 days.
+    days, out = run(50_000_000.0, 100_000_000.0, 0.0)
+    assert abs(days - 730.0) < 1e-6, days
+    msg = [e.message for e in out.log if "avg_lock_duration_days=" in e.message][0]
+    assert "PROXY, not a measurement" in msg, msg
+    assert "no distribution can be read off it" in msg, msg
+
+    # ** THE TRAP. ** 100m locked of which 60m is PERMANENT, and the decaying 40m averages half
+    # its term. totalSupply = 60m (permanent, undecayed) + 20m (decayed bias) = 80m.
+    #   naive   80/100 x 1460 = 1,168 days — nearly four years, and wrong
+    #   correct (80-60)/(100-60) x 1460 = 730 days
+    days, _ = run(80_000_000.0, 100_000_000.0, 60_000_000.0)
+    assert abs(days - 730.0) < 1e-6, f"permanent locks must come off BOTH sides, got {days}"
+    naive = 80_000_000.0 / 100_000_000.0 * 1460
+    assert abs(naive - 1168.0) < 1e-6 and naive > days * 1.5, \
+        "and the naive ratio is the failure this guards — 1,168 days against a true 730"
+
+    # EVERYTHING PERMANENT IS A REAL STATE, NOT A FAILURE: nothing is counting down, so there is
+    # no average to report and the reason says where to look instead.
+    days, out = run(100_000_000.0, 100_000_000.0, 100_000_000.0)
+    assert days is None
+    assert any("decaying cohort is empty" in e.message and "permanent_locked_tokens" in e.message
+               for e in out.log), out.log
+
+    # ** A MISSING PERMANENT FIGURE DOES NOT FALL BACK TO ZERO. ** Treating absent as zero is
+    # exactly the naive ratio, arrived at by omission instead of by choice.
+    days, out = run(80_000_000.0, 100_000_000.0, None)
+    assert days is None, "no figure may be produced without the permanent tranche"
+    assert any("IS NOT OPTIONAL" in e.message for e in out.log), out.log
+
+    # OUT OF THE CONTRACT'S OWN BOUND MEANS AN INPUT IS WRONG — nothing stored, nothing clipped.
+    days, out = run(120_000_000.0, 100_000_000.0, 0.0)
+    assert days is None
+    assert any("NOTHING STORED and nothing clipped" in e.message for e in out.log), out.log
+
+    # THE DISTRIBUTION IS FLAGGED AS THE NEXT STEP, NOT STARTED — it needs the per-NFT
+    # enumeration this proxy exists to avoid.
+    assert spec["next_step"]["status"].startswith("NOT STARTED")
+    assert "per-NFT enumeration" in spec["next_step"]["cost"]
+    print("aerodrome duration ok: linear decay confirmed from source, permanent tranche removed "
+          "from both sides, and the naive ratio would have read 1,168 days against a true 730")
+
+
 def test_pendles_locked_tokens_history_is_all_shares_and_the_0918_cliff_is_not_a_read_change():
     """** THE THREE-REGIME READING WAS WRONG, AND THE ARITHMETIC ONLY CLOSES ONE WAY. **
 
@@ -1429,10 +1504,20 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
 
     # ** THE FILTER IS IN THE QUERY, NOT APPLIED AFTERWARDS. ** Post-filtering would mean the
     # $39.47bn is summed at least once in memory, one edit from being the number that ships.
-    assert "whitelisted:true" in api["markets_query"].replace(" ", ""), api["markets_query"]
-    assert api["filter_field"] == "whitelisted" and api["verify_field"] == "listed", \
-        "the FILTER input and the OUTPUT field have different names, and confusing them " \
-        "silently returns everything"
+    assert "listed:true" in api["markets_query"].replace(" ", ""), api["markets_query"]
+    assert api["filter_field"] == "listed" and api["verify_field"] == "listed"
+    # ===== ** AND `whitelisted` IS WRONG, THOUGH SIX REPOSITORIES USE IT. ** The API answered:
+    # 'Field "whitelisted" is not defined by type "MarketFilters". Did you mean "listed"?'
+    # The corroboration was real and still wrong — whitelisted is the filter on the `vaults`
+    # type, not on `markets`. Six agreeing SECONDARY sources are still secondary, and the schema
+    # was one call away. Pinned so the reasoning is not redone and the field not reverted.
+    assert "whitelisted" not in api["markets_query"], api["markets_query"]
+    rej = api["rejected_field_2026_09_23"]
+    assert rej["field"] == "whitelisted" and "MarketFilters" in rej["why_it_was_wrong"]
+    assert "vaults" in rej["why_it_was_wrong"]
+    # ** IT WAS CAUGHT BY AN ERROR, NOT BY A WRONG NUMBER ** — which is what putting the filter
+    # in the query rather than post-filtering bought.
+    assert "by an error" in rej["how_it_was_caught"]
 
     class Stub:
         def __init__(self, borrow_key="borrowAssetsUsd", listed=True):
@@ -1471,8 +1556,8 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
     ignored = run(morpho, Stub(listed=False))
     assert ignored.frame().empty, "nothing may be stored when the filter did not apply"
     fmsg = [e.message for e in ignored.log if e.status == "failed"]
-    assert fmsg and "THE WHITELIST FILTER DID NOT APPLY" in fmsg[0], ignored.log
-    assert "NOTHING STORED" in fmsg[0] and "whitelisted:true" in fmsg[0], fmsg[0]
+    assert fmsg and "THE LISTED FILTER DID NOT APPLY" in fmsg[0], ignored.log
+    assert "NOTHING STORED" in fmsg[0] and "listed:true" in fmsg[0], fmsg[0]
 
     # ===== THE PARTIAL-FIELD PROBLEM, AND THE TWO ABSENCES THAT ARE NOT THE SAME THING. =====
     # BOTH FIELDS ABSENT is an empty market: it contributes nothing to either side, so dropping
@@ -1623,26 +1708,37 @@ def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
     # correct number upwards. The RECORD is kept — it says what the old route measured and what
     # replaced it — and it returns automatically if the confirmation is reverted, because both
     # are driven by the same flag.
+    # ===== ** THE ROW'S OWN SOURCE RETIRES THE CAVEAT — AND KEYING IT ON A CONFIG FLAG WAS A
+    # ** BUG SHIPPED ON 2026-09-23. ** The first version suppressed it whenever
+    # lending_api.status was "confirmed". Confirming a route and having it WRITE are different
+    # things: blue-api then failed on a wrong filter field, nothing new was stored, DefiLlama
+    # had already stood down, and the store's older DefiLlama rows rendered with the caveat
+    # suppressed by the flag. utilisation_pct showed 0.3231 — the collateral-inflated figure —
+    # as `ok` with nothing on it, while supply_units gapped. One route, two different fates.
+    #
+    # A flag describes an intention; a source string describes the row in front of you.
     raw = config.PROJECT_BY_NAME["Morpho"]["non_comparable"]
     for metric in ("utilisation_pct", "supply_units"):
         assert "COLLATERAL" in raw[metric]["why"].upper(), metric
-        assert raw[metric]["superseded_when_confirmed"] == "lending_api", metric
-        assert config.is_non_comparable("Morpho", metric) is None, \
-            f"{metric}: the blue-api route has no collateral in it, so the caveat must not render"
-    reverted = dict(config.PROJECT_BY_NAME["Morpho"],
-                    lending_api=dict(config.PROJECT_BY_NAME["Morpho"]["lending_api"],
-                                     status="unconfirmed"))
-    saved = config.PROJECT_BY_NAME["Morpho"]
-    config.PROJECT_BY_NAME["Morpho"] = reverted
-    try:
-        for metric in ("utilisation_pct", "supply_units"):
-            nc = config.is_non_comparable("Morpho", metric)
-            assert nc and "COLLATERAL" in nc["why"].upper(), \
-                f"{metric}: reverting the confirmation must bring the caveat back"
-    finally:
-        config.PROJECT_BY_NAME["Morpho"] = saved
-    # A caveat with no supersession flag is untouched by any of this.
+        assert raw[metric]["superseded_by_source"] == "morpho_api", metric
+        # A row from the new route carries no collateral, so no caveat.
+        assert config.is_non_comparable("Morpho", metric, "morpho_api:markets") is None, metric
+        # ** A DefiLlama ROW KEEPS IT FOR EVER, WHATEVER THE FLAG SAYS. ** This is the assertion
+        # the flag version could not make.
+        nc = config.is_non_comparable("Morpho", metric, "defillama")
+        assert nc and "COLLATERAL" in nc["why"].upper(), \
+            f"{metric}: a stored DefiLlama row is still collateral-inflated"
+        # AN UNKNOWN SOURCE KEEPS IT TOO. A stale caveat is a nuisance; a missing one on a
+        # biased figure is what this field exists to prevent.
+        assert config.is_non_comparable("Morpho", metric) is not None, metric
+    # ** AND THE TWO METRICS CANNOT DIVERGE, because each row answers for itself. **
+    for src in ("defillama", "morpho_api:markets", None):
+        verdicts = {m: config.is_non_comparable("Morpho", m, src) is None
+                    for m in ("utilisation_pct", "supply_units")}
+        assert len(set(verdicts.values())) == 1, f"{src}: one route, two fates — {verdicts}"
+    # A caveat with no supersession key is untouched by any of this.
     assert config.is_non_comparable("Uniswap", "buyback_fund_balance") is not None
+    assert config.is_non_comparable("Uniswap", "buyback_fund_balance", "morpho_api") is not None
     # THE EXACT ROUTE IS STILL ON FILE, and still honest about its cost.
     blocked = config.PROJECT_BY_NAME["Morpho"]["utilisation_pct_blocked"]
     assert "superseded" in blocked["status"]
@@ -9646,9 +9742,17 @@ def test_an_rpc_that_refuses_one_method_falls_over_to_the_next_endpoint(monkeypa
     # Sky's burn read as "403 from publicnode" and the log could not say whether the failover then
     # found a working endpoint or ran out of them. Those are different problems — one is nothing
     # to do, the other needs RPC_ETHEREUM set — so the scan records both.
-    assert reader.log_endpoint_used["ethereum"] == urls[1]
-    assert reader.log_endpoints_refused["ethereum"][0].startswith(urls[0])
+    # ** RECORDED BY HOST, NEVER BY URL. ** A keyed endpoint is https://<host>/v2/<key>, and
+    # these fields go into the run log, the Run Log tab and the failover messages — all of which
+    # a human reads and pastes. The host answers the only question asked of the field (which
+    # provider), so cutting the path off loses nothing and stops the key travelling.
+    from fetch.chain import rpc_host
+    assert reader.log_endpoint_used["ethereum"] == rpc_host(urls[1]) == "second.example"
+    assert reader.log_endpoints_refused["ethereum"][0].startswith("publicnode.example")
     assert "403" in reader.log_endpoints_refused["ethereum"][0]
+    assert not any("https://" in v for v in [reader.log_endpoint_used["ethereum"]]
+                   + reader.log_endpoints_refused["ethereum"]), \
+        "a full URL in any of these fields is an API key in a log line"
 
     # EVERY ENDPOINT REFUSING IS A DIFFERENT ANSWER FROM A NARROWER RANGE, and says so: the
     # remedy is an endpoint that serves logs, not a smaller chunk.
@@ -9659,16 +9763,67 @@ def test_an_rpc_that_refuses_one_method_falls_over_to_the_next_endpoint(monkeypa
     except RuntimeError as e:
         assert "ALL 3 configured ethereum RPC endpoint(s) refused eth_getLogs" in str(e)
         assert "PER-METHOD refusal" in str(e) and "not a narrower range" in str(e)
-        # NAMED IN ORDER, WITH WHAT EACH ONE SAID. "403 from publicnode" was ambiguous precisely
-        # because it named one endpoint out of four and gave no verdict on the rest.
+        # NAMED IN ORDER, WITH WHAT EACH ONE SAID — BY HOST. "403 from publicnode" was ambiguous
+        # precisely because it named one endpoint out of four and gave no verdict on the rest.
         for u in urls:
-            assert u in str(e), f"{u} refused and is not named in the failure"
+            assert rpc_host(u) in str(e), f"{rpc_host(u)} refused and is not named in the failure"
+        # ** AND NOT ONE FULL URL ANYWHERE IN IT. ** Redacting the endpoint field is not enough
+        # on its own: a provider's exception embeds the request URI ("403 Client Error for url:
+        # https://<host>/v2/<key>"), and that text is interpolated into this very message. The
+        # first version of this redaction did exactly that and this assertion is what caught it.
+        assert "https://" not in str(e) and "http://" not in str(e), \
+            "a full URL in the failure text is an API key in a log line"
+        assert "_RPC_URL in .env" in str(e), "and the remedy names the PREPEND, not the replace"
         assert len({u for u, _ in stub2.calls}) == 3, "each endpoint tried exactly once"
         assert len(reader2.log_endpoints_refused["ethereum"]) == 3
         assert "ethereum" not in reader2.log_endpoint_used, "nothing served it"
     else:
         raise AssertionError("all endpoints refusing must raise, not return an empty scan")
     print("rpc fallback ok: a per-method 403 moves to the next endpoint; all refusing says why")
+
+
+def test_a_keyed_endpoint_is_preferred_without_discarding_the_public_fallbacks(monkeypatch):
+    """** PREPEND, NOT REPLACE — AND REPLACE WAS THE ONLY OPTION BEFORE. **
+
+    The one method that needs a keyed endpoint is eth_getLogs: publicnode answers eth_call and
+    eth_getCode perfectly and returns 403 to logs, which is why four Sky burn rows gapped for
+    days. The existing RPC_<CHAIN> override REPLACES the list, so getting logs that way would
+    have thrown away four working endpoints for every other call on the chain.
+
+    ETHEREUM_RPC_URL is tried FIRST and the public list stays behind it, so one provider's
+    outage or rate limit does not take the run down.
+    """
+    from fetch.chain import rpc_endpoints, rpc_host, redact_urls
+    KEYED = "https://eth-mainnet.g.alchemy.com/v2/SUPERSECRETKEY"
+
+    monkeypatch.delenv("RPC_ETHEREUM", raising=False)
+    monkeypatch.setenv("ETHEREUM_RPC_URL", KEYED)
+    eps = rpc_endpoints("ethereum")
+    assert eps[0] == KEYED, "the keyed endpoint is tried first"
+    assert eps[1:] == config.DEFAULT_RPC["ethereum"], "and the public list is kept, in order"
+
+    # ** NOT ONE OF THESE FIELDS MAY CARRY THE PATH. ** The key lives in it.
+    assert rpc_host(KEYED) == "eth-mainnet.g.alchemy.com"
+    assert "SUPERSECRETKEY" not in rpc_host(KEYED)
+    assert "SUPERSECRETKEY" not in redact_urls(f"403 Client Error for url: {KEYED}")
+
+    # DEDUPLICATED, ORDER PRESERVED — a keyed endpoint that is also a default is tried once.
+    monkeypatch.setenv("ETHEREUM_RPC_URL", config.DEFAULT_RPC["ethereum"][2])
+    eps = rpc_endpoints("ethereum")
+    assert eps[0] == config.DEFAULT_RPC["ethereum"][2]
+    assert len(eps) == len(config.DEFAULT_RPC["ethereum"]), f"duplicated: {eps}"
+    assert len(set(eps)) == len(eps)
+
+    # RPC_<CHAIN> STILL REPLACES. Two knobs, two meanings, and the escape hatch keeps working.
+    monkeypatch.setenv("RPC_ETHEREUM", "https://only.example")
+    assert rpc_endpoints("ethereum") == ["https://only.example"], \
+        "RPC_<CHAIN> is the 'use exactly these' override and must still win outright"
+
+    # AND WITH NEITHER SET, NOTHING CHANGES FROM BEFORE.
+    monkeypatch.delenv("RPC_ETHEREUM", raising=False)
+    monkeypatch.delenv("ETHEREUM_RPC_URL", raising=False)
+    assert rpc_endpoints("ethereum") == config.DEFAULT_RPC["ethereum"]
+    print("rpc preference ok: keyed endpoint first, publics behind it, host-only in every field")
 
 
 def test_an_http_403_is_already_a_per_method_refusal_and_not_an_unclassified_error():

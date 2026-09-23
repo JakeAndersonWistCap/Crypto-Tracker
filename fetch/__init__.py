@@ -399,6 +399,97 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
                    f"{spec['denominator']} across the same window."))
 
 
+def _derive_lock_duration(out: FetchOutput, projects: list[dict]) -> None:
+    """Average remaining lock, recovered from two aggregates instead of enumerating every NFT.
+
+    ===== ** THE MODEL IS CONFIRMED FROM AERODROME'S OWN SOURCE, NOT ASSUMED. ** =====
+    VotingEscrow.sol line 26 states the decay is LINEAR and MAXTIME is four years (line 549).
+    Lines 603-604 give each position's weight as `amount / MAXTIME * (end - now)`, so summing
+    over positions:
+
+        totalSupply = SUM(amount_i x remaining_i) / MAXTIME  +  permanentLockBalance
+
+    and the amount-weighted mean remaining duration is
+    (totalSupply - permanent) / (locked - permanent) x MAXTIME. Two extra eth_calls, against a
+    per-NFT enumeration of every position.
+
+    ** THE PERMANENT TRANCHE COMES OFF BOTH SIDES, AND THE NAIVE RATIO MISSES IT. **
+    BalanceLogicLibrary.supplyAt returns `bias + permanentLockBalance` — a permanent position
+    contributes its FULL amount for ever. Left in, it drags the ratio toward 1.0 and the column
+    reports "nearly four years remaining" for locks that have no end date at all. The bias runs
+    in the direction that makes the protocol look most locked-in, which is the direction nobody
+    questions.
+
+    ** IT IS A PROXY AND THE LABEL SAYS SO. ** The same mean fits "everyone at two years" and
+    "half at four years, half about to expire". A distribution needs the enumeration this
+    avoids — recorded as next_step in config, deliberately not started here.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    latest = {(r.project, r.metric): (r.value, r.date)
+              for r in frame.sort_values("date")[["project", "metric", "value", "date"]]
+                            .itertuples(index=False)}
+    for p in projects:
+        spec = p.get("lock_duration_proxy")
+        if not spec:
+            continue
+        name = p["name"]
+        if (name, spec["metric"]) in {(r.project, r.metric) for r in
+                                      frame[["project", "metric"]].itertuples(index=False)}:
+            # A SOURCED FIGURE WINS AND THE PROXY STANDS DOWN. A proxy beside a measurement is a
+            # second measuring point, and the two alternating blank the column.
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: NOT derived — the metric already has a figure this "
+                        f"run, and a PROXY must never alternate with a measurement.", tier=2)
+            continue
+        parts = {k: latest.get((name, spec[k])) for k in ("voting_power", "locked", "permanent")}
+        missing = [spec[k] for k, v in parts.items() if v is None]
+        if missing:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: needs {spec['voting_power']}, {spec['locked']} and "
+                        f"{spec['permanent']} in the SAME run; missing {', '.join(missing)}. "
+                        f"** {spec['permanent']} IS NOT OPTIONAL: ** a permanent lock never "
+                        f"decays, so dropping it from the arithmetic reports positions with no "
+                        f"end date as nearly-full-length locks.", tier=2)
+            continue
+        vp, locked, perm = (float(parts["voting_power"][0]), float(parts["locked"][0]),
+                            float(parts["permanent"][0]))
+        num, den = vp - perm, locked - perm
+        if den <= 0:
+            # EVERYTHING PERMANENT IS A REAL STATE, NOT A FAILURE, and it has no average
+            # remaining duration because nothing is counting down.
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: the decaying cohort is empty — {spec['locked']} "
+                        f"{locked:,.0f} minus {spec['permanent']} {perm:,.0f} is {den:,.0f}. "
+                        f"Every lock is permanent, so there is no remaining duration to "
+                        f"average. Not a gap: see {spec['permanent']}.", tier=2)
+            continue
+        days = num / den * float(spec["max_days"])
+        lo, hi = spec["sanity"]["min_days"], spec["sanity"]["max_days"]
+        if not (lo <= days <= hi):
+            # ** OUT OF BAND MEANS THE MODEL IS WRONG, NOT THAT THE NUMBER NEEDS CLIPPING. **
+            # Remaining duration cannot exceed the contract's own maximum or go negative, so a
+            # value outside [0, MAXTIME] means an input is not what this derivation thinks it
+            # is. Storing a clipped figure would hide that.
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: {days:,.1f} days is outside the contract's own "
+                        f"0-{hi} bound, so an input is not what this derivation thinks it is — "
+                        f"NOTHING STORED and nothing clipped. voting_power={vp:,.0f} "
+                        f"locked={locked:,.0f} permanent={perm:,.0f}. Re-read "
+                        f"{spec['source_url']} (last read {spec['source_date']}) before "
+                        f"changing anything here.", tier=2)
+            continue
+        when = max(v[1] for v in parts.values())
+        out.add(point(name, spec["metric"], days, f"{SOURCE_DERIVED}:decay_proxy", 2, when),
+                SOURCE_DERIVED, name,
+                f"{spec['metric']}={days:,.1f} — PROXY, not a measurement: "
+                f"({spec['voting_power']} {vp:,.0f} - {perm:,.0f} permanent) / "
+                f"({spec['locked']} {locked:,.0f} - {perm:,.0f}) x {spec['max_days']} days. "
+                f"Amount-weighted MEAN over the decaying cohort only; no distribution can be "
+                f"read off it.", 2)
+
+
 def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
     """actual_buyback_tokens where the destination makes it a re-labelling, and its USD twin.
 
@@ -1210,6 +1301,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # AFTER issuance, so both lock figures are certainly in the frame by now.
     _derive_lock_ratio(out, projects, ctx["prior_values"], ctx.get("prior_delta") or {},
                        ctx.get("prior_dates") or {})
+    _derive_lock_duration(out, projects)
     # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
     # rather than a figure that is about to be superseded.
     _derive_buyback(out, projects)
