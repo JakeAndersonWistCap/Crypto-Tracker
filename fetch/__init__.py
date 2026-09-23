@@ -402,6 +402,84 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
                    f"{spec['denominator']} across the same window."))
 
 
+def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: dict,
+                         prior_dates: dict) -> None:
+    """Tokens released from a pre-minted pool, as the gap between two supply series.
+
+    ===== ** RELEASE IS NOT ISSUANCE, AND THE WHOLE POINT IS THAT THEY LOOK ALIKE. ** =====
+    Minting creates tokens: total supply rises and circulating rises with it. Releasing moves
+    tokens that ALREADY EXIST out of a locked pool: circulating rises and total does not. Both
+    raise circulating supply, so a reader watching that column alone cannot tell a protocol
+    inflating from one distributing what it pre-minted years ago — and for the DePIN names the
+    second is the entire supply-side story.
+
+        pool_release_tokens = d(circulating_supply) - d(total_supply)
+
+    Total flat while circulating rises gives exactly the release. Minting straight into
+    circulation gives zero, which is the discrimination worth having.
+
+    ** NEVER CLAMPED. ** A negative value means circulating fell faster than total — tokens
+    going back OUT of circulation, into a lockup or a treasury purchase. That is real, and it is
+    the direction a "releases can't be negative" floor would silently erase.
+
+    ** IT INHERITS COINGECKO'S JUDGEMENT AND SAYS SO. ** circulating_supply is a third-party
+    ESTIMATE resting on their classification of what counts as circulating, and differencing two
+    independently-sourced stocks compounds both their errors. That is why this is the
+    cross-check wherever a measured outflow exists, and the primary only where one does not.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    latest = {(r.project, r.metric): (r.value, r.date)
+              for r in frame.sort_values("date")[["project", "metric", "value", "date"]]
+                            .itertuples(index=False)}
+    for p in projects:
+        name = p["name"]
+        if "pool_release_tokens" not in config.metrics_for_project(p):
+            continue
+        circ, total = latest.get((name, "circulating_supply")), latest.get((name, "total_supply"))
+        if circ is None or total is None:
+            missing = [m for m, v in (("circulating_supply", circ), ("total_supply", total))
+                       if v is None]
+            out.skipped(SOURCE_DERIVED, name,
+                        f"pool_release_tokens: needs BOTH circulating_supply and total_supply "
+                        f"in this run; missing {', '.join(missing)}. The figure is the gap "
+                        f"between the two, so one of them alone says nothing.", tier=2)
+            continue
+        p_circ = prior_delta.get((name, "circulating_supply"))
+        p_total = prior_delta.get((name, "total_supply"))
+        if p_circ is None or p_total is None:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"pool_release_tokens: a FLOW needs an earlier-dated reading of both "
+                        f"stocks to difference against, and the store has none for "
+                        f"{'circulating_supply' if p_circ is None else 'total_supply'}. Not a "
+                        f"gap in the source: the series simply has no prior yet.", tier=2)
+            continue
+        d_circ, d_total = float(circ[0]) - float(p_circ), float(total[0]) - float(p_total)
+        release = d_circ - d_total
+        when = max(circ[1], total[1])
+        # ** THE TWO STOCKS MUST BE DIFFERENCED OVER THE SAME WINDOW. ** They are fetched
+        # independently, so their prior readings can sit on different dates — and subtracting a
+        # 7-day change from a 1-day change produces a number with no referent that still looks
+        # like a release.
+        dc, dt = prior_dates.get((name, "circulating_supply")), prior_dates.get((name, "total_supply"))
+        if dc is not None and dt is not None and pd.Timestamp(dc) != pd.Timestamp(dt):
+            out.skipped(SOURCE_DERIVED, name,
+                        f"pool_release_tokens: the two stocks' prior readings are on DIFFERENT "
+                        f"dates ({str(dc)[:10]} and {str(dt)[:10]}), so differencing them would "
+                        f"subtract a change over one window from a change over another. "
+                        f"NOTHING STORED — this resolves itself once both series have a reading "
+                        f"on the same day.", tier=2)
+            continue
+        out.add(point(name, "pool_release_tokens", release,
+                      f"{SOURCE_DERIVED}:d_circulating-d_total", 2, when),
+                SOURCE_DERIVED, name,
+                f"pool_release_tokens={release:,.0f} = d(circulating) {d_circ:,.0f} - "
+                f"d(total) {d_total:,.0f}. RELEASE, NOT ISSUANCE: supply that already existed "
+                f"entering circulation. Derived from two independently-sourced CoinGecko "
+                f"stocks, so it carries their classification of what counts as circulating.", 2)
+
+
 def _derive_lock_duration(out: FetchOutput, projects: list[dict]) -> None:
     """Average remaining lock, recovered from two aggregates instead of enumerating every NFT.
 
@@ -1305,6 +1383,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     _derive_lock_ratio(out, projects, ctx["prior_values"], ctx.get("prior_delta") or {},
                        ctx.get("prior_dates") or {})
     _derive_lock_duration(out, projects)
+    _derive_pool_release(out, projects, ctx.get("prior_delta") or {},
+                         ctx.get("prior_dates") or {})
     # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
     # rather than a figure that is about to be superseded.
     _derive_buyback(out, projects)

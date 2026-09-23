@@ -357,6 +357,27 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"{ratio['numerator']} and {ratio['denominator']}. The ratio computes itself once "
                 f"both are present in the same run.")
 
+    # ===== THE SAME ANSWER FOR THE OTHER TWO DERIVATIONS. Added 2026-09-23. =====
+    # Both are computed from other columns, so "no source configured" is the wrong instruction —
+    # it sends someone to write a scraper for a figure nothing publishes.
+    dur = project.get("lock_duration_proxy") or {}
+    if dur.get("metric") == metric:
+        return (f"DERIVED, not fetched: a PROXY computed as {dur['formula']}, and at least one "
+                f"input did not arrive this run. There is no source to add.",
+                f"Resolve whichever of {dur['voting_power']}, {dur['locked']} and "
+                f"{dur['permanent']} is missing — see their own Gap Report rows. "
+                f"{dur['permanent']} is NOT optional: a permanent lock never decays, so without "
+                f"it the figure would report positions with no end date as nearly-full-length "
+                f"locks.")
+    if metric == "pool_release_tokens":
+        return ("DERIVED, not fetched: d(circulating_supply) - d(total_supply), the tokens "
+                "entering circulation that were NOT newly minted. It needs both stocks in this "
+                "run AND an earlier-dated reading of each to difference against. There is no "
+                "source to add.",
+                "Resolve whichever of circulating_supply and total_supply is missing. If both "
+                "are present, the series simply has no prior reading yet and will compute on "
+                "the next run — that is not a sourcing problem.")
+
     entry = scrape_entries.get((name, metric))
     if isinstance(entry, dict):
         # ARMED AND RETURNED NOTHING — a different problem from a missing entry, and the one the

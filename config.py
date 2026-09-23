@@ -453,6 +453,17 @@ METRICS = {
                                    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 10_000_000_000,
                                    "only_projects": ["Aerodrome"]},
+    # ===== RELEASE FROM A PRE-MINTED POOL — NOT MINTING. Added 2026-09-23. =====
+    # ** ONE COLUMN MUST NEVER CARRY BOTH, AND THE NAME IS THE FIRST DEFENCE. ** Minting creates
+    # tokens and raises TOTAL supply; releasing moves tokens that already exist from a locked
+    # pool into CIRCULATION, leaving total flat. Both raise circulating supply, and for the DePIN
+    # names the second is the whole supply-side story — which is why these were not closed as
+    # not_applicable. See POOL_RELEASE_ROUTES for which route is live per project.
+    "pool_release_tokens":        {"label": "Released from a pre-minted pool (supply already existed — NOT newly minted)",
+                                   "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4],
+                                   "tiers": [1, 2], "sanity_min": None, "sanity_max": None,
+                                   "only_projects": ["Chainlink", "GEODNET", "Maple",
+                                                     "Hyperliquid", "Aethir"]},
     "avg_lock_duration_days":     {"label": "Average lock duration",           "kind": "stock", "unit": "days",   "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1830, "requires_lock_model": "time_locked"},
     # Aave's two staking pages are NOT parallel, and treating them as such overstated AAVE float.
     #   app.aave.com/safety-module  = the LEGACY Safety Module. AAVE and ABPT staked on Ethereum,
@@ -12926,6 +12937,69 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # unresolved, why it matters, and what would settle it. Delete an entry once it is settled
 # and the corresponding config change is made.
 # =======================================================================================
+# =======================================================================================
+# PRE-MINTED POOL RELEASE — WHICH ROUTE IS LIVE, PER PROJECT. 2026-09-23.
+#
+# Release from a pre-minted pool raises CIRCULATING supply while TOTAL stays flat. It is not
+# minting and must never share a column with gross_issuance_tokens — see the pool_release_tokens
+# metric label.
+#
+# TWO ROUTES, and where both exist the MEASURED one is primary:
+#   MEASURED  Transfer events OUT of the named pool wallet. A balance falls for reasons other
+#             than distribution and rises on top-ups; the outflow is the quantity.
+#   DERIVED   d(circulating) - d(total). Needs no addresses and works for all five today, but
+#             inherits CoinGecko's classification of what counts as circulating AND compounds
+#             the error of two independently-sourced stocks. Primary only where no measured
+#             route exists.
+# =======================================================================================
+POOL_RELEASE_ROUTES = {
+    "Chainlink": {
+        "wallet": "staking_reward_vault 0x996913c8c0...",
+        "chain": "ethereum", "wallet_known": True, "verified": "2026-09-17",
+        "measured": "NOT YET ATTEMPTED — needs a live run. Ethereum logs are now reachable "
+                    "(keyed endpoint) and scan_logs handles the span, so this is wiring plus "
+                    "one confirming run, not research.",
+        "derived": "live",
+    },
+    "GEODNET": {
+        "wallet": "mining_polygon 0xfa5fEd5cc2... and mining_distribution_polygon 0x8FB9dd00B9...",
+        "chain": "polygon", "wallet_known": True, "verified": "2026-09-17",
+        # ** THE PRECONDITION IS UNCHECKED AND A FAILURE HERE IS NOT A RANGE PROBLEM. **
+        # Whether polygon-bor-rpc.publicnode.com serves eth_getLogs AT ALL is unknown — both
+        # Polygon endpoints are egress-blocked from the build environment. A flat method refusal
+        # and a range limit look alike in a run log and are completely different problems: no
+        # amount of chunking fixes a refusal, and the fix is a keyed Polygon endpoint
+        # (POLYGON_RPC_URL, which is PREPENDED so the public ones stay as fallback).
+        "measured": "BLOCKED ON A PRECONDITION: confirm Polygon serves eth_getLogs before "
+                    "wiring. The adapter already distinguishes a method refusal from a range "
+                    "limit and now prints the provider's own body, so one run answers it.",
+        "derived": "live",
+    },
+    "Maple": {"wallet": "syrupDrip — NOT IDENTIFIED", "chain": "ethereum",
+              "wallet_known": False,
+              "measured": "needs an address. contracts.stsyrup is the staking receipt, not the "
+                          "drip.",
+              "derived": "live — and primary, because no measured route exists"},
+    "Hyperliquid": {"wallet": "future-emissions pool — NOT IDENTIFIED", "chain": "hypercore",
+                    "wallet_known": False,
+                    "measured": "likely IMPOSSIBLE by this route: HyperCore is not an EVM chain "
+                                "the log scanner can read, which is why Hyperliquid declares no "
+                                "contracts at all and uses its own info API.",
+                    "derived": "live — and primary"},
+    "Aethir": {"wallet": "allocation wallets — NOT IDENTIFIED", "chain": "arbitrum",
+               "wallet_known": False,
+               "measured": "needs addresses. Only the token contract is on file.",
+               "derived": "live — and primary"},
+}
+
+# ** THE DISAGREEMENT IS THE OUTPUT, NOT SOMETHING TO RESOLVE. ** Where both routes run they
+# measure the same quantity by independent means and should agree. A gap beyond this tolerance
+# means one of them is wrong — most likely CoinGecko's circulating classification, but possibly
+# a missed wallet on the measured side — and picking a winner silently would throw away the only
+# evidence that anything is off.
+POOL_RELEASE_DISAGREEMENT_PCT = 10.0
+
+
 OPEN_QUESTIONS = [
     # ---------------------------------------------------------------- GEODNET
     {

@@ -360,6 +360,85 @@ def test_growthepie_reports_the_field_names_instead_of_guessing_them():
           "missed filter named, ragged rows counted")
 
 
+def test_pool_release_is_the_gap_between_the_two_supply_series_and_is_never_clamped():
+    """** RELEASE IS NOT ISSUANCE, AND THE WHOLE DIFFICULTY IS THAT THEY LOOK ALIKE. **
+
+    Minting creates tokens: total supply rises and circulating rises with it. Releasing moves
+    tokens that ALREADY EXIST out of a pre-minted pool: circulating rises and total does not.
+    Both raise circulating supply, so that column alone cannot tell a protocol inflating from
+    one distributing what it pre-minted years ago — and for the DePIN names the second is the
+    entire supply-side story, which is why these were not closed as not_applicable.
+    """
+    from fetch import _derive_pool_release
+    from fetch.base import FetchOutput, LONG_COLUMNS
+
+    assert config.METRICS["pool_release_tokens"]["kind"] == "flow"
+    for n in ("Chainlink", "GEODNET", "Maple", "Hyperliquid", "Aethir"):
+        assert "pool_release_tokens" in config.metrics_for_project(config.PROJECT_BY_NAME[n]), n
+    # SCOPED. A project with no pre-minted pool must not grow the column.
+    assert "pool_release_tokens" not in config.metrics_for_project(
+        config.PROJECT_BY_NAME["Uniswap"])
+
+    def run(circ, total, p_circ, p_total, name="Chainlink", dates=None):
+        out = FetchOutput()
+        rows = [{"date": pd.Timestamp("2026-09-23"), "project": name, "metric": m, "value": v,
+                 "source": "coingecko", "tier": 1}
+                for m, v in (("circulating_supply", circ), ("total_supply", total))
+                if v is not None]
+        out.add(pd.DataFrame(rows)[LONG_COLUMNS], "test", name, "", 1)
+        delta = {(name, "circulating_supply"): p_circ, (name, "total_supply"): p_total}
+        delta = {k: v for k, v in delta.items() if v is not None}
+        pdates = dates if dates is not None else {
+            (name, "circulating_supply"): pd.Timestamp("2026-09-22"),
+            (name, "total_supply"): pd.Timestamp("2026-09-22")}
+        _derive_pool_release(out, [config.PROJECT_BY_NAME[name]], delta, pdates)
+        got = out.frame()
+        got = got[got.metric == "pool_release_tokens"]
+        return (float(got.value.iloc[0]) if not got.empty else None), out
+
+    # ** THE CASE THE COLUMN EXISTS FOR: ** total FLAT, circulating up 5m. All release.
+    v, out = run(605_000_000.0, 1_000_000_000.0, 600_000_000.0, 1_000_000_000.0)
+    assert v == 5_000_000.0, v
+    msg = [e.message for e in out.log if "pool_release_tokens=" in e.message][0]
+    assert "RELEASE, NOT ISSUANCE" in msg, msg
+    assert "CoinGecko" in msg, "the inherited classification is stated on the row"
+
+    # MINTING STRAIGHT INTO CIRCULATION IS NOT A RELEASE — both rise together, so it is zero.
+    v, _ = run(605_000_000.0, 1_005_000_000.0, 600_000_000.0, 1_000_000_000.0)
+    assert v == 0.0, f"newly minted tokens are issuance, not release: {v}"
+
+    # ** NEVER CLAMPED. ** Circulating falling faster than total is tokens going back OUT of
+    # circulation — into a lockup or a treasury purchase. Real, and exactly what a
+    # "releases can't be negative" floor would erase.
+    v, _ = run(598_000_000.0, 1_000_000_000.0, 600_000_000.0, 1_000_000_000.0)
+    assert v == -2_000_000.0, f"a negative release must survive: {v}"
+
+    # A MISSING STOCK SAYS SO RATHER THAN HALF-COMPUTING.
+    v, out = run(605_000_000.0, None, 600_000_000.0, 1_000_000_000.0)
+    assert v is None and any("missing total_supply" in e.message for e in out.log), out.log
+
+    # NO PRIOR IS NOT A SOURCING PROBLEM, and the message says which it is.
+    v, out = run(605_000_000.0, 1_000_000_000.0, None, 1_000_000_000.0)
+    assert v is None
+    assert any("no prior yet" in e.message for e in out.log), out.log
+
+    # ** THE TWO STOCKS MUST BE DIFFERENCED OVER THE SAME WINDOW. ** They are fetched
+    # independently, so their priors can land on different dates — and subtracting a 7-day
+    # change from a 1-day change gives a number with no referent that still looks like a
+    # release.
+    v, out = run(605_000_000.0, 1_000_000_000.0, 600_000_000.0, 1_000_000_000.0,
+                 dates={("Chainlink", "circulating_supply"): pd.Timestamp("2026-09-16"),
+                        ("Chainlink", "total_supply"): pd.Timestamp("2026-09-22")})
+    assert v is None, "different prior dates must refuse, not silently mix windows"
+    assert any("DIFFERENT dates" in e.message and "NOTHING STORED" in e.message
+               for e in out.log), out.log
+
+    # AND THE GAP REASON SENDS THE READER TO THE INPUTS, not to write a scraper for a figure
+    # nothing publishes.
+    print("pool release ok: total-flat-circulating-up is all release, minting is zero, negative "
+          "survives, and mismatched windows refuse")
+
+
 def test_aerodromes_lock_duration_is_a_proxy_and_permanent_locks_come_off_both_sides():
     """** THE MODEL WAS CONFIRMED FROM SOURCE BEFORE IT WAS WIRED, AND IT HAD A TRAP IN IT. **
 
