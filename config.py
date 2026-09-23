@@ -7690,8 +7690,17 @@ PROJECTS = [
                                  "veAERO NFT whose balance represents DECAYING voting weight. THREE separate "
                                  "reasons voting weight diverges from AERO locked: the NFT totalSupply is a "
                                  "position count, the weight decays with time to expiry, and holders receive "
-                                 "automatic weekly REBASES that increase their veAERO balance. Only "
-                                 "AERO.balanceOf(escrow) gives the tokens actually locked."),
+                                 "automatic weekly REBASES that increase their veAERO balance. "
+                                 "** THIS IS A CUSTODY READING, NOT THE LOCK. ** Corrected 2026-09-23: "
+                                 "it is what the escrow HOLDS, and the escrow holds LESS than it has "
+                                 "locked — 990,636,288.30 against veAERO.supply() of 1,050,289,998.20 at "
+                                 "block 51,693,612. The 59,653,709.90 difference is AERO that "
+                                 "_increaseAmountFor (VotingEscrow.sol:854-861) forwarded out to the "
+                                 "managed NFTs' LockedManagedReward escrows without decrementing supply; "
+                                 "it is still locked principal and still inside totalSupply(). KEPT AS A "
+                                 "SECONDARY READING rather than retired: 'how much AERO sits in the "
+                                 "contract' is a real question and this is its answer. See "
+                                 "ve_locked_supply for the escrow's own accounting."),
             # ===== THE LOCK-DURATION PROXY'S TWO EXTRA READS. Added 2026-09-23. =====
             # Both are calls ON THE ESCROW ITSELF, which is the opposite of `ve` above — and
             # that is deliberate, not an inconsistency. `ve` reads AERO.balanceOf(escrow)
@@ -7718,6 +7727,55 @@ PROJECTS = [
             #     veAERO.supply()              1,050,289,998.20   what it has LOCKED
             #     difference                     -59,653,709.90   -5.68% of the locked amount
             #
+            # ===== ** WHERE THE 59,653,709.90 IS: THE MANAGED-NFT REWARD ESCROWS. ** =====
+            # Answered 2026-09-23 by reading the source, not inferred. `supply` is written in
+            # exactly two places — 768 (+_value) and 907 (-value) — and each is paired with one
+            # of the only two IERC20(token) moves, 794 (in) and 914 (out). merge, split,
+            # depositManaged and withdrawManaged never touch it, and the constructor seeds it at
+            # zero. So no deposit/withdraw cycle can open a gap, and for a while it looked as
+            # though nothing in the contract could.
+            #
+            # ** THE THIRD TOKEN MOVEMENT IS NOT AN IERC20(token) CALL, which is exactly why a
+            # grep for one misses it. ** _increaseAmountFor, lines 854-861:
+            #
+            #     _depositFor(...)                    // supply += _value, AERO pulled IN at 794
+            #     if (_escrowType == EscrowType.MANAGED) {
+            #         IERC20(_token).safeApprove(_lockedManagedReward, _value);
+            #         IReward(_lockedManagedReward).notifyRewardAmount(_token, _value);
+            #         IERC20(_token).safeApprove(_lockedManagedReward, 0);
+            #     }
+            #
+            # Reward.sol:240-242, _notifyRewardAmount, is
+            # `IERC20(token).safeTransferFrom(sender, address(this), amount)` with sender == the
+            # escrow. The AERO leaves the escrow on the same transaction that raised supply, and
+            # ** supply is not decremented. ** That is the gap, and it runs in the observed
+            # direction.
+            #
+            # This is the path taken by every rebase and every compounded reward paid into a
+            # MANAGED veNFT: depositFor is distributor-only for managed NFTs (line 808), and the
+            # comment at 855 says what it means — "increaseAmount called on managed tokens are
+            # treated as locked rewards". The AERO comes back only at withdrawManaged (line 197),
+            # whose getReward is ve-only and pays to ve (Reward.sol:230, recipient == sender ==
+            # ve). ** So it is a float against unexited managed positions, not a leak. **
+            #
+            # ** AND THAT MAKES supply() THE CORRECT READING OF "TOKENS LOCKED". ** The AERO
+            # parked in the LockedManagedReward contracts is locked principal by every other
+            # measure the escrow keeps: it is inside _locked[mTokenId].amount, inside
+            # permanentLockBalance (managed NFTs are created permanent at line 129, so line 850
+            # adds it), and therefore inside totalSupply(). Only the custody reading,
+            # AERO.balanceOf(escrow), leaves it out. That is also why supply() reconciles against
+            # totalSupply() and balanceOf does not — they are the same accounting, one basis.
+            #
+            # NOTE THE DIRECTION, which is the reverse of how the question was put: supply()
+            # INCLUDES something balanceOf EXCLUDES. The escrow holds less than its books record,
+            # not more.
+            #
+            # ** UNVERIFIED AND FALSIFIABLE. ** The gap should equal the summed AERO balance of
+            # every managedToLocked[mTokenId] LockedManagedReward contract. Checking it needs the
+            # managed NFT ids enumerated, which this container cannot do (Base RPCs answer 403
+            # here). If that sum is not 59,653,709.90 at block 51,693,612, this explanation is
+            # incomplete and should be REOPENED rather than patched around.
+            #
             # ** THE BIAS IS COMPUTED AGAINST THE LOCKED AMOUNT, so the ratio has to be too. **
             # With balanceOf the decaying cohort came out at 2,123,151 against a bias of
             # 38,427,661 — 18.1x, impossible. With supply() it is 61,776,861, giving 0.622,
@@ -7732,6 +7790,15 @@ PROJECTS = [
             # ACTED ON: the workbook now shows 990.6m in that column while this derivation uses
             # 1,050.3m, a 5.68% difference on one sheet, and which figure that column should
             # carry is a decision rather than a bug fix.
+            #
+            # ** THE DEFINITIONAL GATE ON THAT DECISION IS NOW ANSWERED (2026-09-23) ** — see the
+            # managed-NFT block below — AND IT POINTS AT supply(). The gap is locked principal
+            # held in the managed reward escrows, counted by _locked, permanentLockBalance and
+            # totalSupply() and missed only by the custody read. The switch of "Tokens locked
+            # (ve)" to ve_locked_supply_tokens is STILL NOT MADE HERE: it was asked for pending
+            # Jake's confirmation as well as this answer, and the second gate has not been given.
+            # Nothing else needs to change when it is — ve_locked_supply already fetches and
+            # stores, and locked_tokens stays on file as the custody reading either way.
             "ve_locked_supply": _contract(
                 "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "ve_locked_supply", "AERO",
                 "https://github.com/aerodrome-finance/contracts/blob/main/contracts/VotingEscrow.sol",
@@ -7744,7 +7811,12 @@ PROJECTS = [
                         "avg_lock_duration_days.",
                 note="NOT INTERCHANGEABLE WITH locked_tokens, which is AERO.balanceOf(escrow). "
                      "They differed by 59,653,709.90 at block 51,693,612 — the escrow holds less "
-                     "than it has locked. Confirmed on-chain, not inferred."),
+                     "than it has locked. Confirmed on-chain, not inferred. THE CAUSE IS "
+                     "_increaseAmountFor lines 854-861: a reward paid into a MANAGED veNFT "
+                     "raises supply and is then forwarded straight out to that NFT's "
+                     "LockedManagedReward contract, which supply does not record. It returns "
+                     "at withdrawManaged, so the gap is a float against unexited managed "
+                     "positions."),
             "ve_permanent": _contract(
                 "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "permanent_locked", "AERO",
                 "https://github.com/aerodrome-finance/contracts/blob/main/contracts/VotingEscrow.sol",
