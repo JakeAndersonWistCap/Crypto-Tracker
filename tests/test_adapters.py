@@ -276,6 +276,32 @@ def test_growthepie_reports_the_field_names_instead_of_guessing_them():
     assert all(isinstance(v, float) for v in got0.value), \
         "a numeric STRING in the value column would sort and sum as text"
 
+    # ===== ** 120 ROWS, AND THIS IS WHERE THEY LAND. ** Asked for after the first live run:
+    # 120 is exactly 2 projects x 2 metrics x 30 days, and the arithmetic working out is not
+    # proof the mapping is right. Run EVERY project against a document shaped like the real one
+    # — several chains, several metrics — and check that nothing else is touched.
+    many = [{"origin_key": c, "metric_key": m, "date": f"2026-08-{d:02d}",
+             "value": f"{1000 + d}.0"}
+            for c in ("ethereum", "plume", "base", "arbitrum", "optimism")
+            for m in ("daa", "txcount", "fees_paid_usd", "tvl")
+            for d in range(1, 31)]
+    a2 = GrowThePie()
+    a2.http = _GtpStub(doc=many)
+    wide = FetchOutput()
+    a2.run(config.PROJECTS, None, wide)
+    df = wide.frame()
+    assert len(df) == 120, f"2 projects x 2 metrics x 30 days = 120, got {len(df)}"
+    assert sorted(set(df.project)) == ["Ethereum", "Plume"], sorted(set(df.project))
+    assert sorted(set(df.metric)) == ["active_addresses", "tx_count"], sorted(set(df.metric))
+    assert {(p_, m_): len(g) for (p_, m_), g in df.groupby(["project", "metric"])} == {
+        ("Ethereum", "active_addresses"): 30, ("Ethereum", "tx_count"): 30,
+        ("Plume", "active_addresses"): 30, ("Plume", "tx_count"): 30}
+    assert not [e for e in wide.log if e.status == "failed"], wide.log
+    # THREE OTHER CHAINS AND TWO OTHER METRICS WERE IN THE DOCUMENT AND NONE LEAKED — that is
+    # what the origin_key AND metric_key filter together buys, and filtering on either alone
+    # would have quietly summed chains or pulled in fees.
+    assert a2.http.calls == 1, "still one fetch for the whole run"
+
     # THE UNCONFIRMED PATH, as it will be for the next chain added.
     spec = dict(spec, status="unconfirmed", date_field=None, value_field=None)
     eth = dict(eth, growthepie=spec)

@@ -132,6 +132,20 @@ SEL_TOTAL_SUPPLY = "0x18160ddd"    # keccak("totalSupply()")[:4]
 SEL_BALANCE_OF = "0x70a08231"      # keccak("balanceOf(address)")[:4]
 SEL_DECIMALS = "0x313ce567"        # keccak("decimals()")[:4]
 SEL_THRESHOLD = "0x42cde4e8"       # keccak("threshold()")[:4]
+# veAERO (Aerodrome VotingEscrow) — the three reads the lock-duration proxy depends on.
+# ** permanentLockBalance() WAS WRITTEN FROM MEMORY AS 0xa4d49d90 AND THAT IS WRONG. ** keccak
+# says 0x4d01cb66. The fifth hand-written selector in this file to be wrong, and the first to be
+# caught before it ran — because these are declared HERE, where _assert_selectors sees them,
+# rather than beside the function that uses them.
+SEL_VE_SUPPLY = "0x047fc9aa"       # keccak("supply()")[:4]
+SEL_VE_PERMANENT = "0x4d01cb66"    # keccak("permanentLockBalance()")[:4]
+SEL_VE_EPOCH = "0x900cf0cf"        # keccak("epoch()")[:4]
+AERO_TOKEN = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
+VEAERO = "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"
+# Base, for the veAERO reads. Same shape as ETH_RPCS and the same preference rule: a keyed
+# endpoint in BASE_RPC_URL goes first, the public ones stay behind it.
+_PUBLIC_BASE_RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.base.org",
+                     "https://base.llamarpc.com"]
 
 # --- addresses for the three checks added 2026-09-17 -------------------------------------
 SYRUP = "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66"           # Maple SYRUP token
@@ -172,7 +186,13 @@ def _assert_selectors() -> None:
     tables = [SELECTORS, SELECTORS_SPLITTER, SELECTORS_SPLITTER_PARAMS,
               {"list()": CHAINLOG_LIST, "getAddress(bytes32)": CHAINLOG_GET,
                "totalSupply()": SEL_TOTAL_SUPPLY, "balanceOf(address)": SEL_BALANCE_OF,
-               "decimals()": SEL_DECIMALS, "threshold()": SEL_THRESHOLD}]
+               "decimals()": SEL_DECIMALS, "threshold()": SEL_THRESHOLD,
+               # ** A FIFTH WRONG SELECTOR, CAUGHT BEFORE IT RAN. ** permanentLockBalance() was
+               # written from memory as 0xa4d49d90; keccak says 0x4d01cb66. Registering these
+               # here is what turned that into a one-line correction instead of another
+               # "UNREACHABLE" that reads as a network fault.
+               "supply()": SEL_VE_SUPPLY, "permanentLockBalance()": SEL_VE_PERMANENT,
+               "epoch()": SEL_VE_EPOCH}]
     wrong = []
     for table in tables:
         for sig, sel in table.items():
@@ -204,9 +224,9 @@ def rpc(url: str, method: str, params=None):
     return r.json()
 
 
-def eth_block_number():
+def eth_block_number(chain: str = "ethereum"):
     """The current block, so a pair of reads can be pinned to ONE state rather than two."""
-    for url in ETH_RPCS:
+    for url in _rpcs_for(chain):
         try:
             j = rpc(url, "eth_blockNumber")
             if "result" in j:
@@ -216,14 +236,35 @@ def eth_block_number():
     return None, None
 
 
-def eth_call(to: str, selector: str, block: str = "latest"):
+def _rpcs_for(chain: str) -> list:
+    """The endpoint list for a chain, keyed endpoint first. Ethereum and Base only.
+
+    ** ADDED BECAUSE A BASE CONTRACT WAS ABOUT TO BE CALLED AGAINST ETHEREUM RPCs. ** Every
+    helper here was Ethereum-only, and the veAERO reads are on Base — which would have returned
+    "no code at address" or silence, and read as the contract being wrong rather than the
+    endpoint. The chain is now named at the call site.
+    """
+    if chain == "base":
+        keyed = os.environ.get("BASE_RPC_URL", "").strip()
+        urls = [u.strip() for u in keyed.split(",") if u.strip()] if keyed else []
+        urls += _PUBLIC_BASE_RPCS
+        seen, out = set(), []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
+    return ETH_RPCS
+
+
+def eth_call(to: str, selector: str, block: str = "latest", chain: str = "ethereum"):
     """Try each endpoint until one answers. Returns (result_hex, endpoint) or (None, error).
 
     `block` pins the read. Two calls at "latest" can straddle a block boundary, which for a
     ratio of two figures is the difference between a measurement and a coincidence.
     """
     errors = []
-    for url in ETH_RPCS:
+    for url in _rpcs_for(chain):
         try:
             j = rpc(url, "eth_call", [{"to": to, "data": selector}, block])
             if "result" in j:
@@ -1085,6 +1126,103 @@ def beaconchain():
             print("  reachable without a key — usable for validator issuance")
     except Exception as e:  # noqa: BLE001
         print(f"  UNREACHABLE — {e}")
+
+
+
+
+def aerodrome_lock_inputs():
+    """WHICH OF THE THREE READS IS WRONG — four calls, ONE block, on Base.
+
+    ** THE ARITHMETIC IS IMPOSSIBLE AND THE DERIVATION REFUSED, WHICH IS THE SYSTEM WORKING. **
+    The run gave voting_power 1,026,941,566 against locked 990,636,223 and permanent
+    988,513,072. Decaying voting power CANNOT exceed the amount it derives from — bias is
+    `amount * remaining / MAXTIME` with remaining <= MAXTIME — so:
+
+        bias      = vp - permanent   = 38,428,494
+        decaying  = locked - permanent = 2,123,151
+        ratio                          = 18.1x, where the ceiling is 1.0
+
+    Three candidates, and this probe separates them rather than arguing about them:
+
+    (1) locked_tokens IS THE WRONG DENOMINATOR. It reads AERO.balanceOf(escrow) — tokens the
+        escrow HOLDS. VotingEscrow keeps its own accounting in `supply` (line 556, incremented
+        at 768 and decremented at 907), which is what the bias is actually computed against. If
+        supply() != balanceOf, the escrow holds a different amount from what it has locked, and
+        `supply` is the figure this derivation wants.
+
+    (2) ** THE TWO PERMANENT FIGURES ARE NOT THE SAME QUANTITY, AND THIS IS THE SUBTLE ONE. **
+        BalanceLogicLibrary.supplyAt returns `bias + _point.permanentLockBalance` — the value
+        CHECKPOINTED in _pointHistory, not current storage. permanentLockBalance() returns
+        CURRENT storage. VotingEscrow refreshes the point from storage only inside _checkpoint
+        (line 699). So totalSupply() and permanentLockBalance() can legitimately disagree, and
+        subtracting one from the other is not exactly the decaying bias even when every read is
+        correct. Reading epoch() alongside them says how stale the point is.
+
+    (3) A UNITS OR TARGET MISMATCH — the least likely, since all three scale by AERO's 18
+        decimals and two of them are calls on the escrow itself, but it is what the first two
+        being clean would leave.
+
+    ** PINNED TO ONE BLOCK, because the run read these at three different moments. ** A moving
+    target cannot produce a 36m excess on its own, but an unpinned comparison cannot prove that.
+    """
+    head("AERODROME — which of the three lock reads is wrong? (four calls, one block)")
+    blk = eth_block_number(chain="base")
+    if blk is None:
+        print("  UNREACHABLE — no Base RPC answered eth_blockNumber; nothing else attempted.")
+        return
+    print(f"  block {blk}\n")
+    reads = [
+        ("AERO.balanceOf(veAERO)", AERO_TOKEN, SEL_BALANCE_OF + VEAERO[2:].lower().rjust(64, "0"),
+         "what locked_tokens reads"),
+        ("veAERO.supply()", VEAERO, SEL_VE_SUPPLY, "the escrow's OWN accounting of AERO locked"),
+        ("veAERO.totalSupply()", VEAERO, SEL_TOTAL_SUPPLY,
+         "what ve_voting_power_tokens reads = bias + CHECKPOINTED permanent"),
+        ("veAERO.permanentLockBalance()", VEAERO, SEL_VE_PERMANENT,
+         "what permanent_locked_tokens reads = CURRENT storage"),
+    ]
+    vals = {}
+    for label, addr, data, why in reads:
+        word, src = eth_call(addr, data, block=blk, chain="base")
+        if word is None:
+            print(f"  {label:<32} UNREACHABLE  {src[:80]}")
+            continue
+        raw = int(word, 16)
+        vals[label] = raw / 1e18
+        print(f"  {label:<32} {raw / 1e18:>18,.2f}   {why}")
+    word, _ = eth_call(VEAERO, SEL_VE_EPOCH, block=blk, chain="base")
+    if word is not None:
+        print(f"  {'veAERO.epoch()':<32} {int(word, 16):>18,}   global checkpoints so far")
+
+    bal = vals.get("AERO.balanceOf(veAERO)")
+    sup = vals.get("veAERO.supply()")
+    ts = vals.get("veAERO.totalSupply()")
+    perm = vals.get("veAERO.permanentLockBalance()")
+    print("\n  VERDICT")
+    if bal is not None and sup is not None:
+        d = bal - sup
+        print(f"    balanceOf - supply() = {d:,.2f}"
+              + ("  -> THE SAME. locked_tokens is NOT the problem; candidate (1) is dead."
+                 if abs(d) < max(1.0, abs(sup) * 1e-9) else
+                 "  -> THEY DIFFER. The escrow holds a different amount from what it has "
+                 "locked, and supply() is the denominator this derivation wants."))
+    if ts is not None and sup is not None:
+        print(f"    totalSupply() - supply() = {ts - sup:,.2f}"
+              + ("  -> voting power EXCEEDS the locked amount, which is impossible for a "
+                 "decaying weight. Candidate (2) or (3)." if ts > sup else
+                 "  -> within the locked amount, as it must be."))
+    if ts is not None and perm is not None and sup is not None:
+        bias, decaying = ts - perm, sup - perm
+        print(f"    implied bias = {bias:,.2f}   decaying locked = {decaying:,.2f}")
+        if decaying > 0:
+            r = bias / decaying
+            print(f"    bias / decaying = {r:.3f}"
+                  + ("  -> AT OR UNDER 1.0. The inputs reconcile against supply(), so "
+                     "locked_tokens was the wrong denominator." if r <= 1.0001 else
+                     "  -> STILL ABOVE 1.0. Not the denominator. Look at candidate (2): "
+                     "totalSupply() carries the CHECKPOINTED permanent balance and "
+                     "permanentLockBalance() is current, so they are not the same quantity."))
+    print("\n  PASTE BACK all four values, the block and the epoch. Do NOT adjust the 0-1460 "
+          "bound or the formula on the strength of this — it is a diagnosis, not a fix.")
 
 
 def main():

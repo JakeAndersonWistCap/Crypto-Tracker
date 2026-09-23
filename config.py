@@ -7980,6 +7980,65 @@ PROJECTS = [
             # per-NFT enumeration this proxy exists to avoid. It needs every tokenId's
             # locked(tokenId).end, so it is a Dune query or a log scan, not two eth_calls.
             # Recorded as the next step rather than started.
+            # ===== ** THE FIRST LIVE RUN REFUSED, AND THE INPUTS ARE WHY. Recorded 2026-09-23.
+            # Result 26,425.6 days (~72 years) against the 0-1460 bound, so nothing was stored
+            # and nothing was clipped — the refusal worked. But the arithmetic is not the fault:
+            #
+            #     voting_power  1,026,941,566
+            #     locked          990,636,223
+            #     permanent       988,513,072
+            #
+            # ** VOTING POWER EXCEEDS THE LOCKED AMOUNT BY 36,305,343, WHICH IS IMPOSSIBLE. **
+            # bias is `amount * remaining / MAXTIME` with remaining <= MAXTIME, so the sum of
+            # biases can never exceed the sum of amounts. Removing the permanent tranche makes
+            # it starker: bias 38,428,494 against a decaying cohort of 2,123,151 — 18.1x, where
+            # the ceiling is 1.0. 99.79% of the lock is permanent, so the decaying denominator
+            # is tiny and any error in the numerator is amplified enormously.
+            #
+            # THE THREE READS ARE WIRED AS INTENDED — checked against config, not assumed:
+            #   locked_tokens           AERO.balanceOf(veAERO)      on 0x940181a9…
+            #   ve_voting_power_tokens  veAERO.totalSupply()        on 0xeBf418Fe…
+            #   permanent_locked_tokens veAERO.permanentLockBalance() on 0xeBf418Fe…
+            # all scaled by AERO's 18 decimals. So the fault is in what one of them MEANS.
+            #
+            # ** A CANDIDATE FOUND IN THE SOURCE, AND IT IS NOT THE OBVIOUS ONE. **
+            # BalanceLogicLibrary.supplyAt returns `bias + _point.permanentLockBalance` — the
+            # value CHECKPOINTED in _pointHistory. permanentLockBalance() returns CURRENT
+            # storage, and VotingEscrow refreshes the point from storage only inside _checkpoint
+            # (line 699). So the two permanent figures are NOT the same quantity, and
+            # subtracting one from the other is not exactly the decaying bias even when every
+            # read is correct.
+            #
+            # The other live candidate is the DENOMINATOR: locked_tokens reads what the escrow
+            # HOLDS, while VotingEscrow keeps its own accounting of what it has LOCKED in
+            # `supply` (line 556). Those need not agree.
+            #
+            # ** NOT DIAGNOSED FROM HERE — every Base endpoint is egress-blocked. **
+            # check_offline_items.py aerodrome_lock_inputs reads all four at ONE pinned block
+            # (balanceOf, supply(), totalSupply(), permanentLockBalance(), plus epoch()) and its
+            # verdict separates the two candidates. Do NOT adjust the bound or the formula
+            # before it has run: the bound is what caught this.
+            "first_run_2026_09_23": {
+                "result_days": 26_425.6,
+                "voting_power": 1_026_941_566, "locked": 990_636_223,
+                "permanent": 988_513_072,
+                "voting_power_minus_locked": 36_305_343,
+                "impossible_because": "a decaying weight cannot exceed the amount it derives "
+                                      "from; bias/decaying is 18.1x against a ceiling of 1.0",
+                "stored": False, "clipped": False,
+                "candidates": {
+                    "checkpointed_vs_current_permanent":
+                        "supplyAt uses _point.permanentLockBalance (checkpointed); "
+                        "permanentLockBalance() is current storage. Not the same quantity.",
+                    "wrong_denominator":
+                        "locked_tokens is AERO.balanceOf(escrow) — what it HOLDS. The escrow's "
+                        "own accounting of what it has LOCKED is `supply` (VotingEscrow.sol "
+                        "line 556), and the two need not agree.",
+                },
+                "diagnose_with": "check_offline_items.py aerodrome_lock_inputs",
+                "do_not": "adjust the 0-1460 bound or the formula. The bound is what caught "
+                          "this, and widening it would have stored 72 years as a lock duration.",
+            },
             "next_step": {
                 "want": "lock distribution by bucket (<1y, 1-2y, 2-4y), not just the mean",
                 "cost": "per-NFT enumeration — locked(tokenId) for every position",
@@ -8765,6 +8824,30 @@ PROJECTS = [
                     # returned was the server saying exactly that.
                     "from_block": 20_663_735,
                     "from_block_found_on": "2026-09-23",
+                    # ** BLOCKED ON THE PROVIDER'S PLAN, NOT ON THE CODE. Confirmed 2026-09-23
+                    # from Alchemy's own error body: "Under the Free tier plan, you can make
+                    # eth_getLogs requests with up to a 10 block range." The chunking narrowed
+                    # 5000 -> 2500 -> 1250 -> 625 -> 500 and was still refused, because the real
+                    # ceiling is below MIN_LOG_CHUNK. That is the algorithm working — it refuses
+                    # rather than guessing below its floor.
+                    #
+                    # 10 blocks over ~5.4m is ~540,000 requests. Not viable at any chunk size,
+                    # so these four rows stay GAPPED rather than wrong. Two ways out, and
+                    # neither is a code change: a paid Alchemy plan, or a provider with a more
+                    # generous free eth_getLogs range — worth checking dRPC and Infura's actual
+                    # limits rather than assuming either is better.
+                    "scan_blocked_2026_09_23": {
+                        "provider": "Alchemy free tier",
+                        "eth_getLogs_max_range": 10,
+                        "evidence": "its own error body, quoted above",
+                        "requests_needed": "~540,000 over the ~5.4m block history",
+                        "narrowing_worked": "5000 -> 2500 -> 1250 -> 625 -> 500, then refused",
+                        "do_not": "lower MIN_LOG_CHUNK to force a result. A lower floor buys a "
+                                  "scan that rate-limits for hours, not a figure.",
+                        "ways_out": ("a paid plan with a higher range",
+                                     "a provider with a better free range — CHECK dRPC and "
+                                     "Infura's actual limits first, do not assume"),
+                    },
                     "from_block_discover": "deployment",
                     # 10,000 is what free endpoints generally serve for eth_getLogs. A full
                     # history is roughly 2.6m blocks, so expect ~260 chunks on the first run; the

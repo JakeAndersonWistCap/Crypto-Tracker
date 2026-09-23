@@ -452,6 +452,18 @@ class ChainReader:
     # limit. Halving answers what it said; it is not a blind retry of the same request.
     LOGS_RANGE_TOO_WIDE = ("query returned more than", "block range", "too many results",
                            "response size", "limit exceeded", "range is too large", "query timeout")
+    # ===== ** THE FLOOR IS NOT A TUNING KNOB. Confirmed the hard way 2026-09-23. ** =====
+    # Alchemy's free tier caps eth_getLogs at TEN blocks, from its own error body: "Under the
+    # Free tier plan, you can make eth_getLogs requests with up to a 10 block range." The
+    # narrowing did exactly what it should — 5000 -> 2500 -> 1250 -> 625 -> 500 — and was still
+    # refused, because the real ceiling is below this floor. Refusing there is the algorithm
+    # working: it declines to guess below a bound it was given.
+    #
+    # ** DO NOT LOWER THIS TO FORCE A RESULT. ** A 10-block cap over Sky's ~5.4m block history
+    # is ~540,000 requests: not viable at any chunk size, so a lower floor would buy a scan that
+    # runs for hours and rate-limits, not a figure. The four burn-decomposition rows stay
+    # correctly GAPPED until the plan or the provider changes, which is a true empty cell rather
+    # than a number assembled from half a scan.
     MIN_LOG_CHUNK = 500
 
     @staticmethod
