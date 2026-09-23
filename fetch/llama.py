@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from .base import Http, tidy, window
+from .base import Http, point, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.llama")
 
@@ -426,6 +426,20 @@ class DefiLlama:
         slug, name = project.get("defillama_protocol"), project["name"]
         if not spec or not slug:
             return
+        # ===== THE UNBIASED ROUTE WINS, AND THE TWO NEVER ALTERNATE. Added 2026-09-23. =====
+        # Once the protocol's own API is confirmed, it writes these columns and this route stands
+        # down COMPLETELY — not "unless it fails". A run where the API is down must leave the
+        # column empty rather than filling it from here, because two sources taking turns is a
+        # measuring-point change and blanks the whole series. That is the failure this file has
+        # now recorded three times.
+        api = project.get("lending_api") or {}
+        if api.get("status") == "confirmed":
+            out.skipped(SOURCE, name,
+                        f"supply_units and utilisation_pct: NOT taken from DefiLlama — "
+                        f"{api.get('endpoint')} is confirmed and serves them without the "
+                        f"collateral in the denominator. The two routes must not alternate.",
+                        TIER)
+            return
         try:
             j = self.http.get(f"{API}/protocol/{slug}")
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
@@ -567,3 +581,116 @@ class DefiLlama:
             self.chain_tvl(p, window_days, out)
             self.stablecoins(p, window_days, out)
         self.rwa(projects, window_days, out)
+
+
+# ===== MORPHO'S OWN API: THE SAME FIGURES THE TVL ADAPTER READS AND DISCARDS. 2026-09-23. =====
+#
+# ** THE DEFILLAMA ROUTE CAN ONLY APPROXIMATE THIS. ** morpho-blue's tvl function sums the Morpho
+# Blue singleton's balance of every market's collateralToken as well as its loanToken, so
+# tvl + borrowed is supplied PLUS collateral and the utilisation it yields reads too small.
+#
+# Morpho publishes the per-market state — supplyAssetsUsd and borrowAssetsUsd — through a free
+# GraphQL endpoint. Summed across markets that is utilisation with no collateral in the
+# denominator: the figure itself rather than a labelled approximation of it.
+#
+# ** IT WRITES NOTHING WHILE status IS unconfirmed. ** The endpoint is egress-blocked from the
+# environment this was written in, so it has not been shown to answer. A source is not promoted
+# to primary until it fetches on a live run — this book has been burned by the other order. The
+# adapter runs, reports exactly what came back, and refuses to store until somebody flips the
+# flag on the strength of a run that worked.
+class MorphoBlueApi:
+    """Per-market supply and borrow, summed, from Morpho's own GraphQL API."""
+
+    SOURCE = "morpho_api"
+    TIER = 1
+
+    def __init__(self, **_ignored):
+        self.http = Http(min_interval=0.5)
+
+    def _query(self, endpoint: str, query: str, variables: dict | None = None):
+        return self.http.post(endpoint, json_body={"query": query,
+                                                   "variables": variables or {}})
+
+    def run(self, projects: list[dict], window_days, out):
+        when = today()
+        for p in projects:
+            api = p.get("lending_api") or {}
+            if not api.get("endpoint"):
+                continue
+            name = p["name"]
+            try:
+                chains = self._query(api["endpoint"], api["chains_query"])
+                ids = [c["id"] for c in (((chains or {}).get("data") or {}).get("chains") or [])]
+            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(self.SOURCE, name, f"{api['endpoint']}: chains query failed: {e}",
+                         self.TIER)
+                continue
+            if not ids:
+                out.fail(self.SOURCE, name,
+                         f"{api['endpoint']} answered but listed no chains. Response keys: "
+                         f"{', '.join(sorted(chains or {})) or 'none'}", self.TIER)
+                continue
+
+            supply, borrow, seen, skip = 0.0, 0.0, 0, 0
+            missing_fields = set()
+            try:
+                while True:
+                    page = self._query(api["endpoint"], api["markets_query"],
+                                       {"c": ids, "skip": skip,
+                                        "first": int(api.get("page_size", 1000))})
+                    node = (((page or {}).get("data") or {}).get("markets") or {})
+                    items = node.get("items") or []
+                    for it in items:
+                        st = it.get("state") or {}
+                        sv, bv = st.get(api["supply_field"]), st.get(api["borrow_field"])
+                        if sv is None:
+                            missing_fields.add(api["supply_field"])
+                        if bv is None:
+                            missing_fields.add(api["borrow_field"])
+                        supply += float(sv or 0.0)
+                        borrow += float(bv or 0.0)
+                        seen += 1
+                    total = (node.get("pageInfo") or {}).get("countTotal")
+                    if not items or (total is not None and seen >= int(total)):
+                        break
+                    skip += int(api.get("page_size", 1000))
+            except Exception as e:  # noqa: BLE001
+                out.fail(self.SOURCE, name, f"{api['endpoint']}: markets query failed: {e}",
+                         self.TIER)
+                continue
+
+            detail = (f"{seen} market(s) across {len(ids)} chain(s): "
+                      f"{api['supply_field']}={supply:,.0f}, {api['borrow_field']}={borrow:,.0f}")
+            if missing_fields:
+                # ** THE FIELD NAME IS THE UNCONFIRMED HALF, so a missing one is reported as
+                # exactly that rather than summed as zero. ** A borrow field that silently reads
+                # 0 gives a utilisation of 0.0000 on a lending protocol, which is a number.
+                out.fail(self.SOURCE, name,
+                         f"{api['endpoint']}: {', '.join(sorted(missing_fields))} absent from "
+                         f"state on at least one market. {detail}. NOTHING SUMMED INTO A "
+                         f"FIGURE — a borrow field reading 0 would give utilisation 0.0000, "
+                         f"which is a number and not a gap.", self.TIER)
+                continue
+            if supply <= 0:
+                out.fail(self.SOURCE, name, f"{api['endpoint']}: supply summed to 0. {detail}",
+                         self.TIER)
+                continue
+
+            if api.get("status") != "confirmed":
+                # THE WHOLE POINT OF THE UNCONFIRMED STATE: it reports what it would have
+                # written, so one run settles whether the route works — and writes nothing.
+                out.skipped(self.SOURCE, name,
+                            f"supply_units and utilisation_pct NOT stored — lending_api.status "
+                            f"is {api.get('status')!r}. IT WORKED: {detail}, which would give "
+                            f"supply_units={supply:,.0f} and "
+                            f"utilisation_pct={borrow / supply:.4f}. Set status to 'confirmed' "
+                            f"in config to take this route and stand DefiLlama's down.",
+                            self.TIER)
+                continue
+
+            for metric, value in (("supply_units", supply),
+                                  ("utilisation_pct", borrow / supply)):
+                out.add(point(name, metric, value, f"{self.SOURCE}:markets", self.TIER, when),
+                        self.SOURCE, name,
+                        f"{metric} from Morpho's own API — {detail}. NO COLLATERAL in the "
+                        f"denominator, unlike the DefiLlama route this replaces.", self.TIER)

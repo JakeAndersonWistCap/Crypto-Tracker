@@ -1136,6 +1136,152 @@ def test_a_column_that_is_another_column_says_so_instead_of_sitting_empty():
           "label rather than in config")
 
 
+def test_etherfis_two_addresses_have_two_roles_and_neither_is_read_as_a_balance():
+    """** THE MISMATCH WAS REAL AND THE READING OF IT WAS WRONG. ** These are not two candidates
+    for one label — they are two contracts doing two jobs, and three independent sources agree:
+
+      (1) DefiLlama's adapter: eETH withdrawal fees go to 0x2f5301a3..., misc staking revenue
+          (eETH, EIGEN) to 0x0c83EA...
+      (2) Ether.fi's OWN test suite, test/TestSetup.sol:294, declares 0x2f5301a3... as
+          `buybackWallet` — found in an earlier round and PARKED as an unverified lead, which is
+          what leads are for.
+      (3) Ether.fi's governance gitbook: 100% of eETH withdrawal fee revenue funds the weekly
+          ETHFI buybacks.
+
+    (1) and (3) are the same claim from two directions; (2) names the contract. The adapter's
+    loose "to the treasury" was describing a buyback wallet.
+    """
+    p = config.PROJECT_BY_NAME["Ether.fi"]
+    assert "treasury_candidates" not in p, "the ambiguity is resolved, not still recorded as one"
+    bw, tr = p["buyback_wallet"], p["treasury"]
+    assert bw["address"] == "0x2f5301a3D59388c509C65f8698f521377D41Fd0F"
+    assert tr["address"] == "0x0c83EAe1FE72c390A02E426572854931EefF93BA"
+    assert bw["address"] != tr["address"]
+    assert len(bw["sources"]) == 3, "three independent sources is the standard that was met"
+    assert any("TestSetup.sol" in x for x in bw["sources"])
+    assert any("gitbook" in x for x in bw["sources"])
+
+    # ** AND THE BUYBACK WALLET'S BALANCE IS NOT actual_buyback_tokens. ** Third time this round,
+    # after NEAR's revenue wallets and Plume's fee receiver: a wallet that exists to SPEND has a
+    # balance delta of inflow MINUS spending, so it understates the buyback by the buyback.
+    assert "understates the buyback by the buyback" in bw["not_wired_as_balance"]
+    assert "log scan" in bw["route_that_would_work"] and "not a balance read" in bw["route_that_would_work"]
+    # NEITHER IS DECLARED AS A CONTRACT, so nothing reads either one yet.
+    assert not any(c.get("address", "").lower() in (bw["address"].lower(), tr["address"].lower())
+                   for c in p["contracts"].values()), \
+        "recorded, not wired — what the treasury HOLDS has not been read"
+    print("ether.fi ok: buyback wallet and treasury told apart by three sources, and the "
+          "buyback wallet's balance is explicitly not the buyback")
+
+
+def test_spendle_is_ethereum_only_so_the_multichain_candidate_is_ruled_out():
+    """** THE ONLY CANDIDATE POINTING THE RIGHT WAY FOR A 3x GAP, AND IT IS WRONG. **
+
+    Pendle runs on fourteen chains, so an Ethereum-only totalSupply read missing the rest would
+    understate by construction — which is exactly the shape a 34.1m read against a 100m report
+    needs. The boost hypothesis points the other way; this one did not.
+
+    Ten chains' deployment files were read on 2026-09-23. sPendle appears in ONE: Ethereum. Every
+    other chain carries the bridged PENDLE token and a DEPRECATED vePendle. So locked_tokens is
+    COMPLETE, not partial — and the cheap explanation for the 3x is gone, which makes the
+    remaining candidates more likely rather than less.
+    """
+    d = config.is_non_comparable("Pendle", "locked_tokens")["discrepancy_2026_09_23"]
+    mc = d["multichain_ruled_out"]
+    assert mc["spendle_found_on"] == (1,), mc
+    assert len(mc["chains_answered"]) >= 9 and 42161 in mc["chains_answered"]
+    assert "COMPLETE, not partial" in mc["verdict"]
+    # ** BUT vePENDLE REALLY WAS MULTI-CHAIN, and that sharpens a different candidate. ** A
+    # reported "100m staked" that predates or straddles the migration could be summing vePENDLE
+    # across chains, which is not the same quantity as sPENDLE on Ethereum.
+    assert "deprecated" in mc["but_vependle_was_multichain"].lower()
+    assert "0x3209E9412" in mc["but_vependle_was_multichain"]
+    # THE OTHER THREE CANDIDATES SURVIVE UNCHANGED — ruling one out is not choosing another.
+    assert len(d["candidates"]) == 3
+    assert d["boost_hypothesis_fits"] is False
+    print("pendle ok: sPENDLE is Ethereum-only, so locked_tokens is complete and the one "
+          "candidate that pointed the right way is ruled out")
+
+
+def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
+    """** A ROUTE THAT REMOVES THE BIAS, AND A FLAG THAT KEEPS IT HONEST UNTIL IT IS PROVEN. **
+
+    Morpho publishes per-market supplyAssetsUsd and borrowAssetsUsd — the figures morpho-blue's
+    TVL adapter reads and discards. Summed, that is utilisation with NO collateral in the
+    denominator: the figure itself rather than a labelled approximation.
+
+    The endpoint is egress-blocked from the environment this was written in, so it has NOT been
+    shown to answer. A source is not promoted to primary until it fetches on a live run — so the
+    adapter runs, reports exactly what it would have written, and stores nothing until the flag
+    is flipped on the strength of a run that worked.
+    """
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama, MorphoBlueApi
+
+    api = config.PROJECT_BY_NAME["Morpho"]["lending_api"]
+    assert api["status"] == "unconfirmed", "it has not been shown to answer from here"
+    assert api["endpoint"] == "https://blue-api.morpho.org/graphql"
+    assert "DefiLlama" in api["schema_evidence"], "the supply field's provenance is named"
+    assert "measuring-point change" in api["on_confirm"]
+
+    class Stub:
+        def __init__(self, borrow_key="borrowAssetsUsd"):
+            self.borrow_key = borrow_key
+
+        def post(self, url, json_body=None, **kw):
+            if "chains" in (json_body or {}).get("query", ""):
+                return {"data": {"chains": [{"id": 1}, {"id": 8453}]}}
+            st = {"supplyAssetsUsd": 600.0, self.borrow_key: 400.0}
+            return {"data": {"markets": {"pageInfo": {"countTotal": 1},
+                                         "items": [{"marketId": "0xa", "chain": {"id": 1},
+                                                    "state": st}]}}}
+
+    def run(project, stub):
+        a = MorphoBlueApi()
+        a.http = stub
+        out = FetchOutput()
+        a.run([project], None, out)
+        return out
+
+    morpho = config.PROJECT_BY_NAME["Morpho"]
+    out = run(morpho, Stub())
+    # ** NOTHING STORED — and the skip carries the numbers, so ONE run settles it. **
+    assert out.frame().empty, out.frame()
+    msg = [e.message for e in out.log if e.status == "skipped"]
+    assert msg and "IT WORKED" in msg[0], out.log
+    assert "utilisation_pct=0.6667" in msg[0], msg[0]
+    assert "stand DefiLlama's down" in msg[0]
+
+    # ONCE CONFIRMED IT WRITES, and the row says the bias is gone rather than merely named.
+    confirmed = dict(morpho, lending_api=dict(api, status="confirmed"))
+    out2 = run(confirmed, Stub())
+    got = {r.metric: float(r.value) for r in out2.frame().itertuples(index=False)}
+    assert got["supply_units"] == 600.0 and abs(got["utilisation_pct"] - 2 / 3) < 1e-9, got
+    assert any("NO COLLATERAL in the denominator" in e.message for e in out2.log)
+
+    # ** AND THE TWO ROUTES NEVER ALTERNATE. ** Two sources taking turns on one column is a
+    # measuring-point change, which blanks the series — the failure this file has now recorded
+    # three times. Once confirmed, DefiLlama's lending route stands down COMPLETELY, not
+    # "unless the API fails".
+    d = DefiLlama()
+    d.http = object()          # never called: the stand-down happens before any request
+    out3 = FetchOutput()
+    d.lending_supply(confirmed, None, out3)
+    assert out3.frame().empty
+    assert [e for e in out3.log if e.status == "skipped" and "must not alternate" in e.message]
+
+    # ** A MISSING BORROW FIELD IS REPORTED, NEVER SUMMED AS ZERO. ** The field's spelling is the
+    # unconfirmed half, and a borrow side reading 0 gives utilisation 0.0000 on a lending
+    # protocol — a number, not a gap, and entirely plausible on a quiet day.
+    out4 = run(confirmed, Stub(borrow_key="borrowAssetsUSD"))
+    assert out4.frame().empty
+    bad = [e for e in out4.log if e.status == "failed"]
+    assert bad and "borrowAssetsUsd absent" in bad[0].message, out4.log
+    assert "0.0000" in bad[0].message, "the reason names the number it refuses to produce"
+    print("morpho api ok: reports what it would write and stores nothing until confirmed, "
+          "stands DefiLlama's route down when it is, and refuses a missing borrow field")
+
+
 def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
     """** THE REFUSAL OF 2026-09-22 FOUND SOMETHING REAL, AND THE ANSWER CHANGED ANYWAY. **
 
@@ -6765,7 +6911,36 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
     for table in (coi.SELECTORS, coi.SELECTORS_SPLITTER, coi.SELECTORS_SPLITTER_PARAMS):
         for sig, sel in table.items():
             assert sel == "0x" + Web3.keccak(text=sig).hex()[:8], sig
-    assert coi.SEL_THRESHOLD == "0x" + Web3.keccak(text="threshold()").hex()[:8]
+    # ** AND THE BARE CONSTANTS, WHICH IS WHERE A FOURTH WRONG ONE SURVIVED. ** The 2026-09-23
+    # fix checked the three DICTS; list() is a module constant and slipped through, so the
+    # ChainLog enumeration — the check built precisely to avoid guessing an address — was
+    # calling a function that does not exist and would have reported UNREACHABLE.
+    for sig, sel in (("list()", coi.CHAINLOG_LIST), ("getAddress(bytes32)", coi.CHAINLOG_GET),
+                     ("totalSupply()", coi.SEL_TOTAL_SUPPLY),
+                     ("balanceOf(address)", coi.SEL_BALANCE_OF),
+                     ("decimals()", coi.SEL_DECIMALS), ("threshold()", coi.SEL_THRESHOLD)):
+        assert sel == "0x" + Web3.keccak(text=sig).hex()[:8], sig
+    # THE EVENT TOPIC TOO — 32 bytes, same class of typo, and a wrong one matches nothing and
+    # reads as "the parameter never changed".
+    assert coi.FILE_TOPIC_UINT == "0x" + Web3.keccak(text="File(bytes32,uint256)").hex()
+    assert coi.WHAT_BURN == "0x" + b"burn".hex().ljust(64, "0")
+    # ** AND NO HAND-WRITTEN SELECTOR SURVIVES ANYWHERE ELSE IN THE CODEBASE. ** Every four-byte
+    # hex literal outside the tests is either in this file (checked above) or in config's record
+    # of the corrections themselves.
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    stray = []
+    for f in list(root.glob("*.py")) + list((root / "fetch").glob("*.py")):
+        if f.name == "check_offline_items.py":
+            continue
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if re.search(r'"0x[0-9a-fA-F]{8}"', line) and "selector_correction" not in line:
+                if f.name == "config.py" and '"was":' in line:
+                    continue          # the recorded corrections, which are meant to be wrong
+                stray.append(f"{f.name}:{i}: {line.strip()[:70]}")
+    assert not stray, ("a hand-written four-byte selector outside check_offline_items is "
+                       "unchecked:\n  " + "\n  ".join(stray))
     # The endpoint order is LEFT ALONE — it costs nothing — but it is no longer justified by a
     # diagnosis that has been superseded.
     assert src.index('"https://ethereum-rpc.publicnode.com"') < src.index('"https://eth.llamarpc.com"')
@@ -6776,7 +6951,8 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
     # ALL OF THEM ACTUALLY RUN. A check that exists and is not called is not a check.
     main = src[src.index("def main():"):]
     for fn in ("pendle_spendle_virtual", "uniswap_firepit_threshold", "sky_chainlog",
-               "sky_splitter", "sky_splitter_params", "sky_splitter_history", "sky"):
+               "sky_splitter", "sky_splitter_params", "sky_splitter_history", "sky",
+               "morpho_blue_api"):
         assert fn in main, f"{fn} is defined but never called from main()"
     print("offline checks ok: H1 added as a direct shares-vs-assets read on one block, "
           "H2 and H3 already present and confirmed")

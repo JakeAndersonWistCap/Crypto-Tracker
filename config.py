@@ -3352,6 +3352,37 @@ PROJECTS = [
             "issuance_route_instead": "observed minting: d(total_supply_gross) across the four "
                                       "EVM deployments. It is a measurement rather than a model, "
                                       "and it does not need a launch date.",
+            # ===== THE t=0 WAS PROBABLY NEVER A CHAIN LAUNCH. Recorded 2026-09-23. =====
+            # ** THE CURVE WAS BEING TESTED AGAINST THE WRONG KIND OF EVENT. ** t is the time
+            # since EMISSION began, and the comparison was against mainnet dates — which is why
+            # nothing matched. World Mobile's own 2022 FAQ says: "Before mainnet launch you can
+            # stake your WMT in the World Mobile vault to earn rewards."
+            #
+            # So staking rewards — an emission — were being paid BEFORE any mainnet, and the
+            # implied 2022-04-16 is a plausible date for that rather than an impossible one for
+            # a chain launch. The curve is not refuted by the mainnet timeline; it was never
+            # about the mainnet timeline.
+            #
+            # IT DOES NOT PROMOTE THE CURVE BACK TO THE ROUTE, and that is deliberate. "A 2022
+            # vault existed" is not "emission began on 2026-04-16" — there is still no dated
+            # first-emission event to check against, only a period in which one is plausible. A
+            # candidate that has become plausible is not a confirmation, and the measured route
+            # needs no date at all.
+            "t0_is_emission_not_launch": {
+                "quote": "Before mainnet launch you can stake your WMT in the World Mobile vault "
+                         "to earn rewards",
+                "source": "World Mobile's own 2022 FAQ",
+                "recorded_on": "2026-09-23",
+                "what_it_changes": "the implied 2022-04-16 stops being impossible. Staking "
+                                   "rewards predate every mainnet, so t=0 is when EMISSION "
+                                   "began and not when a chain launched — which is why no "
+                                   "mainnet date matched, and is not evidence against the curve.",
+                "what_it_does_not_change": "the curve stays a CROSS-CHECK. A period in which a "
+                                           "first emission is plausible is not a dated event to "
+                                           "test against, and the measured route needs no date. "
+                                           "Promote it only against a dated first emission from "
+                                           "World Mobile's own material.",
+            },
         },
         "inflation_budget": {
             "tokens": 580_000_000,
@@ -5839,6 +5870,54 @@ PROJECTS = [
         # than blank: the denominator is too LARGE, so utilisation reads too SMALL. A figure whose
         # error has a known sign can be reasoned about; one whose error could go either way
         # cannot. Nobody should read this as clean utilisation, and the label says so.
+        # ===== A ROUTE THAT REMOVES THE BIAS RATHER THAN NAMING IT. Added 2026-09-23. =====
+        #
+        # Morpho runs a free public GraphQL API exposing per-market state — the same
+        # totalSupplyAssets / totalBorrowAssets that morpho-blue's TVL adapter reads and
+        # discards. Summed across markets that is utilisation with NO collateral in the
+        # denominator, which is the figure the DefiLlama route can only approximate.
+        #
+        # ** STATUS unconfirmed, AND NOTHING IS WRITTEN WHILE IT STAYS THAT WAY. ** The endpoint
+        # is egress-blocked from this sandbox, so it has NOT been shown to answer here. The
+        # standing rule is that a source is not promoted to primary until it fetches on a live
+        # run — the version of this that was "obviously fine" is how a column ends up sourced
+        # from something that 404s. The adapter runs, reports exactly what it got, and refuses
+        # to store. Flip status to "confirmed" after a run that returns markets.
+        #
+        # THE FIELD NAMES ARE THE PART THAT NEEDS CONFIRMING. `state { supplyAssetsUsd }` is
+        # certain — DefiLlama's own utils/scripts/findInsolventMarkets.js selects it, read
+        # 2026-09-23 — and the BORROW side's spelling is not. Both are in config so a rename is
+        # an edit here and not a code change.
+        #
+        # THE TWO ROUTES MUST NEVER ALTERNATE. Once confirmed, this one writes and
+        # lending_supply stands down entirely; a run where one fails must leave the column EMPTY
+        # rather than filling it from the other, because two sources taking turns is a
+        # measuring-point change and blanks the series. See _resolve, which enforces it.
+        "lending_api": {
+            "status": "unconfirmed",
+            "endpoint": "https://blue-api.morpho.org/graphql",
+            "chains_query": "{ chains { id } }",
+            "markets_query": ("query($c:[Int!],$skip:Int!,$first:Int!){ "
+                              "markets(first:$first, skip:$skip, where:{chainId_in:$c}){ "
+                              "pageInfo{countTotal} items{ marketId chain{id} "
+                              "state{ supplyAssetsUsd borrowAssetsUsd } } } }"),
+            "page_size": 1000,
+            "supply_field": "supplyAssetsUsd",
+            "borrow_field": "borrowAssetsUsd",
+            "writes": {"supply_units": "sum(supplyAssetsUsd)",
+                       "utilisation_pct": "sum(borrowAssetsUsd) / sum(supplyAssetsUsd)"},
+            "why": "removes the bias instead of labelling it: no collateral in the denominator, "
+                   "because these are the market's own supply and borrow figures rather than a "
+                   "contract's token balances.",
+            "schema_evidence": "DefiLlama's own utils/scripts/findInsolventMarkets.js queries "
+                               "this endpoint and selects state{supplyAssetsUsd}, read "
+                               "2026-09-23. The BORROW field's spelling is the unconfirmed half.",
+            "confirm_with": "python check_offline_items.py — the morpho_blue_api check prints "
+                            "what the endpoint returns and whether both fields are present. Set "
+                            "status to 'confirmed' only after it does.",
+            "on_confirm": "lending_supply below stands down completely. Do NOT run both — two "
+                          "sources for one column alternating is a measuring-point change.",
+        },
         "lending_supply": {
             "borrowed_key": "borrowed",
             "supply_units_formula": "tvl + borrowed",
@@ -9162,6 +9241,47 @@ PROJECTS = [
                     "candidates": ("shares-vs-assets (H1 settles it)",
                                    "the reported figure counts something else",
                                    "two and a half months of unstaking between the two dates"),
+                    # ===== A FOURTH CANDIDATE, CHECKED AND RULED OUT. 2026-09-23. =====
+                    # ** MULTI-CHAIN sPENDLE WOULD HAVE BEEN THE RIGHT DIRECTION, and it is the
+                    # only one of the four that is. ** Pendle runs on fourteen chains, so an
+                    # Ethereum-only totalSupply read missing the rest would understate by
+                    # construction — which is exactly what a 34.1m read against a 100m report
+                    # needs. The boost hypothesis points the wrong way; this one does not.
+                    #
+                    # IT IS STILL WRONG, and the deployments say so. Ten chains' core.json files
+                    # were read on 2026-09-23 (1, 42161, 8453, 10, 56, 146, 5000, 80094, 999 all
+                    # answered; 252, 5330, 43111 have no file). ** sPendle appears in ONE of
+                    # them: Ethereum. ** Every other chain carries the bridged PENDLE token and a
+                    # DEPRECATED vePendle, and nothing else.
+                    #
+                    # SO OUR locked_tokens IS COMPLETE, NOT PARTIAL — and that is a finding
+                    # rather than an absence of one: the cheap explanation for the 3x is gone,
+                    # which makes the remaining three candidates more likely, not less.
+                    #
+                    # AND THE DEPRECATED vePendle ENTRIES SHARPEN CANDIDATE (b). vePENDLE DID
+                    # have cross-chain representations — 0x3209E9412... on Arbitrum,
+                    # 0x8A09574b0... on BSC — so a reported "100m staked" that predates or
+                    # straddles the migration could be summing vePENDLE across chains, which is
+                    # a different quantity from sPENDLE on Ethereum and would be larger for a
+                    # reason that has nothing to do with our read.
+                    "multichain_ruled_out": {
+                        "checked_on": "2026-09-23",
+                        "source": "pendle-finance/pendle-core-v2-public deployments/<chainId>-core.json",
+                        "chains_answered": (1, 42161, 8453, 10, 56, 146, 5000, 80094, 999),
+                        "chains_without_a_file": (252, 5330, 43111),
+                        "spendle_found_on": (1,),
+                        "verdict": "sPENDLE IS ETHEREUM-ONLY. locked_tokens is COMPLETE, not "
+                                   "partial, and this candidate — the only one pointing the "
+                                   "right way for a 3x gap — is ruled out.",
+                        "but_vependle_was_multichain": "the other chains carry a DEPRECATED "
+                                                       "vePendle (Arbitrum 0x3209E9412cca80B18338f2a56ADA59c484c39644, "
+                                                       "BSC 0x8A09574b0401A856d89d1b583eE22E8cb0C5530B). "
+                                                       "A reported figure summing vePENDLE "
+                                                       "across chains is a different quantity "
+                                                       "from sPENDLE on Ethereum — which "
+                                                       "sharpens candidate (b) rather than "
+                                                       "replacing it.",
+                    },
                     "do_not": "pick the larger figure because it flatters the lock rate, or the "
                               "smaller because it is ours. A 3x error here moves the lock rate "
                               "from 12% to 36% and nothing else on the sheet would look wrong.",
@@ -9752,26 +9872,65 @@ PROJECTS = [
                            "'unlocked' in the contractual sense and not in the float sense.",
             },
         },
-        "treasury_candidates": {
-            "withdrawal_fee_recipient": "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
-            "withdrawal_fee_sender": "0x7d5706f6ef3F89B3951E23e557CDFBC3239D4E2c",
-            "misc_revenue_recipient": "0x0c83EAe1FE72c390A02E426572854931EefF93BA",
-            "expected_was": "0x0c83EAe1FE72c390A02E426572854931EefF93BA",
-            "verdict": "MISMATCH. The withdrawal-fee destination is 0x2f5301a3..., not "
-                       "0x0c83EA.... 0x0c83EA... is where MISCELLANEOUS staking revenue (eETH "
-                       "and EIGEN transfers) is sent, and the adapter calls THAT one 'the "
-                       "protocol treasury' — while describing the withdrawal fees as going 'to "
-                       "the treasury' as well.",
+        # ===== RESOLVED 2026-09-23. TWO ADDRESSES, TWO ROLES, NO AMBIGUITY. =====
+        #
+        # The mismatch recorded on 2026-09-23 was real and its reading was wrong: these are not
+        # two candidates for one label, they are two contracts doing two jobs. THREE INDEPENDENT
+        # SOURCES AGREE, which is the standard this file asks for before an address is wired:
+        #
+        #   (1) DefiLlama's ether-fi-stake adapter — eETH withdrawal fees are transferred to
+        #       0x2f5301a3..., and MISC staking revenue (eETH, EIGEN) to 0x0c83EA....
+        #   (2) Ether.fi's OWN test suite, test/TestSetup.sol:294, declares 0x2f5301a3... as
+        #       `buybackWallet`. Found in an earlier round and PARKED as an unverified lead —
+        #       which is exactly what a lead is for, and why leads are kept rather than deleted.
+        #   (3) Ether.fi's governance gitbook: 100% of eETH withdrawal fee revenue funds the
+        #       weekly ETHFI buybacks.
+        #
+        # (1) and (3) are the same claim from two directions — the money leaves the withdrawal
+        # queue and it funds buybacks — and (2) names the contract. So the adapter's loose prose
+        # ("to the treasury") was describing a buyback wallet, and there was never a second
+        # treasury.
+        #
+        # ** AND THE BUYBACK WALLET'S BALANCE IS NOT actual_buyback_tokens. ** Third time this
+        # round: a buyback wallet exists to SPEND, so a differenced balance is inflow minus
+        # spending and understates the buyback by the buyback. The measured quantity is the
+        # INFLOW — eETH transfers into 0x2f5301a3... from the withdrawal queue — which is a log
+        # scan, not a balanceOf. Named as a route and NOT built.
+        "buyback_wallet": {
+            "address": "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+            "funded_by": "100% of eETH withdrawal fee revenue",
+            "sender": "0x7d5706f6ef3F89B3951E23e557CDFBC3239D4E2c (the withdrawal queue)",
+            "cadence": "weekly ETHFI buybacks",
+            "sources": (
+                "DefiLlama fees/ether-fi-stake/index.ts getWithdrawalFees, read 2026-09-23",
+                "Ether.fi test/TestSetup.sol:294 — declared as `buybackWallet`",
+                "Ether.fi governance gitbook — 100% of eETH withdrawal fee revenue funds the "
+                "weekly ETHFI buybacks",
+            ),
+            "resolved_on": "2026-09-23",
+            "not_wired_as_balance": "a buyback wallet exists to SPEND. A differenced balance is "
+                                    "inflow MINUS spending, so it understates the buyback by the "
+                                    "buyback — the same refusal recorded this round for NEAR's "
+                                    "revenue wallets and Plume's fee receiver.",
+            "route_that_would_work": "the INFLOW: eETH Transfer events from the withdrawal queue "
+                                     "(0x7d5706f6...) to this address, which is the adapter's "
+                                     "own filter. A log scan on eETH, not a balance read. Build "
+                                     "it only if that scan is available — the Sky burn scan has "
+                                     "been 403ing for a week, which is the same shape of "
+                                     "dependency.",
+        },
+        "treasury": {
+            "address": "0x0c83EAe1FE72c390A02E426572854931EefF93BA",
+            "receives": "miscellaneous staking revenue — eETH and EIGEN transfers, including "
+                        "the protocol's ~11% share of EigenLayer restaking rewards",
             "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/"
                           "master/fees/ether-fi-stake/index.ts",
             "source_date": "2026-09-23",
-            "not_wired": "no treasury_holding contract is declared from this. Two addresses "
-                         "sharing one label is an ambiguity, and picking one would put a "
-                         "confident figure under an address nobody confirmed.",
-            "what_would_settle_it": "Ether.fi's own documentation or governance naming the "
-                                    "treasury address, or an on-chain look at both: a protocol "
-                                    "treasury holds a portfolio, a fee-routing address holds "
-                                    "little and forwards.",
+            "provenance": "the adapter's getMiscStakingRevenue targets it and its own breakdown "
+                          "methodology calls it 'the protocol treasury'",
+            "not_wired": "recorded, not declared as a treasury_holding contract. What it HOLDS "
+                         "has not been read, and a treasury column wants a balance in ETHFI "
+                         "rather than the eETH and EIGEN this address is described as receiving.",
         },
         "name": "Ether.fi", "symbol": "ETHFI",
         "coingecko_id": "ether-fi",

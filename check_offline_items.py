@@ -31,7 +31,15 @@ ETH_RPCS = ["https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com",
 # Sky's canonical on-chain registry. It exists precisely so integrators never hardcode an address
 # governance might change — which is the failure mode that produced a superseded pip in config.
 SKY_CHAINLOG = "0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F"
-CHAINLOG_LIST = "0x63b0c6b0"       # keccak("list()")[:4]
+# ** A FOURTH WRONG SELECTOR, FOUND 2026-09-23 BY WIDENING THE CHECK. ** list() was
+# 0x63b0c6b0; keccak says 0x0f560cd7. That is the call that enumerates every ChainLog key so the
+# registry key is READ rather than guessed — so the one check built to avoid guessing an address
+# was itself calling a function that does not exist, and would have reported "UNREACHABLE".
+#
+# Three of these were found on 2026-09-23 by checking the three selector DICTS. This one survived
+# because it is a bare module constant and the check did not look at those. It does now: every
+# selector in this file is derived and compared, whatever shape it is declared in.
+CHAINLOG_LIST = "0x0f560cd7"       # keccak("list()")[:4]
 CHAINLOG_GET = "0x21f8a721"        # keccak("getAddress(bytes32)")[:4]
 # keccak("receiver()")[:4] — SwapOnly exposes the address it sends bought SKY to.
 # ** TWO OF THESE WERE WRONG, AND THE SYMPTOM WAS BLAMED ON A PROVIDER. ** Corrected 2026-09-23
@@ -120,12 +128,26 @@ def _assert_selectors() -> None:
                 return h.digest()
         except ImportError:
             return
+    # ** EVERY SELECTOR IN THE FILE, WHATEVER SHAPE IT IS DECLARED IN. ** The first version of
+    # this checked the three DICTS only, and a fourth wrong selector survived it — list(), a bare
+    # module constant. Bare constants are named here explicitly rather than discovered, so adding
+    # one and forgetting to register it is a visible omission and not a silent gap.
+    tables = [SELECTORS, SELECTORS_SPLITTER, SELECTORS_SPLITTER_PARAMS,
+              {"list()": CHAINLOG_LIST, "getAddress(bytes32)": CHAINLOG_GET,
+               "totalSupply()": SEL_TOTAL_SUPPLY, "balanceOf(address)": SEL_BALANCE_OF,
+               "decimals()": SEL_DECIMALS, "threshold()": SEL_THRESHOLD}]
     wrong = []
-    for table in (SELECTORS, SELECTORS_SPLITTER, SELECTORS_SPLITTER_PARAMS):
+    for table in tables:
         for sig, sel in table.items():
             want = "0x" + keccak(sig.encode()).hex()[:8]
             if want != sel:
                 wrong.append(f"{sig}: file has {sel}, keccak says {want}")
+    # AND THE EVENT TOPIC, which is a full 32 bytes rather than four and would not be caught by
+    # the loop above. Same class of typo, same cost: a wrong topic matches nothing and reads as
+    # "no events found", which is indistinguishable from "the parameter never changed".
+    want_topic = "0x" + keccak(b"File(bytes32,uint256)").hex()
+    if want_topic != FILE_TOPIC_UINT:
+        wrong.append(f"File(bytes32,uint256): file has {FILE_TOPIC_UINT}, keccak says {want_topic}")
     if wrong:
         raise SystemExit("SELECTOR MISMATCH — fix these before running:\n  "
                          + "\n  ".join(wrong))
@@ -404,6 +426,73 @@ def sky_splitter_history(splitter: str | None, from_block: int):
     print("\n  PASTE BACK the whole table. Each row is one dated period boundary for Sky's")
     print("  fee_split.history LAYER 2 — and the pre-2026-08-13 periods stop being 'unconfirmed'")
     print("  the moment this table exists. Do NOT fill a period from the period after it.")
+
+
+def morpho_blue_api():
+    """Does Morpho's own GraphQL API answer, and does it carry BOTH sides of the market state?
+
+    ** THIS SETTLES WHETHER A BIASED COLUMN CAN BE REPLACED BY AN UNBIASED ONE. ** utilisation_pct
+    currently comes from DefiLlama as borrowed / (tvl + borrowed), and morpho-blue's tvl sums the
+    singleton's balance of every market's COLLATERAL token as well as its loan token — so the
+    denominator carries assets that were never lendable and the ratio reads too small.
+
+    Morpho publishes the per-market state directly. `state { supplyAssetsUsd }` is certain —
+    DefiLlama's own utils/scripts/findInsolventMarkets.js selects it. THE BORROW FIELD'S SPELLING
+    IS THE UNCONFIRMED HALF, and a wrong name would sum to zero and give a utilisation of 0.0000
+    on a lending protocol, which is a number rather than a gap. So it is checked by name.
+    """
+    head("MORPHO — does blue-api.morpho.org carry BOTH supplyAssetsUsd and borrowAssetsUsd?")
+    url = "https://blue-api.morpho.org/graphql"
+    q = ("query($c:[Int!],$skip:Int!,$first:Int!){ markets(first:$first, skip:$skip, "
+         "where:{chainId_in:$c}){ pageInfo{countTotal} items{ marketId chain{id} "
+         "state{ supplyAssetsUsd borrowAssetsUsd } } } }")
+    try:
+        chains = requests.post(url, json={"query": "{ chains { id } }"}, timeout=TIMEOUT).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE  {e}")
+        print("  Leave Morpho lending_api.status as 'unconfirmed'. The DefiLlama route stays,")
+        print("  with its bias on the label — that is the correct state, not a fallback.")
+        return
+    ids = [c["id"] for c in ((chains.get("data") or {}).get("chains") or [])]
+    print(f"  chains       {len(ids)}: {ids[:14]}")
+    if not ids:
+        print(f"  *** no chains returned. Response keys: {sorted(chains)} ***")
+        return
+    try:
+        page = requests.post(url, json={"query": q, "variables": {"c": ids, "skip": 0,
+                                                                 "first": 50}},
+                             timeout=TIMEOUT).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  markets query FAILED  {e}")
+        return
+    if page.get("errors"):
+        # ** A GraphQL ERROR IS A 200. ** The transport succeeded and the query did not, and a
+        # field name that does not exist is reported here rather than as a missing value.
+        print(f"  *** GraphQL errors — most likely a FIELD NAME: {page['errors']} ***")
+        print("  If it names borrowAssetsUsd, find the right spelling and put it in Morpho's")
+        print("  lending_api.borrow_field. Do NOT drop the field and sum the supply side alone.")
+        return
+    node = ((page.get("data") or {}).get("markets") or {})
+    items = node.get("items") or []
+    total = (node.get("pageInfo") or {}).get("countTotal")
+    print(f"  markets      {len(items)} of {total} returned")
+    if not items:
+        print("  *** no market items. Nothing to confirm. ***")
+        return
+    have_supply = sum(1 for i in items if (i.get("state") or {}).get("supplyAssetsUsd") is not None)
+    have_borrow = sum(1 for i in items if (i.get("state") or {}).get("borrowAssetsUsd") is not None)
+    print(f"  supplyAssetsUsd present on {have_supply}/{len(items)}")
+    print(f"  borrowAssetsUsd present on {have_borrow}/{len(items)}")
+    sup = sum(float((i.get("state") or {}).get("supplyAssetsUsd") or 0) for i in items)
+    bor = sum(float((i.get("state") or {}).get("borrowAssetsUsd") or 0) for i in items)
+    print(f"  first page sums: supply ${sup:,.0f}  borrow ${bor:,.0f}"
+          + (f"  utilisation {bor / sup:.4f}" if sup else ""))
+    if have_supply == len(items) and have_borrow == len(items):
+        print("\n  BOTH FIELDS PRESENT. Set Morpho lending_api.status to 'confirmed' in config —")
+        print("  the DefiLlama route then stands down on its own and the collateral bias goes.")
+    else:
+        print("\n  *** ONE SIDE IS MISSING. Do not confirm. *** A borrow field summing to zero")
+        print("  gives utilisation 0.0000 on a lending protocol, which is a number and not a gap.")
 
 
 def sky():
@@ -797,7 +886,7 @@ def main():
 
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
-    for fn in (sky_chainlog, sky, lambda: sky_splitter(args.splitter),
+    for fn in (sky_chainlog, sky, morpho_blue_api, lambda: sky_splitter(args.splitter),
                lambda: sky_splitter_params(args.splitter),
                lambda: sky_splitter_history(args.splitter, args.splitter_from_block),
                solana, injective, near, etherfi_sethfi,

@@ -1971,3 +1971,97 @@ SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 -- COMMIT;
 
 -- V4. VERIFY — V1 returns nothing, and V2's count/dates are unchanged from before V3 ran.
+
+-- ========================================================================================
+-- W. ETHEREUM'S DERIVED BURN — IS THE 50-70 ETH/DAY DISAGREEMENT REAL, OR RECENCY?
+--    LOOK ONLY. No deletes in this section; it exists to answer a question.       2026-09-23
+-- ========================================================================================
+-- THE DISAGREEMENT AS STATED: the derived burn came out at ~36 ETH/day against a researched
+-- 50-70. But the ~36 was computed from a 30-day revenue TOTAL divided by ONE price snapshot,
+-- and the 50-70 is MAY 2026 reporting while the stored window ends in September. Two different
+-- periods and a price that moved between them is enough to produce that gap with nothing wrong.
+--
+-- ** THIS IS THE TEST: per-day prices, monthly medians, across the whole stored window. **
+-- A DECLINE from ~50 in May toward ~36 in September explains the gap as recency, and the review
+-- row should be retired. FLAT at ~36 back through May means the disagreement is real and the
+-- row stays. Do not average the two figures; they are measurements of different months.
+--
+-- W1. THE MONTHLY MEDIAN OF revenue_usd / price_usd — the implied ETH burned per day. Each day
+--     is priced on ITS OWN price, which is the whole point: a single snapshot applied to a
+--     month of revenue reports what the burn WOULD have cost today, not what it was.
+SELECT substr(r.date, 1, 7)                      AS month,
+       COUNT(*)                                  AS days,
+       ROUND(AVG(r.value / p.value), 1)          AS mean_eth_per_day,
+       ROUND(MIN(r.value / p.value), 1)          AS min_eth,
+       ROUND(MAX(r.value / p.value), 1)          AS max_eth,
+       ROUND(AVG(p.value), 2)                    AS mean_price
+  FROM metrics r
+  JOIN metrics p
+    ON p.project = r.project AND p.date = r.date AND p.metric = 'price_usd'
+ WHERE r.project = 'Ethereum' AND r.metric = 'revenue_usd'
+ GROUP BY month
+ ORDER BY month;
+
+-- W2. THE REVENUE / FEES RATIO BY MONTH. Ethereum's Revenue is base + blob fees and its Fees
+--     adds priority fees, so this ratio SHOULD move — it is the share of fees that is burned.
+--     A ratio that is pinned to a constant is a sign the series is not what it claims to be.
+SELECT substr(r.date, 1, 7)                      AS month,
+       ROUND(AVG(r.value / f.value), 4)          AS mean_revenue_over_fees,
+       ROUND(MIN(r.value / f.value), 4)          AS min_ratio,
+       ROUND(MAX(r.value / f.value), 4)          AS max_ratio
+  FROM metrics r
+  JOIN metrics f
+    ON f.project = r.project AND f.date = r.date AND f.metric = 'fees_usd'
+ WHERE r.project = 'Ethereum' AND r.metric = 'revenue_usd'
+ GROUP BY month
+ ORDER BY month;
+
+-- W3. AND WHAT THE SOURCES ACTUALLY ARE. Run this first if anything above looks synthetic —
+--     a source beginning 'FIXTURE:' means the store is a seeded test fixture and NONE of the
+--     numbers above are Ethereum's.
+SELECT metric, source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric IN ('revenue_usd', 'fees_usd', 'price_usd')
+ GROUP BY metric, source
+ ORDER BY metric, rows DESC;
+
+-- ========================================================================================
+-- X. SKY'S RETIRED governance_burn_balance.                                       2026-09-23
+--    X1-X2 LOOK. X3 deletes, scoped to the one metric on the one project.
+-- ========================================================================================
+-- WHAT HAPPENED: the burn decomposition split Pause Proxy burns off as "governance" — a one-off
+-- executive action, explicitly not to be annualised — and looked for a separate Stage 2 burner.
+-- There is not one. Sky's executive of 2026-09-11 burns "SKY from the Pause Proxy balance", so
+-- those burns ARE the recurring 5%-of-NPS leg, and the old label had them as the opposite.
+--
+-- ** READING IS ALREADY SAFE WITHOUT THIS SECTION. ** burn_logs no longer serves
+-- governance_burn_balance, so config.withdrawn_contract_keys returns ['burn_logs'] for any such
+-- row and the build blanks it. The rows cannot render. This section is about not keeping them.
+--
+-- AND THEY MAY NOT EXIST AT ALL: the decomposed read has been 403ing since it was written, so
+-- the metric may never have been produced. X1 is how you find out — it is not assumed either way.
+--
+-- X1. THE ROWS, if any. Expect NOTHING if the burn scan has never succeeded.
+SELECT date, project, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Sky'
+   AND metric IN ('governance_burn_balance', 'governance_burn_tokens')
+ ORDER BY date;
+
+-- X2. WHAT SURVIVES — the two series that ARE served. Run before and after X3; this must not
+--     move. If it is empty too, the scan has never run and X3 has nothing to do.
+SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Sky' AND metric IN ('burn_address_balance', 'other_burn_balance')
+ GROUP BY metric;
+
+-- X3. THE DELETE. Only if X1 returned rows. They are not a lower-confidence figure — they are
+--     the Stage 2 burn filed under a name that says "do not annualise this", which is the
+--     opposite of what it is.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Sky'
+--    AND metric IN ('governance_burn_balance', 'governance_burn_tokens');
+-- COMMIT;
+
+-- X4. VERIFY — X1 returns nothing, and X2 is unchanged from before X3 ran.
