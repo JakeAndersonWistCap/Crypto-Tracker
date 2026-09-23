@@ -16,6 +16,8 @@ USAGE
 -----
     python run_sql.py                 list the sections, with what each one is about
     python run_sql.py E               run section E's SELECTs and print the results
+    python run_sql.py AB              same, for a two-letter section — the file runs A..Z
+                                      and then AA, AB, ... like spreadsheet columns
     python run_sql.py E --db other.db run against a different store
     python run_sql.py --delete E      run section E's DELETE, after showing what goes and
                                       asking for typed confirmation
@@ -37,10 +39,32 @@ HERE = pathlib.Path(__file__).resolve().parent
 SQL_FILE = HERE / "orphan_cleanup.sql"
 DEFAULT_DB = HERE / "metrics.db"
 
-# A section starts at its first marker and runs to the next letter's first marker. Sections are
+# A section starts at its first marker and runs to the next label's first marker. Sections are
 # headed inconsistently in the file — some open with "-- A. Title", some go straight to "-- D1." —
 # so both spellings are matched rather than relying on one convention the file does not keep.
-SECTION_MARKER = re.compile(r"^--\s*([A-Z])(\d*)\.\s?(.*)$")
+#
+# ===== ** TWO-LETTER LABELS. Fixed 2026-09-24, and the symptom was NOT a missing section. ** =====
+# This was `([A-Z])` — exactly one letter — so when the file passed Z and went to AA, the new
+# markers stopped matching ENTIRELY. They were not reported as unknown; they were invisible, and
+# their SQL was absorbed into whichever section preceded them.
+#
+# ** THAT MADE IT A DELETE-SAFETY BUG, not a listing bug. ** Section Z (Pendle's re-attribution)
+# swallowed AA and AB, so `--delete Z` collected AA's `DELETE FROM metrics WHERE project =
+# 'Uniswap'` alongside Pendle's UPDATE and offered them under one prompt reading "DELETE Z".
+# Somebody approving the Pendle move would have taken the Uniswap delete with it.
+#
+# ** WHY {1,2} AND NOT [A-Z]+. ** A bare [A-Z]+ invents sections out of ordinary prose: this file
+# contains "-- FIX. Nothing renders wrongly...", "CAKE.balanceOf(...)" and "PENDLE.balanceOf(...)",
+# all of which match `^--\s*[A-Z]+\.`, and each would have become a phantom section stealing the
+# SQL that followed it. Two letters covers A..ZZ — 702 sections, and the file is at AB — and
+# `_check_section_labels` below fails loudly if a longer label is ever added, so the next person
+# gets an error rather than the silence this bug lived in.
+SECTION_MARKER = re.compile(r"^--\s?([A-Z]{1,2})(\d*)\.\s?(.*)$")
+# What a section label may look like on the command line. Kept separate from SECTION_MARKER:
+# this validates what a HUMAN typed, where there is no prose to be confused with, so it is the
+# permissive form. An over-long label falls through to the ordinary "no section X" message with
+# the available list, which is the answer the caller needs.
+SECTION_ARG = re.compile(r"^[A-Z]+$")
 
 
 def _decode_safe() -> None:
@@ -152,6 +176,59 @@ def parse_sections(sql: str) -> dict[str, dict]:
     return sections
 
 
+# Prose in the SQL file that LOOKS like a section marker and is not. Each was checked by hand
+# on 2026-09-24. The list exists so that a NEW one has to be looked at rather than absorbed: see
+# _check_section_labels.
+KNOWN_NON_SECTIONS = {"FIX", "CAKE", "PENDLE"}
+
+
+def _next_label(label: str) -> str:
+    """A, B, ... Z, AA, AB — the spreadsheet-column sequence the sections are named in."""
+    chars = list(label)
+    i = len(chars) - 1
+    while i >= 0:
+        if chars[i] != "Z":
+            chars[i] = chr(ord(chars[i]) + 1)
+            return "".join(chars)
+        chars[i] = "A"
+        i -= 1
+    return "A" + "".join(chars)
+
+
+def _check_section_labels(sql: str, sections: dict) -> list[str]:
+    """Problems with how the file's section headers parse, or [] if there are none.
+
+    ** THIS EXISTS BECAUSE THE FAILURE IT CATCHES WAS SILENT. ** When the file went past Z, the
+    one-letter SECTION_MARKER stopped matching and AA/AB were not reported as unknown — they were
+    absorbed into section Z, taking a Uniswap DELETE into Z's confirmation prompt with them. A
+    parser that cannot see a section must SAY so.
+    """
+    problems = []
+    # 1. A marker with a longer label than SECTION_MARKER accepts. Either it is a new section and
+    #    the pattern needs widening, or it is prose and belongs in KNOWN_NON_SECTIONS. Both are
+    #    decisions for a person; neither is something to guess at silently.
+    long_marker = re.compile(r"^--\s?([A-Z]{3,})\d*\.")
+    for line in sql.splitlines():
+        m = long_marker.match(line.rstrip())
+        if m and m.group(1) not in KNOWN_NON_SECTIONS:
+            problems.append(
+                f"{m.group(1)!r} looks like a section header but SECTION_MARKER accepts at most "
+                f"two letters, so it would be INVISIBLE and its SQL absorbed into the section "
+                f"above it. Widen SECTION_MARKER if it is a section, or add it to "
+                f"KNOWN_NON_SECTIONS if it is prose. Line: {line.strip()[:80]!r}")
+    # 2. The labels that DID parse must run A, B, ... Z, AA, AB with no holes. A hole means a
+    #    header was skipped, which is the same silence in a different shape.
+    got = list(sections)
+    expected = "A"
+    for label in got:
+        if label != expected:
+            problems.append(f"section sequence jumps: expected {expected!r}, found {label!r} — "
+                            f"a header between them was not parsed")
+            expected = label
+        expected = _next_label(expected)
+    return problems
+
+
 def classify(stmt: str) -> str:
     body = strip_comments(stmt)
     if not body:
@@ -219,11 +296,12 @@ def list_sections(sections: dict[str, dict]) -> int:
     for letter, sec in sections.items():
         stmts = [s for s in split_statements(sec["text"]) if classify(s) == "select"]
         has_write = bool(uncommented_write(sec["text"]))
-        print(f"  {letter}   line {sec['line']:>4}   {len(stmts)} SELECT(s)"
+        print(f"  {letter:<3} line {sec['line']:>4}   {len(stmts)} SELECT(s)"
               f"   {'write available' if has_write else 'look only'}")
         print(f"      {sec['title'][:96]}")
-    print("\n  python run_sql.py <letter>            run that section's SELECTs")
-    print("  python run_sql.py --delete <letter>   run its DELETE, after showing what goes\n")
+    print("\n  python run_sql.py <section>            run that section's SELECTs")
+    print("  python run_sql.py --delete <section>   run its DELETE, after showing what goes")
+    print("  Section labels are one or more letters: A..Z, then AA, AB, ...\n")
     return 0
 
 
@@ -354,8 +432,9 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path) -> int:
 def main(argv=None) -> int:
     _decode_safe()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("section", nargs="?", help="section letter, e.g. E")
-    ap.add_argument("--delete", metavar="LETTER",
+    ap.add_argument("section", nargs="?",
+                    help="section label — one or more letters, e.g. E or AB")
+    ap.add_argument("--delete", metavar="SECTION",
                     help="run that section's DELETE, after showing the rows and confirming")
     ap.add_argument("--db", default=str(DEFAULT_DB), help=f"store to read (default {DEFAULT_DB.name})")
     args = ap.parse_args(argv)
@@ -371,6 +450,11 @@ def main(argv=None) -> int:
     letter = (args.delete or args.section or "").strip().upper()
     if not letter:
         return list_sections(sections)
+    if not SECTION_ARG.match(letter):
+        print(f"\n  {letter!r} is not a section label. Labels are one or more letters "
+              f"(A..Z, then AA, AB, ...).")
+        print(f"  Available: {', '.join(sections)}\n")
+        return 1
     if letter not in sections:
         print(f"\n  No section {letter!r}. Available: {', '.join(sections)}\n")
         return 1

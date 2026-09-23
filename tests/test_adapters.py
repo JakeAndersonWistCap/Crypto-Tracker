@@ -12312,3 +12312,130 @@ def test_supply_units_declares_the_tier_that_actually_serves_it():
     assert "supply_units" not in G.TIER1_SOURCE, (
         "if this is ever added it must be project-scoped first — Morpho is the only project "
         "with a tier-1 route for it, and five DePIN projects share the metric")
+
+
+def test_run_sql_handles_two_letter_sections_and_does_not_let_them_bleed_into_one_another():
+    """The one-letter SECTION_MARKER was a DELETE-safety bug, not a listing bug.
+
+    Past Z, "-- AA." stopped matching entirely. AA and AB were not reported as unknown — they
+    were invisible, and their SQL was absorbed into section Z. So `--delete Z`, whose prompt
+    reads "DELETE Z" and whose stated subject is Pendle's re-attribution, also collected section
+    AA's `DELETE FROM metrics WHERE project = 'Uniswap'`. Approving the Pendle move would have
+    taken the Uniswap delete with it.
+
+    BA is exercised explicitly because that is the next place the old assumption would have bitten.
+    """
+    import pathlib
+    import sqlite3
+    import tempfile
+
+    import run_sql as R
+
+    SQL = """\
+-- ========================================================================================
+-- Z. PENDLE — a one-letter section that ships a write.
+-- ========================================================================================
+-- Z1. LOOK.
+SELECT project, metric FROM metrics WHERE project = 'Pendle';
+-- Z2. THE DELETE.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Pendle';
+-- COMMIT;
+
+-- ========================================================================================
+-- AA. UNISWAP — the first two-letter section, and it ships its OWN write.
+-- ========================================================================================
+-- AA1. LOOK.
+SELECT project, metric FROM metrics WHERE project = 'Uniswap';
+-- AA2. THE DELETE.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Uniswap';
+-- COMMIT;
+
+-- ========================================================================================
+-- AB. MORPHO — look only.
+-- ========================================================================================
+-- AB1. LOOK.
+SELECT project, metric FROM metrics WHERE project = 'Morpho';
+
+-- ========================================================================================
+-- BA. THE NEXT ROLLOVER, which is where the old assumption would have bitten again.
+-- ========================================================================================
+-- BA1. LOOK.
+SELECT project FROM metrics WHERE project = 'Sky';
+"""
+    secs = R.parse_sections(SQL)
+    assert list(secs) == ["Z", "AA", "AB", "BA"], secs
+
+    # ** EACH SECTION OWNS ITS OWN WRITE AND NOBODY ELSE'S. ** This is the assertion that would
+    # have caught the original bug.
+    z_write = "\n".join(R.uncommented_write(secs["Z"]["text"]))
+    aa_write = "\n".join(R.uncommented_write(secs["AA"]["text"]))
+    assert "Pendle" in z_write and "Uniswap" not in z_write, \
+        f"section Z swallowed AA's delete — this is the bug, not a cosmetic one:\n{z_write}"
+    assert "Uniswap" in aa_write and "Pendle" not in aa_write, aa_write
+    assert R.uncommented_write(secs["AB"]["text"]) == [], "AB is look-only"
+    # AND THE SELECTS DO NOT BLEED EITHER — Z absorbed three of AA/AB's in the real file.
+    for label, who in (("Z", "Pendle"), ("AA", "Uniswap"), ("AB", "Morpho"), ("BA", "Sky")):
+        sel = [s for s in R.split_statements(secs[label]["text"]) if R.classify(s) == "select"]
+        assert len(sel) == 1, f"section {label} has {len(sel)} SELECTs, expected its own 1"
+        assert who in sel[0], f"section {label}'s SELECT is not its own: {sel[0]}"
+
+    # ** AND THE CLI ACCEPTS THE LABEL END TO END **, which is what the user actually types.
+    # Driven through main(), not through the regex, because the regex was never the blocker.
+    with tempfile.TemporaryDirectory() as tmp:
+        sql_path = pathlib.Path(tmp) / "orphan_cleanup.sql"
+        sql_path.write_text(SQL, encoding="utf-8")
+        db_path = pathlib.Path(tmp) / "metrics.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL, "
+                     "source TEXT, tier INT, fetched_at TEXT)")
+        conn.execute("INSERT INTO metrics VALUES ('2026-09-24','Uniswap','x',1.0,'s',1,'t')")
+        conn.commit()
+        conn.close()
+        old_file = R.SQL_FILE
+        try:
+            R.SQL_FILE = sql_path
+            for label in ("AA", "AB", "BA"):
+                assert R.main([label, "--db", str(db_path)]) == 0, f"{label} did not run"
+            # A label that is not letters is refused with the list, not a traceback.
+            assert R.main(["3x", "--db", str(db_path)]) == 1
+        finally:
+            R.SQL_FILE = old_file
+
+
+def test_run_sql_says_so_when_a_section_label_is_wider_than_it_can_parse():
+    """The original failure was SILENCE. A label the parser cannot see must be named.
+
+    SECTION_MARKER accepts at most two letters, because a bare [A-Z]+ turns ordinary prose in the
+    SQL file — "-- FIX. Nothing renders wrongly...", "CAKE.balanceOf(...)" — into phantom sections
+    that steal the SQL after them. So the ceiling is real, and the guard is what stops it being
+    silent the way the one-letter ceiling was.
+    """
+    import run_sql as R
+
+    # 1. THE REAL FILE IS CLEAN, and its two-letter sections are actually reachable.
+    sql = R.SQL_FILE.read_text(encoding="utf-8")
+    sections = R.parse_sections(sql)
+    assert R._check_section_labels(sql, sections) == []
+    assert "AA" in sections and "AB" in sections
+    assert "-- AA." not in sections["Z"]["text"], "Z must no longer contain AA"
+
+    # 2. THE PROSE THAT LOOKS LIKE A SECTION IS ALLOWED BY NAME, not by accident.
+    for word in ("FIX", "CAKE", "PENDLE"):
+        assert word in R.KNOWN_NON_SECTIONS
+
+    # 3. A GENUINELY NEW OVER-WIDE LABEL IS REPORTED, with what to do about it.
+    probs = R._check_section_labels("-- AAA. A SECTION NOBODY CAN SEE.\nSELECT 1;\n", {})
+    assert probs and "AAA" in probs[0] and "INVISIBLE" in probs[0], probs
+    assert "SECTION_MARKER" in probs[0] and "KNOWN_NON_SECTIONS" in probs[0]
+
+    # 4. A HOLE IN THE SEQUENCE IS REPORTED TOO — the same silence in a different shape.
+    holed = R._check_section_labels("", {"A": {}, "C": {}})
+    assert holed and "expected 'B'" in holed[0], holed
+
+    # 5. THE ROLLOVER ARITHMETIC, since the guard depends on it.
+    assert [R._next_label(x) for x in ("A", "Y", "Z", "AA", "AZ", "ZZ")] \
+        == ["B", "Z", "AA", "AB", "BA", "AAA"]
