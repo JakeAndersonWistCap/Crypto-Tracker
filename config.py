@@ -1611,19 +1611,26 @@ PROJECTS = [
         # one run. Guessing `date`/`value` would either work silently or look exactly like a
         # missing series, and nothing on the sheet would say which happened.
         "growthepie": {
-            "status": "unconfirmed",
+            # ** CONFIRMED 2026-09-23 FROM LIVE SAMPLE ROWS, both projects, both metrics:
+            #   {'metric_key': 'daa', 'origin_key': 'ethereum', 'date': '2026-06-25',
+            #    'value': '563332.0'}
+            # NOTE THE VALUE IS A STRING. float() handles it, and the adapter has always gone
+            # through float() rather than trusting the type — but it is written down here
+            # because a numeric-looking string is exactly the thing a later refactor "tidies"
+            # into a direct assignment, and the column would then sort and sum as text.
+            "status": "confirmed",
+            "value_is_a_string": "'563332.0' — cast, never assumed numeric",
             "endpoint": "https://api.growthepie.com/v1/fundamentals.json",
             "origin_key": "ethereum",
             "metrics": {"active_addresses": "daa", "tx_count": "txcount"},
-            "date_field": None,
-            "value_field": None,
+            "date_field": "date",
+            "value_field": "value",
             "robots_checked": "2026-09-23 — www.growthepie.com/robots.txt disallows page paths "
                               "only; api.growthepie.com unrestricted, no separate robots.txt",
             "confirmed_from_the_document": "origin_key 'ethereum' and metric_key 'daa' / "
                                            "'txcount' are all present, 2026-09-23.",
-            "what_is_unconfirmed": "the row's DATE and VALUE key names. Run once, read them off "
-                                   "the skipped message, put them in date_field/value_field and "
-                                   "set status to 'confirmed'.",
+            "confirmed_on": "2026-09-23 — date_field 'date', value_field 'value', read off "
+                            "live sample rows for both projects and both metrics.",
         },
         "name": "Ethereum", "symbol": "ETH",
         "coingecko_id": "ethereum",
@@ -2531,19 +2538,26 @@ PROJECTS = [
         # one run. Guessing `date`/`value` would either work silently or look exactly like a
         # missing series, and nothing on the sheet would say which happened.
         "growthepie": {
-            "status": "unconfirmed",
+            # ** CONFIRMED 2026-09-23 FROM LIVE SAMPLE ROWS, both projects, both metrics:
+            #   {'metric_key': 'daa', 'origin_key': 'ethereum', 'date': '2026-06-25',
+            #    'value': '563332.0'}
+            # NOTE THE VALUE IS A STRING. float() handles it, and the adapter has always gone
+            # through float() rather than trusting the type — but it is written down here
+            # because a numeric-looking string is exactly the thing a later refactor "tidies"
+            # into a direct assignment, and the column would then sort and sum as text.
+            "status": "confirmed",
+            "value_is_a_string": "'563332.0' — cast, never assumed numeric",
             "endpoint": "https://api.growthepie.com/v1/fundamentals.json",
             "origin_key": "plume",
             "metrics": {"active_addresses": "daa", "tx_count": "txcount"},
-            "date_field": None,
-            "value_field": None,
+            "date_field": "date",
+            "value_field": "value",
             "robots_checked": "2026-09-23 — www.growthepie.com/robots.txt disallows page paths "
                               "only; api.growthepie.com unrestricted, no separate robots.txt",
             "confirmed_from_the_document": "origin_key 'plume' and metric_key 'daa' / "
                                            "'txcount' are all present, 2026-09-23.",
-            "what_is_unconfirmed": "the row's DATE and VALUE key names. Run once, read them off "
-                                   "the skipped message, put them in date_field/value_field and "
-                                   "set status to 'confirmed'.",
+            "confirmed_on": "2026-09-23 — date_field 'date', value_field 'value', read off "
+                            "live sample rows for both projects and both metrics.",
         },
         "name": "Plume", "symbol": "PLUME",
         "coingecko_id": "plume",
@@ -8731,7 +8745,15 @@ PROJECTS = [
                     # estimated from a block time because a start after the events returns a
                     # smaller, confident, entirely plausible number. The run prints what it found
                     # so it can be written back here and the search skipped thereafter.
-                    "from_block": None,
+                    # ** FOUND 2026-09-23: 20,663,735. ** Written down so every future run skips
+                    # the deployment binary search entirely — that search costs calls, and a
+                    # block number that has been established once does not change.
+                    #
+                    # THE SPAN IS WHY THE SCAN NEEDED CHUNKING: 20,663,735 to ~26,039,143 is
+                    # ~5.4m blocks, which no provider serves in one eth_getLogs. The 400 it
+                    # returned was the server saying exactly that.
+                    "from_block": 20_663_735,
+                    "from_block_found_on": "2026-09-23",
                     "from_block_discover": "deployment",
                     # 10,000 is what free endpoints generally serve for eth_getLogs. A full
                     # history is roughly 2.6m blocks, so expect ~260 chunks on the first run; the

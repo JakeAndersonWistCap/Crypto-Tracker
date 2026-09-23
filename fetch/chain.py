@@ -59,6 +59,20 @@ ERC20_ABI = [
     # emission); tokensPerWeek(week) is a public mapping (RewardsDistributor's per-week rebase).
     {"constant": True, "inputs": [], "name": "weekly", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     {"constant": True, "inputs": [{"name": "", "type": "uint256"}], "name": "tokensPerWeek", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # ===== veAERO's PERMANENT TRANCHE. Added 2026-09-23 after the read failed for want of it.
+    # "The function 'permanentLockBalance' was not found in this contract's abi" — the ADDRESS
+    # was right (0xeBf418Fe…, VotingEscrow on Base) and the fragment was simply absent. Taken
+    # from Aerodrome's own contracts/VotingEscrow.sol line 566, `uint256 public
+    # permanentLockBalance;`, which compiles to a no-input uint256 getter. NOT guessed from the
+    # name: a public state variable and a view function with the same name would encode
+    # identically here, but only the source says which exists.
+    #
+    # ** THIS ONE IS LOAD-BEARING, unlike the harmless-if-unused fragments above. **
+    # BalanceLogicLibrary.supplyAt returns `bias + permanentLockBalance`, so without it
+    # avg_lock_duration_days has no way to remove the non-decaying tranche — and the derivation
+    # REFUSES rather than falling back to the naive ratio, which would report permanent locks as
+    # nearly-four-year ones. A missing fragment therefore gaps the metric; it never degrades it.
+    {"constant": True, "inputs": [], "name": "permanentLockBalance", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     # tailEmissionRate() is BASIS POINTS, not a token amount. Scaling it by the token's decimals
     # would turn 67 bps into a vanishing fraction and the emission into zero. Read through
     # Reader.raw(), never scaled().
@@ -316,6 +330,9 @@ class ChainReader:
         # different fixes, and the log has to say which one happened.
         self.log_endpoint_used: dict[str, str] = {}
         self.log_endpoints_refused: dict[str, list[str]] = {}
+        # Every range/bad-request body the providers returned, so the working chunk size is READ
+        # from what they said rather than guessed at.
+        self.log_range_errors: dict[str, list[str]] = {}
 
     def web3(self, chain: str):
         if chain in self._w3:
@@ -423,11 +440,52 @@ class ChainReader:
     # not, and treating them alike would hammer four providers with the same bad request.
     LOGS_ENDPOINT_REFUSED = ("403", "forbidden", "unauthorized", "method not found",
                              "not supported", "unsupported method", "429", "rate limit")
+    # ** A 400 IS NOT IN EITHER LIST, AND THAT IS WHY SKY'S SCAN DIED RATHER THAN NARROWING. **
+    # Sky's burn read moved 403 -> 400 once a keyed endpoint was configured: the method is now
+    # permitted and the REQUEST is being rejected. But requests' HTTPError stringifies to
+    # "400 Client Error: Bad Request for url: ..." with the BODY DROPPED, and the body is where
+    # the provider names its own limit ("block range exceeds..."). So str(e) matched neither
+    # LOGS_RANGE_TOO_WIDE nor LOGS_ENDPOINT_REFUSED, the handler re-raised, and a scan with
+    # working narrowing logic never narrowed once.
+    LOGS_BAD_REQUEST = ("400", "bad request", "invalid params", "-32602")
     # And the substrings that mean "this RANGE is too wide for me" — the server naming its own
     # limit. Halving answers what it said; it is not a blind retry of the same request.
     LOGS_RANGE_TOO_WIDE = ("query returned more than", "block range", "too many results",
                            "response size", "limit exceeded", "range is too large", "query timeout")
     MIN_LOG_CHUNK = 500
+
+    @staticmethod
+    def error_detail(e) -> str:
+        """The exception text PLUS the response body, which is where the real message lives.
+
+        ** requests.HTTPError DROPS THE BODY FROM ITS str(). ** It renders as "400 Client Error:
+        Bad Request for url: ..." and the provider's actual complaint — the one naming its own
+        block-range limit — is in `.response.text`, which nothing was reading. Every match and
+        every report below runs against this, not against str(e), because otherwise the code is
+        pattern-matching a message that has had its content removed.
+
+        Tolerant of shape on purpose: web3 wraps provider errors several ways and this runs
+        inside an exception handler, so it must never raise on its way to explaining a failure.
+        """
+        parts = [str(e)]
+        for attr in ("response", "args"):
+            try:
+                v = getattr(e, attr, None)
+            except Exception:  # noqa: BLE001
+                continue
+            if attr == "response" and v is not None:
+                try:
+                    parts.append(str(getattr(v, "text", ""))[:600])
+                except Exception:  # noqa: BLE001
+                    pass
+            elif attr == "args" and v:
+                parts.extend(str(a)[:600] for a in v if not isinstance(a, Exception))
+        seen, out = set(), []
+        for part in parts:
+            if part and part not in seen:
+                seen.add(part)
+                out.append(part)
+        return redact_urls(" | ".join(out))
 
     def _get_logs_resilient(self, chain: str, base: dict, block: int, head: int,
                             chunk: int) -> tuple[list, int, int]:
@@ -467,13 +525,39 @@ class ChainReader:
                     getattr(w3, "provider", None), "endpoint_uri", "?"))
                 return logs, upper, chunk
             except Exception as e:  # noqa: BLE001
-                msg = str(e).lower()
-                if any(s in msg for s in self.LOGS_RANGE_TOO_WIDE) and chunk > self.MIN_LOG_CHUNK:
+                detail = self.error_detail(e)
+                msg = detail.lower()
+                # ** THE BODY IS RECORDED WHATEVER HAPPENS NEXT. ** Knowing that a provider said
+                # "block range exceeds 10000" is what turns a guessed chunk size into a read one,
+                # and it is lost the moment the exception is re-raised.
+                self.log_range_errors.setdefault(chain, [])
+                if detail not in self.log_range_errors[chain]:
+                    self.log_range_errors[chain].append(detail[:300])
+                named_range = any(s in msg for s in self.LOGS_RANGE_TOO_WIDE)
+                # AN UNEXPLAINED 400 OVER A WIDE SPAN IS TREATED AS A RANGE REJECTION, and the
+                # inference is logged AS an inference. A 400 means the request was rejected, not
+                # the method; over thousands of blocks the overwhelmingly likely cause is the
+                # range, and narrowing tests that in one call. It is bounded by MIN_LOG_CHUNK, so
+                # it cannot become an unbounded retry loop — at the floor it raises with the body
+                # attached, which is the honest end state.
+                bare_400 = (not named_range and any(s in msg for s in self.LOGS_BAD_REQUEST)
+                            and chunk > self.MIN_LOG_CHUNK)
+                if (named_range or bare_400) and chunk > self.MIN_LOG_CHUNK:
                     chunk = max(self.MIN_LOG_CHUNK, chunk // 2)
-                    log.info("chain %s: eth_getLogs range refused (%s) — narrowing to %d blocks",
-                             chain, str(e)[:120], chunk)
+                    log.info("chain %s: eth_getLogs %s (%s) — narrowing to %d blocks", chain,
+                             "range refused" if named_range else
+                             "400 with no range named — INFERRING a range limit",
+                             detail[:160], chunk)
                     continue
                 if not any(s in msg for s in self.LOGS_ENDPOINT_REFUSED):
+                    # ** RE-RAISED UNCHANGED, AND THE BODY TRAVELS SEPARATELY. ** Wrapping this
+                    # in a RuntimeError would put the provider's words in the message and throw
+                    # away the exception TYPE, which callers and tests discriminate on — a
+                    # decoding fault and a range fault must stay distinguishable. The body is
+                    # already in log_range_errors, which the scan's own report prints, so it
+                    # reaches a human either way.
+                    log.info("chain %s: eth_getLogs failed over blocks %d-%d at chunk %d — %s",
+                             chain, block, upper, chunk, detail[:300])
                     raise
                 tried.append(rpc_host(getattr(getattr(w3, "provider", None),
                                               "endpoint_uri", "?")))
@@ -537,23 +621,52 @@ class ChainReader:
         topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
         base = {"address": self.checksum(token), "topics": [topic, None, to_topic]}
-        events, block, chunks, used = [], from_block, 0, chunk
-        while block <= head:
-            logs, upper, used = self._get_logs_resilient(chain, base, block, head, used)
-            chunks += 1
-            for entry in logs:
+        raw, chunks, used = self.scan_logs(chain, base, from_block, head, chunk)
+        events = []
+        if True:
+            for entry in raw:
                 # THE VALUE IS THE DATA WORD, not a topic: Transfer indexes from and to and leaves
                 # value unindexed. Reading a topic here would return an address as an amount.
                 data = entry["data"]
-                raw = int(data.hex() if hasattr(data, "hex") else str(data), 16)
+                word = int(data.hex() if hasattr(data, "hex") else str(data), 16)
                 sender = entry["topics"][1]
                 sender = sender.hex() if hasattr(sender, "hex") else str(sender)
                 events.append({"from": "0x" + sender[-40:],
-                               "value": raw,
+                               "value": word,
                                "block": int(entry["blockNumber"])})
-            block = upper + 1
         self.log_chunk_used[chain] = used
         return events, from_block, head, chunks
+
+    def scan_logs(self, chain: str, base: dict, from_block: int, to_block: int,
+                  chunk: int = 10_000) -> tuple[list, int, int]:
+        """THE one chunked eth_getLogs. Every event read in this codebase goes through it.
+
+        Returns (raw log entries, chunks used, the chunk size that worked). Decoding is the
+        CALLER's job — this returns entries untouched, so a Transfer scan and a pool-outflow
+        scan share the traversal without sharing an ABI.
+
+        ** IT WAS ALREADY WRITTEN AND IT WAS NOT REUSABLE. ** The traversal, the narrowing and
+        the endpoint failover all existed, fused inside the Transfer-specific burn reader — so
+        the next event-based read would have had to copy them or go without. Extracted rather
+        than rewritten: the logic below is the logic that was there, which is why no behaviour
+        changes for the burn scan.
+
+        A SPAN NO PROVIDER SERVES IN ONE CALL IS THE NORMAL CASE, not an error. Sky's burn
+        history is ~5.4m blocks (20,663,735 to ~26,039,143); nothing serves that unchunked, and
+        the 400 it now returns is the server saying so.
+        """
+        block, chunks, used, out = from_block, 0, chunk, []
+        while block <= to_block:
+            logs, upper, used = self._get_logs_resilient(chain, base, block, to_block, used)
+            chunks += 1
+            out.extend(logs)
+            # ** upper, NOT block + used. ** _get_logs_resilient may have NARROWED mid-scan, and
+            # advancing by the requested size after a narrowed chunk would skip every block
+            # between the narrowed end and the assumed one — silently, and only on the runs
+            # where narrowing happened, which is the hardest kind of gap to notice.
+            block = upper + 1
+        self.log_chunk_used[chain] = used
+        return out, chunks, used
 
     def scaled(self, chain: str, address: str, call: str, *args, decimals_from: str | None = None) -> float:
         """Call `call` on `address`, scaled by decimals().
@@ -1135,8 +1248,17 @@ class Chain:
                  "" if worked == asked else f" (config asked for {asked:,}; the endpoint capped it)",
                  served,
                  "" if not refused_by else f", after {len(refused_by)} refusal(s): {'; '.join(refused_by)}")
+        # ** WHAT THE PROVIDERS ACTUALLY SAID ABOUT THE RANGE. ** The working chunk size is only
+        # interpretable next to the complaint that produced it, and a 400 whose body was never
+        # printed is what left Sky's scan unexplained for days.
+        ranges = getattr(self.reader, "log_range_errors", {}).get(chain) or []
+        if ranges:
+            log.info("%s/%s: %d range/bad-request response(s) while scanning: %s",
+                     project["name"], key, len(ranges), " || ".join(ranges[:3]))
         out.log.append(LogEntry(SOURCE, project["name"], 0, "ok",
                                 f"{key}: eth_getLogs served by {served}"
+                                + (f"; provider range message(s): {' || '.join(ranges[:2])}"
+                                   if ranges else "")
                                 + (f" after {len(refused_by)} refusal(s): {'; '.join(refused_by)}"
                                    if refused_by else " (no endpoint refused it)"), TIER))
 

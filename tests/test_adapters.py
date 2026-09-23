@@ -237,27 +237,48 @@ def _gtp_rows(origin="ethereum", key="daa", n=3, dk="date", vk="value"):
 
 
 def test_growthepie_reports_the_field_names_instead_of_guessing_them():
-    """** origin_key AND metric_key ARE CONFIRMED. THE DATE AND VALUE KEYS ARE NOT. **
+    """** CONFIRMED 2026-09-23 FROM LIVE ROWS, and the unconfirmed path is kept for the next one.
 
-    'ethereum' and 'plume' are both in the document and so are 'daa' and 'txcount' — those were
-    read from the live fundamentals.json. What was NEVER read from a sample row is what a row
-    calls its date and its value: that was inferred from the query shape.
+    {'metric_key': 'daa', 'origin_key': 'ethereum', 'date': '2026-06-25', 'value': '563332.0'}
 
-    A parser that assumed `date`/`value` would either work silently or produce something that
-    looks exactly like a missing series, and nothing on the sheet would say which happened. So
-    the adapter stores nothing while status is unconfirmed and REPORTS THE KEYS A REAL ROW HAS,
-    which settles it in one run.
+    date_field 'date', value_field 'value'. ** THE VALUE ARRIVES AS A STRING. ** float() handles
+    it and the adapter has always gone through float() rather than trusting the type — pinned
+    here because a numeric-looking string is exactly what a later refactor "tidies" into a
+    direct assignment, after which the column sorts and sums as text.
+
+    The unconfirmed branch is still exercised below: it is what will settle the NEXT chain's
+    field names, and a path that only ran once is a path that has stopped being tested.
     """
     from fetch.base import FetchOutput
     from fetch.growthepie import GrowThePie
 
     eth = config.PROJECT_BY_NAME["Ethereum"]
     spec = eth["growthepie"]
-    assert spec["status"] == "unconfirmed"
+    assert spec["status"] == "confirmed"
     assert spec["origin_key"] == "ethereum"
     assert spec["metrics"] == {"active_addresses": "daa", "tx_count": "txcount"}
-    assert spec["date_field"] is None and spec["value_field"] is None, \
-        "the unread names must be None, not a guess"
+    assert (spec["date_field"], spec["value_field"]) == ("date", "value")
+    assert config.PROJECT_BY_NAME["Plume"]["growthepie"]["origin_key"] == "plume"
+
+    # ** THE STRING VALUE IS CAST, NOT ASSUMED NUMERIC. ** Pinned against the real sample row.
+    live = [{"metric_key": "daa", "origin_key": "ethereum", "date": "2026-06-25",
+             "value": "563332.0"},
+            {"metric_key": "txcount", "origin_key": "plume", "date": "2026-06-25",
+             "value": "206496.0"}]
+    a = GrowThePie()
+    a.http = _GtpStub(doc=live)
+    out0 = FetchOutput()
+    a.run([eth, config.PROJECT_BY_NAME["Plume"]], None, out0)
+    got0 = out0.frame()
+    e = got0[(got0.project == "Ethereum") & (got0.metric == "active_addresses")]
+    p_ = got0[(got0.project == "Plume") & (got0.metric == "tx_count")]
+    assert float(e.value.iloc[0]) == 563332.0 and float(p_.value.iloc[0]) == 206496.0
+    assert all(isinstance(v, float) for v in got0.value), \
+        "a numeric STRING in the value column would sort and sum as text"
+
+    # THE UNCONFIRMED PATH, as it will be for the next chain added.
+    spec = dict(spec, status="unconfirmed", date_field=None, value_field=None)
+    eth = dict(eth, growthepie=spec)
     # ROBOTS CHECKED AND DATED, because respecting it is a design requirement here.
     assert "2026-09-23" in spec["robots_checked"] and "api.growthepie.com" in spec["robots_checked"]
 
@@ -10030,6 +10051,121 @@ def test_a_range_the_server_will_not_serve_is_narrowed_not_retried_blindly(monke
     else:
         raise AssertionError("an unrecognised error must propagate")
     print("range narrowing ok: halved on the server's own limit, floored, and unrelated errors raise")
+
+
+def test_a_400_whose_body_names_the_range_narrows_and_the_body_is_kept(monkeypatch):
+    """** SKY'S SCAN HAD WORKING NARROWING LOGIC AND NEVER NARROWED ONCE. **
+
+    With a keyed endpoint configured, Sky's burn read moved 403 -> 400: the method is now
+    permitted and the REQUEST is being rejected. But requests' HTTPError stringifies to
+    "400 Client Error: Bad Request for url: ..." with THE BODY DROPPED — and the body is where
+    the provider names its own limit. So str(e) matched neither LOGS_RANGE_TOO_WIDE nor
+    LOGS_ENDPOINT_REFUSED, the handler re-raised, and ~5.4m blocks were never split.
+
+    Two fixes, and the first is the one that matters: read the body. Matching a message that has
+    had its content removed is not matching.
+    """
+    import fetch.chain as chain_mod
+
+    class _Resp:
+        text = '{"error":{"code":-32602,"message":"block range exceeds 10000 blocks"}}'
+
+    class _Body400(_RefusingLogs):
+        class _Eth(_RefusingLogs._Eth):
+            def get_logs(self, params):
+                span = int(params["toBlock"]) - int(params["fromBlock"]) + 1
+                self.outer.calls.append((self.url, span))
+                if span > 10_000:
+                    e = Exception("400 Client Error: Bad Request for url: "
+                                  "https://eth-mainnet.g.alchemy.com/v2/SECRETKEY")
+                    e.response = _Resp()
+                    raise e
+                return []
+
+    stub = _Body400(refuse_urls=set())
+    reader = _reader_with(monkeypatch, stub, ["https://a.example"])
+    logs, upper, chunk = reader._get_logs_resilient(
+        "ethereum", {"address": "0xabc", "topics": []}, 0, 5_400_000, 40_000)
+    assert chunk == 10_000, f"narrowed to the provider's stated limit, got {chunk}"
+    assert [span for _, span in stub.calls] == [40_000, 20_000, 10_000]
+
+    # ** THE BODY IS KEPT, because the working chunk size is only interpretable next to the
+    # complaint that produced it. A 400 whose body was never printed is what left this
+    # unexplained for days.
+    kept = reader.log_range_errors["ethereum"]
+    assert kept and "block range exceeds 10000" in kept[0], kept
+    # AND THE KEY IS NOT IN IT. The body arrives beside a URL that carries one.
+    assert "SECRETKEY" not in " ".join(kept), "the error body is redacted like everything else"
+    assert "https://" not in " ".join(kept)
+
+    # A BARE 400 WITH NO BODY STILL NARROWS, and says it is INFERRING rather than reading.
+    class _Bare400(_RefusingLogs):
+        class _Eth(_RefusingLogs._Eth):
+            def get_logs(self, params):
+                span = int(params["toBlock"]) - int(params["fromBlock"]) + 1
+                self.outer.calls.append((self.url, span))
+                if span > 5_000:
+                    raise Exception("400 Client Error: Bad Request")
+                return []
+
+    bare = _Bare400(refuse_urls=set())
+    r2 = _reader_with(monkeypatch, bare, ["https://a.example"])
+    _, _, chunk2 = r2._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []},
+                                          0, 5_400_000, 20_000)
+    assert chunk2 == 5_000, f"a bare 400 over a wide span is treated as a range limit: {chunk2}"
+
+    # ** AND THE INFERENCE IS BOUNDED. ** At the floor it raises rather than shrinking for ever,
+    # so an unexplained 400 can never become an unbounded retry loop.
+    class _Always400(_RefusingLogs):
+        class _Eth(_RefusingLogs._Eth):
+            def get_logs(self, params):
+                self.outer.calls.append((self.url, 0))
+                raise Exception("400 Client Error: Bad Request")
+
+    always = _Always400(refuse_urls=set())
+    r3 = _reader_with(monkeypatch, always, ["https://a.example"])
+    try:
+        r3._get_logs_resilient("ethereum", {"address": "0xabc", "topics": []}, 0, 5_400_000, 20_000)
+    except Exception:
+        pass
+    else:
+        raise AssertionError("a 400 that survives narrowing to the floor must raise")
+    assert len(always.calls) <= 12, f"bounded, not unbounded: {len(always.calls)} calls"
+    print("400 handling ok: body read and kept, range narrowed to the stated limit, a bare 400 "
+          "inferred and bounded at the floor")
+
+
+def test_scan_logs_is_the_one_chunked_reader_and_advances_by_what_was_served(monkeypatch):
+    """** THE TRAVERSAL EXISTED AND WAS NOT REUSABLE. ** Chunking, narrowing and endpoint
+    failover were all written, fused inside the Transfer-specific burn reader — so the next
+    event-based read would have had to copy them or go without. scan_logs is that traversal
+    extracted, returning entries UNDECODED so a Transfer scan and a pool-outflow scan share it
+    without sharing an ABI.
+
+    ** IT ADVANCES BY WHAT THE SERVER SERVED, NOT BY WHAT WAS ASKED. ** If a chunk narrows
+    mid-scan, advancing by the requested size would skip every block between the narrowed end
+    and the assumed one — silently, and only on runs where narrowing happened, which is the
+    hardest kind of gap to notice.
+    """
+    class _NarrowsOnce(_RefusingLogs):
+        class _Eth(_RefusingLogs._Eth):
+            def get_logs(self, params):
+                lo, hi = int(params["fromBlock"]), int(params["toBlock"])
+                self.outer.calls.append((lo, hi))
+                if hi - lo + 1 > 10_000:
+                    raise Exception("400: block range exceeds 10000 blocks")
+                return [{"blockNumber": lo}]
+
+    stub = _NarrowsOnce(refuse_urls=set())
+    reader = _reader_with(monkeypatch, stub, ["https://a.example"])
+    logs, chunks, used = reader.scan_logs("ethereum", {"address": "0xabc", "topics": []},
+                                          0, 29_999, 20_000)
+    assert used == 10_000 and chunks == 3, f"chunks={chunks} used={used}"
+    served = [(lo, hi) for lo, hi in stub.calls if hi - lo + 1 <= 10_000]
+    # CONTIGUOUS AND COMPLETE: every block from 0 to 29,999 covered exactly once.
+    assert served == [(0, 9_999), (10_000, 19_999), (20_000, 29_999)], served
+    assert len(logs) == 3, "entries are returned undecoded, all of them"
+    print("scan_logs ok: one traversal, advances by what was served, no silent hole on narrowing")
 
 
 def test_a_contract_that_serves_a_derived_flow_is_not_read_as_withdrawn():
