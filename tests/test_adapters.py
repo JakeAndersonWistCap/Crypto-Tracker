@@ -11925,16 +11925,25 @@ def test_recovery_applies_itself_the_day_the_watch_child_reports_again():
     switch_day = fees[fees.date == pd.Timestamp("2026-09-12")]
     assert abs(float(switch_day.value.iloc[0]) - (605_000.0 + 21.64)) < 0.01
 
-    recov = [r for r in out.review if r["reason"] == "source_restructure_recovered"]
-    assert len(recov) == 1, out.review
-    assert "RECOVERED" in recov[0]["basis"] and "morpho-blue" in recov[0]["basis"]
-    assert "No human step was needed" in recov[0]["basis"]
     assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
         "a recovered series must not also report a gap"
-    assert "covers the whole break window" in recov[0]["basis"], \
-        "continuity is CHECKED against the child's own chart, never asserted"
+    # ===== ** UPDATED 2026-09-24: THIS SCENARIO NOW RAISES NO REVIEW ITEM. ** =====
+    # morpho-blue covers 09-12..09-22 here, so `uncovered` is empty and there is nothing to
+    # review — the series is sum(children), continuous and correct. This used to assert one
+    # review row unconditionally, which is the behaviour that was narrowed: see
+    # config's review_flag_rule and test_the_recovery_review_flag_tracks_the_hole_not_the_restructure.
+    recov = [r for r in out.review if r["reason"] == "source_restructure_recovered"]
+    assert recov == [], (
+        "a fully covered recovery has nothing to review — a permanently flagged row is a stain, "
+        f"not signal: {recov}")
+    # ** THE SWITCH IS STILL ON THE RECORD, in the Run Log where a fact belongs rather than in
+    # the column meant for things that need doing. **
+    msg = [e.message for e in out.log if e.status == "ok" and "RECOVERED" in e.message]
+    assert msg and "morpho-blue" in msg[0], msg
+    assert "WINDOW COMPLETE" in msg[0], \
+        "continuity is CHECKED against the child's own chart and SAID so, never asserted silently"
     print("recovery ok: full history summed and stored, switch day sums both children, "
-          "recorded with no gap alongside it")
+          "recorded in the Run Log with no gap and no review flag alongside it")
 
 
 def test_a_recovery_that_does_not_backfill_leaves_the_hole_visible():
@@ -12010,9 +12019,17 @@ def test_the_hole_closes_by_itself_the_day_the_source_backfills_it():
             f"09-{day:02d} is backfilled upstream and must now be stored"
     assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
         "a filled window is not a gap, and nothing had to be edited to say so"
+    # ===== ** UPDATED 2026-09-24. THE FLAG CLEARING IS THE POINT OF THIS TEST NOW. ** =====
+    # The window is filled, so the review flag that stood while the hole was open goes with it —
+    # on the same run, with no human step, exactly like the gap row above. A flag that outlived
+    # the hole it described would leave this row permanently marked for a problem that no longer
+    # exists. See config's review_flag_rule for why it is scoped this way.
     recov = [r for r in out.review if r["reason"] == "source_restructure_recovered"]
-    assert recov and "covers the whole break window" in recov[0]["basis"], recov
-    print("backfill ok: the held-out days return on their own once morpho-blue reports them")
+    assert recov == [], f"the hole is closed, so its flag must close with it: {recov}"
+    msg = [e.message for e in out.log if e.status == "ok" and "RECOVERED" in e.message]
+    assert msg and "WINDOW COMPLETE" in msg[0] and "HELD OUT" not in msg[0], msg
+    print("backfill ok: the held-out days return on their own once morpho-blue reports them, "
+          "and the review flag closes with the hole")
 
 
 def test_the_generic_restructure_check_stands_down_once_a_project_is_declared():
@@ -12550,20 +12567,40 @@ def test_two_points_on_one_date_are_reported_and_refused_not_silently_summed():
         f"across-slug summing is the point of recovery and must still work: {day}"
 
 
-def test_a_recovered_fees_series_keeps_flagging_for_review_every_run():
-    """RECORDED, NOT FIXED — this is a finding about what the sheet will say, not a bug fix.
+def test_the_recovery_review_flag_tracks_the_hole_not_the_restructure():
+    """Narrowed 2026-09-24. It used to fire on every run for ever once a restructure recovered.
 
-    review_item is called unconditionally once the watch child has recovered, so fees_usd reads
-    'review' on every subsequent run even when the hole is fully backfilled and nothing is wrong.
-    It will not return to 'ok' by itself. Pinned here so the answer is not re-derived, and so
-    that whoever decides to scope it has a test that says what the current behaviour is.
+    ** THE OVER-FLAGGING COST LANDS ON EVERY OTHER ROW, NOT THIS ONE. ** A reader who learns the
+    review column carries rows needing nothing learns to skim the review column — and that is the
+    one place a real problem has to be seen. A recovered series with its window fully backfilled
+    is just sum(children), continuous and correct; there is nothing to review.
+
+    If a future change makes this fire unconditionally again, this test is where that decision
+    gets argued — see the config note, which says why it is narrow.
     """
-    # Fully backfilled: blue covers the entire break window, so `uncovered` is empty.
-    f, out = _morpho_guard(range(12, 24))
-    assert not f.empty and f[f.value < 1000].empty, "nothing held out — the hole is gone"
+    # (1) HOLE OPEN — 09-12..09-20 absent. The flag fires, and names the days.
+    f, out = _morpho_guard([21, 22, 23])
     items = [r for r in out.review if r["metric"] == "fees_usd"]
     assert len(items) == 1 and items[0]["reason"] == "source_restructure_recovered", items
-    assert items[0]["action"] == "stored_flagged", items[0]
-    # ** THE POINT: a clean, fully recovered series STILL raises it. ** If this ever stops being
-    # true the behaviour has been scoped deliberately and this test should be updated with it.
-    assert "the series is continuous across it" in (items[0]["basis"] or ""), items[0]["basis"]
+    basis = items[0]["basis"]
+    assert "9 day(s)" in basis and "2026-09-12..2026-09-20" in basis, basis
+    # ** AND IT SAYS WHAT IT IS, so the reader is not left thinking the restructure is the flag. **
+    assert "THIS FLAG IS THE HOLE, NOT THE RESTRUCTURE" in basis, basis
+    assert "clears by itself" in basis, basis
+
+    # (2) ** FULLY BACKFILLED — NOTHING TO REVIEW, SO NOTHING IS RAISED. ** This is the assertion
+    #     that replaces the one pinning the old unconditional behaviour.
+    f, out = _morpho_guard(range(12, 24))
+    assert not f.empty and f[f.value < 1000].empty, "sanity: recovered and no hole"
+    assert [r for r in out.review if r["metric"] == "fees_usd"] == [], (
+        "a recovered series with every day covered must raise NO review item — a permanently "
+        "flagged row is a stain, not signal")
+    # ** NOT SILENCE. ** The Run Log still records the switch AND that the window is whole —
+    # otherwise "no flag raised" and "the check never ran" look identical from the outside.
+    msg = [e.message for e in out.log if e.status == "ok" and "RECOVERED" in e.message]
+    assert msg and "WINDOW COMPLETE" in msg[0] and "no review flag is raised" in msg[0], msg
+
+    # (3) THE FLAG COMES BACK IF A HOLE REAPPEARS — it tracks state, it is not a one-shot.
+    f, out = _morpho_guard([12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23])   # 09-20 missing
+    items = [r for r in out.review if r["metric"] == "fees_usd"]
+    assert len(items) == 1 and "1 day(s)" in items[0]["basis"], items

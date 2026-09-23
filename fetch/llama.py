@@ -450,10 +450,15 @@ class DefiLlama:
         rows = sorted((d, v) for d, v in by_date.items() if d not in set(uncovered))
         if not rows:
             return
+        # The fully-covered case says so EXPLICITLY rather than falling silent. It is the case
+        # that raises no review item (see below), so the Run Log is where it has to be legible —
+        # otherwise "no flag" and "the check did not run" look identical from the outside.
         held = (f"; {len(uncovered)} day(s) HELD OUT "
                 f"({uncovered[0].date()}..{uncovered[-1].date()}) — {watch} has no point on "
                 f"them, so the sum there would be the other child alone"
-                if uncovered else "")
+                if uncovered else
+                f"; WINDOW COMPLETE — {watch} covers every day from {break_date.date()}, so "
+                f"nothing is held out and no review flag is raised")
         out.add(tidy(rows, name, "fees_usd", SOURCE, TIER), SOURCE, name,
                 f"RECOVERED — {' + '.join(sum_slugs)}, full history re-pulled, {len(rows)} "
                 f"day(s){held}", TIER)
@@ -472,24 +477,50 @@ class DefiLlama:
                                 f"{uncovered[0].date()}..{uncovered[-1].date()}, which this "
                                 f"check picks up on its own the next run. Do NOT fill them by "
                                 f"interpolation or by carrying the neighbouring days."))
-        out.review_item(
-            name, "fees_usd", "source_restructure_recovered", "stored_flagged",
-            value=rows[-1][1], date=rows[-1][0].date().isoformat(),
-            basis=(f"{slug!r}'s restructure has RECOVERED: {watch} is reporting again from "
-                  f"{recovered_from}. fees_usd is now sum({', '.join(sum_slugs)}), full "
-                  f"history re-pulled. "
-                  + (f"** THE BREAK WINDOW IS NOT BACKFILLED: {len(uncovered)} day(s) "
-                     f"({uncovered[0].date()}..{uncovered[-1].date()}) are absent because "
-                     f"{watch} has no point on them. The series is continuous either side and "
-                     f"the hole is VISIBLE, which is the intended state — storing the other "
-                     f"child alone there would have hidden it behind a plausible number. **"
-                     if uncovered else
-                     f"{watch} covers the whole break window, so the series is continuous "
-                     f"across it — checked against its own chart, not assumed.")
-                  + f" No human step was needed for the switch, the re-pull, or clearing the "
-                    f"level-break flag — that flag is computed from the stored numbers on every "
-                    f"run, so a correct series simply stops tripping it."),
-            source=f"{SOURCE}:recovered", tier=TIER)
+        # ===== ** THE FLAG IS SCOPED TO THE HOLE, AND THIS IS DELIBERATE. Narrowed 2026-09-24.
+        # DO NOT WIDEN IT BACK. ** =====
+        # This fired unconditionally, so once a restructure had recovered, fees_usd read `review`
+        # on EVERY subsequent run — for ever, including when the break window was fully
+        # backfilled and there was nothing whatever to look at. That is not signal. A row that is
+        # permanently flagged is a permanent stain, and the cost is not on this row: it is that a
+        # reader who learns the review column contains rows needing nothing learns to skim it,
+        # and the review column is the one place a real problem has to be seen.
+        #
+        # ** THE INFORMATION IS NOT LOST, WHICH IS WHY THIS IS SAFE. ** "This series went through
+        # a restructure" is already carried by the hold-out for exactly as long as it matters:
+        # the absent days, the gap row raised beside them, and the basis text below all say so.
+        # Once every day is covered there is no hole, no gap row, and nothing to review — the
+        # series is simply sum(children), continuous, and correct.
+        #
+        # SO THE FLAG TRACKS THE HOLE, NOT THE HISTORY. It clears the run after the last uncovered
+        # day is backfilled, which is the run on which the series stops being incomplete. The
+        # restructure itself stays on the record in config's defillama_restructure block, where a
+        # permanent fact belongs — not in a column meant for things that need doing.
+        if uncovered:
+            out.review_item(
+                name, "fees_usd", "source_restructure_recovered", "stored_flagged",
+                value=rows[-1][1], date=rows[-1][0].date().isoformat(),
+                basis=(f"{slug!r}'s restructure has RECOVERED: {watch} is reporting again from "
+                      f"{recovered_from}. fees_usd is now sum({', '.join(sum_slugs)}), full "
+                      f"history re-pulled. "
+                      f"** THE BREAK WINDOW IS NOT BACKFILLED: {len(uncovered)} day(s) "
+                      f"({uncovered[0].date()}..{uncovered[-1].date()}) are absent because "
+                      f"{watch} has no point on them. The series is continuous either side and "
+                      f"the hole is VISIBLE, which is the intended state — storing the other "
+                      f"child alone there would have hidden it behind a plausible number. ** "
+                      f"THIS FLAG IS THE HOLE, NOT THE RESTRUCTURE: it clears by itself on the "
+                      f"run after the last of those days is backfilled, and a recovered series "
+                      f"with no hole raises nothing. No human step was needed for the switch, "
+                      f"the re-pull, or clearing the level-break flag — that flag is computed "
+                      f"from the stored numbers on every run, so a correct series simply stops "
+                      f"tripping it."),
+                source=f"{SOURCE}:recovered", tier=TIER)
+        else:
+            # Not silence: the Run Log still records that the switch happened and that the window
+            # is whole. It is just not a REVIEW item, because nothing needs reviewing.
+            log.info("%s: restructure recovered and fully covered — %s reports every day from "
+                     "%s, so sum(%s) is continuous and no review flag is raised",
+                     name, watch, recovered_from, ", ".join(sum_slugs))
 
     # ------------------------------------------------------------------ TVL
     def protocol_tvl(self, project: dict, window_days, out):

@@ -6804,6 +6804,31 @@ PROJECTS = [
                 # event this watch waits for. Fixed the same day; verified by driving the
                 # function — the old form stored five residual rows, the new one stores none.
                 "partial_backfill_hole_fixed_on": "2026-09-24",
+                # ===== ** THE RECOVERY REVIEW FLAG IS SCOPED TO THE HOLE. DO NOT WIDEN IT BACK.
+                # Narrowed 2026-09-24. ** =====
+                # source_restructure_recovered used to fire on EVERY run once a restructure had
+                # recovered, so fees_usd read `review` for ever — including with the break window
+                # fully backfilled and nothing whatever to look at. It now fires only while
+                # `uncovered` is non-empty.
+                #
+                # ** IF THIS LOOKS LIKE AN OVERSIGHT LATER, IT IS NOT — READ THIS FIRST. ** The
+                # narrower flag is the point, for two reasons:
+                #
+                #   1. THE INFORMATION IS NOT LOST. "This series went through a restructure" is
+                #      carried by the hold-out itself for exactly as long as it matters — the
+                #      absent days, the gap row beside them, and the basis text all say so. Once
+                #      every day is covered there is no hole and no gap row, and the series is
+                #      just sum(children), continuous and correct. There is nothing to review.
+                #   2. A PERMANENT FLAG IS NOT SIGNAL, AND IT COSTS MORE THAN THE ROW. A reader
+                #      who learns that the review column carries rows needing nothing learns to
+                #      skim the review column — and that is the one place a real problem has to
+                #      be seen. The cost of over-flagging lands on every OTHER row.
+                #
+                # The restructure is a permanent fact and it lives HERE, in config, which is where
+                # permanent facts belong. The review column is for things that need doing.
+                "review_flag_scoped_on": "2026-09-24",
+                "review_flag_rule": "fires only while `uncovered` is non-empty; clears the run after the last absent day is backfilled",
+                "review_flag_do_not": "do NOT restore the unconditional flag — a recovered series with no hole has nothing to review, and a permanently flagged row teaches readers to skim the review column",
                 "blocked_on": "nothing — AB answered it",
                 "do_not": "do NOT re-open the 13.3m question from the current series; it is not in it",
             },
