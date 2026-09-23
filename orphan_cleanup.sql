@@ -1974,7 +1974,7 @@ SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 
 -- ========================================================================================
 -- W. ETHEREUM'S DERIVED BURN — IS THE 50-70 ETH/DAY DISAGREEMENT REAL, OR RECENCY?
---    ** ANSWERED 2026-09-24: RECENCY. ** The review row is retired. LOOK ONLY throughout.
+--    ** ANSWERED 2026-09-23: RECENCY. ** The review row is retired. LOOK ONLY throughout.
 -- ========================================================================================
 -- THE ANSWER, and it is the one W was built to distinguish. Monthly mean ETH/day, from W1:
 --
@@ -2054,7 +2054,7 @@ SELECT metric, source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS l
  ORDER BY metric, rows DESC;
 
 -- ========================================================================================
--- X. SKY'S RETIRED governance_burn_balance.               CHECKED EMPTY 2026-09-24 — CLOSED.
+-- X. SKY'S RETIRED governance_burn_balance.               CHECKED EMPTY 2026-09-23 — CLOSED.
 --    NOTHING TO RUN. Kept as the record that it was checked, not as work outstanding.
 -- ========================================================================================
 -- ** X1 RETURNED NO ROWS. ** The decomposed burn read has been 403ing since it was written, so
@@ -2112,3 +2112,118 @@ SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 -- COMMIT;
 
 -- X4. VERIFY — X1 returns nothing, and X2 is unchanged from before X3 ran.
+
+-- ========================================================================================
+-- Y. sETHFI'S ACCRUAL JUMPED 15x — WHICH MECHANISM?
+--    LOOK ONLY. No deletes in this section; it exists to answer a question.    2026-09-23
+-- ========================================================================================
+-- THE OBSERVATION. lock_assets_per_share ran:
+--     2026-09-14  1.238612   block 25,982,077
+--     2026-09-21  1.239700   +0.0879% over 7 days = 0.0126%/day  (~4.7%/yr)
+--     2026-09-23  1.244475   block 26,039,143
+--                            +0.3852% over 2 days = 0.1924%/day  (~101.7%/yr)
+-- Every step is an INCREASE, so the direction check is silent by design. A rate guard is now
+-- declared at 25%/yr (lock_ratio.max_annualised_accrual) and will raise a row on the second
+-- window — but a flag says LOOK, it does not say WHY. This section is the why.
+--
+-- ** FIRST, A CORRECTION TO THE PROPOSED TEST, because it does not separate what it was meant
+-- ** to. ** The test as put was: "a batch deposit shows as a step in ETHFI.balanceOf(sETHFI)
+-- with sETHFI.totalSupply() flat; organic accrual moves them together."
+--
+-- In an ERC-4626-shaped vault, organic accrual does NOT move them together — that is precisely
+-- why the ratio rises at all. Rewards arriving move ASSETS ALONE and leave SHARES flat, whether
+-- they arrive as one batch or as a continuous stream. What moves the two together is USER FLOW:
+-- a deposit mints shares at the prevailing ratio and a withdrawal burns them, and both leave the
+-- ratio unchanged. So "assets step, shares flat" is the signature of REWARDS-versus-FLOW, not of
+-- LUMPY-versus-SMOOTH. Both candidate explanations for the acceleration sit on the rewards side
+-- of that line, and this test cannot tell them apart.
+--
+-- ** WHAT SEPARATES LUMPY FROM SMOOTH IS GRANULARITY, NOT PATTERN. ** A step needs a day on
+-- which it happened. With observations only on 09-14, 09-21 and 09-23, each window is ONE
+-- interval and an interval has no shape. Y3 is how you find out whether the daily rows exist;
+-- if they do not, more observations are the only route and no query here will substitute.
+--
+-- ** BUT THE DECOMPOSITION IS WORTH RUNNING ANYWAY, because it can catch a THIRD mechanism
+-- ** that nobody has listed and that the ratio hides completely. ** If shares fall faster than
+-- assets — holders exiting at a discount, an exit fee accruing to those who stay, or a share
+-- burn — the ratio RISES with no reward arriving at all. That is indistinguishable from accrual
+-- in the ratio and obvious in the two series. It is also the one candidate with a different
+-- meaning for the sheet: a rising ratio would then be holders leaving, not rewards compounding.
+--
+-- READ Y2's `residual` AS: the assets that appeared beyond what the share change accounts for.
+--     residual > 0, d_shares ~ 0          rewards arrived. Magnitude is the residual.
+--     residual > 0, d_shares strongly < 0 shares left faster than assets — EXIT/FEE/BURN, and
+--                                         the ratio rise is not accrual at all.
+--     residual ~ 0                        the ratio moved with no reward and no exit, which
+--                                         means one of the two readings is wrong. Check the
+--                                         sources and blocks before anything else.
+--
+-- Y1. THE TWO SERIES SIDE BY SIDE, with their sources and blocks. Anything whose source differs
+--     between rows is a measuring-point change and must be settled before the deltas mean
+--     anything — a Dune daily aggregate against a point-in-time contract read are not the same
+--     measurement, and differencing across the join produces a number with no referent.
+SELECT date,
+       MAX(CASE WHEN metric = 'locked_tokens'            THEN value END) AS shares,
+       MAX(CASE WHEN metric = 'locked_tokens_underlying' THEN value END) AS assets,
+       MAX(CASE WHEN metric = 'lock_assets_per_share'    THEN value END) AS ratio,
+       MAX(CASE WHEN metric = 'locked_tokens'            THEN source END) AS shares_source,
+       MAX(CASE WHEN metric = 'locked_tokens_underlying' THEN source END) AS assets_source
+  FROM metrics
+ WHERE project = 'Ether.fi'
+   AND metric IN ('locked_tokens', 'locked_tokens_underlying', 'lock_assets_per_share')
+   AND date >= '2026-09-01'
+ GROUP BY date
+ ORDER BY date;
+
+-- Y2. THE DECOMPOSITION, window by window. `flow_assets` is what the share change accounts for
+--     at the PREVIOUS ratio; `residual` is everything else, which is the reward-like inflow.
+WITH s AS (
+  SELECT date,
+         MAX(CASE WHEN metric = 'locked_tokens'            THEN value END) AS shares,
+         MAX(CASE WHEN metric = 'locked_tokens_underlying' THEN value END) AS assets
+    FROM metrics
+   WHERE project = 'Ether.fi'
+     AND metric IN ('locked_tokens', 'locked_tokens_underlying')
+     AND date >= '2026-09-01'
+   GROUP BY date
+), w AS (
+  SELECT date, shares, assets,
+         LAG(date)   OVER (ORDER BY date) AS prev_date,
+         LAG(shares) OVER (ORDER BY date) AS prev_shares,
+         LAG(assets) OVER (ORDER BY date) AS prev_assets
+    FROM s
+   WHERE shares IS NOT NULL AND assets IS NOT NULL
+)
+SELECT prev_date, date,
+       CAST(julianday(date) - julianday(prev_date) AS INT)      AS days,
+       shares - prev_shares                                     AS d_shares,
+       assets - prev_assets                                     AS d_assets,
+       (shares - prev_shares) * (prev_assets / prev_shares)      AS flow_assets,
+       (assets - prev_assets)
+         - (shares - prev_shares) * (prev_assets / prev_shares)  AS residual,
+       ((assets - prev_assets)
+         - (shares - prev_shares) * (prev_assets / prev_shares))
+         / prev_assets * 100.0                                   AS residual_pct_of_assets,
+       (assets / shares) / (prev_assets / prev_shares) - 1.0      AS ratio_change
+  FROM w
+ WHERE prev_date IS NOT NULL
+ ORDER BY date;
+
+-- Y3. IS THERE DAILY GRANULARITY AT ALL? One row per OBSERVATION DAY across the window. If this
+--     returns three rows, the lumpy-versus-smooth question is unanswerable from the store and
+--     the only route is more observations — say so rather than reading shape into two points.
+SELECT date, COUNT(DISTINCT metric) AS metrics_on_that_day
+  FROM metrics
+ WHERE project = 'Ether.fi'
+   AND metric IN ('locked_tokens', 'locked_tokens_underlying')
+   AND date >= '2026-08-15'
+ GROUP BY date
+ ORDER BY date;
+
+-- Y4. THE SAME DECOMPOSITION FOR PENDLE, which has exactly one point today and will not answer
+--     yet. Run it once sPENDLE has two, so the question is not re-derived from scratch there.
+SELECT date, metric, value, source
+  FROM metrics
+ WHERE project = 'Pendle'
+   AND metric IN ('locked_tokens', 'locked_tokens_shares', 'lock_assets_per_share')
+ ORDER BY metric, date;

@@ -390,7 +390,7 @@ METRICS = {
     # Forward-only from the day the contract read was wired, the same limitation Chainlink's
     # principal figure carries: a contract read returns present state and nothing else.
     "locked_tokens_underlying":   {"label": "Tokens locked (underlying asset held by the staking contract)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Ether.fi"]},
-    # ===== THE SHARE COUNT, WHERE THE ASSETS ARE THE HEADLINE. Added 2026-09-24. =====
+    # ===== THE SHARE COUNT, WHERE THE ASSETS ARE THE HEADLINE. Added 2026-09-23. =====
     # ** TWO PROJECTS, TWO NAMINGS FOR ONE PAIR, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
     # ** Ether.fi puts the SHARES in locked_tokens and the assets in locked_tokens_underlying;
     # Pendle puts the ASSETS in locked_tokens and the shares here. Both store both figures and
@@ -1161,6 +1161,42 @@ def derivation_suppressed(project_name: str, metric: str) -> dict | None:
     return None
 
 
+def declared_source_hole(project_name: str, metric: str) -> dict | None:
+    """Dates this metric is KNOWN to be missing because the SOURCE did not report them.
+
+    ** NOT THE SAME THING AS "WE HAVE NO ROW FOR THAT DAY", AND THE DIFFERENCE IS THE WHOLE
+    ** POINT. ** This tool observes on RUN DAYS, so most series are sparse by construction and a
+    missing interior day is ordinary. A density check over the window cannot tell the two apart:
+    it reads Hyperliquid's three points across four months as twenty-seven days of absence, which
+    is a warning the series has not earned. (That was tried on 2026-09-23 and the control test
+    for exactly this caught it.)
+
+    A DECLARED hole is different. It names dates a human established the upstream source did not
+    cover, and it is therefore the only kind of interior absence that can be reported without
+    guessing. Morpho is the case: DefiLlama did not report Morpho Blue's fees for 2026-09-12..
+    2026-09-20, and those days are deliberately not stored rather than filled with Morpho
+    Midnight's ~$2/day (see fetch.llama's recovery guard). fees_usd has run since 2021, so the
+    series is "alive" for all thirty days, and a trailing-30-day sum silently omits nine days of
+    roughly $600,000 each.
+
+    ** THAT IS THE SAME SHAPE OF ERROR THE HOLE EXISTS TO AVOID, ONE LEVEL UP. ** The days were
+    held out because a wrong-but-plausible number is worse than an absence; a 30-day header over
+    a 21-day sum puts the understatement straight back, and this time with nothing to notice.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    r = p.get("defillama_restructure") or {}
+    hole = r.get("hole") or {}
+    if metric != (r.get("recovery") or {}).get("target_metric"):
+        return None
+    if not hole.get("from") or not hole.get("to"):
+        return None
+    # A hole that has since been backfilled is not a hole. The flag is removed when the source
+    # fills the dates, which the recovery path detects on its own — see break_window_backfilled.
+    if r.get("break_window_backfilled"):
+        return None
+    return hole
+
+
 def metric_addresses_unverified(project_name: str, metric: str) -> list[str]:
     """Contract entries serving this metric that were never checked against protocol docs."""
     p = PROJECT_BY_NAME.get(project_name) or {}
@@ -1510,7 +1546,7 @@ PROJECTS = [
                           "master/fees/ethereum/index.ts",
             "source_date": "2026-09-22",
             "components": "base fees + blob fees (EIP-1559 and EIP-4844); priority fees excluded",
-            # ===== ** RESOLVED 2026-09-24 — THE BAND WAS THE WRONG NUMBER, AND THE ~36/DAY
+            # ===== ** RESOLVED 2026-09-23 — THE BAND WAS THE WRONG NUMBER, AND THE ~36/DAY
             # ** WAS RIGHT. ** The band is REMOVED rather than widened, because the evidence is
             # not that 36 sits inside a bigger range: it is that the burn has been FALLING for
             # thirteen months and a single fixed band cannot describe a trend.
@@ -1537,8 +1573,8 @@ PROJECTS = [
             # exactly what caught the seeded fixture. It is recorded as a methodology sanity
             # series, not as a metric.
             "expect_daily_tokens": None,
-            "expect_removed_on": "2026-09-24",
-            "band_resolution_2026_09_24": {
+            "expect_removed_on": "2026-09-23",
+            "band_resolution_2026_09_23": {
                 "verdict": "the ~36 ETH/day is correct and the 50-70 band described an earlier "
                            "period. Review row outside_expected_band is CLOSED.",
                 "monthly_mean_eth_per_day": {
@@ -1580,7 +1616,7 @@ PROJECTS = [
                                        "2015 burn valued in 2026 is not what was destroyed.",
                 "how_to_extend_it": "backfill price_usd further, which is the only thing that "
                                     "moves this floor. Nothing about the derivation changes.",
-                "recorded_on": "2026-09-24",
+                "recorded_on": "2026-09-23",
             },
         },
         "defillama_fees_slug": "ethereum", "defillama_protocol": None, "defillama_chain": "Ethereum",
@@ -5981,7 +6017,7 @@ PROJECTS = [
             # clipped or dropped by this band; it only decides whether the unconfirmed-run
             # message invites a human to confirm or tells them not to. The first live run came
             # back at 0.981 and the message called it a success — see lending_api.
-            # first_run_2026_09_24. The floor is where a lending market is plainly under-used
+            # first_run_2026_09_23. The floor is where a lending market is plainly under-used
             # and the ceiling is where withdrawal and liquidation stop working; both are
             # deliberately wide, because a band this crude only has to catch a number that is
             # not utilisation at all.
@@ -5997,7 +6033,7 @@ PROJECTS = [
             "confirm_with": "python check_offline_items.py — the morpho_blue_api check pages "
                             "the WHOLE market population and prints the distribution, the "
                             "listed/unlisted split and a DefiLlama TVL cross-check. Field "
-                            "presence alone is NOT the bar; see first_run_2026_09_24.",
+                            "presence alone is NOT the bar; see first_run_2026_09_23.",
             "on_confirm": "lending_supply below stands down completely. Do NOT run both — two "
                           "sources for one column alternating is a measuring-point change.",
             # ===== ** THE FIRST LIVE RUN RETURNED A NUMBER THAT CANNOT BE SUPPLY, AND THE OLD
@@ -6006,7 +6042,7 @@ PROJECTS = [
             # fields produced was nonsense. A presence check confirms a SPELLING, never a
             # MEANING, and this is the second time this project has been handed a well-formed
             # number that measured the wrong thing.
-            "first_run_2026_09_24": {
+            "first_run_2026_09_23": {
                 "markets": 7_868,
                 "supply_assets_usd": 39_470_000_000.0,
                 "borrow_assets_usd": 38_730_000_000.0,
@@ -6027,7 +6063,7 @@ PROJECTS = [
                     "not. That explains the $39.47bn AND the 98% with one mechanism.",
                 "supporting_evidence":
                     "DefiLlama does not trust the unfiltered population either. From their "
-                    "utils/scripts/findInsolventMarkets.js (read 2026-09-24): API_MIN_USD = 1000; "
+                    "utils/scripts/findInsolventMarkets.js (read 2026-09-23): API_MIN_USD = 1000; "
                     "contradictsMarket = (m) => m.listed === true && !redTypes(m).length ...; "
                     "queuesMarket = (m) => usdOf(m.badDebt) > API_MIN_USD && m.state."
                     "supplyAssetsUsd > API_MIN_USD. `listed` is a real Market field and they "
@@ -6247,7 +6283,7 @@ PROJECTS = [
             # from a real one. Writing the same residual under a new label, with a continuity
             # claim attached, is worse than the gap — the gap was visible.
             #
-            # FIXED 2026-09-24: the days the watch child does not cover are HELD OUT, reported as
+            # FIXED 2026-09-23: the days the watch child does not cover are HELD OUT, reported as
             # a gap of their own, and the review row says the window is not backfilled instead of
             # claiming it is. An absent day is a hole a reader can see; a $2.13 day is a number
             # they will believe.
@@ -6262,7 +6298,34 @@ PROJECTS = [
                      "fills_itself_if": "DefiLlama backfills morpho-blue for those dates; the "
                                         "next run picks it up with no human step.",
                      "do_not": "do NOT interpolate, carry the neighbouring days forward, or "
-                               "accept the midnight-only sum. The hole is the honest answer."},
+                               "accept the midnight-only sum. The hole is the honest answer.",
+                     # ===== ** AND THE 30-DAY SUM WAS SILENTLY SHORT BY NINE DAYS OF ~$600,000
+                     # ** UNTIL 2026-09-23. ** Window coverage asks how long a series has
+                     # EXISTED — the right question for one that started late, the wrong one for
+                     # one that stopped and restarted. fees_usd has run since 2021, so it read
+                     # "30 of 30" while the trailing sum omitted the hole entirely.
+                     #
+                     # THAT IS THIS SAME ERROR ONE LEVEL UP. The days were held out because a
+                     # wrong-but-plausible number is worse than an absence; a 30-day header over
+                     # a 21-day sum puts the understatement straight back, with nothing at all
+                     # to notice. Now the declared hole comes off the coverage and the cell says
+                     # COVERS 21 OF 30 DAYS with the source named as the reason.
+                     #
+                     # ** DECLARED, NOT DETECTED, AND THAT DISTINCTION IS LOAD-BEARING. ** A
+                     # density check over the window was tried first and is wrong: this tool
+                     # observes on RUN DAYS, so interior gaps are ordinary, and counting them
+                     # reads Hyperliquid's three points across four months as twenty-seven days
+                     # of absence. The control test for exactly that caught it. Only a hole a
+                     # human established upstream can be subtracted without guessing.
+                     "coverage_deducted_from": "the trailing-30d window, via "
+                                               "config.declared_source_hole",
+                     "figure_is_disclosed_not_withheld": "a 21-day total IS the honest 21-day "
+                                                         "total once the header says so. The "
+                                                         "cell drops to AMBER with the reason "
+                                                         "rather than blanking.",
+                     "self_clearing": "break_window_backfilled going True removes the deduction. "
+                                      "The recovery path sets it by re-pulling the watch child "
+                                      "every run, so nobody edits a date."},
         },
         "archetypes": [2], "archetypes_held": [],
         "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.morpho.org/", "source_date": "2026-09-14",
@@ -6989,7 +7052,7 @@ PROJECTS = [
         # one. No number is hardcoded here — read it on-chain or record it with its source and date.
         "governance_parameters": {
             "release_threshold_uni": {
-                # ===== ** READ ON MAINNET 2026-09-24, AND IT IS NOT THE PUBLISHED 2,000. ** =====
+                # ===== ** READ ON MAINNET 2026-09-23, AND IT IS NOT THE PUBLISHED 2,000. ** =====
                 # threshold() on 0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721 returns
                 # 4000000000000000000000 raw at block 26,039,143. The only figure published
                 # anywhere is 2,000 UNI, and that is the OP-stack BRIDGED-FIREPIT configuration
@@ -7011,11 +7074,11 @@ PROJECTS = [
                 "raw": 4_000_000_000_000_000_000_000,
                 "block": 26_039_143,
                 "chain": "ethereum (MAINNET)",
-                "read_on": "2026-09-24",
+                "read_on": "2026-09-23",
                 "programmed": False,
                 "controller": "Uniswap Governance Timelock (holds thresholdSetter, and can appoint a different setter)",
                 "source_url": UNISWAP_FEE_DEPLOYMENTS,
-                "source_date": "2026-09-24",
+                "source_date": "2026-09-23",
                 "published_2000_uni_is_a_different_deployment":
                     "Uniswap/protocol-fees README.md 'Cross-Chain UNI Burn (OP Stack L2s)' gives "
                     "2,000 UNI. That is the BRIDGED firepit's configuration on OP-stack L2s, not "
@@ -8178,7 +8241,7 @@ PROJECTS = [
                        "share_of_nps_burned": 0.05,
                        "share_of_repurchased_burned": 5.0 / 27.5,
                        "splitter_burn_param_expected": 0.55,
-                       # ===== ** CONFIRMED ON-CHAIN 2026-09-24 — THE READING IS NO LONGER AN
+                       # ===== ** CONFIRMED ON-CHAIN 2026-09-23 — THE READING IS NO LONGER AN
                        # ** INFERENCE FROM A PROPOSAL. ** Splitter.burn() reads 0.55 WAD at block
                        # 26,039,143, which is the 27.5/50 arithmetic above answered by the
                        # contract rather than by somebody's reading of an executive. The 55/45
@@ -8191,7 +8254,7 @@ PROJECTS = [
                        # rejected, and this confirmation is not evidence for it.
                        "splitter_burn_param_confirmed": {
                            "value": 0.55, "raw": "0.55e18 WAD",
-                           "block": 26_039_143, "as_of": "2026-09-24",
+                           "block": 26_039_143, "as_of": "2026-09-23",
                            "source": "Splitter.burn() read on-chain",
                            "closes": "whether the 55/45 read off the 2026-08-13 executive "
                                      "matches what is deployed. It does.",
@@ -8556,7 +8619,7 @@ PROJECTS = [
         # bounds — so this says what was set then, not what is set now. Confirming it still holds
         # is an on-chain read, not a documentary question. See OPEN_QUESTIONS.
         "governance_parameters": {
-            # ===== ** CONFIRMED CURRENT 2026-09-24, AND THAT RETIRES THE LP QUESTION FOR GOOD.
+            # ===== ** CONFIRMED CURRENT 2026-09-23, AND THAT RETIRES THE LP QUESTION FOR GOOD.
             # ** The SPLITTER's own flapper() reads this address at block 26,039,143, and it
             # matches BOTH the ChainLog's MCD_FLAP and the 2024-09-27 executive. So the splitter
             # has not been re-pointed, the live flapper is still FlapperUniV2SwapOnly, and the
@@ -8575,9 +8638,9 @@ PROJECTS = [
                 "source": "Splitter.flapper() read on-chain at block 26,039,143, matching "
                           "ChainLog MCD_FLAP and the 2024-09-27 executive",
                 "block": 26_039_143,
-                "as_of": "2026-09-24", "status": "confirmed_current",
+                "as_of": "2026-09-23", "status": "confirmed_current",
                 "was": {"as_of": "2024-09-27", "status": "point_in_time",
-                        "note": "the vote alone, before the 2026-09-24 on-chain read"},
+                        "note": "the vote alone, before the 2026-09-23 on-chain read"},
             },
             # UNCHANGED SINCE THE VOTE, read with the CORRECTED selector (0x1f1fcd51; the old
             # 0x1f1c827f matched no function and its failure was misread as an RPC fault).
@@ -8585,7 +8648,7 @@ PROJECTS = [
                      "source_url": "https://github.com/sky-ecosystem/community",
                      "source": "read on-chain at block 26,039,143 — still the 2024 value",
                      "block": 26_039_143,
-                     "as_of": "2026-09-24", "status": "confirmed_current"},
+                     "as_of": "2026-09-23", "status": "confirmed_current"},
             # ===== hop() IS SHORTER THAN THE INITIALISED HOUR, AND THAT IS EXPECTED. =====
             # 2,504 seconds is ~41.7 minutes between kicks, against the 3,600s FlapperInit sets.
             # It is NOT a discrepancy: the 2026-09-11 executive shortened the SBE cycle, so a
@@ -8598,7 +8661,7 @@ PROJECTS = [
             "hop": {"value": 2_504, "what": "seconds between SBE kicks (~41.7 minutes)",
                     "source": "Splitter.hop() read on-chain at block 26,039,143",
                     "source_url": None, "block": 26_039_143,
-                    "as_of": "2026-09-24", "status": "confirmed_current",
+                    "as_of": "2026-09-23", "status": "confirmed_current",
                     "init_constant": 3_600,
                     "why_shorter": "the 2026-09-11 executive shortened the cycles. A value below "
                                    "FlapperInit's 1-hour initialisation is that change, not a "
@@ -8609,7 +8672,7 @@ PROJECTS = [
             # RECONFIGURED SINCE THE VOTE, and this is the proof that point_in_time was the right
             # label: the live pip is NOT the one the 2024 executive set. pair() still matches, so
             # the reconfiguration was partial rather than a wholesale redeploy.
-            # ** RE-READ 2026-09-24 AND UNCHANGED FROM THE 09-14 READ. ** Config already carried
+            # ** RE-READ 2026-09-23 AND UNCHANGED FROM THE 09-14 READ. ** Config already carried
             # the LIVE value as primary with the vote's value beneath it as `superseded`, and
             # that is confirmed to be the right arrangement: 0xc2ffbbdc... is what is deployed.
             #
@@ -8623,16 +8686,16 @@ PROJECTS = [
                     "what": "live oracle, read on-chain",
                     "source_url": None,
                     "source": "read on-chain 2026-09-14, re-read at block 26,039,143 on "
-                              "2026-09-24 and unchanged",
+                              "2026-09-23 and unchanged",
                     "block": 26_039_143,
-                    "as_of": "2026-09-24", "status": "confirmed_current",
+                    "as_of": "2026-09-23", "status": "confirmed_current",
                     "superseded": {"value": "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437",
                                    "what": "SWAP_ONLY_FLAP_SKY_ORACLE, per the 2024-09-27 executive vote",
                                    "note": "superseded — the vote no longer describes what is "
                                            "deployed. NOT A MISMATCH: the vote was accurate in "
                                            "2024 and governance changed the oracle since. Do "
                                            "not raise a review row against it.",
-                                   "confirmed_superseded_on": "2026-09-24"}},
+                                   "confirmed_superseded_on": "2026-09-23"}},
             # CONFIRMED unchanged on-chain, so this one is current rather than point-in-time.
             "pair": {"value": "0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c", "what": "PAIR_USDS_SKY",
                      "source_url": "https://github.com/sky-ecosystem/community",
@@ -9221,7 +9284,7 @@ PROJECTS = [
             "note": "the terminal 2%/yr emission is a mint, per Jake's review.",
         },
         # COOLDOWN, NOT A TIME-LOCK. ** AND IT IS NOW THE CONTRACT'S ANSWER, NOT THE DOCS'. **
-        # cooldownDuration() returned 1,209,600 seconds on-chain on 2026-09-24 — exactly 14 days,
+        # cooldownDuration() returned 1,209,600 seconds on-chain on 2026-09-23 — exactly 14 days,
         # which is what Pendle's docs said. THE AGREEMENT IS NOT THE POINT: what changed is
         # WHERE the number comes from. It was a documentary constant that happened to be right,
         # and it is now a read of the parameter that is actually enforced, so the day governance
@@ -9230,11 +9293,11 @@ PROJECTS = [
             "model": "cooldown",
             "sourced": True,
             "source": "sPENDLE.cooldownDuration(), read live every run — see "
-                      "contracts.spendle_cooldown. CONFIRMED ON-CHAIN 2026-09-24: 1,209,600 "
+                      "contracts.spendle_cooldown. CONFIRMED ON-CHAIN 2026-09-23: 1,209,600 "
                       "seconds = 14.0 days.",
-            "confirmed_on": "2026-09-24",
+            "confirmed_on": "2026-09-23",
             "onchain_confirmation": {
-                "seconds": 1_209_600, "days": 14.0, "as_of": "2026-09-24",
+                "seconds": 1_209_600, "days": 14.0, "as_of": "2026-09-23",
                 "call": "sPENDLE.cooldownDuration()",
                 "agrees_with_docs": True,
                 "docs_constant_dropped": "YES, and that is the change. A docs figure that agrees "
@@ -9477,7 +9540,7 @@ PROJECTS = [
                      "width the interface declares. Pendle's own sPENDLE docs give 14 days; this "
                      "read is what keeps that true after a governance change rather than at the "
                      "moment somebody last looked."),
-            # ===== ASSETS, NOT SHARES — THE HEADLINE LOCK FIGURE. Added 2026-09-24. =====
+            # ===== ASSETS, NOT SHARES — THE HEADLINE LOCK FIGURE. Added 2026-09-23. =====
             # PENDLE.balanceOf(sPENDLE) is the PENDLE actually locked. Read on-chain at block
             # 26,039,143: 35,557,548.09 against a share count of 30,310,807.38, so one share
             # redeems for 1.1731 PENDLE and sPENDLE COMPOUNDS — the same shape as sETHFI and
@@ -9486,13 +9549,13 @@ PROJECTS = [
             "spendle_underlying": _contract(
                 "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "stake_underlying",
                 "PENDLE", PENDLE_DEPLOYMENTS_1_CORE,
-                verified="2026-09-24",
+                verified="2026-09-23",
                 provenance="same address as contracts.spendle, already verified; this entry "
                            "reads PENDLE.balanceOf(sPENDLE) rather than sPENDLE.totalSupply()",
                 metric_override="locked_tokens", underlying="token", token_standard="erc20",
                 purpose="PENDLE HELD BY THE sPENDLE CONTRACT — the assets actually locked, and "
                         "the figure locked_tokens carries for this project.",
-                note="SETTLED ON-CHAIN 2026-09-24 at block 26,039,143. shares 30,310,807.38, "
+                note="SETTLED ON-CHAIN 2026-09-23 at block 26,039,143. shares 30,310,807.38, "
                      "assets 35,557,548.09, assets/share 1.1731. The boost hypothesis pointed "
                      "the other way and is refuted BY DIRECTION: a boosted share count would "
                      "exceed the assets behind it, and this one is 15% below them."),
@@ -9503,7 +9566,7 @@ PROJECTS = [
                 read_method="erc20_total_supply", token_standard="erc20", underlying="token",
                 metric_override="locked_tokens_shares",
                 purpose="sPENDLE SHARES OUTSTANDING — NOT the tokens locked. It was the lock "
-                        "source until 2026-09-24, when an on-chain read showed sPENDLE "
+                        "source until 2026-09-23, when an on-chain read showed sPENDLE "
                         "compounds (assets/share 1.1731), so this figure understates the lock "
                         "and locked_tokens moved to spendle_underlying.",
                 note="ADDRESS RESOLVED from Pendle's own deployments/1-core.json, key 'sPendle'. The same file "
@@ -9527,7 +9590,7 @@ PROJECTS = [
         # between a lock rate that supports the thesis and one that does not. Settling it needs
         # direct contract inspection (does totalSupply include virtual balances?), which is not a
         # documentary question and is NOT guessed at here.
-        # ===== THE RATIO, AND WHY THE TWO PROJECTS NAME THE PAIR DIFFERENTLY. 2026-09-24. =====
+        # ===== THE RATIO, AND WHY THE TWO PROJECTS NAME THE PAIR DIFFERENTLY. 2026-09-23. =====
         # assets / shares, exactly as Ether.fi's lock_ratio computes it — but with the numerator
         # and denominator NAMED the other way round, because Pendle's locked_tokens is the assets
         # and Ether.fi's is the shares.
@@ -9545,12 +9608,17 @@ PROJECTS = [
             "metric": "lock_assets_per_share",
             "flag_on": "decrease",
             "decrease_tolerance": 0.001,
+            # THE SAME CEILING AS ETHER.FI, and for the same reason — sPENDLE compounds by the
+            # same mechanism, so a move too large for its interval means the same three things
+            # there. Set now rather than after a surprise: this series has ONE point, so there
+            # is no history to calibrate against and nothing to be gained by waiting for one.
+            "max_annualised_accrual": 0.25,
             "measured": {
                 "shares": 30_310_807.38,
                 "assets": 35_557_548.09,
                 "ratio": 1.1731,
                 "block": 26_039_143,
-                "as_of": "2026-09-24",
+                "as_of": "2026-09-23",
                 "source": "direct on-chain read via check_offline_items.py, both calls pinned to "
                           "block 26,039,143",
             },
@@ -9610,7 +9678,7 @@ PROJECTS = [
                                "staked PENDLE at or below 34.1m — further from 100m, not closer.",
                     "candidates": ("the reported figure counts something else",
                                    "two and a half months of unstaking between the two dates"),
-                    # ===== CANDIDATE (a) SETTLED ON-CHAIN 2026-09-24, AND IT DOES NOT EXPLAIN
+                    # ===== CANDIDATE (a) SETTLED ON-CHAIN 2026-09-23, AND IT DOES NOT EXPLAIN
                     # THE GAP. ** H1 ran: shares 30,310,807.38, assets 35,557,548.09, block
                     # 26,039,143. sPENDLE COMPOUNDS at 1.1731 assets per share — so our read WAS
                     # the shares and the assets figure is 17.3% larger, which is the right
@@ -9626,7 +9694,7 @@ PROJECTS = [
                     # or a real fall between July and September — and the second needs no
                     # mechanism at all, which is why it keeps being the one nobody checks.
                     "shares_vs_assets_settled": {
-                        "settled_on": "2026-09-24",
+                        "settled_on": "2026-09-23",
                         "block": 26_039_143,
                         "shares": 30_310_807.38,
                         "assets": 35_557_548.09,
@@ -10566,6 +10634,19 @@ PROJECTS = [
             # is measurement noise about a quantity that is genuinely monotonic by design. A real
             # reward halt or discounted exit moves it far further than this.
             "decrease_tolerance": 0.001,
+            # ===== THE UPPER GUARD, ON THE RATE AND NOT THE LEVEL. Added 2026-09-23. =====
+            # 25%/yr. Deliberately well above any plausible ETHFI staking yield and well below
+            # the 101.7%/yr the 09-21..09-23 window implies, so it fires on the case it was
+            # built for and stays quiet through ordinary accrual — the 09-14..09-21 window
+            # annualises to 4.7% and must never raise a row.
+            #
+            # ** A CEILING, NOT A TOLERANCE, AND THE DIFFERENCE MATTERS HERE. ** The tolerance
+            # above is a noise allowance ON A MEASUREMENT. This is not: the measurement is
+            # stored either way, unblanked and unrescaled. It is the point past which a human
+            # is asked to look. If it turns out to fire every month on lumpy reward deposits,
+            # the answer is to establish that the deposits ARE lumpy and record it — never to
+            # raise the number until it stops firing.
+            "max_annualised_accrual": 0.25,
             "measured": {
                 "shares": 89_748_241.267610, "assets": 111_163_214.703019,
                 "ratio": 1.238611622166, "block": 25_982_077, "as_of": "2026-09-14",
@@ -10627,51 +10708,74 @@ PROJECTS = [
             #
             #     2026-09-14  1.238611622166   block 25,982,077   baseline
             #     2026-09-21  1.2397           +0.0879% over 7d   = 0.0126%/day   ~4.7%/yr
-            #     2026-09-24  1.244475         block 26,039,143
-            #                                  +0.3852% over 3d   = 0.1282%/day  ~59.6%/yr
+            #     2026-09-23  1.244475         block 26,039,143
+            #                                  +0.3852% over 2d   = 0.1924%/day  ~101.7%/yr
             #
-            # ** THE ACCRUAL RATE ROSE TENFOLD BETWEEN THE TWO INTERVALS, and 59.6% annualised
-            # ** is not a staking yield on ETHFI. ** RAISED, NOT RESOLVED, and deliberately not
-            # flagged mechanically: nothing here establishes which reading is wrong, and there
-            # are at least four candidates that this data cannot separate —
-            #   (a) a LUMPY reward deposit rather than a smooth stream, in which case a 3-day
-            #       window straddling one deposit annualises to nonsense and the 7-day window
-            #       happened not to contain one. Most likely, and the cheapest to test: another
-            #       week of points either regresses to ~4.7% or does not.
-            #   (b) the 09-21 figure being a ROUNDED 1.2397 against two full-precision reads, so
-            #       part of the jump is the rounding. At 4 decimal places that is worth at most
-            #       ~0.004% on the interval — it cannot account for a tenfold difference.
-            #   (c) a genuine change in the reward rate.
-            #   (d) the 09-24 read being wrong.
+            # ** THE DAILY RATE ROSE FIFTEENFOLD BETWEEN THE TWO INTERVALS. ** 101.7%/yr is not
+            # a staking yield on ETHFI. A rate guard is now declared above
+            # (max_annualised_accrual, 25%/yr) so this stops passing silently — but a flag says
+            # LOOK, not WHY, and the why is still open.
             #
-            # ** THE STORED SERIES IS THE EVIDENCE, AND THE ANNUALISATION IS NOT STORED. ** Three
-            # points are enough to notice a change of slope and nowhere near enough to report a
-            # yield; carrying 59.6%/yr as a figure would turn an artefact of a 3-day window into
-            # a number somebody quotes.
+            # ** A CORRECTION TO THE TEST THAT WAS PROPOSED FOR IT, because it does not separate
+            # ** what it was meant to. ** The proposal was: a batch deposit shows as a step in
+            # assets with shares flat, while organic accrual moves the two together. In an
+            # ERC-4626-shaped vault organic accrual does NOT move them together — that is
+            # exactly why the ratio rises. Rewards move ASSETS ALONE and leave SHARES flat
+            # whether they arrive in one batch or as a stream. What moves the two together is
+            # USER FLOW, which leaves the ratio unchanged. So "assets step, shares flat" is the
+            # signature of rewards-versus-flow, and BOTH candidate explanations live on the
+            # rewards side of that line.
+            #
+            # WHAT SEPARATES LUMPY FROM SMOOTH IS GRANULARITY. A step needs a day on which it
+            # happened, and with observations only on 09-14, 09-21 and 09-23 each window is one
+            # interval. An interval has no shape. More observations are the only route.
+            #
+            # ** THE DECOMPOSITION IS STILL WORTH RUNNING, FOR A THIRD MECHANISM NOBODY LISTED
+            # ** AND THE RATIO HIDES COMPLETELY: ** if shares fall faster than assets — holders
+            # exiting at a discount, an exit fee accruing to those who stay, a share burn — the
+            # ratio RISES with no reward arriving at all. Indistinguishable in the ratio,
+            # obvious in the two series, and it means the opposite thing for the sheet: a rising
+            # ratio would be holders leaving, not rewards compounding. See orphan_cleanup.sql
+            # section Y, which is written and known to run.
             "observed_series": [
                 {"ratio": 1.238611622166, "as_of": "2026-09-14", "block": 25_982_077,
                  "source": "direct on-chain read, both calls pinned to the block"},
                 {"ratio": 1.2397, "as_of": "2026-09-21", "run": "20260921T204341Z-734e5f",
                  "source": "first live derivation", "precision": "4dp as reported"},
-                {"ratio": 1.244475, "as_of": "2026-09-24", "block": 26_039_143,
+                {"ratio": 1.244475, "as_of": "2026-09-23", "block": 26_039_143,
                  "source": "direct on-chain read via check_offline_items.py"},
             ],
-            "series_observation_2026_09_24": {
-                "direction": "up at every step, which is what the check tests and it passes",
+            "series_observation_2026_09_23": {
+                "direction": "up at every step, which is what the fall check tests and it passes",
                 "rate_7d_to_0921": "0.0126%/day (~4.7%/yr)",
-                "rate_3d_to_0924": "0.1282%/day (~59.6%/yr)",
-                "concern": "a tenfold change in accrual rate between consecutive intervals. "
-                           "59.6%/yr is not a plausible ETHFI staking yield.",
-                "status": "RAISED, NOT RESOLVED — lumpy reward deposits are the leading "
-                          "explanation and a 3-day window is too short to annualise from.",
-                "what_settles_it": "the next two or three weekly points. If the rate regresses "
-                                   "to ~4-5%/yr the 09-24 interval straddled a deposit; if it "
-                                   "holds near 60% something changed and the reward rate is the "
-                                   "thing to look at.",
-                "not_flagged_mechanically": "a check on the RATE would need a band, and a band "
-                                            "set from three points on a series whose smoothness "
-                                            "is the open question is a flag that fires on its "
-                                            "own assumption. The direction check stays as it is.",
+                "rate_2d_to_0923": "0.1924%/day (~101.7%/yr)",
+                "acceleration": "15.3x between consecutive intervals",
+                "concern": "101.7%/yr is not a plausible ETHFI staking yield, and this ratio is "
+                           "the denominator of Ether.fi's lock figures.",
+                "status": "FLAGGED MECHANICALLY from 2026-09-23 (max_annualised_accrual = 0.25) "
+                          "and NOT EXPLAINED. The guard makes it visible; it does not diagnose.",
+                "candidates": {
+                    "lumpy_reward_deposit": "leading, and UNCHECKED. Needs daily granularity to "
+                                            "confirm — three observation days cannot show a "
+                                            "step.",
+                    "exit_or_fee_or_share_burn": "shares falling faster than assets raises the "
+                                                 "ratio with NO reward arriving. Detectable in "
+                                                 "the two series and invisible in the ratio. "
+                                                 "Means the opposite thing for the sheet.",
+                    "reward_rate_changed": "possible, and the only one that would be news.",
+                    "bad_read": "the 09-23 read is a single observation and not yet corroborated.",
+                },
+                "how_to_check": "orphan_cleanup.sql section Y — Y2 decomposes each window into "
+                                "the share-flow component and the residual, which separates the "
+                                "second candidate from the rest; Y3 says whether the daily rows "
+                                "needed for the first exist at all.",
+                "what_settles_it": "the next two or three points. If the rate regresses to "
+                                   "~4-5%/yr the 09-23 interval straddled a deposit; if it holds "
+                                   "near 100% the reward rate is the thing to look at.",
+                "the_annualisation_is_not_stored": "101.7%/yr is an interval artefact of a "
+                                                   "2-day window, quoted to say why this is "
+                                                   "raised. It is not a yield and is not written "
+                                                   "to any metric.",
             },
             "baseline_is_chain_vs_chain": True,
             "unreconciled": "Dune staked_supply 141,470,107.5 (2026-09-10) exceeds both on-chain "
@@ -12805,10 +12909,10 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Sky",
-        "topic": "ANSWERED 2026-09-24 — every splitter parameter re-read on-chain at block "
+        "topic": "ANSWERED 2026-09-23 — every splitter parameter re-read on-chain at block "
                  "26,039,143; the flapper is unchanged and the LP question stays retired",
         "status": "answered",
-        "answered_on": "2026-09-24",
+        "answered_on": "2026-09-23",
         "answer": "THE SPLITTER HAS NOT BEEN RE-POINTED. Splitter.flapper() reads "
                   "0x374D9c3d5134052Bc558F432Afa1df6575f07407 at block 26,039,143, matching BOTH "
                   "the ChainLog's MCD_FLAP and the 2024-09-27 executive — three sources agreeing, "
@@ -12821,7 +12925,7 @@ OPEN_QUESTIONS = [
                   "read and still not the vote's 0x61A12E5b..., which is RECONFIGURATION and is "
                   "filed as superseded rather than as a mismatch.",
         "what_this_settles": "the point_in_time label was the right one and it has now been "
-                             "discharged: every parameter carries a block and a 2026-09-24 date, "
+                             "discharged: every parameter carries a block and a 2026-09-23 date, "
                              "so nothing here is a document standing in for current state.",
         "what_it_does_not": "hop is a throttle governance retunes and want/burn are governance "
                             "parameters — confirmed current means confirmed AT THAT BLOCK. The "
@@ -12836,13 +12940,13 @@ OPEN_QUESTIONS = [
                   "verified address as a verified mechanism: the document was accurate and may no longer "
                   "describe what is deployed.",
         "suggestion": "NOTHING OUTSTANDING. The 2026-09-14 read answered it partially — pair() "
-                      "matched the vote and pip() did not — and the 2026-09-24 read with the "
+                      "matched the vote and pip() did not — and the 2026-09-23 read with the "
                       "CORRECTED selectors finished it: want(), burn(), hop() and the splitter's "
                       "own flapper() all answered, and the flapper is unchanged. The three "
                       "corrected selectors below are what made that possible; before them, "
                       "flapper() printed UNREACHABLE and would have been read as a network fault "
                       "on the one call that answers whether the splitter has been re-pointed.",
-        "confirmed_2026_09_24": {
+        "confirmed_2026_09_23": {
             "block": 26_039_143,
             "flapper()": "0x374D9c3d5134052Bc558F432Afa1df6575f07407 — matches ChainLog MCD_FLAP "
                          "and the 2024 vote. LP concern stays retired.",

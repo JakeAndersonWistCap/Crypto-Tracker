@@ -1075,7 +1075,7 @@ def test_pendles_lock_discrepancy_does_not_fit_the_boost_hypothesis():
     assert "BOOSTED" in nc["why"], "the original virtual-balance question stays on file"
     # ALL THREE CANDIDATES ARE NAMED, INCLUDING UNSTAKING BETWEEN THE TWO DATES.
     assert any("unstaking" in c for c in d["candidates"]), d["candidates"]
-    # ** CANDIDATE (a) IS SETTLED AND DID NOT EXPLAIN IT. ** H1 ran on 2026-09-24: sPENDLE
+    # ** CANDIDATE (a) IS SETTLED AND DID NOT EXPLAIN IT. ** H1 ran on 2026-09-23: sPENDLE
     # compounds at 1.1731 assets per share, so our read was the SHARES and the assets are 17.3%
     # larger — right direction, and 12.6% of supply against a reported 36%. Three of the four
     # candidates are now gone and the remaining two are load-bearing.
@@ -1267,7 +1267,7 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
     # NAMES were right. So a reported utilisation outside the plausible band says plainly not to
     # confirm, and it still stores nothing either way.
     assert api["plausible_utilisation"] == (0.40, 0.92), api.get("plausible_utilisation")
-    first = api["first_run_2026_09_24"]
+    first = api["first_run_2026_09_23"]
     assert first["implied_utilisation"] == 0.981 and first["status_stays"] == "unconfirmed"
     assert "PERMISSIONLESS" in first["leading_hypothesis"]
     assert "API_MIN_USD = 1000" in first["supporting_evidence"] and \
@@ -1710,7 +1710,7 @@ def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapte
     assert not [r for r in eth.review if r["reason"] == "outside_expected_band"], eth.review
     decl = config.PROJECT_BY_NAME["Ethereum"]["chain_burn_from_revenue"]
     assert decl["expect_daily_tokens"] is None, "resolved, not re-banded"
-    res = decl["band_resolution_2026_09_24"]
+    res = decl["band_resolution_2026_09_23"]
     assert res["monthly_mean_eth_per_day"]["2026-05"] == 75.6, "above the old ceiling"
     assert res["monthly_mean_eth_per_day"]["2026-09"] == 32.5
     assert "a flag that wide catches nothing" in res["why_no_new_band"]
@@ -3657,6 +3657,88 @@ def test_a_COMPOUNDING_lock_ratio_flags_only_when_it_FALLS():
         "a ratio needs both sides"
     assert any(e.status == "skipped" and "lock_assets_per_share" in e.message for e in out.log), \
         "and the skip must be logged, not silent"
+
+    # ===== ** THE RATE GUARD, PINNED TO THE REAL SERIES THAT SLIPPED THROUGH. ** =====
+    # sETHFI ran 1.238612 (09-14) -> 1.239700 (09-21) -> 1.244475 (09-23). Every step was an
+    # INCREASE, so the direction check above said nothing — correctly, by its own contract —
+    # while the daily rate went 0.0126%/day to 0.1924%/day, fifteen times faster, on a series
+    # that is now the denominator of Ether.fi's lock figures.
+    def rate_run(prior_ratio, prior_day, day, assets, shares=SHARES):
+        out = FetchOutput()
+        out.add(pd.DataFrame([
+            {"date": pd.Timestamp(day), "project": "Ether.fi", "metric": "locked_tokens",
+             "value": shares, "source": "dune:8683038", "tier": 4},
+            {"date": pd.Timestamp(day), "project": "Ether.fi",
+             "metric": "locked_tokens_underlying", "value": assets,
+             "source": "chain:ethereum:sethfi:PARTIAL", "tier": 2},
+        ])[LONG_COLUMNS], "test", "Ether.fi", "", 2)
+        key = ("Ether.fi", "lock_assets_per_share")
+        _derive_lock_ratio(out, [config.PROJECT_BY_NAME["Ether.fi"]],
+                           {key: prior_ratio}, {key: prior_ratio},
+                           {key: pd.Timestamp(prior_day)})
+        return out
+
+    # THE 7-DAY WINDOW — 4.7%/yr. Ordinary accrual, and it MUST stay silent, or the guard is
+    # just noise with a threshold.
+    quiet = rate_run(1.238611622166, "2026-09-14", "2026-09-21", SHARES * 1.2397)
+    assert not [r for r in quiet.review
+                if r["reason"] == "accrued_rate_implausible"], quiet.review
+
+    # THE 2-DAY WINDOW — 0.1924%/day, which compounds to 101.7%/yr against a 25% ceiling.
+    loud = rate_run(1.2397, "2026-09-21", "2026-09-23", SHARES * 1.244475)
+    hot = [r for r in loud.review if r["reason"] == "accrued_rate_implausible"]
+    assert len(hot) == 1, loud.review
+    b = hot[0]["basis"]
+    assert "0.1924%/day" in b, b
+    assert "in 2 day(s)" in b, b
+
+    # ** THE FIGURE IS STORED AS MEASURED — NOTHING IS BLANKED OR RESCALED. ** The flag is the
+    # output; the ratio is still the ratio.
+    got = loud.frame()[loud.frame().metric == "lock_assets_per_share"]
+    assert abs(float(got.value.iloc[0]) - 1.244475) < 1e-9, "stored exactly as measured"
+
+    # ** AND THE ANNUALISATION IS AN INTERVAL ARTEFACT, SAID SO IN THE ROW AND STORED NOWHERE. **
+    # Two points across two days cannot measure a yield, and a number that looks like one gets
+    # quoted as one.
+    assert "INTERVAL ARTEFACT, NOT A YIELD" in b, b
+    assert "101.7%" in b, b
+    assert not [r for r in loud.review if str(r.get("value")) == "1.017"], \
+        "the annualised figure must never be a stored value"
+    # The row points at the three mechanisms and says the ratio alone cannot separate them.
+    assert "lumpy reward deposit" in b and "exit fee" in b and "reward rate" in b, b
+    assert "not distinguishable from this ratio alone" in b, b
+
+    # A FALL STILL WINS. Both guards cannot fire on one observation — a fall is not a fast rise.
+    fell = rate_run(1.30, "2026-09-21", "2026-09-23", SHARES * 1.244475)
+    reasons = {r["reason"] for r in fell.review}
+    assert reasons == {"accrued_rate_fell"}, fell.review
+
+    # NO PRIOR DATE MEANS NO RATE, and the guard says so rather than assuming an interval —
+    # "probably a week" turns a 2-day move into a plausible weekly one and silences the exact
+    # case this exists for.
+    out = FetchOutput()
+    out.add(pd.DataFrame([
+        {"date": pd.Timestamp("2026-09-23"), "project": "Ether.fi", "metric": "locked_tokens",
+         "value": SHARES, "source": "dune:8683038", "tier": 4},
+        {"date": pd.Timestamp("2026-09-23"), "project": "Ether.fi",
+         "metric": "locked_tokens_underlying", "value": SHARES * 1.244475,
+         "source": "chain:ethereum:sethfi", "tier": 2},
+    ])[LONG_COLUMNS], "test", "Ether.fi", "", 2)
+    key = ("Ether.fi", "lock_assets_per_share")
+    _derive_lock_ratio(out, [config.PROJECT_BY_NAME["Ether.fi"]],
+                       {key: 1.2397}, {key: 1.2397}, {})
+    assert not [r for r in out.review if r["reason"] == "accrued_rate_implausible"]
+    assert any("the rise guard did not run" in e.message for e in out.log), \
+        "its silence must be explicable, not mistaken for a pass"
+
+    # ** A PROJECT WITHOUT A DECLARED CEILING KEEPS THE DIRECTION CHECK ALONE. ** Opt-in, so
+    # nothing gains a flag it was not given.
+    assert config.PROJECT_BY_NAME["Ether.fi"]["lock_ratio"]["max_annualised_accrual"] == 0.25
+    for p_ in config.PROJECTS:
+        spec_ = p_.get("lock_ratio")
+        if spec_ and "max_annualised_accrual" in spec_:
+            assert 0 < spec_["max_annualised_accrual"] < 1.0, \
+                f"{p_['name']}: a ceiling at or above 100%/yr cannot fire on anything real"
 
     print("compounding ratio ok: rising and flat silent, falling flags with what it fell from, "
           "noise inside tolerance silent, no ratio from one side")
@@ -6185,6 +6267,65 @@ def test_a_series_older_than_the_window_is_not_flagged_for_coverage():
     assert "COVERS" not in got["note"], f"a long-running series must not be flagged: {got['note']}"
     assert "covers only" not in str(got["why_amber"]), got["why_amber"]
     print("S6 control ok: a sparse but long-running series is not flagged")
+
+
+def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
+    """** THE 30-DAY SUM WAS SILENTLY MISSING NINE DAYS OF ~$600,000. **
+
+    Morpho's fees_usd has run since 2021 and is missing 2026-09-12..2026-09-20 because DefiLlama
+    did not report Morpho Blue for them — days deliberately held out rather than filled with
+    Morpho Midnight's ~$2/day. Coverage asks how long the series has EXISTED, so it read 30 of
+    30, and the trailing-30-day figure omitted nine days under a full-window header.
+
+    ** THAT IS THE SAME SHAPE OF ERROR THE HOLE EXISTS TO AVOID, ONE LEVEL UP. ** The days were
+    held out because a wrong-but-plausible number is worse than an absence; a 30-day header over
+    a 21-day sum puts the understatement back with nothing at all to notice.
+
+    DISCLOSED, NOT WITHHELD: a 21-day total IS the honest 21-day total once the header says so.
+    """
+    rows = ([("2021-06-01", "Morpho", "fees_usd", 500_000.0, "defillama", 1)]
+            + [(f"2026-09-{d:02d}", "Morpho", "fees_usd", 600_000.0, "defillama", 1)
+               for d in list(range(1, 12)) + list(range(21, 23))])   # 09-12..09-20 ABSENT
+    got = _aggregate_rows(rows, "2026-09-23")[("Morpho", "fees_usd")]
+
+    assert "COVERS 21 OF 30 DAYS" in got["note"], got["note"]
+    # ** AND THE REASON IS THE SOURCE, NOT THE SERIES' AGE. ** A series running since 2021 that
+    # said "its history does not span the full window" would be stating something false, and it
+    # sends the reader to the wrong question.
+    assert "the source did not report them" in got["note"], got["note"]
+    assert "2026-09-12..2026-09-20" in got["note"], got["note"]
+    assert "history does not span" not in got["note"], "that is the OTHER reason, and it is wrong here"
+    assert "do NOT interpolate" in got["note"], "the config instruction travels to the cell"
+    assert got["confidence"] == "AMBER", got["confidence"]
+    assert "covers only 21 of the 30 days" in got["why_amber"], got["why_amber"]
+    # The figure is DISCLOSED, not blanked — it is a true 21-day sum.
+    assert got["now"] == 600_000.0 * 13, got["now"]
+    print("morpho coverage ok:", got["note"][:110])
+
+
+def test_the_hole_stops_being_subtracted_once_the_source_backfills_it():
+    """THE CONTROL, and the thing that makes this self-clearing. Nobody edits a date by hand:
+    the recovery path sets break_window_backfilled when morpho-blue reports those days, and the
+    coverage deduction disappears with it.
+    """
+    import copy
+    assert config.declared_source_hole("Morpho", "fees_usd") is not None, "open today"
+    # Only the TARGET metric carries it — revenue_usd was never routed through the restructure.
+    assert config.declared_source_hole("Morpho", "revenue_usd") is None
+    # And a project with no declared restructure is untouched, which is what keeps this from
+    # becoming a density check over every sparse series.
+    assert config.declared_source_hole("Hyperliquid", "gross_burn_tokens") is None
+
+    filled = copy.deepcopy(config.PROJECT_BY_NAME["Morpho"])
+    filled["defillama_restructure"]["break_window_backfilled"] = True
+    saved = config.PROJECT_BY_NAME["Morpho"]
+    config.PROJECT_BY_NAME["Morpho"] = filled
+    try:
+        assert config.declared_source_hole("Morpho", "fees_usd") is None, \
+            "a backfilled window is not a hole, and nothing should have to be edited to say so"
+    finally:
+        config.PROJECT_BY_NAME["Morpho"] = saved
+    print("hole control ok: it clears itself when the source fills the dates")
 
 
 class _Recorder:
@@ -10866,6 +11007,34 @@ def test_a_recovery_that_does_not_backfill_leaves_the_hole_visible():
         "the continuity claim must not survive a window that is not covered"
     print("recovery hole ok: the nine unbackfilled days are absent and reported, not filled "
           "with the other child's ~$2/day wearing Morpho's name")
+
+
+def test_the_hole_closes_by_itself_the_day_the_source_backfills_it():
+    """** NOBODY EDITS A DATE. ** The recovery path re-pulls the watch child's whole chart every
+    run and recomputes which days it covers, so a backfill closes the hole the same way the
+    recovery itself applied: by the next run noticing, with no human step and no config change.
+
+    THE CONTROL FOR THE HELD-OUT DAYS. Holding days out is only defensible if it is temporary
+    and self-clearing; a hole that needs someone to remember it is a hole that stays.
+    """
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    # Blue starts reporting from 09-21 AND fills in the nine days it missed.
+    d = DefiLlama()
+    d.http = _MorphoLlamaStub(blue_after_break=[(f"2026-09-{d_:02d}", 605_000.0)
+                                                for d_ in range(12, 23)])
+    out = FetchOutput()
+    d.fees(config.PROJECT_BY_NAME["Morpho"], None, out)
+    stored = set(out.frame()[out.frame().metric == "fees_usd"]["date"])
+    for day in range(12, 21):
+        assert pd.Timestamp(f"2026-09-{day:02d}") in stored, \
+            f"09-{day:02d} is backfilled upstream and must now be stored"
+    assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
+        "a filled window is not a gap, and nothing had to be edited to say so"
+    recov = [r for r in out.review if r["reason"] == "source_restructure_recovered"]
+    assert recov and "covers the whole break window" in recov[0]["basis"], recov
+    print("backfill ok: the held-out days return on their own once morpho-blue reports them")
 
 
 def test_the_generic_restructure_check_stands_down_once_a_project_is_declared():

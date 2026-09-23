@@ -689,7 +689,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "flow_span": None, "point_spans": {}, "reconciliation": None,
                    "flow_recon_blocked": None,
                    "granularity": "daily", "period_label": "",
-                   "covered_days": None, "window_days": None}
+                   "covered_days": None, "window_days": None, "hole_note": ""}
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
                 if gap is not None:
@@ -782,8 +782,36 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # HOW MUCH OF THE WINDOW THE SERIES WAS ACTUALLY ALIVE FOR. Only on non-monthly
                 # flows: a monthly series reports a named month above and is not pretending to be
                 # a 30-day sum, so "covers 30 of 30" would be answering a question nobody asked.
-                row["covered_days"], row["window_days"] = _window_coverage(
-                    s, asof - pd.Timedelta(days=short), asof)
+                w_start = asof - pd.Timedelta(days=short)
+                row["covered_days"], row["window_days"] = _window_coverage(s, w_start, asof)
+                # ===== ** A DECLARED SOURCE HOLE COMES OFF THE COVERAGE. Added 2026-09-23. **
+                # The coverage above asks how long the series has EXISTED, which is the right
+                # question for one that started late and the wrong one for one that stopped and
+                # restarted. Morpho's fees_usd has run since 2021 and is missing nine days in
+                # the middle because DefiLlama did not report Morpho Blue for them — so it reads
+                # as 30 of 30 while the sum omits nine days of ~$600,000 each.
+                #
+                # ** DECLARED, NOT DETECTED, and that distinction is load-bearing. ** A density
+                # check cannot do this: this tool observes on RUN DAYS, so interior gaps are
+                # ordinary and counting them reads Hyperliquid's three points across four months
+                # as twenty-seven days of absence. Only a hole a human established upstream can
+                # be subtracted without guessing. See config.declared_source_hole.
+                #
+                # NOTHING NEW RENDERS IT. covered < window already puts "COVERS n OF 30 DAYS" on
+                # the row and drops the cell to AMBER with the reason — the figure is disclosed,
+                # not withheld, because a 21-day total IS the honest 21-day total once the
+                # header says so.
+                hole = config.declared_source_hole(name, metric)
+                if hole and row["window_days"]:
+                    h0 = max(pd.Timestamp(hole["from"]), w_start)
+                    h1 = min(pd.Timestamp(hole["to"]), asof)
+                    if h1 >= h0:
+                        lost = int((h1 - h0).days) + 1
+                        row["covered_days"] = max(int(row["covered_days"]) - lost, 0)
+                        row["hole_note"] = (
+                            f"{lost} day(s) in this window ({h0.date()}..{h1.date()}) are "
+                            f"ABSENT because the source did not report them, not because the "
+                            f"figure was low. {hole.get('do_not', '')}".strip())
             else:
                 row["now"] = float(latest["value"])
                 row["m1"] = _at_or_before(s, asof - pd.Timedelta(days=short))
@@ -857,9 +885,15 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                                + (f" | {row['note']}" if row["note"] else ""))
             covered, window = row["covered_days"], row["window_days"]
             if window and covered is not None and covered < window:
-                row["note"] = (f"COVERS {covered} OF {window} DAYS — this series' history does not "
-                               f"span the full window, so the figure is a {covered}-day total "
-                               f"under a {window}-day header, not a short {window} days"
+                # TWO REASONS A WINDOW IS SHORT, AND THEY SEND THE READER TO DIFFERENT PLACES. A
+                # series that has not existed long enough is nobody's fault and needs no action;
+                # a source that stopped reporting for nine days is a fact about the upstream
+                # feed, and saying only "history does not span the window" would be false there.
+                why = (row.get("hole_note")
+                       or (f"this series' history does not span the full window, so the figure "
+                           f"is a {covered}-day total under a {window}-day header, not a short "
+                           f"{window} days"))
+                row["note"] = (f"COVERS {covered} OF {window} DAYS — {why}"
                                + (f" | {row['note']}" if row["note"] else ""))
 
             # A SUPPRESSION WITH PROOF THAT THE QUANTITY IS ZERO IS NOT A WITHHELD FIGURE.

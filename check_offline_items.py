@@ -451,7 +451,7 @@ def morpho_blue_api():
       aggregate to 98%. Real markets hold idle liquidity; a self-dealt one does not.
 
       ** DEFILLAMA FILTERS EXACTLY THIS, AND THE FILTER IS THE EVIDENCE. ** From their own
-      utils/scripts/findInsolventMarkets.js, read 2026-09-24:
+      utils/scripts/findInsolventMarkets.js, read 2026-09-23:
 
         const API_MIN_USD = 1000
         const contradictsMarket = (m) => m.listed === true && !redTypes(m).length ...

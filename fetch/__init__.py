@@ -226,12 +226,15 @@ ISSUANCE_FROM_SUPPLY_DELTA = config.ISSUANCE_FROM_SUPPLY_DELTA_BY_MECHANISM
 
 
 REASON_RATIO_FELL = "accrued_rate_fell"
+REASON_RATIO_ROSE_TOO_FAST = "accrued_rate_implausible"
 # Same "derived:" prefix the issuance derivation uses, so the source string says at a glance
 # that this figure was computed here rather than read from anywhere.
 SOURCE_DERIVED = "derived"
 
 
-def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dict) -> None:
+def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dict,
+                       prior_delta: dict | None = None,
+                       prior_dates: dict | None = None) -> None:
     """Assets per share for a COMPOUNDING stake, and a flag on the ONE direction that matters.
 
     Ether.fi's sETHFI compounds — settled on-chain 2026-09-14 at block 25,982,077, where
@@ -244,6 +247,27 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
     DIRECTION: a rising ratio is rewards accruing, and a FALLING one means rewards stopped or
     holders are exiting at a discount. The LEVEL is never the finding — 1.24 is not "too high",
     and neither would 3.0 be — so nothing here compares against a threshold.
+
+    ===== AND THE SECOND FLAG IS ON THE RATE, WHICH IS NOT THE LEVEL. Added 2026-09-23. =====
+
+    ** A TENFOLD ACCELERATION PASSED SILENTLY, ON THE SERIES THAT IS NOW A DENOMINATOR. **
+    sETHFI ran 1.238612 (09-14) -> 1.239700 (09-21) -> 1.244475 (09-23): 0.0126%/day over the
+    first window and 0.1924%/day over the second, which is 15x and annualises past 100%. Every
+    step was an INCREASE, so the direction check — correctly, by its own contract — said nothing.
+
+    THE PARAGRAPH ABOVE STILL HOLDS AND THIS DOES NOT CONTRADICT IT. The level is still never the
+    finding: 1.244475 is not flagged for being 1.244475. What is flagged is a MOVE too large for
+    the time it took, which is a different quantity and one a staking yield does bound — an
+    accrual implying 100%/yr is either not a staking yield or not an accrual.
+
+    ** THE FLAG IS THE OUTPUT AND THE ANNUALISED FIGURE IS NOT STORED ANYWHERE. ** It is computed
+    to make the comparison and quoted in the basis as an interval artefact, explicitly labelled.
+    Two points across two days cannot measure a yield, and a number that looks like one gets
+    quoted as one. Nothing is blanked, suppressed or rescaled: the ratio is stored exactly as
+    measured, because the check is about whether a human should look, not about what is true.
+
+    OPT-IN PER PROJECT via lock_ratio.max_annualised_accrual. A project without it gets the
+    direction check alone, which is what every project had before.
 
     Config-driven rather than hardcoded to Ether.fi: a project declares `lock_ratio` naming its
     numerator, denominator and output metric, or gets no ratio at all.
@@ -305,7 +329,7 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
                 SOURCE_DERIVED, name,
                 f"{spec['metric']}={ratio:.8f} ({spec['numerator']} / {spec['denominator']})", 2)
 
-        # THE ONLY FLAG, AND ONLY IN ONE DIRECTION.
+        # THE FALL FLAG — the original, and the only one most projects have.
         prior = prior_values.get((name, spec["metric"]))
         if prior is None or prior <= 0:
             continue
@@ -315,6 +339,64 @@ def _derive_lock_ratio(out: FetchOutput, projects: list[dict], prior_values: dic
             out.review_item(name, spec["metric"], REASON_RATIO_FELL, "stored_flagged",
                             value=ratio, prior_value=prior, date=when,
                             source=f"{SOURCE_DERIVED}:ratio", tier=2)
+            continue
+
+        # THE RISE FLAG — see the docstring. A rise too large for the days it took.
+        ceiling = spec.get("max_annualised_accrual")
+        if not ceiling:
+            continue
+        # ===== ** THE RATE GUARD DIFFERENCES, SO IT TAKES THE EARLIER-DAY PAIR — NOT THE ONE
+        # ** THE FALL CHECK USES. ** prior_values is latest_values(): the newest figure of ANY
+        # date, today's included. Pairing that value with prior_dates (which comes from
+        # values_before(today)) would put a value from one observation beside the DATE of a
+        # different one, and on a same-day re-run that means dividing a near-zero move by a
+        # multi-day interval — or a real move by zero days. The rate would be fiction either way.
+        #
+        # This is the same rule the comment in token_metrics.py sets out for every other
+        # differencing operation, and the reason it exists is a real loss: PancakeSwap's
+        # 59,857,159.01 burn was overwritten by a dust delta when a same-day prior was used.
+        # prior_delta and prior_dates both come from values_before(), so they describe ONE
+        # observation. The fall check keeps prior_values, which is right for it: a level
+        # comparison wants the newest figure and has no interval to get wrong.
+        base = (prior_delta or {}).get((name, spec["metric"]))
+        prior_when = (prior_dates or {}).get((name, spec["metric"]))
+        if base is None or base <= 0 or ratio <= base:
+            continue
+        if prior_when is None:
+            # ** NO PRIOR DATE MEANS NO RATE, AND A RATE GUESSED FROM AN ASSUMED INTERVAL IS
+            # ** WORSE THAN NO GUARD AT ALL. ** Assuming "probably a week" turns a 2-day move
+            # into a plausible-looking weekly one and silences the exact case this exists for.
+            # Reported so its silence is explicable rather than mistaken for a pass.
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{spec['metric']}: the rise guard did not run — the store has a prior "
+                        f"value but no prior DATE for it, so the interval is unknown and a rate "
+                        f"cannot be formed. The direction check ran as normal.", tier=2)
+            continue
+        days = (pd.Timestamp(when) - pd.Timestamp(prior_when)).days
+        if days <= 0:
+            continue
+        implied = (ratio / base) ** (365.0 / days) - 1.0
+        if implied <= float(ceiling):
+            continue
+        out.review_item(
+            name, spec["metric"], REASON_RATIO_ROSE_TOO_FAST, "stored_flagged",
+            value=ratio, prior_value=base, date=when,
+            source=f"{SOURCE_DERIVED}:ratio", tier=2,
+            basis=(f"the ratio moved {base:.6f} -> {ratio:.6f} in {days} day(s), which is "
+                   f"{((ratio / base) ** (1.0 / days) - 1.0) * 100:.4f}%/day — faster than a "
+                   f"staking yield explains. It is STORED AS MEASURED and nothing is blanked: "
+                   f"the flag is the output. "
+                   f"** THE ANNUALISATION IS AN INTERVAL ARTEFACT, NOT A YIELD, AND IS NOT "
+                   f"STORED ANYWHERE: ** compounding this {days}-day move over a year gives "
+                   f"{implied * 100:.1f}% against a declared {float(ceiling) * 100:.0f}% "
+                   f"ceiling, and it is quoted only to say WHY this is being raised. Do not "
+                   f"read it as a rate of return. "
+                   f"WHAT TO LOOK AT: whether the move is a lumpy reward deposit (assets step, "
+                   f"shares flat), a withdrawal at a discount or an exit fee (shares fall "
+                   f"faster than assets, so the ratio rises with no reward arriving at all), or "
+                   f"a genuine change in the reward rate. The three are not distinguishable "
+                   f"from this ratio alone — compare {spec['numerator']} against "
+                   f"{spec['denominator']} across the same window."))
 
 
 def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
@@ -1126,7 +1208,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     _restate_metrics(out, projects)
     _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"])
     # AFTER issuance, so both lock figures are certainly in the frame by now.
-    _derive_lock_ratio(out, projects, ctx["prior_values"])
+    _derive_lock_ratio(out, projects, ctx["prior_values"], ctx.get("prior_delta") or {},
+                       ctx.get("prior_dates") or {})
     # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
     # rather than a figure that is about to be superseded.
     _derive_buyback(out, projects)
