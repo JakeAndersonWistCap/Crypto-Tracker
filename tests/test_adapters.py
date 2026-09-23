@@ -1001,6 +1001,87 @@ def test_a_stale_source_is_told_apart_from_a_stale_fetch():
           "that has stopped running")
 
 
+def test_pendles_fee_split_is_confirmed_from_its_own_docs_with_the_right_base():
+    """** THE SHARE WAS DOCUMENTED ALL ALONG — ON A DIFFERENT PAGE. ** It was carried as
+    undocumented, with programmed=False, because the tokenomics page does not state it. The
+    sPENDLE page does:
+
+      "80% of Pendle V2 fees from Yield and Swap Fees are allocated to PENDLE token buybacks.
+       Up to 100% of repurchased PENDLE will be distributed to active sPENDLE holders in the
+       form of sPENDLE."
+
+    Two things in that sentence are easy to lose and both change the number:
+      * the BASE is V2 YIELD AND SWAP fees. Secondary sources fold Boros in; the docs do not.
+      * "UP TO 100%" is a ceiling on the DISTRIBUTION, not a floor, and not the 80%.
+    """
+    fs = config.PROJECT_BY_NAME["Pendle"]["fee_split"]
+    assert fs["share_to_buyback"] == 0.80 and fs["programmed"] is True
+    assert "sPENDLE" in fs["source_url"] and fs["source_date"] == "2026-09-23"
+    assert fs["destination"] == "distribute"
+    # THE BASE IS NAMED AND BOROS IS NAMED OUT OF IT.
+    assert "YIELD and SWAP" in fs["base"] and "Boros" in fs["base"]
+    # THE CEILING IS A CEILING. A floor of 1.0 here would assert something the docs do not say.
+    assert fs["destination_ceiling"] == 1.00 and fs["destination_floor"] is None
+    # AIRDROPS ARE NOT BUYBACK VOLUME — distributed in kind, never purchased.
+    assert "IN KIND" in fs["airdrops_excluded"]
+
+    # ** THE LEAD THAT PRECEDED IT WAS RIGHT ABOUT THE NUMBER AND WRONG ABOUT THE SENTENCE. **
+    # Kept, because it is the case for holding an unsourced lead: acting on "80% of revenue to
+    # holders" would have applied 0.80 to the wrong base and skipped the buyback step, and the
+    # figure would have looked right the whole time.
+    lead = fs["lead_80_20"]
+    assert lead["status"].startswith("CONFIRMED 2026-09-23")
+    assert "not the same base" in lead["status"] and "skipped the buyback step" in lead["status"]
+    assert "the wrong base" in lead["kept_because"] and "wrong destination" in lead["kept_because"]
+
+    # ** AND THE CADENCE MAKES IT LUMPY. ** Biweekly, buying across the following week — so a
+    # 7-day window holds two weeks of buying or none, and neither is a change in the protocol.
+    assert fs["cadence"]["period"] == "biweekly"
+    assert config.level_break_windows("Pendle", "actual_buyback_tokens") == (30, 90)
+    assert config.lumpy_flow("Pendle", "actual_buyback_usd") is not None
+
+    # THE BUYBACK CONTRACT IS REPORTED ABSENT, NOT GUESSED AT. Pendle's own deployment file was
+    # read in full and does not name one; a distributor is not a purchaser.
+    reg = config.PROJECT_BY_NAME["Pendle"]["deployment_registry"]
+    assert reg["buyback_contract"] is None
+    assert "NOT IN THE FILE" in reg["buyback_contract_status"]
+    assert reg["treasury"] == "0x8270400d528c34e1596EF367eeDEc99080A1b592"
+    assert reg["s_pendle"] == config.PROJECT_BY_NAME["Pendle"]["contracts"]["spendle"]["address"]
+    print("pendle ok: 0.80 of V2 yield+swap fees, programmed, distributed under a ceiling, "
+          "biweekly and lumpy, and no buyback address invented")
+
+
+def test_pendles_lock_discrepancy_does_not_fit_the_boost_hypothesis():
+    """** THE OBVIOUS READING IS TO FILE THE 3x GAP UNDER THE VIRTUAL-BALANCE QUESTION, AND THE
+    DIRECTION FORBIDS IT. **
+
+    Reporting puts sPENDLE staking above 100,000,000 PENDLE by early July 2026. Our
+    sPENDLE.totalSupply() read is 34,100,000. A BOOSTED balance would make totalSupply LARGER
+    than the PENDLE behind it — so under that hypothesis real staked PENDLE is at or below
+    34.1m, which is further from 100m, not closer.
+
+    So the gap is recorded with three candidates and none chosen, including the cheap one that is
+    easiest to forget because it needs no mechanism at all: the two figures are two and a half
+    months apart, and the cooldown is 14 days.
+    """
+    nc = config.is_non_comparable("Pendle", "locked_tokens")
+    d = nc["discrepancy_2026_09_23"]
+    assert d["reported_tokens"] == 100_000_000 and d["read_tokens"] == 34_100_000
+    assert 2.9 < d["ratio"] < 3.0
+    # THE HYPOTHESIS IS EXPLICITLY REJECTED FOR THIS, and the old entry is not deleted — it is
+    # still a live question about what totalSupply means, just not the explanation for this.
+    assert d["boost_hypothesis_fits"] is False
+    assert "further from 100m" in d["why_not"]
+    assert "BOOSTED" in nc["why"], "the original virtual-balance question stays on file"
+    # ALL THREE CANDIDATES ARE NAMED, INCLUDING UNSTAKING BETWEEN THE TWO DATES.
+    assert any("unstaking" in c for c in d["candidates"]), d["candidates"]
+    assert any("shares-vs-assets" in c for c in d["candidates"])
+    # AND NEITHER FIGURE IS PREFERRED, with the cost of getting it wrong stated.
+    assert "12% to 36%" in d["do_not"]
+    print("pendle lock ok: the 3x gap is recorded with the boost hypothesis ruled OUT by "
+          "direction, and unstaking named as the candidate nobody would think of")
+
+
 def test_a_column_that_is_another_column_says_so_instead_of_sitting_empty():
     """** AN EMPTY CELL SAYS "WE COULD NOT FIND THIS", AND TWICE THAT WAS WRONG. **
 

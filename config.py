@@ -8574,6 +8574,30 @@ PROJECTS = [
                     "is not.",
         },
         "name": "Pendle", "symbol": "PENDLE",
+        # ===== FROM PENDLE'S OWN DEPLOYMENT FILE. Read 2026-09-23. =====
+        # deployments/1-core.json, the same file sPENDLE's address came from. Recorded rather
+        # than wired: the treasury is not a metric on this project, and an address on file that
+        # nothing reads is still worth more than a search repeated in six months.
+        "deployment_registry": {
+            "source_url": "https://raw.githubusercontent.com/pendle-finance/"
+                          "pendle-core-v2-public/main/deployments/1-core.json",
+            "source_date": "2026-09-23",
+            "treasury": "0x8270400d528c34e1596EF367eeDEc99080A1b592",
+            "governance": "0x8119EC16F0573B7dAc7C0CB94EB504FB32456ee1",
+            "dev_multisig": "0xE6F0489ED91dc27f40f9dbe8f81fccbFC16b9cb1",
+            "s_pendle": "0x999999999991E178D52Cd95AFd4b00d066664144",
+            "buyback_contract": None,
+            "buyback_contract_status": "NOT IN THE FILE. All 74 keys were read; the nearest "
+                                       "entries are vePendleAirdropDistributor and "
+                                       "externalRewardsDistributor, and neither is the biweekly "
+                                       "buyback contract. Reported as absent rather than guessed "
+                                       "at — a distributor is not a purchaser.",
+            "deprecated_confirms_migration": ["vePendle", "feeDistributor", "feeDistributorV2",
+                                              "votingController"],
+            "deprecated_note": "the file's own `deprecated` block lists vePendle and both fee "
+                               "distributors, which independently corroborates the sPENDLE "
+                               "migration already recorded on contracts.spendle.",
+        },
         "coingecko_id": "pendle",
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
@@ -8599,18 +8623,68 @@ PROJECTS = [
                 "holders and no fund accumulates, so there is no balance to read. The metric "
                 "describes a HOLDING, and this mechanism holds nothing. Declared 2026-09-15.",
         },
-        # TOKENOMICS CHANGED APRIL 2026, and the change supersedes the old emissions model
-        # entirely. The buyback is now REVENUE-FUNDED and distributed to sPENDLE holders, replacing
-        # gauge-voting emissions. The SHARE of revenue is NOT documented, so programmed=False and
-        # share_to_buyback stays None — estimating it from the ~2m PENDLE repurchased in six months
-        # would be reverse-engineering a rule from an outcome.
-        "fee_split": {"share_to_buyback": None,
-                      "source_url": "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/Tokenomics",
-                      "source_date": "2026-09-14", "programmed": False, "status": "active",
+        # ===== THE SHARE IS DOCUMENTED AFTER ALL. CONFIRMED 2026-09-23. =====
+        # It was carried as undocumented, with programmed=False and share_to_buyback None,
+        # because the tokenomics page did not state it. The sPENDLE page does, verbatim:
+        #
+        #   "80% of Pendle V2 fees from Yield and Swap Fees are allocated to PENDLE token
+        #    buybacks. Up to 100% of repurchased PENDLE will be distributed to active sPENDLE
+        #    holders in the form of sPENDLE."
+        #
+        # ** THE BASE IS THE SENTENCE'S BASE, NOT A WIDER ONE. ** V2 YIELD AND SWAP FEES. Some
+        # secondary sources fold Boros fees into it; the docs sentence does not, and a share is
+        # only as meaningful as the base it is a share OF. Widening the base without widening the
+        # source would inflate the implied buyback by whatever Boros earns.
+        #
+        # AND NOTE WHAT THE SECOND SENTENCE DOES NOT SAY: "UP TO 100%" is a CEILING on the
+        # distribution, not a floor. The 80% is the programmed parameter; what happens to the
+        # repurchased PENDLE afterwards is a separate question with a ceiling and no documented
+        # floor, so destination_floor stays None rather than being read as 100%.
+        #
+        # THE 80 ALSO APPEARS IN PENDLE'S OWN DEPLOYMENT FILE — deployments/1-core.json carries
+        # network.initialReserveFeePercent = 80, read 2026-09-23. NOT the same parameter and NOT
+        # treated as a second source for it; recorded because a reader who finds it should not
+        # have to wonder whether it is.
+        "fee_split": {"share_to_buyback": 0.80,
+                      "source_url": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/"
+                                    "Mechanisms/sPENDLE",
+                      "source_date": "2026-09-23", "programmed": True, "status": "active",
+                      "base": "Pendle V2 fees from YIELD and SWAP fees. Boros fees are NOT in the "
+                              "documented base — some secondary sources include them, the docs "
+                              "sentence does not.",
+                      "destination": "distribute",
+                      "destination_detail": "repurchased PENDLE is distributed to ACTIVE sPENDLE "
+                                            "holders as sPENDLE. 'Active' is the docs' own word "
+                                            "and is not defined on that page.",
+                      "destination_ceiling": 1.00,
+                      "destination_floor": None,
+                      "airdrops_excluded": "airdrops from points assets are distributed IN KIND, "
+                                           "not bought back, so they are not part of this flow "
+                                           "and must not be counted as buyback volume.",
                       "note": "APRIL 2026 TOKENOMICS: revenue-funded buyback distributed to sPENDLE holders, "
-                              "replacing gauge-voting emissions. DISTRIBUTE, not burn. The revenue SHARE is "
-                              "not documented — do not estimate it. Sanity bounds only: ~2m PENDLE "
-                              "repurchased in the first six months, ~$653,702 of fees over 30 days.",
+                              "replacing gauge-voting emissions. DISTRIBUTE, not burn. Sanity bounds: "
+                              "~2m PENDLE repurchased in the first six months, ~$653,702 of fees over 30 days.",
+                      "cadence": {
+                          # BIWEEKLY, buying across the following week — so the flow is LUMPY by
+                          # construction. A 7-day window can hold two weeks of buying or none of
+                          # it, and neither is a change in the protocol.
+                          "period": "biweekly",
+                          "execution": "a dedicated buyback contract buys across the week "
+                                       "following each cycle",
+                          "reference_cumulative": [
+                              {"as_of": "2026-06-15", "tokens": 1_722_192},
+                              {"as_of": "2026-09-25", "tokens": 2_680_000, "usd": 3_700_000,
+                               "note": "reported as 'more than', so a FLOOR"},
+                          ],
+                          "contract_address": None,
+                          "address_status": "NOT FOUND in Pendle's own deployments. "
+                                            "deployments/1-core.json was read in full on "
+                                            "2026-09-23 (74 keys) and names no buyback contract "
+                                            "— the nearest entries are vePendleAirdropDistributor "
+                                            "and externalRewardsDistributor, and neither is it. "
+                                            "Left None rather than filled with a plausible "
+                                            "neighbour.",
+                      },
                       # ===== A LEAD, NOT A FIGURE. Recorded 2026-09-22. =====
                       # Reported that since September 2025 Pendle directs 80% of protocol revenue
                       # to sPENDLE holders and 20% to the treasury. If true, that is exactly the
@@ -8625,13 +8699,20 @@ PROJECTS = [
                       "lead_80_20": {
                           "claim": "80% of protocol revenue to sPENDLE holders, 20% to the "
                                    "treasury, in effect since September 2025",
-                          "status": "UNCONFIRMED — not from Pendle's own material",
+                          "status": "CONFIRMED 2026-09-23 — and the lead's WORDING was not quite "
+                                    "right, which is why it was held. The docs say 80% of V2 "
+                                    "YIELD AND SWAP FEES goes to BUYBACKS, and 'up to 100%' of "
+                                    "what is repurchased is distributed to ACTIVE sPENDLE "
+                                    "holders. 'Revenue' and 'fees' are not the same base, and "
+                                    "'to holders' skipped the buyback step entirely. The share "
+                                    "was right; the sentence around it was not.",
                           "recorded_on": "2026-09-22",
-                          "what_would_settle_it": "docs.pendle.finance' tokenomics page, or a "
-                                                  "governance post stating the split. Until then "
-                                                  "share_to_buyback stays None and programmed "
-                                                  "stays False — do NOT populate either from "
-                                                  "this line.",
+                          "confirmed_on": "2026-09-23",
+                          "kept_because": "it is the case for holding an unsourced lead rather "
+                                          "than acting on it. Acting on the lead as written "
+                                          "would have applied 0.80 to the wrong base and named "
+                                          "the wrong destination, and the figure would have "
+                                          "looked right the whole time.",
                       }},
         "burn_split": None,
         # THE HARD SUPPLY CAP IS GONE. It was 258,446,028 and most trackers still show it, which is
@@ -8753,6 +8834,44 @@ PROJECTS = [
                 "use_instead": "nothing yet. Treat the figure as an UPPER BOUND on PENDLE staked. The "
                                "dashboard cross-check below would catch a large divergence if "
                                "app.pendle.finance ever becomes fetchable.",
+                # ===== A 3x DISAGREEMENT, AND IT POINTS THE WRONG WAY FOR THE BOOST. Added 2026-09-23.
+                # Reporting puts sPENDLE staking above 100,000,000 PENDLE by early July 2026 —
+                # about 36% of supply. sPENDLE.totalSupply() reads 34,100,000.
+                #
+                # ** THE BOOST HYPOTHESIS ABOVE DOES NOT EXPLAIN THIS, AND THE DIRECTION IS WHY. **
+                # A boosted balance would make totalSupply LARGER than the PENDLE behind it, so
+                # under that hypothesis the real staked figure is at or BELOW 34.1m — further
+                # from 100m, not closer. Whatever the 3x is, it is not the boost inflating our
+                # read. Recorded because the obvious reading of "we have a virtual-balance
+                # question and a 3x gap" is to file one under the other, and they do not fit.
+                #
+                # THREE CANDIDATES, NONE CHOSEN:
+                #   (a) the two figures count different things — ours SHARES, theirs ASSETS. H1
+                #       settles it: PENDLE.balanceOf(sPENDLE) against sPENDLE.totalSupply() on
+                #       ONE block.
+                #   (b) the reported figure includes something we do not — LP positions, legacy
+                #       vePENDLE, or a cumulative rather than a standing balance.
+                #   (c) IT IS SIMPLY TWO AND A HALF MONTHS OF UNSTAKING. The 100m is dated early
+                #       JULY and our read is SEPTEMBER. A 14-day cooldown makes a large exit
+                #       entirely possible in that window, and nobody has looked at the series in
+                #       between. This one is cheap to test and is the one most easily forgotten,
+                #       because it requires no mechanism at all.
+                "discrepancy_2026_09_23": {
+                    "reported_tokens": 100_000_000,
+                    "reported_as_of": "2026-07-01",
+                    "read_tokens": 34_100_000,
+                    "read_as_of": "2026-09",
+                    "ratio": 100_000_000 / 34_100_000,
+                    "boost_hypothesis_fits": False,
+                    "why_not": "a boosted balance inflates totalSupply, so it would put real "
+                               "staked PENDLE at or below 34.1m — further from 100m, not closer.",
+                    "candidates": ("shares-vs-assets (H1 settles it)",
+                                   "the reported figure counts something else",
+                                   "two and a half months of unstaking between the two dates"),
+                    "do_not": "pick the larger figure because it flatters the lock rate, or the "
+                              "smaller because it is ours. A 3x error here moves the lock rate "
+                              "from 12% to 36% and nothing else on the sheet would look wrong.",
+                },
             },
         },
         "cooldown": {
@@ -10138,6 +10257,29 @@ LUMPY_FLOWS = {
         "observed_cadence": "daily",
         "why": "revenue is a share of fees_usd and inherits its booking pattern exactly.",
         "source": "follows fees_usd above",
+        "recorded_on": "2026-09-23",
+    },
+    # ===== PENDLE BUYS BIWEEKLY, SO A WEEK IS THE WRONG UNIT. Added 2026-09-23. =====
+    # Confirmed with the fee split on 2026-09-23: buybacks run on a BIWEEKLY cycle and the
+    # dedicated contract buys across the following week. A 7-day window therefore contains two
+    # weeks of buying or none of it, and neither is a change in the protocol — the same shape as
+    # GEODNET's weekly burn read daily.
+    ("Pendle", "actual_buyback_tokens"): {
+        "underlying_cadence": "biweekly",
+        "observed_cadence": "daily",
+        "why": "the buyback contract executes on a biweekly cycle, spreading its purchases over "
+               "the following week. Zero on the off-week is the mechanism, not a stall, and a "
+               "day-on-day comparison across the boundary is a comparison of a buying week with "
+               "a quiet one.",
+        "source": "Pendle's sPENDLE documentation and the buyback cadence recorded on "
+                  "fee_split.cadence, 2026-09-23",
+        "recorded_on": "2026-09-23",
+    },
+    ("Pendle", "actual_buyback_usd"): {
+        "underlying_cadence": "biweekly",
+        "observed_cadence": "daily",
+        "why": "the same flow priced — it inherits the token leg's cadence exactly.",
+        "source": "follows actual_buyback_tokens above",
         "recorded_on": "2026-09-23",
     },
     ("Maple", "holders_revenue_usd"): {
