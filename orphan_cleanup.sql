@@ -2267,3 +2267,111 @@ SELECT date, metric, value, source
  WHERE project = 'Pendle'
    AND metric IN ('locked_tokens', 'locked_tokens_shares', 'lock_assets_per_share')
  ORDER BY metric, date;
+
+-- ========================================================================================
+-- Z. PENDLE locked_tokens IS ONE SERIES, NOT THREE — AND ALL OF IT IS SHARES.
+--    Z1-Z3 LOOK. Z4 MOVES (re-attribution, not deletion). Z5 VERIFIES.       2026-09-23
+-- ========================================================================================
+-- ** THE THREE-REGIME READING WAS WRONG, AND ESTABLISHING THAT CAME FIRST. ** The report was:
+--     2026-09-11..09-17  34,153,771 .. 34,162,882   ASSETS
+--     2026-09-18..09-23  29,995,170 .. 30,310,807   SHARES (a silent switch)
+-- with the 09-18 drop of -12.20% attributed to the read changing. It was not. Checked against
+-- git rather than inferred from the numbers:
+--
+--   * NO CONFIG CHANGE. contracts.spendle is byte-identical at f63bfd5 (09-17 13:36) and
+--     08aa467 / 7ee15f2 / b56453e (09-18): kind ve_total_supply, read_method erc20_total_supply.
+--     It has carried that read_method continuously since 216428e (09-11 16:11) — and before
+--     that it was None, which METHOD_REQUIRED_KINDS REFUSES, which is why the series starts on
+--     09-11 at all.
+--   * NO ADAPTER CHANGE. The escrow-vs-totalSupply dispatch condition in fetch/chain.py is
+--     identical either side. b56453e is the only chain.py commit that day and it added
+--     metric_override and call_arg, neither of which touches this path.
+--   * NOTHING ELSE COULD HAVE WRITTEN IT. dune_queries.locked_tokens has query_id None (never
+--     fetched). The only Pendle scrape targets locked_tokens_dashboard, a different metric, and
+--     is robots-blocked. No manual override mentions Pendle. No vePENDLE contract exists.
+--     Exactly ONE contract mapped to locked_tokens on both dates, and it read totalSupply().
+--
+-- ** SO THE MEASURING POINT NEVER MOVED, AND EVERY ROW FROM 09-11 TO 09-23 IS THE SHARE COUNT.
+-- ** The -12.20% is a change in the measured quantity, not in the reader. The source string
+-- being identical across the boundary is a TRUE observation with the opposite meaning to the
+-- one drawn from it: it is identical because nothing changed.
+--
+-- THE ARITHMETIC AGREES. Today's pair is internally consistent to 271 tokens
+-- (30,310,807.38 shares x 1.1731 = 35,557,608 against a measured 35,557,337). Read regime 1 as
+-- shares and assets fell ~40,076,477 -> 35,557,337, which is -11.3% and matches the -12.2% fall
+-- in shares. Read it as assets and the share count RISES 4.1% across a week in which the stored
+-- series FELL 12% — the two would have to move in opposite directions through the same event.
+--
+-- ** SO THE MOVE IS THE WHOLE SERIES, NOT THE SECOND REGIME. ** Moving only 09-18..09-23 would
+-- split one homogeneous share series across two metrics AND leave 34,162,882 standing in
+-- locked_tokens labelled as assets — a wrong number in the assets column, which is the outcome
+-- this whole exercise exists to prevent. locked_tokens then legitimately has NO history: the
+-- first post-fix reading is its first observation, so no measuring-point guard fires and there
+-- is no hole to declare.
+--
+-- Z1. THE WHOLE SERIES WITH ITS SOURCES. Every row must read chain:ethereum:spendle. Any row
+--     with a different source is NOT covered by the reasoning above and must be looked at
+--     before anything moves.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Pendle' AND metric = 'locked_tokens'
+ ORDER BY date;
+
+-- Z2. THE SOURCE CENSUS — one row expected. More than one means the premise is wrong.
+SELECT source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Pendle' AND metric = 'locked_tokens'
+ GROUP BY source
+ ORDER BY rows DESC;
+
+-- Z3. THE COLLISION CHECK. locked_tokens_shares already holds 2026-09-23 (written by the same
+--     contract once metric_override was set). The store is keyed (date, project, metric), so a
+--     bare UPDATE would violate that key on any date present in BOTH. Expect exactly one row:
+--     2026-09-23. Anything else and Z4 must be narrowed before it is run.
+SELECT s.date, s.value AS shares_value, l.value AS locked_value, s.source
+  FROM metrics s
+  JOIN metrics l ON l.date = s.date AND l.project = s.project
+ WHERE s.project = 'Pendle' AND s.metric = 'locked_tokens_shares'
+   AND l.metric = 'locked_tokens'
+ ORDER BY s.date;
+
+-- Z4. THE MOVE. Re-attribution, not deletion — the readings were right and the column was
+--     wrong. Colliding dates are DROPPED from the source side rather than overwritten: both
+--     rows are the same read of the same contract on the same day, so the one already under
+--     locked_tokens_shares is kept and its duplicate discarded. Nothing is lost.
+--     Commented out deliberately. Run Z1-Z3 first.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Pendle' AND metric = 'locked_tokens'
+--    AND date IN (SELECT date FROM metrics
+--                  WHERE project = 'Pendle' AND metric = 'locked_tokens_shares');
+-- UPDATE metrics
+--    SET metric = 'locked_tokens_shares'
+--  WHERE project = 'Pendle' AND metric = 'locked_tokens';
+-- COMMIT;
+
+-- Z5. VERIFY. locked_tokens returns NOTHING (it has no history until the first post-fix run);
+--     locked_tokens_shares runs continuously 2026-09-11..2026-09-23 from one source.
+SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       COUNT(DISTINCT source) AS sources
+  FROM metrics
+ WHERE project = 'Pendle' AND metric IN ('locked_tokens', 'locked_tokens_shares')
+ GROUP BY metric;
+
+-- Z6. THE INCOMING SANITY CHECK, for the first run after the fix. locked_tokens will be
+--     PENDLE.balanceOf(sPENDLE) — the ASSETS — and there is no assets history to compare it
+--     against, so the continuity statement is arithmetic rather than a trend:
+--
+--       expected  ~35,557,337   (= the 2026-09-23 direct read, and = shares x 1.1731 to 271)
+--       tolerance  a few tenths of a percent for accrual and flow since that block
+--
+--     ** IF THE FIRST READING COMES BACK NEAR 30.3M, THE FIX DID NOT TAKE ** — that is the
+--     share count, and spendle_underlying is being read as a totalSupply again. If it comes
+--     back near 40M, the 09-17 level, something re-derived the old regime and must be traced
+--     before the row is trusted. Either way, stop and report rather than accepting the number.
+SELECT date, metric, value, source
+  FROM metrics
+ WHERE project = 'Pendle'
+   AND metric IN ('locked_tokens', 'locked_tokens_shares', 'lock_assets_per_share')
+ ORDER BY metric, date DESC;

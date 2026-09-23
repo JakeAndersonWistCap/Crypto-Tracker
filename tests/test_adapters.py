@@ -217,6 +217,63 @@ def test_a_holder_whose_symbol_differs_from_its_tokens_is_read_through_the_token
     assert any(addr == TOKEN and args for addr, _, args in c.reader.read_calls), c.reader.read_calls
 
 
+def test_pendles_locked_tokens_history_is_all_shares_and_the_0918_cliff_is_not_a_read_change():
+    """** THE THREE-REGIME READING WAS WRONG, AND THE ARITHMETIC ONLY CLOSES ONE WAY. **
+
+    locked_tokens was reported as assets to 2026-09-17, a silent switch to shares from 09-18,
+    and assets again after the fix — with the -12.20% drop on 09-18 attributed to the reader
+    changing under an unchanged source string. Checked against git instead of inferred from the
+    numbers: contracts.spendle is byte-identical either side of the boundary, read_method has
+    been erc20_total_supply continuously since 09-11 16:11, the adapter's escrow-vs-totalSupply
+    dispatch is unchanged, and nothing else could write the metric. The measuring point never
+    moved, so EVERY row is the share count and the cliff is a change in the QUANTITY.
+
+    ** THE IDENTICAL SOURCE STRING IS A TRUE OBSERVATION WITH THE OPPOSITE MEANING. ** It is
+    identical because nothing changed, not because a change slipped past it.
+
+    This test pins the arithmetic, which is what makes the git evidence decisive rather than
+    merely consistent: read regime 1 as shares and assets fall in step with shares; read it as
+    assets and the share count has to RISE 4% through a week in which the stored series FELL
+    12%. Both cannot describe one event.
+    """
+    d = config.PROJECT_BY_NAME["Pendle"]["non_comparable"]["locked_tokens"]
+    cliff = d["discrepancy_2026_09_23"]["cliff_2026_09_18"]
+    assert cliff["is_a_read_change"] is False
+    assert cliff["change_pct"] == -12.20
+
+    RATIO = config.PROJECT_BY_NAME["Pendle"]["lock_ratio"]["measured"]["ratio"]
+    S17, S23, A23 = 34_162_882, 30_310_807.38, 35_557_548.09
+
+    # Today's pair is internally consistent, which is what makes it a usable anchor at all.
+    assert abs(S23 * RATIO - A23) / A23 < 1e-4, "shares x ratio must reproduce the measured assets"
+
+    # READ REGIME 1 AS SHARES: assets then ~40.08m, falling ~11% to today — the same direction
+    # and roughly the same size as the -12.2% fall in shares. One event, both series moving.
+    as_shares = (A23 / (S17 * RATIO)) - 1.0
+    assert -0.13 < as_shares < -0.09, as_shares
+
+    # READ REGIME 1 AS ASSETS: shares then ~29.12m, RISING 4% to today — while the stored series
+    # fell 12% over the same week. That needs the two to move in opposite directions through one
+    # event, which is the reading this test exists to refuse.
+    as_assets = (S23 / (S17 / RATIO)) - 1.0
+    assert as_assets > 0.03, as_assets
+    assert as_shares < 0 < as_assets, \
+        "the two readings disagree in SIGN — that is the whole discriminator"
+
+    # ** AND THE CURRENT WIRING IS THE ONLY WIRING THAT PRODUCES ASSETS. ** One contract maps to
+    # locked_tokens and it is the balanceOf read; the totalSupply read maps to the share count.
+    c = config.PROJECT_BY_NAME["Pendle"]["contracts"]
+    assert config.contract_serves(c["spendle_underlying"]) == {"locked_tokens"}
+    assert config.contract_serves(c["spendle"]) == {"locked_tokens_shares"}
+    assert c["spendle_underlying"]["read_method"] == "escrow_balance_of"
+    assert c["spendle"]["read_method"] == "erc20_total_supply"
+    # The expected first post-fix reading travels with the entry, because locked_tokens has no
+    # assets history to extrapolate from — the check is arithmetic, not a trend.
+    assert "35,557,337" in c["spendle_underlying"]["note"]
+    assert "near 30.3M means the fix did not take" in c["spendle_underlying"]["note"]
+    print("pendle cliff ok: one series, all shares, and the two readings disagree in sign")
+
+
 def test_a_stake_underlying_entry_with_no_read_method_is_refused_not_guessed():
     """THE CONTROL, and it is the half that matters more. A stake_underlying entry with no
     read_method does not FAIL — it silently becomes a totalSupply read on the holder, which

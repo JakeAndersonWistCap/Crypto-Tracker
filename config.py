@@ -9742,7 +9742,22 @@ PROJECTS = [
                         "the figure locked_tokens carries for this project. Read as "
                         "PENDLE.balanceOf(sPENDLE): the call is made on the HOLDER (sPENDLE) "
                         "and symbol/decimals come from the TOKEN (PENDLE).",
-                note="SETTLED ON-CHAIN 2026-09-23 at block 26,039,143. shares 30,310,807.38, "
+                # ===== THE FIRST READING'S SANITY CHECK, and it is arithmetic not a trend.
+                # locked_tokens has NO assets history — every stored row to 2026-09-23 is the
+                # SHARE count (see orphan_cleanup.sql section Z), so the first post-fix reading
+                # is this metric's FIRST observation and there is nothing to extrapolate from.
+                #
+                #   expected  ~35,557,337  — the 2026-09-23 direct read, which equals
+                #                            30,310,807.38 shares x 1.1731 to within 271 tokens
+                #   tolerance  a few tenths of a percent, for accrual and flow since that block
+                #
+                # ** NEAR 30.3M MEANS THE FIX DID NOT TAKE ** — that is the share count, and
+                # this entry is being read as a totalSupply again. Near 40M means something
+                # re-derived the pre-09-18 level. Either way stop and report rather than
+                # accepting the row.
+                note="FIRST READING EXPECTED ~35,557,337 — see the comment above; near 30.3M "
+                     "means the fix did not take. "
+                     "SETTLED ON-CHAIN 2026-09-23 at block 26,039,143. shares 30,310,807.38, "
                      "assets 35,557,548.09, assets/share 1.1731. The boost hypothesis pointed "
                      "the other way and is refuted BY DIRECTION: a boosted share count would "
                      "exceed the assets behind it, and this one is 15% below them."),
@@ -9880,6 +9895,62 @@ PROJECTS = [
                     # insufficient. What is left is a reported figure measuring something else,
                     # or a real fall between July and September — and the second needs no
                     # mechanism at all, which is why it keeps being the one nobody checks.
+                    # ===== ** THE 2026-09-18 CLIFF IS EVIDENCE FOR CANDIDATE (c), NOT A READ
+                    # ** CHANGE. Established 2026-09-23. ** locked_tokens was reported as three
+                    # regimes — assets to 09-17, a silent switch to shares from 09-18, assets
+                    # again after the fix — with the -12.20% drop on 09-18 attributed to the
+                    # reader changing. It was checked against git rather than inferred from the
+                    # numbers, and the measuring point never moved:
+                    #
+                    #   * contracts.spendle is BYTE-IDENTICAL at f63bfd5 (09-17 13:36) and at
+                    #     08aa467 / 7ee15f2 / b56453e (09-18). read_method has been
+                    #     erc20_total_supply continuously since 216428e (09-11 16:11); before
+                    #     that it was None, which METHOD_REQUIRED_KINDS refuses — which is why
+                    #     the series begins on 09-11 at all.
+                    #   * fetch/chain.py's escrow-vs-totalSupply dispatch is identical either
+                    #     side. b56453e is the only chain.py commit that day and it added
+                    #     metric_override and call_arg, neither of which touches that path.
+                    #   * Nothing else could have written it: dune_queries.locked_tokens has
+                    #     query_id None, the only Pendle scrape targets locked_tokens_dashboard
+                    #     and is robots-blocked, no manual override names Pendle, and no
+                    #     vePENDLE contract exists. ONE contract mapped to locked_tokens on both
+                    #     dates and it read totalSupply().
+                    #
+                    # ** SO EVERY ROW FROM 09-11 TO 09-23 IS THE SHARE COUNT, and the -12.20% is
+                    # ** a change in the QUANTITY. ** The identical source string across the
+                    # boundary is a true observation with the opposite meaning to the one drawn
+                    # from it: it is identical because nothing changed.
+                    #
+                    # AND THE ARITHMETIC ONLY CLOSES ONE WAY. Read as shares, assets fell
+                    # ~40,076,477 -> 35,557,337 (-11.3%), matching the -12.2% fall in shares.
+                    # Read as assets, the share count RISES 4.1% across a week in which the
+                    # stored series FELL 12% — the two would have to move in opposite directions
+                    # through the same event.
+                    "cliff_2026_09_18": {
+                        "from": 34_162_882, "to": 29_995_170, "change_pct": -12.20,
+                        "over": "one day",
+                        "regime_1_drift": "+0.027% across 09-11..09-17 — almost perfectly flat",
+                        "regime_2_drift": "+1.05% across 09-18..09-23",
+                        "is_a_read_change": False,
+                        "evidence": "config and adapter byte-identical either side; no other "
+                                    "source could write the metric. Checked 2026-09-23.",
+                        "what_it_is": "a fall in the sPENDLE SHARE COUNT. Whether that is "
+                                      "unstaking, a migration, or a single on-chain event is "
+                                      "NOT established — it needs chain access, not more "
+                                      "arithmetic.",
+                        "bears_on": "candidate (c), a real fall between the reported July "
+                                    "figure and now. A 12% drop in six days is the same "
+                                    "phenomenon on a shorter timescale, so it is corroboration "
+                                    "rather than a new question.",
+                        "why_nothing_flagged_it": "change_threshold_pct is 50 and this is 12.2%. "
+                                                  "That is the right mechanism behaving "
+                                                  "correctly: it IS a real move, so a "
+                                                  "measuring-point flag would have been wrong.",
+                        "cooldown_note": "sPENDLE enforces a 14-day cooldown (1,209,600s, read "
+                                         "on-chain), so a one-day cliff means a cohort whose "
+                                         "notice matured together, not a same-day exit. "
+                                         "09-18 minus 14 days is 09-04. NOT INVESTIGATED.",
+                    },
                     "shares_vs_assets_settled": {
                         "settled_on": "2026-09-23",
                         "block": 26_039_143,
@@ -13200,6 +13271,36 @@ OPEN_QUESTIONS = [
                           "endpoint ORDER is left alone — it costs nothing — but it is no longer "
                           "offered as the explanation.",
         },
+    },
+    {
+        "project": "Sky",
+        "topic": "lssky reads totalSupply() — is it a 1:1 receipt, or does it compound like "
+                 "sPENDLE, sETHFI and stSYRUP?",
+        "severity": 2,
+        "reason": "FOUND BY AUDIT 2026-09-23, not by a bad number. Sky's locked_tokens is "
+                  "LSSKY.totalSupply() — a SHARE count — and three of this project's four other "
+                  "staked receipts have now turned out to compound: sETHFI at 1.2445, stSYRUP, "
+                  "and sPENDLE at 1.1731, where the share count understated the lock by 17.3%. "
+                  "If lssky compounds too, Sky's locked_tokens has the same understatement and "
+                  "nothing on the sheet says so.\n\n"
+                  "** THE GROUNDS FOR erc20_total_supply ARE DOCUMENTARY, WHICH IS THE PATTERN "
+                  "THAT KEEPS FAILING. ** contracts.lssky's note reads: 'Sky's own docs describe "
+                  "staking with no minimum, no lockup period and no exit fee, so there is no "
+                  "duration-weighted escrow here and the lssky balance IS the lock-rate "
+                  "figure.' That may well be right — and it is the same class of claim as "
+                  "Pendle's '14 days' cooldown, which held up, and Pendle's 'totalSupply() IS "
+                  "the staked amount', which did not. No exit fee does not imply no accrual: a "
+                  "vault can compound rewards into the share price with no lockup at all.",
+        "suggestion": "ONE CALL SETTLES IT, exactly as it did for sPENDLE: SKY.balanceOf(lssky) "
+                      "against LSSKY.totalSupply() at one pinned block. Equal means a 1:1 "
+                      "receipt and the current wiring is right. Assets above shares means it "
+                      "compounds, and locked_tokens needs the same split Pendle just got — a "
+                      "stake_underlying entry for the assets and locked_tokens_shares for the "
+                      "count. Add it to check_offline_items.py beside the Pendle and Ether.fi "
+                      "checks. Do NOT change the wiring on the strength of the analogy alone.",
+        "raised_by": "the audit asked for in the 2026-09-23 round: which series could switch "
+                     "read method under an unchanged source string. Nine contracts can; lssky "
+                     "is the one where the CURRENT method may already be the wrong one.",
     },
     {
         "project": "Venice AI", "topic": "the 20% protocol take on locked sVVV yield is not captured",
