@@ -12253,3 +12253,62 @@ def test_morphos_september_level_break_is_recorded_as_the_old_breaks_tail_with_i
     assert "BLOCKED" in lb["probe_result"] and "403" in lb["probe_result"]
     assert lb["not_ruled_out"] and lb["settle_it_by"], \
         "a best-supported reading must say what would still overturn it"
+
+
+def test_the_morpho_level_break_verdict_is_recorded_as_falsified_not_quietly_replaced():
+    """A prediction that failed is the most valuable thing in the record — it must stay visible.
+
+    The 09-23 reading said the 7-day median would snap back in one step on 09-24. It did not:
+    fees_usd read $13,302,020.60, ABOVE the pre-break level. A hole inside a trailing window
+    cannot do that, so the explanation is ruled out rather than merely unconfirmed.
+    """
+    rec = config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]
+    assert "level_break_2026_09_23" in rec, \
+        "the falsified reading stays on file — a deleted wrong answer gets re-derived"
+    re_ = rec["level_break_2026_09_23_REOPENED"]
+    assert "FAILED" in re_["prediction_outcome"]
+    assert "RULED OUT" in re_["single_break_explanation"]
+    assert re_["blocked_on"] and "do NOT write a fix" in re_["do_not"]
+
+    # ** THE TWO THINGS RULED OUT ARE RULED OUT FROM THE CODE, so re-assert them against the
+    # code rather than trusting the note. **
+    assert rec["recovery"]["sum_slugs"] == ["morpho-blue", "morpho-midnight"], \
+        "the parent slug must not be in the sum — that would be the double-count"
+    import inspect
+
+    from fetch.llama import DefiLlama
+    src = inspect.getsource(DefiLlama._fees_with_restructure_guard)
+    assert "total30d" not in src, "the recovery path must never read the parent's 30-day total"
+    # AND THE SUMMING KEYED ON .date() IS REAL — this is the mechanism to check first, so pin
+    # that it still exists rather than describing a line that has since moved.
+    assert "by_date.get(day, 0.0) + float(v)" in src, \
+        "the note names this line as the first thing to check; keep them in step"
+
+
+def test_supply_units_declares_the_tier_that_actually_serves_it():
+    """tiers: [5, 3] made the Gap Report describe a scraper for a figure a tier-1 API serves.
+
+    `tiers` gates nothing — it has ONE consumer, gaps.py — so this never cost a figure. What it
+    cost was a true sentence: with tier 5 declared and no stub, the row reads "no sources.yaml
+    entry", which sends a reader to build a scraper that is not the route.
+    """
+    import fetch.gaps as G
+
+    for metric in ("supply_units", "utilisation_pct"):
+        assert 1 in config.METRICS[metric]["tiers"], \
+            f"{metric} is served by morpho_api at tier 1; the declaration must say so"
+
+    # ** AND IT REMAINS TRUE THAT tiers GATES NOTHING **, which is why this is safe to change.
+    import pathlib
+    hits = [f for f in pathlib.Path(".").rglob("*.py")
+            if not f.name.startswith("test_") and "tests" not in f.parts
+            and '.get("tiers"' in f.read_text(encoding="utf-8", errors="ignore")]
+    assert [f.name for f in hits] == ["gaps.py"], \
+        f"a second consumer of `tiers` appeared — changing it is no longer cosmetic: {hits}"
+
+    # THE REASON TEXT IS STILL WRONG, and that is recorded here rather than left to be
+    # rediscovered: TIER1_SOURCE is keyed by METRIC ALONE, so registering supply_units there
+    # would tell GEODNET and Aethir to "set lending_api in config", which is worse.
+    assert "supply_units" not in G.TIER1_SOURCE, (
+        "if this is ever added it must be project-scoped first — Morpho is the only project "
+        "with a tier-1 route for it, and five DePIN projects share the metric")

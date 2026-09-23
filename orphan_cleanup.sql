@@ -2440,3 +2440,59 @@ SELECT metric, COUNT(*) AS rows
   FROM metrics
  WHERE project = 'Uniswap' AND metric = 'buyback_fund_balance'
  GROUP BY metric;
+
+-- ========================================================================================
+-- AB. MORPHO fees_usd — THE DAILY SERIES, WHICH IS THE ONLY THING THAT SETTLES THIS.
+--     AB1-AB4 ARE ALL SELECTS. NOTHING HERE WRITES.                           2026-09-24
+-- ========================================================================================
+-- The 09-23 verdict (an unbackfilled hole inside the 7-day lookback) made a one-step
+-- prediction for 09-24 and the prediction FAILED: fees_usd reads $13,302,020.60, roughly
+-- 22x the pre-break level rather than a return to it. A hole cannot push a median ABOVE
+-- the healthy level, so that explanation is ruled out.
+--
+-- ** DO NOT WRITE A FIX BEFORE RUNNING THESE. ** Three causes are still live — a cumulative
+-- series, a one-day catch-up dump, and a second restructure — and they need different
+-- handling. Two of the three would be made worse by guessing.
+
+-- AB1. THE LAST 10 DAYS, PLAINLY. This is the headline: is $13.3m one point or a level?
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'fees_usd'
+ ORDER BY date DESC
+ LIMIT 10;
+
+-- AB2. THE SHAPE EITHER SIDE OF THE BREAK, to see whether the series is a level or a spike
+--      and whether the 09-12..09-20 hole is still absent.
+--      EXPECTED IF IT IS AN AGGREGATE IN A DAILY COLUMN: exactly one outsized point, with
+--      the days around it at Blue's ordinary ~$500-650k, and the hole still empty.
+--      EXPECTED IF IT IS A SECOND RESTRUCTURE: a sustained shift, not one point.
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'fees_usd'
+   AND date >= date('2026-09-05')
+ ORDER BY date;
+
+-- AB3. ** IS IT CUMULATIVE? ** The decisive test, and it needs no judgement: a cumulative
+--      series never decreases. If prev_value is never above value across the recovered
+--      span, _chart is returning a running total and the daily column is wrong from the
+--      recovery date onward — not just on the newest point.
+SELECT date, value,
+       LAG(value) OVER (ORDER BY date) AS prev_value,
+       value - LAG(value) OVER (ORDER BY date) AS step,
+       CASE WHEN value < LAG(value) OVER (ORDER BY date) THEN 'DECREASES -> not cumulative'
+            ELSE 'non-decreasing' END AS verdict
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'fees_usd'
+   AND date >= date('2026-09-21')
+ ORDER BY date;
+
+-- AB4. DUPLICATE DATES. The recovery branch does by_date[day] += v, keyed on .date(), so two
+--      points stamped on one UTC day are summed silently — and that branch had never run
+--      against real data before this week. The store upserts on (date, project, metric), so
+--      a duplicate will NOT show here as two rows; this checks the store is not itself the
+--      place the doubling happened, which would point the investigation the other way.
+SELECT date, COUNT(*) AS rows
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'fees_usd'
+ GROUP BY date
+HAVING COUNT(*) > 1;

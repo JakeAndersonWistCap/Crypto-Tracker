@@ -483,8 +483,15 @@ METRICS = {
                             "sanity_min": 0, "sanity_max": 1e11, "only_projects": ["Aave"],
                             "excluded_from_supply": True},
     # --- off-chain operational (archetype 2)
-    "supply_units":               {"label": "Supply units (nodes/hotspots/GPUs)", "kind": "stock", "unit": "units", "archetypes": [2],        "tiers": [5, 3], "sanity_min": 0,    "sanity_max": 1e8},
-    "utilisation_pct":            {"label": "Capacity utilisation",            "kind": "stock", "unit": "pct",    "archetypes": [2],          "tiers": [5, 3], "sanity_min": 0,    "sanity_max": 1.0},
+    # ===== TIER 1 ADDED 2026-09-23, AND THE SYMPTOM WAS A WRONG SENTENCE, NOT A LOST FIGURE. =====
+    # `tiers` has exactly ONE consumer — fetch/gaps.py's "tiers_attempted" text and the branch of
+    # _tier_note it picks. It gates nothing, so these two metrics stored fine from morpho_api at
+    # tier 1 while declaring [5, 3]. What it did was make the Gap Report describe the wrong route:
+    # with tier 5 declared and no scrape stub, Morpho/supply_units reads "no sources.yaml entry
+    # for this metric", sending a reader to build a scraper for a figure a tier-1 API already
+    # serves. Declaring tier 1 makes the reason text name the route that actually exists.
+    "supply_units":               {"label": "Supply units (nodes/hotspots/GPUs)", "kind": "stock", "unit": "units", "archetypes": [2],        "tiers": [1, 5, 3], "sanity_min": 0,    "sanity_max": 1e8},
+    "utilisation_pct":            {"label": "Capacity utilisation",            "kind": "stock", "unit": "pct",    "archetypes": [2],          "tiers": [1, 5, 3], "sanity_min": 0,    "sanity_max": 1.0},
     "customer_revenue_usd":       {"label": "End-user revenue",                "kind": "flow",  "unit": "usd",    "archetypes": [2],          "tiers": [5, 3, 1], "sanity_min": 0,  "sanity_max": 1e11},
     "publisher_conviction_usd":   {"label": "Publisher Conviction (pre-purchased demand)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [5, 3], "sanity_min": 0,   "sanity_max": 1e10, "only_projects": ["OriginTrail"]},
     # --- self-reported headline figures (tier 3, taken as published and cited)
@@ -6708,6 +6715,60 @@ PROJECTS = [
             # above, and nothing offline separates them: recovered_on is already set and would not move.
             # So this is the best-supported reading, not a confirmed one. Re-run the probe from a host
             # that can reach api.llama.fi to settle it.
+            # ===== ** THE 09-23 VERDICT ABOVE WAS WRONG, AND ITS OWN PREDICTION IS WHAT KILLED IT. **
+            # Reopened 2026-09-24. =====
+            # The prediction was that the 7-day median would snap back to Blue's ~$600,000 in ONE STEP on
+            # 09-24. It did not. fees_usd now reads $13,302,020.60 — status review, source defillama —
+            # about 22x the PRE-break level rather than a return to it. A single unbackfilled hole inside
+            # a trailing window cannot produce a figure ABOVE the healthy level, so the single-break
+            # explanation is ruled out, not merely unconfirmed. It is left above rather than deleted: the
+            # arithmetic was sound and the reading still failed, which is the part worth keeping.
+            #
+            # ** WHAT IS RULED OUT FROM THE CODE, offline and with certainty: **
+            #   - PARENT + CHILDREN DOUBLE-COUNT. recovery.sum_slugs is [morpho-blue, morpho-midnight];
+            #     the parent slug is not in the sum and _fees_with_restructure_guard never reads
+            #     total30d. The two branches are exclusive, so the ordinary path cannot also write.
+            #   - A TIER GATE. `tiers` is read in exactly one place (gaps.py's reason text) and gates
+            #     nothing.
+            #
+            # ** THE LEADING HYPOTHESIS, ARITHMETIC ONLY, NOT CONFIRMED: A 30-DAY TOTAL IN A DAILY
+            # COLUMN. ** $13,302,020.60 / $614,631 (Blue's last clean daily) = 21.64 days. Blue's own
+            # 30-day window currently holds 21 reported days — 30 minus the 9-day hole. Those two agree
+            # to within half a day. The same figure is also 1.96% off the recorded parent_total30d of
+            # $13,046,131.76. Both readings say the stored point is an AGGREGATE, not a day. This project
+            # has had that exact failure before (Aerodrome's weekly stored as daily, 7x latent).
+            #
+            # ** WHAT WOULD MAKE IT THAT, and it is a real possibility rather than a guess: ** _chart()
+            # reads `totalDataChart` and the recovery path then re-keys by .date() and ADDS —
+            # `by_date[day] = by_date.get(day, 0.0) + float(v)`. Two points on one UTC date silently sum.
+            # If DefiLlama's re-index of morpho-blue returned the catch-up as multiple entries stamped on
+            # one day, or as a cumulative series, the newest point becomes an aggregate. The ordinary
+            # path does not do this — it passes (datetime, value) pairs straight to tidy() — so the
+            # summing is unique to recovery and has never run against real data until now.
+            #
+            # ** NOT FIXED, DELIBERATELY. ** The daily series for the last 10 days settles which of these
+            # it is, and no fix should be written before it is read: a cumulative series, a one-day
+            # catch-up dump and a second restructure all need different handling and two of the three
+            # would be made worse by guessing. The store is the only place that series exists — it cannot
+            # be fetched from this container (api.llama.fi answers 403 CONNECT at the proxy).
+            "level_break_2026_09_23_REOPENED": {
+                "reopened_on": "2026-09-24",
+                "prediction_made": "7d median returns to ~$600,000 in one step on 2026-09-24",
+                "prediction_outcome": "FAILED — fees_usd reads $13,302,020.60, ~22x the pre-break level",
+                "single_break_explanation": "RULED OUT — a hole cannot push a median above the healthy level",
+                "ruled_out_from_code": [
+                    "parent+children double-count: sum_slugs excludes the parent and total30d is never read",
+                    "tier gate: `tiers` gates nothing, it only feeds gap-report text",
+                ],
+                "leading_hypothesis": "an AGGREGATE stored in a daily column, not a daily value",
+                "arithmetic": "13,302,020.60 / 614,631 = 21.64 days; Blue's 30d window holds 21 reported days (30 - 9 hole)",
+                "second_reading": "1.96% off the recorded parent_total30d of 13,046,131.76",
+                "mechanism_to_check_first": (
+                    "recovery sums by .date() — by_date[day] += v — so two points on one UTC date merge "
+                    "silently. Unique to the recovery branch; the ordinary path passes pairs to tidy()."),
+                "blocked_on": "the last 10 days of the stored daily series, which only the store has",
+                "do_not": "do NOT write a fix before reading that series — the three candidate causes need different handling",
+            },
             "level_break_2026_09_23": {
                 "observed": "fees_usd 7d median $176 vs 30d median $596,604",
                 "verdict": "the 09-12 break's unbackfilled window inside the 7-day lookback, not a new restructure",
