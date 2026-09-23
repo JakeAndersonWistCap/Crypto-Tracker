@@ -6766,8 +6766,46 @@ PROJECTS = [
                 "mechanism_to_check_first": (
                     "recovery sums by .date() — by_date[day] += v — so two points on one UTC date merge "
                     "silently. Unique to the recovery branch; the ordinary path passes pairs to tidy()."),
-                "blocked_on": "the last 10 days of the stored daily series, which only the store has",
-                "do_not": "do NOT write a fix before reading that series — the three candidate causes need different handling",
+                # ===== ** RESOLVED 2026-09-24 BY THE AB RESULTS — AND NOT THE WAY EITHER
+                # HYPOTHESIS EXPECTED. ** =====
+                # AB1/AB2: 09-21 and 09-22 came back at 704,123 and 713,684, inside Blue's
+                # pre-break range; 09-12..09-20 still sit at the Midnight-only residual (0 to
+                # 178); and NO $13.3m point exists anywhere in the series. AB3: 09-21 -> 09-22 is
+                # +9,561, an ordinary daily step, so the series is genuinely daily and the
+                # cumulative reading is out. AB4: no duplicate dates in what is stored.
+                #
+                # So the $13,302,020.60 was TRANSIENT — produced by a run that has since been
+                # superseded, and not reproducible from current data. It is not chased further.
+                #
+                # ** THE by_date SUMMING IS FIXED ANYWAY, and the distinction matters: it is
+                # closed as a latent fault repaired, NOT as the diagnosis confirmed. ** AB4 shows
+                # it did not fire on what is stored now. Each slug is now read into its own dict
+                # and a repeated date is reported with both values, failing the project's fetch,
+                # rather than being added into a daily column.
+                "resolved_on": "2026-09-24",
+                "resolution": "TRANSIENT — superseded run; not reproducible from the current series",
+                "ab_results": {
+                    "AB1_AB2": "09-21 = 704,123 and 09-22 = 713,684; 09-12..09-20 still residual (0-178); no 13.3m point",
+                    "AB3": "09-21 -> 09-22 step is +9,561 — daily, NOT cumulative",
+                    "AB4": "no duplicate dates in the stored series",
+                },
+                "hypotheses_eliminated": [
+                    "tail of the old break — pulls a median DOWN, cannot explain 22x above baseline",
+                    "parent/child double-count — mechanically excluded by sum_slugs",
+                    "cumulative series — ruled out by AB3's ordinary daily step",
+                ],
+                "mechanism_fixed_on": "2026-09-24",
+                "mechanism_was_the_cause": "NOT ESTABLISHED — fixed because it is real, not because it was proved",
+                # ** A SECOND, SEPARATE BUG FOUND WHILE CONFIRMING THE WATCH. ** The held-out
+                # window was bounded by `d < recovered_from`, and recovered_from is the EARLIEST
+                # day the watch child reports after the break. A PARTIAL backfill therefore
+                # shrank the protection: filling 09-15 alone moved recovered_from back to 09-15
+                # and let 09-16..09-20 through as Midnight's ~$2/day. The trigger is the very
+                # event this watch waits for. Fixed the same day; verified by driving the
+                # function — the old form stored five residual rows, the new one stores none.
+                "partial_backfill_hole_fixed_on": "2026-09-24",
+                "blocked_on": "nothing — AB answered it",
+                "do_not": "do NOT re-open the 13.3m question from the current series; it is not in it",
             },
             "level_break_2026_09_23": {
                 "observed": "fees_usd 7d median $176 vs 30d median $596,604",

@@ -12268,7 +12268,18 @@ def test_the_morpho_level_break_verdict_is_recorded_as_falsified_not_quietly_rep
     re_ = rec["level_break_2026_09_23_REOPENED"]
     assert "FAILED" in re_["prediction_outcome"]
     assert "RULED OUT" in re_["single_break_explanation"]
-    assert re_["blocked_on"] and "do NOT write a fix" in re_["do_not"]
+    # ** RESOLVED 2026-09-24 BY THE AB RESULTS, and resolved is not the same as explained. **
+    # The $13.3m is transient and not reproducible from the current series, so it stops being
+    # chased — but the by_date summing was fixed WITHOUT being proved to be the cause, and the
+    # record has to keep those two apart or the next reader will take the fix as the diagnosis.
+    assert re_["resolution"].startswith("TRANSIENT")
+    assert re_["blocked_on"] == "nothing — AB answered it"
+    assert "NOT ESTABLISHED" in re_["mechanism_was_the_cause"], \
+        "a latent fault repaired must not be recorded as a confirmed cause"
+    assert len(re_["hypotheses_eliminated"]) == 3, re_["hypotheses_eliminated"]
+    assert re_["ab_results"]["AB3"].endswith("NOT cumulative")
+    # AND THE SECOND BUG FOUND WHILE CONFIRMING THE WATCH IS ON THE RECORD TOO.
+    assert re_["partial_backfill_hole_fixed_on"] == "2026-09-24"
 
     # ** THE TWO THINGS RULED OUT ARE RULED OUT FROM THE CODE, so re-assert them against the
     # code rather than trusting the note. **
@@ -12279,10 +12290,14 @@ def test_the_morpho_level_break_verdict_is_recorded_as_falsified_not_quietly_rep
     from fetch.llama import DefiLlama
     src = inspect.getsource(DefiLlama._fees_with_restructure_guard)
     assert "total30d" not in src, "the recovery path must never read the parent's 30-day total"
-    # AND THE SUMMING KEYED ON .date() IS REAL — this is the mechanism to check first, so pin
-    # that it still exists rather than describing a line that has since moved.
-    assert "by_date.get(day, 0.0) + float(v)" in src, \
-        "the note names this line as the first thing to check; keep them in step"
+    # ** THE SUMMING KEYED ON .date() WAS REAL AND IS NOW FIXED (2026-09-24). ** This assertion
+    # used to pin the buggy line so the note could not describe code that had moved; it now pins
+    # the opposite, because the line is gone. Summing ACROSS slugs is still the job — what must
+    # never come back is accumulating two points from ONE slug on one date.
+    assert "by_date.get(day, 0.0) + float(v)" not in src, \
+        "the silent within-slug summing is fixed; this assertion guards against its return"
+    assert "DUPLICATE DATE(S)" in src and "per_slug" in src, \
+        "a repeated date must be reported and refused, not added"
 
 
 def test_supply_units_declares_the_tier_that_actually_serves_it():
@@ -12439,3 +12454,116 @@ def test_run_sql_says_so_when_a_section_label_is_wider_than_it_can_parse():
     # 5. THE ROLLOVER ARITHMETIC, since the guard depends on it.
     assert [R._next_label(x) for x in ("A", "Y", "Z", "AA", "AZ", "ZZ")] \
         == ["B", "Z", "AA", "AB", "BA", "AAA"]
+
+
+def _morpho_guard(blue_days, midnight_days=range(1, 24), blue_extra=None):
+    """Drive the real recovery branch with a stubbed DefiLlama. Returns (frame, out)."""
+    import calendar
+    import datetime as dt
+
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    def ts(d):
+        return calendar.timegm(d.timetuple())
+    BLUE, MID = 620_000.0, 2.0
+    pre = [[ts(dt.date(2026, 9, d)), BLUE] for d in range(1, 12)]     # 09-01..09-11 healthy
+
+    class Stub:
+        def get(self, url, params=None, **kw):
+            if url.endswith("/morpho-blue"):
+                rows = pre + [[ts(dt.date(2026, 9, d)), BLUE] for d in blue_days]
+                return {"totalDataChart": rows + list(blue_extra or [])}
+            return {"totalDataChart": [[ts(dt.date(2026, 9, d)), MID] for d in midnight_days]}
+
+    a = DefiLlama(known_absent=set())
+    a.http = Stub()
+    out = FetchOutput()
+    p = config.PROJECT_BY_NAME["Morpho"]
+    a._fees_with_restructure_guard(p, "morpho", p["defillama_restructure"], 90, out)
+    return out.frame(), out
+
+
+def test_a_partial_backfill_does_not_unprotect_the_rest_of_the_break_window():
+    """The held-out window was bounded by the FIRST recovered day, which a partial backfill moves.
+
+    recovered_from is the earliest day the watch child reports on or after the break. With the
+    old `d < recovered_from` bound, DefiLlama filling 09-15 alone moved recovered_from from 09-21
+    back to 09-15 — and 09-16..09-20, still missing, fell OUTSIDE the hold-out and were stored as
+    Morpho Midnight's ~$2/day standing in for Morpho Blue's ~$600,000.
+
+    ** THE TRIGGER IS THE EVENT THE WATCH EXISTS TO WAIT FOR. ** A backfill arriving out of order
+    is the expected shape of the thing being watched for, not an edge case.
+    """
+    # (1) TODAY'S STATE — blue recovered from 09-21, the 9-day hole held out. Unchanged.
+    f, out = _morpho_guard([21, 22, 23])
+    assert f[f.value < 1000].empty, f"midnight-only residual rows were stored:\n{f[f.value < 1000]}"
+    held = [e.message for e in out.log if "HELD OUT" in e.message]
+    assert held and "2026-09-12..2026-09-20" in held[0], held
+
+    # (2) ** THE REGRESSION. ** Blue also reports 09-15 — and nothing else in the window.
+    f, out = _morpho_guard([15, 21, 22, 23])
+    resid = f[f.value < 1000]
+    assert resid.empty, (
+        "a partial backfill unprotected the rest of the break window — these are Midnight's "
+        f"~$2/day standing in for Blue's ~$600,000:\n{resid}")
+    # 09-15 IS stored, at its real value: the backfilled day is genuine data.
+    got = f[f.date == pd.Timestamp("2026-09-15")]
+    assert len(got) == 1 and got.value.iloc[0] > 600_000, got
+
+    # (3) AND A WATCH CHILD THAT LAGS A DAY IS THE SAME FAULT, so it is refused too.
+    f, _ = _morpho_guard([21, 22])           # midnight has 09-23, blue does not
+    assert pd.Timestamp("2026-09-23") not in set(f.date), \
+        "a day the watch child has not reported is the other child alone — never store it"
+
+
+def test_two_points_on_one_date_are_reported_and_refused_not_silently_summed():
+    """Summing ACROSS slugs is the job. Summing within ONE slug is how an aggregate becomes a day.
+
+    Not currently triggered — AB4 shows no duplicate dates in the store — and fixed anyway: a
+    latent fault that happened not to fire is not a fixed one, and this branch runs on every
+    future restructure recovery.
+    """
+    import calendar
+    import datetime as dt
+
+    def ts(d):
+        return calendar.timegm(d.timetuple())
+    # Blue reports 09-23 twice: a normal day and, an hour later, a 12.68m catch-up.
+    extra = [[ts(dt.date(2026, 9, 23)) + 3600, 12_682_020.60]]
+    f, out = _morpho_guard([21, 22, 23], blue_extra=extra)
+
+    assert f.empty, f"nothing may be stored from a chart whose shape is not understood:\n{f}"
+    msg = [e.message for e in out.log if "DUPLICATE DATE(S)" in e.message]
+    assert msg, [e.message for e in out.log]
+    # ** BOTH VALUES ARE NAMED. ** A count would leave the reader to re-fetch to see what happened.
+    assert "2026-09-23" in msg[0] and "620,000.00" in msg[0] and "12,682,020.60" in msg[0], msg[0]
+    assert "NOT summed and NOT stored" in msg[0]
+    # AND THE SUM IS NEVER FORMED — 620,000 + 12,682,020.60 = 13,302,020.60, the figure that
+    # started this. It must appear nowhere.
+    assert "13,302,020.60" not in msg[0], "the refused sum must not be computed or quoted"
+
+    # THE HEALTHY CASE IS UNAFFECTED: summing blue + midnight across slugs still happens.
+    f, _ = _morpho_guard([21, 22, 23])
+    day = f[f.date == pd.Timestamp("2026-09-23")]
+    assert len(day) == 1 and abs(day.value.iloc[0] - 620_002.0) < 0.01, \
+        f"across-slug summing is the point of recovery and must still work: {day}"
+
+
+def test_a_recovered_fees_series_keeps_flagging_for_review_every_run():
+    """RECORDED, NOT FIXED — this is a finding about what the sheet will say, not a bug fix.
+
+    review_item is called unconditionally once the watch child has recovered, so fees_usd reads
+    'review' on every subsequent run even when the hole is fully backfilled and nothing is wrong.
+    It will not return to 'ok' by itself. Pinned here so the answer is not re-derived, and so
+    that whoever decides to scope it has a test that says what the current behaviour is.
+    """
+    # Fully backfilled: blue covers the entire break window, so `uncovered` is empty.
+    f, out = _morpho_guard(range(12, 24))
+    assert not f.empty and f[f.value < 1000].empty, "nothing held out — the hole is gone"
+    items = [r for r in out.review if r["metric"] == "fees_usd"]
+    assert len(items) == 1 and items[0]["reason"] == "source_restructure_recovered", items
+    assert items[0]["action"] == "stored_flagged", items[0]
+    # ** THE POINT: a clean, fully recovered series STILL raises it. ** If this ever stops being
+    # true the behaviour has been scoped deliberately and this test should be updated with it.
+    assert "the series is continuous across it" in (items[0]["basis"] or ""), items[0]["basis"]

@@ -365,15 +365,51 @@ class DefiLlama:
         watch_days: set = set()
         ok = True
         for kid in sum_slugs:
+            # ===== ** SUMMING ACROSS SLUGS IS THE JOB. SUMMING WITHIN ONE IS A BUG. ** =====
+            # This accumulated straight into by_date, so two points from the SAME slug on one UTC
+            # date merged silently into a number that looks like a day and is not. Summing the
+            # children is the whole point of recovery, so the two cases have to be told apart:
+            # each slug is read into its own dict, a repeated date there is REPORTED rather than
+            # added, and only then is the slug folded into the total.
+            #
+            # NOT CURRENTLY TRIGGERED — the 2026-09-24 store has no duplicate dates. It is fixed
+            # anyway: a latent fault that happened not to fire is not a fixed one, and this
+            # branch runs on every future restructure recovery, when a re-indexing provider is
+            # exactly the thing most likely to emit a date twice.
+            per_slug: dict = {}
+            dupes: list = []
             try:
                 for d, v in self._chart(self._summary(kid, "dailyFees")):
                     day = pd.Timestamp(d.date())
-                    by_date[day] = by_date.get(day, 0.0) + float(v)
-                    if kid == watch:
-                        watch_days.add(day)
+                    if day in per_slug:
+                        dupes.append((day, per_slug[day], float(v)))
+                        continue        # KEEP THE FIRST, never the sum — see below
+                    per_slug[day] = float(v)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{kid}: recovery re-pull failed: {e}", TIER)
                 ok = False
+                continue
+            if dupes:
+                # ** REPORTED AND REFUSED, NOT REPAIRED. ** Which of the two points is the day's
+                # figure is not knowable from here — the provider may be mid-reindex, or may have
+                # split one day across two stamps — and picking one is a guess that ships as a
+                # number. The run fails for this project so nothing is stored on a series whose
+                # shape is not understood, and the message carries the dates and both values so
+                # the next step is a reading rather than another run.
+                shown = "; ".join(f"{d.date()}: {a:,.2f} and {b:,.2f}" for d, a, b in dupes[:5])
+                out.fail(SOURCE, name,
+                         f"{kid}: {len(dupes)} DUPLICATE DATE(S) in the recovery re-pull — "
+                         f"{shown}"
+                         + (f" (and {len(dupes) - 5} more)" if len(dupes) > 5 else "")
+                         + ". NOT summed and NOT stored: two points on one UTC date is a "
+                           "provider-shape change, and adding them would put an aggregate in a "
+                           "daily column. Read the slug's chart before re-running.", TIER)
+                ok = False
+                continue
+            for day, val in per_slug.items():
+                by_date[day] = by_date.get(day, 0.0) + val
+                if kid == watch:
+                    watch_days.add(day)
         if not ok or not by_date:
             return
 
@@ -394,9 +430,23 @@ class DefiLlama:
         #
         # SO THE DAYS THE WATCH CHILD DOES NOT COVER ARE HELD OUT, AND NAMED. An absent day is a
         # hole a reader can see. A $2.13 day is a number they will believe.
-        uncovered = sorted(d for d in by_date
-                           if d >= break_date and d < pd.Timestamp(recovered_from)
-                           and d not in watch_days)
+        # ===== ** THE WINDOW IS THE WHOLE BREAK, NOT JUST UP TO THE FIRST RECOVERED DAY. ** =====
+        # This read `d < pd.Timestamp(recovered_from)`, and recovered_from is the EARLIEST day the
+        # watch child reports on or after the break. A PARTIAL backfill therefore shrank the
+        # protected window to nothing: if DefiLlama filled 09-15 alone, recovered_from moved from
+        # 09-21 back to 09-15, and 09-16..09-20 — still missing — fell OUTSIDE the hold-out and
+        # were stored as Morpho Midnight's ~$2/day standing in for Blue's ~$600,000.
+        #
+        # ** AND THE TRIGGER IS THE EVENT THIS WATCH EXISTS TO WAIT FOR. ** A backfill arriving
+        # out of order is not an edge case here; it is the expected shape of the thing being
+        # watched for. Verified by driving this function with a stubbed chart: the old form
+        # stored five residual rows, this one stores none.
+        #
+        # The rule is simply the contract stated in point (1) of this method's docstring: a day
+        # the WATCH CHILD does not cover is not this protocol's fees, whenever it falls. That
+        # deliberately extends past the original break too — if the watch child ever lags a day
+        # behind the other child, that day is the other child alone and must not be stored either.
+        uncovered = sorted(d for d in by_date if d >= break_date and d not in watch_days)
         rows = sorted((d, v) for d, v in by_date.items() if d not in set(uncovered))
         if not rows:
             return
