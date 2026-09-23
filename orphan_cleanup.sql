@@ -1870,59 +1870,101 @@ SELECT date, project, metric, value, typical,
 -- T4. VERIFY — T2 returns nothing verdicted PARTIAL.
 
 -- ========================================================================================
--- U. MORPHO'S PARENT-RESIDUAL fees_usd ROWS — 2026-09-12 onward.                    2026-09-23
---    U1-U2 LOOK. U3 deletes, scoped tightly to exactly what U1/U2 showed.
+-- U. MORPHO'S PARENT-RESIDUAL fees_usd ROWS — the post-break days morpho-blue does not cover.
+--    U1-U2 LOOK. U3 deletes. U4 verifies.                              2026-09-23T21:26Z
 -- ========================================================================================
--- WHAT HAPPENED: DefiLlama restructured `morpho` into a parent with two children on
--- 2026-09-12. The parent slug kept answering 200 and kept returning a daily chart — it just
--- stopped being the protocol's fees. Its post-break daily chart IS morpho-midnight's, to the
--- cent, wearing Morpho's name. Every fees_usd row for Morpho dated 2026-09-12 or later is that
--- residual, not a measurement of Morpho's fees.
+-- ** RE-SCOPED 2026-09-23. THE FIRST VERSION WOULD HAVE DELETED THE ONLY GOOD POST-BREAK DATA. **
+-- As committed on 2026-09-22 (f18f607) this section selected `date >= '2026-09-12'` — right
+-- that day, when every row from the break onward was the parent residual. morpho-blue then
+-- recovered from 2026-09-21 and the recovery wrote 09-21 (704,123) and 09-22 (713,684) into the
+-- same range. The section was never narrowed, so its preview listed those two real days beside
+-- the nine residual ones and its DELETE would have removed them. An upper bound fixed at write
+-- time goes stale the moment the thing it describes moves.
 --
--- A SECOND, 45-DAY PROBE CONFIRMED morpho-blue (the child that actually carries Morpho's fees)
--- has reported NOTHING since 2026-09-11 — not truncated at 30 days, absent at 45 — and every
--- commit touching the adapter since late August is dated and unrelated to the break. The most
--- likely cause is a DefiLlama indexing failure on morpho-blue's own listing, not anything on
--- our side. See config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"].
+-- ** SO IT IS SCOPED BY WHAT IT TARGETS, NOT BY AN END DATE. ** The residual rows are exactly
+-- the post-break days morpho-blue does not cover — the `uncovered` set that
+-- fetch/llama._fees_with_restructure_guard computes and deliberately does not store. That set
+-- is visible in the store without recomputing it, because of two facts:
+--   (1) the recovery branch re-pulls the FULL history every run and upserts every day it
+--       stores — never window_days — and
+--   (2) store.py's upsert sets fetched_at = excluded.fetched_at, so every row the recovery
+--       wrote carries the latest recovery run's timestamp.
+-- A post-break row OLDER than the newest fees_usd write for Morpho is one the latest recovery
+-- did not write: a day morpho-blue does not cover. Nothing in that rule needs keeping up to
+-- date. When DefiLlama backfills a day, the next run rewrites it with a fresh timestamp and it
+-- leaves U1 on its own.
 --
--- FIXED AT WRITE TIME on 2026-09-23 (fetch/llama.py, _fees_with_restructure_guard): the
--- residual is no longer stored going forward, and the run auto-recovers — switching to
--- sum(morpho-blue, morpho-midnight) with a full re-pull — the moment morpho-blue reports again,
--- with no human step. THIS SECTION IS FOR ROWS ALREADY WRITTEN BEFORE THAT FIX LANDED.
+-- TWO FIXED BOUNDS REMAIN, AND NEITHER CAN MOVE:
+--   date >= '2026-09-12'  THE BREAK DATE (config defillama_restructure.break_date) — a
+--                         historical fact, not a moving edge. AND IT IS LOAD-BEARING: Morpho's
+--                         fees_usd runs back to 2021, before either child listing existed, so
+--                         old parent-slug rows are ALSO never rewritten by recovery and would
+--                         match the timestamp rule on its own. The floor keeps that history out.
+--   value < 10000         A MAGNITUDE INTERLOCK on the DELETE, not the targeting rule. The
+--                         residual is Morpho Midnight's 0..~200/day; Blue's fees are ~500,000+.
+--                         If the timestamp rule ever picks a real-sized row, the interlock
+--                         refuses it and U1's looks_like column shows the disagreement.
 --
--- U1. THE RESIDUAL ROWS, dated on or after the break. Expect Morpho fees_usd only — this is
---     scoped to exactly the (project, metric, date, source-prefix) shape of the bug, so a
---     legitimate row from an unrelated route can never be swept up by it.
-SELECT date, project, metric, value, source, tier, fetched_at
+-- ** RUN THIS AFTER A RUN THAT REACHED MORPHO. ** If the newest write is not a recovery run the
+-- rule has nothing to compare against — U2 shows which rows the newest write covered; if it
+-- does not list 09-21 onward, stop.
+
+-- U1. THE TARGETS. As of 2026-09-23 expect nine rows, 2026-09-12..2026-09-20, all
+--     residual-sized and all from one earlier write.
+SELECT date, value, source, tier, fetched_at,
+       CASE WHEN value < 10000 THEN 'residual-sized'
+            ELSE 'REAL-SIZED - NOT A TARGET' END AS looks_like
   FROM metrics
  WHERE project = 'Morpho'
    AND metric = 'fees_usd'
    AND source LIKE 'defillama%'
    AND date >= '2026-09-12'
+   AND fetched_at < (SELECT MAX(fetched_at) FROM metrics
+                      WHERE project = 'Morpho' AND metric = 'fees_usd')
  ORDER BY date;
 
--- U2. WHAT SURVIVES — the genuine pre-break history, which this section never touches. Run
---     before and after U3 and only the count above should change; this one should not move.
-SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
+-- U2. WHAT SURVIVES — every post-break row U1 does NOT select, which must be exactly the days
+--     morpho-blue reports (2026-09-21 onward as of 2026-09-23). Then the pre-break count. Run
+--     before and after U3; neither should move.
+SELECT date, value, fetched_at
+  FROM metrics
+ WHERE project = 'Morpho'
+   AND metric = 'fees_usd'
+   AND date >= '2026-09-12'
+   AND fetched_at >= (SELECT MAX(fetched_at) FROM metrics
+                       WHERE project = 'Morpho' AND metric = 'fees_usd')
+ ORDER BY date;
+
+SELECT COUNT(*) AS pre_break_rows, MIN(date) AS first_date, MAX(date) AS last_date
   FROM metrics
  WHERE project = 'Morpho' AND metric = 'fees_usd' AND date < '2026-09-12';
 
--- U3. THE DELETE. Deleted rather than left in place: a near-empty residual sitting beside good
---     history feeds the 30-day sum and every trailing window the same way a real observation
---     would, and there is no route to a better number for these specific dates — DefiLlama has
---     not reported them, full stop. Once morpho-blue reports again, recovery re-pulls the WHOLE
---     history (never window_days) and overwrites everything from 2026-09-12 forward with the
---     real sum, so this delete does not need to be re-run after that happens; it simply has
---     nothing left to find.
+-- U3. THE DELETE. The same rule as U1 plus the magnitude interlock. Deleted rather than left:
+--     a near-empty residual beside good history feeds every trailing window as though it were
+--     an observation, and there is no better number for these dates until DefiLlama backfills
+--     morpho-blue for them. When it does, recovery stores the real sum for that day with no
+--     human step — so this does not need re-running afterwards. It is not a date to update.
 -- BEGIN;
 -- DELETE FROM metrics
 --  WHERE project = 'Morpho'
 --    AND metric = 'fees_usd'
 --    AND source LIKE 'defillama%'
---    AND date >= '2026-09-12';
+--    AND date >= '2026-09-12'
+--    AND value < 10000
+--    AND fetched_at < (SELECT MAX(fetched_at) FROM metrics
+--                       WHERE project = 'Morpho' AND metric = 'fees_usd');
 -- COMMIT;
 
--- U4. VERIFY — U1 returns nothing, and U2's count/dates are unchanged from before U3 ran.
+-- U4. VERIFY — U1 returns nothing; U2's rows and the pre-break count are unchanged.
+--     The level-break check then sees only real post-break days. It is NOT EVALUATED until
+--     five of the seven window days are stored (fewer than the 60% floor), then evaluates clean
+--     — see config's sheet_trace for why that is the right outcome and not a silence.
+SELECT COUNT(*) AS residual_rows_left
+  FROM metrics
+ WHERE project = 'Morpho'
+   AND metric = 'fees_usd'
+   AND date >= '2026-09-12'
+   AND value < 10000;
 
 -- ========================================================================================
 -- V. GEODNET actual_buyback_usd ROWS WRITTEN BY THE DERIVATION.                     2026-09-22
@@ -2443,7 +2485,7 @@ SELECT metric, COUNT(*) AS rows
 
 -- ========================================================================================
 -- AB. MORPHO fees_usd — THE DAILY SERIES, WHICH IS THE ONLY THING THAT SETTLES THIS.
---     AB1-AB4 ARE ALL SELECTS. NOTHING HERE WRITES.                           2026-09-24
+--     AB1-AB4 ARE ALL SELECTS. NOTHING HERE WRITES.                           2026-09-23
 -- ========================================================================================
 -- The 09-23 verdict (an unbackfilled hole inside the 7-day lookback) made a one-step
 -- prediction for 09-24 and the prediction FAILED: fees_usd reads $13,302,020.60, roughly
@@ -2499,7 +2541,7 @@ HAVING COUNT(*) > 1;
 
 -- ========================================================================================
 -- AC. MORPHO utilisation_pct / supply_units — THE DefiLlama ROWS THAT PIN measuring_point_changed.
---     AC1-AC2 LOOK. AC3 is the proposed delete, commented out.                  2026-09-24
+--     AC1-AC2 LOOK. AC3 is the proposed delete, commented out.                  2026-09-23
 -- ========================================================================================
 -- utilisation_pct renders n/a with status measuring_point_changed and source
 -- morpho_api:markets. The flag is CORRECT and it is STUCK: the stored series carries rows from
@@ -2564,7 +2606,7 @@ SELECT DISTINCT source
 
 -- ========================================================================================
 -- AD. GEODNET buyback_wallet_polygon_historical — RETIRED 2026-09-24; ANY ROWS IT WROTE.
---     AD1 LOOKS. AD2 is the proposed delete, commented out.                    2026-09-24
+--     AD1 LOOKS. AD2 is the proposed delete, commented out.                    2026-09-23
 -- ========================================================================================
 -- The contract entry is gone from config (kept as retired_contracts on the GEODNET entry).
 -- It was kind buyback_fund_balance on a project whose buyback BURNS, so the metric it served

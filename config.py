@@ -6980,8 +6980,26 @@ PROJECTS = [
                         "plus 09-21 and 09-22 at ~$700k. Six of seven is above the 60% floor, "
                         "so the check RUNS, and the median of six lands on the residual. The "
                         "text is a correct computation over stale ROWS. The fix is "
-                        "orphan_cleanup.sql section U3, which was written for exactly these "
-                        "rows and has not been run; nothing in code re-derives it."),
+                        "orphan_cleanup.sql section U3 — RE-SCOPED 2026-09-23 before it was "
+                        "ever run, because its original `date >= 2026-09-12` had gone stale "
+                        "and would have deleted the recovered 09-21/09-22 rows too. It now "
+                        "targets the post-break rows the latest recovery did not rewrite."),
+                    # ===== WHAT DELETING THE NINE ROWS DOES TO THE CHECK — driven, not reasoned.
+                    # check_level_breaks run 2026-09-23 on the store's shape, asof 09-24..09-28:
+                    #   rows kept:     CLEAN from 09-24 — but on 09-24 the median is 349,089, half
+                    #                  residual and half real, inside 10x by accident rather than
+                    #                  because the window is right.
+                    #   rows deleted:  NOT EVALUATED on 09-24 and 09-25 (3 and 4 rows, under the
+                    #                  4.2 floor), then CLEAN from 09-26 over real days only.
+                    # Either way the stale "median 176" gap row is gone on the next run. The
+                    # deletion is still the right call: the rows are wrong data in every trailing
+                    # window, and a check that says "not enough data" for two days is honest
+                    # where a check that passes on a half-residual median is lucky.
+                    "level_break_after_u3": {
+                        "rows_kept": "clean from 2026-09-24, first on a mixed median of 349,089",
+                        "rows_deleted": "not evaluated 2026-09-24/25 (below the 4.2-row floor); clean from 2026-09-26 on real days only",
+                        "gap_row_on_next_run": "gone in both cases",
+                    },
                     "supply_units_and_utilisation": "see the Morpho project entry — sanity bound and measuring-point notes",
                 },
                 # ===== ** THE RECOVERY REVIEW FLAG IS SCOPED TO THE HOLE. DO NOT WIDEN IT BACK.

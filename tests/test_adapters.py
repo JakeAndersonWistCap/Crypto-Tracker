@@ -12870,3 +12870,218 @@ def test_the_small_items_landed_as_specified_or_with_the_reason_they_did_not():
     assert config.relation_exempt("Near", "circulating_supply", "total_supply") is None
     q = next(q for q in config.OPEN_QUESTIONS if q.get("project") == "Near" and "10 NEAR" in q.get("topic", ""))
     assert "DO NOT WIDEN THE TOLERANCE" in q["suggestion"] and "do not add a relation_exempt" in q["suggestion"]
+
+
+# ======================================================================================
+# SECTION U RE-SCOPED, AND THE POST-DATING GUARD. 2026-09-23.
+# ======================================================================================
+
+def _morpho_fees_store(path):
+    """A store shaped like the one reported on 2026-09-23, plus the case that makes the break-date
+    floor load-bearing: OLD parent-slug history that is residual-SIZED and never rewritten."""
+    import sqlite3
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL, "
+                 "source TEXT, tier INT, fetched_at TEXT, PRIMARY KEY(date, project, metric))")
+    rows = []
+    # 2023 parent-slug history: no child listing covers it, so recovery never rewrites it —
+    # stale timestamp AND under the magnitude interlock. Only `date >= break` keeps it out.
+    for d in ("2023-05-01", "2023-05-02", "2023-05-03"):
+        rows.append((d, 3_000.0, "2026-09-10T00:00:00Z"))
+    # Pre-break, re-pulled by the latest recovery run.
+    for day in range(1, 12):
+        rows.append((f"2026-09-{day:02d}", 600_000.0 + day, "2026-09-23T20:36:29Z"))
+    # THE NINE TARGETS — written by the earlier run, never rewritten since.
+    for day, v in zip(range(12, 21), (21.64, 0.0, 2.13, 2.99, 5.10, 12.0, 0.0, 44.0, 178.0)):
+        rows.append((f"2026-09-{day:02d}", v, "2026-09-23T08:56:34Z"))
+    # THE TWO RECOVERED DAYS the original section would have deleted.
+    rows += [("2026-09-21", 704_123.0, "2026-09-23T20:36:29Z"),
+             ("2026-09-22", 713_684.0, "2026-09-23T20:36:29Z")]
+    conn.executemany("INSERT INTO metrics VALUES (?, 'Morpho', 'fees_usd', ?, 'defillama', 1, ?)",
+                     [(d, v, f) for d, v, f in rows])
+    conn.commit()
+    conn.close()
+
+
+def test_section_u_targets_exactly_the_uncovered_days_and_the_delete_spares_the_recovered_ones(
+        tmp_path, monkeypatch, capsys):
+    """U selected `date >= '2026-09-12'` — right when written, stale once morpho-blue recovered
+    from 09-21. Re-scoped by what it TARGETS: post-break rows the latest recovery did not rewrite.
+    Driven end to end through run_sql.main(), DELETE included, against the reported store shape.
+    """
+    import sqlite3
+
+    import run_sql as R
+
+    db = tmp_path / "metrics.db"
+    _morpho_fees_store(db)
+    sec = R.parse_sections(R.SQL_FILE.read_text(encoding="utf-8"))["U"]
+    assert sec["authored"] and "T" in sec["authored"], "the re-scoped section carries a precise stamp"
+    assert "<=" not in sec["text"].split("-- U1.")[1].split("-- U2.")[0], "no end date in the targeting rule"
+
+    # (1) U1 — exactly the nine, nothing else.
+    conn = sqlite3.connect(str(db))
+    u1 = [s for s in R.split_statements(sec["text"]) if R.classify(s) == "select"][0]
+    got = conn.execute(R.strip_comments(u1)).fetchall()
+    assert [r[0] for r in got] == [f"2026-09-{d:02d}" for d in range(12, 21)], got
+    assert {r[-1] for r in got} == {"residual-sized"}
+    conn.close()
+
+    # (2) THE DELETE, through the real --delete path with its typed confirmation.
+    monkeypatch.setattr("builtins.input", lambda *a: "DELETE U")
+    assert R.main(["--delete", "U", "--db", str(db)]) == 0
+    printed = capsys.readouterr().out
+    assert "Rows this would remove from metrics (9)" in printed, printed
+    assert "!!" not in printed, "rows written before the re-scoped section's stamp raise no note"
+
+    conn = sqlite3.connect(str(db))
+    left = dict(conn.execute("SELECT date, value FROM metrics").fetchall())
+    conn.close()
+    assert left["2026-09-21"] == 704_123.0 and left["2026-09-22"] == 713_684.0, \
+        "the ONLY good post-break data must survive — this is the near-miss"
+    assert not any(f"2026-09-{d:02d}" in left for d in range(12, 21)), "the nine are gone"
+    assert all(d in left for d in ("2023-05-01", "2023-05-02", "2023-05-03")), \
+        "old parent history is stale AND residual-sized; only the break-date floor protects it"
+    assert all(f"2026-09-{d:02d}" in left for d in range(1, 12)), "pre-break history untouched"
+
+
+def test_the_original_section_u_would_have_been_stopped_by_the_post_dating_guard(
+        tmp_path, monkeypatch, capsys):
+    """The generalisable version of the near-miss: a preview says which rows were WRITTEN after
+    the section was authored, and splits them by write so the newest batch stands out.
+
+    ** WHAT THE FLAG ALONE CANNOT DO, pinned so nobody over-trusts it. ** fetched_at is when a
+    row was last WRITTEN (the upsert refreshes it). All eleven rows were written after U was
+    authored — the nine targets included — so the flag fires on all of them. The line that
+    separates the two recovered days is the BATCH breakdown, which marks them NEWEST.
+    """
+    import sqlite3
+
+    import run_sql as R
+
+    db = tmp_path / "metrics.db"
+    _morpho_fees_store(db)
+    original = """\
+-- ========================================================================================
+-- U. MORPHO'S PARENT-RESIDUAL fees_usd ROWS — 2026-09-12 onward.                    2026-09-23
+--    U1-U2 LOOK. U3 deletes, scoped tightly to exactly what U1/U2 showed.
+-- ========================================================================================
+-- U1. THE RESIDUAL ROWS.
+SELECT date, project, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'fees_usd' AND source LIKE 'defillama%'
+   AND date >= '2026-09-12'
+ ORDER BY date;
+-- U3. THE DELETE.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Morpho'
+--    AND metric = 'fees_usd'
+--    AND source LIKE 'defillama%'
+--    AND date >= '2026-09-12';
+-- COMMIT;
+"""
+    sql_path = tmp_path / "orphan_cleanup.sql"
+    sql_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(R, "SQL_FILE", sql_path)
+    monkeypatch.setattr("builtins.input", lambda *a: "no")          # read, then abort
+
+    assert R.main(["--delete", "U", "--db", str(db)]) == 1
+    out = capsys.readouterr().out
+    assert "Rows this would remove from metrics (11)" in out, "the original scope, as it was"
+    assert "11 of 11 row(s) were last WRITTEN after this section was authored" in out, out
+    assert "DATE-ONLY stamp" in out
+    assert "2 different writes" in out
+    newest = [l for l in out.splitlines() if "<- NEWEST" in l]
+    assert len(newest) == 1 and "2 row(s)" in newest[0], newest
+    assert "2026-09-21..2026-09-22" in newest[0] and "704,123 .. 713,684" in newest[0], newest[0]
+    older = [l for l in out.splitlines() if "written 2026-09-23T08:56:34Z" in l]
+    assert older and "9 row(s)" in older[0] and "2026-09-12..2026-09-20" in older[0], older
+    # AND AT THE POINT OF DECISION, not only above a table that may have scrolled away.
+    assert out.index("!! SOME ROWS ABOVE WERE WRITTEN AFTER SECTION U") < out.index("Type exactly")
+
+    conn = sqlite3.connect(str(db))
+    assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 25, "aborted: nothing deleted (3+11+9+2)"
+    conn.close()
+
+
+def test_the_post_dating_guard_is_silent_when_nothing_post_dates_and_loud_about_a_bad_stamp():
+    """A note on every run is a note nobody reads, so it speaks only when it has something to say."""
+    from datetime import datetime, timezone
+
+    import run_sql as R
+
+    cols = ["date", "value", "fetched_at"]
+    rows = [("2026-09-12", 21.64, "2026-09-23T08:56:34Z")]
+    now = datetime(2026, 9, 23, 22, 0, tzinfo=timezone.utc)
+    # Written before a precise stamp: silent.
+    assert R.fetch_provenance(cols, rows, "2026-09-23T21:26Z", now) == []
+    # Written after it: flagged, single write so no batch table.
+    notes = R.fetch_provenance(cols, rows, "2026-09-23T08:00Z", now)
+    assert notes and notes[0].startswith("!! 1 of 1 row(s)") and "different writes" not in " ".join(notes)
+    # DATE-ONLY stamps are conservative: the whole authoring day counts.
+    assert R.fetch_provenance(cols, rows, "2026-09-23", now)[0].startswith("!! 1 of 1")
+    assert R.fetch_provenance(cols, rows, "2026-09-24", now)[0].startswith("!! this section's authoring stamp")
+    # A FUTURE stamp silently disables the check — so it is refused loudly instead. This is the
+    # shape of the one-day-ahead misdating found in the AB/AC/AD headers on 2026-09-23.
+    assert "FUTURE" in R.fetch_provenance(cols, rows, "2026-09-25T00:00Z", now)[0]
+    # No stamp, no fetched_at: said once, or nothing.
+    assert "no authoring stamp" in R.fetch_provenance(cols, rows, None, now)[0]
+    assert R.fetch_provenance(["date", "value"], [("2026-09-12", 1.0)], "2026-09-23", now) == []
+
+    # EVERY section's stamp in the real file is readable and none is in the future.
+    secs = R.parse_sections(R.SQL_FILE.read_text(encoding="utf-8"))
+    for label, sec in secs.items():
+        if sec["authored"]:
+            assert R._utc(sec["authored"]) is not None, (label, sec["authored"])
+            assert R._utc(sec["authored"]).date() <= datetime.now(timezone.utc).date(), \
+                f"section {label} is stamped in the future ({sec['authored']}) — the guard cannot see past it"
+
+
+def test_the_level_break_check_evaluates_only_real_days_once_section_u_has_run():
+    """Driven through check_level_breaks, not reasoned about.
+
+    ** "CLEARS" MEANS TWO DIFFERENT THINGS HERE AND THE DIFFERENCE MATTERS. ** With the nine rows
+    kept, the check is clean from 09-24 on a median that is half residual (~349k) — inside 10x
+    by accident. With them deleted it is NOT EVALUATED for two days (below the 60% floor), then
+    clean over real days only. Both remove the stale gap row; only one is clean for the right reason.
+    """
+    import datetime as dt
+
+    from fetch.base import FetchOutput
+    from fetch.validate import check_level_breaks
+
+    pre = [(dt.date(2026, 3, 1) + dt.timedelta(days=i), 490_000 + (i * 7919) % 160_000)
+           for i in range((dt.date(2026, 9, 11) - dt.date(2026, 3, 1)).days + 1)]
+    residual = {12: 21.64, 13: 0.0, 14: 2.13, 15: 2.99, 16: 5.10, 17: 12.0, 18: 0.0, 19: 44.0, 20: 178.0}
+    real = {21: 704_123.0, 22: 713_684.0, 23: 698_000.0, 24: 711_000.0, 25: 705_000.0, 26: 720_000.0}
+
+    def run(asof_day, keep_residual):
+        asof = dt.date(2026, 9, asof_day)
+        pts = list(pre) + [(dt.date(2026, 9, d), v)
+                           for d, v in {**(residual if keep_residual else {}), **real}.items()
+                           if dt.date(2026, 9, d) < asof]       # today's partial row is never stored
+        df = pd.DataFrame({"project": "Morpho", "metric": "fees_usd", "source": "defillama",
+                           "date": [pd.Timestamp(d) for d, _ in pts], "value": [v for _, v in pts]})
+        win = df[(df.date > pd.Timestamp(asof) - pd.Timedelta(days=7)) & (df.date <= pd.Timestamp(asof))]
+        out = FetchOutput()
+        check_level_breaks(df, out, asof=pd.Timestamp(asof))
+        fired = [r for r in out.review if r["metric"] == "fees_usd"]
+        return ("not_evaluated" if len(win) < 7 * 0.6 else "fires" if fired else "clean"), win
+
+    assert config.level_break_windows("Morpho", "fees_usd") == (7, 30)
+
+    # AFTER U3: two honest days of "not enough data", then clean over real days only.
+    assert run(24, False)[0] == "not_evaluated" and run(25, False)[0] == "not_evaluated"
+    state, win = run(26, False)
+    assert state == "clean" and win.value.min() > 600_000, "only real days in the window"
+
+    # WITH THE ROWS KEPT: already "clean" on 09-24 — on a median that is neither residual nor real.
+    state, win = run(24, True)
+    assert state == "clean" and 300_000 < win.value.median() < 400_000, win.value.median()
+
+    # AND THE DAY IT FIRED — the 2026-09-23 run that produced the stale gap text.
+    assert run(23, True)[0] == "fires"
+    rec = (config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]
+           ["level_break_2026_09_23_REOPENED"]["sheet_trace_2026_09_24"])
+    assert "not evaluated" in rec["level_break_after_u3"]["rows_deleted"]

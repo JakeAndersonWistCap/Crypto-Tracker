@@ -34,6 +34,7 @@ import pathlib
 import re
 import sqlite3
 import sys
+from datetime import datetime, timezone
 
 HERE = pathlib.Path(__file__).resolve().parent
 SQL_FILE = HERE / "orphan_cleanup.sql"
@@ -65,6 +66,19 @@ SECTION_MARKER = re.compile(r"^--\s?([A-Z]{1,2})(\d*)\.\s?(.*)$")
 # permissive form. An over-long label falls through to the ordinary "no section X" message with
 # the available list, which is the answer the caller needs.
 SECTION_ARG = re.compile(r"^[A-Z]+$")
+
+# ===== WHEN A SECTION WAS WRITTEN, SO ITS PREVIEW CAN SAY WHAT POST-DATES IT. 2026-09-23. =====
+# Section headers end with an authoring stamp — "2026-09-22" by convention, or a precise
+# "2026-09-23T21:30Z" — on the marker line or one of the two after it. It is read so that a
+# preview can separate the rows a section was WRITTEN AGAINST from rows written into the store
+# later, which the section's WHERE clause never saw.
+#
+# ** THE NEAR-MISS THAT PROMPTED IT. ** Section U selected `date >= '2026-09-12'` because on
+# the day it was written every row from the break onward was the parent residual. morpho-blue
+# recovered from 2026-09-21 and the recovery wrote two real days into that range. U's preview
+# listed them silently beside the nine targets, and its DELETE would have removed the only good
+# post-break data.
+AUTHORED_STAMP = re.compile(r"(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?Z)?)\s*$")
 
 
 def _decode_safe() -> None:
@@ -168,10 +182,18 @@ def parse_sections(sql: str) -> dict[str, dict]:
                     if body and not set(body) <= {"=", "-"}:
                         title = body
                         break
+        authored = None
+        for k in range(n, min(n + 3, end_line)):
+            probe = lines[k].rstrip()
+            m_st = AUTHORED_STAMP.search(probe)
+            if probe.lstrip().startswith("--") and m_st:
+                authored = m_st.group(1)
+                break
         sections[letter] = {
             "title": title or "(no title)",
             "line": n + 1,
             "text": sql[offsets[n]:offsets[end_line]],
+            "authored": authored,
         }
     return sections
 
@@ -227,6 +249,98 @@ def _check_section_labels(sql: str, sections: dict) -> list[str]:
             expected = label
         expected = _next_label(expected)
     return problems
+
+
+def _utc(stamp) -> datetime | None:
+    """An ISO-ish timestamp as an aware UTC datetime, or None. Accepts Z, +00:00, a space for T."""
+    if stamp is None:
+        return None
+    t = str(stamp).strip().replace(" ", "T", 1)
+    if t.endswith("Z"):
+        t = t[:-1] + "+00:00"
+    try:
+        d = datetime.fromisoformat(t)
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _num(v) -> str:
+    return f"{v:,.2f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+
+def fetch_provenance(cols: list[str], rows: list, authored: str | None,
+                     now: datetime | None = None) -> list[str]:
+    """Lines to print under a preview: which rows were last WRITTEN after the section was authored.
+
+    ** WHAT THIS CAN AND CANNOT SEE. ** `fetched_at` is when a row was last WRITTEN, not when it
+    first appeared — store.py's upsert sets fetched_at = excluded.fetched_at. So "written after
+    this section" includes rows that already existed and were rewritten since, not only rows
+    that are new. That is still the right question — a rewritten row may carry a different value
+    from the one the section was written against — but it means the flag alone does not separate
+    a still-intended target from an interloper when both were rewritten after authoring.
+    That is what the batch breakdown is for: rows written by a LATER run than the rest are the
+    likeliest sign the situation has moved on. It is the line that would have stopped section U.
+
+    Silent when nothing post-dates the section: a flag on every run is a flag nobody reads.
+    """
+    if "fetched_at" not in cols or not rows:
+        return []
+    fi = cols.index("fetched_at")
+    di = cols.index("date") if "date" in cols else None
+    vi = cols.index("value") if "value" in cols else None
+    if not authored:
+        return ["note: this section carries no authoring stamp, so rows written after it "
+                "cannot be told apart from the ones it was written against."]
+    stamp = _utc(authored)
+    if stamp is None:
+        return [f"note: unreadable authoring stamp {authored!r} — post-dating rows cannot be told apart."]
+    precise = "T" in authored
+    now = now or datetime.now(timezone.utc)
+    if (stamp if precise else stamp.replace(hour=0)) > now:
+        # A future stamp silently disables the check: nothing is ever "after" it.
+        return [f"!! this section's authoring stamp ({authored}) is in the FUTURE, so no row can "
+                f"be recognised as written after it. Correct the stamp before trusting this preview."]
+
+    def later(r) -> bool:
+        f = _utc(r[fi])
+        if f is None:
+            return False
+        return f > stamp if precise else f.date() >= stamp.date()
+
+    late = [r for r in rows if later(r)]
+    if not late:
+        return []
+    basis = (authored if precise else
+             f"{authored} — a DATE-ONLY stamp, so every row written on or after that day counts; "
+             f"the time of day it was written is not recorded")
+    out = [f"!! {len(late)} of {len(rows)} row(s) were last WRITTEN after this section was "
+           f"authored ({basis}). Its WHERE clause was chosen before they took their current "
+           f"values — confirm each one is still a target."]
+    batches: dict[str, list] = {}
+    for r in late:
+        batches.setdefault(str(r[fi]), []).append(r)
+    order = sorted(batches, key=lambda k: _utc(k) or datetime.min.replace(tzinfo=timezone.utc))
+    if len(order) > 1:
+        out.append(f"   They come from {len(order)} different writes. Rows from a LATER run than "
+                   f"the rest are the likeliest sign the situation this section describes has "
+                   f"moved on since it was written:")
+    if len(order) > 8:
+        out.append(f"     ... {len(order) - 8} earlier write(s) not shown")
+    for k in order[-8:]:
+        rs = batches[k]
+        line = f"     written {k}   {len(rs)} row(s)"
+        if di is not None:
+            ds = sorted(str(r[di]) for r in rs)
+            line += f"   dates {ds[0]}" + (f"..{ds[-1]}" if ds[-1] != ds[0] else "")
+        if vi is not None:
+            vs = [r[vi] for r in rs if isinstance(r[vi], (int, float))]
+            if vs:
+                line += f"   value {_num(min(vs))}" + (f" .. {_num(max(vs))}" if max(vs) != min(vs) else "")
+        if len(order) > 1 and k == order[-1]:
+            line += "   <- NEWEST"
+        out.append(line)
+    return out
 
 
 def classify(stmt: str) -> str:
@@ -305,7 +419,7 @@ def list_sections(sections: dict[str, dict]) -> int:
     return 0
 
 
-def run_selects(conn, section_text: str, letter: str) -> int:
+def run_selects(conn, section_text: str, letter: str, authored: str | None = None) -> int:
     stmts = split_statements(section_text)
     ran, refused = 0, 0
     for stmt in stmts:
@@ -324,7 +438,10 @@ def run_selects(conn, section_text: str, letter: str) -> int:
         print(f"\n  {label[:110]}" if label else "")
         try:
             cur = conn.execute(body)
-            print(render(cur, cur.fetchall()))
+            rows = cur.fetchall()
+            print(render(cur, rows))
+            for line in fetch_provenance([d[0] for d in cur.description], rows, authored):
+                print("    " + line)
             ran += 1
         except sqlite3.Error as e:
             print(f"    SQL ERROR: {e}")
@@ -336,7 +453,8 @@ def run_selects(conn, section_text: str, letter: str) -> int:
     return 0
 
 
-def run_delete(conn, section_text: str, letter: str, db: pathlib.Path) -> int:
+def run_delete(conn, section_text: str, letter: str, db: pathlib.Path,
+               authored: str | None = None) -> int:
     lines = uncommented_write(section_text)
     if not lines:
         print(f"\n  Section {letter} ships no DELETE.")
@@ -371,6 +489,7 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path) -> int:
     # wrong table. Same class as the J3 bug — a lookup keyed on something that does not match the
     # shape of the data — and the same fix: resolve it from the statement instead of assuming it.
     total = 0
+    post_dating = False
     for d in deletes:
         where = d[d.upper().index(" WHERE ") + 7:] if " WHERE " in d.upper() else "1=1"
         m = re.search(r"DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)", d, re.I)
@@ -398,6 +517,10 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path) -> int:
         print(render(cur, rows[:200]))
         if len(rows) > 200:
             print(f"    ... and {len(rows) - 200} more")
+        notes = fetch_provenance([c[0] for c in cur.description], rows, authored)
+        for line in notes:
+            print("    " + line)
+        post_dating = post_dating or any(n.startswith("!!") for n in notes)
         total += len(rows)
 
     if total == 0:
@@ -406,6 +529,10 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path) -> int:
         print("  be replaced with the real ones from D2 first.\n")
         return 1
 
+    if post_dating:
+        # Said again at the point of decision, not only above a table that may have scrolled off.
+        print(f"\n  !! SOME ROWS ABOVE WERE WRITTEN AFTER SECTION {letter} WAS AUTHORED — read the "
+              f"notes under the table before confirming.")
     print(f"\n  BACK UP FIRST. This cannot be undone:")
     print(f"      copy {db.name} {db.name}.bak")
     want = f"DELETE {letter}"
@@ -470,8 +597,8 @@ def main(argv=None) -> int:
         print(f"\n  {SQL_FILE.name} section {letter} (line {sec['line']}) against {db.name}")
         print(f"  {sec['title'][:100]}")
         if args.delete:
-            return run_delete(conn, sec["text"], letter, db)
-        return run_selects(conn, sec["text"], letter)
+            return run_delete(conn, sec["text"], letter, db, sec.get("authored"))
+        return run_selects(conn, sec["text"], letter, sec.get("authored"))
     finally:
         conn.close()
 
