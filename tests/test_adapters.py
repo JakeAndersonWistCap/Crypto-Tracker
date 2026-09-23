@@ -159,6 +159,93 @@ class _HolderTokenReader:
         return self.assets if args and args[0] else self.shares
 
 
+def test_every_check_is_reachable_from_main_and_prints_its_section(capsys, monkeypatch):
+    """** A CHECK WAS BUILT, TESTED, PUSHED — AND NEVER RAN. **
+
+    aerodrome_lock_inputs was added, covered by its own unit test, and left out of main()'s
+    list: the edit meant to register it did not match, did nothing, and said nothing. The
+    verification was `'aerodrome_lock_inputs' in dir(module)` — which asks whether the function
+    EXISTS, not whether anything calls it. A defined, unreferenced check produces no output, no
+    error and no failing test. It is invisible in exactly the way a missing check is.
+
+    ** THE UNIT TESTS COULD NOT HAVE CAUGHT IT, AND THAT IS THE LESSON. ** Every other test of
+    this script either reads its source as text or calls one function directly. Nothing ran the
+    entry point, so the suite was green with a hole in the run path.
+
+    Two assertions, and the second is the one that generalises:
+      1. main() end-to-end prints a section for every registered check.
+      2. EVERY function in the file that prints a section header is in the registry — so
+         forgetting to register the next one fails here rather than in six weeks' output.
+    """
+    import inspect
+    import re
+    import check_offline_items as coi
+
+    # No network: every endpoint list is emptied, so each check takes its unreachable path and
+    # prints its header regardless. The headers are what this test is about.
+    monkeypatch.setattr(coi, "ETH_RPCS", [], raising=False)
+    monkeypatch.setattr(coi, "_PUBLIC_BASE_RPCS", [], raising=False)
+    monkeypatch.setattr(coi, "_rpcs_for", lambda chain="ethereum": [], raising=False)
+
+    class _Dead:
+        def post(self, *a, **k):
+            raise RuntimeError("no network in tests")
+
+        def get(self, *a, **k):
+            raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(coi, "requests", _Dead(), raising=False)
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py"])
+
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 0, "one unreachable check must never stop the rest"
+
+    # ===== 1. EVERY REGISTERED CHECK LEFT A TRACE IN THE OUTPUT.
+    for fn in coi.CHECKS:
+        assert fn.__name__ in out, f"{fn.__name__} is registered but printed nothing"
+    assert f"{len(coi.CHECKS)} checks ran" in out, out[-400:]
+
+    # ** AND THE ONE THAT WENT MISSING IS NAMED EXPLICITLY. ** A regression here is the exact
+    # bug, not a generic one.
+    assert "aerodrome_lock_inputs" in out
+    assert "AERODROME" in out.upper(), "the Aerodrome section header must appear"
+
+    # ** AND A SECTION THAT PRINTS SOMETHING IS NOT THE SAME AS ONE THAT WORKS. ** Running the
+    # script for real — which is what this test does and nothing else did — showed the Aerodrome
+    # probe printing "block (None, None)": eth_block_number returns (block, endpoint) and the
+    # guard tested the TUPLE against None, which is never None, so an unreachable chain fell
+    # through and made four calls that could not work. Asserting only that the header appears
+    # would have passed that too.
+    aero = out[out.upper().index("AERODROME"):]
+    aero = aero[:aero.find("=====", 200) if aero.find("=====", 200) > 0 else len(aero)]
+    assert "(None, None)" not in aero, f"a tuple leaked into the output: {aero[:300]}"
+    assert "UNREACHABLE — no Base RPC" in aero, \
+        f"with no network it must say so and stop, not proceed: {aero[:300]}"
+
+    # ===== 2. NOTHING THAT PRINTS A SECTION IS LEFT OUT OF THE REGISTRY.
+    # A "check" is any public module-level function whose body calls head() — that is what
+    # prints a section, so it is the honest definition and it maintains itself.
+    src = inspect.getsource(coi)
+    registered = {f.__name__ for f in coi.CHECKS}
+    unregistered = []
+    for name, fn in vars(coi).items():
+        if (not name.startswith("_") and inspect.isfunction(fn)
+                and fn.__module__ == coi.__name__ and name not in registered):
+            try:
+                body = inspect.getsource(fn)
+            except OSError:
+                continue
+            if re.search(r"^\s+head\(", body, re.M):
+                unregistered.append(name)
+    assert not unregistered, (
+        f"these print a section but main() never calls them: {unregistered}. "
+        f"Add them to check_offline_items.CHECKS — a check that is defined and unreferenced "
+        f"produces no output, no error and no failing test.")
+    del src
+    print(f"entry point ok: {len(coi.CHECKS)} checks registered, all reachable, none orphaned")
+
+
 def test_a_holder_whose_symbol_differs_from_its_tokens_is_read_through_the_token():
     """** THE RUN OF 20260923T095552Z REFUSED PENDLE'S ASSET READ ON A SYMBOL MISMATCH. **
 
@@ -7840,12 +7927,22 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
     assert "may not be \"MCD_SPLIT\"" in src, \
         "the registry key is not guessed either — list() is printed in full first"
 
-    # ALL OF THEM ACTUALLY RUN. A check that exists and is not called is not a check.
-    main = src[src.index("def main():"):]
+    # ===== ** THIS GUARD EXISTED AND STILL MISSED ONE, WHICH IS THE INTERESTING PART. **
+    # It read main()'s SOURCE TEXT for a HARDCODED list of eight names. aerodrome_lock_inputs
+    # was a ninth, nobody added it here, and the guard passed while the check never ran — a
+    # completeness check that has to be kept complete by hand is not a completeness check.
+    #
+    # The list is now the module's own registry, and the real assertion lives in
+    # test_every_check_is_reachable_from_main_and_prints_its_section: it runs main() end to end
+    # and separately proves that every function printing a section is registered. This keeps the
+    # named-eight assertion as a cheap regression on the ones that matter most, but it is no
+    # longer what the suite relies on.
+    import check_offline_items as _coi
+    registered = {f.__name__ for f in _coi.CHECKS}
     for fn in ("pendle_spendle_virtual", "uniswap_firepit_threshold", "sky_chainlog",
                "sky_splitter", "sky_splitter_params", "sky_splitter_history", "sky",
-               "morpho_blue_api"):
-        assert fn in main, f"{fn} is defined but never called from main()"
+               "morpho_blue_api", "aerodrome_lock_inputs"):
+        assert fn in registered, f"{fn} is defined but not in CHECKS, so main() never calls it"
     print("offline checks ok: H1 added as a direct shares-vs-assets read on one block, "
           "H2 and H3 already present and confirmed")
 

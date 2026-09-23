@@ -1166,11 +1166,15 @@ def aerodrome_lock_inputs():
     target cannot produce a 36m excess on its own, but an unpinned comparison cannot prove that.
     """
     head("AERODROME — which of the three lock reads is wrong? (four calls, one block)")
-    blk = eth_block_number(chain="base")
+    # ** eth_block_number RETURNS (block, endpoint), NOT A BARE VALUE. ** The first version
+    # tested `blk is None` against the tuple, which is never None — so an unreachable chain fell
+    # through and printed "block (None, None)" before making four calls that could not work.
+    # Caught by running the script rather than by reading it.
+    blk, via = eth_block_number(chain="base")
     if blk is None:
         print("  UNREACHABLE — no Base RPC answered eth_blockNumber; nothing else attempted.")
         return
-    print(f"  block {blk}\n")
+    print(f"  block {int(blk, 16):,} (via {_rpc_host(via)})\n")
     reads = [
         ("AERO.balanceOf(veAERO)", AERO_TOKEN, SEL_BALANCE_OF + VEAERO[2:].lower().rjust(64, "0"),
          "what locked_tokens reads"),
@@ -1225,6 +1229,41 @@ def aerodrome_lock_inputs():
           "bound or the formula on the strength of this — it is a diagnosis, not a fix.")
 
 
+# ===== THE RUN PATH, AS DATA. Added 2026-09-23 after a check was built and never called. =====
+#
+# ** aerodrome_lock_inputs WAS WRITTEN, TESTED AND PUSHED, AND NEVER RAN. ** The edit that was
+# supposed to add it to main()'s list did not match, did nothing, and said nothing — and the
+# verification was `'aerodrome_lock_inputs' in dir(module)`, which asks whether the function
+# EXISTS, not whether anything calls it. A check that is defined and unreferenced produces no
+# output, no error and no failing test: it is invisible in exactly the way a missing check is.
+#
+# THE LIST IS NOW A MODULE-LEVEL REGISTRY, so that:
+#   * it can be inspected by a test rather than read by eye, and
+#   * test_every_check_is_reachable_from_main compares it against every function in this file
+#     that prints a section header, so forgetting to register the NEXT one fails the suite.
+# The ordering is the reporting order and is deliberate: Sky first, because it is the one with
+# an open question, and beaconchain last, because it is the slowest.
+CHECKS = (
+    sky_chainlog, sky, morpho_blue_api,
+    sky_splitter, sky_splitter_params, sky_splitter_history,
+    solana, injective, near, etherfi_sethfi,
+    maple_dao_multisig, pendle_spendle_virtual, aerodrome_lock_inputs,
+    uniswap_firepit_threshold, beaconchain,
+)
+
+# The three that need a value off the command line. Kept beside the registry rather than folded
+# into it, so CHECKS stays a plain list of the functions that run — which is what the
+# completeness test compares against.
+def _bind(fn, args):
+    if fn is sky_splitter:
+        return lambda: sky_splitter(args.splitter)
+    if fn is sky_splitter_params:
+        return lambda: sky_splitter_params(args.splitter)
+    if fn is sky_splitter_history:
+        return lambda: sky_splitter_history(args.splitter, args.splitter_from_block)
+    return fn
+
+
 def main():
     import argparse
 
@@ -1240,17 +1279,17 @@ def main():
 
     print("check_offline_items.py — running every check the build sandbox cannot reach.")
     print("Paste the whole output back.")
-    for fn in (sky_chainlog, sky, morpho_blue_api, lambda: sky_splitter(args.splitter),
-               lambda: sky_splitter_params(args.splitter),
-               lambda: sky_splitter_history(args.splitter, args.splitter_from_block),
-               solana, injective, near, etherfi_sethfi,
-               maple_dao_multisig, pendle_spendle_virtual, uniswap_firepit_threshold,
-               beaconchain):
+    ran = []
+    for fn in CHECKS:
+        ran.append(fn.__name__)
         try:
-            fn()
+            _bind(fn, args)()
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest
-            print(f"\n  {getattr(fn, '__name__', 'check')} FAILED: {e}")
-    print("\nDone.")
+            print(f"\n  {fn.__name__} FAILED: {e}")
+    # ** THE ROLL CALL IS THE POINT. ** A check that silently never ran is invisible; naming
+    # every one that did, and the count, makes an absent section obvious in the pasted output
+    # instead of something a reader has to notice is missing.
+    print(f"\nDone. {len(ran)} checks ran: {', '.join(ran)}")
     return 0
 
 
