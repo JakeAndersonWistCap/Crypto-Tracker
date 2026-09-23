@@ -1136,48 +1136,104 @@ def test_a_column_that_is_another_column_says_so_instead_of_sitting_empty():
           "label rather than in config")
 
 
-def test_morphos_utilisation_is_blocked_and_the_gap_says_what_was_read():
-    """** DefiLlama'S PROTOCOL DATA CANNOT GIVE THIS, AND THAT IS A FINDING, NOT A MISSING SOURCE. **
+def test_morphos_utilisation_is_stored_with_its_bias_named_not_left_blank():
+    """** THE REFUSAL OF 2026-09-22 FOUND SOMETHING REAL, AND THE ANSWER CHANGED ANYWAY. **
 
-    The plan was borrowed / supplied off /protocol/morpho. From the adapter itself
-    (DefiLlama-Adapters/projects/morpho-blue/index.js, read 2026-09-22):
+    DefiLlama cannot give clean utilisation. From projects/morpho-blue/index.js, the tvl function
+    builds its token list from BOTH loanToken AND collateralToken and sums the Morpho Blue
+    singleton's balance of each — and Morpho Blue custodies collateral. Total supplied is idle
+    loan tokens plus borrowed; tvl + borrowed adds collateral on top.
 
-        tvl      = sumTokens2({ owner: morphoBlue, tokens, ... })   where `tokens` is built from
-                   BOTH loanToken AND collateralToken of every market
-        borrowed = sum of market.totalBorrowAssets
-
-    So tvl holds every borrower's posted COLLATERAL, and borrowed/(tvl+borrowed) has a
-    denominator that was never lendable. It would look entirely plausible on the sheet.
-
-    "no source configured" would send the next reader to repeat that search. The row says what
-    was read, why it does not answer, and what would.
+    So the column is populated from DefiLlama and the bias is declared rather than the cell left
+    empty. What makes that acceptable is the DIRECTION: the denominator is too large, so
+    utilisation reads too SMALL, always. A figure whose error has a known sign can be reasoned
+    about. The finding is not withdrawn — it is on the label, on non_comparable, and in
+    utilisation_pct_blocked, which still names the exact route.
     """
-    from fetch.gaps import _tier_note
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
 
-    reason, suggestion = _tier_note(config.PROJECT_BY_NAME["Morpho"], "utilisation_pct", {})
-    assert "blocked" in reason
-    assert "totalBorrowAssets / totalSupplyAssets" in reason
-    assert "never lendable" in reason
-    assert "morpho-blue/index.js" in reason and "2026-09-22" in reason
-    assert "CreateMarket logs" in suggestion
-    # AND IT DOES NOT PRETEND THE WORK IS SMALL. A route named without its cost is a route
-    # somebody starts and abandons.
-    assert "NOT started without a decision" in suggestion
-    print("morpho utilisation ok: blocked with the adapter line that blocks it, and the route "
-          "that would work named with its cost")
+    spec = config.PROJECT_BY_NAME["Morpho"]["lending_supply"]
+    assert spec["utilisation_formula"] == "borrowed / (tvl + borrowed)"
+    assert "UNDERSTATES" in spec["bias"] and "collateral" in spec["bias"]
+    for metric in ("utilisation_pct", "supply_units"):
+        nc = config.is_non_comparable("Morpho", metric)
+        assert nc and "COLLATERAL" in nc["why"].upper(), metric
+    # THE EXACT ROUTE IS STILL ON FILE, and still honest about its cost.
+    blocked = config.PROJECT_BY_NAME["Morpho"]["utilisation_pct_blocked"]
+    assert "superseded" in blocked["status"]
+    assert "totalBorrowAssets / totalSupplyAssets" in blocked["wanted"]
+    assert "NOT started without a decision" in blocked["route_that_would_work"]
+
+    class Stub:
+        def get(self, url, params=None):
+            return {"tvl": [{"date": 1_758_000_000, "totalLiquidityUSD": 600.0},
+                            {"date": 1_758_086_400, "totalLiquidityUSD": 700.0}],
+                    "chainTvls": {"borrowed": {"tvl": [
+                        {"date": 1_758_000_000, "totalLiquidityUSD": 400.0},
+                        {"date": 1_758_086_400, "totalLiquidityUSD": 300.0}]}}}
+
+    d = DefiLlama()
+    d.http = Stub()
+    out = FetchOutput()
+    d.lending_supply(config.PROJECT_BY_NAME["Morpho"], None, out)
+    got = out.frame()
+    units = got.query("metric == 'supply_units'").sort_values("date")
+    util = got.query("metric == 'utilisation_pct'").sort_values("date")
+    assert list(units.value) == [1000.0, 1000.0], list(units.value)
+    assert list(util.value) == [0.4, 0.3], list(util.value)
+    # THE CAVEAT IS ON THE ROW THAT LANDS IN THE RUN LOG TOO, not only in config.
+    assert any("DENOMINATOR INCLUDES COLLATERAL" in e.message for e in out.log), out.log
+
+    # ** THE TWO SERIES ARE PAIRED BY DATE, NEVER BY POSITION. ** Aligning two series on their
+    # index rather than their date is how a borrowed figure gets divided by the wrong day's tvl,
+    # and the result looks entirely reasonable.
+    class Ragged(Stub):
+        def get(self, url, params=None):
+            j = Stub.get(self, url, params)
+            j["chainTvls"]["borrowed"]["tvl"] = [{"date": 1_758_086_400, "totalLiquidityUSD": 300.0}]
+            return j
+
+    d2 = DefiLlama()
+    d2.http = Ragged()
+    out2 = FetchOutput()
+    d2.lending_supply(config.PROJECT_BY_NAME["Morpho"], None, out2)
+    u2 = out2.frame().query("metric == 'utilisation_pct'")
+    assert len(u2) == 1 and float(u2.value.iloc[0]) == 0.3, u2
+
+    # A RESPONSE WITHOUT THE BORROW SERIES NAMES THE KEYS IT DID CARRY, so the next run's log
+    # says what shape arrived rather than only that the expected one did not.
+    class NoBorrow:
+        def get(self, url, params=None):
+            return {"tvl": [], "chainTvls": {"Ethereum": {}, "staking": {}}}
+
+    d3 = DefiLlama()
+    d3.http = NoBorrow()
+    out3 = FetchOutput()
+    d3.lending_supply(config.PROJECT_BY_NAME["Morpho"], None, out3)
+    assert out3.frame().empty
+    assert [e for e in out3.log if e.status == "failed" and "Keys present: Ethereum, staking" in e.message], out3.log
+    print("morpho capacity ok: stored with the collateral bias named and its direction stated, "
+          "paired by date, and a missing borrow series names what arrived instead")
 
 
 # ---------------------------------------------- World Mobile's issuance, from the curve
-def test_world_mobiles_issuance_is_the_curve_evaluated_at_the_t_its_supply_implies():
-    """** THE MISSING START DATE IS NO LONGER AN INPUT. IT IS AN OUTPUT. **
+def test_world_mobiles_curve_is_a_cross_check_because_it_has_no_launch_date_to_test_against():
+    """** THE MODEL'S ONE INDEPENDENT TEST HAD NOTHING TO TEST AGAINST. **
 
-    The whitepaper gives rate(t) = k/(t+1) with k = 0.1141. Integrated that is S(t) = S0(t+1)^k,
-    and the stated year-20 target of 2bn pins S0 = 2bn / 21^k = 1,413,073,572. The model is
-    therefore INVERTIBLE: an observed supply gives its own t, and the emission start date that
-    blocked this route for weeks comes out the other end as a finding to confirm.
+    The whitepaper's rate law integrates to S(t) = S0(t+1)^k with S0 = 2bn/21^k, and the model is
+    invertible, so the missing emission start date looked like an OUTPUT rather than a missing
+    input: total_supply_gross = 1,714,232,116 puts t at 4.44 years, implying emission began
+    around 2022-04-16. That was offered as the one independent check on the parameterisation.
 
-    The real figure: total_supply_gross = 1,714,232,116 puts t+1 at 5.437, so t = 4.44 years,
-    a rate of 2.0986%/yr and about 35.97m WMTX a year.
+    WORLD MOBILE HAS NO SUCH DATE. The Cardano-era mainnet was PLANNED for Q3 2022 and re-planned
+    for Q1 2023; the Chain's public testnet was 2025-03, a permissioned Developer Mainnet 2025-06,
+    and public mainnet is still phasing through 2026. Not one of those is 2022-04, and more to
+    the point there is no single t0 at all.
+
+    A test that cannot be run is not a test — so the curve stops writing the column and becomes a
+    cross-check. emissions_tokens comes from OBSERVED MINTING, which needs no t0. The curve still
+    runs and still reports its implied t, because the two disagreeing is worth seeing.
     """
     from fetch import _derive_curve_issuance
     from fetch.base import FetchOutput
@@ -1191,44 +1247,106 @@ def test_world_mobiles_issuance_is_the_curve_evaluated_at_the_t_its_supply_impli
         _derive_curve_issuance(out, [config.PROJECT_BY_NAME["World Mobile"]])
         return out
 
+    curve = config.issuance_curve("World Mobile")
+    assert curve["role"] == "cross_check" and curve["demoted_on"] == "2026-09-23"
+    assert "no single t0" in curve["why_demoted"]
+    assert "d(total_supply_gross)" in curve["issuance_route_instead"]
+
     out = run(1_714_232_116.0)
-    got = out.frame().query("metric == 'emissions_tokens'")
-    assert len(got) == 1, out.log
-    annual = float(got.value.iloc[0]) * 365.25
-    assert abs(annual - 35_974_341) < 2_000, annual
-    # THE SOURCE SAYS IT IS A MODEL, and that it is evaluated on a partial supply.
-    assert str(got.source.iloc[0]) == "schedule:curve:PARTIAL", got.source.iloc[0]
-    detail = [e.message for e in out.log if "emissions_tokens=" in e.message]
-    assert detail and "A DERIVED MODEL, not an observation" in detail[0], detail
-    assert "t=4.44y" in detail[0] and "rate=2.0986%/yr" in detail[0], detail[0]
+    # ** NOTHING IS WRITTEN. ** That is the change: a cross-check that also fills the column is
+    # not a cross-check, it is the route wearing a different word.
+    assert out.frame().query("metric == 'emissions_tokens'").empty, out.frame()
+    flags = [r for r in out.review if r["reason"] == "curve_cross_check"]
+    assert len(flags) == 1, out.review
+    b = flags[0]["basis"]
+    assert "WRITES NOTHING" in b
+    # THE ARITHMETIC IS STILL REPORTED IN FULL, because that is what makes it a cross-check.
+    assert "t=4.44y" in b and "2.0986%/yr" in b, b
+    assert "35,974,3" in b, b
+    assert "Cardano-era mainnet was planned for Q3 2022" in b, "the reason travels with the row"
+    assert "no single t0" in b
+    assert [e for e in out.log if e.status == "skipped" and "CROSS-CHECK, not the route" in e.message]
 
-    # ** THE PARTIALITY TRAVELS WITH THE ROW, AND ITS DIRECTION IS NOT CLAIMED. ** An understated
-    # supply understates t, which RAISES the rate and LOWERS the base — the two pull opposite
-    # ways, so there is no direction to correct for and the row says so instead of pretending.
-    part = [r for r in out.review if r["reason"] == "supply_partial"]
-    assert part and "Cardano" in part[0]["basis"] and "no known sign" in part[0]["basis"]
+    # THE MATHS IS UNCHANGED AND STILL ASSERTED — demoting the role must not quietly break it.
+    s0 = config.issuance_curve_s0(curve)
+    assert abs(s0 - 1_413_073_572.18) < 1.0, s0
+    assert 0.29 <= (curve["cap"] - s0) / curve["cap"] <= 0.30
 
-    # THE IMPLIED LAUNCH DATE IS REPORTED FOR CONFIRMATION — an output of the curve, and the one
-    # independent test of the parameterisation available.
-    gap = next(g for g in out.gaps if "launch date the curve implies" in g["metric"])
-    assert "2022-04" in gap["reason"], gap["reason"]
-    assert "Jake supplies the actual emission start date" in gap["suggestion"]
-    assert "do NOT adjust S0 to close a gap" in gap["suggestion"].replace("Do NOT", "do NOT")
-
-    # ** BELOW THE CURVE'S OWN ORIGIN THERE IS NO t, AND IT REFUSES RATHER THAN CLAMPING. ** A
-    # clamp would report year zero's rate for ever and look like a reading.
+    # ** BELOW THE CURVE'S OWN ORIGIN IT STILL REFUSES RATHER THAN CLAMPING, ** and that has to
+    # survive the demotion: a cross-check reporting a clamped t would be worse than silence.
     low = run(1_000_000_000.0)
-    assert low.frame().query("metric == 'emissions_tokens'").empty
+    assert not [r for r in low.review if r["reason"] == "curve_cross_check"]
     assert [g for g in low.gaps if "at or below the model's own origin" in g["reason"]]
+    print("world mobile ok: the curve reports its implied t and writes nothing, because the "
+          "launch date it was going to be tested against does not exist")
 
-    # A MEASURED FIGURE WINS. A model beside a measurement is a second measuring point.
-    both = run(1_714_232_116.0, [{"date": pd.Timestamp("2026-09-22"), "project": "World Mobile",
-                                  "metric": "emissions_tokens", "value": 99_000.0,
-                                  "source": "dune:1", "tier": 4}])
-    assert len(both.frame().query("metric == 'emissions_tokens'")) == 1
-    assert [e for e in both.log if e.status == "skipped" and "already has a figure" in e.message]
-    print("world mobile ok: the curve is evaluated at the t its supply implies, the launch date "
-          "comes out as a finding, and the partial supply's error has no claimed direction")
+
+def test_world_mobiles_emissions_come_from_observed_minting_not_from_the_model():
+    """** THE COLUMN NEEDED A ROUTE THAT DOES NOT NEED A LAUNCH DATE. ** The whitepaper's curve
+    integrates cleanly and reproduces its own 29% target, and it still cannot be anchored —
+    World Mobile has no single t0. A measurement needs none: the contracts' own totalSupply moved
+    or it did not.
+
+    AND THE PARTIALITY NOW HAS A DIRECTION, which the model's did not. total_supply_gross sums
+    the EVM deployments and excludes Cardano, so a mint there is invisible and the figure can
+    only be too SMALL. The curve's error could go either way, because understating supply
+    understated t, which raised the rate and lowered the base.
+    """
+    from fetch import _derive_observed_minting
+    from fetch.base import FetchOutput
+
+    def run(now, prior, prior_date="2026-09-21"):
+        out = FetchOutput()
+        out.frames = [pd.DataFrame([{"date": pd.Timestamp("2026-09-22"),
+                                     "project": "World Mobile", "metric": "total_supply_gross",
+                                     "value": now, "source": "chain:sum(...)", "tier": 2}])]
+        _derive_observed_minting(
+            out, [config.PROJECT_BY_NAME["World Mobile"]],
+            {("World Mobile", "total_supply_gross"): prior},
+            {("World Mobile", "total_supply_gross"): prior_date})
+        return out
+
+    spec = config.PROJECT_BY_NAME["World Mobile"]["observed_minting"]
+    assert spec["metric"] == "emissions_tokens" and spec["supply_metric"] == "total_supply_gross"
+    assert "no single launch date" in spec["why"]
+
+    out = run(1_714_332_116.0, 1_714_232_116.0)
+    got = out.frame().query("metric == 'emissions_tokens'")
+    assert len(got) == 1 and abs(float(got.value.iloc[0]) - 100_000.0) < 1e-6, got
+    src = str(got.source.iloc[0])
+    assert "d_total_supply_gross" in src and src.endswith(":delta"), src
+    assert "PARTIAL" in src, "Cardano is excluded, and the row has to say so"
+    part = [r for r in out.review if r["reason"] == "supply_partial"]
+    assert part and "can only be too small" in part[0]["basis"], part
+
+    # ** ONE OBSERVATION IS NOT A FLOW. ** Same rule as every other differenced series: two dated
+    # readings or nothing, never a 0 that reads as "nothing was minted".
+    lone = run(1_714_332_116.0, None)
+    assert lone.frame().query("metric == 'emissions_tokens'").empty
+    # AND A MEASURED FIGURE STILL WINS.
+    out2 = FetchOutput()
+    out2.frames = [pd.DataFrame([
+        {"date": pd.Timestamp("2026-09-22"), "project": "World Mobile",
+         "metric": "total_supply_gross", "value": 1_714_332_116.0, "source": "chain:sum(...)", "tier": 2},
+        {"date": pd.Timestamp("2026-09-22"), "project": "World Mobile",
+         "metric": "emissions_tokens", "value": 42.0, "source": "dune:1", "tier": 4}])]
+    _derive_observed_minting(out2, [config.PROJECT_BY_NAME["World Mobile"]],
+                             {("World Mobile", "total_supply_gross"): 1_714_232_116.0},
+                             {("World Mobile", "total_supply_gross"): "2026-09-21"})
+    assert len(out2.frame().query("metric == 'emissions_tokens'")) == 1
+    assert [e for e in out2.log if e.status == "skipped" and "already has a figure" in e.message]
+
+    # W3 — THE ALLOCATION TABLE VALIDATES TO THE TOKEN, which is corroboration of the TABLE.
+    v = config.PROJECT_BY_NAME["World Mobile"]["allocation_validation"]
+    assert v["bucket_share"] * 2_000_000_000 / v["vesting_months"] == v["next_unlock_tokens"]
+    assert v["next_unlock_tokens"] == 5_000_000 and v["verdict"].startswith("EXACT")
+
+    # W2 — RANDOMISED CADENCE, SO NO WINDOW BEHAVES. The strongest lumpy case in the file.
+    assert config.PROJECT_BY_NAME["World Mobile"]["buyback_cadence"]["interval"] == "randomized"
+    assert config.PROJECT_BY_NAME["World Mobile"]["buyback_cadence"]["share_of_earnings"] is None
+    assert config.level_break_windows("World Mobile", "actual_buyback_tokens") == (30, 90)
+    print("world mobile ok: emissions measured from the gross-supply delta, partial in a KNOWN "
+          "direction, and the 18%/72-month bucket validated to the token")
 
 
 # ------------------------------------------------------------------ NEAR's staked supply
@@ -4150,15 +4268,28 @@ def test_the_burn_mechanism_flag_fires_only_where_a_burn_is_ACTUALLY_CLAIMED():
     row = {"status": "ok", "source": "tier1", "n_points": 9, "entered_on": "",
            "measuring_points": ("tier1",)}
 
-    # (1) a project with NO burn claimed anywhere must not carry a mechanism flag
+    # ===== (1) A DECLARED no_burn IS A STRONGER CASE THAN SILENCE, AND MUST ALSO NOT FLAG. =====
+    # Plume used to be the "no burn claimed by any of the four signals" case: nothing declared
+    # anywhere, so nothing to flag. On 2026-09-23 its registry settled it — an Arbitrum Orbit
+    # chain whose fees are COLLECTED at a receiver, never destroyed — so it now declares
+    # no_burn/confirmed, which trips the "claims a burn" test by having a mechanism at all.
+    #
+    # THE FLAG MUST STILL NOT FIRE, and for a better reason than before: the mechanism is not
+    # assumed, it is confirmed to be absent. A project that has DONE the work must not read worse
+    # than one that has not.
     plume = config.PROJECT_BY_NAME["Plume"]
     assert 4 not in plume["archetypes"] and plume.get("burn_split") is None \
-        and plume.get("burn_read_method") is None and plume.get("burn_mechanism") is None, \
-        "Plume claims no burn by any of the four signals — if that changes, this test must change"
-    assert "gross_burn_tokens" in config.metrics_for_project(plume), \
-        "the metric IS in scope for archetype 1, which is why the flag could reach it"
+        and plume.get("burn_read_method") is None
+    mech = config.burn_mechanism(plume)
+    assert mech["model"] == "no_burn" and mech["status"] == "confirmed", mech
+    assert mech.get("source_url") and mech.get("source_date"), "confirmed needs a provenance"
+    assert config.not_applicable_reason("Plume", "gross_burn_tokens"), \
+        "and the metric itself is declared n/a, so the column never asks for a figure"
     band, why = bw.confidence_for("Plume", "gross_burn_tokens", row, asof)
-    assert "MECHANISM" not in why, f"no burn is claimed, so no mechanism flag: {why}"
+    assert "MECHANISM" not in why, f"a CONFIRMED absence of a burn must not read as assumed: {why}"
+    # AND IT CLOSES THE ISSUANCE QUESTION TOO — the two were one question.
+    assert config.issuance_supply_rule(plume, mech["model"]) == "delta_only", \
+        "with no burn there is nothing to add back: issuance is d(total_supply)"
 
     # (2) Hyperliquid's mechanism is CONFIRMED, from two independent primaries
     mech = config.burn_mechanism(config.PROJECT_BY_NAME["Hyperliquid"])

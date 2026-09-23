@@ -1787,6 +1787,61 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        # ===== THE INTENTS REVENUE WALLETS, AND WHAT intents.near IS NOT. Added 2026-09-23. =====
+        #
+        # ** intents.near IS THE VERIFIER, NOT A BUYBACK DESTINATION. ** It is NEAR Intents'
+        # own NEAR-side treasury address AND the contract holding every user deposit — which is
+        # what DefiLlama's TVL for Intents measures. Its balance is user money in custody, and
+        # reading it as a buyback wallet would report the entire float as repurchased NEAR. The
+        # error would be enormous and entirely plausible-looking, which is the dangerous kind.
+        #
+        # THE ACTUAL WALLETS, from DefiLlama's near-intents adapter (read 2026-09-23), which
+        # quotes NEAR's own Dune queries 6740088 and 6732239 and reconciles with
+        # revenue.near.org:
+        #     fefundsadmin.sputnik-dao.near    front-end fund ("fe")
+        #     1csfundsadmin.sputnik-dao.near   1Click fund
+        #     buybacks.multisignature.near     the buyback wallet
+        # DefiLlama measures Intents revenue as NEAR/wNEAR SWEPT INTO these three, excluding
+        # internal hops between them — a treasury movement of already-captured revenue is not a
+        # new inflow.
+        #
+        # ** AND A BALANCE READ OF THESE WALLETS IS NOT THAT FIGURE. ** The measured quantity is
+        # the INFLOW; a balance differenced across two runs is the inflow MINUS whatever was
+        # spent, and the buyback wallet exists precisely to spend. So a balance read understates
+        # by exactly the thing being measured, and understates most in the months it matters
+        # most. NOT WIRED as a read for that reason — the same refusal recorded for Plume's fee
+        # receiver, and for the same reason.
+        "intents_revenue_wallets": {
+            "wallets": {
+                "fefundsadmin.sputnik-dao.near": "front-end fund — near.com / app.near-intents.org",
+                "1csfundsadmin.sputnik-dao.near": "1Click fund — partner revenue shares, quote "
+                                                  "improvement, private agreements",
+                "buybacks.multisignature.near": "the buyback wallet",
+            },
+            "verifier_not_a_wallet": "intents.near is the Verifier holding all user deposits and "
+                                     "is NEAR Intents' NEAR-side treasury address. It is NOT a "
+                                     "buyback destination and its balance must never be read as "
+                                     "one — DefiLlama's Intents TVL is exactly that balance.",
+            "buyback_start": "2026-02-23",
+            "buyback_not_burn": "captured revenue buys $NEAR on the open market and is NOT "
+                                "burned — DefiLlama books it as HoldersRevenue from 2026-02-23 "
+                                "and as ProtocolRevenue (treasury) before it.",
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/"
+                          "master/fees/near-intents/index.ts",
+            "source_date": "2026-09-23",
+            "reference_scale": "~$3m/month of buybacks, May 2026 reporting. A SANITY BOUND, not "
+                               "a figure: an order of magnitude away is a bug in the read.",
+            "why_not_read": "the wallets' BALANCES are not the measured quantity. DefiLlama "
+                            "measures INFLOWS to them; a balance delta nets out the spending, "
+                            "and the buyback wallet's whole purpose is to spend. Reading it "
+                            "would understate the buyback by the buyback.",
+            "route_that_would_work": "NEAR RPC gives balances, not transfer history, so this "
+                                     "needs the INFLOW events — near.actions TRANSFER and "
+                                     "near.ft_transfers on wrap.near, filtered to these three "
+                                     "receivers and excluding senders among the same three. "
+                                     "That is the adapter's own query and it is a Dune "
+                                     "dependency, not an RPC call.",
+        },
         "not_applicable": {
             # ===== THERE IS NO MAXIMUM. Declared 2026-09-22. =====
             # NEAR mints validator rewards on an inflation curve and burns 70% of gas; neither
@@ -2101,8 +2156,16 @@ PROJECTS = [
         "contracts": {
             "intents_treasury_base": _contract(
                 "0x2CfF890f0378a11913B6129B2E97417a2c302680", "base", "treasury_holding", "NEAR",
-                "https://basescan.org/address/0x2cff890f0378a11913b6129b2e97417a2c302680",
-                verified="2026-09-14", provenance="BaseScan contract label 'NEAR Intents: Treasury'",
+                # ** PROVENANCE UPGRADED TO PRIMARY, 2026-09-23. ** It was a BaseScan contract
+                # LABEL — a third party's annotation, which is evidence and not authority. NEAR
+                # Intents' own documentation now names it:
+                # docs.near-intents.org/security-compliance/treasury-addresses lists the EVM
+                # treasury as this address and the NEAR-side treasury as intents.near.
+                "https://docs.near-intents.org/security-compliance/treasury-addresses",
+                verified="2026-09-23",
+                provenance="NEAR Intents' own treasury-addresses page (docs.near-intents.org), "
+                           "read 2026-09-23. Supersedes the BaseScan contract label, which was "
+                           "a third party's annotation and agreed with it",
                 holder_has_code=True, token_standard="erc20", underlying=None,
                 purpose="NEAR Intents Treasury on Base — the destination of the Intents buyback. Read as a "
                         "TREASURY HOLDING, never as a burn: the decision above establishes the repurchased "
@@ -2252,6 +2315,65 @@ PROJECTS = [
         # revenue capture and is actually inflation paid to stakers. Counting it as archetype 3
         # would report dilution as value accrual.
         "archetypes": [1], "archetypes_held": [],
+        # ===== PLUME DOES NOT BURN. Established 2026-09-23 from Plume's own asset registry. =====
+        # assets.plume.org/mainnet/core.json describes an ARBITRUM ORBIT chain (chainName
+        # "conduit-orbit-deployer") whose networkFeeReceiver and infrastructureFeeCollector are
+        # the SAME address, 0x6CBb552855CE5Eb70af49B76a8048be8E3799A05. Fees are COLLECTED there.
+        # Nothing destroys PLUME.
+        #
+        # ** AND THAT ALSO CLOSES THE ISSUANCE QUESTION. ** gross_issuance_tokens was blocked at
+        # P3 on "the burn mechanism is undetermined, so how it affects total supply is unknown".
+        # With no burn there is nothing to add back: issuance is d(total_supply), full stop. The
+        # two were one question and settling the burn settles both.
+        "burn_mechanism": {
+            "model": "no_burn",
+            "status": "confirmed",
+            "source_url": "https://assets.plume.org/mainnet/core.json",
+            "source_date": "2026-09-23",
+            "note": "an Arbitrum Orbit chain with networkFeeReceiver and "
+                    "infrastructureFeeCollector both set to "
+                    "0x6CBb552855CE5Eb70af49B76a8048be8E3799A05. Fees are collected at that "
+                    "address, not destroyed. No burn address, no protocol-level destruction.",
+        },
+        "not_applicable": {
+            "gross_burn_tokens":
+                "PLUME IS NOT BURNED. Plume's own mainnet registry (assets.plume.org) shows an "
+                "Arbitrum Orbit chain whose network and infrastructure fees are both COLLECTED "
+                "at 0x6CBb552855CE5Eb70af49B76a8048be8E3799A05. There is no burn mechanism and "
+                "no burn address to read. Declared 2026-09-23.",
+        },
+        # ===== THE FEE RECEIVER IS A ROUTE, AND IT IS NOT WIRED. Recorded 2026-09-23. =====
+        # Native PLUME inflows to 0x6CBb55... via rpc.plume.org would give a fees figure. It is
+        # NOT wired, and the reason is the one that keeps coming up this round: a BALANCE
+        # differenced across two runs is inflow MINUS whatever was swept out, and a fee collector
+        # exists to be swept. The figure would understate fees by exactly the amount collected
+        # and moved, which is most of it.
+        #
+        # Separating the two needs TRANSFER HISTORY — inflow events to that address, filtered
+        # against outflows — which is a log scan or a Dune query, not a balance read. Until then
+        # fees_usd stays not-tracked, which is honest, rather than carrying a number that is a
+        # lower bound of unknown tightness.
+        # L3 — THE STAKING CONTRACT IS NOT PUBLISHED. Left as a gap on purpose, 2026-09-23.
+        # It is in neither Plume's contract-addresses page nor assets.plume.org's core.json, both
+        # checked. That is a fact about Plume's documentation, not a search nobody has done, and
+        # recording it stops the next person repeating the search. locked_tokens stays a gap.
+        "staking_contract_not_published": {
+            "checked": ("Plume's contract-addresses page", "assets.plume.org/mainnet/core.json"),
+            "checked_on": "2026-09-23",
+            "verdict": "NOT PUBLISHED in either. Left as a gap for Jake rather than resolved by "
+                       "picking a plausible address off an explorer — a staking contract read "
+                       "from a guess would put the whole lock rate under an address nobody "
+                       "confirmed.",
+        },
+        "fee_receiver": {
+            "address": "0x6CBb552855CE5Eb70af49B76a8048be8E3799A05",
+            "roles": ("networkFeeReceiver", "infrastructureFeeCollector"),
+            "source_url": "https://assets.plume.org/mainnet/core.json",
+            "source_date": "2026-09-23",
+            "not_wired": "a balance delta nets out sweeps. Wire it only if inflows can be "
+                         "separated from outflows — that is a transfer-history source "
+                         "(rpc.plume.org log scan, or Dune), not a balanceOf.",
+        },
         "fee_split": {"share_to_buyback": 0.0, "source_url": "https://docs.plume.org/",
                       "source_date": "2026-09-14", "programmed": True, "status": "n/a",
                       "note": "ZERO. Plume's own staking docs describe revenue sharing as BEING EXPLORED, "
@@ -3114,6 +3236,76 @@ PROJECTS = [
         # applied to — the two pull in opposite directions and the net error does not have a
         # known sign. The row is marked PARTIAL for exactly that reason and the reason travels
         # with it.
+        # ===== THE ISSUANCE ROUTE IS THE MEASUREMENT, NOT THE MODEL. Added 2026-09-23. =====
+        # emissions_tokens comes from OBSERVED MINTING — the change in total_supply_gross, which
+        # is the sum of the four EVM deployments' own totalSupply(). It needs no launch date, no
+        # rate law and no parameterisation, which is the whole point: the curve needed all three
+        # and one of them does not exist.
+        #
+        # ** IT INHERITS total_supply_gross's PARTIALITY, and here the direction IS known. **
+        # Cardano is excluded, so a mint on Cardano is invisible and the figure is a LOWER BOUND.
+        # That is a better failure than the curve's, whose error had no known sign.
+        "observed_minting": {
+            "metric": "emissions_tokens",
+            "supply_metric": "total_supply_gross",
+            "why": "the whitepaper's curve cannot be anchored — World Mobile has no single "
+                   "launch date (see issuance_curve.why_demoted) — so the column comes from what "
+                   "the contracts actually minted.",
+            "partial_reason": "total_supply_gross sums the EVM deployments only; Cardano is "
+                              "excluded, so a mint there is invisible and this is a LOWER BOUND.",
+            "declared_on": "2026-09-23",
+        },
+        # ===== W2: THE BUYBACK SHARE IS UNPUBLISHED, AND THE CADENCE IS RANDOM. 2026-09-23. =====
+        # World Mobile says only that "a portion" of earnings funds buybacks, and that they run
+        # at "randomized intervals" — their own blog, 2025-04 — with the first on 2023-05-29.
+        #
+        # ** A RANDOMISED CADENCE IS THE STRONGEST CASE FOR lumpy THERE IS. ** GEODNET's burn is
+        # weekly and Pendle's buyback biweekly: both have a period, so a window matched to it
+        # behaves. This one has no period at all, by design, so any fixed window compares an
+        # interval that happened to contain a buyback with one that did not. Declared in
+        # LUMPY_FLOWS for both legs.
+        "buyback_cadence": {
+            "share_of_earnings": None,
+            "share_status": "UNPUBLISHED. World Mobile says 'a portion' and nothing more. Do NOT "
+                            "estimate it from observed buybacks — that is reverse-engineering a "
+                            "rule from an outcome, and this file has withdrawn one such "
+                            "derivation already (see inflation_schedule_derived).",
+            "interval": "randomized",
+            "first_buyback": "2023-05-29",
+            "source_url": "https://worldmobile.io/blog",
+            "source_date": "2025-04",
+            "read_on": "2026-09-23",
+        },
+        # ===== W3: THE DISTRIBUTION TABLE VALIDATES EXACTLY. Confirmed 2026-09-23. =====
+        # CoinGecko shows the next unlock on 2026-09-30 as 5,000,000 WMTX for the WM Operations
+        # Fund, 0.25% of supply. Against the allocation table that is not approximately right:
+        #     18% x 2,000,000,000 / 72 months = 360,000,000 / 72 = 5,000,000 EXACTLY
+        # An independent source reproducing a table's arithmetic to the token is corroboration of
+        # the table, not of the unlock — and it is the kind that is cheap to record and expensive
+        # to reconstruct later.
+        "allocation_validation": {
+            "checked_on": "2026-09-23",
+            "next_unlock_date": "2026-09-30",
+            "next_unlock_tokens": 5_000_000,
+            "bucket": "WM Operations Fund",
+            "bucket_share": 0.18,
+            "vesting_months": 72,
+            "arithmetic": "0.18 * 2,000,000,000 / 72 = 5,000,000",
+            "source": "CoinGecko unlock schedule, read 2026-09-23",
+            "verdict": "EXACT. Corroborates the allocation table's 18% bucket and its 72-month "
+                       "linear vesting. It does not corroborate any other bucket.",
+        },
+        # ===== W4: THE TREASURY WALLET IS NOT PUBLISHED. Left as a gap, 2026-09-23. =====
+        # Not in the MiCA whitepaper and not on World Mobile's blog, both checked. Recorded so
+        # the search is not repeated; treasury_holding_tokens stays a gap.
+        "treasury_not_published": {
+            "checked": ("worldmobiletoken.com/mica_whitepaper_wmtx.pdf", "World Mobile's blog"),
+            "checked_on": "2026-09-23",
+            "verdict": "NOT PUBLISHED. Left as a gap for Jake rather than filled from an "
+                       "explorer's label — a labelled address is a third party's annotation, "
+                       "and this round has already found one of those disagreeing with the "
+                       "protocol's own docs (see Ether.fi).",
+        },
         "issuance_curve": {
             "status": "confirmed",
             "metric": "emissions_tokens",
@@ -3131,6 +3323,35 @@ PROJECTS = [
                               "WMT originated, is excluded. The model is evaluated at the t that "
                               "an understated supply implies.",
             "report_implied_launch": True,
+            # ===== DEMOTED TO A CROSS-CHECK ON 2026-09-23. THE LAUNCH DATE DOES NOT EXIST. =====
+            #
+            # The curve implied emission began around 2022-04-16, and that was offered as the one
+            # independent test of the parameterisation. ** THERE IS NO DATE FOR IT TO MATCH. **
+            # World Mobile's history does not contain a single clean mainnet moment:
+            #     Q3 2022      original Cardano-era mainnet, PLANNED
+            #     Q1 2023      re-planned
+            #     2025-03      World Mobile Chain public TESTNET
+            #     2025-06      permissioned Developer Mainnet
+            #     2026         public mainnet still rolling out in phases
+            # None of those is 2022-04, and more to the point none of them is THE launch — the
+            # thing the model needs is a single t0 and the project does not have one.
+            #
+            # SO THE TEST CANNOT BE RUN, AND A TEST THAT CANNOT BE RUN IS NOT A TEST. The curve
+            # stops being the issuance route and becomes a cross-check: emissions_tokens comes
+            # from OBSERVED MINTING — d(total_supply_gross) across the four EVM deployments —
+            # which needs no t0 at all. The curve still runs each time and reports its implied t,
+            # because the two disagreeing is worth seeing; it just no longer writes the column.
+            "role": "cross_check",
+            "demoted_on": "2026-09-23",
+            "why_demoted": "the implied launch (~2022-04) matches nothing in World Mobile's "
+                           "actual history — Cardano-era mainnet was planned for Q3 2022 and "
+                           "re-planned for Q1 2023; the Chain's public testnet was 2025-03, a "
+                           "permissioned Developer Mainnet 2025-06, and public mainnet is still "
+                           "phasing through 2026. There is no single t0 to anchor to, so "
+                           "anchoring to one would be inventing the input the model most needs.",
+            "issuance_route_instead": "observed minting: d(total_supply_gross) across the four "
+                                      "EVM deployments. It is a measurement rather than a model, "
+                                      "and it does not need a launch date.",
         },
         "inflation_budget": {
             "tokens": 580_000_000,
@@ -5559,6 +5780,20 @@ PROJECTS = [
         },
         "name": "Morpho", "symbol": "MORPHO",
         "not_applicable": {
+            # ===== MORPHO IS GOVERNANCE-ONLY. Declared 2026-09-23. =====
+            # Morpho's docs describe MORPHO as a governance token with no staking. A staking
+            # proposal went to the forum in November 2024 and WAS NEVER IMPLEMENTED — so the
+            # thing that makes this column look answerable is a proposal, not a deployment.
+            #
+            # REOPEN CONDITION, recorded because that is what makes a declaration reviewable:
+            # that proposal or a successor passing and shipping. Until then there is no lock
+            # contract because there is no lock.
+            "locked_tokens":
+                "THERE IS NO MORPHO STAKING. MORPHO is governance-only per Morpho's own docs; a "
+                "2024-11 forum staking proposal was never implemented. Nothing is locked, so "
+                "there is no contract to read and no figure to source. REOPEN if that proposal "
+                "or a successor ships. Declared 2026-09-23.",
+
             # ===== NO EMISSION MECHANISM. Declared 2026-09-22. =====
             # emissions_model already reads "none" — MORPHO is not emitted to suppliers or
             # stakers — but a classified model is not the same as a scoped-out column, so the
@@ -5588,6 +5823,60 @@ PROJECTS = [
                 "recorded_on": "2026-09-22",
             },
         },
+        # ===== THE ARCHETYPE-2 CAPACITY COLUMNS, WITH THEIR BIAS ON THE LABEL. Added 2026-09-23.
+        #
+        # supply_units = tvl + borrowed, utilisation_pct = borrowed / (tvl + borrowed), both from
+        # DefiLlama's /protocol/morpho. Wired on instruction after the 2026-09-22 refusal, and
+        # the refusal's FINDING still stands and is not withdrawn — see utilisation_pct_blocked
+        # below, and non_comparable, which carries it to the cell.
+        #
+        # ** THE DENOMINATOR CARRIES COLLATERAL. ** morpho-blue's tvl function builds its token
+        # list from BOTH loanToken AND collateralToken and sums the singleton's balance of each,
+        # and Morpho Blue custodies collateral. Total SUPPLIED is idle loan tokens plus borrowed;
+        # tvl + borrowed is idle loan tokens plus COLLATERAL plus borrowed.
+        #
+        # SO THE BIAS HAS A KNOWN DIRECTION, and that is the whole reason this is storable rather
+        # than blank: the denominator is too LARGE, so utilisation reads too SMALL. A figure whose
+        # error has a known sign can be reasoned about; one whose error could go either way
+        # cannot. Nobody should read this as clean utilisation, and the label says so.
+        "lending_supply": {
+            "borrowed_key": "borrowed",
+            "supply_units_formula": "tvl + borrowed",
+            "utilisation_formula": "borrowed / (tvl + borrowed)",
+            "bias": "UNDERSTATES utilisation. The denominator includes borrower collateral, "
+                    "which was never available to lend.",
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/DefiLlama-Adapters/"
+                          "main/projects/morpho-blue/index.js",
+            "source_date": "2026-09-23",
+            "exact_route": "sum(totalBorrowAssets) / sum(totalSupplyAssets) across markets — the "
+                           "same adapter reads totalSupplyAssets and exports only the borrow "
+                           "side. See utilisation_pct_blocked for what that would cost.",
+        },
+        "non_comparable": {
+            "utilisation_pct": {
+                "why": "THE DENOMINATOR INCLUDES COLLATERAL. This is borrowed / (tvl + borrowed) "
+                       "from DefiLlama, and morpho-blue's tvl sums the singleton's balance of "
+                       "every market's collateralToken as well as its loanToken. Total supplied "
+                       "is idle loan tokens plus borrowed; this denominator adds collateral on "
+                       "top, so the ratio READS TOO SMALL by a known direction. Not clean "
+                       "utilisation, and not comparable with a utilisation figure computed the "
+                       "ordinary way.",
+                "use_instead": "nothing yet, and the exact route is cheap in calls and expensive "
+                               "in work: sum(totalBorrowAssets) / sum(totalSupplyAssets) across "
+                               "every market on every chain Morpho runs on, enumerated from "
+                               "CreateMarket logs. See utilisation_pct_blocked.",
+                "recorded_on": "2026-09-23",
+            },
+            "supply_units": {
+                "why": "tvl + borrowed, where tvl includes borrower COLLATERAL — so this is "
+                       "supplied assets PLUS collateral, not supplied assets. Overstated by "
+                       "whatever is posted as collateral, which for a lending protocol is a "
+                       "large share of the balance sheet.",
+                "use_instead": "nothing yet. Same route as utilisation_pct: the per-market "
+                               "totalSupplyAssets, which DefiLlama reads and does not export.",
+                "recorded_on": "2026-09-23",
+            },
+        },
         # ===== utilisation_pct CANNOT COME FROM DefiLlama'S PROTOCOL DATA. Established 2026-09-22.
         #
         # The plan was borrowed / supplied off /protocol/morpho. Read the adapter and it does not
@@ -5611,7 +5900,12 @@ PROJECTS = [
         # exports the borrow side alone. So the figure is one contract read away and zero
         # aggregator calls away.
         "utilisation_pct_blocked": {
-            "status": "blocked — no route that does not change what the column means",
+            # ** SUPERSEDED AS A BLOCK ON 2026-09-23, NOT WITHDRAWN AS A FINDING. ** The column is
+            # now populated from DefiLlama with its bias declared (see lending_supply and
+            # non_comparable). Everything below is still true about what that figure IS; what has
+            # changed is that a labelled approximation was judged better than a blank.
+            "status": "superseded 2026-09-23 — the approximation is stored with its bias named. "
+                      "The exact route below is still the exact route.",
             "wanted": "totalBorrowAssets / totalSupplyAssets, summed across markets",
             "why_not_defillama": "DefiLlama publishes `borrowed` but not `supplied`; its `tvl` "
                                  "is the contract's held balance INCLUDING collateral, so "
@@ -8927,6 +9221,39 @@ PROJECTS = [
         # been read from Fluid's own schedule — their docs are not reachable from here — so the
         # source string says schedule:config:declared and the confidence machinery treats it as
         # what it is. The day the schedule is sourced, `sourced` flips and this note goes.
+        "not_applicable": {
+            # ===== FLUID STAKING IS NOT DEPLOYED. Declared 2026-09-23. =====
+            # An April 2026 analysis describes FLUID staking as PROSPECTIVE, and Fluid's own docs
+            # carry no staking. So locked_tokens has nothing behind it — not an unfound contract,
+            # an unbuilt one. REOPEN if it ships; that condition is what makes this reviewable
+            # rather than a permanent silence.
+            "locked_tokens":
+                "FLUID STAKING IS NOT DEPLOYED. The April 2026 analysis that describes it is "
+                "describing something PROSPECTIVE, and Fluid's own documentation has no staking "
+                "product. Nothing is locked, so there is no contract to read. REOPEN if staking "
+                "ships. Declared 2026-09-23.",
+        },
+        # ===== THE RESERVE ADDRESS IS NOT PUBLIC, AND ONE FREE FIGURE EXISTS. Added 2026-09-23. ==
+        # Instadapp's own blog (2025-10) said the automated buyback-TRACKING system was still in
+        # development — so the address is not withheld, it is not yet part of a published system.
+        # Tokenomist tracks the target address behind a PAYWALL, which is a route and not a
+        # source: a figure nobody here can check is not a figure this book will carry.
+        #
+        # WHAT IS FREE is one cumulative number, recorded as a SANITY BOUND and nothing more.
+        # 0.51% of supply, as at 2026-08-31. It is not a series, it is not dated per period, and
+        # deriving a rate from a single cumulative point would be inventing a cadence.
+        "buyback_reference": {
+            "cumulative_pct_of_supply": 0.0051,
+            "as_of": "2026-08-31",
+            "source": "Tokenomist (free view), read 2026-09-23",
+            "use": "SANITY BOUND ONLY. If a buyback series is ever sourced, its cumulative to "
+                   "2026-08-31 should land near 0.51% of supply. Do NOT turn one cumulative "
+                   "point into a rate — that is a cadence nobody published.",
+            "address_status": "NOT PUBLIC. Instadapp's blog (2025-10) records the automated "
+                              "buyback-tracking system as still in development; Tokenomist "
+                              "tracks the target address behind a paywall. A paywalled address "
+                              "is a route, not a source.",
+        },
         "declared_zero": {
             "emissions_tokens": {
                 "why": "the FLUID emission has finished — the token's distribution was a vesting "
@@ -9042,7 +9369,28 @@ PROJECTS = [
                           "incentive programme's treasury is the obvious 5m block of ambiguous status.",
             "hypothesis_status": "UNTESTED. An arithmetic coincidence is a reason to look, not a finding. "
                                  "Testing it needs the treasury address, which is missing — see below.",
-            "resolution": "NONE. Recorded, not resolved. The stored figure remains CoinGecko's by tier order.",
+            # ===== SETTLED 2026-09-23, AND OUR STORED FIGURE WAS THE RIGHT ONE. =====
+            # Tokenomist now reports 83,696,996 (83.70%) — the SAME figure CoinGecko has been
+            # serving and we have been storing. The 78,696,996 reading is superseded on the
+            # vendor's own site, and the 5,000,000 gap is gone.
+            #
+            # ** THE HYPOTHESIS IS NOT CONFIRMED BY THIS, and that distinction is worth keeping. **
+            # The gap closing tells us the two vendors now agree; it does NOT tell us the 5m was
+            # treasury-held tokens, which is what the hypothesis claimed. A vendor correcting a
+            # figure and a vendor changing a definition look identical from outside. The
+            # hypothesis stays UNTESTED and the incentive-programme treasury address is still
+            # missing — that is a separate gap and it has not moved.
+            "resolution": "SETTLED 2026-09-23 in favour of the stored figure. Tokenomist now "
+                          "reports 83,696,996 (83.70%), matching CoinGecko. The contested flag "
+                          "is cleared; the stored series never moved and needs no correction.",
+            "resolved_on": "2026-09-23",
+            "resolved_source": "tokenomist.ai, read 2026-09-23",
+            "hypothesis_still_untested": "the 5,000,000 gap closing does not establish WHAT it "
+                                         "was. A vendor correcting a figure and a vendor "
+                                         "changing a definition are indistinguishable from "
+                                         "outside, so the treasury-tokens explanation is "
+                                         "neither confirmed nor refuted — it is simply no "
+                                         "longer visible.",
             "source_date": "2026-09-15",
         },
         # ============ TWO MISSING ADDRESSES, AND THE SECOND ONE IS NEW ============
@@ -9325,6 +9673,106 @@ PROJECTS = [
         ],
     },
     {
+        # ===== THE TREASURY ADDRESSES, AND THE ADAPTER DISAGREES WITH ITSELF. Read 2026-09-23. ==
+        #
+        # The plan was to read DefiLlama's ether-fi-stake adapter for the address eETH withdrawal
+        # fees are sent to, and compare it against 0x0c83EAe1FE72c390A02E426572854931EefF93BA.
+        # ** THEY DO NOT MATCH, and the mismatch is inside the adapter rather than between it and
+        # us. ** From fees/ether-fi-stake/index.ts, read 2026-09-23:
+        #
+        #   getWithdrawalFees   Transfer(eETH) FROM 0x7d5706f6ef3F89B3951E23e557CDFBC3239D4E2c
+        #                                      TO   0x2f5301a3D59388c509C65f8698f521377D41Fd0F
+        #   getMiscStakingRevenue  Transfer(eETH) and Transfer(EIGEN)
+        #                                      TO   0x0c83EAe1FE72c390A02E426572854931EefF93BA
+        #
+        # and its OWN breakdown methodology says of the withdrawal fees: "tracked as eETH
+        # transfers from the withdrawal queue to the treasury", while calling 0x0c83EA... "the
+        # protocol treasury" in the line above it. Both cannot be the treasury in the same
+        # sentence's sense.
+        #
+        # ** NEITHER IS PROMOTED TO A VERIFIED TREASURY ADDRESS ON THAT BASIS. ** Two candidates
+        # with one label between them is the textbook `ambiguous` case this file refuses to
+        # resolve by picking: reading the wrong one would report somebody else's balance as
+        # Ether.fi's treasury, at full confidence, and nothing else on the sheet would look
+        # wrong. Recorded with both, and with what each is used FOR in the adapter, so the next
+        # person starts from two facts rather than from a search.
+        # ===== ETHFI IS NOT EMITTED. Declared 2026-09-23. =====
+        # All 1,000,000,000 ETHFI were minted at construction. What looks like issuance is
+        # VESTING RELEASE out of that fixed supply — tokens moving from a locked allocation into
+        # circulation, which changes circulating_supply and leaves total_supply untouched.
+        #
+        # A supply delta cannot see it, and DefiLlama's unlocks feed is the wrong shape too, so
+        # the Pro-tier answer the Gap Report used to give was the wrong obstacle entirely.
+        "emissions_model": {
+            "model": "distributed_from_premint",
+            "sourced": True,
+            "source": "Ether.fi governance documentation via the allocation table below — all "
+                      "1bn ETHFI minted at construction, with each bucket vesting out of it",
+            "declared_by": "research round, 2026-09-23",
+            "note": "there is no issuance. Every ETHFI that exists existed at construction; the "
+                    "flow that matters is RELEASE, which moves circulating_supply and not "
+                    "total_supply.",
+        },
+        # ===== WHO HOLDS THE 1bn, AND WHEN IT UNLOCKS. Recorded 2026-09-23. =====
+        # Source: Ether.fi's governance gitbook, via DropsTab. RECORD ONLY — nothing reads this.
+        # It is here because a reader looking at a step in circulating_supply needs to be able to
+        # tell a scheduled release from a fault, and because the Team bucket is still releasing.
+        #
+        # ** THE TRACKERS DISAGREE ON HOW MUCH IS UNLOCKED, AND THE GAP IS NOT SMALL. **
+        # Tokenomist says 78.7%, DefiLlama says ~97%. That is 183 MILLION ETHFI of disagreement —
+        # more than the whole Team bucket still to vest — so any "% unlocked" figure taken from a
+        # tracker is unusable without knowing which convention it uses. Flagged rather than
+        # averaged.
+        "allocation_table": {
+            "total_supply": 1_000_000_000,
+            "source": "Ether.fi governance gitbook, via DropsTab",
+            "source_date": "2026-09-23",
+            "buckets": [
+                {"name": "Investors & Advisors", "share": 0.325,
+                 "status": "fully unlocked 2026-03-18"},
+                {"name": "DAO Treasury", "share": 0.2724, "status": "see treasury_candidates"},
+                {"name": "Team", "share": 0.2326, "tokens": 232_600_000,
+                 "unlocked_tokens": 151_460_000, "rate_per_day": 318_000,
+                 "status": "LINEAR, running into mid-2027 — the one bucket still releasing at a "
+                           "steady rate, so a step in circulating_supply that is NOT ~318k/day "
+                           "is something else"},
+                {"name": "Airdrop", "share": 0.11, "status": "complete"},
+                {"name": "Liquidity", "share": 0.03},
+                {"name": "Binance Launchpool", "share": 0.02},
+                {"name": "Protocol Guild", "share": 0.01},
+            ],
+            "trackers_disagree": {
+                "tokenomist_pct_unlocked": 0.787,
+                "defillama_pct_unlocked": 0.97,
+                "gap_tokens": 183_000_000,
+                "verdict": "DO NOT USE EITHER as a percentage-unlocked figure without "
+                           "establishing its convention. The gap is larger than the entire "
+                           "unvested Team balance, so at least one of them is counting "
+                           "something the other is not — most likely the DAO Treasury, which is "
+                           "'unlocked' in the contractual sense and not in the float sense.",
+            },
+        },
+        "treasury_candidates": {
+            "withdrawal_fee_recipient": "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+            "withdrawal_fee_sender": "0x7d5706f6ef3F89B3951E23e557CDFBC3239D4E2c",
+            "misc_revenue_recipient": "0x0c83EAe1FE72c390A02E426572854931EefF93BA",
+            "expected_was": "0x0c83EAe1FE72c390A02E426572854931EefF93BA",
+            "verdict": "MISMATCH. The withdrawal-fee destination is 0x2f5301a3..., not "
+                       "0x0c83EA.... 0x0c83EA... is where MISCELLANEOUS staking revenue (eETH "
+                       "and EIGEN transfers) is sent, and the adapter calls THAT one 'the "
+                       "protocol treasury' — while describing the withdrawal fees as going 'to "
+                       "the treasury' as well.",
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/"
+                          "master/fees/ether-fi-stake/index.ts",
+            "source_date": "2026-09-23",
+            "not_wired": "no treasury_holding contract is declared from this. Two addresses "
+                         "sharing one label is an ambiguity, and picking one would put a "
+                         "confident figure under an address nobody confirmed.",
+            "what_would_settle_it": "Ether.fi's own documentation or governance naming the "
+                                    "treasury address, or an on-chain look at both: a protocol "
+                                    "treasury holds a portfolio, a fee-routing address holds "
+                                    "little and forwards.",
+        },
         "name": "Ether.fi", "symbol": "ETHFI",
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
@@ -9345,6 +9793,20 @@ PROJECTS = [
         },
         # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
         "not_applicable": {
+            # ===== ETHFI IS NOT EMITTED TO ANYBODY. Declared 2026-09-23. =====
+            # All 1,000,000,000 were minted at construction — see allocation_table, whose seven
+            # buckets sum to exactly 1.0 — so there is no issuance at all, and what moves is
+            # RELEASE out of a fixed supply. Release is not emission: emissions_tokens asks what
+            # the protocol pays suppliers or stakers to participate, and a vesting cliff for
+            # investors and the team is not that.
+            #
+            # See emissions_model, kept beside this as the precise classification
+            # (distributed_from_premint) for anyone who needs to know WHY rather than just that.
+            "emissions_tokens":
+                "ETHFI IS NOT EMITTED. All 1bn were minted at construction and the only flow is "
+                "VESTING RELEASE out of that fixed supply — which moves circulating_supply and "
+                "leaves total_supply untouched. There is no supplier or staker emission "
+                "programme to source. Declared 2026-09-23.",
             "buyback_fund_balance":
                 "destination_effect is yield_payout: repurchased ETHFI passes through to stakers "
                 "and no fund accumulates, so there is no balance to read. The metric describes a "
@@ -10277,6 +10739,26 @@ LUMPY_FLOWS = {
     },
     ("Pendle", "actual_buyback_usd"): {
         "underlying_cadence": "biweekly",
+        "observed_cadence": "daily",
+        "why": "the same flow priced — it inherits the token leg's cadence exactly.",
+        "source": "follows actual_buyback_tokens above",
+        "recorded_on": "2026-09-23",
+    },
+    # ===== A RANDOMISED CADENCE IS THE STRONGEST CASE FOR THIS THERE IS. Added 2026-09-23. =====
+    # World Mobile buys back at "randomized intervals" — their own blog — so unlike GEODNET's
+    # weekly burn or Pendle's biweekly buyback there is no period a window could be matched to.
+    # Any fixed window compares an interval that happened to contain a buyback with one that did
+    # not, and neither is a change in the protocol.
+    ("World Mobile", "actual_buyback_tokens"): {
+        "underlying_cadence": "irregular",
+        "observed_cadence": "daily",
+        "why": "buybacks run at RANDOMIZED intervals by design, with the first on 2023-05-29. "
+               "There is no period, so there is no window that behaves.",
+        "source": "World Mobile's own blog, 2025-04 — see buyback_cadence",
+        "recorded_on": "2026-09-23",
+    },
+    ("World Mobile", "actual_buyback_usd"): {
+        "underlying_cadence": "irregular",
         "observed_cadence": "daily",
         "why": "the same flow priced — it inherits the token leg's cadence exactly.",
         "source": "follows actual_buyback_tokens above",

@@ -400,6 +400,86 @@ class DefiLlama:
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{slug}:protocol tvl: {e}", TIER)
 
+    # ===== A LENDING PROTOCOL'S SUPPLY SIDE, AND THE CAVEAT THAT TRAVELS WITH IT. =====
+    #
+    # supply_units and utilisation_pct are archetype 2's two capacity columns, and for a lending
+    # protocol they come from the same pair of DefiLlama series:
+    #     supply_units    = tvl + borrowed          (total supplied, in USD)
+    #     utilisation_pct = borrowed / supply_units
+    #
+    # ** THE DENOMINATOR CARRIES COLLATERAL, AND THAT IS NOT A DETAIL. ** Read from
+    # DefiLlama-Adapters/projects/morpho-blue/index.js on 2026-09-23, the tvl function builds its
+    # token list from BOTH loanToken AND collateralToken of every market and sums the Morpho Blue
+    # singleton's balance of each. Morpho Blue custodies collateral, so it is in there.
+    #
+    # Total SUPPLIED is idle loan tokens plus borrowed. tvl + borrowed is idle loan tokens plus
+    # COLLATERAL plus borrowed. So this denominator is too large by the collateral, and the
+    # utilisation it produces is too SMALL — a known direction, which is the only thing that
+    # makes it usable at all. It is stored with that on the label rather than left blank, and
+    # config.non_comparable carries the reason to the cell.
+    #
+    # The exact figure — sum(totalBorrowAssets) / sum(totalSupplyAssets) across markets — is one
+    # contract read away and zero aggregator calls away, because the same adapter reads
+    # totalSupplyAssets and exports only the borrow side. See utilisation_pct_blocked.
+    def lending_supply(self, project: dict, window_days, out):
+        spec = project.get("lending_supply") or {}
+        slug, name = project.get("defillama_protocol"), project["name"]
+        if not spec or not slug:
+            return
+        try:
+            j = self.http.get(f"{API}/protocol/{slug}")
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{slug}:lending supply: {e}", TIER)
+            return
+
+        chain_tvls = j.get("chainTvls") or {}
+        borrowed = (chain_tvls.get(spec.get("borrowed_key", "borrowed")) or {}).get("tvl")
+        if not isinstance(borrowed, list) or not borrowed:
+            # THE KEYS THE RESPONSE DID CARRY ARE NAMED, so the next run's log says what shape
+            # arrived rather than only that the expected one did not.
+            out.fail(SOURCE, name,
+                     f"{slug}: no {spec.get('borrowed_key', 'borrowed')!r} series in chainTvls. "
+                     f"Keys present: {', '.join(sorted(chain_tvls)[:12]) or 'none'}", TIER)
+            out.gap(name, "utilisation_pct",
+                    reason=(f"DefiLlama's /protocol/{slug} carries no "
+                            f"{spec.get('borrowed_key', 'borrowed')!r} series, so there is no "
+                            f"borrow side to divide by. Keys present: "
+                            f"{', '.join(sorted(chain_tvls)[:12]) or 'none'}."),
+                    tiers_attempted="1",
+                    suggestion=("Check the key name against the live response before changing "
+                                "anything — this is read from chainTvls, not from the headline "
+                                "tvl series."))
+            return
+
+        supplied_side = {int(r["date"]): float(r["totalLiquidityUSD"])
+                         for r in (j.get("tvl") or []) if r.get("totalLiquidityUSD") is not None}
+        rows_units, rows_util = [], []
+        for r in borrowed:
+            ts = int(r["date"])
+            b = float(r.get("totalLiquidityUSD") or 0.0)
+            tvl = supplied_side.get(ts)
+            if tvl is None:
+                continue
+            total = tvl + b
+            if total <= 0:
+                continue
+            when = datetime.fromtimestamp(ts, tz=timezone.utc)
+            rows_units.append((when, total))
+            rows_util.append((when, b / total))
+
+        if not rows_units:
+            out.fail(SOURCE, name,
+                     f"{slug}: the borrowed series and the tvl series share no dates, so neither "
+                     f"figure can be formed. Nothing was stored rather than pairing them by "
+                     f"position, which would align two series on their INDEX and not their DATE.",
+                     TIER)
+            return
+        for metric, rows in (("supply_units", rows_units), ("utilisation_pct", rows_util)):
+            out.add(window(tidy(rows, name, metric, SOURCE, TIER), window_days), SOURCE, name,
+                    f"{slug}:{metric} = " + ("tvl + borrowed" if metric == "supply_units"
+                                             else "borrowed / (tvl + borrowed)")
+                    + " — DENOMINATOR INCLUDES COLLATERAL, see non_comparable", TIER)
+
     def chain_tvl(self, project: dict, window_days, out):
         chain, name = project.get("defillama_chain"), project["name"]
         if not chain:
@@ -483,6 +563,7 @@ class DefiLlama:
             # unless a human went looking.
             self.check_restructure(p, out)
             self.protocol_tvl(p, window_days, out)
+            self.lending_supply(p, window_days, out)
             self.chain_tvl(p, window_days, out)
             self.stablecoins(p, window_days, out)
         self.rwa(projects, window_days, out)

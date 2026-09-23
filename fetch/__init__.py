@@ -23,7 +23,8 @@ import pandas as pd
 
 import config
 
-from .base import FetchOutput, LogEntry, new_run_id, point, today  # noqa: F401
+from .base import (FetchOutput, LogEntry, derive_flow_from_cumulative, new_run_id,
+                   point, today)  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
 from .dune import Dune
@@ -470,6 +471,66 @@ def _restate_metrics(out: FetchOutput, projects: list[dict]) -> None:
             have |= {(name, metric)}
 
 
+def _derive_observed_minting(out: FetchOutput, projects: list[dict],
+                             prior_values: dict, prior_dates: dict) -> None:
+    """Emissions measured as the change in a gross supply figure, for a project with no model.
+
+    ** THE MODEL NEEDED A LAUNCH DATE AND THE PROJECT DOES NOT HAVE ONE. ** World Mobile's
+    whitepaper gives a rate law that integrates cleanly and reproduces its own 29% target, and it
+    still cannot be anchored: the Cardano-era mainnet was planned twice and the Chain's mainnet
+    is still phasing through 2026, so there is no single t0. A measurement needs none — the
+    contracts' own totalSupply moved or it did not.
+
+    IT USES THE SAME DIFFERENCING AS EVERY OTHER FLOW, deliberately: two dated readings or
+    nothing, never a 0 from one observation. See derive_flow_from_cumulative.
+    """
+    frame = out.frame()
+    if frame.empty:
+        return
+    have = {(r.project, r.metric) for r in frame[["project", "metric"]]
+            .drop_duplicates().itertuples(index=False)}
+
+    for p in projects:
+        name = p["name"]
+        spec = p.get("observed_minting") or {}
+        if not spec:
+            continue
+        metric, supply_metric = spec["metric"], spec["supply_metric"]
+        if (name, metric) in have:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{metric}: NOT derived from the supply delta — the column already has a "
+                        f"figure this run, and a derivation beside a measurement is a second "
+                        f"measuring point.", tier=2)
+            continue
+        rows = frame[(frame.project == name) & (frame.metric == supply_metric)].sort_values("date")
+        if rows.empty:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{metric}: it is the change in {supply_metric}, which produced nothing "
+                        f"this run. Not a separate gap: see {supply_metric}.", tier=2)
+            continue
+        latest = rows.iloc[-1]
+        src = f"{SOURCE_DERIVED}:d_{supply_metric}"
+        if spec.get("partial_reason"):
+            src = config.mark_source(src, "PARTIAL")
+        flow = derive_flow_from_cumulative(
+            float(latest.value), prior_values.get((name, supply_metric)), name, metric,
+            config.mark_source(src, "delta"), 2, latest.date,
+            prior_date=prior_dates.get((name, supply_metric)),
+            stock_metric=supply_metric, out=out)
+        if flow.empty:
+            continue
+        out.add(flow, SOURCE_DERIVED, name,
+                f"{metric} = the change in {supply_metric} — MEASURED, not modelled: "
+                f"{spec['why']}", 2)
+        if spec.get("partial_reason"):
+            out.review_item(name, metric, "supply_partial", "stored_flagged",
+                            value=float(flow["value"].iloc[0]), date=latest.date,
+                            source=src, tier=2,
+                            basis=(f"{spec['partial_reason']} Unlike the model this replaced, "
+                                   f"the direction of THIS error is known: it can only be too "
+                                   f"small."))
+
+
 def _derive_curve_issuance(out: FetchOutput, projects: list[dict]) -> None:
     """Issuance from a declared rate law, evaluated at the t the observed supply implies.
 
@@ -542,6 +603,32 @@ def _derive_curve_issuance(out: FetchOutput, projects: list[dict]) -> None:
         if curve.get("partial_reason"):
             src = config.mark_source(src, "PARTIAL")
         when = latest.date
+
+        # ===== A CROSS-CHECK DOES NOT WRITE THE COLUMN. Added 2026-09-23. =====
+        # ** THE MODEL'S ONE INDEPENDENT TEST TURNED OUT TO HAVE NOTHING TO TEST AGAINST. ** The
+        # curve implied World Mobile's emission began around 2022-04, and the project has no
+        # single launch date for that to match: Cardano-era mainnet was PLANNED for Q3 2022 and
+        # re-planned for Q1 2023, the Chain's public testnet was 2025-03, a permissioned
+        # Developer Mainnet 2025-06, and public mainnet is still phasing through 2026.
+        #
+        # So the column comes from OBSERVED MINTING instead — a measurement, needing no t0 — and
+        # the curve still runs every time and reports its implied t, because the two disagreeing
+        # is worth seeing. What it no longer does is write the figure.
+        if curve.get("role") == "cross_check":
+            out.review_item(
+                name, metric, "curve_cross_check", "stored_flagged",
+                value=daily, prior_value=None, date=when, source=src, tier=1,
+                basis=(f"THE CURVE IS A CROSS-CHECK HERE AND WRITES NOTHING. "
+                       f"{supply_metric}={supply:,.0f} puts the whitepaper's model at "
+                       f"t={t_plus_1 - 1:.2f}y, a rate of {100 * k / t_plus_1:.4f}%/yr, "
+                       f"{annual:,.0f} tokens/yr ({daily:,.2f}/day). Compare that against the "
+                       f"MEASURED issuance. {curve.get('why_demoted', '')}"))
+            out.skipped(SOURCE_DERIVED, name,
+                        f"{metric}: the curve is a CROSS-CHECK, not the route — see "
+                        f"issuance_curve.role. The column comes from "
+                        f"{curve.get('issuance_route_instead', 'observed minting')}.", tier=1)
+            continue
+
         out.add(point(name, metric, daily, src, 1, when), SOURCE_DERIVED, name,
                 f"{metric}={daily:,.2f}/day — the whitepaper's rate law k/(t+1) integrated to "
                 f"S(t)=S0(t+1)^k, evaluated at the t that {supply_metric}={supply:,.0f} implies: "
@@ -998,6 +1085,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # gaps them for want of a figure that is one division away.
     _derive_chain_burn(out, projects)
     _derive_curve_issuance(out, projects)
+    _derive_observed_minting(out, projects, ctx["prior_values"], ctx["prior_dates"])
     # AFTER the derivations, so a restatement copies the settled series rather than one that is
     # about to be superseded, and BEFORE the checks, so the restated column is validated too.
     _restate_metrics(out, projects)
