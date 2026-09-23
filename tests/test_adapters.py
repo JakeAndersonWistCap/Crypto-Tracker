@@ -965,7 +965,12 @@ def test_sky_has_no_burn_address_because_it_has_no_dead_address_mechanism():
     # The deployment block is computable from the chain by binary search on eth_getCode, which is
     # derivation rather than assumption, and it is what lets the scan cover the governance burns
     # that predate Stage 2.
-    assert cfg["from_block"] is None and cfg["from_block_discover"] == "deployment"
+    # ** NOW FOUND AND WRITTEN DOWN: 20,663,735 (2026-09-23). ** The discovery mechanism stays
+    # declared — it is what found it, and it is what will find the next one — but a block number
+    # established once does not change, and re-running a binary search on eth_getCode every run
+    # spends calls to re-learn a constant.
+    assert cfg["from_block"] == 20_663_735 and cfg["from_block_discover"] == "deployment"
+    assert cfg["from_block_found_on"] == "2026-09-23"
     ref = cfg["first_read_reference"]
     assert ref["value"] == 2_860_000 and ref["as_of"] == "2026-09-14" and ref["tolerance_pct"] == 5
     assert ref["mode"] == "at_least", \
@@ -1160,7 +1165,12 @@ def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
     plausible number.
     """
     cfg = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]
-    assert cfg["from_block"] is None and cfg["from_block_discover"] == "deployment"
+    # ** NOW FOUND AND WRITTEN DOWN: 20,663,735 (2026-09-23). ** The discovery mechanism stays
+    # declared — it is what found it, and it is what will find the next one — but a block number
+    # established once does not change, and re-running a binary search on eth_getCode every run
+    # spends calls to re-learn a constant.
+    assert cfg["from_block"] == 20_663_735 and cfg["from_block_discover"] == "deployment"
+    assert cfg["from_block_found_on"] == "2026-09-23"
     assert cfg["max_blocks_per_run"] is None, \
         "a full-history scan is the intent here, not the accident the ceiling guards against"
 
@@ -1169,9 +1179,24 @@ def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
     c = Chain(prior_values={}, prior_dates={})
     c.reader = reader
     out = FetchOutput()
+    # ===== ** THE CONFIGURED from_block IS USED AND DISCOVERY IS SKIPPED. ** 20,663,735 was
+    # found on 2026-09-23 and written down; a binary search on eth_getCode every run spends
+    # calls to re-learn a constant. Discovery stays declared and is exercised below — it is what
+    # found this one and what will find the next.
     c.run([_sky_log_probe()], None, out)
-    assert reader.asked["deployment"][1] == config.PROJECT_BY_NAME["Sky"]["contracts"]["token"]["address"]
-    assert reader.asked["scan"]["from_block"] == 20_700_000, reader.asked
+    assert "deployment" not in reader.asked, \
+        "a known from_block must not re-run the deployment search"
+    assert reader.asked["scan"]["from_block"] == 20_663_735, reader.asked
+
+    # AND WITH IT UNSET, DISCOVERY RUNS — the mechanism is not dead code.
+    r2 = _LogReader([{"from": STAGE2, "value": int(2_860_000 * WAD), "block": 23_400_100}],
+                    deployed=20_700_000)
+    c2 = Chain(prior_values={}, prior_dates={})
+    c2.reader = r2
+    out2 = FetchOutput()
+    c2.run([_sky_log_probe(from_block=None)], None, out2)
+    assert r2.asked["deployment"][1] == config.PROJECT_BY_NAME["Sky"]["contracts"]["token"]["address"]
+    assert r2.asked["scan"]["from_block"] == 20_700_000, r2.asked
     assert reader.asked["scan"]["chunk"] == 10_000
     assert reader.asked["scan"]["burn_to"] == config.BURN_ADDRESSES["zero"]
 
@@ -1179,7 +1204,7 @@ def test_the_burn_scan_starts_at_deployment_and_reports_its_chunking():
     # the stripper the series would blank itself for a change that never happened.
     from fetch.base import _measuring_point
     row = out.frame().query("metric == 'burn_address_balance'").iloc[0]
-    assert "logs@20700000-" in row["source"] and "deployed@20700000" in row["source"], row["source"]
+    assert "logs@20663735-" in row["source"], row["source"]
     assert _measuring_point(row["source"]) == "chain:ethereum:burn_logs", row["source"]
     # ** THE SIBLING SERIES NAME THEIR METRIC IN BRACKETS, AND THAT PLACEMENT IS THE POINT. **
     # One contract key emitting three parts has to disambiguate them, and the first version did it
