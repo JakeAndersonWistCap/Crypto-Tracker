@@ -652,6 +652,43 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
                 have |= {(name, "actual_buyback_tokens")}
 
         # (2) THE USD TWIN, for whatever token series now exists.
+        # ===== THE SPLIT ROUTE: THE SUPPLY-REDUCTION LEG IS A BURN, SO IT RE-LABELS TOO. =====
+        # Added 2026-09-24 for Sky. Stage 2 spends 27.5% of NPS on SKY: 22.5 points go to
+        # stakers (distributed, unmeasured — no stock, no burn) and 5 points are bought and
+        # BURNED. The burn leg is the same event as gross_burn_tokens, exactly as GEODNET's whole
+        # buyback is, so it is taken from that series rather than sourced again — and marked
+        # PARTIAL, because it is one leg of two and the sheet must not read it as the whole
+        # buyback. Where the burn series produced nothing (Sky's scan is blocked by the provider
+        # cap) there is nothing to re-label, and that is said rather than reported as a second gap.
+        if (route["route"] == "split" and "actual_buyback_tokens" not in sourced
+                and "actual_buyback_tokens" not in {m for n, m in have if n == name}):
+            legs = config.stage_split_legs(name)
+            burn_legs = [l for l in legs
+                         if l.get("effect") == "supply_reduction" and l.get("cross_check_metric")]
+            other = [l for l in legs if l.get("effect") != "supply_reduction"]
+            if burn_legs:
+                leg = burn_legs[0]
+                src = frame[(frame.project == name) & (frame.metric == leg["cross_check_metric"])]
+                unmeasured = ", ".join(f"{l.get('share', 0):.1%} {l.get('effect', '')}" for l in other)
+                if src.empty:
+                    out.skipped(SOURCE_DERIVED, name,
+                                f"actual_buyback_tokens: the {leg.get('share', 0):.0%} "
+                                f"supply-reduction leg burns, so it equals "
+                                f"{leg['cross_check_metric']} — which produced nothing this run, "
+                                f"so there is nothing to re-label. Not a separate gap: see "
+                                f"{leg['cross_check_metric']}. The other leg(s) ({unmeasured}) are "
+                                f"distributed and have no stock or burn to read.", tier=2)
+                else:
+                    rows = src.copy()
+                    rows["metric"] = "actual_buyback_tokens"
+                    rows["source"] = rows["source"].astype(str).map(
+                        lambda x: config.mark_source(config.mark_source(x, "as-buyback"), "PARTIAL"))
+                    out.add(rows, SOURCE_DERIVED, name,
+                            f"actual_buyback_tokens = {leg['cross_check_metric']} ({len(rows)} "
+                            f"row(s)) — the {leg.get('share', 0):.0%} supply-reduction leg ONLY, "
+                            f"marked PARTIAL: the other leg(s) ({unmeasured}) are distributed to "
+                            f"stakers and are not measured here.", 2)
+                    have |= {(name, "actual_buyback_tokens")}
         if ("actual_buyback_usd" in sourced
                 or "actual_buyback_usd" in {m for n, m in have if n == name}
                 or "actual_buyback_tokens" not in {m for n, m in have if n == name}):

@@ -2496,3 +2496,93 @@ SELECT date, COUNT(*) AS rows
  WHERE project = 'Morpho' AND metric = 'fees_usd'
  GROUP BY date
 HAVING COUNT(*) > 1;
+
+-- ========================================================================================
+-- AC. MORPHO utilisation_pct / supply_units — THE DefiLlama ROWS THAT PIN measuring_point_changed.
+--     AC1-AC2 LOOK. AC3 is the proposed delete, commented out.                  2026-09-24
+-- ========================================================================================
+-- utilisation_pct renders n/a with status measuring_point_changed and source
+-- morpho_api:markets. The flag is CORRECT and it is STUCK: the stored series carries rows from
+-- two sources — DefiLlama's borrowed/(tvl+borrowed) (0.3231, collateral in the denominator)
+-- and morpho_api's sum(borrow)/sum(supply) over listed markets (0.8802) — and case 5 in
+-- build_workbook blanks a series read from two places unless a handover is declared.
+--
+-- ** IT IS NOT A HANDOVER, SO NONE IS DECLARED. ** A handover says two legs are ONE series
+-- measured at two points in time. These are two different quantities: the DefiLlama figure
+-- has borrower collateral in its denominator and the morpho_api figure does not. Stitching
+-- them and calling the result continuous would be the same mistake as summing the two
+-- Pendle regimes. The store upserts and never deletes, so this does not clear by itself.
+--
+-- ** WHAT THE ROWS ARE. ** Not wrong readings of utilisation — correct readings of a
+-- different ratio, stored under this column's name before the exact route existed. The
+-- caveat that described them (config.is_non_comparable, "THE DENOMINATOR INCLUDES
+-- COLLATERAL") still travels with any row sourced from defillama, so they were never
+-- displayed as clean; they are simply no longer the figure this column carries.
+
+-- AC1. THE ROWS. Expect utilisation_pct only — DefiLlama never stored supply_units for
+--      Morpho (the adapter refused that pair from the start); the supply_units clause is
+--      here so a row that did land is seen rather than assumed absent.
+SELECT date, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Morpho'
+   AND metric IN ('utilisation_pct', 'supply_units')
+   AND source LIKE 'defillama%'
+ ORDER BY metric, date;
+
+-- AC2. WHAT SURVIVES — the morpho_api rows, which this section never touches. Run before
+--      and after; this must not move. (supply_units will be EMPTY until the run after the
+--      per-project sanity bound landed on 2026-09-24 — it was rejected at validation, not
+--      stored and then lost.)
+SELECT metric, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Morpho'
+   AND metric IN ('utilisation_pct', 'supply_units')
+   AND source LIKE 'morpho_api%'
+ GROUP BY metric;
+
+-- AC3. THE PROPOSED DELETE. Delete rather than move: there is no metric these rows are a
+--      correct reading OF that this tool carries — "utilisation with collateral in the
+--      denominator" is not a column, and inventing one to keep a known-biased series would
+--      be keeping a number for its own sake. The DefiLlama route itself stays on record in
+--      config (non_comparable, utilisation_pct_blocked) so what was measured, and why it was
+--      replaced, is not lost with the rows.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Morpho'
+--    AND metric IN ('utilisation_pct', 'supply_units')
+--    AND source LIKE 'defillama%';
+-- COMMIT;
+
+-- AC4. VERIFY — AC1 returns nothing, AC2 is unchanged. On the next build utilisation_pct's
+--      status changes from measuring_point_changed to ok with source morpho_api:markets;
+--      if it does not, a THIRD source is in the series and AC1's filter needs widening —
+--      look before widening it.
+SELECT DISTINCT source
+  FROM metrics
+ WHERE project = 'Morpho' AND metric = 'utilisation_pct';
+
+-- ========================================================================================
+-- AD. GEODNET buyback_wallet_polygon_historical — RETIRED 2026-09-24; ANY ROWS IT WROTE.
+--     AD1 LOOKS. AD2 is the proposed delete, commented out.                    2026-09-24
+-- ========================================================================================
+-- The contract entry is gone from config (kept as retired_contracts on the GEODNET entry).
+-- It was kind buyback_fund_balance on a project whose buyback BURNS, so the metric it served
+-- is not one GEODNET can have — the same shape section AA found on Uniswap — and it was
+-- model-knowledge with no GEODNET-authored source and no reference from the burn query.
+-- The read was refused as unverified from the start, so AD1 is EXPECTED EMPTY; it is here so
+-- that is seen rather than assumed, and because any row that did land is now orphaned.
+
+-- AD1. THE ROWS, if any. Expect none: the read was refused while the entry existed.
+SELECT date, metric, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET'
+   AND source LIKE '%buyback_wallet_polygon_historical%'
+ ORDER BY date;
+
+-- AD2. THE PROPOSED DELETE. Only if AD1 returned rows.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'GEODNET'
+--    AND source LIKE '%buyback_wallet_polygon_historical%';
+-- COMMIT;

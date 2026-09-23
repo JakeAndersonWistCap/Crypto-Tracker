@@ -157,6 +157,75 @@ METRIC_CONTRACT_KIND = {
 }
 
 
+def _format_blocked(blocked: dict) -> tuple[str, str]:
+    """A project's `{metric}_blocked` record as (reason, suggestion). One formatter, two callers."""
+    return (f"{blocked.get('status', 'blocked')} — WANTED: {blocked.get('wanted')}. "
+            f"{blocked.get('why_not_defillama') or blocked.get('why') or ''} "
+            f"(established from {blocked.get('source_url')}, read "
+            f"{blocked.get('source_date')})",
+            blocked.get("route_that_would_work")
+            or "See this project's config entry for what would answer it.")
+
+
+def _buyback_gap_reason(project: dict, metric: str, scrape_entries: dict) -> tuple[str, str] | None:
+    """(reason, suggestion) for actual_buyback_tokens / actual_buyback_usd, from the ROUTE.
+
+    ** THE PRINCIPLE, SETTLED: a buyback wallet exists to SPEND, so a differenced balance is inflow
+    minus spending. The measurable quantity is the INFLOW, which needs Transfer events. ** So no
+    branch here ever suggests declaring a buyback_fund_balance contract to difference.
+
+      burn / split      the buyback IS the burn (or its burn leg) — one event, two names. The row
+                        points at gross_burn_tokens and carries THAT row's reason, so a reader
+                        is never sent to build a second source for the same event.
+      treasury_inflow   the fund is known or not; either way the route is a log scan. The
+                        project's actual_buyback_tokens_blocked says which and why.
+      distribute        no stock and no burn to read; needs the distributor's outflow history.
+      none              no mechanism.
+
+    usd FOLLOWS tokens: same reason, prefixed, so the two rows never disagree.
+    """
+    name = project["name"]
+    if metric == "actual_buyback_usd":
+        blocked = project.get("actual_buyback_tokens_blocked")
+        if blocked:
+            reason, suggestion = _format_blocked(blocked)
+        else:
+            inner = _buyback_gap_reason(project, "actual_buyback_tokens", scrape_entries)
+            if inner is None:
+                return None
+            reason, suggestion = inner
+        return (f"FOLLOWS actual_buyback_tokens — usd is tokens x price_usd on each flow's own "
+                f"date, so it exists exactly when tokens does. Tokens: {reason}",
+                f"Resolve actual_buyback_tokens; this row fills from it with no separate source. "
+                f"({suggestion})")
+
+    route = config.buyback_route(name)
+    kind = route.get("route")
+    if kind in ("burn", "split"):
+        if kind == "burn":
+            burn_metric, share_note = route.get("metric") or "gross_burn_tokens", ""
+        else:
+            legs = [l for l in config.stage_split_legs(name)
+                    if l.get("effect") == "supply_reduction" and l.get("cross_check_metric")]
+            if not legs:
+                return (route["reason"], "See stage_split_legs in config.")
+            burn_metric = legs[0]["cross_check_metric"]
+            share_note = (f" This is the {legs[0].get('share', 0):.0%} supply-reduction leg ONLY "
+                          f"(marked PARTIAL when it fills); the distributed leg has no stock or "
+                          f"burn to read.")
+        inner_reason, inner_suggestion = _tier_note(project, burn_metric, scrape_entries)
+        return (f"= {burn_metric} — the bought tokens are the burned tokens, one event under two "
+                f"names, so this row fills from that one and never has its own source.{share_note} "
+                f"That row's reason: {inner_reason}",
+                f"Resolve {burn_metric}; this row re-labels from it. ({inner_suggestion})")
+    if kind in ("treasury_inflow", "distribute", "none"):
+        return (route["reason"],
+                "The route is a Transfer-event scan into the receiving address (an INFLOW), never a "
+                "balance read — a buyback wallet spends, so its differenced balance understates the "
+                "buyback by the buyback. Where the address is unknown, that is the thing to find.")
+    return None
+
+
 def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, str]:
     """(reason, suggestion) for a metric this project has no data for."""
     name = project["name"]
@@ -170,12 +239,21 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # it does not answer, and what would.
     blocked = project.get(f"{metric}_blocked")
     if blocked:
-        return (f"{blocked.get('status', 'blocked')} — WANTED: {blocked.get('wanted')}. "
-                f"{blocked.get('why_not_defillama') or blocked.get('why') or ''} "
-                f"(established from {blocked.get('source_url')}, read "
-                f"{blocked.get('source_date')})",
-                blocked.get("route_that_would_work")
-                or "See this project's config entry for what would answer it.")
+        return _format_blocked(blocked)
+
+    # ===== THE BUYBACK PAIR ANSWERS FROM ITS ROUTE, NEVER FROM "no contract of kind ...". =====
+    # Added 2026-09-24. Seven projects gapped on actual_buyback_* with variants of "no contract
+    # of kind 'buyback_fund_balance' declared", and for none of them was that the reason: Maple
+    # HAS the fund address, Pendle's buyback has no wallet by design, GEODNET's is the burn.
+    # The route already knows the answer (config.buyback_route); this makes the row say it.
+    #
+    # AND actual_buyback_usd NEVER GAPS ON ITS OWN. Where tokens is unavailable, usd inherits the
+    # same reason and points at it; where tokens exists, usd is tokens x price on the flow's own
+    # date, so a usd gap beside a tokens figure is a PRICE gap and says so.
+    if metric in ("actual_buyback_tokens", "actual_buyback_usd"):
+        answer = _buyback_gap_reason(project, metric, scrape_entries)
+        if answer:
+            return answer
 
     if metric in PRO_PAYWALLED:
         # ===== THE PAYWALL IS THE LAST EXPLANATION, NOT THE FIRST. Fixed 2026-09-23. =====
@@ -257,6 +335,30 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # A burn that happens at the protocol level has no address to read, so "no contract declared"
     # would be the wrong explanation entirely — the fix is a different SOURCE, not a missing address.
     if metric in ("gross_burn_tokens", "burn_address_balance"):
+        # ===== A LOG-SCAN ROUTE EXISTS: SAY WHAT BLOCKS IT, NOT "add a sources.yaml entry". =====
+        # Added 2026-09-24. Sky's burn_read_method is protocol_level (no dead address to read),
+        # which is TRUE and used to be the whole answer — until contracts.burn_logs was wired
+        # to read the burn from Transfer-to-zero logs. With that route on file, the row was still
+        # telling the reader to go and find a dashboard, while the actual blocker (the provider's
+        # 10-block eth_getLogs cap, recorded on the contract's own scan_blocked_* entry) went
+        # unmentioned. This branch runs FIRST so a declared log route always speaks for itself.
+        for key, c in (project.get("contracts") or {}).items():
+            if c.get("kind") != "burn_transfer_logs":
+                continue
+            logs = c.get("burn_logs") or {}
+            blocked = next((v for k, v in logs.items() if k.startswith("scan_blocked")), None)
+            if blocked:
+                ways = "; ".join(blocked.get("ways_out") or ())
+                return (f"read from Transfer-to-zero LOGS on contracts.{key}, and the scan is "
+                        f"BLOCKED: {blocked.get('provider')} caps eth_getLogs at "
+                        f"{blocked.get('eth_getLogs_max_range')} blocks per request "
+                        f"({blocked.get('evidence')}) — {blocked.get('requests_needed')} would "
+                        f"be needed. {blocked.get('do_not')}",
+                        f"A logs endpoint above the cap: {ways}. Nothing in config is missing; "
+                        f"the route is wired and waiting on the provider.")
+            return (f"read from Transfer-to-zero LOGS on contracts.{key}; the scan produced "
+                    f"nothing this run — check the Run Log for the chain adapter's row.",
+                    f"See contracts.{key} and the chain adapter's Run Log line for the cause.")
         method = project.get("burn_read_method")
         if method in ("protocol_level", "undetermined", "native_balance"):
             note = project.get("burn_read_note", "")

@@ -1828,10 +1828,17 @@ def test_etherfis_two_addresses_have_two_roles_and_neither_is_read_as_a_balance(
     # balance delta of inflow MINUS spending, so it understates the buyback by the buyback.
     assert "understates the buyback by the buyback" in bw["not_wired_as_balance"]
     assert "log scan" in bw["route_that_would_work"] and "not a balance read" in bw["route_that_would_work"]
-    # NEITHER IS DECLARED AS A CONTRACT, so nothing reads either one yet.
-    assert not any(c.get("address", "").lower() in (bw["address"].lower(), tr["address"].lower())
+    # THE BUYBACK WALLET IS NEVER DECLARED AS A CONTRACT — its balance is inflow minus spending
+    # and reading it would be the error this test exists to refuse.
+    assert not any(c.get("address", "").lower() == bw["address"].lower()
                    for c in p["contracts"].values()), \
-        "recorded, not wired — what the treasury HOLDS has not been read"
+        "the buyback wallet must never be read as a balance"
+    # THE TREASURY WAS WIRED 2026-09-24 ON INSTRUCTION (as treasury_holding, a HOLDING — the
+    # right shape for a treasury, unlike the buyback flow). The basis is an aggregator plus the
+    # instruction, and the contract entry says so rather than wearing a clean 'verified'.
+    wired = [c for c in p["contracts"].values() if c.get("address", "").lower() == tr["address"].lower()]
+    assert len(wired) == 1 and wired[0]["kind"] == "treasury_holding"
+    assert "AGGREGATOR-SOURCED" in wired[0]["provenance"] and tr["wired_on"] == "2026-09-24"
     print("ether.fi ok: buyback wallet and treasury told apart by three sources, and the "
           "buyback wallet's balance is explicitly not the buyback")
 
@@ -5450,7 +5457,12 @@ def test_geodnet_sql_addresses_match_config_exactly():
     # All three 2026-09-15 additions are UNVERIFIED, so the adapter refuses them and they appear in
     # the Gap Report by name. That is the point of recording them.
     added_2026_09_15 = {"mining_polygon", "mining_distribution_polygon", "ecosystem_polygon"}
-    assert set(contracts) == set(from_sql) | {"buyback_wallet_polygon_historical", "token_iotex"} | added_2026_09_15, \
+    # buyback_wallet_polygon_historical RETIRED 2026-09-24: unverified, model-knowledge, and it
+    # served buyback_fund_balance on a project whose buyback burns. It lives on in
+    # retired_contracts; any rows it wrote are section AD's. Listed here as the tripwire's record.
+    retired = config.PROJECT_BY_NAME["GEODNET"]["retired_contracts"]
+    assert set(retired) == {"buyback_wallet_polygon_historical"}
+    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15, \
         f"unexpected contract keys on GEODNET: {sorted(contracts)}"
     for key in added_2026_09_15:
         c = contracts[key]
@@ -6625,7 +6637,10 @@ def test_geodnet_treasury_wallets_are_eoas_not_contracts_targeted_not_kind_wide(
     # THE CONTROL: real treasury contracts elsewhere must be COMPLETELY UNTOUCHED. This is what
     # proves the fix is per-address, not a change to the kind-wide default that would have
     # silently stopped checking Sky's, Maple's and NEAR's genuinely-contract treasuries too.
-    controls = [("Sky", "pause_proxy"), ("Maple", "treasury"), ("Near", "intents_treasury_base")]
+    # NEAR's intents_treasury_base was retired to treasury_reference on 2026-09-24 (the metric
+    # is n/a for NEAR), so it is no longer a control; the guard's per-address scope is proved by
+    # the two that remain.
+    controls = [("Sky", "pause_proxy"), ("Maple", "treasury")]
     for proj, key in controls:
         spec = config.PROJECT_BY_NAME[proj]["contracts"][key]
         assert spec["kind"] == "treasury_holding"
@@ -8141,9 +8156,11 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
     assert only["reads"] == ["burn_polygon"]
     assert only["refused"] == {"burn_solana_token_account": "chain_not_covered"}
 
+    # GEODNET/buyback_fund_balance LEFT this list on 2026-09-24: its only component was the
+    # retired buyback_wallet_polygon_historical, so there is no refused read to mark any more.
     assert set(no_figure) == {
         ("Aave", "locked_tokens"), ("Aave", "total_supply"),
-        ("GEODNET", "buyback_fund_balance"), ("OriginTrail", "total_supply"),
+        ("OriginTrail", "total_supply"),
         ("Venice AI", "buyback_fund_balance"),
     }, f"the all-refused list has moved: {sorted(no_figure)}"
 
@@ -12604,3 +12621,252 @@ def test_the_recovery_review_flag_tracks_the_hole_not_the_restructure():
     f, out = _morpho_guard([12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23])   # 09-20 missing
     items = [r for r in out.review if r["metric"] == "fees_usd"]
     assert len(items) == 1 and "1 day(s)" in items[0]["basis"], items
+
+
+# ======================================================================================
+# BIG ROUND, 2026-09-24 — three metric families across eleven projects, plus Morpho.
+# ======================================================================================
+
+def test_morphos_supply_units_passes_the_bound_that_used_to_reject_it_and_depin_bounds_are_untouched():
+    """The row was never lost in transit: fetch/validate rejected it against a DePIN bound.
+
+    supply_units is "nodes/hotspots/GPUs" with sanity_max 1e8. Morpho's figure is USD supplied
+    to listed markets — 5.87e9, fifty-eight times the ceiling — so it went to the Review Queue
+    as out_of_bounds/rejected and was NEVER STORED, which is what source=None on the sheet means.
+    The bound is re-drawn per project (the World Mobile precedent), and the unit goes with it.
+    """
+    from fetch.base import FetchOutput, point
+    from fetch.validate import validate_frame, REASON_BOUNDS, ACTION_REJECTED
+
+    assert config.sanity_bounds("Morpho", "supply_units") == (1e8, 1e12)
+    assert config.metric_unit("Morpho", "supply_units") == "usd"
+    # THE LIBRARY BOUND IS NOT WIDENED — a DePIN project's node count is still bounded at 1e8.
+    assert config.sanity_bounds("GEODNET", "supply_units")[1] == 1e8
+    assert config.metric_unit("GEODNET", "supply_units") == "units"
+
+    # Through the real validator: the exact tuple morpho_api emits now survives.
+    out = FetchOutput()
+    df = pd.concat([point("Morpho", "supply_units", 5_868_948_998.0, "morpho_api:markets", 1,
+                          pd.Timestamp("2026-09-24")),
+                    point("Morpho", "utilisation_pct", 0.8802, "morpho_api:markets", 1,
+                          pd.Timestamp("2026-09-24"))], ignore_index=True)
+    kept = validate_frame(df, {}, out)
+    assert set(kept.metric) == {"supply_units", "utilisation_pct"}, kept
+    assert not [r for r in out.review if r["reason"] == REASON_BOUNDS], out.review
+
+    # AND THE SAME VALUE ON A DePIN PROJECT IS STILL REJECTED — the fix is scoped, not global.
+    out2 = FetchOutput()
+    df2 = point("GEODNET", "supply_units", 5_868_948_998.0, "scrape:x", 3, pd.Timestamp("2026-09-24"))
+    assert validate_frame(df2, {}, out2).empty
+    rej = [r for r in out2.review if r["reason"] == REASON_BOUNDS and r["action"] == ACTION_REJECTED]
+    assert rej and rej[0]["project"] == "GEODNET", out2.review
+
+    # THE MEASURING-POINT FLAG ON utilisation_pct IS RECORDED AS STUCK, with the section that
+    # clears it — it is a store problem, not a next-run problem.
+    stuck = config.PROJECT_BY_NAME["Morpho"]["utilisation_pct_measuring_point_stuck"]
+    assert stuck["self_clearing"] is False and "section AC" in stuck["clears_by"]
+    assert config.declared_handover("Morpho", "utilisation_pct") is None, \
+        "not a handover — two different quantities, and declaring one would stitch them"
+
+
+def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_leg_is_named():
+    """A split destination's supply-reduction leg is a burn, so it re-labels like GEODNET's.
+
+    22.5 of Stage 2's 27.5 points go to stakers (distributed — no stock, no burn); 5 points are
+    bought and burned. The burn leg is gross_burn_tokens under a second name, marked PARTIAL so
+    the sheet cannot read one leg as the whole buyback.
+    """
+    import fetch
+    from fetch.base import FetchOutput, point
+
+    sky = config.PROJECT_BY_NAME["Sky"]
+    assert config.buyback_route("Sky")["route"] == "split"
+
+    # (1) WITH A BURN SERIES: re-labelled, PARTIAL, priced on the day.
+    out = FetchOutput()
+    out.add(pd.concat([point("Sky", "gross_burn_tokens", 300_000.0, "chain:ethereum:burn_logs:delta", 2,
+                             pd.Timestamp("2026-09-20")),
+                       point("Sky", "gross_burn_tokens", 250_000.0, "chain:ethereum:burn_logs:delta", 2,
+                             pd.Timestamp("2026-09-21"))], ignore_index=True),
+            "chain", "Sky", "burn", 2)
+    out.add(pd.concat([point("Sky", "price_usd", 0.08, "coingecko", 1, pd.Timestamp("2026-09-20")),
+                       point("Sky", "price_usd", 0.10, "coingecko", 1, pd.Timestamp("2026-09-21"))],
+                      ignore_index=True), "coingecko", "Sky", "price", 1)
+    fetch._derive_buyback(out, [sky])
+    df = out.frame()
+    toks = df[df.metric == "actual_buyback_tokens"].sort_values("date")
+    assert list(toks.value) == [300_000.0, 250_000.0], toks.to_dict()
+    src = toks.source.iloc[0]
+    assert ":as-buyback" in src and ":PARTIAL" in src, f"one leg of two must read PARTIAL: {src}"
+    usd = df[df.metric == "actual_buyback_usd"].sort_values("date")
+    assert list(usd.value) == [24_000.0, 25_000.0], "usd = tokens x price on the flow's own date"
+    msg = [e.message for e in out.log if "actual_buyback_tokens = gross_burn_tokens" in e.message]
+    assert msg and "5% supply-reduction leg ONLY" in msg[0] and "27.5% buy_pressure" in msg[0], msg
+
+    # (2) WITHOUT ONE (Sky's scan is cap-blocked): nothing re-labelled, and it says so — not a
+    #     second gap for the same event.
+    out2 = FetchOutput()
+    out2.add(point("Sky", "price_usd", 0.10, "coingecko", 1, pd.Timestamp("2026-09-21")),
+             "coingecko", "Sky", "price", 1)
+    fetch._derive_buyback(out2, [sky])
+    assert out2.frame()[out2.frame().metric == "actual_buyback_tokens"].empty
+    skipped = [e.message for e in out2.log if e.status == "skipped" and "nothing to re-label" in e.message]
+    assert skipped and "Not a separate gap: see gross_burn_tokens" in skipped[0], out2.log
+
+
+def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tokens():
+    """"no contract of kind 'buyback_fund_balance' declared" was the reason on seven projects and
+    true for none of them. The route knows the answer; the row now says it. And usd never gaps on
+    its own: it inherits tokens' reason and points at it.
+    """
+    from fetch.gaps import _tier_note
+
+    def reason(name, metric):
+        return _tier_note(config.PROJECT_BY_NAME[name], metric, {})
+
+    # 1b — fund KNOWN, scan blocked by the provider cap. Neither says "no contract declared".
+    for name, addr in (("Maple", "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"),
+                       ("Ether.fi", "0x2f5301a3D59388c509C65f8698f521377D41Fd0F")):
+        r, sug = reason(name, "actual_buyback_tokens")
+        assert "10 blocks" in r and addr in r, (name, r)
+        assert "no contract of kind" not in r
+        assert "Transfer events INTO" in r, "the inflow, never a balance"
+        assert "balance read" in r and "understates the buyback by the buyback" in r
+        # 1d — usd follows, verbatim.
+        ru, _ = reason(name, "actual_buyback_usd")
+        assert ru.startswith("FOLLOWS actual_buyback_tokens") and "10 blocks" in ru, ru
+
+    # 1c — no readable destination, with THAT reason.
+    r, _ = reason("Pendle", "actual_buyback_tokens")
+    assert "sPENDLE" in r and "no buyback contract" in r and "no contract of kind" not in r, r
+    r, _ = reason("World Mobile", "actual_buyback_tokens")
+    assert "never been published" in r and "explorer label" in r, r
+    r, sug = reason("Near", "actual_buyback_tokens")
+    assert "buybacks.multisignature.near" in r and "view_account" in r and "receipt history" in r, r
+    assert "dune.near.dataset_near_intents_fees" in r or "Dune" in sug, (r, sug)
+    # The three wallets were ALREADY on file from the 2026-09-23 read of the same adapter; this
+    # round re-read it and added two facts rather than a second copy of the list.
+    w = config.PROJECT_BY_NAME["Near"]["intents_revenue_wallets"]
+    assert set(w["wallets"]) == {
+        "fefundsadmin.sputnik-dao.near", "1csfundsadmin.sputnik-dao.near", "buybacks.multisignature.near"}
+    assert w["near_rpc_can_read_balances"] is True and "INFLOWS" in w["why_not_read"]
+    assert "moves" in w["reread_2026_09_24"]
+
+    # 1a — burn / split routes point at the burn row and carry ITS reason, so nobody builds a
+    # second source for one event.
+    r, sug = reason("Sky", "actual_buyback_tokens")
+    assert r.startswith("= gross_burn_tokens") and "5% supply-reduction leg ONLY" in r, r
+    assert "That row's reason:" in r and "Resolve gross_burn_tokens" in sug
+    r, _ = reason("GEODNET", "actual_buyback_tokens")
+    assert r.startswith("= gross_burn_tokens"), r
+    ru, _ = reason("GEODNET", "actual_buyback_usd")
+    assert ru.startswith("FOLLOWS actual_buyback_tokens") and "= gross_burn_tokens" in ru, ru
+    # GEODNET's usd column is ALSO sourced from the same Dune query as tokens, not a separate one.
+    dq = config.PROJECT_BY_NAME["GEODNET"]["dune_queries"]
+    assert dq["actual_buyback_usd"]["query_id"] == dq["actual_buyback_tokens"]["query_id"] == 8683175
+
+
+def test_the_five_treasury_cases_are_settled_the_way_the_facts_say():
+    """2a n/a (the Reserve IS the fund); 2b/2c wired; 2d n/a with the entry retired; 2e kept."""
+    # 2a
+    assert "treasury_holding_tokens" not in config.metrics_for_project(config.PROJECT_BY_NAME["Chainlink"])
+    assert "RESERVE IS THE BUYBACK FUND" in config.not_applicable_reason("Chainlink", "treasury_holding_tokens")
+    assert config.PROJECT_BY_NAME["Chainlink"]["contracts"]["reserve"]["kind"] == "buyback_fund_balance"
+    # 2b — wired, and the basis (an aggregator plus the instruction) is on the record, not hidden.
+    c = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["treasury"]
+    assert c["address"] == "0x0c83EAe1FE72c390A02E426572854931EefF93BA" and c["kind"] == "treasury_holding"
+    assert c["verified"] == "2026-09-24" and "AGGREGATOR-SOURCED" in c["provenance"]
+    assert "0x2f5301a3" in c["purpose"], "distinct from the buyback wallet, and says so"
+    assert config.PROJECT_BY_NAME["Ether.fi"]["treasury"]["wired_on"] == "2026-09-24"
+    # 2c — two Pendle-authored sources.
+    c = config.PROJECT_BY_NAME["Pendle"]["contracts"]["treasury"]
+    assert c["address"] == "0x8270400d528c34e1596EF367eeDEc99080A1b592" and c["kind"] == "treasury_holding"
+    assert "1-core.json" in c["provenance"] and "Fees.md" in c["provenance"]
+    assert c["expected_symbol"] == "PENDLE"
+    # 2d — n/a, entry retired to a record so the same-chain refusal stops recurring.
+    near = config.PROJECT_BY_NAME["Near"]
+    assert "treasury_holding_tokens" not in config.metrics_for_project(near)
+    assert "intents_treasury_base" not in near["contracts"]
+    assert near["treasury_reference"]["intents_treasury_base"] == "0x2CfF890f0378a11913B6129B2E97417a2c302680"
+    # 2e — kept as a gap, with the reason the row will show.
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    assert "treasury_holding_tokens" in config.metrics_for_project(wm)
+    assert "never published" in wm["treasury_holding_tokens_blocked"]["status"]
+
+
+def test_the_pool_release_family_records_what_is_measurable_what_is_blocked_and_what_was_found():
+    """3a derived for all five; 3b/3d blockers stated; 3c syrupDrip found from Maple's registry."""
+    five = {"Chainlink", "GEODNET", "Maple", "Hyperliquid", "Aethir"}
+    assert {p["name"] for p in config.PROJECTS
+            if "pool_release_tokens" in config.metrics_for_project(p)} == five
+    assert "NOT newly minted" in config.METRICS["pool_release_tokens"]["label"]
+    R = config.POOL_RELEASE_ROUTES
+    assert "10 blocks" in R["Chainlink"]["measured"] and "BLOCKED" in R["Chainlink"]["measured"]
+    assert "UNCONFIRMED FROM THIS ENVIRONMENT" in R["GEODNET"]["measured"]
+    assert "PERMANENTLY" in R["Hyperliquid"]["measured"] and "permanently" in R["Hyperliquid"]["derived"]
+    # 3c — found, sourced, NOT wired (no kind means 'release pool' and the scan is capped anyway).
+    m = R["Maple"]
+    assert m["wallet_known"] is True and "0x509712F368255E92410893Ba2E488f40f7E986EA" in m["wallet"]
+    assert any("maple-labs/address-registry" in u for u in m["sources"])
+    assert "NOT wired" in m["measured"] and "10-block" in m["measured"]
+    assert "syrup_drip" not in config.PROJECT_BY_NAME["Maple"]["contracts"]
+    # Aethir: researched, not found, and the pages that WOULD answer it are named.
+    assert R["Aethir"]["wallet_known"] is False and "compute-reward-emissions" in R["Aethir"]["measured"]
+
+
+def test_the_research_round_records_answers_with_sources_and_never_wires_an_unverified_address():
+    """4a NO (with the repo as source); 4b the buyback contracts, recorded and NOT wired;
+    4c/4d/4e searched, recorded, not found — except WM's, which is on Cardano."""
+    fl = config.PROJECT_BY_NAME["Fluid"]
+    # 4a
+    chk = fl["fluid_token_staking_checked"]
+    assert chk["answer"].startswith("NO") and "fToken" in chk["answer"]
+    assert any("stakingRewards/SPEC.md" in u for u in chk["sources"])
+    assert [q.get("status") for q in config.OPEN_QUESTIONS if q.get("project") == "Fluid"] == ["closed"]
+    assert "locked_tokens" not in config.metrics_for_project(fl)
+    # 4b — three addresses from Fluid's own repo; the decision is Jake's, so nothing is wired.
+    found = fl["buyback_contracts_found_2026_09_24"]
+    assert found["buyback_proxy"] == "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1"
+    assert found["treasury_address_hardcoded"] == "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"
+    assert found["reserve_contract"] == "0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2"
+    assert found["does_not_burn"] is True and "LogBuyback" in found["flow_route"]
+    assert not any(c.get("kind") == "buyback_fund_balance" for c in fl["contracts"].values()), \
+        "never wire an address whose role is not established — the closure stands until Jake decides"
+    for m in ("actual_buyback_tokens", "actual_buyback_usd"):
+        u = config.unavailable_for("Fluid", m)
+        assert u and "0x9Afb8C17" in u["reopen_candidate_2026_09_24"], "the closure stays, and says why it might not"
+    # 4c / 4e — searched and not found, with the search on record; nothing guessed.
+    for name in ("Aethir", "GEODNET"):
+        b = config.PROJECT_BY_NAME[name]["locked_tokens_blocked"]
+        assert "NOT" in b["status"] and b["source_url"].startswith("https://")
+        assert not any(c.get("kind") == "ve_total_supply" for c in config.PROJECT_BY_NAME[name]["contracts"].values())
+    # 4d — the contract EXISTS and is a Cardano Plutus validator, which is the answer.
+    b = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_blocked"]
+    assert "Cardano Plutus" in b["status"] and "wmt-staking-plutus-smart-contract" in b["source_url"]
+
+
+def test_the_small_items_landed_as_specified_or_with_the_reason_they_did_not():
+    """5a retired (rows to section AD); 5b closed, not n/a, and not live-confirmed; 5c n/a;
+    5d unchanged — config already records the decision to keep flagging."""
+    import run_sql as R
+    # 5a
+    g = config.PROJECT_BY_NAME["GEODNET"]
+    assert "buyback_wallet_polygon_historical" not in g["contracts"]
+    assert g["retired_contracts"]["buyback_wallet_polygon_historical"]["address"] == "0xc327C048d75398Da9DB5254679bb84a4a9e42010"
+    assert not any(c.get("kind") == "buyback_fund_balance" for c in g["contracts"].values())
+    secs = R.parse_sections(R.SQL_FILE.read_text(encoding="utf-8"))
+    assert "AD" in secs and "AC" in secs
+    assert R.uncommented_write(secs["AD"]["text"]), "the delete ships commented out, runnable via --delete AD"
+    # 5b
+    u = config.unavailable_for("Hyperliquid", "rwa_defillama_usd")
+    assert u and "NOT RE-VERIFIED LIVE" in u["what_was_tried"] and u["reopen_if"]
+    assert config.not_applicable_reason("Hyperliquid", "rwa_defillama_usd") is None
+    # 5c
+    assert "protocol_tvl_usd" not in config.metrics_for_project(config.PROJECT_BY_NAME["Near"])
+    assert "tvl_usd" in config.metrics_for_project(config.PROJECT_BY_NAME["Near"]), "the chain concept stays"
+    assert "protocol_tvl_usd" in config.metrics_for_project(config.PROJECT_BY_NAME["Hyperliquid"]), \
+        "Hyperliquid has a protocol listing as well as a chain, so it keeps it"
+    # 5d — no exemption and no tolerance; the recorded decision stands.
+    assert config.relation_exempt("Near", "circulating_supply", "total_supply") is None
+    q = next(q for q in config.OPEN_QUESTIONS if q.get("project") == "Near" and "10 NEAR" in q.get("topic", ""))
+    assert "DO NOT WIDEN THE TOLERANCE" in q["suggestion"] and "do not add a relation_exempt" in q["suggestion"]
