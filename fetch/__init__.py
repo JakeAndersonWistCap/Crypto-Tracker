@@ -418,11 +418,21 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
             # NOT PRICED AT TODAY'S PRICE. A July burn valued in September is not what was spent,
             # and on a monthly series the error compounds across the whole window. Saying which
             # dates could not be priced is the honest answer.
+            # Same one-sided report as gross_burn_tokens above, and the same fix: the priced
+            # days are stored, so the line says so before it says what was refused.
+            spanb = (f"{str(min(d for d, _ in priced))[:10]}.."
+                     f"{str(max(d for d, _ in priced))[:10]}" if priced else "")
             out.skipped(SOURCE_DERIVED, name,
-                        f"actual_buyback_usd: {len(unpriced)} of {len(toks)} buyback row(s) have "
-                        f"no price_usd on their own date ({', '.join(unpriced[:5])}"
+                        f"actual_buyback_usd: "
+                        + (f"{len(priced)} of {len(toks)} buyback row(s) WERE valued and stored "
+                           f"({spanb}); the other " if priced
+                           else f"NONE of the {len(toks)} buyback row(s) could be valued — all ")
+                        + f"{len(unpriced)} have no price_usd on their own date "
+                        f"({', '.join(unpriced[:5])}"
                         f"{'...' if len(unpriced) > 5 else ''}). Valuing them at the latest price "
-                        f"would report what they would cost today, not what was spent.", tier=2)
+                        f"would report what they would cost today, not what was spent."
+                        + (" The series is stored with those days absent, not blocked."
+                           if priced else ""), tier=2)
         if priced:
             out.add(pd.concat([point(name, "actual_buyback_usd", v, f"{SOURCE_DERIVED}:tokens*price", 2, d)
                                for d, v in priced], ignore_index=True),
@@ -753,12 +763,33 @@ def _derive_chain_burn(out: FetchOutput, projects: list[dict]) -> None:
                        f"burn. Those days are NOT converted. Re-read {decl['source_url']} "
                        f"(last read {decl['source_date']}) before changing anything here."))
         if unpriced:
+            # ===== SAY WHAT WAS CONVERTED, NOT ONLY WHAT WAS REFUSED. *****
+            # ** ONE MISSING PRICE DAY READ AS A DEAD SERIES. ** This line used to name only the
+            # unpriced dates, so "1 revenue row(s) have no price_usd ... were NOT converted" was
+            # read off the run as the whole derivation failing — when 29 of 30 days had in fact
+            # been converted and stored. The refusal was right and the report was one-sided: a
+            # message that names a denominator and a rejection, and never a survivor, leaves the
+            # reader to assume the worst, and they did.
+            #
+            # The counts are already known here: rows are the days that converted, unpriced the
+            # days that did not, and they partition whatever survived the ratio gate. So the
+            # sentence carries both, and the span, and it leads with the series rather than the
+            # hole.
+            span = (f"{str(min(d for d, _ in rows))[:10]}..{str(max(d for d, _ in rows))[:10]}"
+                    if rows else "")
             out.skipped(SOURCE_DERIVED, name,
-                        f"gross_burn_tokens: {len(unpriced)} revenue row(s) have no price_usd on "
-                        f"their own date ({', '.join(unpriced[:5])}"
+                        f"gross_burn_tokens: "
+                        + (f"{len(rows)} of {len(rows) + len(unpriced)} revenue row(s) WERE "
+                           f"converted and stored ({span}); the other " if rows
+                           else f"NONE of the {len(unpriced)} revenue row(s) could be converted — "
+                                f"all ")
+                        + f"{len(unpriced)} have no price_usd on their own date "
+                        f"({', '.join(unpriced[:5])}"
                         f"{'...' if len(unpriced) > 5 else ''}) and were NOT converted at the "
                         f"latest price — that would report what the burn would cost today, not "
-                        f"what was destroyed.", tier=2)
+                        f"what was destroyed."
+                        + (f" The series is stored with those days absent, not blocked."
+                           if rows else ""), tier=2)
         if not rows:
             continue
 

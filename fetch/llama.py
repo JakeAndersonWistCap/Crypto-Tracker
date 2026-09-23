@@ -362,30 +362,83 @@ class DefiLlama:
         # upsert, so the series is continuous rather than having a gap at the switch.
         sum_slugs = restructure["recovery"]["sum_slugs"]
         by_date: dict = {}
+        watch_days: set = set()
         ok = True
         for kid in sum_slugs:
             try:
                 for d, v in self._chart(self._summary(kid, "dailyFees")):
                     day = pd.Timestamp(d.date())
                     by_date[day] = by_date.get(day, 0.0) + float(v)
+                    if kid == watch:
+                        watch_days.add(day)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{kid}: recovery re-pull failed: {e}", TIER)
                 ok = False
         if not ok or not by_date:
             return
-        rows = sorted(by_date.items())
+
+        # ===== ** RECOVERY DOES NOT MEAN BACKFILL, AND THE TWO WERE BEING CONFLATED. ** =====
+        # This line used to store every day of the summed history and say in the review row that
+        # the series "has no gap at the switch". That was ASSERTED, never checked — and for the
+        # days between the break and the recovery it is most likely FALSE. If DefiLlama's
+        # indexing failure simply ended on the recovery date without filling in what it missed,
+        # the watch child has no points for 09-12..09-20, and the sum for those days is the OTHER
+        # child alone: Morpho Midnight's ~$2/day standing in for Morpho Blue's ~$600,000/day.
+        #
+        # ** THAT IS THE EXACT FAILURE THE PRE-RECOVERY BRANCH ABOVE REFUSES **, arriving through
+        # the back door. Point (1) of this method's contract is that the parent's post-break
+        # residual is never stored because it is a wrong-but-plausible number in a column no
+        # daily check distinguishes from a real one. A recovery that writes the same residual
+        # under a new label, and declares continuity while doing it, is worse than the gap: the
+        # gap was visible.
+        #
+        # SO THE DAYS THE WATCH CHILD DOES NOT COVER ARE HELD OUT, AND NAMED. An absent day is a
+        # hole a reader can see. A $2.13 day is a number they will believe.
+        uncovered = sorted(d for d in by_date
+                           if d >= break_date and d < pd.Timestamp(recovered_from)
+                           and d not in watch_days)
+        rows = sorted((d, v) for d, v in by_date.items() if d not in set(uncovered))
+        if not rows:
+            return
+        held = (f"; {len(uncovered)} day(s) HELD OUT "
+                f"({uncovered[0].date()}..{uncovered[-1].date()}) — {watch} has no point on "
+                f"them, so the sum there would be the other child alone"
+                if uncovered else "")
         out.add(tidy(rows, name, "fees_usd", SOURCE, TIER), SOURCE, name,
                 f"RECOVERED — {' + '.join(sum_slugs)}, full history re-pulled, {len(rows)} "
-                f"day(s)", TIER)
+                f"day(s){held}", TIER)
+        if uncovered:
+            # THE HOLE IS REPORTED AS A GAP IN ITS OWN RIGHT, not folded into the recovery row.
+            # A reader scanning the Gap Report for "why does fees_usd stop here" must find this.
+            out.gap(name, "fees_usd",
+                    reason=(f"{len(uncovered)} day(s) between the break ({break_date.date()}) "
+                            f"and the recovery ({recovered_from}) are NOT STORED: {watch} "
+                            f"reported nothing on them, so sum({', '.join(sum_slugs)}) would be "
+                            f"the other child alone — a small, plausible number standing in for "
+                            f"the protocol's fees. Left absent deliberately: a hole is visible "
+                            f"and a wrong number is not."),
+                    tiers_attempted="1",
+                    suggestion=(f"Nothing to do unless DefiLlama backfills {watch} for "
+                                f"{uncovered[0].date()}..{uncovered[-1].date()}, which this "
+                                f"check picks up on its own the next run. Do NOT fill them by "
+                                f"interpolation or by carrying the neighbouring days."))
         out.review_item(
             name, "fees_usd", "source_restructure_recovered", "stored_flagged",
             value=rows[-1][1], date=rows[-1][0].date().isoformat(),
             basis=(f"{slug!r}'s restructure has RECOVERED: {watch} is reporting again from "
                   f"{recovered_from}. fees_usd is now sum({', '.join(sum_slugs)}), full "
-                  f"history re-pulled so the series has no gap at the switch. No human step "
-                  f"was needed for the switch, the re-pull, or clearing the level-break flag — "
-                  f"that flag is computed from the stored numbers on every run, so a correct "
-                  f"series simply stops tripping it."),
+                  f"history re-pulled. "
+                  + (f"** THE BREAK WINDOW IS NOT BACKFILLED: {len(uncovered)} day(s) "
+                     f"({uncovered[0].date()}..{uncovered[-1].date()}) are absent because "
+                     f"{watch} has no point on them. The series is continuous either side and "
+                     f"the hole is VISIBLE, which is the intended state — storing the other "
+                     f"child alone there would have hidden it behind a plausible number. **"
+                     if uncovered else
+                     f"{watch} covers the whole break window, so the series is continuous "
+                     f"across it — checked against its own chart, not assumed.")
+                  + f" No human step was needed for the switch, the re-pull, or clearing the "
+                    f"level-break flag — that flag is computed from the stored numbers on every "
+                    f"run, so a correct series simply stops tripping it."),
             source=f"{SOURCE}:recovered", tier=TIER)
 
     # ------------------------------------------------------------------ TVL
@@ -679,12 +732,34 @@ class MorphoBlueApi:
             if api.get("status") != "confirmed":
                 # THE WHOLE POINT OF THE UNCONFIRMED STATE: it reports what it would have
                 # written, so one run settles whether the route works — and writes nothing.
+                #
+                # ===== ** "IT WORKED" IS WHAT THIS LINE USED TO SAY, AND IT WAS WRONG. ** =====
+                # The first live run fetched cleanly and reported $39.47bn supplied against
+                # $38.73bn borrowed — 98.1% utilisation, which no lending protocol runs at. The
+                # message called that a success and invited a human to flip the flag, because
+                # the only thing it had actually established was that the FIELD NAMES were
+                # right. A route is confirmed when its number is EXPLAINED, not when it parses.
+                # So the line now says what it really showed, and when the implied utilisation
+                # is outside the band it says plainly that this is not ready to confirm.
+                band = api.get("plausible_utilisation")
+                util = borrow / supply
+                bad = bool(band) and not (float(band[0]) <= util <= float(band[1]))
                 out.skipped(self.SOURCE, name,
                             f"supply_units and utilisation_pct NOT stored — lending_api.status "
-                            f"is {api.get('status')!r}. IT WORKED: {detail}, which would give "
-                            f"supply_units={supply:,.0f} and "
-                            f"utilisation_pct={borrow / supply:.4f}. Set status to 'confirmed' "
-                            f"in config to take this route and stand DefiLlama's down.",
+                            f"is {api.get('status')!r}. THE FETCH PARSED: {detail}, which would "
+                            f"give supply_units={supply:,.0f} and utilisation_pct={util:.4f}."
+                            + (f" *** DO NOT CONFIRM ON THIS. *** {util:.4f} is outside the "
+                               f"plausible {float(band[0]):.2f}-{float(band[1]):.2f} band for an "
+                               f"aggregate lending utilisation, so the sum does not mean what "
+                               f"the field name says and the route would swap a labelled bias "
+                               f"for an unlabelled one. Run check_offline_items.py "
+                               f"morpho_blue_api for the listed/unlisted split and the "
+                               f"DefiLlama TVL cross-check before touching status."
+                               if bad else
+                               f" Parsing is NOT the bar: confirm only once the total has been "
+                               f"cross-checked against DefiLlama's TVL for the same protocol. "
+                               f"Then status 'confirmed' takes this route and stands "
+                               f"DefiLlama's down."),
                             self.TIER)
                 continue
 

@@ -1974,7 +1974,35 @@ SELECT COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS last_date
 
 -- ========================================================================================
 -- W. ETHEREUM'S DERIVED BURN — IS THE 50-70 ETH/DAY DISAGREEMENT REAL, OR RECENCY?
---    LOOK ONLY. No deletes in this section; it exists to answer a question.       2026-09-23
+--    ** ANSWERED 2026-09-24: RECENCY. ** The review row is retired. LOOK ONLY throughout.
+-- ========================================================================================
+-- THE ANSWER, and it is the one W was built to distinguish. Monthly mean ETH/day, from W1:
+--
+--   2025-09 110.4   2025-12  19.8   2026-03  28.1   2026-06  57.2   2026-09  32.5
+--   2025-10 141.7   2026-01  33.7   2026-04 126.1   2026-07  36.2
+--   2025-11  78.1   2026-02  54.4   2026-05  75.6   2026-08  36.8
+--
+-- ** MAY 2026 AVERAGED 75.6 — ABOVE THE BAND'S OWN CEILING — AND IT HAS DECLINED SINCE. ** So
+-- the 50-70 reference was right about the period it described and that period has passed. The
+-- late-September ~36/day is recency. config's expect_daily_tokens is now None: REMOVED, not
+-- widened, because the series ran 141.7 in October and 19.8 two months later and a band that
+-- never fires on that has to span 20-142, which catches nothing.
+--
+-- W2 CORROBORATES BY A DIFFERENT ROUTE: revenue/fees falls SMOOTHLY from ~0.88 (2021) to ~0.20
+-- (2026) as priority fees came to dominate a shrinking base fee. The smoothness is the evidence
+-- — a FLAT ratio would mean a hardcoded constant rather than a measurement, which is exactly
+-- what caught the seeded fixture. Keep W2 as a methodology sanity series, not as a metric.
+--
+-- W3 CONFIRMED THE SOURCES ARE REAL: defillama and coingecko throughout, no FIXTURE-prefixed
+-- rows among the contributors. That check is why the monthly series can be believed at all.
+--
+-- ** THE LIMIT, RECORDED SO NOBODY "FIXES" IT: price_usd has 377 rows starting 2025-09-12 while
+-- ** fees/revenue run from 2015. ** The derived burn cannot precede 2025-09-12 — every earlier
+-- day has a numerator and no denominator. A decade of revenue beside an empty burn column reads
+-- as a fetch that failed, and the fix somebody reaches for is the latest price, which is the one
+-- thing the derivation refuses. See chain_burn_from_revenue.derived_series_floor in config.
+--
+-- THE QUERIES FOLLOW UNCHANGED, as the record of what was run.
 -- ========================================================================================
 -- THE DISAGREEMENT AS STATED: the derived burn came out at ~36 ETH/day against a researched
 -- 50-70. But the ~36 was computed from a 30-day revenue TOTAL divided by ONE price snapshot,
@@ -2026,8 +2054,27 @@ SELECT metric, source, COUNT(*) AS rows, MIN(date) AS first_date, MAX(date) AS l
  ORDER BY metric, rows DESC;
 
 -- ========================================================================================
--- X. SKY'S RETIRED governance_burn_balance.                                       2026-09-23
---    X1-X2 LOOK. X3 deletes, scoped to the one metric on the one project.
+-- X. SKY'S RETIRED governance_burn_balance.               CHECKED EMPTY 2026-09-24 — CLOSED.
+--    NOTHING TO RUN. Kept as the record that it was checked, not as work outstanding.
+-- ========================================================================================
+-- ** X1 RETURNED NO ROWS. ** The decomposed burn read has been 403ing since it was written, so
+-- the metric was never produced — which X1 was written to find out rather than assume, and the
+-- answer is the one the section flagged as possible: there is nothing to clean up.
+--
+-- ** DO NOT RUN X3. ** It would delete nothing, and a DELETE executed against an empty set is
+-- not harmless here: it leaves a transaction in the log that reads, months later, as evidence
+-- that rows once existed and were removed. They never existed.
+--
+-- THIS SECTION IS CLOSED AND STAYS HERE. Deleting it would mean the next person who notices the
+-- retired metric name re-derives the whole question from scratch and re-runs X1 looking for
+-- stragglers. The cheapest thing to leave behind is the answer.
+--
+--   X1  no rows          governance_burn_balance / governance_burn_tokens on Sky
+--   X2  not re-run       nothing moved, so there is nothing to compare against
+--   X3  NOT RUN, and not to be
+--   X4  not applicable
+--
+-- THE ORIGINAL SECTION FOLLOWS, UNCHANGED, as the record of what was looked for.
 -- ========================================================================================
 -- WHAT HAPPENED: the burn decomposition split Pause Proxy burns off as "governance" — a one-off
 -- executive action, explicitly not to be annualised — and looked for a separate Stage 2 burner.

@@ -1075,7 +1075,14 @@ def test_pendles_lock_discrepancy_does_not_fit_the_boost_hypothesis():
     assert "BOOSTED" in nc["why"], "the original virtual-balance question stays on file"
     # ALL THREE CANDIDATES ARE NAMED, INCLUDING UNSTAKING BETWEEN THE TWO DATES.
     assert any("unstaking" in c for c in d["candidates"]), d["candidates"]
-    assert any("shares-vs-assets" in c for c in d["candidates"])
+    # ** CANDIDATE (a) IS SETTLED AND DID NOT EXPLAIN IT. ** H1 ran on 2026-09-24: sPENDLE
+    # compounds at 1.1731 assets per share, so our read was the SHARES and the assets are 17.3%
+    # larger — right direction, and 12.6% of supply against a reported 36%. Three of the four
+    # candidates are now gone and the remaining two are load-bearing.
+    sa = d["shares_vs_assets_settled"]
+    assert sa["assets_per_share"] == 1.1731 and sa["closes_the_gap"] is False
+    assert "12.6% of supply" in sa["why_not"]
+    assert not any("shares-vs-assets" in c for c in d["candidates"]), "settled, so no longer open"
     # AND NEITHER FIGURE IS PREFERRED, with the cost of getting it wrong stated.
     assert "12% to 36%" in d["do_not"]
     print("pendle lock ok: the 3x gap is recorded with the boost hypothesis ruled OUT by "
@@ -1197,7 +1204,7 @@ def test_spendle_is_ethereum_only_so_the_multichain_candidate_is_ruled_out():
     assert "deprecated" in mc["but_vependle_was_multichain"].lower()
     assert "0x3209E9412" in mc["but_vependle_was_multichain"]
     # THE OTHER THREE CANDIDATES SURVIVE UNCHANGED — ruling one out is not choosing another.
-    assert len(d["candidates"]) == 3
+    assert len(d["candidates"]) == 2
     assert d["boost_hypothesis_fits"] is False
     print("pendle ok: sPENDLE is Ethereum-only, so locked_tokens is complete and the one "
           "candidate that pointed the right way is ruled out")
@@ -1248,9 +1255,39 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
     # ** NOTHING STORED — and the skip carries the numbers, so ONE run settles it. **
     assert out.frame().empty, out.frame()
     msg = [e.message for e in out.log if e.status == "skipped"]
-    assert msg and "IT WORKED" in msg[0], out.log
+    assert msg and "THE FETCH PARSED" in msg[0], out.log
     assert "utilisation_pct=0.6667" in msg[0], msg[0]
-    assert "stand DefiLlama's down" in msg[0]
+    assert "stands DefiLlama's down" in msg[0]
+    assert "Parsing is NOT the bar" in msg[0], msg[0]
+
+    # ===== ** A CLEAN FETCH THAT SUMS TO NONSENSE MUST NOT READ AS A SUCCESS. ** The first live
+    # run came back with 7,868 markets, $39.47bn supplied and $38.73bn borrowed — 98.1%
+    # utilisation, which no lending protocol runs at — and the old message called that "IT
+    # WORKED" and invited a human to flip the flag. All it had established was that the field
+    # NAMES were right. So a reported utilisation outside the plausible band says plainly not to
+    # confirm, and it still stores nothing either way.
+    assert api["plausible_utilisation"] == (0.40, 0.92), api.get("plausible_utilisation")
+    first = api["first_run_2026_09_24"]
+    assert first["implied_utilisation"] == 0.981 and first["status_stays"] == "unconfirmed"
+    assert "PERMISSIONLESS" in first["leading_hypothesis"]
+    assert "API_MIN_USD = 1000" in first["supporting_evidence"] and \
+        "listed === true" in first["supporting_evidence"], "DefiLlama's own filter is the evidence"
+
+    class Nonsense(Stub):
+        def post(self, url, json_body=None, **kw):
+            if "chains" in (json_body or {}).get("query", ""):
+                return {"data": {"chains": [{"id": 1}]}}
+            st = {"supplyAssetsUsd": 39_470_000_000.0, "borrowAssetsUsd": 38_730_000_000.0}
+            return {"data": {"markets": {"pageInfo": {"countTotal": 1},
+                                         "items": [{"marketId": "0xa", "chain": {"id": 1},
+                                                    "state": st}]}}}
+
+    bad = run(morpho, Nonsense())
+    assert bad.frame().empty, "still nothing stored — the band reports, it does not filter"
+    bmsg = [e.message for e in bad.log if e.status == "skipped"]
+    assert bmsg and "DO NOT CONFIRM ON THIS" in bmsg[0], bmsg
+    assert "0.9813" in bmsg[0] and "outside the plausible 0.40-0.92 band" in bmsg[0], bmsg[0]
+    assert "Parsing is NOT the bar" not in bmsg[0], "the invitation must not survive alongside it"
 
     # ONCE CONFIRMED IT WRITES, and the row says the bias is gone rather than merely named.
     confirmed = dict(morpho, lending_api=dict(api, status="confirmed"))
@@ -1659,14 +1696,31 @@ def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapte
     _derive_chain_burn(eth, [config.PROJECT_BY_NAME["Ethereum"]])
     burn = eth.frame().query("metric == 'gross_burn_tokens'")
     assert len(burn) == 30 and not [r for r in eth.review if r["reason"] == "burn_share_changed"]
-    # ** AND THE SANITY BAND DOES NOT MEET, WHICH IS REPORTED RATHER THAN RESOLVED. ** $2,950,523
-    # over 30 days at $2,745 is ~1,075 ETH, about 36/day, against 50-70/day from research. The
-    # adapter is unambiguous about what the number IS, so it is stored; which input is wrong is a
-    # question for a human, and quietly preferring either figure is how a wrong one gets believed.
+    # ===== ** THE BAND IS GONE, AND IT WAS RESOLVED RATHER THAN WIDENED. ** $2,950,523 over 30
+    # days at $2,745 is ~1,075 ETH, about 36/day, against the old 50-70/day reference — which
+    # fired every run. The monthly series settled it: May 2026 averaged 75.6 ETH/day, ABOVE the
+    # band's own ceiling, and the burn has declined steadily since. So the reference described a
+    # period that had passed and the ~36/day is recency, not error.
+    #
+    # ** NOT WIDENED TO FIT, WHICH IS THE PART WORTH PINNING. ** The series ran 141.7 ETH/day in
+    # October and 19.8 two months later; a band that never fires on that has to span 20-142, and
+    # a flag that wide catches nothing. Removing it is the honest answer, and this assertion is
+    # what stops a future round quietly re-adding a loose one.
     assert abs(float(burn.value.iloc[0]) - 35.83) < 0.05, float(burn.value.iloc[0])
-    band = [r for r in eth.review if r["reason"] == "outside_expected_band"]
-    assert band, eth.review
-    assert "STORED ANYWAY" in band[0]["basis"] and "widening it to fit" in band[0]["basis"]
+    assert not [r for r in eth.review if r["reason"] == "outside_expected_band"], eth.review
+    decl = config.PROJECT_BY_NAME["Ethereum"]["chain_burn_from_revenue"]
+    assert decl["expect_daily_tokens"] is None, "resolved, not re-banded"
+    res = decl["band_resolution_2026_09_24"]
+    assert res["monthly_mean_eth_per_day"]["2026-05"] == 75.6, "above the old ceiling"
+    assert res["monthly_mean_eth_per_day"]["2026-09"] == 32.5
+    assert "a flag that wide catches nothing" in res["why_no_new_band"]
+    # AND THE PRICE-COVERAGE FLOOR IS STATED ON THE METRIC, because a decade of revenue beside an
+    # empty burn column reads as a fetch that failed — and the "fix" somebody reaches for is the
+    # latest price, which is the one thing the derivation refuses.
+    floor = decl["derived_series_floor"]
+    assert floor["earliest_possible_date"] == "2025-09-12"
+    assert "not a fetch failure" in {k.lower() for k in floor} or floor["not_a_fetch_failure"]
+    assert "latest price" in floor["not_a_fetch_failure"]
 
     # A SOURCED SERIES WINS AND THE DERIVATION IS SKIPPED, never ranked against it: two figures
     # for one burn is a measuring-point change, and that blanks the column.
@@ -1680,12 +1734,33 @@ def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapte
 
     # A DAY WITH NO PRICE IS NOT CONVERTED AT THE LATEST PRICE. A July burn valued in September
     # is not what was destroyed.
-    noprice = [r for r in _chain_rows("Near", 3, rev=70_000.0, fees=100_000.0, price=3.50)
-               if not (r["metric"] == "price_usd" and r["date"] == pd.Timestamp("2026-08-25"))]
+    #
+    # ** AND THE MESSAGE MUST NAME THE SURVIVORS, NOT ONLY THE REFUSAL. ** On the live run one
+    # missing price day (2026-08-24) produced "1 revenue row(s) have no price_usd on their own
+    # date ... were NOT converted", and that was read as the whole series being blocked — while
+    # 29 of the 30 days had in fact been converted and stored. The refusal was right; the report
+    # was one-sided. So the assertion is on the count that DID convert and the span it covers,
+    # because a message that only ever names the hole is the bug.
+    noprice = [r for r in _chain_rows("Near", 30, rev=70_000.0, fees=100_000.0, price=3.50)
+               if not (r["metric"] == "price_usd" and r["date"] == pd.Timestamp("2026-08-24"))]
     out2 = _chain_frame(noprice)
     _derive_chain_burn(out2, [config.PROJECT_BY_NAME["Near"]])
-    assert len(out2.frame().query("metric == 'gross_burn_tokens'")) == 2
-    assert [e for e in out2.log if "no price_usd on their own date" in e.message]
+    assert len(out2.frame().query("metric == 'gross_burn_tokens'")) == 29
+    msg = [e.message for e in out2.log if "no price_usd on their own date" in e.message]
+    assert msg, out2.log
+    assert "29 of 30 revenue row(s) WERE converted and stored" in msg[0], msg[0]
+    assert "2026-08-25..2026-09-22" in msg[0], msg[0]
+    assert "not blocked" in msg[0] and "2026-08-24" in msg[0], msg[0]
+
+    # With NO priced day at all the same line says so plainly, rather than claiming a stored span.
+    allmissing = [r for r in _chain_rows("Near", 3, rev=70_000.0, fees=100_000.0, price=3.50)
+                  if r["metric"] != "price_usd"]
+    out3 = _chain_frame(allmissing)
+    _derive_chain_burn(out3, [config.PROJECT_BY_NAME["Near"]])
+    assert out3.frame().query("metric == 'gross_burn_tokens'").empty
+    m3 = [e.message for e in out3.log if "no price_usd on their own date" in e.message]
+    assert m3 and "NONE of the 3 revenue row(s) could be converted" in m3[0], m3
+    assert "WERE converted" not in m3[0] and "not blocked" not in m3[0], m3[0]
     print("chain burn ok: revenue is the burn per the adapters, the ratio gate is a methodology "
           "tripwire, Ethereum's band is flagged not fixed, and a sourced series wins")
 
@@ -9806,7 +9881,12 @@ def test_a_buyback_row_with_no_price_on_its_own_date_is_reported_not_valued_at_t
     skipped = [e for e in out.log if e.status == "skipped" and "actual_buyback_usd" in e.message]
     assert skipped and "2026-07-01" in skipped[0].message, skipped
     assert "not what was spent" in skipped[0].message
-    print("pricing ok: the unpriced date is named and left out, not carried at today's price")
+    # and the same two-sidedness as gross_burn_tokens: the row that DID value is named first, so
+    # the line cannot be read as the whole derivation having failed.
+    assert "1 of 2 buyback row(s) WERE valued and stored" in skipped[0].message, skipped[0].message
+    assert "not blocked" in skipped[0].message, skipped[0].message
+    print("pricing ok: the unpriced date is named and left out, not carried at today's price, "
+          "and the priced row is reported alongside it")
 
 
 def test_the_emissions_paywall_is_the_last_explanation_not_the_first():
@@ -10732,8 +10812,60 @@ def test_recovery_applies_itself_the_day_the_watch_child_reports_again():
     assert "No human step was needed" in recov[0]["basis"]
     assert not [g for g in out.gaps if g["metric"] == "fees_usd"], \
         "a recovered series must not also report a gap"
+    assert "covers the whole break window" in recov[0]["basis"], \
+        "continuity is CHECKED against the child's own chart, never asserted"
     print("recovery ok: full history summed and stored, switch day sums both children, "
           "recorded with no gap alongside it")
+
+
+def test_a_recovery_that_does_not_backfill_leaves_the_hole_visible():
+    """** RECOVERY IS NOT BACKFILL, AND STORING THE OTHER CHILD ALONE WOULD HIDE THE DIFFERENCE. **
+
+    This is what actually happened: morpho-blue went quiet on 2026-09-12 and started reporting
+    again on 2026-09-21, without filling in the nine days it missed. Summing the declared
+    children over "the full history" then writes 09-12..09-20 as morpho-midnight ALONE — about
+    $2 a day standing in for Morpho Blue's ~$600,000 — and the old code declared in its review
+    row that the series "has no gap at the switch".
+
+    ** THAT IS THE SAME WRONG-BUT-PLAUSIBLE NUMBER THE PRE-RECOVERY BRANCH REFUSES TO STORE **,
+    arriving through the back door and with a continuity claim attached. An absent day is a hole
+    a reader can see; a $2.13 day is a number they will believe. So the uncovered days are held
+    out, reported as a gap in their own right, and the review row says the window is NOT
+    backfilled rather than claiming it is.
+    """
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    d = DefiLlama()
+    d.http = _MorphoLlamaStub(blue_after_break=[(f"2026-09-{d_:02d}", 605_000.0)
+                                                for d_ in range(21, 23)])
+    out = FetchOutput()
+    d.fees(config.PROJECT_BY_NAME["Morpho"], None, out)
+
+    fees = out.frame()[out.frame().metric == "fees_usd"].sort_values("date")
+    stored = set(fees["date"])
+    assert fees["date"].max() == pd.Timestamp("2026-09-22"), "the recovered tail is stored"
+    assert fees["date"].min() == pd.Timestamp("2026-08-13"), "the pre-break history is stored"
+    # ** THE NINE DAYS ARE ABSENT, NOT SMALL. ** This is the whole assertion: the series either
+    # side is intact and the middle is a visible hole.
+    for day in range(12, 21):
+        assert pd.Timestamp(f"2026-09-{day:02d}") not in stored, \
+            f"09-{day:02d} must be HELD OUT — morpho-blue has no point on it"
+    assert pd.Timestamp("2026-09-11") in stored and pd.Timestamp("2026-09-21") in stored
+
+    gap = [g for g in out.gaps if g["metric"] == "fees_usd"]
+    assert len(gap) == 1, out.gaps
+    assert "NOT STORED" in gap[0]["reason"] and "2026-09-12" in gap[0]["reason"], gap[0]["reason"]
+    assert "a hole is visible and a wrong number is not" in gap[0]["reason"]
+    assert "interpolation" in gap[0]["suggestion"], "and nobody is to fill them by hand"
+
+    recov = [r for r in out.review if r["reason"] == "source_restructure_recovered"]
+    assert len(recov) == 1 and "THE BREAK WINDOW IS NOT BACKFILLED" in recov[0]["basis"], recov
+    assert "the hole is VISIBLE" in recov[0]["basis"]
+    assert "covers the whole break window" not in recov[0]["basis"], \
+        "the continuity claim must not survive a window that is not covered"
+    print("recovery hole ok: the nine unbackfilled days are absent and reported, not filled "
+          "with the other child's ~$2/day wearing Morpho's name")
 
 
 def test_the_generic_restructure_check_stands_down_once_a_project_is_declared():

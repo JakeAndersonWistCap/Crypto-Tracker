@@ -108,6 +108,11 @@ METRIC_CONTRACT_KIND = {
     "buyback_fund_balance": "buyback_fund_balance",
     "actual_buyback_tokens": "buyback_fund_balance",
     "locked_tokens": "ve_total_supply",
+    # THE SHARE COUNT OF A COMPOUNDING RECEIPT. Same kind as locked_tokens — it is the same
+    # totalSupply() read — and it is here so a project whose lock figure is the ASSETS still gets
+    # "no contract of kind 've_total_supply' declared" rather than the generic "no source
+    # configured", which would send the reader to write a scraper for a balance read.
+    "locked_tokens_shares": "ve_total_supply",
     # The pool's own principal accounting, read by calling getTotalPrincipal() on the pool rather
     # than the token's balance of it. Mapped so a missing one names the contract kind it needs,
     # instead of falling through to "no source configured for this metric".

@@ -429,22 +429,53 @@ def sky_splitter_history(splitter: str | None, from_block: int):
 
 
 def morpho_blue_api():
-    """Does Morpho's own GraphQL API answer, and does it carry BOTH sides of the market state?
+    """Does Morpho's own GraphQL API answer, and DOES ITS SUM MEAN WHAT WE THINK IT MEANS?
 
-    ** THIS SETTLES WHETHER A BIASED COLUMN CAN BE REPLACED BY AN UNBIASED ONE. ** utilisation_pct
-    currently comes from DefiLlama as borrowed / (tvl + borrowed), and morpho-blue's tvl sums the
-    singleton's balance of every market's COLLATERAL token as well as its loan token — so the
-    denominator carries assets that were never lendable and the ratio reads too small.
+    ** THE FIRST RUN CAME BACK WITH A NUMBER THAT CANNOT BE SUPPLY. ** 7,868 markets summing to
+    $39.47bn supplied against $38.73bn borrowed is 98.1% aggregate utilisation. No lending
+    protocol runs at 98%: at that level borrowers cannot be liquidated and lenders cannot
+    withdraw, which is the definition of the thing every risk parameter exists to prevent. The
+    first page alone read 96.3%, so it is not one outlier market — it is the population.
 
-    Morpho publishes the per-market state directly. `state { supplyAssetsUsd }` is certain —
-    DefiLlama's own utils/scripts/findInsolventMarkets.js selects it. THE BORROW FIELD'S SPELLING
-    IS THE UNCONFIRMED HALF, and a wrong name would sum to zero and give a utilisation of 0.0000
-    on a lending protocol, which is a number rather than a gap. So it is checked by name.
+    ** SO THE ROUTE STAYS UNCONFIRMED UNTIL THE SUM IS EXPLAINED, NOT UNTIL IT IS FETCHED. **
+    Confirming it on the grounds that both fields are present would swap a KNOWN bias
+    (DefiLlama's collateral-inflated denominator, which reads too LOW) for an unknown one that
+    reads too high, and the second is worse precisely because nothing on the label warns of it.
+
+    THE LEADING HYPOTHESIS, and what this probe now measures:
+
+      MORPHO BLUE IS PERMISSIONLESS. Anyone can create a market with any oracle, and the api
+      lists every one of them. A market whose loan asset is a worthless token with a fabricated
+      oracle price contributes an arbitrary supplyAssetsUsd, and because the creator lends to
+      themselves it contributes almost exactly the same borrowAssetsUsd — which is what drags an
+      aggregate to 98%. Real markets hold idle liquidity; a self-dealt one does not.
+
+      ** DEFILLAMA FILTERS EXACTLY THIS, AND THE FILTER IS THE EVIDENCE. ** From their own
+      utils/scripts/findInsolventMarkets.js, read 2026-09-24:
+
+        const API_MIN_USD = 1000
+        const contradictsMarket = (m) => m.listed === true && !redTypes(m).length ...
+        const queuesMarket = (m) => usdOf(m.badDebt) > API_MIN_USD
+                                    && !!m.state && m.state.supplyAssetsUsd > API_MIN_USD
+
+      `listed` is a real field on Market and they gate on it being TRUE, with a $1,000 floor
+      beside it. They do not trust the unfiltered population either.
+
+    The other two candidates are measured here too rather than argued about:
+      (b) DOUBLE COUNTING VAULT AND MARKET — a MetaMorpho vault's deposits sit IN the markets it
+          allocates to, so summing vaults and markets together counts them twice. This probe sums
+          MARKETS ONLY, so if the total is still 8x TVL that candidate is dead.
+      (c) THE SAME MARKET ON SEVERAL CHAINS — measured by grouping on marketId across chain ids.
+
+    THE CROSS-CHECK IS THE DECIDER. DefiLlama's morpho-blue TVL is the same quantity by a
+    different route. Order-of-magnitude agreement means supplyAssetsUsd is total supplied;
+    an 8x gap means it is not, whatever it is called.
     """
-    head("MORPHO — does blue-api.morpho.org carry BOTH supplyAssetsUsd and borrowAssetsUsd?")
+    head("MORPHO — what IS the blue-api sum? (98.1% utilisation is not a lending protocol)")
     url = "https://blue-api.morpho.org/graphql"
     q = ("query($c:[Int!],$skip:Int!,$first:Int!){ markets(first:$first, skip:$skip, "
-         "where:{chainId_in:$c}){ pageInfo{countTotal} items{ marketId chain{id} "
+         "where:{chainId_in:$c}){ pageInfo{countTotal} items{ marketId chain{id} listed "
+         "loanAsset{symbol} collateralAsset{symbol} "
          "state{ supplyAssetsUsd borrowAssetsUsd } } } }")
     try:
         chains = requests.post(url, json={"query": "{ chains { id } }"}, timeout=TIMEOUT).json()
@@ -458,41 +489,155 @@ def morpho_blue_api():
     if not ids:
         print(f"  *** no chains returned. Response keys: {sorted(chains)} ***")
         return
-    try:
-        page = requests.post(url, json={"query": q, "variables": {"c": ids, "skip": 0,
-                                                                 "first": 50}},
-                             timeout=TIMEOUT).json()
-    except Exception as e:  # noqa: BLE001
-        print(f"  markets query FAILED  {e}")
-        return
-    if page.get("errors"):
-        # ** A GraphQL ERROR IS A 200. ** The transport succeeded and the query did not, and a
-        # field name that does not exist is reported here rather than as a missing value.
-        print(f"  *** GraphQL errors — most likely a FIELD NAME: {page['errors']} ***")
-        print("  If it names borrowAssetsUsd, find the right spelling and put it in Morpho's")
-        print("  lending_api.borrow_field. Do NOT drop the field and sum the supply side alone.")
-        return
-    node = ((page.get("data") or {}).get("markets") or {})
-    items = node.get("items") or []
-    total = (node.get("pageInfo") or {}).get("countTotal")
+
+    # ===== EVERY MARKET, NOT ONE PAGE. ** A DISTRIBUTION CANNOT BE READ OFF 50 ROWS. ** The
+    # question is what share of $39.47bn sits in how few markets, and a first page ordered by
+    # whatever the api defaults to answers that with a number that is not the population's.
+    items, total = [], None
+    for skip in range(0, 40_000, 1_000):
+        try:
+            page = requests.post(url, json={"query": q,
+                                            "variables": {"c": ids, "skip": skip, "first": 1000}},
+                                 timeout=TIMEOUT).json()
+        except Exception as e:  # noqa: BLE001
+            print(f"  markets query FAILED at skip={skip}  {e}")
+            return
+        if page.get("errors"):
+            # ** A GraphQL ERROR IS A 200. ** The transport succeeded and the query did not, and
+            # a field name that does not exist is reported here rather than as a missing value.
+            print(f"  *** GraphQL errors — most likely a FIELD NAME: {page['errors']} ***")
+            print("  If it names borrowAssetsUsd, find the right spelling and put it in Morpho's")
+            print("  lending_api.borrow_field. If it names `listed`, say so — the whole")
+            print("  filtered-population reading below depends on that field existing.")
+            return
+        node = ((page.get("data") or {}).get("markets") or {})
+        got = node.get("items") or []
+        total = (node.get("pageInfo") or {}).get("countTotal") or total
+        items.extend(got)
+        if not got or (total and len(items) >= total):
+            break
     print(f"  markets      {len(items)} of {total} returned")
     if not items:
         print("  *** no market items. Nothing to confirm. ***")
         return
-    have_supply = sum(1 for i in items if (i.get("state") or {}).get("supplyAssetsUsd") is not None)
-    have_borrow = sum(1 for i in items if (i.get("state") or {}).get("borrowAssetsUsd") is not None)
-    print(f"  supplyAssetsUsd present on {have_supply}/{len(items)}")
-    print(f"  borrowAssetsUsd present on {have_borrow}/{len(items)}")
-    sup = sum(float((i.get("state") or {}).get("supplyAssetsUsd") or 0) for i in items)
-    bor = sum(float((i.get("state") or {}).get("borrowAssetsUsd") or 0) for i in items)
-    print(f"  first page sums: supply ${sup:,.0f}  borrow ${bor:,.0f}"
-          + (f"  utilisation {bor / sup:.4f}" if sup else ""))
-    if have_supply == len(items) and have_borrow == len(items):
-        print("\n  BOTH FIELDS PRESENT. Set Morpho lending_api.status to 'confirmed' in config —")
-        print("  the DefiLlama route then stands down on its own and the collateral bias goes.")
-    else:
-        print("\n  *** ONE SIDE IS MISSING. Do not confirm. *** A borrow field summing to zero")
-        print("  gives utilisation 0.0000 on a lending protocol, which is a number and not a gap.")
+
+    def st(i, k):
+        v = (i.get("state") or {}).get(k)
+        return float(v) if isinstance(v, (int, float)) else None
+
+    # ---- (0) field presence, over the WHOLE population rather than one page.
+    have_supply = sum(1 for i in items if st(i, "supplyAssetsUsd") is not None)
+    have_borrow = sum(1 for i in items if st(i, "borrowAssetsUsd") is not None)
+    print(f"\n  FIELD PRESENCE (all {len(items)} markets)")
+    print(f"    supplyAssetsUsd  {have_supply}/{len(items)}")
+    print(f"    borrowAssetsUsd  {have_borrow}/{len(items)}"
+          + ("" if have_borrow == len(items) else "   <-- THE PARTIAL-FIELD PROBLEM"))
+    # ** A MISSING BORROW FIELD IS NOT A ZERO. ** 8 of the first 50 had none. Summing them as 0
+    # understates borrowing; dropping the market understates supply. Which of the two is right
+    # depends on why it is absent, and that is not knowable from the absence itself.
+    missing_supply_of_missing_borrow = sum(
+        1 for i in items if st(i, "borrowAssetsUsd") is None and st(i, "supplyAssetsUsd"))
+    if have_borrow < len(items):
+        print(f"    of the {len(items) - have_borrow} with no borrow field, "
+              f"{missing_supply_of_missing_borrow} DO carry a supply figure — so they are not "
+              f"simply empty markets, and neither treating them as 0 nor dropping them is safe.")
+
+    def report(label, rows):
+        sup = sum(st(i, "supplyAssetsUsd") or 0 for i in rows)
+        bor = sum(st(i, "borrowAssetsUsd") or 0 for i in rows)
+        u = f"{bor / sup:7.4f}" if sup else "    n/a"
+        print(f"    {label:<34} {len(rows):>6} mkts  supply ${sup:>18,.0f}  "
+              f"borrow ${bor:>18,.0f}  util {u}")
+        return sup, bor
+
+    # ---- (1) THE FILTERS DEFILLAMA ITSELF APPLIES. If the unfiltered total is 39bn and the
+    # listed total is a few bn at a believable utilisation, the question is answered.
+    print(f"\n  POPULATION vs THE FILTERS DEFILLAMA APPLIES (listed === true, $1,000 floor)")
+    all_sup, _ = report("ALL markets (what we summed)", items)
+    listed = [i for i in items if i.get("listed") is True]
+    unlisted = [i for i in items if i.get("listed") is not True]
+    report("listed === true", listed)
+    report("NOT listed", unlisted)
+    big = [i for i in items if (st(i, "supplyAssetsUsd") or 0) > 1000]
+    report("supply > $1,000 (API_MIN_USD)", big)
+    report("listed AND supply > $1,000", [i for i in listed if (st(i, "supplyAssetsUsd") or 0) > 1000])
+
+    # ---- (2) THE CONCENTRATION. A handful of markets carrying most of $39bn with borrow==supply
+    # to four decimals is a self-dealt position, not a lending market.
+    ranked = sorted(items, key=lambda i: st(i, "supplyAssetsUsd") or 0, reverse=True)
+    print(f"\n  TOP 12 BY SUPPLY — look for borrow == supply and for assets nobody has heard of")
+    for i in ranked[:12]:
+        sup, bor = st(i, "supplyAssetsUsd") or 0, st(i, "borrowAssetsUsd")
+        pair = (f"{((i.get('collateralAsset') or {}).get('symbol') or '?')}"
+                f"/{((i.get('loanAsset') or {}).get('symbol') or '?')}")
+        shown = f"${bor:,.0f}" if bor is not None else "ABSENT"
+        print(f"    {pair:<24} chain {str((i.get('chain') or {}).get('id')):<7} "
+              f"listed={str(i.get('listed')):<5} supply ${sup:>16,.0f}  "
+              f"borrow {shown:>17}  "
+              f"{(bor / sup) if (bor and sup) else 0:6.4f}  "
+              f"{(sup / all_sup * 100) if all_sup else 0:5.2f}% of total")
+    for n in (10, 50, 200):
+        share = sum(st(i, "supplyAssetsUsd") or 0 for i in ranked[:n])
+        print(f"    top {n:<4} carry ${share:>18,.0f}  "
+              f"({(share / all_sup * 100) if all_sup else 0:5.1f}% of the total)")
+
+    # ---- (3) CANDIDATE (c): THE SAME MARKET COUNTED ON SEVERAL CHAINS.
+    per_chain, by_id = {}, {}
+    for i in items:
+        cid = (i.get("chain") or {}).get("id")
+        per_chain.setdefault(cid, []).append(i)
+        by_id.setdefault(i.get("marketId"), set()).add(cid)
+    dupes = {k: v for k, v in by_id.items() if len(v) > 1}
+    print(f"\n  PER CHAIN")
+    for cid, rows in sorted(per_chain.items(), key=lambda kv: -sum(
+            st(i, 'supplyAssetsUsd') or 0 for i in kv[1]))[:10]:
+        report(f"chain {cid}", rows)
+    print(f"    marketIds appearing on more than one chain: {len(dupes)}")
+    if not dupes:
+        print("    -> CANDIDATE (c) IS DEAD. Nothing is counted twice across chains.")
+
+    # ---- (4) THE CROSS-CHECK THAT DECIDES IT. Same quantity, different route.
+    print(f"\n  CROSS-CHECK against DefiLlama morpho-blue TVL (the same quantity, other route)")
+    try:
+        tv = requests.get("https://api.llama.fi/protocol/morpho-blue", timeout=TIMEOUT).json()
+        cur = tv.get("currentChainTvls") or {}
+        llama = sum(float(v) for k, v in cur.items()
+                    if isinstance(v, (int, float)) and "-" not in k)
+        print(f"    DefiLlama morpho-blue TVL  ${llama:,.0f}")
+        print(f"    blue-api supplyAssetsUsd   ${all_sup:,.0f}")
+        if llama:
+            r = all_sup / llama
+            print(f"    ratio                       {r:.2f}x")
+            # ** NOTE WHICH DIRECTION EACH BIAS RUNS. ** DefiLlama's morpho-blue tvl COUNTS
+            # COLLATERAL as well as the loan token, so it is if anything the LARGER of the two
+            # honest measures. A blue-api sum several times LARGER than that cannot be explained
+            # by a difference of definition in the direction that would excuse it.
+            if r > 3:
+                print("    -> supplyAssetsUsd IS NOT TOTAL SUPPLIED as we read it. And note the")
+                print("       direction: llama's tvl already includes COLLATERAL, so it is the")
+                print("       more generous measure. Being several times larger than the")
+                print("       generous one leaves no definitional excuse. Compare against the")
+                print("       listed-only line above — if THAT is the same order as llama, the")
+                print("       answer is the unlisted spam markets and the route needs the filter.")
+            elif r > 1.5:
+                print("    -> same order, but not the same number. Find the difference before")
+                print("       confirming; do not average them.")
+            else:
+                print("    -> SAME ORDER. Candidate 'supplyAssetsUsd excludes idle liquidity' is")
+                print("       then unlikely, and the 98% needs another explanation.")
+    except Exception as e:  # noqa: BLE001
+        print(f"    UNREACHABLE — {e}")
+        print("    Without this the sum is unexplained, so the route stays unconfirmed.")
+
+    print("\n  WHAT TO DO WITH THIS, AND WHAT NOT TO:")
+    print("  * Do NOT set lending_api.status to 'confirmed' on both fields being present. That")
+    print("    was the old exit and it is why a 98% number nearly became the column.")
+    print("  * If the listed-only subset is the same order as llama's TVL and its utilisation is")
+    print("    believable (40-92%), the answer is the permissionless tail, and the route needs")
+    print("    where:{whitelisted:true} or a listed filter IN THE QUERY before it is confirmed.")
+    print("  * If the listed subset is ALSO at 98%, the field does not mean what we think and")
+    print("    the route is dead, not filterable.")
+    print("  * PASTE BACK the POPULATION block, the top-12 and the cross-check ratio.")
 
 
 def sky():
@@ -720,6 +865,51 @@ def maple_dao_multisig():
               f"({bal / ref:.4f}x). Report the figure; do not force it either way.")
 
 
+# ===== THREE OUTCOMES, NOT TWO — AND A VERDICT YOU CAN CALL IS A VERDICT YOU CAN TEST. =====
+#
+# ** THE FIRST VERSION WAS A TWO-WAY BRANCH INSIDE A print(), AND IT ASSERTED THE OPPOSITE OF ITS
+# OWN NUMBER. ** Anything not above 1.01 fell into an else reading "shares are 0.8524x assets,
+# i.e. one share is one locked PENDLE within a percent". 0.8524 is fifteen percent from parity.
+# The test that was supposed to cover this checked that the string "VERDICT (direct)" APPEARED —
+# presence, not correctness — so the contradiction sailed through.
+#
+# The missing case is the one that turned out to be true: a share worth MORE than one asset, a
+# COMPOUNDING receipt, which is what sETHFI and stSYRUP already do in this book. Below parity the
+# share count UNDERSTATES what is locked — the opposite direction from the boost the branch was
+# written to catch — and the old text waved it through as confirmation that nothing was wrong.
+#
+# PULLED OUT OF THE PRINTER so it can be called with numbers. A branch that only ever runs inside
+# a script nobody can import is a branch nobody can check.
+def share_verdict(shares: float, assets: float) -> tuple[str, str]:
+    """(code, sentence) for a share token measured against the assets its contract holds."""
+    if assets <= 0:
+        return ("not_established",
+                "NOT ESTABLISHED — the staking contract holds no PENDLE, which means the lock is "
+                "not custodied at this address and this comparison does not apply. Do not read "
+                "it as 'shares exceed assets'.")
+    ratio = shares / assets
+    per_share = assets / shares if shares else float("inf")
+    if ratio > 1.01:
+        return ("boosted",
+                f"BOOSTED OR VIRTUAL BALANCES ARE INCLUDED. The share count is {ratio:.2f}x the "
+                f"PENDLE the contract actually holds, and every really-locked PENDLE is in that "
+                f"balance — so the excess is not locked tokens. locked_tokens OVERSTATES by this "
+                f"factor and the non_comparable flag is correct. THE ASSETS FIGURE IS THE ONE TO "
+                f"USE.")
+    if ratio < 0.99:
+        return ("compounds",
+                f"sPENDLE COMPOUNDS. One share redeems for {per_share:.4f} PENDLE, so the share "
+                f"count UNDERSTATES what is locked by {(per_share - 1) * 100:.1f}%. Same shape as "
+                f"sETHFI and stSYRUP. locked_tokens must read PENDLE.balanceOf(sPENDLE) — the "
+                f"ASSETS — and the share count belongs in its own column beside the ratio. This "
+                f"is NOT the boosted-balance case: a boost would put this ratio ABOVE one.")
+    return ("one_to_one",
+            f"A 1:1 RECEIPT — shares are {ratio:.4f}x assets, within a percent of parity, so one "
+            f"share really is one locked PENDLE. The boosted balance is a VOTING-WEIGHT construct "
+            f"that totalSupply() does not carry, and locked_tokens is measuring what its name "
+            f"says. This SETTLES the open P1 where the ceiling test below could not.")
+
+
 def pendle_spendle_virtual():
     """Does sPENDLE.totalSupply() include the vePENDLE-migration BOOSTED and virtual balances?
 
@@ -797,23 +987,11 @@ def pendle_spendle_virtual():
                   "which means the lock is not custodied at this address and this comparison "
                   "does not apply. Do not read it as 'shares exceed assets'.")
         else:
-            ratio = locked / assets
-            print(f"  shares / assets      {ratio:.6f}")
-            if ratio > 1.01:
-                print(f"\n  VERDICT (direct): BOOSTED OR VIRTUAL BALANCES ARE INCLUDED. sPENDLE's "
-                      f"share count is {ratio:.2f}x the PENDLE the contract actually holds, and "
-                      f"every really-locked PENDLE is in that balance — so the excess is not "
-                      f"locked tokens. locked_tokens OVERSTATES by this factor and the "
-                      f"non_comparable flag is correct. THE ASSETS FIGURE IS THE ONE TO USE.")
-            else:
-                print(f"\n  VERDICT (direct): NOT INCLUDED — shares are {ratio:.4f}x assets, i.e. "
-                      f"one share is one locked PENDLE within a percent. The boosted balance is "
-                      f"therefore a VOTING-WEIGHT construct that totalSupply() does not carry, "
-                      f"and locked_tokens is measuring what its name says. This SETTLES the open "
-                      f"P1 where the ceiling test below could not.")
-    else:
-        print("\n  VERDICT (direct): NOT RUN — PENDLE.balanceOf(sPENDLE) did not return. The "
-              "ceiling test below is all that is left and it cannot settle the question.")
+            code, text = share_verdict(locked, assets)
+            print(f"  shares / assets      {locked / assets:.6f}")
+            print(f"  assets / share       {assets / locked:.6f}")
+            print(f"\n  VERDICT (direct): {text}")
+            del code
 
     if locked > total:
         print(f"\n  VERDICT (ceiling): INCLUDES BOOSTED/VIRTUAL — sPENDLE totalSupply EXCEEDS the entire "
