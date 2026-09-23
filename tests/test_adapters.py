@@ -12051,3 +12051,96 @@ def test_morphos_second_revenue_route_is_recorded_as_a_watch_item():
     assert config.PROJECT_BY_NAME["Morpho"]["fee_split"]["share_to_buyback"] == 0.0
     assert "midnight_fee_watch" in config.PROJECT_BY_NAME["Morpho"]["fee_split"]["note"]
     print("midnight watch ok: a second, independent route recorded without wiring anything")
+
+
+def test_the_locked_column_shows_supply_for_aerodrome_and_balanceof_for_everyone_else():
+    """The headline lock figure is PER PROJECT, and a blanket flip would have emptied 26 columns.
+
+    Switched 2026-09-23 after the definitional question was answered: veAERO.supply() exceeded
+    AERO.balanceOf(veAERO) by 59,653,709.90 because _increaseAmountFor (VotingEscrow.sol:854-861)
+    forwards a reward paid into a MANAGED veNFT out to that NFT's LockedManagedReward contract
+    without decrementing supply. The forwarded AERO is still locked principal — it is inside
+    _locked[mTokenId].amount, inside permanentLockBalance and therefore inside totalSupply() —
+    so supply() is the figure, and it is the one avg_lock_duration_days already divides by.
+
+    ** THE TRAP THIS PINS. ** ve_locked_supply_tokens is only_projects Aerodrome, but the column
+    is shared by 27 projects. Changing the row wholesale would have left Aerodrome correct and
+    blanked Pendle, Ether.fi, Sky, Aave and 22 others — a fix that reads as done and quietly
+    destroys the rest of the column. This reads what the builder actually WROTE for two projects,
+    not what the resolver returns in isolation.
+    """
+    import build_workbook as bw
+
+    # (1) The resolver, and the guarantee that it never names a metric the project cannot have.
+    assert config.lock_display_metric("Aerodrome") == "ve_locked_supply_tokens"
+    assert config.lock_display_metric("Pendle") == "locked_tokens"
+    holders = [p for p in config.PROJECTS if "locked_tokens" in config.metrics_for_project(p)]
+    assert len(holders) > 20, "sanity: this column is shared, not Aerodrome-only"
+    for pr in holders:
+        chosen = config.lock_display_metric(pr["name"])
+        assert chosen in config.metrics_for_project(pr), (
+            f"{pr['name']}: the locked column would point at {chosen}, which is not applicable to "
+            f"it — the cell renders n/a and the figure silently leaves the sheet")
+
+    # (2) What the builder actually wrote. The formula matches on 'project|metric', so the metric
+    #     name appears in the cell text — that is the assertion, not a call to the lambda.
+    aero = _a3_formula("Aerodrome", "Tokens locked (ve)")[0]
+    assert "|ve_locked_supply_tokens" in aero, aero
+    assert "|locked_tokens" not in aero, f"Aerodrome must no longer show the custody read: {aero}"
+    pend = _a3_formula("Pendle", "Tokens locked (ve)")[0]
+    assert "|locked_tokens" in pend and "ve_locked_supply" not in pend, pend
+
+    # (3) ** THE LOCK RATE MUST DIVIDE THE NUMBER PRINTED ABOVE IT. ** A ratio whose numerator is
+    #     not the displayed figure is the same class of error as the 26,425-day duration: two
+    #     quantities that are not the same thing, presented as though they were.
+    rate = _a3_formula("Aerodrome", "Lock rate")[0]
+    assert "|ve_locked_supply_tokens" in rate and "|locked_tokens" not in rate, rate
+    assert "|locked_tokens" in _a3_formula("Pendle", "Lock rate")[0]
+
+    # (4) AND THE DURATION USES THAT SAME BASE, which is the point of the switch: until now the
+    #     sheet showed 990.6m in the locked column while the duration two rows down was computed
+    #     against 1,050.3m. config is the one place that says so.
+    proxy = config.PROJECT_BY_NAME["Aerodrome"]["lock_duration_proxy"]
+    assert proxy["locked"] == config.lock_display_metric("Aerodrome"), (
+        f"the duration divides by {proxy['locked']} but the sheet displays "
+        f"{config.lock_display_metric('Aerodrome')} — the two rows disagree again")
+
+    # (5) locked_tokens IS KEPT, not deleted: still applicable, still fetched, still validated.
+    assert "locked_tokens" in config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"]), \
+        "the custody reading stays on file as a secondary series, it is just not the headline"
+
+
+def test_a_per_project_metric_row_still_counts_in_the_tab_confidence_tally():
+    """_confidence_tally read only the STATIC metric tag, so metric_fn rows counted for nobody.
+
+    True of the revenue row since metric_fn was introduced, and it would have quietly spread to
+    the two locked-tokens rows. The tally is the headline 'how much of this tab can be acted on',
+    so a row missing from it makes the tab read better than it is.
+    """
+    from openpyxl import Workbook
+
+    import build_workbook as bw
+
+    wb = Workbook()
+    ws = wb.active
+    asof = pd.Timestamp("2026-09-14")
+    bw._WINDOWS.clear()
+    for label, start, end in bw._period_windows(asof):
+        bw._WINDOWS[label.lower()] = (start.date().isoformat(), end.date().isoformat())
+
+    # Every applicable series GREEN except Aerodrome's ve_locked_supply_tokens, which is RED. If
+    # the tally honours metric_fn that RED must appear in the count; if it does not, it vanishes.
+    data_by_key = {}
+    for pr in config.PROJECTS:
+        for metric in config.metrics_for_project(pr):
+            band = "RED" if (pr["name"], metric) == ("Aerodrome", "ve_locked_supply_tokens") else "GREEN"
+            data_by_key[f"{pr['name']}|{metric}"] = {
+                "status": "ok", "source": "test", "n_points": 9, "entered_on": "",
+                "confidence": band, "why_amber": ""}
+    R = bw.Refs(len(data_by_key), 0, [])
+    projects, _ = bw.write_a3(ws, R, data_by_key)
+    text = "\n".join(str(ws.cell(row=r, column=1).value or "") for r in range(1, ws.max_row + 1))
+    red = next(line for line in text.splitlines() if line.startswith("RED "))
+    assert red.split()[1] != "0", (
+        "Aerodrome's ve_locked_supply_tokens is RED and reachable only through metric_fn — a "
+        f"tally of zero means the row was skipped: {red!r}")

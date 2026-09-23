@@ -1515,7 +1515,12 @@ def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], da
     counts = {"GREEN": 0, "AMBER": 0, "RED": 0}
     for p in projects:
         for spec in specs:
-            metric = (spec[5] if len(spec) > 5 else {}).get("metric")
+            meta = spec[5] if len(spec) > 5 else {}
+            # metric_fn rows were silently absent from this tally: it read only the static tag,
+            # so a row whose metric is per project counted for nobody. Fixed 2026-09-23 when the
+            # locked-tokens rows became per project — it had been true of the revenue row since
+            # metric_fn was introduced.
+            metric = meta["metric_fn"](p["name"]) if meta.get("metric_fn") else meta.get("metric")
             if not metric:
                 continue
             st = data_by_key.get(f"{p['name']}|{metric}")
@@ -1885,8 +1890,19 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          {"gate": "fee_split", "base": True, "metric": "gross_burn_tokens"}),
         ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r, p)}"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
-        ("Tokens locked (ve)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
-        ("Lock rate = locked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
+        # PER PROJECT, not fixed: Aerodrome shows veAERO.supply() and everyone else shows the
+        # escrow's token balance. See config.LOCK_DISPLAY_METRIC for why only Aerodrome differs,
+        # and note that a blanket flip here would have blanked this column for the other 26
+        # projects, since ve_locked_supply_tokens is only_projects Aerodrome.
+        ("Tokens locked (ve)",
+         lambda r, p: pull(R.D(r, config.lock_display_metric(p["name"]), "now")),
+         FMT_NUM, "pull", False, {"metric_fn": config.lock_display_metric}),
+        # The lock rate divides the SAME figure the row above displays. Leaving this on
+        # locked_tokens would have put a ratio on the sheet whose numerator was not the number
+        # printed directly above it.
+        ("Lock rate = locked ÷ circulating",
+         lambda r, p: calc(f"{R.D(r, config.lock_display_metric(p['name']), 'now')}/{circ(r)}"),
+         FMT_PCT, "calc"),
         ("Tokens locked — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "locked_tokens_dashboard", "now")),
          FMT_NUM, "pull", False, {"metric": "locked_tokens_dashboard"}),
         # The divergence is meaningless without the cross-check, so it inherits the cross-check's

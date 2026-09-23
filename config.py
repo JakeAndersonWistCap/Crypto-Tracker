@@ -905,6 +905,43 @@ def revenue_base_metric(project_name: str) -> str:
     return (revenue_base(project_name) or {}).get("metric") or "revenue_usd"
 
 
+# ===== WHICH FIGURE "TOKENS LOCKED (ve)" SHOWS. Switched 2026-09-23. =====
+# ** THE COLUMN IS SHARED BY 27 PROJECTS AND THE ANSWER IS ONLY DIFFERENT FOR ONE. ** For every
+# project but Aerodrome, locked_tokens (the escrow's token balance) is the tokens locked, and a
+# blanket flip of the row would have blanked the column for the other 26 — ve_locked_supply_tokens
+# is only_projects Aerodrome. So the choice is per project, the same shape as revenue_base_metric
+# above, and for the same reason: a fixed metric tag on a row whose meaning varies attaches the
+# wrong series' confidence, coverage and staleness to the cell.
+#
+# WHY AERODROME IS THE EXCEPTION. veAERO.supply() and AERO.balanceOf(veAERO) differed by
+# 59,653,709.90 at block 51,693,612 — the escrow holds LESS than it has locked, because
+# _increaseAmountFor (VotingEscrow.sol:854-861) forwards a reward paid into a MANAGED veNFT
+# straight out to that NFT's LockedManagedReward contract without decrementing supply. The
+# forwarded AERO is still locked principal: it is inside _locked[mTokenId].amount, inside
+# permanentLockBalance and therefore inside totalSupply(). Only the custody read leaves it out.
+# The full derivation is on the ve_locked_supply contract entry.
+#
+# ** AND IT MAKES THE SHEET INTERNALLY CONSISTENT. ** avg_lock_duration_days already divides the
+# bias by supply() minus permanent — that was the fix that took it from an impossible 26,425 days
+# to 908.2. Until this switch the sheet showed 990.6m in the locked column while the duration two
+# rows down was computed against 1,050.3m. Now both read the same base.
+#
+# locked_tokens IS NOT DELETED and is still fetched, stored and validated — "how much AERO sits
+# in the contract" is a real question and that is its answer. It is simply no longer the headline.
+LOCK_DISPLAY_METRIC = {
+    "Aerodrome": "ve_locked_supply_tokens",
+}
+
+
+def lock_display_metric(project_name: str) -> str:
+    """The metric the locked-tokens column shows, defaulting to the custody read.
+
+    The default is right for every project whose escrow holds exactly what it has locked, which
+    is every one of them except Aerodrome. See LOCK_DISPLAY_METRIC.
+    """
+    return LOCK_DISPLAY_METRIC.get(project_name, "locked_tokens")
+
+
 def declared_handover(project_name: str, metric: str) -> dict | None:
     """A series deliberately STITCHED from two measuring points, one after the other.
 
