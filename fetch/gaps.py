@@ -107,6 +107,7 @@ METRIC_CONTRACT_KIND = {
     # "no source configured for this metric".
     "ve_voting_power_tokens": "ve_voting_power",
     "permanent_locked_tokens": "permanent_locked",
+    "ve_locked_supply_tokens": "ve_locked_supply",
     "burn_address_balance": "burn_address_balance",
     "gross_burn_tokens": "burn_address_balance",       # derived by differencing the balance
     "buyback_fund_balance": "buyback_fund_balance",

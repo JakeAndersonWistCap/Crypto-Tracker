@@ -576,7 +576,8 @@ def test_aerodromes_lock_duration_is_a_proxy_and_permanent_locks_come_off_both_s
         out = FetchOutput()
         rows = [{"date": pd.Timestamp("2026-09-23"), "project": project, "metric": m,
                  "value": v, "source": "chain:base:x", "tier": 2}
-                for m, v in (("ve_voting_power_tokens", vp), ("locked_tokens", locked),
+                for m, v in (("ve_voting_power_tokens", vp),
+                             ("ve_locked_supply_tokens", locked),
                              ("permanent_locked_tokens", perm)) if v is not None]
         out.add(pd.DataFrame(rows)[LONG_COLUMNS], "test", project, "", 2)
         _derive_lock_duration(out, [config.PROJECT_BY_NAME[project]])
@@ -618,6 +619,36 @@ def test_aerodromes_lock_duration_is_a_proxy_and_permanent_locks_come_off_both_s
     days, out = run(120_000_000.0, 100_000_000.0, 0.0)
     assert days is None
     assert any("NOTHING STORED and nothing clipped" in e.message for e in out.log), out.log
+
+    # ===== ** THE REAL BLOCK, AND THE DENOMINATOR THAT WAS WRONG. Block 51,693,612. ** =====
+    # The first live run divided by AERO.balanceOf(escrow) — what the escrow HOLDS — and got
+    # 26,425 days, refused by the bound. The escrow's own accounting of what it has LOCKED is
+    # `supply` (VotingEscrow.sol line 556), and the two differ by 59,653,709.90 AERO:
+    #
+    #     balanceOf  990,636,288.30   supply()  1,050,289,998.20
+    #
+    # Since 94% of the lock is permanent, the decaying cohort is a small difference between two
+    # large numbers — so a 5.68% error in the denominator became 18.1x in the ratio. The bias is
+    # computed against the LOCKED amount, so the ratio must be too.
+    VP, SUPPLY, PERM = 1_026_940_797.62, 1_050_289_998.20, 988_513_136.74
+    days, out = run(VP, SUPPLY, PERM)
+    assert days is not None, f"the corrected denominator must STORE, not gap: {out.log}"
+    assert abs(days - 908.2) < 0.1, f"expected ~908.2 days, got {days}"
+    assert 0 <= days <= 1460, "and inside the contract's own bound"
+    # ** THE OLD DENOMINATOR IS STILL REFUSED, which is what makes this a fix and not a widening
+    # of the bound. ** Nothing about the 0-1460 range changed.
+    BALANCE_OF = 990_636_288.30
+    bad, out_bad = run(VP, BALANCE_OF, PERM)
+    assert bad is None, f"balanceOf as the denominator must still refuse, got {bad}"
+    assert any("NOTHING STORED and nothing clipped" in e.message for e in out_bad.log)
+
+    # AND locked_tokens IS UNTOUCHED — it has six other consumers and none was in scope.
+    assert config.PROJECT_BY_NAME["Aerodrome"]["lock_duration_proxy"]["locked"] == \
+        "ve_locked_supply_tokens"
+    ve = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["ve"]
+    assert ve["read_method"] == "escrow_balance_of", \
+        "locked_tokens must still be AERO.balanceOf(escrow)"
+    assert config.contract_serves(ve) == {"locked_tokens"}
 
     # THE DISTRIBUTION IS FLAGGED AS THE NEXT STEP, NOT STARTED — it needs the per-NFT
     # enumeration this proxy exists to avoid.

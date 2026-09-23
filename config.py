@@ -449,6 +449,10 @@ METRICS = {
                                    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 10_000_000_000,
                                    "only_projects": ["Aerodrome"]},
+    "ve_locked_supply_tokens":    {"label": "veAERO's own accounting of AERO locked (supply(), NOT the escrow's token balance)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
+                                   "sanity_min": 0, "sanity_max": 10_000_000_000,
+                                   "only_projects": ["Aerodrome"]},
     "permanent_locked_tokens":    {"label": "Locked permanently (no unlock date — excluded from the duration average)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 10_000_000_000,
@@ -1364,6 +1368,10 @@ KIND_METRIC = {
     # takes `underlying`. See lock_duration_proxy for why the second one is not optional.
     "ve_voting_power": "ve_voting_power_tokens",
     "permanent_locked": "permanent_locked_tokens",
+    # ** THE ESCROW'S OWN ACCOUNTING OF WHAT IT HAS LOCKED, which is NOT its token balance. **
+    # Kept as its own metric rather than replacing locked_tokens: six other consumers read
+    # locked_tokens and none of them was in scope for this fix. See lock_duration_proxy.
+    "ve_locked_supply": "ve_locked_supply_tokens",
     "burn_address_balance": "burn_address_balance",
     "ve_total_supply": "locked_tokens",
     "buyback_fund_balance": "buyback_fund_balance",
@@ -7702,6 +7710,41 @@ PROJECTS = [
                 note="SCALED BY AERO's 18 DECIMALS, because bias is denominated in the locked "
                      "token. Same address as `ve`, deliberately, and a different call: one "
                      "reads the tokens locked and this reads what they currently vote."),
+            # ===== ** THE DENOMINATOR THE LOCK DURATION ACTUALLY WANTS. Added 2026-09-23. **
+            # `uint256 public supply` — VotingEscrow's own accounting of AERO LOCKED, which is
+            # NOT what the escrow HOLDS. Read at block 51,693,612 (epoch 913,660):
+            #
+            #     AERO.balanceOf(veAERO)         990,636,288.30   what it HOLDS
+            #     veAERO.supply()              1,050,289,998.20   what it has LOCKED
+            #     difference                     -59,653,709.90   -5.68% of the locked amount
+            #
+            # ** THE BIAS IS COMPUTED AGAINST THE LOCKED AMOUNT, so the ratio has to be too. **
+            # With balanceOf the decaying cohort came out at 2,123,151 against a bias of
+            # 38,427,661 — 18.1x, impossible. With supply() it is 61,776,861, giving 0.622,
+            # comfortably under the ceiling. The 18.1x was never an arithmetic problem: it was
+            # two figures that are not the same quantity.
+            #
+            # ** locked_tokens IS DELIBERATELY NOT CHANGED. ** Six other things read it —
+            # build_workbook's "Tokens locked (ve)" column, fetch/validate's
+            # locked_tokens <= total_supply relation, headline.py, diagnose_lock_vs_float,
+            # fetch/gaps and preflight's kind map — and none was in scope here. balanceOf may
+            # still be the right answer for "how much AERO sits in the contract". RAISED AND NOT
+            # ACTED ON: the workbook now shows 990.6m in that column while this derivation uses
+            # 1,050.3m, a 5.68% difference on one sheet, and which figure that column should
+            # carry is a decision rather than a bug fix.
+            "ve_locked_supply": _contract(
+                "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "ve_locked_supply", "AERO",
+                "https://github.com/aerodrome-finance/contracts/blob/main/contracts/VotingEscrow.sol",
+                verified="2026-09-23",
+                provenance="VotingEscrow.sol line 556, `uint256 public supply`, incremented at "
+                           "768 and decremented at 907",
+                read_method="escrow_self_call", token_standard="erc721", call="supply",
+                underlying="token", holder_has_code=True,
+                purpose="AERO LOCKED per the escrow's own books. The denominator for "
+                        "avg_lock_duration_days.",
+                note="NOT INTERCHANGEABLE WITH locked_tokens, which is AERO.balanceOf(escrow). "
+                     "They differed by 59,653,709.90 at block 51,693,612 — the escrow holds less "
+                     "than it has locked. Confirmed on-chain, not inferred."),
             "ve_permanent": _contract(
                 "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4", "base", "permanent_locked", "AERO",
                 "https://github.com/aerodrome-finance/contracts/blob/main/contracts/VotingEscrow.sol",
@@ -7954,10 +7997,13 @@ PROJECTS = [
         "lock_duration_proxy": {
             "metric": "avg_lock_duration_days",
             "voting_power": "ve_voting_power_tokens",
-            "locked": "locked_tokens",
+            # ** supply(), NOT balanceOf. ** Settled on-chain 2026-09-23 — see first_run below
+            # and contracts.ve_locked_supply. locked_tokens stays as it is for its six other
+            # consumers; this is scoped to what the derivation divides by.
+            "locked": "ve_locked_supply_tokens",
             "permanent": "permanent_locked_tokens",
             "max_days": 1460,
-            "formula": "(voting_power - permanent) / (locked - permanent) * 1460",
+            "formula": "(voting_power - permanent) / (ve_locked_supply - permanent) * 1460",
             "is_a_proxy": True,
             "what_it_is_not": "a measurement of any individual lock. It is the amount-weighted "
                               "MEAN remaining duration across the decaying cohort, recovered "
@@ -8034,6 +8080,47 @@ PROJECTS = [
                         "locked_tokens is AERO.balanceOf(escrow) — what it HOLDS. The escrow's "
                         "own accounting of what it has LOCKED is `supply` (VotingEscrow.sol "
                         "line 556), and the two need not agree.",
+                },
+                # ===== ** RESOLVED 2026-09-23 AT BLOCK 51,693,612 (epoch 913,660). THE
+                # ** DENOMINATOR WAS WRONG, NOT THE CHECKPOINT TIMING. **
+                #     AERO.balanceOf(veAERO)         990,636,288.30
+                #     veAERO.supply()              1,050,289,998.20   <- the right denominator
+                #     veAERO.totalSupply()         1,026,940,797.62
+                #     veAERO.permanentLockBalance()  988,513,136.74
+                #
+                # balanceOf - supply() = -59,653,709.90. They genuinely differ: the escrow HOLDS
+                # less than it has LOCKED. The bias is computed against the locked amount, so
+                # the ratio has to be too.
+                #
+                # ** A 5.68% ERROR IN THE DENOMINATOR BECAME 18.1x IN THE RATIO, and that is the
+                # ** lesson worth keeping. ** 94% of the lock is permanent, so the decaying
+                # cohort is a small difference between two large numbers — 61,776,861 with
+                # supply(), 2,123,151 with balanceOf. Wherever a figure is a difference of
+                # near-equal quantities, a small error in either input is amplified without
+                # limit, and the result still looks like a number.
+                #
+                # THE CHECKPOINT CANDIDATE IS NOT REFUTED, ONLY NOT NEEDED. supplyAt still
+                # returns the CHECKPOINTED permanentLockBalance while permanentLockBalance()
+                # returns current storage; at epoch 913,660 they are close enough that the ratio
+                # lands at 0.622. It stays on file as a reason the figure could drift if
+                # checkpoints ever lag.
+                "resolved_2026_09_23": {
+                    "block": 51_693_612, "epoch": 913_660,
+                    "balance_of": 990_636_288.30, "supply": 1_050_289_998.20,
+                    "total_supply": 1_026_940_797.62, "permanent": 988_513_136.74,
+                    "verdict": "wrong denominator — locked_tokens is balanceOf, the derivation "
+                               "needs supply()",
+                    "ratio_with_supply": 0.622040, "days_with_supply": 908.2,
+                    "ratio_with_balance_of": 18.099,
+                    "why_so_amplified": "94% of the lock is permanent, so the decaying cohort is "
+                                        "a small difference between two large numbers and a "
+                                        "5.68% denominator error becomes 18.1x.",
+                    "checkpoint_candidate": "not refuted, just not needed — supplyAt uses the "
+                                            "CHECKPOINTED permanent balance and "
+                                            "permanentLockBalance() is current. Close enough at "
+                                            "this epoch; a reason the figure could drift later.",
+                    "scope": "ONLY the derivation's denominator. locked_tokens still reads "
+                             "balanceOf for its six other consumers.",
                 },
                 "diagnose_with": "check_offline_items.py aerodrome_lock_inputs",
                 "do_not": "adjust the 0-1460 bound or the formula. The bound is what caught "

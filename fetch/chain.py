@@ -73,6 +73,13 @@ ERC20_ABI = [
     # REFUSES rather than falling back to the naive ratio, which would report permanent locks as
     # nearly-four-year ones. A missing fragment therefore gaps the metric; it never degrades it.
     {"constant": True, "inputs": [], "name": "permanentLockBalance", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # ===== veAERO's OWN ACCOUNTING OF WHAT IT HAS LOCKED. Added 2026-09-23. =====
+    # `uint256 public supply` (VotingEscrow.sol line 556), incremented at 768 and decremented at
+    # 907. NOT the same as AERO.balanceOf(escrow): at block 51,693,612 they differed by
+    # 59,653,709.90 AERO — the escrow HOLDS 990,636,288.30 and has LOCKED 1,050,289,998.20.
+    # The bias is computed against the locked amount, so this is the denominator the lock
+    # duration derives from.
+    {"constant": True, "inputs": [], "name": "supply", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     # tailEmissionRate() is BASIS POINTS, not a token amount. Scaling it by the token's decimals
     # would turn 67 bps into a vanishing fraction and the emission into zero. Read through
     # Reader.raw(), never scaled().
@@ -122,7 +129,7 @@ REFERENCE_ONLY_KINDS = {"burn_executor", "bridged_representation"}
 # denominated in AERO: VotingEscrow.sol computes bias as `slope * (end - now)` where
 # `slope = amount / MAXTIME`, so the units are locked-token units throughout.
 PRINCIPAL_KINDS = {"stake_principal", "emission_rate_current", "rebase_last_week",
-                   "ve_voting_power", "permanent_locked"}
+                   "ve_voting_power", "permanent_locked", "ve_locked_supply"}
 
 # WEEK, in seconds — the ve(3,3) / Aerodrome-family epoch length. Used only to compute
 # call_arg "last_complete_week_unix"; not a general-purpose constant.
