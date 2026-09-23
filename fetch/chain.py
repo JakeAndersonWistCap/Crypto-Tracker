@@ -1643,10 +1643,15 @@ class Chain:
         INTO the burn address, which say what moved, when, and from where.
         """
         name = project["name"]
-        burn = {k: v for k, v in (project.get("contracts") or {}).items()
-                if v.get("kind") in ("burn_address_balance", "spl_token_account")}
+        # THE ADDRESS NAMED IS THE ONE THAT WAS READ. Contract kinds are named after the stock
+        # metric they serve, so the holders behind `stock_metric` are the contracts of that kind.
+        # This used to list burn kinds only, so Chainlink's Reserve (kind buyback_fund_balance,
+        # on file and read) was reported as "(no address on file)" — a stale message, not lost
+        # wiring. Fixed 2026-09-23.
+        holders = {k: v for k, v in (project.get("contracts") or {}).items()
+                   if v.get("kind") in (stock_metric, "spl_token_account")}
         token = (project.get("contracts") or {}).get("token", {})
-        where = "; ".join(f"{k} {v.get('address')} on {v.get('chain')}" for k, v in burn.items()) or "(no address on file)"
+        where = "; ".join(f"{k} {v.get('address')} on {v.get('chain')}" for k, v in holders.items()) or "(no address on file)"
 
         out.review_item(name, flow_metric, "unattributable_zero", "stored_flagged", value=0.0,
                         prior_value=self.prior.get((name, flow_metric)), date=when,

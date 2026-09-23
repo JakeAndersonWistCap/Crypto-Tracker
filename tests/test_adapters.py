@@ -2394,8 +2394,9 @@ def test_near_staked_is_summed_from_the_validators_call_and_scaled_from_nears_ow
     assert str(got.source.iloc[0]) == "near_rpc:validators"
     # NEXT EPOCH'S SEATS ARE NOT SUMMED — the stub carries a 10^6 NEAR next_validators entry.
     assert float(got.value.iloc[0]) < 1_000_000_000.0
-    body = stub.calls[0][1]
-    assert body["method"] == "validators" and body["params"] == [None]
+    # the balance reads (view_account) go first since 2026-09-23; pin the stake call by method
+    body = next(b for _, b in stub.calls if b.get("method") == "validators")
+    assert body["params"] == [None]
 
     # ** AN EXPONENT TOO SMALL IS CAUGHT BY A STRUCTURAL BOUND. ** Nothing staked can exceed
     # everything in existence, so 10^18 on a yoctoNEAR figure fails and NOTHING is stored.
@@ -2427,7 +2428,8 @@ def test_near_staked_is_summed_from_the_validators_call_and_scaled_from_nears_ow
     # a stake" for a rejected request. The next endpoint is tried.
     out5, stub5 = _run_near({"jsonrpc": "2.0", "error": {"name": "HANDLER_ERROR"}, "id": "x"})
     assert out5.frame().empty
-    assert len(stub5.calls) == 3, "every configured endpoint is tried before giving up"
+    stake_calls = [c for c in stub5.calls if c[1].get("method") == "validators"]
+    assert len(stake_calls) == 3, "every configured endpoint is tried before giving up"
     assert [e for e in out5.log if e.status == "failed" and "JSON-RPC error" in e.message]
     print("near stake ok: current validators summed, 10^24 from NEAR's own SDK, a small exponent "
           "refused by the bound and a large one flagged where nothing else would see it")
@@ -5621,6 +5623,10 @@ def test_gap_detection_covers_every_applicable_metric():
             # hand-entered quarterly figures are not unresolved gaps — they have their own block
             if config.is_manual_quarterly(p["name"], m):
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} is manual and must not be a gap"
+                continue
+            # ONE GAP, NOT TWO: usd folds into the tokens row wherever tokens is itself a gap.
+            if m == "actual_buyback_usd" and (p["name"], "actual_buyback_tokens") in keys:
+                assert (p["name"], m) not in keys, f"{p['name']}/{m} must fold into the tokens row"
                 continue
             assert (p["name"], m) in keys, f"{p['name']}/{m} missing from the Gap Report"
     assert all(g["reason"] and g["suggestion"] for g in gaps), "every gap needs a reason and a fix"
@@ -13085,3 +13091,172 @@ def test_the_level_break_check_evaluates_only_real_days_once_section_u_has_run()
     rec = (config.PROJECT_BY_NAME["Morpho"]["defillama_restructure"]
            ["level_break_2026_09_23_REOPENED"]["sheet_trace_2026_09_23"])
     assert "not evaluated" in rec["level_break_after_u3"]["rows_deleted"]
+
+
+class _NearRouter:
+    """A NEAR node that answers by method: validators for the stake, view_account per account."""
+
+    def __init__(self, validators_payload, balances: dict, fail_accounts=()):
+        self.validators, self.balances, self.fail_accounts = validators_payload, balances, set(fail_accounts)
+        self.calls = []
+
+    def post(self, url, json_body=None, **kw):
+        self.calls.append((url, json_body))
+        if json_body.get("method") == "validators":
+            return self.validators
+        acct = json_body["params"]["account_id"]
+        if acct in self.fail_accounts:
+            raise RuntimeError("connection refused")
+        return {"jsonrpc": "2.0", "id": "token-metrics",
+                "result": {"amount": str(int(self.balances[acct] * 10 ** 24)), "locked": "0",
+                           "block_height": 187440904, "storage_usage": 410}}
+
+
+def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
+    """** WIRED ON INSTRUCTION, WITH THE CAVEATS ON THE ROW. ** The three Intents revenue wallets
+    are read via `query` / request_type view_account (NEAR's own RPC docs, URL on the read):
+    result.amount is yoctoNEAR and the sourced 10^24 applies. It is a STOCK: the wallet spends,
+    so the delta is inflow minus spending, and actual_buyback_tokens keeps its blocked reason.
+    The addresses are aggregator-sourced and the row says so; native NEAR only, marked PARTIAL.
+    """
+    from fetch.base import FetchOutput
+    from fetch.near import NearNode
+
+    p = dict(config.PROJECT_BY_NAME["Near"])
+    reads = p["node_api"]["extra_reads"]
+    assert [r["metric"] for r in reads] == ["buyback_fund_balance"]
+    read = reads[0]
+    assert read["kind"] == "near_view_account" and read["field"] == "amount"
+    assert set(read["accounts"]) == set(p["intents_revenue_wallets"]["wallets"])
+    assert "AGGREGATOR-SOURCED" in read["address_source"] and "wrap.near" in read["partial"]
+    assert "actual_buyback_tokens_blocked" in read["no_flow"]
+
+    balances = {"fefundsadmin.sputnik-dao.near": 1_250_000.5, "1csfundsadmin.sputnik-dao.near": 40_000.0,
+                "buybacks.multisignature.near": 2_700_000.25}
+    n = NearNode(prior_values={("Near", "total_supply"): 1_240_000_000.0})
+    n.http = _NearRouter(_near_payload([200_000_000.0]), balances)
+    out = FetchOutput()
+    n.run([p], None, out)
+    got = out.frame().query("metric == 'buyback_fund_balance'")
+    assert len(got) == 1, out.log
+    assert abs(float(got.value.iloc[0]) - 3_990_000.75) < 1e-6, float(got.value.iloc[0])
+    assert str(got.source.iloc[0]) == "near_rpc:view_account:PARTIAL", got.source.iloc[0]
+    # the stake read still lands beside it, and NOTHING is differenced into a buyback flow
+    assert len(out.frame().query("metric == 'locked_tokens'")) == 1
+    assert out.frame().query("metric == 'actual_buyback_tokens'").empty
+    bodies = [b for _, b in n.http.calls if b.get("method") == "query"]
+    assert len(bodies) == 3 and all(b["params"]["request_type"] == "view_account" and
+                                    b["params"]["finality"] == "final" for b in bodies)
+    # the gap reason for the metric, when the read yields nothing, names THIS read's kind
+    from fetch.gaps import _tier_note
+    r, sug = _tier_note(p, "buyback_fund_balance", {})
+    assert "near_view_account" in r and "returned nothing this run" in r, r
+    assert "contracts.mdx" in sug
+
+    # ** ALL OR NOTHING. ** One wallet failing stores no sum — a sum short one wallet is wrong,
+    # not smaller — and the gap names the account.
+    n2 = NearNode(prior_values={("Near", "total_supply"): 1_240_000_000.0})
+    n2.http = _NearRouter(_near_payload([200_000_000.0]), balances, fail_accounts=["buybacks.multisignature.near"])
+    out2 = FetchOutput()
+    n2.run([p], None, out2)
+    assert out2.frame().query("metric == 'buyback_fund_balance'").empty
+    assert [g for g in out2.gaps if g["metric"] == "buyback_fund_balance"
+            and "buybacks.multisignature.near" in g["reason"]], out2.gaps
+    # and the burn has no address to read — declared n/a, not gapped at P3
+    assert "PROTOCOL-LEVEL DESTRUCTION" in config.not_applicable_reason("Near", "burn_address_balance")
+    print("near view_account ok: three wallets summed as a PARTIAL stock, never a flow; all-or-nothing")
+
+
+def test_the_usd_buyback_gap_folds_into_the_tokens_gap():
+    """** THE SAME GAP COUNTED TWICE. ** actual_buyback_usd is tokens x price on each flow's own
+    date, so where tokens is a gap the usd row was the identical gap under a second name, on
+    every project with the pair. It folds into the tokens row and says so there; a usd row
+    survives only beside a tokens FIGURE, where it is a price gap and a different problem.
+    """
+    from fetch.gaps import detect
+    empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"])
+    rows = detect(config.PROJECTS, empty, set(), {}, [])
+    keys = {(r["project"], r["metric"]) for r in rows}
+    assert not [k for k in keys if k[1] == "actual_buyback_usd"], "usd must fold wherever tokens gaps"
+    for name in ("World Mobile", "GEODNET", "Maple", "Near", "Sky", "Pendle", "Ether.fi"):
+        row = next(r for r in rows if r["project"] == name and r["metric"] == "actual_buyback_tokens")
+        assert "actual_buyback_usd is NOT listed separately" in row["suggestion"], (name, row["suggestion"][-160:])
+    # tokens PRESENT, usd absent: the usd row stays, as a price gap
+    frame = pd.DataFrame([{"date": pd.Timestamp("2026-09-20"), "project": "Maple",
+                           "metric": "actual_buyback_tokens", "value": 10.0, "source": "dune:1", "tier": 4}])
+    rows2 = detect([config.PROJECT_BY_NAME["Maple"]], frame, set(), {}, [])
+    keys2 = {(r["project"], r["metric"]) for r in rows2}
+    assert ("Maple", "actual_buyback_usd") in keys2 and ("Maple", "actual_buyback_tokens") not in keys2
+    # a null reason can never reach the sheet silently
+    rows3 = detect([config.PROJECT_BY_NAME["Maple"]], empty, set(), {},
+                   [{"project": "Maple", "metric": "fees_usd", "reason": None, "tiers_attempted": "1"}])
+    bad = next(r for r in rows3 if r["metric"] == "fees_usd")
+    assert bad["reason"].startswith("NO REASON RECORDED for Maple/fees_usd") and bad["suggestion"]
+    print("usd fold ok: one gap per buyback pair; a null reason is named, not blank")
+
+
+def test_the_premint_emissions_row_points_at_the_measured_release():
+    """The five projects with pool_release_tokens no longer stop at "NOT MINTING": the row names
+    the derivation that measures the release, and says why it is a ceiling and not an alias.
+    """
+    from fetch.gaps import _tier_note
+    for name in ("Chainlink", "GEODNET", "Maple", "Hyperliquid", "Aethir"):
+        r, sug = _tier_note(config.PROJECT_BY_NAME[name], "emissions_tokens", {})
+        assert "NOT MINTING" in r and "pool_release_tokens = d(circulating_supply) - d(total_supply)" in r, (name, r)
+        assert "CEILING on emissions" in r and "not aliased" in r, (name, r)
+        assert sug.startswith("Read pool_release_tokens") and "OUTFLOW history" in sug
+        assert config.metric_restatements(name).get("emissions_tokens") is None, "pointed at, never copied"
+    assert "pool_release_tokens" in config.derivation_suppressed("GEODNET", "gross_issuance_tokens")["na_reason"]
+    print("premint emissions ok: the five rows point at pool_release_tokens without aliasing it")
+
+
+def test_an_unattributable_zero_names_the_balance_that_was_actually_read():
+    """Chainlink's actual_buyback_tokens read 0 by differencing the Reserve — an address ON FILE
+    and read — and the row said "(no address on file)": the message listed burn kinds only. The
+    holders named are now the contracts of the STOCK metric's own kind. Stale message, not lost
+    wiring, and the test pins the address.
+    """
+    from fetch.base import FetchOutput
+    out = FetchOutput()
+    Chain()._flag_unattributable_zero(config.PROJECT_BY_NAME["Chainlink"], "actual_buyback_tokens",
+                                       "buyback_fund_balance", "2026-09-23", out)
+    g = next(g for g in out.gaps if "actual_buyback_tokens is ZERO" in g["metric"])
+    assert "reserve 0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6 on ethereum" in g["reason"], g["reason"][:300]
+    assert "(no address on file)" not in g["reason"]
+    # a burn stock still names the burn address
+    out2 = FetchOutput()
+    Chain()._flag_unattributable_zero(config.PROJECT_BY_NAME["Uniswap"], "gross_burn_tokens",
+                                       "burn_address_balance", "2026-09-23", out2)
+    g2 = next(g for g in out2.gaps if "gross_burn_tokens is ZERO" in g["metric"])
+    assert "(no address on file)" not in g2["reason"] and "burn" in g2["reason"], g2["reason"][:200]
+    print("unattributable zero ok: the address read is the address named")
+
+
+def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
+    """Hyperliquid's two activity columns close on the API's documented shape; Fluid's two stock
+    rows name the three candidates and pick none; Ether.fi's inert flow half is no longer staged.
+    """
+    from fetch.gaps import _tier_note
+    for m in ("active_addresses", "tx_count"):
+        u = config.unavailable_for("Hyperliquid", m)
+        assert u and "mod.ts" in u["what_was_tried"] and "hypurrscan" in u["reopen_if"], m
+    for m in ("buyback_fund_balance", "treasury_holding_tokens"):
+        r, sug = _tier_note(config.PROJECT_BY_NAME["Fluid"], m, {})
+        for addr in ("0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1", "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09",
+                     "0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2"):
+            assert addr in r, (m, addr)
+        assert "no contract of kind" not in r and "NONE CONFIRMED" in r and "ONE" in sug, (m, r[:120])
+    assert not config.PROJECT_BY_NAME["Fluid"].get("contracts", {}).get("buyback_fund"), "nothing was picked"
+    q = config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"]["locked_tokens_dashboard"]
+    assert "staging_cols" not in q and q["flow_half_dropped"]["cols"] == ["agg_14", "agg_30"]
+    assert q["value_col"] == "staked_supply", "the lock-rate half is untouched"
+    # the Aethir and GEODNET research is recorded as candidates, and nothing was wired
+    a = config.PROJECT_BY_NAME["Aethir"]
+    cands = a["locked_tokens_blocked"]["candidates_2026_09_23"]
+    assert cands["defillama_staking_owner"]["address"] == "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE"
+    assert cands["checker_node_license_nft"]["address"] == "0xC227e25544EdD261A9066932C71a25F4504972f1"
+    assert set(a["contracts"]) == {"token_arbitrum"}, "no candidate became a contract"
+    assert a["defillama_fees_slug"] is None and a["customer_revenue_route"]["candidate_slug"] == "aethir"
+    g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["docs_pages_2026_09_23"]
+    assert any(u.endswith("stake-geods.md") for u in g["pages"])
+    print("2026-09-23 round ok: closures, blocked rows and research records all land, nothing wired unverified")

@@ -2191,6 +2191,15 @@ PROJECTS = [
                 "NEAR HAS NO SUPPLY CAP. Validator rewards mint on an inflation curve and 70% of "
                 "every gas fee is burned, so terminal supply is the balance of the two rather "
                 "than a declared parameter. Nothing to source. Declared 2026-09-22.",
+            # ===== THE BURN HAS NO ADDRESS. Declared 2026-09-23. =====
+            # It was gapping at P3 as "protocol level — no address to read", which is the reason
+            # a metric does not exist here, not the reason a read failed.
+            "burn_address_balance":
+                "PROTOCOL-LEVEL DESTRUCTION — 70% of every gas fee is destroyed inside the "
+                "runtime with no transfer and no receiving account, so there is no balance to "
+                "read. The burn FLOW is sourced already: gross_burn_tokens is DefiLlama's chain "
+                "Revenue for NEAR ('Burned NEAR' = fees x 0.7, see burn_split). Declared "
+                "2026-09-23.",
         },
         # ===== STAKED NEAR, FROM THE CHAIN. Added 2026-09-22. =====
         # locked_tokens gapped asking for a lock contract. There is not one: NEAR's staking is
@@ -2226,6 +2235,41 @@ PROJECTS = [
             "note": "current_validators only. next_validators and current_proposals are the NEXT "
                     "epoch's seats and are not additional stake; summing them would double-count "
                     "every validator that carries over, which is nearly all of them.",
+            # ===== THE THREE INTENTS REVENUE WALLETS, READ AS A BALANCE. Wired 2026-09-23. =====
+            # buyback_fund_balance is what these accounts HOLD — a stock, read via NEAR's `query`
+            # RPC with request_type view_account (spec URL below; result.amount in yoctoNEAR).
+            # ** IT IS NOT DIFFERENCED INTO actual_buyback_tokens, AND MUST NOT BE. ** The
+            # buyback wallet exists to spend, so its delta is inflow minus spending — see
+            # actual_buyback_tokens_blocked, which stays exactly as it is.
+            # ** THE ADDRESSES ARE AGGREGATOR-SOURCED. ** They come from DefiLlama's near-intents
+            # adapter (itself from NEAR's Dune query 6740088), not from NEAR Intents' own docs;
+            # wired on Jake's instruction of 2026-09-23 with that caveat carried here and in the
+            # log line. If NEAR Intents' own material names different wallets, these are wrong.
+            "extra_reads": [
+                {
+                    "kind": "near_view_account",
+                    "metric": "buyback_fund_balance",
+                    "accounts": [
+                        "fefundsadmin.sputnik-dao.near",
+                        "1csfundsadmin.sputnik-dao.near",
+                        "buybacks.multisignature.near",
+                    ],
+                    "field": "amount",
+                    "spec_url": "https://raw.githubusercontent.com/near/docs/master/api/rpc/contracts.mdx",
+                    "spec_date": "2026-09-23",
+                    "spec_note": "query / request_type view_account returns result.amount as a "
+                                 "yoctoNEAR decimal string (and result.locked, the staked part); "
+                                 "the same 10^24 exponent as the validators read applies.",
+                    "address_source": "AGGREGATOR-SOURCED — DefiLlama fees/near-intents adapter, "
+                                      "read 2026-09-23; see intents_revenue_wallets. Not verified "
+                                      "against NEAR Intents' own material.",
+                    "partial": "native NEAR only. The adapter's `moves` CTE also counts wrap.near "
+                               "(an FT) received by these wallets, which view_account cannot see; "
+                               "an ft_balance_of call on wrap.near would complete it.",
+                    "no_flow": "a STOCK, deliberately not differenced — see "
+                               "actual_buyback_tokens_blocked.",
+                },
+            ],
         },
         # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
         # DefiLlama's chain Revenue for NEAR is the BURNED NEAR. From the adapter's own source,
@@ -4443,6 +4487,28 @@ PROJECTS = [
             "why": "GEODNET's own GIP repository (geodnet/GIP) carries GIP5 'SuperHex Bonus Rewards Requirement', which defines the staking success benchmark and RRR rules and names no contract. GitHub code search finds no GEODNET-authored staking contract; docs.geodnet.com is unreachable from here. No address is guessed.",
             "source_url": "https://raw.githubusercontent.com/geodnet/GIP/main/GIP202381733411309930.md",
             "source_date": "2026-09-23",
+            # ===== THE DOCS PAGES EXIST AND ARE THE PLACE TO LOOK. Found 2026-09-23. =====
+            # GEODNET's own docs index lists 'Stake GEODs', 'SuperHex' and 'Staking FAQs' under
+            # geod-console-advanced. docs.geodnet.com and polygonscan (GEOD top holders, the
+            # contracts miner wallets interact with) both return 000 from here, so the pages are
+            # named and not read. No aggregator names the contract either: DefiLlama has no
+            # GEODNET TVL adapter at all, only the burn-based fees adapter.
+            "docs_pages_2026_09_23": {
+                "index_mirror": "https://raw.githubusercontent.com/api-evangelist/geodnet/main/llms/geodnet-llms.txt",
+                "pages": [
+                    "https://docs.geodnet.com/geod-console-advanced/stake-geods.md",
+                    "https://docs.geodnet.com/geod-console-advanced/superhex.md",
+                    "https://docs.geodnet.com/geod-console-advanced/staking-faqs.md",
+                ],
+                "polygonscan_route": "https://polygonscan.com/token/"
+                                     "0xAC0F66379A6d7801D7726d5a943356A172549Adb#balances — the "
+                                     "top holders; a pooled staking contract would sit near the "
+                                     "top with 20,000-GEOD-multiple inflows. Unreachable from "
+                                     "here.",
+                "defillama": "no TVL adapter for geodnet in DefiLlama-Adapters (404 on "
+                             "projects/geodnet/index.js, 2026-09-23); fees/geodnet.ts is "
+                             "burn-based and names only the token and the dead address",
+            },
             "route_that_would_work": "a GEODNET-authored page or GIP naming the SuperHex staking contract on Polygon; then an escrow_balance_of read on GEOD (contracts.token_polygon) against it.",
         },
         # ===== buyback_wallet_polygon_historical RETIRED 2026-09-23. =====
@@ -4956,8 +5022,12 @@ PROJECTS = [
                           "and does not move, so nothing is minted and this column's quantity is "
                           "zero by construction. GEODNET's emissions are real and are "
                           "DISTRIBUTION from pre-minted mining wallets, not minting: that is a "
-                          "different quantity and it is UNMEASURED. See "
-                          "emissions_proxy_declined for the route that would measure it."),
+                          "different quantity. The RELEASE side of it IS measured: "
+                          "pool_release_tokens = d(circulating) - d(total), wired 2026-09-23, is "
+                          "the route for this project's supply-side flow — gross_issuance was "
+                          "never the only route and is not the measured one. Emissions proper "
+                          "(the mining distribution alone) remain UNMEASURED; see "
+                          "emissions_proxy_declined for the route that would measure them."),
             "was_producing": "0 from derived:d_supply:MECHANISM_ASSUMED",
             "why": "issuance is schedule-based and PER-MINER — f(miner count, uptime, data quality, band "
                    "type, zone multipliers) — not a function of the supply delta. The derivation was "
@@ -5420,10 +5490,95 @@ PROJECTS = [
             "why": "Aethir's docs index (docs.aethir.com, via two llms.txt mirrors on GitHub) has pages for 'Aethir Staking', 'Staking Key Information', 'Staking as Cloud Host' and 'Staking Parameters', so a staking mechanism is documented. The pages' content is not reachable from this environment and GitHub code search finds no Aethir-authored repository with the contract. No address is guessed.",
             "source_url": "https://raw.githubusercontent.com/reclear-io/llmref/main/registry/aethir/2026.07.02/llms.txt",
             "source_date": "2026-09-23",
+            # ===== CANDIDATES FOUND 2026-09-23, NONE WIRED. =====
+            # arbiscan, polygonscan and docs.aethir.com all return 000 from here, so every
+            # address below is AGGREGATOR-SOURCED and stays a candidate until read against
+            # Aethir's own material. Wiring an unverified address is the one thing this file
+            # never does.
+            "candidates_2026_09_23": {
+                "defillama_staking_owner": {
+                    "address": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE", "chain": "ethereum",
+                    "what": "the ONLY address DefiLlama counts as Aethir 'staking': ATH on "
+                            "Ethereum (0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B) held by it. "
+                            "Its implementation ABI (Keystone metadata registry) exposes "
+                            "aethir(), stAethir(), veAethir(), wrap(), unwrap() and Wrap/Unwrap "
+                            "events — a wrapper that mints stAethir/veAethir against deposited "
+                            "ATH. ETHEREUM-side staking, not the Arbitrum Checker/Cloud-Host "
+                            "stake this block asks for.",
+                    "sources": [
+                        "https://raw.githubusercontent.com/DefiLlama/DefiLlama-Adapters/main/registries/sumTokens/data3.js",
+                        "https://github.com/KeystoneHQ/Smart-Contract-Metadata-Registry/blob/master/ethereum/0x3f69bb14860f7f3348ac8a5f0d445322143f7fee.json",
+                    ],
+                    "read_if_confirmed": "escrow_balance_of on ATH (ethereum) with this holder — "
+                                         "the wrapper's ATH balance is the staked amount",
+                },
+                "checker_node_license_nft": {
+                    "address": "0xC227e25544EdD261A9066932C71a25F4504972f1", "chain": "arbitrum",
+                    "what": "the Checker Node licence NFT (ERC-721). Two independent aggregator "
+                            "sources agree: DefiLlama's zoofi-io adapter (`nft:` in its 'Aethir "
+                            "LntVault' entry) and MetaStreet's yield-pass test suite "
+                            "(`checkerNodeLicense`). A licence COUNT is not a token stake; it "
+                            "answers supply_units, not locked_tokens.",
+                    "sources": [
+                        "https://raw.githubusercontent.com/DefiLlama/DefiLlama-Adapters/main/projects/zoofi-io/index.js",
+                        "https://raw.githubusercontent.com/metastreet-labs/metastreet-yield-pass/main/test/yieldAdapters/aethir/Base.t.sol",
+                    ],
+                },
+                "checker_claim_and_withdraw": {
+                    "address": "0x3EB64fc76De5D77659387E64951d78d5fCaE1111", "chain": "arbitrum",
+                    "what": "Checker reward claim/withdraw contract per MetaStreet's test suite "
+                            "(SINGLE source). Relevant to emissions (the reward OUTFLOW), not to "
+                            "the stake.",
+                    "sources": [
+                        "https://raw.githubusercontent.com/metastreet-labs/metastreet-yield-pass/main/test/yieldAdapters/aethir/Base.t.sol",
+                    ],
+                },
+                "aethir_core_service_fee_escrow": {
+                    "address": "0x226DC7D2AA1F9a565e82faf04772FDbBaF2da42d", "chain": "arbitrum",
+                    "what": "AethirCore — where developers deposit ATH service fees "
+                            "(DepositServiceFee / WithdrawServiceFee events); DefiLlama's fees "
+                            "adapter reads it. A verified AethirCore source sits at "
+                            "0x7E5F4bFcfB4b9344Fb486559267d856e8Be5EfD2 in the contract "
+                            "sanctuary (implementation vs proxy NOT established). Customer "
+                            "spend, not stake — see customer_revenue_route.",
+                    "sources": [
+                        "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/aethir/index.ts",
+                    ],
+                },
+                "still_unfound": "the Arbitrum staking contract for Checker Node operators and "
+                                 "Cloud Hosts. ATH's Arbiscan read/write tabs and top-holder "
+                                 "list could not be opened from here (000).",
+            },
             "route_that_would_work": "read docs.aethir.com/aethir-staking/staking-key-information from a host that can reach it and take the Arbitrum contract from there; then an escrow_balance_of read on ATH (contracts.token_arbitrum) against it.",
         },
         "coingecko_id": "aethir",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
+        # ===== customer_revenue_usd: A FREE ROUTE EXISTS AND IS NOT WIRED. Found 2026-09-23. =====
+        # DefiLlama's fees adapter for Aethir (dimension-adapters/fees/aethir, Arbitrum, from
+        # 2024-07-22) sums DepositServiceFee minus WithdrawServiceFee on AethirCore, in ATH, and
+        # calls it "Service fees paid by developers to use aethir GPU services" — 20% protocol,
+        # 80% to GPU providers. That IS end-user spend, the quantity customer_revenue_usd asks
+        # for, and api.llama.fi/summary/fees/aethir is a free, unauthenticated API: the top of
+        # the sourcing order. Two things stop it being wired here: (1) a slug is promoted only
+        # after it fetches on a live run, and api.llama.fi is unreachable from this environment;
+        # (2) the figure is DEPOSITS net of withdrawals into the fee escrow — prepayment, not
+        # consumption — so the label must say so, as GEODNET's burn/0.8 restatement does.
+        # defillama_fees_slug stays None until confirmed; then customer_revenue_usd is a
+        # restatement of fees_usd, exactly GEODNET's shape.
+        "customer_revenue_route": {
+            "status": "FOUND, NOT WIRED — needs a live fetch to confirm before the slug is set",
+            "candidate_slug": "aethir",
+            "adapter": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/aethir/index.ts",
+            "measures": "DepositServiceFee - WithdrawServiceFee on AethirCore (arbitrum "
+                        "0x226DC7D2AA1F9a565e82faf04772FDbBaF2da42d), in ATH; the adapter "
+                        "allows negative days",
+            "semantics": "service-fee DEPOSITS net of withdrawals — prepayment into the escrow, "
+                         "not metered consumption",
+            "found_on": "2026-09-23",
+            "wire_as": "defillama_fees_slug 'aethir' for fees_usd, then a restatement "
+                       "customer_revenue_usd = fees_usd carrying the prepayment caveat in the "
+                       "label",
+        },
         # ARCHETYPE 2 ONLY. ARCHETYPE 3 IS REFUTED, NOT HELD — and the distinction matters because
         # "held" means "pending evidence" and the evidence is in. There is NO revenue-to-token
         # conversion anywhere in Aethir's design: ATH pays for compute DIRECTLY to GPU providers,
@@ -7546,6 +7701,12 @@ PROJECTS = [
                 "request": {"type": "tokenDetails"},
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
+                # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
+                # arithmetic is also available as check_offline_items.hyperliquid_supply_convention:
+                # the same three numbers, the Assistance Fund balance and CoinGecko's total, with
+                # the verdict printed. total_supply_convention is declared from the pasted output,
+                # not by the script.
+                "offline_check": "check_offline_items.py — hyperliquid_supply_convention",
                 "decimals_from": {
                     "request": {"type": "spotMeta"},
                     "list_path": "tokens",
@@ -11095,6 +11256,51 @@ PROJECTS = [
             ],
             "decision_needed": "confirm TREASURY_ADDRESS as buyback_fund_balance (and reopen the actual_buyback closures onto the LogBuyback route), or keep the closure. Not made here.",
         },
+        # ===== THE TWO STOCK ROWS NAME THE CANDIDATES, NOT "no contract of kind". 2026-09-23. =====
+        # buyback_fund_balance and treasury_holding_tokens were still gapping on the generic
+        # "no contract of kind ... declared" while buyback_contracts_found_2026_09_23 above holds
+        # three addresses from Instadapp's own repo. The rows now say what is on file and what
+        # is NOT decided. ** NONE IS PICKED HERE. ** A balance read on the wrong one of the three
+        # is a plausible wrong number, which is worse than a gap.
+        "buyback_fund_balance_blocked": {
+            "status": "THREE CANDIDATES ON FILE, NONE CONFIRMED AS THE FUND — decision open",
+            "wanted": "FLUID held at the buyback's resting destination, as a balance",
+            "why": "From Instadapp's fluid-contracts-public: FluidBuybackProxy "
+                   "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1 holds bought FLUID only until a "
+                   "rebalancer calls collectFluidTokensToTreasury; TREASURY_ADDRESS "
+                   "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09 is the hardcoded recipient of "
+                   "that call; FluidReserveContract 0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2 "
+                   "is the protocol reserve. Which of them is 'The Fluid Reserve' of the buyback "
+                   "announcement is NOT established by name, and the proxy's balance is a "
+                   "transit figure rather than a fund. Nothing is burned, so the burn route "
+                   "does not apply.",
+            "source_url": "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/"
+                          "main/contracts/periphery/buyback/SPEC.md",
+            "source_date": "2026-09-23",
+            "route_that_would_work": "Fluid's own announcement or docs naming where bought FLUID "
+                                     "rests; then ONE balanceOf read on that address. A balance "
+                                     "is a STOCK — the buyback FLOW stays the LogBuyback scan, "
+                                     "blocked by the 10-block cap (see actual_buyback closures).",
+        },
+        "treasury_holding_tokens_blocked": {
+            "status": "THREE CANDIDATES ON FILE, NONE CONFIRMED AS THE TREASURY — decision open",
+            "wanted": "FLUID held by the protocol treasury, as a balance",
+            "why": "The same three addresses as buyback_fund_balance_blocked: TREASURY_ADDRESS "
+                   "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09 (the buyback contract's hardcoded "
+                   "delivery target — a name in code, not a confirmed treasury), "
+                   "FluidReserveContract 0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2 (the "
+                   "reserve, per its own SPEC.md), and the buyback proxy "
+                   "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1 (transit only). Whether "
+                   "TREASURY_ADDRESS and the reserve are the same treasury, or the treasury is "
+                   "a third address, is the open question.",
+            "source_url": "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/"
+                          "main/contracts/reserve/SPEC.md",
+            "source_date": "2026-09-23",
+            "route_that_would_work": "Fluid's own governance or docs page naming the treasury; "
+                                     "then a treasury_holding contract on that ONE address. Do "
+                                     "not sum the candidates — that double-counts a transfer in "
+                                     "flight between them.",
+        },
         # ===== "DOES A FLUID STAKING OR LOCK MECHANISM EXIST" — ANSWERED 2026-09-23: NO. =====
         # What exists in fluid-contracts-public is FluidLendingStakingRewards
         # (contracts/protocols/lending/stakingRewards/main.sol): a Synthetix-style pool that
@@ -12169,20 +12375,29 @@ PROJECTS = [
                 # No drop_current_period: staked_supply is a STOCK, and a stock read part-way
                 # through a day is a valid reading of it. Dropping the current period is for
                 # FLOWS, where an incomplete period understates the total.
-                # agg_14 and agg_30 are 14- and 30-day aggregates. They are a CANDIDATE for the
-                # 30-day trajectory column and are captured to the staging table so the choice can
-                # be made on real numbers — but nothing reads them, and the trajectory columns are
-                # NOT switched to them. That switch is a decision, not a default.
-                "staging_cols": ["agg_14", "agg_30"],
-                "staging_note": "14d/30d aggregate from Dune 8683038. Candidate for the 30-day trajectory "
-                                "column; NOT used in any figure. Switching to it is a deliberate change.",
+                # ===== THE FLOW HALF IS DROPPED. 2026-09-23. =====
+                # agg_14 and agg_30 were staged as a candidate for the 30-day trajectory column.
+                # Every pull returned floating-point noise around zero (-5.8e-10, -2.4e-09) beside
+                # zeroed deposit/request/processed columns — see quality_warning — so what was
+                # being staged was not a series. Staging kept a dead candidate alive on the
+                # Staging tab; it is dropped rather than left to look like an option. The
+                # LOCK-RATE half (staked_supply, perc_staked, num_holders) is untouched.
+                "flow_half_dropped": {
+                    "on": "2026-09-23",
+                    "cols": ["agg_14", "agg_30"],
+                    "why": "inert on every pull — noise around zero, not a flow; a trajectory "
+                           "built on it would read as a flat, healthy series",
+                    "reopen_if": "the get_vault_details CTE casing is fixed on dune.com/queries/"
+                                 "8683038 and the flow columns carry values; then stage again "
+                                 "before promoting anything",
+                },
                 # Not mapped, and deliberately so: deposit_amount, deposit_users, request_amount,
                 # request_users, processed_amount and processed_users are withdrawal-queue flows.
                 # No metric in the library takes them, they read as inert (see quality_warning),
                 # and inventing a metric to hold a column is how a sheet fills up with numbers
                 # nobody chose.
                 "quality_warning": {
-                    "label": "the FLOW half of query 8683038 looks inert",
+                    "label": "the FLOW half of query 8683038 is inert — dropped from staging 2026-09-23",
                     "reason": "In every sample row the deposit/request/processed amount and user columns are 0, "
                               "and agg_14/agg_30 are floating-point noise (-5.8e-10, -2.4e-09) rather than "
                               "values. Either there has genuinely been no vault activity, or the "
@@ -13687,6 +13902,50 @@ UNAVAILABLE = [
             "so it would fill with no edit; OR a fresh read of the listing from a host that can "
             "reach api.llama.fi shows an entry, in which case the 'returned no data' result was a "
             "fetch fault and this closure was wrong."),
+    },
+
+    # ===== active_addresses / tx_count — CLOSED ON THE API'S SHAPE. 2026-09-23. =====
+    # Both gapped as "no sources.yaml entry", which reads as unfinished work. The info API was
+    # checked for what it can return, and a chain-activity aggregate is not among its request
+    # types: the full method list in the maintained SDK (nktkas/hyperliquid src/api/info/mod.ts,
+    # read 2026-09-23) is market state, per-user state, vaults, validators and token metadata —
+    # nothing counts transactions or addresses over a day. growthepie is Ethereum L2s only;
+    # DefiLlama carries no address or transaction metric. Explorer APIs (hypurrscan, hyperscan)
+    # were NOT checked — unreachable from here — so this closes on the documented API, and the
+    # explorer route is the reopen condition, not a claim.
+    {
+        "project": "Hyperliquid", "metric": "active_addresses",
+        "closed_on": "2026-09-23",
+        "summary": "Hyperliquid's info API exposes market, per-user, vault, validator and token "
+                   "state and no chain-activity aggregate — there is no daily active-address "
+                   "series to read from the protocol.",
+        "what_was_tried": (
+            "The documented info request types, via the typed method list in nktkas/hyperliquid "
+            "(src/api/info/mod.ts): activeAssetData, allMids, candleSnapshot, clearinghouseState, "
+            "spotClearinghouseState, userFills, userFillsByTime, validatorSummaries, "
+            "tokenDetails, spotMeta and the rest — every one is a market, per-user or metadata "
+            "query. growthepie (origin_key list) covers Ethereum L2s and not Hyperliquid; "
+            "DefiLlama's chain route carries no address count."),
+        "impact": "NONE on any supply or buyback figure. It is a demand-context column.",
+        "reopen_if": (
+            "an official stats endpoint appears in the info API, or an explorer (hypurrscan, "
+            "hyperscan) with a documented free API for daily address counts is read from a "
+            "host that can reach it — neither was checked from here."),
+    },
+    {
+        "project": "Hyperliquid", "metric": "tx_count",
+        "closed_on": "2026-09-23",
+        "summary": "Hyperliquid's info API has no transaction-count request type — the same "
+                   "shape finding as active_addresses.",
+        "what_was_tried": (
+            "The same method list as active_addresses (nktkas/hyperliquid src/api/info/mod.ts, "
+            "read 2026-09-23): nothing aggregates transactions over a period. userFillsByTime "
+            "is per user and fills only, not chain transactions."),
+        "impact": "NONE on any supply or buyback figure. It is a demand-context column.",
+        "reopen_if": (
+            "an official stats endpoint appears, or an explorer (hypurrscan, hyperscan) with a "
+            "documented free API for daily transaction counts is read from a host that can "
+            "reach it — neither was checked from here."),
     },
 
     # ===== total_supply_dashboard — CLOSED ON THE ROUTE, NOT ON THE FIGURE. 2026-09-23. =====

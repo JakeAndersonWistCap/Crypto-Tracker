@@ -1243,12 +1243,97 @@ def aerodrome_lock_inputs():
 #     that prints a section header, so forgetting to register the NEXT one fails the suite.
 # The ordering is the reporting order and is deliberate: Sky first, because it is the one with
 # an open question, and beaconchain last, because it is the slowest.
+HYPE_INFO = "https://api.hyperliquid.xyz/info"
+HYPE_ASSISTANCE_FUND = "0xfefefefefefefefefefefefefefefefefefefefe"
+
+
+def _hl_info(body: dict):
+    r = requests.post(HYPE_INFO, json=body, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def hyperliquid_supply_convention():
+    """The total_supply convention, settled by arithmetic — Part E of the 2026-09-23 round.
+
+    gross_issuance_tokens for Hyperliquid is blocked on one question: is CoinGecko's total_supply
+    NET of the Assistance Fund burn or GROSS of it? The two issuance formulas differ by the whole
+    burn, so nothing is assumed. tokenDetails is Hyperliquid's OWN supply figure; the AF balance
+    is the burn; CoinGecko's total is the provider's. Six numbers, one subtraction, and the
+    verdict follows the same rule as fetch/hypercore.py._token_details — plus the inverted case
+    that method does not name (Hyperliquid's fees page, read literally, says AF HYPE leaves
+    total supply, which would make THEIR figure the net one).
+
+    api.hyperliquid.xyz returns 000 from the build environment, which is why this lives here.
+    total_supply_convention is declared in config.py from the pasted output — never by script.
+    """
+    head("Hyperliquid — total_supply convention (tokenDetails vs Assistance Fund vs CoinGecko)")
+    try:
+        meta = _hl_info({"type": "spotMeta"})
+        tok = next((t for t in meta.get("tokens", []) if t.get("name") == "HYPE"), None)
+        if not tok:
+            print(f"  spotMeta carries no token named HYPE — names seen: "
+                  f"{[t.get('name') for t in meta.get('tokens', [])][:12]}")
+            return
+        token_id = tok.get("tokenId")
+        det = _hl_info({"type": "tokenDetails", "tokenId": token_id})
+        mx, tot, circ = (float(det[k]) for k in ("maxSupply", "totalSupply", "circulatingSupply"))
+        st = _hl_info({"type": "spotClearinghouseState", "user": HYPE_ASSISTANCE_FUND})
+        af = next((float(b.get("total") or b.get("balance") or 0.0)
+                   for b in st.get("balances", []) if b.get("coin") == "HYPE"), None)
+        print(f"  tokenId (spotMeta)                {token_id}   weiDecimals {tok.get('weiDecimals')}")
+        print(f"  tokenDetails.maxSupply            {mx:>24,.4f}")
+        print(f"  tokenDetails.totalSupply          {tot:>24,.4f}")
+        print(f"  tokenDetails.circulatingSupply    {circ:>24,.4f}")
+        print(f"  tokenDetails.futureEmissions      {det.get('futureEmissions')}")
+        print(f"  Assistance Fund HYPE (spotClearinghouseState) "
+              f"{'(no HYPE balance row)' if af is None else f'{af:,.4f}'}")
+        print(f"  total - circulating               {tot - circ:>24,.4f}")
+        print(f"  max - total                       {mx - tot:>24,.4f}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    try:
+        cg = requests.get("https://api.coingecko.com/api/v3/coins/hyperliquid",
+                          params={"localization": "false", "tickers": "false", "market_data": "true",
+                                  "community_data": "false", "developer_data": "false"},
+                          timeout=TIMEOUT)
+        cg.raise_for_status()
+        md = cg.json().get("market_data") or {}
+        provider_total, provider_circ = md.get("total_supply"), md.get("circulating_supply")
+    except Exception as e:  # noqa: BLE001
+        print(f"  CoinGecko UNREACHABLE — {e}; the tokenDetails numbers above still stand")
+        return
+    print(f"  CoinGecko total_supply            {provider_total if provider_total is None else f'{float(provider_total):>24,.4f}'}")
+    print(f"  CoinGecko circulating_supply      {provider_circ if provider_circ is None else f'{float(provider_circ):>24,.4f}'}")
+    if provider_total is None or af is None:
+        print("  NO VERDICT: one of the two comparison sides is missing.")
+        return
+    gap = tot - float(provider_total)
+    tol = max(1.0, abs(tot) * 0.001)
+    print(f"  tokenDetails.total - CoinGecko.total = {gap:,.4f}   (tolerance {tol:,.2f}; AF = {af:,.4f})")
+    if abs(gap - af) <= tol:
+        verdict = ("net_of_burn — Hyperliquid's totalSupply EXCEEDS CoinGecko's by the AF balance: "
+                   "CoinGecko subtracts the burn; issuance = d(supply) + burn")
+    elif abs(gap) <= tol:
+        verdict = "gross — the two AGREE; neither subtracts the AF; issuance = d(supply) alone"
+    elif abs(gap + af) <= tol:
+        verdict = ("INVERTED — CoinGecko's total EXCEEDS Hyperliquid's by the AF balance: "
+                   "Hyperliquid's own totalSupply is the net one (their fees page taken literally) "
+                   "and CoinGecko's is gross")
+    else:
+        verdict = ("NEITHER — the difference matches neither the burn nor zero nor minus the burn; "
+                   "something else sits between the two figures. Do NOT pick the closer one")
+    print(f"  VERDICT: {verdict}")
+    print("  Paste this block back. total_supply_convention is declared in config.py from it.")
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, aerodrome_lock_inputs,
-    uniswap_firepit_threshold, beaconchain,
+    uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

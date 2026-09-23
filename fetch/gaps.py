@@ -276,6 +276,26 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                         "Nothing to buy. If gross_issuance_tokens is itself unresolved, that is "
                         "the one row to fix; this one follows from it.")
             if model["model"] == "distributed_from_premint":
+                # ===== THE RELEASE IS MEASURED ON FIVE PROJECTS, AND THE ROW SAYS SO. 2026-09-23. =====
+                # "NOT MINTING" was the whole answer, and on the projects that carry
+                # pool_release_tokens it sent the reader away from the one figure that measures
+                # the release. It is NOT aliased in: d(circulating) - d(total) carries investor,
+                # team and ecosystem unlocks as well as reward distribution, so it is a ceiling on
+                # emissions rather than emissions — a restatement would put unlock figures in an
+                # emissions cell as a displayed number. The row points; it does not copy.
+                if "pool_release_tokens" in config.metrics_for_project(project):
+                    return (f"NOT MINTING — the supply already exists and is being RELEASED, and the "
+                            f"release IS measured on this project: pool_release_tokens = "
+                            f"d(circulating_supply) - d(total_supply), the tokens leaving pre-minted "
+                            f"pools each period. {note} That figure is a CEILING on emissions, not "
+                            f"emissions itself — it also carries investor, team and ecosystem "
+                            f"unlocks, which is why this column is not aliased to it. DefiLlama's "
+                            f"unlocks feed is the wrong shape for either quantity: the Pro tier "
+                            f"would not answer this.{caveat}",
+                            "Read pool_release_tokens for the release (if that row is empty, its "
+                            "own Gap Report row says why). Emissions proper need the reward pool's "
+                            "OUTFLOW history — a Dune query on the distribution wallet, not a "
+                            "balance read. Do NOT derive it from total supply.")
                 return (f"NOT MINTING — the supply already exists and is being RELEASED. {note} "
                         f"Total supply does not move, so a supply delta cannot see it, and "
                         f"DefiLlama's unlocks feed is the wrong shape for it too: the Pro tier "
@@ -327,6 +347,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # A metric served by a node API read (TRON's BURN_TRX) has a source configured; if it produced
     # nothing the adapter has already raised a specific gap naming the failure.
     node_api = project.get("node_api") or {}
+    # extra_reads share the node and carry their own kind (NEAR's view_account balance).
+    extra = {r.get("metric"): r.get("kind") for r in (node_api.get("extra_reads") or [])}
+    if node_api and metric in extra:
+        return (f"node API read ({extra[metric]}) is configured but returned nothing this run",
+                f"Check the node_api endpoints and this read's accounts/field in config.py for "
+                f"{name}. Spec on file: {next((r.get('spec_url') for r in node_api.get('extra_reads') or [] if r.get('metric') == metric), None) or 'none'}")
     if node_api and metric in (node_api.get("metric"), "gross_burn_tokens"):
         return (f"node API read ({node_api.get('kind')}) is configured but returned nothing this run",
                 f"Check the node_api endpoints, path and response_keys in config.py for {name}. "
@@ -622,6 +648,36 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
                     "suggestion": (spec.get("note") or "Document the split, then set status to active in config.py "
                                    f"with the source URL and date. Source on file: {spec.get('source_url') or 'none'}"),
                 })
+
+    # ===== ONE GAP, NOT TWO. Added 2026-09-23. =====
+    # actual_buyback_usd is tokens x price on each flow's own date, so where tokens is a gap the
+    # usd row is the same gap under a second name — seven projects carried it twice. The usd row
+    # is folded into the tokens row here and the tokens row says so. A usd row survives only
+    # where tokens EXISTS and usd does not: that is a price gap, and a different problem.
+    tokens_gapped = {r["project"] for r in rows if r["metric"] == "actual_buyback_tokens"}
+    folded = {r["project"] for r in rows
+              if r["metric"] == "actual_buyback_usd" and r["project"] in tokens_gapped}
+    if folded:
+        rows = [r for r in rows if not (r["metric"] == "actual_buyback_usd" and r["project"] in folded)]
+        for r in rows:
+            if r["metric"] == "actual_buyback_tokens" and r["project"] in folded:
+                r["suggestion"] = (f"{r['suggestion']} actual_buyback_usd is NOT listed separately: "
+                                   f"it is tokens x price_usd on each flow's own date and fills "
+                                   f"from this row.")
+
+    # ===== A NULL REASON IS A REPORTING BUG, AND IT SAYS SO ON THE ROW. Added 2026-09-23. =====
+    # Every raiser passes a reason, and _tier_note always returns one, but _priority lower-cases
+    # the reason and a None here would take the run down — or, worse, render as an empty cell
+    # that reads as "nothing to say". It is replaced with a reason that names the bug and logged
+    # as an error, so the row is visible and the raiser is findable.
+    for r in rows:
+        if not r.get("reason"):
+            log.error("gap row %s/%s has NO REASON — reporting bug in whichever raiser produced it",
+                      r["project"], r["metric"])
+            r["reason"] = (f"NO REASON RECORDED for {r['project']}/{r['metric']} — a reporting "
+                           f"bug in the code that raised this row, not a sourcing fact; see the "
+                           f"run log")
+            r["suggestion"] = r.get("suggestion") or "Find the out.gap( call that raised it without a reason."
 
     # Rank every row so the report opens on what actually matters, not on alphabetical order.
     for r in rows:
