@@ -337,6 +337,19 @@ class HyperCoreInfo:
         out.add(point(name, metric, total, f"{SOURCE}:tokenDetails", TIER, when), SOURCE, name,
                 f"{metric}={total:,.4f} from Hyperliquid's own tokenDetails "
                 f"(circulatingSupply={circ:,.4f}, maxSupply={cap:,.4f})", TIER)
+        # futureEmissions: the pre-minted staking-reward reserve, INSIDE totalSupply. Its fall is the
+        # rewards paid — the input a validator yield needs, and one pool_release_tokens cannot give
+        # because d(circulating) - d(total) also counts every unlock. Opt-in per read.
+        fut_metric = read.get("future_emissions_metric")
+        if fut_metric:
+            fut = parse_number(json_path_get(payload, "futureEmissions"))
+            if fut is None:
+                out.fail(SOURCE, name, f"{fut_metric}: tokenDetails carried no numeric futureEmissions "
+                                       f"— not stored", TIER)
+            else:
+                out.add(point(name, fut_metric, fut, f"{SOURCE}:tokenDetails", TIER, when), SOURCE, name,
+                        f"{fut_metric}={fut:,.4f} from tokenDetails.futureEmissions (a stock: the "
+                        f"reward reserve still inside totalSupply)", TIER)
         provider = self.prior.get((name, "total_supply"))
         if provider is not None:
             # REPORTED, NOT RECONCILED: the difference is logged so a change in it is visible,

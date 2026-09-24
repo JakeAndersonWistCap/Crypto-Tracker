@@ -396,6 +396,19 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Check that the 'explorer' adapter ran (a --sources filter excludes it) and that "
                 "ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY are in .env.")
     node_api = project.get("node_api") or {}
+    # A SECOND FIELD FROM A RESPONSE ALREADY FETCHED — say which, so nobody hunts for a source.
+    bc = (project.get("beaconchain") or {}).get("metrics") or {}
+    if metric in bc:
+        return (f"beaconcha.in ETH.Store `{bc[metric].get('field')}` is configured (the same "
+                f"response as gross_issuance_tokens) but stored nothing this run",
+                f"Read the beaconchain lines in the Run Log for {name}: a 401/429 is the key or "
+                f"quota, 'has not finished' means the latest day is still open.")
+    fut = next((r for r in (node_api.get("extra_reads") or []) if r.get("future_emissions_metric") == metric), None)
+    if fut:
+        return (f"read from the same tokenDetails response as {fut.get('metric')} "
+                f"(futureEmissions) but stored nothing this run",
+                "Read the hypercore_info lines in the Run Log — tokenDetails needs the token id "
+                "from spotMeta, and a missing futureEmissions field is logged by name.")
     # extra_reads share the node and carry their own kind (NEAR's view_account balance).
     extra = {r.get("metric"): r.get("kind") for r in (node_api.get("extra_reads") or [])}
     if node_api and metric in extra:

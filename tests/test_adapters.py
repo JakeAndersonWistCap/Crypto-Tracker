@@ -13802,9 +13802,10 @@ def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
     the reason's words (ANSWERED_SIGNALS), so nothing is a hand-kept list of keys."""
     from fetch import gaps as G, registry_reasons
     import gap_count
+    # World Mobile's locked_tokens LEFT this list on 2026-09-24: it is now hand-entered quarterly
+    # (manual_quarterly), so it renders in the Manual block instead of as an answered gap.
     listed = {("World Mobile", m) for m in ("fees_usd", "revenue_usd", "holders_revenue_usd",
-                                             "protocol_tvl_usd", "[config] revenue-to-buyback split",
-                                             "locked_tokens")}
+                                             "protocol_tvl_usd", "[config] revenue-to-buyback split")}
     listed |= {("Chainlink", "buyback_fund_balance_dashboard"), ("Chainlink", "[config] revenue-to-buyback split"),
                ("Near", "total_supply_dashboard"), ("Sky", "locked_tokens_dashboard"),
                ("Pendle", "locked_tokens_dashboard")}
@@ -13823,9 +13824,10 @@ def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
         assert by_key[k]["reason"], "the reasoning stays visible"
     # a genuinely open row is untouched
     assert by_key[("Maple", "actual_buyback_tokens")]["priority_label"] != "P5 answered"
-    # the blocked-record route: answered only because a human marked it
-    wm = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_blocked"]
-    assert wm["answered"] is True and by_key[("World Mobile", "locked_tokens")]["reason"].startswith("ANSWERED, NOT OPEN")
+    # the blocked record stays as the reason the contract is unreadable; the FIGURE now comes by hand
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    assert wm["locked_tokens_blocked"]["answered"] is True and "manual_route" in wm["locked_tokens_blocked"]
+    assert "locked_tokens" in wm["manual_quarterly"] and ("World Mobile", "locked_tokens") not in by_key
     # gap_count: an old baseline's "P5 by design" is read as answered and removed from its total
     old = {"total": 55, "projects": 16, "by_priority": {"P5 by design": 9, "P6 uncovered": 46}, "by_metric": {}}
     b = gap_count._normalise(old)
@@ -14350,6 +14352,106 @@ def test_beaconchain_stores_the_complete_prior_day_consensus_rewards_only(monkey
     assert "bc-secret-456" not in " ".join(e.message for e in out.log)
 
 
+def test_beaconchain_stores_apr_as_the_validator_yield_from_the_same_single_call(monkeypatch):
+    """Jake, 2026-09-24: staking_yield_pct = `apr` (not cl_apr), from the response already
+    fetched. Two metrics, ONE call — the free tier is 10 req/min."""
+    import pandas as pd
+
+    from fetch.base import today
+
+    t = today()
+    start = (t - pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    end = (t - pd.Timedelta(days=1) + pd.Timedelta(hours=23, minutes=59)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out, http = _beaconchain_run(monkeypatch, {"status": "OK", "data": [_ethstore_row(start, end, 10 ** 21)]})
+    df = out.frame()
+    y = df[df.metric == "staking_yield_pct"]
+    assert list(y["value"]) == [0.05], "apr (cl + el), not cl_apr's 0.045"
+    assert len(http.calls) == 1, f"one call for both metrics, got {len(http.calls)}"
+    assert config.sanity_bounds("Ethereum", "staking_yield_pct") == (0, 0.5), "a percent-form 5.0 must be rejected"
+
+
+def test_hyperliquid_future_emissions_is_its_own_series_never_pool_release():
+    from fetch.base import FetchOutput
+    from fetch.hypercore import HyperCoreInfo
+
+    read = next(r for r in config.PROJECT_BY_NAME["Hyperliquid"]["node_api"]["extra_reads"]
+                if r.get("metric") == "total_supply_gross")
+    assert read["future_emissions_metric"] == "future_emissions_tokens"
+    out = FetchOutput()
+    payload = {"totalSupply": "999000000", "circulatingSupply": "340000000", "maxSupply": "1000000000",
+               "futureEmissions": "380000000.5"}
+    HyperCoreInfo()._token_details(config.PROJECT_BY_NAME["Hyperliquid"], {}, read, payload, out, None)
+    df = out.frame()
+    assert list(df[df.metric == "future_emissions_tokens"]["value"]) == [380000000.5]
+    assert list(df[df.metric == "total_supply_gross"]["value"]) == [999000000.0], "the existing read is untouched"
+    assert "pool_release_tokens" not in set(df.metric)
+
+
+def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart():
+    c = config.PROJECT_BY_NAME["Chainlink"]
+    assert c["archetypes"] == [1, 2, 3], "the note's archetype-2 list names Chainlink"
+    assert "supply_units" in c["manual_quarterly"] and "customer_revenue_usd_blocked" in c
+    assert config.not_applicable_reason("Chainlink", "utilisation_pct")
+    assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
+    for n in ("Ethereum", "Plume"):
+        assert "settlement_volume_annual_usd" in config.PROJECT_BY_NAME[n]["manual_quarterly"]
+    # validator and protocol yields never share a project list or a metric
+    assert not set(config.VALIDATOR_YIELD) & set(config.PROTOCOL_YIELD)
+    assert set(config.PROTOCOL_YIELD) == {"Sky", "Pendle", "Ether.fi"}
+    assert set(config.PROTOCOL_YIELD_NOT_APPLICABLE) == {"Aethir", "Fluid"}
+    assert config.PROTOCOL_YIELD["Ether.fi"]["lock"] == "locked_tokens_underlying", "assets, not shares"
+    assert config.VALIDATOR_YIELD["Near"]["share_path"][-1] == "validator_share"
+    assert {n for n in ("GEODNET", "Hyperliquid", "Ethereum", "Near", "Uniswap", "Sky")
+            if config.issuance_basis(n) == "pool_release_tokens"} == {"GEODNET", "Hyperliquid"}
+    assert "EigenLayer" in config.lock_partial_reason("Aethir")
+
+
+def test_archetype_tabs_open_on_the_valuation_headlines():
+    """project | symbol | price | market cap | that archetype's headline ratios | the rest — and
+    the A4 columns MOVED, not duplicated; the retirement pair gated together; Uniswap off A3;
+    charts on the right series."""
+    import pathlib as _pl
+    import tempfile
+
+    import openpyxl
+
+    import build_workbook as bw
+    import store as store_mod
+
+    db = _pl.Path(__file__).resolve().parent / "_scratch" / "metrics.db"
+    if not db.exists():
+        return
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        path = bw.build_workbook(store_mod.Store(str(db)), tmp.name)
+    wb = openpyxl.load_workbook(path)
+
+    def heads(tab):
+        ws = wb[tab]
+        return [ws.cell(4, c).value for c in range(1, ws.max_column + 1)]
+
+    head = ["Project", "Symbol", "Price — spot ($)", "Market cap ($)"]
+    a3, a4, a2, a1 = (heads(t) for t in ("A3 Revenue Buyback", "A4 Permanent Burn", "A2 Coordination", "A1 Infrastructure"))
+    assert a3[:4] == head and a3[4].startswith("CIRCULATING RETIREMENT") and a3[5].startswith("FDV RETIREMENT")
+    assert a4[:4] == head and a4[4].startswith("PERMANENT BURN YIELD") and a4[5] == "Issuance basis for the crossover"
+    assert a2[:4] == head and a2[4].startswith("FREE FLOAT =") and a2[6].startswith("FREE FLOAT ÷ ARR")
+    assert a1[:4] == head and a1[4].startswith("VALIDATOR STAKING YIELD")
+    # moved, not duplicated
+    for gone in ("Burn as % of supply (annualised)", "Burn ÷ issuance (x)"):
+        assert gone not in a4
+    assert sum(1 for h in a4 if h and h.startswith("NET SUPPLY CHANGE Q0")) == 1
+    # both retirement rates share ONE gate
+    ws = wb["A3 Revenue Buyback"]
+    f5, f6 = ws.cell(5, 5).value, ws.cell(5, 6).value
+    gate = lambda f: f[:f.index("*")]  # the IF(AND(...)) gate and the buyback ref, before the arithmetic  # noqa: E731
+    assert gate(f5) == gate(f6), "the pair must share one gate"
+    assert all(f"|{m}\"" in gate(f5) for m in ("actual_buyback_usd", "market_cap_usd", "fdv_usd"))
+    names = [ws.cell(r, 1).value for r in range(5, ws.max_row + 1)]
+    assert "Uniswap" not in names[:names.index("Confidence on this tab")]
+    assert "Chainlink" in [wb["A2 Coordination"].cell(r, 1).value for r in range(5, 30)]
+    # charts resolve by header
+    assert a3[bw._hcol(wb["A3 Revenue Buyback"], "BUYBACK AS % OF SUPPLY") - 1].startswith("BUYBACK AS % OF SUPPLY")
+
+
 def test_beaconchain_never_stores_an_incomplete_or_todays_day(monkeypatch):
     import pandas as pd
 
@@ -14399,7 +14501,8 @@ def test_beaconchain_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch)
     out = FetchOutput()
     beaconchain.BeaconChain(http=_BeaconChainHttp({})).run(
         [config.PROJECT_BY_NAME["Ethereum"]], None, out)
-    assert {g["metric"] for g in out.gaps} == {"gross_issuance_tokens"}
+    # both figures ETH.Store gives — issuance and the validator yield — need the same key
+    assert {g["metric"] for g in out.gaps} == {"gross_issuance_tokens", "staking_yield_pct"}
     assert all("BEACONCHAIN_API_KEY" in g["reason"] for g in out.gaps)
 
 

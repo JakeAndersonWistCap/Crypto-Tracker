@@ -1533,6 +1533,167 @@ def _net_change(R, r: int, p: dict, iss, burn) -> str:
     return f"IF(ISNUMBER({sr}),{sr},{derived})"
 
 
+# ---------------------------------------------------------------------------------------
+# Valuation-framework headlines — the "What Do I Own?" note's figures, at the LEFT of each
+# archetype tab: project | symbol | price | market cap | that archetype's ratios | the rest.
+# ---------------------------------------------------------------------------------------
+def _valuation_head(R: Refs) -> list[tuple]:
+    return [
+        ("Price — spot ($)", lambda r, p: pull(R.D(r, "price_usd", "now")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
+        ("Market cap ($)", lambda r, p: pull(R.D(r, "market_cap_usd", "now")), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
+    ]
+
+
+def _key_cols(specs: list[tuple], *prefixes: str) -> set[int]:
+    """1-based column numbers of the headers starting with any prefix — never hard-coded."""
+    return {i for i, s in enumerate(specs, start=1) if any(s[0].startswith(x) for x in prefixes)}
+
+
+def _widths(specs: list[tuple]) -> dict:
+    """Project 16, Symbol 8, Notes and the flags column 60, everything else 14 — by position."""
+    out = {get_column_letter(i): 14 for i in range(1, len(specs) + 2)}
+    out["A"], out["B"] = 16, 8
+    for i, s in enumerate(specs, start=1):
+        if s[0] == "Notes":
+            out[get_column_letter(i)] = 60
+    out[get_column_letter(len(specs) + 1)] = 60
+    return out
+
+
+def _a3_headline(R: Refs) -> list[tuple]:
+    """BOTH RETIREMENT RATES, OR NEITHER. The gap between them is the dilution warning; the
+    circulating rate alone is the flattering half. One gate serves both cells, so a missing
+    market cap, FDV or buyback blanks the pair together."""
+    bb = lambda r: R.D(r, "actual_buyback_usd", "q0")  # noqa: E731
+    mc = lambda r: R.D(r, "market_cap_usd", "now")  # noqa: E731
+    fdv = lambda r: R.D(r, "fdv_usd", "now")  # noqa: E731
+    gate = lambda r: f"AND(ISNUMBER({bb(r)}),ISNUMBER({mc(r)}),ISNUMBER({fdv(r)}))"  # noqa: E731
+    return [
+        ("CIRCULATING RETIREMENT RATE = actual buyback $ (annualised) ÷ market cap",
+         lambda r, p: calc(f"IF({gate(r)},{bb(r)}*{ANN}/{mc(r)},{NA})"), FMT_PCT, "calc", True,
+         {"metric": "actual_buyback_usd"}),
+        ("FDV RETIREMENT RATE = actual buyback $ (annualised) ÷ FDV — always read with the rate to its left",
+         lambda r, p: calc(f"IF({gate(r)},{bb(r)}*{ANN}/{fdv(r)},{NA})"), FMT_PCT, "calc", True,
+         {"metric": "actual_buyback_usd"}),
+    ]
+
+
+def _basis_iss(R: Refs, p: dict):
+    m = config.issuance_basis(p["name"])
+    return lambda r, w="q0": R.D(r, m, w)
+
+
+def _a4_headline(R: Refs, burn) -> list[tuple]:
+    """Burn yield in TOKEN terms (price-independent, comparable across protocols) and the
+    crossover against whichever issuance applies — pool release where the supply is pre-minted."""
+    circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
+    return [
+        ("PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)",
+         lambda r, p: calc(f"{burn(r)}*{ANN}/{circ(r)}"), FMT_PCT, "calc", True, {"metric": "gross_burn_tokens"}),
+        ("Issuance basis for the crossover",
+         lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
+                       else "gross_issuance_tokens"), FMT_TEXT, "text"),
+        ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
+         lambda r, p: calc(f"{burn(r)}/{_basis_iss(R, p)(r)}"), FMT_X, "calc", True),
+        ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
+         lambda r, p: calc(_net_change(R, r, p, _basis_iss(R, p), burn)), FMT_NUM, "calc", True),
+        ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
+         lambda r, p: calc(f"({_net_change(R, r, p, _basis_iss(R, p), burn)})*{ANN}/{circ(r)}"), FMT_PCT, "calc", True),
+    ]
+
+
+def _free_float_reason(p: dict) -> str | None:
+    """Why free float cannot be computed for this project — or None if it can."""
+    name = p["name"]
+    if "locked_tokens" not in config.metrics_for_project(p):
+        return "n/a — " + (config.not_applicable_reason(name, "locked_tokens") or "no lock metric")[:90]
+    blocked = p.get("locked_tokens_blocked")
+    if blocked and "locked_tokens" not in (p.get("manual_quarterly") or ()):
+        return "blocked — " + str(blocked.get("status", ""))[:90]
+    return None
+
+
+def _a2_headline(R: Refs) -> list[tuple]:
+    """Free float, its market cap, Free Float / ARR (the note's WMTx headline) and the supply
+    trajectory. Where the lock cannot be read the cells SAY SO — circulating is never passed
+    off as free float, which would overstate it by everything staked."""
+    circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
+    lock = lambda r: R.D(r, "locked_tokens", "now")  # noqa: E731
+    price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
+    arr = lambda r: f"{R.D(r, 'customer_revenue_usd', 'q0')}*{ANN}"  # noqa: E731
+    emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
+    ff = lambda r: f"IF(AND(ISNUMBER({circ(r)}),ISNUMBER({lock(r)})),{circ(r)}-{lock(r)},{NA})"  # noqa: E731
+
+    def cell(expr_fn):
+        def build(r, p):
+            why = _free_float_reason(p)
+            return why if why else calc(expr_fn(r))
+        return build
+
+    partial = {"partial_fn": lambda p: config.lock_partial_reason(p["name"]),
+               "partial_direction": "the lock figure is incomplete, so FREE FLOAT READS HIGH by "
+                                    "whatever the missing leg holds; ratios built on it inherit that."}
+    return [
+        ("FREE FLOAT = circulating − locked (tokens)", cell(ff), FMT_NUM, "calc", True,
+         {"metric": "locked_tokens", **partial, "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
+        ("Free float market cap ($, spot)", cell(lambda r: f"({ff(r)})*{price(r)}"), FMT_USD, "calc", False,
+         {"metric": "locked_tokens", **partial, "partial_fmt": '$#,##0" PARTIAL↑";($#,##0)" PARTIAL↑"'}),
+        ("FREE FLOAT ÷ ARR (x) = free float market cap ÷ customer revenue annualised — headline",
+         cell(lambda r: f"({ff(r)})*{price(r)}/({arr(r)})"), FMT_X, "calc", True,
+         {"metric": "customer_revenue_usd", **partial, "partial_fmt": '0.00"x PARTIAL↑";(0.00"x)" PARTIAL↑"'}),
+        ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",
+         cell(lambda r: f"{emi(r)}*{ANN}/({ff(r)})"), FMT_PCT, "calc", True,
+         {"metric": "emissions_tokens", **partial, "partial_fmt": '0.0%" PARTIAL↓";(0.0%)" PARTIAL↓"'}),
+    ]
+
+
+def _a1_headline(R: Refs) -> list[tuple]:
+    """The VALIDATOR yield (securing the chain) — never a protocol revenue share — and the manual
+    settlement-volume input Network Reserve Ratio needs. Neither ratio built on them (NRR, Total
+    Yield) is on the sheet: their formulas are the note's and are not yet in config."""
+    def vyield(r, p):
+        spec = config.VALIDATOR_YIELD.get(p["name"])
+        if not spec:
+            return ""
+        if spec["method"] == "stored":
+            return pull(R.D(r, spec["metric"], "now"))
+        if spec["method"] == "issuance_share":
+            share = p
+            for k in spec["share_path"]:
+                share = share[k]
+            iss, stake = R.D(r, "gross_issuance_tokens", "q0"), R.D(r, "locked_tokens", "now")
+            return calc(f"IF(AND(ISNUMBER({iss}),ISNUMBER({stake})),{iss}*{share}*{ANN}/{stake},{NA})")
+        return "pending — " + spec.get("why", "")[:80]
+    return [
+        ("VALIDATOR STAKING YIELD (annual) — securing the chain, NOT a protocol revenue share",
+         vyield, FMT_PCT, "calc", True,
+         {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "gross_issuance_tokens"}.get(n)}),
+        ("Settlement volume, annualised ($) — The Block adjusted, manual quarterly",
+         lambda r, p: pull(R.D(r, "settlement_volume_annual_usd", "now")) if "settlement_volume_annual_usd"
+         in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_annual_usd"}),
+    ]
+
+
+def _protocol_yield(R: Refs):
+    """A3 supporting column: revenue share paid to a protocol's stakers — kept apart from the
+    validator yield by name and by tab, so it can never be summed into archetype-1 Total Yield."""
+    def build(r, p):
+        spec = config.PROTOCOL_YIELD.get(p["name"])
+        if spec:
+            rev, lock = R.D(r, spec["revenue"], "q0"), R.D(r, spec["lock"], "now")
+            px = R.D(r, "price_usd", "now")
+            return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({lock}),ISNUMBER({px})),{rev}*{ANN}/({lock}*{px}),{NA})")
+        why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
+        return f"n/a — {why}" if why else ""
+    return ("PROTOCOL STAKING YIELD = holders revenue (annualised) ÷ locked value — revenue share, NOT a validator yield",
+            build, FMT_PCT, "calc", False,
+            {"metric": "holders_revenue_usd",
+             "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
+                                      if p["name"] in config.PROTOCOL_YIELD else None),
+             "partial_direction": "the locked value is incomplete, so the yield READS HIGH.",
+             "partial_fmt": '0.0%" PARTIAL↑";(0.0%)" PARTIAL↑"'})
+
+
 def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:
     out = []
     for m in metrics:
@@ -1697,6 +1858,15 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     c.fill = FILL_UNCONFIRMED
                 elif status == "paused":
                     c.fill = FILL_PAUSED
+            # PARTIAL INPUT, FLAGGED ON THE CELL ITSELF: the word is in the displayed number, so
+            # it cannot be missed by someone who never hovers. The value stays numeric.
+            pf = meta.get("partial_fn")
+            why = pf(p) if pf else None
+            if why:
+                c.fill = FILL_STALE
+                c.number_format = meta.get("partial_fmt", c.number_format)
+                c.comment = Comment(f"PARTIAL — {meta.get('partial_direction', '')}\n\n{why}",
+                                    "token_metrics")
         fc = ws.cell(row=r, column=len(specs) + 1, value=_flags(data_by_key, p["name"], flag_metrics))
         fc.font = Font(name=FONT, size=9, color="C00000")
         r += 1
@@ -1788,6 +1958,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
+        # MOVED HERE 2026-09-24 from further right (burn yield, crossover ratio, both net-change
+        # columns) — not duplicated. The crossover now runs on config.issuance_basis: pool
+        # release for pre-minted supply (GEODNET, Hyperliquid), gross issuance for everyone else.
+        *_valuation_head(R),
+        *_a4_headline(R, burn),
         ("Burn execution", lambda r, p: pull(R.C(r, "Burn execution")), FMT_TEXT, "pull"),
         ("Burn status", lambda r, p: pull(R.C(r, "Burn status")), FMT_TEXT, "pull", False, {"status_fill": "burn_split"}),
         ("Documented share of fees burned (config)", lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False, {"gate": "burn_split"}),
@@ -1815,18 +1990,12 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
-        ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn",
-         lambda r, p: calc(_net_change(R, r, p, iss, burn)), FMT_NUM, "calc", True),
         ("Derived net supply change (issuance − burn), for comparison", lambda r, p: calc(f"{iss(r)}-{burn(r)}"), FMT_NUM, "calc"),
         ("Self-reported − derived (a gap here means one of the two is wrong)",
          lambda r, p: calc(f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
          lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{price(r)}"), FMT_USD, "calc"),
-        ("NET SUPPLY CHANGE, annualised % of circulating",
-         lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
-        ("Burn ÷ issuance (x)", lambda r, p: calc(f"{burn(r)}/{iss(r)}"), FMT_X, "calc"),
         ("Burn as share of fees (measured)", lambda r, p: calc(f"{burn(r)}*{price(r)}/{R.D(r, 'fees_usd', 'q0')}"), FMT_PCT, "calc"),
-        ("Burn as % of supply (annualised)", lambda r, p: calc(f"{burn(r)}*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{iss(r)}*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
@@ -1844,9 +2013,10 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     ]
     end = _write_table(ws, R, projects, specs, data_by_key,
                        ["fees_usd", "price_usd", "gross_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],
-                       key_cols={8, 10, 12, 16})
+                       key_cols=_key_cols(specs, "PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE",
+                                          "GROSS BURN Q0", "GROSS ISSUANCE Q0", "Pool release Q0"))
     _confidence_tally(ws, end + 2, scoped_projects(), specs, data_by_key)
-    _set_widths(ws, {"A": 16, "B": 8, "C": 12, "D": 11, "E": 11, **{get_column_letter(i): 14 for i in range(6, 34)}, "AH": 60, "AI": 60})
+    _set_widths(ws, _widths(specs))
     return projects, end
 
 
@@ -1870,6 +2040,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
+        *_valuation_head(R),
+        *_a3_headline(R),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
         ("Buyback status", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"status_fill": "fee_split"}),
         ("Programmed? (contract-enforced vs revisable by governance)", lambda r, p: pull(R.C(r, "Programmed (contract-enforced)")), FMT_TEXT, "pull"),
@@ -1960,6 +2132,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{R.D(r, 'locked_tokens_dashboard', 'now')}-1"),
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
+        _protocol_yield(R),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====
         # locked_tokens (the column above, via contracts.spendle_underlying) is PENDLE.balanceOf
         # (sPENDLE) — the NEW contract, unchanged by this addition. This column is PENDLE.balanceOf
@@ -2011,9 +2184,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("fee_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],
-                       key_cols={15, 18, 21})
+                       key_cols=_key_cols(specs, "CIRCULATING RETIREMENT", "FDV RETIREMENT",
+                                          "BUYBACK AS % OF SUPPLY", "Net absorption Q0"))
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
-    _set_widths(ws, {"A": 16, "B": 8, "C": 10, "D": 11, "E": 10, "F": 11, "G": 11, **{get_column_letter(i): 14 for i in range(8, 38)}, "AL": 60, "AM": 60})
+    _set_widths(ws, _widths(specs))
     return projects, end
 
 
@@ -2029,6 +2203,8 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
+        *_valuation_head(R),
+        *_a1_headline(R),
         ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False, {"metric": "tx_count"}),
         ("Fees Q0 ($)", lambda r, p: pull(fees(r)), FMT_USD, "pull", False, {"metric": "fees_usd"}),
         ("Fee per transaction ($)", lambda r, p: calc(f"{fees(r)}/{R.D(r, 'tx_count', 'q0')}"), FMT_USD4, "calc"),
@@ -2058,9 +2234,9 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["tx_count", "fees_usd", "tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd", "rwa_xyz_usd", "gross_issuance_tokens", "price_usd", "staked_tokens", "circulating_supply"],
-                       key_cols={8, 21})
+                       key_cols=_key_cols(specs, "VALIDATOR STAKING YIELD", "TVL — chain", "FEES ÷ ISSUANCE"))
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
-    _set_widths(ws, {"A": 16, "B": 8, **{get_column_letter(i): 14 for i in range(3, 38)}, "AK": 60, "AL": 60})
+    _set_widths(ws, _widths(specs))
     # Monthly block for the time chart: fees ÷ issuance by month
     block = _monthly_block(ws, R, projects, end + 9, months, "Fees ÷ issuance by month (x) — fees ÷ (issuance tokens × monthly average price)",
                            lambda r, mc: calc(f"{R.M(r, 'fees_usd', mc)}/({R.M(r, 'gross_issuance_tokens', mc)}*{R.M(r, 'price_usd', mc)})"), FMT_X)
@@ -2077,6 +2253,8 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
+        *_valuation_head(R),
+        *_a2_headline(R),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
         ("Supply units (nodes / hotspots / GPUs), latest", lambda r, p: pull(R.D(r, "supply_units", "now")), FMT_NUM, "pull", False, {"metric": "supply_units"}),
         ("Capacity utilisation (latest)", lambda r, p: pull(R.D(r, "utilisation_pct", "now")), FMT_PCT, "pull", False, {"metric": "utilisation_pct"}),
@@ -2101,9 +2279,10 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["supply_units", "utilisation_pct", "customer_revenue_usd", "emissions_tokens", "price_usd", "publisher_conviction_usd"],
-                       key_cols={10, 11})
+                       key_cols=_key_cols(specs, "FREE FLOAT", "SUPPLY TRAJECTORY", "CUSTOMER REVENUE PER TOKEN",
+                                          "Customer revenue ÷ emissions value"))
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
-    _set_widths(ws, {"A": 16, "B": 8, "C": 10, **{get_column_letter(i): 14 for i in range(4, 34)}, "AG": 60, "AH": 60})
+    _set_widths(ws, _widths(specs))
     block = _monthly_block(ws, R, projects, end + 9, months, "Customer revenue per token emitted by month ($/token)",
                            lambda r, mc: calc(f"{R.M(r, 'customer_revenue_usd', mc)}/{R.M(r, 'emissions_tokens', mc)}"), FMT_USD4)
     return projects, end, block
@@ -2132,6 +2311,17 @@ def _monthly_block(ws, R: Refs, projects: list[dict], start_row: int, months: li
     return hdr, hdr + 1, r - 1, len(months)
 
 
+def _hcol(ws, prefix: str, row: int = 4) -> int:
+    """The column whose header (on the tab's header row) starts with `prefix`. Charts used to
+    point at fixed indices, and every column added since pushed them onto the wrong series —
+    the A3 chart was plotting the 90-day price. Looked up by name, they cannot drift."""
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(row=row, column=c).value
+        if isinstance(v, str) and v.startswith(prefix):
+            return c
+    raise KeyError(f"no header starting {prefix!r} on {ws.title}")
+
+
 def write_charts(ws, sheets: dict):
     _title(ws, "Charts", "Native Excel charts — live off the archetype tabs. Change a config lever and they move.")
     a3p, a3_end = sheets["a3"]
@@ -2147,8 +2337,8 @@ def write_charts(ws, sheets: dict):
     ch.y_axis.title = "% of supply"
     ch.y_axis.numFmt = "0.0%"
     cats = Reference(ws_a3, min_col=1, min_row=5, max_row=4 + len(a3p))
-    ch.add_data(Reference(ws_a3, min_col=15, min_row=4, max_row=4 + len(a3p)), titles_from_data=True)
-    ch.add_data(Reference(ws_a3, min_col=18, min_row=4, max_row=4 + len(a3p)), titles_from_data=True)
+    ch.add_data(Reference(ws_a3, min_col=_hcol(ws_a3, "BUYBACK AS % OF SUPPLY"), min_row=4, max_row=4 + len(a3p)), titles_from_data=True)
+    ch.add_data(Reference(ws_a3, min_col=_hcol(ws_a3, "Actual buyback as % of supply"), min_row=4, max_row=4 + len(a3p)), titles_from_data=True)
     ch.set_categories(cats)
     ch.width, ch.height = 28, 12
     ws.add_chart(ch, "A4")
@@ -2161,8 +2351,8 @@ def write_charts(ws, sheets: dict):
     ch.y_axis.title = "$"
     ch.y_axis.numFmt = '$#,##0'
     cats = Reference(ws_a4, min_col=1, min_row=5, max_row=4 + len(a4p))
-    ch.add_data(Reference(ws_a4, min_col=9, min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
-    ch.add_data(Reference(ws_a4, min_col=11, min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
+    ch.add_data(Reference(ws_a4, min_col=_hcol(ws_a4, "Gross burn Q0 ($"), min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
+    ch.add_data(Reference(ws_a4, min_col=_hcol(ws_a4, "Gross issuance Q0 ($"), min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
     ch.set_categories(cats)
     ch.width, ch.height = 28, 12
     ws.add_chart(ch, "A30")
@@ -2174,8 +2364,8 @@ def write_charts(ws, sheets: dict):
     ch.title = "Burn vs issuance as % of circulating supply (annualised) — archetype 4"
     ch.y_axis.numFmt = "0.0%"
     cats = Reference(ws_a4, min_col=1, min_row=5, max_row=4 + len(a4p))
-    ch.add_data(Reference(ws_a4, min_col=17, min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
-    ch.add_data(Reference(ws_a4, min_col=18, min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
+    ch.add_data(Reference(ws_a4, min_col=_hcol(ws_a4, "PERMANENT BURN YIELD"), min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
+    ch.add_data(Reference(ws_a4, min_col=_hcol(ws_a4, "Issuance as % of supply"), min_row=4, max_row=4 + len(a4p)), titles_from_data=True)
     ch.set_categories(cats)
     ch.width, ch.height = 28, 12
     ws.add_chart(ch, "A56")

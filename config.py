@@ -166,6 +166,22 @@ METRICS = {
     "circulating_supply_implied": {"label": "Circulating supply (mcap/price)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4],       "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e15},
     "total_supply":               {"label": "Total supply",                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 2], "sanity_min": 0,    "sanity_max": 1e15},
     "max_supply":                 {"label": "Max supply",                      "kind": "stock", "unit": "tokens", "archetypes": [4],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e15},
+    # ===== ARCHETYPE 1 VALUATION INPUTS. Added 2026-09-24 (Jake, from "What Do I Own?"). =====
+    # A VALIDATOR yield — what staking the chain's own token earns for securing it. NEVER a
+    # protocol's revenue share to its stakers: that is a different quantity (the A3 "Protocol
+    # staking yield" column) and must not enter the archetype-1 Total Yield. A FRACTION, not a
+    # percent: 0.03 is 3%, and the 0.5 ceiling rejects a value arriving in percent form.
+    # Stored only where a source publishes it (Ethereum, ETH.Store `apr`); NEAR's is computed on
+    # the A1 tab from stored issuance and stake, not stored.
+    "staking_yield_pct":          {"label": "Validator staking yield (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Ethereum",)},
+    # Annualised on-chain settlement volume — The Block's "adjusted on-chain volume", entered by
+    # hand quarterly (no free API carries it: growthepie's metrics and Etherscan's daily stats
+    # were checked 2026-09-24). A RATE STATED AS OF A DATE, so kind stock: a quarterly hand entry
+    # summed as a flow would mean nothing across a 90-day window.
+    "settlement_volume_annual_usd": {"label": "On-chain settlement volume, annualised ($, The Block adjusted — manual quarterly)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e14, "only_projects": ("Ethereum", "Plume")},
+    # Hyperliquid's staking-reward reserve (tokenDetails.futureEmissions) — pre-minted, INSIDE
+    # totalSupply. Its decline over a window is rewards paid; that is the validator-yield input.
+    "future_emissions_tokens":    {"label": "Staking-reward reserve remaining (tokenDetails.futureEmissions)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "fdv_usd":                    {"label": "FDV",                             "kind": "stock", "unit": "usd",    "archetypes": [3],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
     # --- free API: DefiLlama
     "fees_usd":                   {"label": "Total fees paid",                 "kind": "flow",  "unit": "usd",    "archetypes": [1, 3, 4],    "tiers": [1, 3], "sanity_min": 0,    "sanity_max": 1e11},
@@ -1805,18 +1821,33 @@ PROJECTS = [
             "key_env": "BEACONCHAIN_API_KEY",
             "metrics": {
                 "gross_issuance_tokens": {"path": "/api/v1/ethstore/latest",
-                                          "field": "consensus_rewards_sum_wei", "scale": 1e18},
+                                          "field": "consensus_rewards_sum_wei", "scale": 1e18,
+                                          "log_note": "consensus-layer rewards only, excludes "
+                                                      "tx_fees_sum_wei/el_apr (a transfer to the "
+                                                      "proposer, not issuance)"},
+                # ===== THE VALIDATOR YIELD, FROM THE SAME RESPONSE. Added 2026-09-24 (Jake). =====
+                # `apr`, NOT cl_apr: the total staker return — consensus rewards PLUS execution-
+                # layer priority fees and MEV. Right for a yield (what a staker earns); wrong for
+                # issuance, which is why gross_issuance_tokens above reads cl only. Stored as a
+                # FRACTION (0.03 = 3%); the metric's 0-0.5 bound rejects a percent-form value.
+                "staking_yield_pct": {"path": "/api/v1/ethstore/latest", "field": "apr", "scale": 1,
+                                      "log_note": "total staker APR (cl + el), a fraction — the "
+                                                  "validator yield, not issuance"},
             },
             "field_source": "https://raw.githubusercontent.com/gobitfly/"
                             "eth2-beaconchain-explorer/master/static/openapi/bundled.yaml",
             "source_read": "2026-09-24",
-            "excludes": "tx_fees_sum_wei, el_apr, cl_apr, apr and the 7d/31d trailing averages — "
-                       "only the raw daily consensus_rewards_sum_wei is stored; everything else "
-                       "in the response is either a rate (not a token amount) or execution-layer "
-                       "fee revenue (a transfer, not issuance).",
+            "excludes": "tx_fees_sum_wei, el_apr, cl_apr and the 7d/31d trailing averages. "
+                       "consensus_rewards_sum_wei is stored as issuance and apr as the validator "
+                       "yield; the rest is either a component of apr or execution-layer fee "
+                       "revenue (a transfer, not issuance).",
             "live_confirmed": None,      # set from the first run's log line, which prints the row
         },
         "name": "Ethereum", "symbol": "ETH",
+        # Settlement volume for Network Reserve Ratio: The Block's adjusted on-chain volume,
+        # entered by hand quarterly into manual_overrides.csv. No free API carries it (checked
+        # 2026-09-24: growthepie's metric set, Etherscan's daily stats, DefiLlama chain data).
+        "manual_quarterly": ["settlement_volume_annual_usd"],
         "coingecko_id": "ethereum",
         # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
         # DefiLlama's chain Revenue for Ethereum is the BURNED ETH, not a share of fees, and that
@@ -2940,6 +2971,10 @@ PROJECTS = [
                             "live sample rows for both projects and both metrics.",
         },
         "name": "Plume", "symbol": "PLUME",
+        # As Ethereum: The Block's adjusted on-chain volume, hand-entered quarterly IF The Block
+        # publishes a comparable Plume figure. If it does not, this stays empty in the Manual block
+        # rather than being filled from a different definition of volume.
+        "manual_quarterly": ["settlement_volume_annual_usd"],
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",
         # ARCHETYPE 1 ONLY. ARCHETYPE 3 REMOVED 2026-09-14.
@@ -3313,7 +3348,32 @@ PROJECTS = [
         "name": "Chainlink", "symbol": "LINK",
         "coingecko_id": "chainlink",
         "defillama_fees_slug": "chainlink", "defillama_protocol": "chainlink", "defillama_chain": None,
-        "archetypes": [1, 3], "archetypes_held": [],
+        # ===== ARCHETYPE 2 ADDED 2026-09-24 (Jake) — it was [1, 3]. =====
+        # The "What Do I Own?" note's own archetype-2 list names Chainlink: oracle node operators
+        # stake LINK to operate, which is a coordination token. Its free float therefore renders
+        # on A2 with the other coordination tokens, not as a special case elsewhere. The three
+        # archetype-2 metrics this brings in each carry a reason below: customer_revenue_usd is
+        # blocked (customer_revenue_usd_blocked), supply_units is manual quarterly, and
+        # utilisation_pct is not applicable.
+        "archetypes": [1, 2, 3], "archetypes_held": [],
+        "manual_quarterly": ["supply_units"],
+        # END-USER SPEND is not established. DefiLlama's chainlink fees are on file as fees_usd,
+        # but nobody has read the adapter to see whether that is what oracle/CCIP consumers PAY
+        # or what the network routes to the Reserve. Restating it would assert the answer.
+        "customer_revenue_usd_blocked": {
+            "status": "NOT ESTABLISHED — the one on-file figure (fees_usd) has not been shown to be end-user spend",
+            "wanted": "what dApps pay for Chainlink services (data feeds, CCIP, VRF, Automation) per period",
+            "why": "fees_usd comes from DefiLlama's chainlink adapter, which has not been read on this "
+                   "project. If it books consumer payments it can be restated as customer revenue, "
+                   "exactly as GEODNET's and Aethir's are; if it books Reserve inflows (the protocol's "
+                   "share, via Payment Abstraction), it is revenue, not spend, and restating it would "
+                   "understate customer payments by the node operators' share.",
+            "source_url": "https://github.com/DefiLlama/dimension-adapters/tree/master/fees",
+            "source_date": "2026-09-24",
+            "route_that_would_work": "read DefiLlama's chainlink fees adapter; if it books consumer "
+                                     "payments, declare metric_restatement customer_revenue_usd = "
+                                     "fees_usd with the adapter's definition on the label.",
+        },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
         # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
         # circulating + locked nor circulating alone lands near total_supply, so the provider's
@@ -3331,6 +3391,11 @@ PROJECTS = [
         # looked" must not render identically.
         # ===== B2: NO ISSUANCE HAS EVER BEEN POSSIBLE, AND NONE EVER WILL BE. =====
         "not_applicable": {
+            "utilisation_pct":
+                "AN ORACLE NETWORK HAS NO CAPACITY TO UTILISE. Capacity utilisation is a DePIN "
+                "measure — hotspots, GPUs, storage used against available. Chainlink's supply side "
+                "is node operators serving requests, with no published capacity denominator. "
+                "Declared 2026-09-24 when archetype 2 was added.",
             # ===== THE RESERVE IS THE BUYBACK FUND; THERE IS NO SEPARATE TREASURY IN SCOPE.
             # Declared 2026-09-23. =====
             # Chainlink's LINK accumulates in the Reserve (contracts.reserve, kind
@@ -3708,6 +3773,13 @@ PROJECTS = [
             "source_url": "https://github.com/worldmobilegroup/wmt-staking-plutus-smart-contract",
             "source_date": "2026-09-23",
             "route_that_would_work": "a Cardano-side read of the staking validator's WMT balance (Blockfrost/Koios), or World Mobile publishing a Base staking contract if the Base leg in staking_terms.live_on is on-chain rather than snapshot-based.",
+            # ===== THE ROUTE TAKEN, 2026-09-24 (Jake): MANUAL QUARTERLY. =====
+            # The contract stays unreadable here; the FIGURE is hand-entered quarterly into
+            # manual_overrides.csv from World Mobile's own staking dashboard, as the "What Do I
+            # Own?" note did. It feeds A2's free float and the Free Float / ARR headline (the
+            # note's 2.27x). locked_tokens is listed in manual_quarterly for that reason.
+            "manual_route": "manual_overrides.csv, quarterly, from World Mobile's own staking "
+                            "dashboard — staked WMTX, dated to the dashboard's own as-of date",
         },
         "coingecko_id": "world-mobile-token",
         # ===== NOT ON DEFILLAMA, as far as DefiLlama's own adapter repositories go. =====
@@ -4681,7 +4753,7 @@ PROJECTS = [
                                "provides.",
             },
         },
-        "manual_quarterly": ["supply_units", "utilisation_pct"],
+        "manual_quarterly": ["supply_units", "utilisation_pct", "locked_tokens"],
         "materiality": "low",
         # DISCREPANCY BETWEEN TWO OWN-SOURCE DOCUMENTS — recorded, not resolved by preference.
         # Whitepaper Table I (2021, pre-launch): Partnerships 7.85%, 12-month initial lockup, 24-month
@@ -8345,6 +8417,10 @@ PROJECTS = [
                 "metric": "total_supply_gross",
                 "shape": "token_details",
                 "request": {"type": "tokenDetails"},
+                # Stored from 2026-09-24 as its own series (Jake): the staking-reward reserve. Its
+                # decline is rewards paid, the input a validator yield needs. Never folded into
+                # pool_release_tokens, which also counts every pre-mint unlock.
+                "future_emissions_metric": "future_emissions_tokens",
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
                 # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
@@ -13512,6 +13588,69 @@ def buyback_route(project_name: str) -> dict:
                           "separates the buy-pressure leg from the supply-reduction leg"}
     return {"route": "none", "metric": None,
             "reason": f"buyback_destination {dest!r} is not a route this function knows"}
+
+
+# ===== VALUATION-FRAMEWORK HEADLINES — YIELDS, ISSUANCE BASIS, PARTIAL LOCKS. 2026-09-24. =====
+# From Wiston's "What Do I Own?" note, built on Jake's instruction. Two yields that must never be
+# confused: a VALIDATOR yield (staking the chain's token to secure it — archetype 1, feeds Total
+# Yield) and a PROTOCOL staking yield (a revenue share paid to a protocol's stakers — archetype 3,
+# never enters Total Yield). They live in separate declarations and separate sheet columns.
+#
+# VALIDATOR yield, per chain, by method:
+#   stored          a source publishes it — read staking_yield_pct from the store
+#   issuance_share  observed gross issuance x the documented validator share, annualised, over
+#                   staked tokens (locked_tokens) — computed on the A1 tab, not stored
+#   pending         the input is being collected; the cell says what is missing
+VALIDATOR_YIELD = {
+    "Ethereum": {"method": "stored", "metric": "staking_yield_pct",
+                 "note": "ETH.Store `apr` — total staker return (cl + el)"},
+    "Near": {"method": "issuance_share",
+             "share_path": ("issuance_rate_declared", "treasury_share", "validator_share"),
+             "note": "gross_issuance_tokens x the documented 90% validator share, annualised, over "
+                     "stake from the validators RPC. NOT protocol_reward_rate — that RPC read is "
+                     "structurally inapplicable on mainnet (settled 2026-09-17)."},
+    "Hyperliquid": {"method": "pending",
+                    "why": "rewards = the fall in future_emissions_tokens, stored from 2026-09-24; "
+                           "a yield needs two observations a window apart"},
+}
+
+# PROTOCOL staking yield: holders_revenue_usd (annualised) / (locked value x spot price). `lock`
+# names the ASSETS series — Ether.fi keeps its share count in locked_tokens and its assets in
+# locked_tokens_underlying.
+PROTOCOL_YIELD = {
+    "Sky": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
+    "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
+    "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying"},
+}
+PROTOCOL_YIELD_NOT_APPLICABLE = {
+    "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "
+              "emissions, not a revenue share",
+    "Fluid": "FLUID staking is not deployed — nothing is staked to be paid",
+}
+
+
+def issuance_basis(project_name: str) -> str:
+    """The issuance series a burn is compared against on A4.
+
+    pool_release_tokens where the supply is PRE-MINTED (emissions_model distributed_from_premint)
+    and a release series exists — minting there is zero by construction, and what enters
+    circulation is distribution from the pool. gross_issuance_tokens everywhere else.
+    """
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    premint = (p.get("emissions_model") or {}).get("model") == "distributed_from_premint"
+    if premint and "pool_release_tokens" in metrics_for_project(p):
+        return "pool_release_tokens"
+    return "gross_issuance_tokens"
+
+
+def lock_partial_reason(project_name: str, metric: str = "locked_tokens") -> str | None:
+    """The partial_reason of any live contract feeding `metric` that is declared partial."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    for c in (p.get("contracts") or {}).values():
+        served = c.get("metric_override") or KIND_METRIC.get(c.get("kind"))
+        if served == metric and c.get("supply_is_partial"):
+            return c.get("partial_reason") or "declared partial"
+    return None
 
 
 # ===== METRICS THAT ONLY A CHAIN HAS. Added 2026-09-23. =====

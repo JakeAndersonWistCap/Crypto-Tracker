@@ -118,20 +118,29 @@ class BeaconChain:
             return
         from .scrape import robots_verdict
 
+        # ONE CALL PER PATH, however many metrics read from it: gross_issuance_tokens and
+        # staking_yield_pct both come from /ethstore/latest, and the free tier allows 10/min.
+        bodies: dict[str, object] = {}
         for metric, m in spec["metrics"].items():
             url = spec["base_url"].rstrip("/") + m["path"]
-            allowed, why = robots_verdict(url)
-            if not allowed:
-                out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}", TIER)
-                out.gap(name, metric, reason=f"robots.txt disallows {url} — {why}",
+            if url not in bodies:
+                allowed, why = robots_verdict(url)
+                if not allowed:
+                    bodies[url] = ("robots", why)
+                else:
+                    try:
+                        bodies[url] = ("ok", self.http.get(url, headers={"apikey": key}))
+                    except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                        bodies[url] = ("error", self._scrub(spec, e))
+            state, body = bodies[url]
+            if state == "robots":
+                out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {body}", TIER)
+                out.gap(name, metric, reason=f"robots.txt disallows {url} — {body}",
                         tiers_attempted="1", suggestion="Not worked around. Manual entry, or another source.")
                 continue
-            try:
-                body = self.http.get(url, headers={"apikey": key})
-            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-                msg = self._scrub(spec, e)
-                out.fail(SOURCE, name, f"{metric}: {m['path']}: {msg}", TIER)
-                out.gap(name, metric, reason=f"beaconcha.in {m['path']} did not answer: {msg}",
+            if state == "error":
+                out.fail(SOURCE, name, f"{metric}: {m['path']}: {body}", TIER)
+                out.gap(name, metric, reason=f"beaconcha.in {m['path']} did not answer: {body}",
                         tiers_attempted="1", suggestion="Read the status above; a 401 is the key.")
                 continue
             self._store(name, metric, m, body, out)
@@ -200,5 +209,4 @@ class BeaconChain:
         out.add(point(name, metric, value, SOURCE, TIER, day), SOURCE, name,
                 f"{metric} = beaconcha.in ETH.Store `{field}` for the beaconchain-day "
                 f"{day.date()} ({rec['day_start']}..{rec['day_end']}) = {value:,.4f} — "
-                f"consensus-layer rewards only, excludes tx_fees_sum_wei/el_apr (a transfer to "
-                f"the proposer, not issuance)", TIER)
+                f"{m.get('log_note', '')}", TIER)
