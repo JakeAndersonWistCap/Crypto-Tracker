@@ -14128,3 +14128,123 @@ def test_beaconchain_measured_figure_suppresses_that_days_issuance_derivation(mo
     rows = df[(df.project == "Ethereum") & (df.metric == "gross_issuance_tokens")]
     assert len(rows) == 1 and rows["source"].iloc[0] == "beaconchain", \
         "the derivation must not add a second row once beaconchain has already answered"
+
+
+def _kill_network(monkeypatch, coi):
+    """Every network path in check_offline_items empties or raises, so a filtered-run test
+    exercises only the selection logic — never real network, and never a real RPC/API answer
+    that would make a test's pass/fail depend on the outside world."""
+    monkeypatch.setattr(coi, "ETH_RPCS", [], raising=False)
+    monkeypatch.setattr(coi, "_PUBLIC_BASE_RPCS", [], raising=False)
+    monkeypatch.setattr(coi, "_rpcs_for", lambda chain="ethereum": [], raising=False)
+
+    class _Dead:
+        def post(self, *a, **k):
+            raise RuntimeError("no network in tests")
+
+        def get(self, *a, **k):
+            raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(coi, "requests", _Dead(), raising=False)
+
+
+def test_offline_checks_filter_runs_only_the_named_check(monkeypatch, capsys):
+    import check_offline_items as coi
+
+    _kill_network(monkeypatch, coi)
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "beaconchain"])
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "running only beaconchain" in out
+    assert "Done. 1 check ran: beaconchain" in out
+    assert "ETH.Store" in out, "the one selected check must still actually run"
+    # Nothing else ran: another check's own section header must not appear.
+    assert "SKY — is the 2024 flapper" not in out
+    assert "GEODNET — GEOD destinations" not in out
+
+
+def test_offline_checks_filter_matches_exact_name_before_considering_it_a_prefix(monkeypatch, capsys):
+    """'sky' and 'sky_splitter' are themselves registered checks AND prefixes of their own
+    siblings (sky_chainlog, sky_splitter_params, sky_splitter_history, ...). Typing the exact
+    name must run exactly that check, never be treated as an ambiguous group prefix."""
+    import check_offline_items as coi
+
+    _kill_network(monkeypatch, coi)
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "sky"])
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Done. 1 check ran: sky" in out
+    assert "matches" not in out, "an exact name must never be reported as ambiguous"
+
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "sky_splitter"])
+    rc2 = coi.main()
+    out2 = capsys.readouterr().out
+    assert rc2 == 0
+    assert "Done. 1 check ran: sky_splitter" in out2
+    assert "which flapper is the SPLITTER pointing at" in out2  # sky_splitter's own header
+    assert "does the Splitter's burn parameter read" not in out2  # sky_splitter_params' header
+
+
+def test_offline_checks_unambiguous_prefix_runs_the_one_match(monkeypatch, capsys):
+    import check_offline_items as coi
+
+    _kill_network(monkeypatch, coi)
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "geodnet"])
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Done. 1 check ran: geodnet_staking_candidates" in out
+
+
+def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypatch, capsys):
+    import check_offline_items as coi
+
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "aethir"])
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "'aethir' matches 3 checks" in out
+    for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
+        assert name in out
+    assert "Done." not in out, "a refusal must not claim anything ran"
+
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "maple"])
+    rc2 = coi.main()
+    out2 = capsys.readouterr().out
+    assert rc2 == 1
+    assert "'maple' matches 2 checks" in out2
+    assert "maple_dao_multisig" in out2 and "maple_transparency" in out2
+
+
+def test_offline_checks_unmatched_name_refuses_and_points_at_list(monkeypatch, capsys):
+    import check_offline_items as coi
+
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "not_a_real_check"])
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "no check named or starting with 'not_a_real_check'" in out
+    assert "--list" in out
+    assert "Done." not in out
+
+
+def test_offline_checks_list_flag_prints_names_and_touches_no_network(monkeypatch, capsys):
+    import check_offline_items as coi
+
+    class _Explode:
+        def get(self, *a, **k):
+            raise AssertionError("--list must not make any network call")
+
+        def post(self, *a, **k):
+            raise AssertionError("--list must not make any network call")
+
+    monkeypatch.setattr(coi, "requests", _Explode(), raising=False)
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "--list"])
+    rc = coi.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    listed = [line for line in out.splitlines() if line.strip()]
+    assert listed == [fn.__name__ for fn in coi.CHECKS]
+    assert "Done." not in out and "Paste the whole output back" not in out

@@ -2,11 +2,15 @@
 """
 check_offline_items.py — every check this sandbox cannot reach, in one command.
 
-    python check_offline_items.py
+    python check_offline_items.py              run every check
+    python check_offline_items.py <name>       run just that one — exact name, or an
+                                                unambiguous prefix (e.g. "beaconchain")
+    python check_offline_items.py --list       print the check names, run nothing
 
 The build environment's proxy blocks chain RPCs, Cosmos LCDs and beaconcha.in, so a handful of
 questions have been stacking up unanswered. This runs all of them from a machine that has real
-network, and prints results in a form that can be pasted straight back.
+network, and prints results in a form that can be pasted straight back. When only one question
+is live, the positional filter runs just that check instead of scrolling past the other 20-odd.
 
 Reads only. It touches no contract state, writes nothing to the store, and needs no API key.
 """
@@ -2028,10 +2032,45 @@ def _bind(fn, args):
     return fn
 
 
+def _resolve_check(name: str):
+    """(fn, None) on a match, (None, message) on a refusal — never a guess.
+
+    EXACT NAME WINS OUTRIGHT, before prefix matching is even considered. Several checks would
+    otherwise be ambiguous against their own siblings' prefix — 'sky' is itself a registered
+    check (sky_chainlog, sky_splitter... all start with it too), and 'sky_splitter' is itself
+    one (sky_splitter_params, sky_splitter_history start with it) — so typing a check's own full
+    name must always run exactly that check, never the group it happens to prefix.
+
+    UNAMBIGUOUS PREFIX IS THE FALLBACK, for the common case of typing enough to be unique
+    ('beaconchain', 'maple_transparency') without the whole name. A prefix matching MORE than
+    one check REFUSES rather than picking one or running the lot — same rule run_sql.py already
+    applies to an unmatched section label, applied here to a name instead of a letter: this
+    tool guesses nothing about field names, chain state or which contract holds what, and it
+    is not about to start guessing which check the caller meant.
+    """
+    lname = name.strip().lower()
+    exact = next((fn for fn in CHECKS if fn.__name__ == lname), None)
+    if exact:
+        return exact, None
+    matches = [fn for fn in CHECKS if fn.__name__.startswith(lname)]
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
+        names = ", ".join(fn.__name__ for fn in matches)
+        return None, (f"{name!r} matches {len(matches)} checks and could mean any of them: "
+                      f"{names}. Type the full name of the one you want.")
+    return None, f"no check named or starting with {name!r}. Run --list to see the names."
+
+
 def main():
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("check", nargs="?", default=None,
+                    help="run only this check — its exact name, or an unambiguous prefix "
+                         "(e.g. 'beaconchain'). Omit to run everything.")
+    ap.add_argument("--list", action="store_true",
+                    help="print the check names and exit; nothing is run")
     ap.add_argument("--splitter", default=SKY_SPLITTER,
                     help="Sky's Splitter address, to confirm which flapper is live and to read "
                          "its burn/hop parameters and their File history")
@@ -2041,10 +2080,26 @@ def main():
                          "history, it is a wrong one")
     args = ap.parse_args()
 
-    print("check_offline_items.py — running every check the build sandbox cannot reach.")
+    if args.list:
+        for fn in CHECKS:
+            print(fn.__name__)
+        return 0
+
+    selected = CHECKS
+    if args.check:
+        fn, err = _resolve_check(args.check)
+        if err:
+            print(f"\n  {err}\n")
+            return 1
+        selected = (fn,)
+
+    if selected is CHECKS:
+        print("check_offline_items.py — running every check the build sandbox cannot reach.")
+    else:
+        print(f"check_offline_items.py — running only {selected[0].__name__}.")
     print("Paste the whole output back.")
     ran = []
-    for fn in CHECKS:
+    for fn in selected:
         ran.append(fn.__name__)
         try:
             _bind(fn, args)()
@@ -2052,8 +2107,10 @@ def main():
             print(f"\n  {fn.__name__} FAILED: {e}")
     # ** THE ROLL CALL IS THE POINT. ** A check that silently never ran is invisible; naming
     # every one that did, and the count, makes an absent section obvious in the pasted output
-    # instead of something a reader has to notice is missing.
-    print(f"\nDone. {len(ran)} checks ran: {', '.join(ran)}")
+    # instead of something a reader has to notice is missing. Still true for a filtered run of
+    # one — it says "1 check ran: beaconchain" rather than leaving the reader to infer that
+    # nothing else was supposed to.
+    print(f"\nDone. {len(ran)} check{'s' if len(ran) != 1 else ''} ran: {', '.join(ran)}")
     return 0
 
 
