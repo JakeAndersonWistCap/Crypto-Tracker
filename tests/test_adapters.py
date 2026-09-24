@@ -12850,9 +12850,11 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     assert "sPENDLE" in r and "no buyback contract" in r and "no contract of kind" not in r, r
     r, _ = reason("World Mobile", "actual_buyback_tokens")
     assert "never been published" in r and "explorer label" in r, r
+    # RESOLVED 2026-09-24: NearBlocks' v1 account-txns endpoint reads the inflow directly, so
+    # this no longer gaps as "wallet known, inflow not readable" — the route names the real read.
     r, sug = reason("Near", "actual_buyback_tokens")
-    assert "buybacks.multisignature.near" in r and "view_account" in r and "receipt history" in r, r
-    assert "dune.near.dataset_near_intents_fees" in r or "Dune" in sug, (r, sug)
+    assert "buybacks.multisignature.near" in r and "near_account_flows" in r, r
+    assert "TRANSFER" in r and "NOT reconciled to a balance" in r, r
     # The three wallets were ALREADY on file from the 2026-09-23 read of the same adapter; this
     # round re-read it and added two facts rather than a second copy of the list.
     w = config.PROJECT_BY_NAME["Near"]["intents_revenue_wallets"]
@@ -13937,6 +13939,110 @@ def _nearblocks_run(monkeypatch, rows_by_path, key="nb-secret-123"):
     return out, http
 
 
+class _NearFlowHttp:
+    """Answers GET /v1/account/{account}/txns with one page per call, keyed by the `cursor`
+    param (None for the first page) — pagination-aware, unlike _NearBlocksHttp's fixed body."""
+
+    def __init__(self, pages, v3=None):
+        self.pages, self.v3, self.calls = pages, v3 or {}, []
+
+    def get(self, url, params=None, headers=None):
+        self.calls.append((url, params, headers))
+        if "/v1/account/" in url:
+            return self.pages[params.get("cursor")]
+        path = url.split("api.nearblocks.io")[1]
+        return self.v3[path]
+
+
+def _near_flow_action(sender, deposit_yocto, action="TRANSFER"):
+    return {"predecessor_account_id": sender, "receiver_account_id": "buybacks.multisignature.near",
+            "block_timestamp": str(int(pd.Timestamp("2026-09-10").value)),
+            "actions": [{"action": action, "method": None, "deposit": str(deposit_yocto), "fee": 0, "args": None}]}
+
+
+def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
+    """The two other near-intents wallets are internal hops, not fresh buyback inflow — dropped
+    client-side since NearBlocks' `from` filter is an exact match, not a NOT-IN."""
+    import pandas as pd
+
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    rows = [
+        _near_flow_action("some-user.near", 5_000_000_000_000_000_000_000_000),   # 5 NEAR, counts
+        _near_flow_action("fefundsadmin.sputnik-dao.near", 9_000_000_000_000_000_000_000_000),  # excluded
+        _near_flow_action("1csfundsadmin.sputnik-dao.near", 1_000_000_000_000_000_000_000_000),  # excluded
+        _near_flow_action("another-user.near", 2_500_000_000_000_000_000_000_000),  # 2.5 NEAR, counts
+    ]
+    http = _NearFlowHttp({None: {"cursor": None, "txns": rows}})
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    df = out.frame()
+    flow = df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")]
+    assert abs(flow["value"].iloc[0] - 7.5) < 1e-9, \
+        f"expected 5 + 2.5 = 7.5 NEAR, excluding the two hops: {flow}"
+    assert flow["date"].iloc[0] == pd.Timestamp("2026-09-10")
+    url, params, headers = next(c for c in http.calls if "/v1/account/" in c[0])
+    assert params["action"] == "TRANSFER" and headers == {"Authorization": "Bearer nb-secret-123"}
+    assert "nb-secret-123" not in " ".join(e.message for e in out.log)
+    print("near account flow ok: 7.5 NEAR summed, two internal hops excluded")
+
+
+def test_near_account_flow_paginates_via_cursor(monkeypatch):
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    page1 = [_near_flow_action("a.near", 1_000_000_000_000_000_000_000_000)]
+    page2 = [_near_flow_action("b.near", 3_000_000_000_000_000_000_000_000)]
+    http = _NearFlowHttp({None: {"cursor": "page2", "txns": page1},
+                          "page2": {"cursor": None, "txns": page2}})
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    df = out.frame()
+    flow = df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")]
+    assert list(flow["value"]) == [4.0], f"expected 1 + 3 = 4 NEAR across two pages: {flow}"
+    flow_calls = [c for c in http.calls if "/v1/account/" in c[0]]
+    assert len(flow_calls) == 2, "must have followed the cursor to the second page"
+    print("near account flow pagination ok: 4.0 NEAR across two pages")
+
+
+def test_near_account_flow_stores_nothing_when_the_live_shape_differs(monkeypatch):
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    http = _NearFlowHttp({None: {"cursor": None, "txns": [{"unexpected": "shape"}]}})
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    df = out.frame()
+    assert df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")].empty
+    gaps = {g["metric"]: g["reason"] for g in out.gaps}
+    assert "actual_buyback_tokens" in gaps and "predecessor_account_id" in gaps["actual_buyback_tokens"]
+
+
+def test_near_account_flow_ignores_non_transfer_actions(monkeypatch):
+    """A FUNCTION_CALL depositing NEAR is not a native TRANSFER — the module docstring's 'native
+    NEAR only' caveat, exercised: only actions whose action kind matches the configured filter
+    are summed."""
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    row = _near_flow_action("some-user.near", 5_000_000_000_000_000_000_000_000, action="FUNCTION_CALL")
+    http = _NearFlowHttp({None: {"cursor": None, "txns": [row]}})
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    df = out.frame()
+    assert df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")].empty, \
+        "a FUNCTION_CALL deposit must not be counted as a native TRANSFER"
+
+
 def test_nearblocks_stores_complete_days_and_never_today(monkeypatch):
     import pandas as pd
 
@@ -13973,13 +14079,16 @@ def test_nearblocks_stores_nothing_when_the_live_shape_differs_from_the_source(m
 
 
 def test_nearblocks_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch):
+    """Both nearblocks shapes need the same key — the v3 stats AND near_account_flows (the
+    buyback inflow, wired 2026-09-24) — so a missing key must gap all three, not just the two
+    that existed before the inflow read was added."""
     from fetch import nearblocks
     from fetch.base import FetchOutput
 
     monkeypatch.delenv("NEARBLOCKS_API_KEY", raising=False)
     out = FetchOutput()
     nearblocks.NearBlocks(http=_NearBlocksHttp({})).run([config.PROJECT_BY_NAME["Near"]], None, out)
-    assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses"}
+    assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses", "actual_buyback_tokens"}
     assert all("NEARBLOCKS_API_KEY" in g["reason"] for g in out.gaps)
 
 

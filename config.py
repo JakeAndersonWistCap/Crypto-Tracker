@@ -321,7 +321,7 @@ METRICS = {
     # section Q. Re-creating it would re-create the empty column.
     "emissions_tokens":           {"label": "Emissions to suppliers/stakers",  "kind": "flow",  "unit": "tokens", "archetypes": [2, 3],       "tiers": [1, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
     "actual_buyback_usd":         {"label": "Actual buyback (observed)",       "kind": "flow",  "unit": "usd",    "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e11},
-    "actual_buyback_tokens":      {"label": "Actual buyback tokens (observed)", "kind": "flow", "unit": "tokens", "archetypes": [3],          "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
+    "actual_buyback_tokens":      {"label": "Actual buyback tokens (observed)", "kind": "flow", "unit": "tokens", "archetypes": [3],          "tiers": [1, 2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
     "buyback_fund_balance":       {"label": "Buyback fund balance",            "kind": "stock", "unit": "tokens", "archetypes": [3],          "tiers": [2],    "sanity_min": 0,    "sanity_max": 1e15},
     # The same figure as published on the protocol's own dashboard. Stored SEPARATELY so the two can
     # be compared: the contract read is preferred and the dashboard is a cross-check, with any
@@ -2223,14 +2223,84 @@ PROJECTS = [
                           "(NearBlocks action_stats.accounts); txns = transactions that day "
                           "(transaction_stats.txns)",
         },
-        "actual_buyback_tokens_blocked": {
-            "status": "WALLET KNOWN, INFLOW NOT READABLE HERE — NEAR is not EVM and the flow needs receipt history",
-            "wanted": "NEAR transferred INTO buybacks.multisignature.near per period (the buyback), excluding hops from the other two revenue wallets",
-            "why": "the wallet is named in DefiLlama's near-intents adapter (from NEAR's own Dune query 6740088). NEAR RPC can read its balance via view_account, but a balance is inflow minus spending and the wallet exists to spend. The inflow needs NEAR receipt history, which is a Dune query over dune.near.dataset_near_intents_fees, not an RPC call.",
-            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/near-intents/index.ts",
-            "source_date": "2026-09-23",
-            "route_that_would_work": "a Dune query mirroring the adapter's `moves` CTE filtered to wallet = 'buybacks.multisignature.near' with the same self-hop exclusion, on a daily bucket. The adapter's SQL is the specification.",
-        },
+        # ===== RESOLVED 2026-09-24 — SEE near_account_flows BELOW. FORMERLY =====
+        # ===== actual_buyback_tokens_blocked, RENAMED SO IT NO LONGER READS AS A GAP. =====
+        # _tier_note (fetch/gaps.py) keys off f"{metric}_blocked" existing AT ALL — a status
+        # field inside it saying "resolved" does not stop it being read as a gap reason, it just
+        # makes the gap reason say something confusing. So this is a plain comment now, not a
+        # dict fetch/gaps.py can find, and config.buyback_route() carries the live reason instead
+        # (see its near_account_flows branch).
+        #
+        # The blocker was real: NEAR RPC's view_account gives a balance, and a balance is inflow
+        # minus spending — useless for a wallet whose whole purpose is to spend. What changed is
+        # not the reasoning, it is the discovery that NearBlocks' v1 REST API (GET /v1/account/
+        # {account}/txns, confirmed from its own GitHub source — see fetch/nearblocks.py's
+        # near_account_flows docstring) gives receipt-level transaction history with a `from`/
+        # `action`/`method` filter and per-action deposit amounts, which is exactly the "receipt
+        # history" this record said would need a Dune query. It does not: NearBlocks already
+        # indexes it and serves it over a REST endpoint this tool can call directly, with the key
+        # already on file (NEARBLOCKS_API_KEY, in production use for tx_count/active_addresses
+        # since 2026-09-24 the same day).
+        #   wanted: NEAR transferred INTO buybacks.multisignature.near per period (the buyback),
+        #           excluding hops from the other two revenue wallets
+        #   why blocked: the wallet is named in DefiLlama's near-intents adapter (from NEAR's own
+        #           Dune query 6740088); NEAR RPC's view_account gives a balance, not the inflow
+        #   source: https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/
+        #           near-intents/index.ts, read 2026-09-23
+        # The Dune route below is still the more RIGOROUS alternative (it is the adapter's own
+        # specification, `moves`, with self-hop exclusion already built in) and would be the one
+        # to build if the NearBlocks read ever needs cross-checking: a Dune query mirroring
+        # `moves` filtered to wallet = 'buybacks.multisignature.near', same self-hop exclusion,
+        # daily bucket.
+        # ===== THE MEASURED INFLOW, FROM NEARBLOCKS' OWN v1 ACCOUNT-TXNS ENDPOINT. 2026-09-24. =====
+        # actual_buyback_tokens_blocked above is the record of why this was thought to need a
+        # Dune query; it does not. GET /v1/account/{account}/txns (confirmed from NearBlocks'
+        # own GitHub source, apps/api/src/routes/account.ts and services/account/txn.ts — see
+        # fetch/nearblocks.py's near_account_flows docstring for the full field-by-field reading)
+        # gives per-transaction predecessor_account_id, block_timestamp and an actions array
+        # carrying each action's deposit (yoctoNEAR). Filtered to action=TRANSFER, the excluded
+        # senders (the other two near-intents wallets, so an internal hop is never double-counted
+        # as a fresh inflow) are dropped client-side and every remaining TRANSFER's deposit is
+        # summed per UTC day.
+        #
+        # ** THIS IS NOT LOG-SCAN'S WEI-EXACT RECONCILIATION. ** fetch/logscan.py proves an EVM
+        # scan complete by requiring sum(in)-sum(out) == balanceOf at a pinned block — an identity
+        # that holds because an ERC-20 balance moves only by Transfer events. A NEAR account's
+        # balance also moves on gas paid and storage staking, so no equivalent identity holds
+        # here without also walking every OUTFLOW, which this read does not attempt. It is a
+        # measured inflow, not a balance-reconciled one — a real answer to "wallet known, inflow
+        # not readable", not the strongest possible one.
+        #
+        # ** NATIVE NEAR ONLY — SAME LIMITATION ALREADY ON THE BALANCE READ. ** action=TRANSFER
+        # is the native action; wrap.near ft_transfer inflows (an FT, a FUNCTION_CALL, not a
+        # native action) are not counted, the same "partial: native NEAR only" caveat already
+        # declared on node_api.extra_reads[0] for the STOCK read of these same three wallets.
+        "near_account_flows": [
+            {
+                "key": "buyback_wallet_inflow",
+                "metric": "actual_buyback_tokens",
+                "base_url": "https://api.nearblocks.io",
+                "key_env": "NEARBLOCKS_API_KEY",
+                "account": "buybacks.multisignature.near",
+                "action": "TRANSFER",
+                "exclude_senders": ["fefundsadmin.sputnik-dao.near",
+                                    "1csfundsadmin.sputnik-dao.near"],
+                "yocto_exponent": 24,
+                "route_source": "https://raw.githubusercontent.com/Nearblocks/nearblocks/main/"
+                                "apps/api/src/routes/account.ts",
+                "field_source": "https://raw.githubusercontent.com/Nearblocks/nearblocks/main/"
+                                "apps/api/src/services/account/txn.ts",
+                "source_read": "2026-09-24",
+                "partial": "NATIVE NEAR TRANSFER actions only — wrap.near ft_transfer inflows "
+                          "are not counted; see node_api.extra_reads[0].partial for the same "
+                          "caveat on the balance read of these wallets.",
+                "no_reconciliation": "measured inflow, NOT reconciled to a balance the way "
+                                     "log_scans (EVM) is — see the module docstring in "
+                                     "fetch/nearblocks.py for why no equivalent identity holds "
+                                     "on NEAR.",
+                "wired_on": "2026-09-24",
+            },
+        ],
         # ===== treasury_holding_tokens — n/a, and the Base contract entry is retired to a record.
         # 2026-09-23. =====
         # The Intents Treasury on Base (0x2CfF890f...) holds a multi-asset basket. There is no
@@ -13310,6 +13380,22 @@ def buyback_route(project_name: str) -> dict:
                            + ("" if scan.get("store") else
                               " — HELD: the scan runs, but which inflows are purchases is not "
                               "established, so nothing is stored. " + scan.get("hold_reason", "")))}
+    # ===== NEAR'S EQUIVALENT: near_account_flows, NOT log_scans. Added 2026-09-24. =====
+    # log_scans is built on eth_getLogs-shaped explorer APIs and does not run on NEAR (not EVM).
+    # near_account_flows is the same idea — the inflow, never a balance — read from NearBlocks'
+    # v1 account-txns endpoint instead. See fetch/nearblocks.py's near_account_flows docstring
+    # for why it does NOT carry log_scans' wei-exact reconciliation to a balance.
+    flow = next((f for f in p.get("near_account_flows") or [] if f.get("metric") == "actual_buyback_tokens"),
+               None)
+    if flow and dest == "hold":
+        return {"route": "treasury_inflow", "metric": None,
+                "reason": (f"the flow is read directly: {flow.get('action', 'TRANSFER')} actions "
+                           f"INTO {flow['account']} (near_account_flows.{flow['key']}), via "
+                           f"NearBlocks' v1 account-txns API, excluding "
+                           f"{', '.join(flow.get('exclude_senders') or []) or 'nothing'} as "
+                           f"internal hops. NOT reconciled to a balance the way an EVM log_scans "
+                           f"is (NEAR's balance moves on gas and storage staking too) — see "
+                           f"fetch/nearblocks.py. {flow.get('partial', '')}")}
     if dest == "hold":
         stock = next((s for s, f in (p.get("cumulative_flow") or {}).items()
                       if f == "actual_buyback_tokens"), None)
