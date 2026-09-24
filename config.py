@@ -287,6 +287,20 @@ METRICS = {
     # tab, not the least: it is either a mechanism we do not know about or an address we have
     # mislabelled. Folding it into the Stage 2 figure would overstate the recurring burn by
     # whatever it is; dropping it would understate total destruction by the same amount.
+    # ===== THE STAGE 2 LEG, ON ITS OWN. Added 2026-09-24. =====
+    # burn_address_balance is the Pause Proxy's WHOLE burn history, and that history holds two
+    # unrelated events: the 2025-06-26 emissions offset (426,292,860.23) and the Stage 2
+    # buy-and-burn that began with the 2026-09-10 spell (2,860,943.76). Only the second is the
+    # recurring, revenue-funded mechanism archetype 4 asks about, so it is carved out by DATE
+    # (burn_logs.stage2_split) and the A4 headline computes from it (Sky.a4_burn_metric).
+    "sky_stage2_burn_balance": {
+        "label": "Cumulative SKY burned by Sky's Stage 2 buy-and-burn (Pause Proxy, from 2026-09-10)",
+        "kind": "stock", "unit": "tokens", "archetypes": [4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
+    "sky_stage2_burn_tokens": {
+        "label": "SKY burned by Sky's Stage 2 buy-and-burn, per day (event-dated, not differenced)",
+        "kind": "flow", "unit": "tokens", "archetypes": [4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
     "other_burn_balance": {
         "label": "Cumulative SKY destroyed by an UNRECOGNISED sender — surfaced, not folded in",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
@@ -1262,6 +1276,8 @@ def contract_serves(spec: dict) -> set:
     for key in ("stage2_metric", "other_metric"):
         if logs.get(key):
             served.add(logs[key])
+    split = logs.get("stage2_split") or {}
+    served |= {split.get("stock_metric"), split.get("flow_metric")}
     return {s for s in served if s}
 
 
@@ -1392,6 +1408,16 @@ def cross_check_waiting_on_primary(project_name: str, metric: str) -> dict | Non
             return {"primary": check["primary"], "why": blocked["why"],
                     "contracts": blocked["contracts"]}
     return None
+
+
+def a4_burn_metric(project_name: str) -> str:
+    """The flow archetype 4's headline burn columns read for this project.
+
+    gross_burn_tokens for everyone except where a project declares otherwise. Sky does: its
+    gross_burn_tokens is differenced from the Pause Proxy's whole burn history, which is two
+    unrelated events, so its headline reads the Stage 2 leg alone (sky_stage2_burn_tokens).
+    """
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("a4_burn_metric") or "gross_burn_tokens"
 
 
 def classification_pending(project_name: str, metric: str) -> dict | None:
@@ -10022,6 +10048,9 @@ PROJECTS = [
             "note": "staked SKY is represented by a liquid token; nothing is time-locked.",
         },
         "name": "Sky", "symbol": "SKY",
+        # A4 headline's burn: the Stage 2 flow, not gross_burn_tokens (blocked — see
+        # classification_pending). config.a4_burn_metric reads this.
+        "a4_burn_metric": "sky_stage2_burn_tokens",
         # ===== other_burn_balance IS REAL AND NOT YET CLASSIFIED. Recorded 2026-09-24. =====
         # The supply identity closed to the wei at the probe's pinned block: minted
         # 34,454,036,757.37 - burned 10,994,232,553.76 = 23,459,804,203.61 = totalSupply(). Every
@@ -10516,6 +10545,25 @@ PROJECTS = [
                     # executive spell archive. NOT YET ACTED ON: burn_address_balance still sums
                     # both. The probe's figures agree to the display rounding: burned
                     # 10,994,232,553.76 - other 10,565,078,749 = ~429,153,804 = the two below.
+                    # ===== THE STAGE 2 LEG, CARVED OUT BY DATE. Added 2026-09-24. =====
+                    # Pause Proxy burns whose BLOCK is dated on or after from_date feed the
+                    # stage2 stock (their sum) and flow (per UTC day, zero-filled from from_date
+                    # through the scan's head: the scan covers every block, so a zero day is
+                    # observed). Dated by the block's own timestamp — one call per Pause Proxy
+                    # event, of which there is one a month. burn_address_balance keeps the whole
+                    # Pause Proxy total (blocked) so the carve-out stays checkable against it.
+                    "stage2_split": {
+                        "stock_metric": "sky_stage2_burn_balance",
+                        "flow_metric": "sky_stage2_burn_tokens",
+                        "from_date": "2026-09-10",
+                        "from_date_source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2026-09-10-DssSpell/DssSpell.sol",
+                        "why_this_date": "the spell that carried the first Stage 2 burn; the "
+                                         "spell archive has no Pause Proxy burn between the "
+                                         "2025-06-26 spell and this one",
+                        # THE FIRST READ MUST CONTAIN THE KNOWN BURN. A floor, like the one above,
+                        # because the cumulative grows by one burn a month from here.
+                        "first_read_floor": 2_860_943.76,
+                    },
                     "pause_proxy_burns_on_file": [
                         {"spell": "2025-06-26", "amount": "426,292,860.23",
                          "what": "offset for SKY minted to fund SKY rewards and Early Bird "

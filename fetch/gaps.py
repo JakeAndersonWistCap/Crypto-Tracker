@@ -160,6 +160,10 @@ METRIC_CONTRACT_KIND = {
     "governance_burn_tokens": "burn_transfer_logs",
     "other_burn_balance": "burn_transfer_logs",
     "other_burn_tokens": "burn_transfer_logs",
+    # The Stage 2 carve-out (burn_logs.stage2_split, 2026-09-24): same scan, Pause Proxy burns
+    # dated from the 2026-09-10 spell onward.
+    "sky_stage2_burn_balance": "burn_transfer_logs",
+    "sky_stage2_burn_tokens": "burn_transfer_logs",
     # No contract serves it — it is DERIVED from the two above. Mapped to neither kind; the
     # tier note below handles it so it cannot fall through to "no source configured".
     "total_supply": "erc20_total_supply",

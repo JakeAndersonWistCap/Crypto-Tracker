@@ -1420,6 +1420,15 @@ class Chain:
                                 f"{a} {v:,.2f}" for a, v in sorted(unrecognised.items(),
                                                                    key=lambda kv: -kv[1])[:6]))
 
+        # ===== THE STAGE 2 LEG, CARVED OUT OF THE PAUSE PROXY BY DATE. Added 2026-09-24. =====
+        # The Pause Proxy has burned for two unrelated reasons (config burn_logs
+        # .pause_proxy_burns_on_file); only burns dated on or after stage2_split.from_date are the
+        # buy-and-burn. Each Pause Proxy event is dated by its own block — one call a month.
+        split = cfg.get("stage2_split") or {}
+        if split and stage2:
+            self._stage2_split(project, chain, key, split, stage2, events, dec, last_blk,
+                               parts, source_suffix, suffix, out)
+
         source_suffix[metric] = suffix
         value = totals.get(metric, 0.0)
 
@@ -1463,6 +1472,57 @@ class Chain:
                                        f"vs reference {expect:,.2f}")
                 return None
         return value
+
+    def _stage2_split(self, project, chain, key, split, burner, events, dec, last_blk,
+                      parts, source_suffix, suffix, out) -> None:
+        """Stock and daily flow for the Pause Proxy burns dated from split['from_date'] onward.
+
+        The flow is EVENT-DATED, not differenced: a day with no Stage 2 burn is an observed 0
+        because the scan covers every block from deployment to last_blk. That is what lets the
+        first read carry the 2,860,943.76 into the A4 window instead of waiting for a second
+        reading to difference against.
+        """
+        from .base import tidy
+        name = project["name"]
+        stock_m, flow_m = split["stock_metric"], split["flow_metric"]
+        start = pd.Timestamp(split["from_date"])
+        # IN WEI, so the floor below is an exact integer comparison: 2,860,943.76 as a float
+        # sum can land a hair under the literal and refuse a correct read, and widening the
+        # check to absorb that would be a tolerance on a check that must not have one.
+        by_day: dict = defaultdict(int)
+        before = 0
+        for e in events:
+            if e["from"].lower() != burner.lower():
+                continue
+            day = pd.Timestamp(self.reader.block_timestamp(chain, e["block"]), unit="s").normalize()
+            amount = int(e["value"])
+            if day >= start:
+                by_day[day] += amount
+            else:
+                before += amount
+        from decimal import Decimal
+        total_wei = sum(by_day.values())
+        total = total_wei / (10 ** dec)
+        floor = split.get("first_read_floor")
+        if floor is not None and total_wei < int(Decimal(str(floor)) * (10 ** dec)):
+            out.gap(name, stock_m,
+                    reason=(f"the Stage 2 carve-out found {total:,.2f} SKY from {burner} dated "
+                            f"{split['from_date']} onward, below the known first burn of "
+                            f"{float(floor):,.2f} (2026-09-10 spell). Nothing stored — a carve-out "
+                            f"missing the burn it was built around is wrong, not small."),
+                    tiers_attempted="2",
+                    suggestion="Check the block dating and from_date against the spell.")
+            return
+        parts[stock_m].append((f"{chain}:{key}[{stock_m}]", total))
+        source_suffix[stock_m] = suffix
+        head_day = pd.Timestamp(self.reader.block_timestamp(chain, last_blk), unit="s").normalize()
+        days = pd.date_range(start, head_day, freq="D")
+        frame = tidy([(d, by_day.get(d, 0) / (10 ** dec)) for d in days], name, flow_m,
+                     f"{SOURCE}:{chain}:{key}[{flow_m}][{suffix}]", TIER)
+        out.add(frame, SOURCE, name,
+                f"{flow_m}: {total:,.2f} SKY over {len(by_day)} burn day(s) from "
+                f"{split['from_date']} (Pause Proxy {burner}); {before / (10 ** dec):,.2f} SKY of earlier Pause "
+                f"Proxy burns excluded as not Stage 2", TIER)
 
     def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out,
                     disputed: dict | None = None, source_suffix: dict | None = None,

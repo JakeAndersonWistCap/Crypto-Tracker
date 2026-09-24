@@ -1537,7 +1537,7 @@ def _net_change(R, r: int, p: dict, iss, burn) -> str:
     flag, NOT merely on a row being present: a project that does not publish net mint always uses
     issuance − burn, even if a stray net_mint_monthly row turns up from somewhere.
     """
-    derived = f"{iss(r)}-{burn(r)}"
+    derived = f"{iss(r)}-{burn(r, p)}"
     if not p.get("self_reported_net_mint"):
         return derived
     sr = R.D(r, "net_mint_monthly", "q0")
@@ -1600,12 +1600,12 @@ def _a4_headline(R: Refs, burn) -> list[tuple]:
     circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
     return [
         ("PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)",
-         lambda r, p: calc(f"{burn(r)}*{ANN}/{circ(r)}"), FMT_PCT, "calc", True, {"metric": "gross_burn_tokens"}),
+         lambda r, p: calc(f"{burn(r, p)}*{ANN}/{circ(r)}"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
         ("Issuance basis for the crossover",
          lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
         ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
-         lambda r, p: calc(f"{burn(r)}/{_basis_iss(R, p)(r)}"), FMT_X, "calc", True),
+         lambda r, p: calc(f"{burn(r, p)}/{_basis_iss(R, p)(r)}"), FMT_X, "calc", True),
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
          lambda r, p: calc(_net_change(R, r, p, _basis_iss(R, p), burn)), FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
@@ -1886,12 +1886,15 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
 
 
 def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
-    """Δ30d, Δ3m, Δ6m, Δ9m columns for a metric (now vs prior 30d; Q0 vs Q1/Q2/Q3)."""
+    """Δ30d, Δ3m, Δ6m, Δ9m columns for a metric (now vs prior 30d; Q0 vs Q1/Q2/Q3).
+
+    `metric` may be a function of the project name (A4's burn is per project)."""
+    m = metric if callable(metric) else (lambda _n: metric)  # noqa: E731
     return [
-        (f"{label} Δ30d", lambda r, p: delta(R.D(r, metric, "now"), R.D(r, metric, "m1")), fmt, "calc"),
-        (f"{label} Δ3m", lambda r, p: delta(R.D(r, metric, "q0"), R.D(r, metric, "q1")), fmt, "calc"),
-        (f"{label} Δ6m", lambda r, p: delta(R.D(r, metric, "q0"), R.D(r, metric, "q2")), fmt, "calc"),
-        (f"{label} Δ9m", lambda r, p: delta(R.D(r, metric, "q0"), R.D(r, metric, "q3")), fmt, "calc"),
+        (f"{label} Δ30d", lambda r, p: delta(R.D(r, m(p["name"]), "now"), R.D(r, m(p["name"]), "m1")), fmt, "calc"),
+        (f"{label} Δ3m", lambda r, p: delta(R.D(r, m(p["name"]), "q0"), R.D(r, m(p["name"]), "q1")), fmt, "calc"),
+        (f"{label} Δ6m", lambda r, p: delta(R.D(r, m(p["name"]), "q0"), R.D(r, m(p["name"]), "q2")), fmt, "calc"),
+        (f"{label} Δ9m", lambda r, p: delta(R.D(r, m(p["name"]), "q0"), R.D(r, m(p["name"]), "q3")), fmt, "calc"),
     ]
 
 
@@ -1964,7 +1967,10 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                                        "PancakeSwap is the disclosure template: publishes net mint monthly.")
     ann = ANN
     price = lambda r: R.D(r, "price_usd", "q0")  # noqa: E731
-    burn = lambda r, w="q0": R.D(r, "gross_burn_tokens", w)  # noqa: E731
+    # PER PROJECT, not a constant: config.a4_burn_metric. Sky's gross_burn_tokens is the Pause
+    # Proxy's whole history (blocked — two unrelated spell burns), so its headline reads the
+    # Stage 2 leg alone. Everyone else reads gross_burn_tokens, unchanged.
+    burn = lambda r, p, w="q0": R.D(r, config.a4_burn_metric(p["name"]), w)  # noqa: E731
     iss = lambda r, w="q0": R.D(r, "gross_issuance_tokens", w)  # noqa: E731
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
@@ -1979,8 +1985,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Documented share of fees burned (config)", lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False, {"gate": "burn_split"}),
         ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
-        ("GROSS BURN Q0 (tokens)", lambda r, p: pull(burn(r)), FMT_NUM, "pull", True, {"metric": "gross_burn_tokens"}),
-        ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r)}*{price(r)}"), FMT_USD, "calc"),
+        ("GROSS BURN Q0 (tokens)", lambda r, p: pull(burn(r, p)), FMT_NUM, "pull", True, {"metric_fn": config.a4_burn_metric}),
+        ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}"), FMT_USD, "calc"),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", True, {"metric": "gross_issuance_tokens"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
         # ===== POOL RELEASE, BESIDE BURN. Added 2026-09-24, for GEODNET. =====
@@ -1996,34 +2002,34 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")), FMT_NUM, "pull", True, {"metric": "pool_release_tokens"}),
         ("Release ÷ burn (x) — premint projects, in place of burn ÷ issuance",
-         lambda r, p: calc(f"{R.D(r, 'pool_release_tokens', 'q0')}/{burn(r)}"), FMT_X, "calc"),
+         lambda r, p: calc(f"{R.D(r, 'pool_release_tokens', 'q0')}/{burn(r, p)}"), FMT_X, "calc"),
         ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
-        ("Derived net supply change (issuance − burn), for comparison", lambda r, p: calc(f"{iss(r)}-{burn(r)}"), FMT_NUM, "calc"),
+        ("Derived net supply change (issuance − burn), for comparison", lambda r, p: calc(f"{iss(r)}-{burn(r, p)}"), FMT_NUM, "calc"),
         ("Self-reported − derived (a gap here means one of the two is wrong)",
-         lambda r, p: calc(f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r)})"), FMT_NUM, "calc"),
+         lambda r, p: calc(f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
          lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{price(r)}"), FMT_USD, "calc"),
-        ("Burn as share of fees (measured)", lambda r, p: calc(f"{burn(r)}*{price(r)}/{R.D(r, 'fees_usd', 'q0')}"), FMT_PCT, "calc"),
+        ("Burn as share of fees (measured)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}/{R.D(r, 'fees_usd', 'q0')}"), FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{iss(r)}*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
-        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), f"{burn(r)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), f"{burn(r, p)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: calc(f"{iss(r, 'q1')}-{burn(r, 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q2 (−6m window)", lambda r, p: calc(f"{iss(r, 'q2')}-{burn(r, 'q2')}"), FMT_NUM, "calc"),
-        ("Net supply change Q3 (−9m window)", lambda r, p: calc(f"{iss(r, 'q3')}-{burn(r, 'q3')}"), FMT_NUM, "calc"),
-        *_trajectory(R, "gross_burn_tokens", "Burn"),
+        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: calc(f"{iss(r, 'q1')}-{burn(r, p, 'q1')}"), FMT_NUM, "calc"),
+        ("Net supply change Q2 (−6m window)", lambda r, p: calc(f"{iss(r, 'q2')}-{burn(r, p, 'q2')}"), FMT_NUM, "calc"),
+        ("Net supply change Q3 (−9m window)", lambda r, p: calc(f"{iss(r, 'q3')}-{burn(r, p, 'q3')}"), FMT_NUM, "calc"),
+        *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, "gross_issuance_tokens", "Issuance"),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("burn_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key,
-                       ["fees_usd", "price_usd", "gross_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],
+                       ["fees_usd", "price_usd", "gross_burn_tokens", "sky_stage2_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],
                        key_cols=_key_cols(specs, "PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE",
                                           "GROSS BURN Q0", "GROSS ISSUANCE Q0", "Pool release Q0"))
     _confidence_tally(ws, end + 2, scoped_projects(), specs, data_by_key)

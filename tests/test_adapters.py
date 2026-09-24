@@ -10672,9 +10672,11 @@ def test_one_contract_can_serve_several_metrics_and_the_guard_knows_it():
     not against a set typed out twice.)
     """
     spec = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]
-    assert config.contract_serves(spec) == {"burn_address_balance", "other_burn_balance"}
+    # + the Stage 2 carve-out (stage2_split, 2026-09-24): same scan, dated Pause Proxy burns.
+    assert config.contract_serves(spec) == {"burn_address_balance", "other_burn_balance",
+                                            "sky_stage2_burn_balance", "sky_stage2_burn_tokens"}
     for metric in ("burn_address_balance", "other_burn_balance", "other_burn_tokens",
-                   "gross_burn_tokens"):
+                   "gross_burn_tokens", "sky_stage2_burn_balance", "sky_stage2_burn_tokens"):
         assert config.withdrawn_contract_keys(
             "Sky", metric, "chain:ethereum:burn_logs:delta") == [], metric
     # ** AND A METRIC IT NO LONGER SERVES IS CORRECTLY JUDGED WITHDRAWN. ** governance_burn_balance
@@ -14880,3 +14882,66 @@ def test_sky_burn_address_balance_is_blocked_with_the_two_spell_burns_named():
                 "426,292,860.23 unrelated 2025 emissions-offset correction from the same spell, "
                 "see config note") in r["note"], r["note"]
     print("sky ok: the Pause Proxy total and its flow are blocked, both burns named")
+
+
+def test_the_stage2_carve_out_takes_only_pause_proxy_burns_from_2026_09_10():
+    """Sky's Pause Proxy burned 426,292,860.23 in the 2025-06-26 spell (emissions offset) and
+    2,860,943.76 in the 2026-09-10 spell (the first Stage 2 burn). Only the second is Stage 2.
+    The carve-out dates each Pause Proxy event by its own block, stores the stock, and writes an
+    EVENT-DATED daily flow — so the first read already carries the burn into the A4 window."""
+    ts_2025 = int(pd.Timestamp("2025-06-30 14:00", tz="UTC").timestamp())
+    ts_2026 = int(pd.Timestamp("2026-09-13 15:00", tz="UTC").timestamp())
+    ts_head = int(pd.Timestamp("2026-09-24 06:00", tz="UTC").timestamp())
+    events = [
+        {"from": PAUSE_PROXY, "value": 426_292_860_230_000_000_000_000_000, "block": 22_817_692},
+        {"from": PAUSE_PROXY, "value": 2_860_943_760_000_000_000_000_000, "block": 23_400_100},
+        {"from": CONVERTER, "value": int(250_000 * WAD), "block": 22_000_000},
+    ]
+    from_block = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]["from_block"]
+    reader = _LogReader(events, timestamps={22_817_692: ts_2025, 23_400_100: ts_2026,
+                                            from_block + 2_600_000: ts_head})
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = reader
+    out = FetchOutput()
+    c.run([_sky_log_probe()], None, out)
+    f = out.frame()
+    stock = f.query("metric == 'sky_stage2_burn_balance'")
+    assert len(stock) == 1 and float(stock.value.iloc[0]) == 2_860_943.76, stock
+    total = float(f.query("metric == 'burn_address_balance'").value.iloc[0])
+    assert abs(total - 429_153_803.99) < 1e-6, total          # the whole Pause Proxy, still read
+    flow = f.query("metric == 'sky_stage2_burn_tokens'").set_index("date")["value"]
+    assert flow.index.min() == pd.Timestamp("2026-09-10") and flow.index.max() == pd.Timestamp("2026-09-24")
+    assert flow[pd.Timestamp("2026-09-13")] == 2_860_943.76
+    assert float(flow.sum()) == 2_860_943.76 and (flow.drop(pd.Timestamp("2026-09-13")) == 0).all()
+    src = f.query("metric == 'sky_stage2_burn_tokens'").source.iloc[0]
+    assert config.withdrawn_contract_keys("Sky", "sky_stage2_burn_tokens", src) == [], src
+
+    # THE FLOOR IS THE KNOWN BURN. A carve-out that misses it stores nothing.
+    c = Chain(prior_values={}, prior_dates={})
+    c.reader = _LogReader(events[:1], timestamps={22_817_692: ts_2025})
+    out = FetchOutput()
+    c.run([_sky_log_probe()], None, out)
+    assert out.frame().query("metric in ['sky_stage2_burn_balance', 'sky_stage2_burn_tokens']").empty
+    gap = next(g for g in out.gaps if g["metric"] == "sky_stage2_burn_balance")
+    assert "below the known first burn of 2,860,943.76" in gap["reason"], gap["reason"]
+    print("stage2 ok: 2,860,943.76 carved out by date; the 2025 offset excluded; floor exact")
+
+
+def test_a4_headline_reads_the_stage2_flow_for_sky_and_gross_burn_for_everyone_else():
+    """Permanent Burn Yield, the crossover and both net-change columns compute from
+    config.a4_burn_metric: Sky's Stage 2 flow (its gross_burn_tokens is blocked), everyone
+    else's gross_burn_tokens exactly as before."""
+    import build_workbook as bw
+    R = bw.Refs(100, 10, ["2026-09"])
+    burn = lambda r, p, w="q0": R.D(r, config.a4_burn_metric(p["name"]), w)  # noqa: E731
+    specs = bw._a4_headline(R, burn)
+    sky, uni = config.PROJECT_BY_NAME["Sky"], config.PROJECT_BY_NAME["Uniswap"]
+    for head, fn, *rest in specs:
+        if head.startswith(("PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE")):
+            s, u = fn(5, sky), fn(5, uni)
+            assert '|sky_stage2_burn_tokens"' in s and '|gross_burn_tokens"' not in s, (head, s)
+            assert '|gross_burn_tokens"' in u and "sky_stage2" not in u, (head, u)
+    yield_meta = specs[0][5]
+    assert yield_meta["metric_fn"]("Sky") == "sky_stage2_burn_tokens"
+    assert yield_meta["metric_fn"]("Uniswap") == "gross_burn_tokens"
+    print("a4 ok: Sky's headline reads the Stage 2 flow; other projects unchanged")
