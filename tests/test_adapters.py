@@ -1727,7 +1727,13 @@ def test_pendles_lock_discrepancy_does_not_fit_the_boost_hypothesis():
     # still a live question about what totalSupply means, just not the explanation for this.
     assert d["boost_hypothesis_fits"] is False
     assert "further from 100m" in d["why_not"]
-    assert "BOOSTED" in nc["why"], "the original virtual-balance question stays on file"
+    # ANSWERED 2026-09-24 from StakedPendle.sol: the question moved from the AMBER reason to a
+    # closed OPEN_QUESTION with its answer, and the AMBER now names the unstake queue.
+    oq = next(q for q in config.OPEN_QUESTIONS
+              if q.get("project") == "Pendle" and "virtual balance" in q["topic"])
+    assert oq["status"] == "closed" and "StakedPendle.sol" in oq["answer"]
+    assert "does not compound" in oq["answer"].lower()
+    assert "UNSTAKE QUEUE" in nc["why"] and "No boosted or virtual balance" in nc["why"]
     # ALL THREE CANDIDATES ARE NAMED, INCLUDING UNSTAKING BETWEEN THE TWO DATES.
     assert any("unstaking" in c for c in d["candidates"]), d["candidates"]
     # ** CANDIDATE (a) IS SETTLED AND DID NOT EXPLAIN IT. ** H1 ran on 2026-09-23: sPENDLE
@@ -13816,3 +13822,73 @@ def test_maple_page_is_not_wired_into_any_run_until_robots_is_read():
     page = [e for e in entries if e.get("url") == "https://maple.finance/transparency"]
     assert page and all(e["enabled"] is False for e in page)
     assert "maple_transparency" not in pathlib.Path(fetch.__file__).read_text()
+
+
+class _NearBlocksHttp:
+    """Answers each v3 stats path with rows in the shape NearBlocks' own SQL produces."""
+
+    def __init__(self, rows_by_path):
+        self.rows_by_path, self.calls = rows_by_path, []
+
+    def get(self, url, params=None, headers=None):
+        self.calls.append((url, params, headers))
+        path = url.split("api.nearblocks.io")[1]
+        return self.rows_by_path[path]
+
+
+def _nearblocks_run(monkeypatch, rows_by_path, key="nb-secret-123"):
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", key)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    http = _NearBlocksHttp(rows_by_path)
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], None, out)
+    return out, http
+
+
+def test_nearblocks_stores_complete_days_and_never_today(monkeypatch):
+    import pandas as pd
+
+    from fetch.base import today
+
+    t = today()
+    day = lambda n: str((t - pd.Timedelta(days=n)).date())
+    out, http = _nearblocks_run(monkeypatch, {
+        "/v3/txn-stats": {"data": [{"date": day(0), "txns": 10, "receipts": "1"},
+                                   {"date": day(1), "txns": 4_500_000, "receipts": "9"},
+                                   {"date": day(2), "txns": 4_400_000, "receipts": "9"}]},
+        "/v3/address-stats": {"data": [{"date": day(1), "active_accounts": 1_200_000,
+                                        "active_contracts": 5}]},
+    })
+    df = out.frame()
+    tx = df[df.metric == "tx_count"].sort_values("date")
+    assert list(tx["value"]) == [4_400_000, 4_500_000], "today's partial day is never stored"
+    assert list(df[df.metric == "active_addresses"]["value"]) == [1_200_000]
+    assert set(df["source"]) == {"nearblocks"}
+    url, params, headers = http.calls[0]
+    assert headers == {"Authorization": "Bearer nb-secret-123"} and params == {"limit": 100}
+    assert "nb-secret-123" not in " ".join(e.message for e in out.log)
+
+
+def test_nearblocks_stores_nothing_when_the_live_shape_differs_from_the_source(monkeypatch):
+    out, _ = _nearblocks_run(monkeypatch, {
+        "/v3/txn-stats": {"data": [{"day": "2026-09-20", "count": 5}]},
+        "/v3/address-stats": {"charts": []},
+    })
+    assert out.frame().empty
+    gaps = {g["metric"]: g["reason"] for g in out.gaps}
+    assert "['count', 'day']" in gaps["tx_count"] and "'txns'" in gaps["tx_count"]
+    assert "without a `data` list" in gaps["active_addresses"]
+
+
+def test_nearblocks_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch):
+    from fetch import nearblocks
+    from fetch.base import FetchOutput
+
+    monkeypatch.delenv("NEARBLOCKS_API_KEY", raising=False)
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=_NearBlocksHttp({})).run([config.PROJECT_BY_NAME["Near"]], None, out)
+    assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses"}
+    assert all("NEARBLOCKS_API_KEY" in g["reason"] for g in out.gaps)

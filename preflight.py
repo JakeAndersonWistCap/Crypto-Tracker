@@ -130,6 +130,14 @@ def protocol_api_plan() -> list[tuple[str, str, str]]:
         base = (api.get("endpoints") or [api.get("endpoint", "?")])[0]
         out.append((p["name"], api.get("metric", "?"),
                     f"{api['kind']} -> POST {base}{api.get('path', '')}"))
+    # NearBlocks: keyed, so the plan says whether the key is present (never the key itself).
+    import os
+    for p in config.PROJECTS:
+        nb = p.get("nearblocks") or {}
+        keyed = "key set" if os.environ.get(nb.get("key_env", ""), "").strip() else f"NO {nb.get('key_env')} — gap"
+        for metric, m in (nb.get("metrics") or {}).items():
+            out.append((p["name"], metric, f"nearblocks -> GET {nb['base_url']}{m['path']} "
+                                           f"`{m['field']}` ({keyed})"))
     return out
 
 

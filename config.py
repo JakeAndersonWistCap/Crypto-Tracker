@@ -2148,6 +2148,30 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        # ===== CHAIN ACTIVITY — NearBlocks API v3, keyed. Wired 2026-09-24. =====
+        # Field names READ FROM NEARBLOCKS' OWN SOURCE (its API is open source; the docs site was
+        # unreachable from the build environment): the response is {"data": [...]} and the
+        # columns are the SQL aliases below. fetch/nearblocks.py checks every live response
+        # against them and stores nothing on a mismatch. `limit` rows per call, 25 per credit.
+        "nearblocks": {
+            "base_url": "https://api.nearblocks.io",
+            "key_env": "NEARBLOCKS_API_KEY",
+            "limit": 100,
+            "metrics": {
+                "tx_count": {"path": "/v3/txn-stats", "field": "txns"},
+                "active_addresses": {"path": "/v3/address-stats", "field": "active_accounts"},
+            },
+            "field_source": [
+                "https://github.com/Nearblocks/nearblocks/blob/main/apps/api/src/sql/queries/stats/txn.sql",
+                "https://github.com/Nearblocks/nearblocks/blob/main/apps/api/src/sql/queries/stats/address.sql",
+                "https://github.com/Nearblocks/nearblocks/blob/main/apps/api/src/routes/v3/stats.ts",
+            ],
+            "source_read": "2026-09-24",
+            "live_confirmed": None,      # set from the first run's log line, which prints a row
+            "definition": "active_accounts = distinct accounts with an action that UTC day "
+                          "(NearBlocks action_stats.accounts); txns = transactions that day "
+                          "(transaction_stats.txns)",
+        },
         "actual_buyback_tokens_blocked": {
             "status": "WALLET KNOWN, INFLOW NOT READABLE HERE — NEAR is not EVM and the flow needs receipt history",
             "wanted": "NEAR transferred INTO buybacks.multisignature.near per period (the buyback), excluding hops from the other two revenue wallets",
@@ -11192,6 +11216,9 @@ PROJECTS = [
             # redeems for 1.1731 PENDLE and sPENDLE COMPOUNDS — the same shape as sETHFI and
             # stSYRUP, and the opposite direction from the boost the entry below was written to
             # worry about. The share count UNDERSTATES the lock by 17.3%.
+            # ** CORRECTED 2026-09-24: IT DOES NOT COMPOUND. ** StakedPendle.sol mints 1:1 and
+            # burns at cooldown(), leaving the PENDLE here until finalizeCooldown(). The 17.3% is
+            # the unstake queue. This read is unchanged; what it contains is now stated.
             "spendle_underlying": _contract(
                 "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "stake_underlying",
                 "PENDLE", PENDLE_DEPLOYMENTS_1_CORE,
@@ -11288,6 +11315,11 @@ PROJECTS = [
             "metric": "lock_assets_per_share",
             "flag_on": "decrease",
             "decrease_tolerance": 0.001,
+            # ** PREMISE REFUTED 2026-09-24: sPENDLE DOES NOT COMPOUND. ** StakedPendle.sol mints
+            # 1:1 and burns at cooldown, so this ratio is 1 + (unstake queue / active stake). It
+            # FALLS whenever queued PENDLE is withdrawn, which the fall flag will report as
+            # "rewards stopped". Left armed pending Jake's call (retire it, or re-read it as a
+            # queue share) — see the 2026-09-24 report. Original reasoning follows.
             # THE SAME CEILING AS ETHER.FI, and for the same reason — sPENDLE compounds by the
             # same mechanism, so a move too large for its interval means the same three things
             # there. Set now rather than after a surprise: this series has ONE point, so there
@@ -11309,22 +11341,33 @@ PROJECTS = [
                                            "here — see the comment above.",
         },
         "metric_labels": {
-            "locked_tokens": "PENDLE locked (ASSETS — PENDLE held by the sPENDLE contract). NOT "
-                             "the share count: sPENDLE compounds at 1.1731 assets per share, so "
-                             "the share count understates the lock by 17.3%.",
-            "locked_tokens_shares": "sPENDLE shares outstanding — NOT the tokens locked. Divide "
-                                    "into locked_tokens for the accrued rate.",
+            "locked_tokens": "PENDLE held by the sPENDLE contract: the active stake PLUS PENDLE in "
+                             "the 14-day unstake queue (sPENDLE is burned at cooldown, the PENDLE "
+                             "leaves at finalize). sPENDLE does NOT compound — corrected "
+                             "2026-09-24 from StakedPendle.sol.",
+            "locked_tokens_shares": "sPENDLE supply = PENDLE actively staked (minted 1:1), "
+                                    "excluding the unstake queue.",
         },
         "non_comparable": {
             "locked_tokens": {
-                "why": "vePENDLE holders converting to sPENDLE received a BOOSTED balance of up to 4x, "
-                       "decaying over ~2 years, and Pendle's docs describe a separate 'virtual sPENDLE "
-                       "balance' used for voting power. If either is included in totalSupply(), this "
-                       "figure OVERSTATES real PENDLE staked by as much as 4x. NOT RESOLVED — it needs "
-                       "direct contract inspection, not a docs reading.",
-                "use_instead": "nothing yet. Treat the figure as an UPPER BOUND on PENDLE staked. The "
-                               "dashboard cross-check below would catch a large divergence if "
-                               "app.pendle.finance ever becomes fetchable.",
+                # ===== THE BOOST QUESTION IS ANSWERED; THE AMBER NOW CARRIES A DIFFERENT REASON.
+                # 2026-09-24, from StakedPendle.sol. No virtual balance is in any figure here. What
+                # IS in locked_tokens is the unstake queue: cooldown() burns the sPENDLE and leaves
+                # the PENDLE in the contract for 14 days, so PENDLE.balanceOf(sPENDLE) counts
+                # holders who have already chosen to leave (5,246,741 on 2026-09-23, 15% of the
+                # active stake). Whether "locked" should include them is a decision, not a fix.
+                # ** AN EXTERNAL sPENDLE FIGURE ABOVE ~40M IS NEVER PENDLE LOCKED IN sPENDLE. ** It
+                # is the hub's sPENDLE + vePENDLE sum, or it counts the virtual boost balance.
+                "why": "INCLUDES THE UNSTAKE QUEUE. PENDLE.balanceOf(sPENDLE) = active stake "
+                       "(sPENDLE.totalSupply(), minted 1:1) + PENDLE in the 14-day cooldown, whose "
+                       "sPENDLE is already burned (StakedPendle.sol). On 2026-09-23 that was 35.56M "
+                       "held against 30.31M staked — the 5.25M difference is exits in progress, "
+                       "not yield. No boosted or virtual balance is in either figure (answered "
+                       "2026-09-24 from source).",
+                "use_instead": "locked_tokens_shares (sPENDLE.totalSupply()) for PENDLE actively "
+                               "staked, excluding the queue. External 'sPENDLE staked' figures "
+                               "near 100M are the hub's sPENDLE + vePENDLE sum or the virtual "
+                               "boost balance — never compare them to either.",
                 # ===== A 3x DISAGREEMENT, AND IT POINTS THE WRONG WAY FOR THE BOOST. Added 2026-09-23.
                 # Reporting puts sPENDLE staking above 100,000,000 PENDLE by early July 2026 —
                 # about 36% of supply. sPENDLE.totalSupply() reads 34,100,000.
@@ -11435,6 +11478,9 @@ PROJECTS = [
                         "shares": 30_310_807.38,
                         "assets": 35_557_548.09,
                         "assets_per_share": 1.1731,
+                        "corrected_2026_09_24": "THE VERDICT BELOW IS WRONG ON MECHANISM. sPENDLE "
+                                                "mints 1:1 (StakedPendle.sol); the 5.25M "
+                                                "difference is the unstake queue, not yield.",
                         "verdict": "sPENDLE COMPOUNDS. locked_tokens now reads the ASSETS "
                                    "(PENDLE.balanceOf(sPENDLE)) and the share count moved to "
                                    "locked_tokens_shares.",
@@ -15087,8 +15133,31 @@ OPEN_QUESTIONS = [
     },
     # ---------------------------------------------------------------- Pendle
     {
-        "project": "Pendle", "topic": "does sPENDLE.totalSupply() include boosted and virtual balances?",
-        "severity": 1,
+        "project": "Pendle", "topic": "ANSWERED 2026-09-24 — sPENDLE.totalSupply() holds NO boosted or "
+                                      "virtual balance; the question as asked is closed",
+        "severity": 1, "status": "closed",
+        "answer": "FROM PENDLE'S OWN CONTRACT SOURCE (StakedPendle.sol): stake() mints sPENDLE 1:1 for "
+                  "PENDLE transferred in; cooldown() BURNS the sPENDLE immediately and the PENDLE "
+                  "leaves only on finalizeCooldown(); instantUnstake() burns and pays out at once. "
+                  "totalSupply() is the plain OpenZeppelin ERC-20 supply — there is no virtual term "
+                  "in it. The loyalty boost (vePENDLE snapshot 2026-01-29, up to 4x, decaying to 0 "
+                  "by ~2028-01-20) is a non-transferable VIRTUAL balance with no PENDLE behind it, "
+                  "accounted outside the ERC-20 (Pendle's docs; the independent Penconomics "
+                  "tracker computes it from vePENDLE's slope buckets: ~177.8M virtual sPENDLE). "
+                  "THE >100M 'STAKED' FIGURES are Pendle's hub combining sPENDLE supply with "
+                  "PENDLE.balanceOf(vePENDLE) (97,869,428 per the tracker's match against the hub "
+                  "API), or cite the virtual balance — neither is PENDLE locked in sPENDLE. "
+                  "locked_tokens reads PENDLE.balanceOf(sPENDLE), unaffected either way. "
+                  "** ONE CORRECTION THIS FORCES: sPENDLE DOES NOT COMPOUND. ** The 2026-09-23 "
+                  "reading (assets 35,557,548 vs shares 30,310,807, 'ratio 1.1731') is the 14-day "
+                  "UNSTAKE QUEUE — PENDLE whose sPENDLE was burned by cooldown() and which has not "
+                  "yet been withdrawn — not accrued yield. See non_comparable.locked_tokens.",
+        "answer_sources": [
+            "https://github.com/pendle-finance/pendle-core-v2-public/blob/main/contracts/LiquidityMining/sPendle/StakedPendle.sol",
+            "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE",
+            "https://github.com/Shaurya477/spendle-tracker (README: mechanics and hub reconciliation)",
+        ],
+        "answered_on": "2026-09-24",
         "reason": "THE ADDRESS IS RIGHT AND THE READ SUCCEEDS — what is unresolved is what the number "
                   "means. vePENDLE holders who converted received a BOOSTED sPENDLE balance of up to 4x, "
                   "decaying over roughly two years, and Pendle's docs separately describe a 'virtual "

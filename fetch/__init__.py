@@ -31,6 +31,7 @@ from .dune import Dune
 from .gaps import detect as detect_gaps
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
+from .nearblocks import NearBlocks
 from .llama import DefiLlama, MorphoBlueApi
 from .schedule import Schedule
 from .logscan import LogScan
@@ -51,6 +52,8 @@ TIER_ORDER = [
     ("morpho_api", 1, lambda ctx: MorphoBlueApi()),
     # Chain activity — daily active addresses and transaction count, free and unauthenticated.
     ("growthepie", 1, lambda ctx: GrowThePie()),
+    # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
+    ("nearblocks", 1, lambda ctx: NearBlocks()),
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
