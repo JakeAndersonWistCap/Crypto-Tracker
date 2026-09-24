@@ -14856,3 +14856,27 @@ def test_a_counted_transfer_with_no_timestamp_is_refused_not_zero_filled(monkeyp
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert "last on 2026-09-01" in line, line
     print("logscan ok: undated transfers refused; last counted transfer date logged")
+
+
+def test_sky_burn_address_balance_is_blocked_with_the_two_spell_burns_named():
+    """Sky's Pause Proxy total is two unrelated spell burns, 426,292,860.23 (2025-06-26,
+    emissions offset) + 2,860,943.76 (2026-09-10, Stage 2). It fed A4's headline as one
+    buy-and-burn. Blocked, and the flow differenced from it with it."""
+    import build_workbook as bw
+    asof = pd.Timestamp("2026-09-24")
+
+    def mk(m, v, d="2026-09-24"):
+        return dict(date=pd.Timestamp(d), project="Sky", metric=m, value=v,
+                    source="chain:ethereum:burn_logs", tier=2, is_manual=False)
+
+    hist = pd.DataFrame([mk("burn_address_balance", 2_860_943.76, "2026-09-23"),
+                         mk("burn_address_balance", 429_153_803.99),
+                         mk("gross_burn_tokens", 426_292_860.23)])
+    o = bw.aggregate(hist, pd.DataFrame(), asof)
+    for m in ("burn_address_balance", "gross_burn_tokens"):
+        r = o[(o.project == "Sky") & (o.metric == m)].iloc[0]
+        assert r["status"] == "blocked" and r["now"] is None, (m, r["status"], r["now"])
+        assert ("429.15M is not a single figure — 2,860,943.76 genuine Stage 2 burn + "
+                "426,292,860.23 unrelated 2025 emissions-offset correction from the same spell, "
+                "see config note") in r["note"], r["note"]
+    print("sky ok: the Pause Proxy total and its flow are blocked, both burns named")

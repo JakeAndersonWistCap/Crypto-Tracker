@@ -418,16 +418,6 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
             f"this project's destination is in doubt, so no figure is shown whatever the store "
             f"holds. {disputed.get('why', '')}").strip()
 
-    # 4b. REAL BUT UNCLASSIFIED. The figure passed every check and its meaning is undecided —
-    #     Sky's other_burn_balance, confirmed by the supply identity and dominated by migration
-    #     plumbing (config Sky.classification_pending). Blanked like the rest: a reader acts on
-    #     the number under the label, and the label is what is not settled.
-    pending = config.classification_pending(project, metric)
-    if pending:
-        return "blocked", (
-            f"BLOCKED — {pending['reason']}. Cleared by: "
-            f"{pending.get('resolves_when', 'see config')}.")
-
     # 5. TWO MEASURING POINTS. A window spanning the change reports the move between two different
     #    addresses as though it were a flow.
     points = row.get("measuring_points") or ()
@@ -521,6 +511,17 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
                 f"assumed. The reading may be real; it is not this metric. {mech.get('note') or ''} "
                 f"Source: {mech.get('source_url') or mech.get('source_note') or 'see burn_mechanism in config'}. "
                 f"Clear the superseded rows; the adapter already refuses to write new ones.").strip()
+
+    # 8b. REAL BUT UNCLASSIFIED. After REFUTED: a mechanism that does not exist outranks a
+    #     figure whose label is undecided. The figure passed every check and its meaning is undecided —
+    #     Sky's other_burn_balance, confirmed by the supply identity and dominated by migration
+    #     plumbing (config Sky.classification_pending). Blanked like the rest: a reader acts on
+    #     the number under the label, and the label is what is not settled.
+    pending = config.classification_pending(project, metric)
+    if pending:
+        return "blocked", (
+            f"BLOCKED — {pending['reason']}. Cleared by: "
+            f"{pending.get('resolves_when', 'see config')}.")
 
     # 9. THE STORED STOCK IS OUTSIDE ITS DECLARED BOUND. Added 2026-09-24.
     #    fetch.validate rejects an out-of-bound value at WRITE time, and cannot reach a row

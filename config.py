@@ -1403,7 +1403,7 @@ def classification_pending(project_name: str, metric: str) -> dict | None:
     label is not. Read by build_workbook.withheld_for, which blanks the cell with the reason.
     """
     rec = (PROJECT_BY_NAME.get(project_name) or {}).get("classification_pending") or {}
-    return rec if metric in (rec.get("metrics") or ()) else None
+    return (rec.get("metrics") or {}).get(metric)
 
 
 def destination_disputed(project_name: str, metric: str) -> dict | None:
@@ -10030,14 +10030,46 @@ PROJECTS = [
         # staking plumbing rather than Sky's token economics, and a sheet that shows it as
         # "SKY destroyed" invites a reading nobody has agreed to. Withheld (status "blocked")
         # until the split below is decided — build_workbook.withheld_for, case 5.
+        #
+        # ** burn_address_balance JOINED IT THE SAME DAY. ** It is the Pause Proxy's total, and
+        # the Pause Proxy has burned twice for two unrelated reasons (burn_logs
+        # .pause_proxy_burns_on_file): 426,292,860.23 in the 2025-06-26 spell to offset reward
+        # emissions, and 2,860,943.76 in the 2026-09-10 spell, the first Stage 2 burn. Summed,
+        # they fed archetype 4's headline as though they were one buy-and-burn — ~150x the real
+        # Stage 2 figure. gross_burn_tokens is differenced from that total, so it goes too.
         "classification_pending": {
-            "metrics": ("other_burn_balance", "other_burn_tokens"),
-            "reason": ("10.57bn confirmed real by supply identity; dominated by two "
-                       "migration-infrastructure senders (identified 2026-09-24, classification "
-                       "pending), see config note"),
+            "metrics": {
+                "burn_address_balance": {
+                    "reason": ("429.15M is not a single figure — 2,860,943.76 genuine Stage 2 "
+                               "burn + 426,292,860.23 unrelated 2025 emissions-offset correction "
+                               "from the same spell, see config note"),
+                    "resolves_when": "never as one figure: the Stage 2 leg is "
+                                     "sky_stage2_burn_balance, the 2025 burn is a footnote",
+                },
+                "gross_burn_tokens": {
+                    "reason": ("differenced from burn_address_balance, which is blocked: 429.15M "
+                               "is not a single figure — 2,860,943.76 genuine Stage 2 burn + "
+                               "426,292,860.23 unrelated 2025 emissions-offset correction from "
+                               "the same spell, see config note"),
+                    "resolves_when": "never as one figure: the Stage 2 flow is "
+                                     "sky_stage2_burn_tokens",
+                },
+                "other_burn_balance": {
+                    "reason": ("10.57bn confirmed real by supply identity; dominated by two "
+                               "migration-infrastructure senders (identified 2026-09-24, "
+                               "classification pending), see config note"),
+                    "resolves_when": "the split (Pause Proxy / migration infrastructure / "
+                                     "long-tail reverse conversion) is decided and wired",
+                },
+                "other_burn_tokens": {
+                    "reason": ("differenced from other_burn_balance: 10.57bn confirmed real by "
+                               "supply identity; dominated by two migration-infrastructure "
+                               "senders (identified 2026-09-24, classification pending), see "
+                               "config note"),
+                    "resolves_when": "the same as other_burn_balance",
+                },
+            },
             "since": "2026-09-24",
-            "resolves_when": "the three-way split (Pause Proxy / migration infrastructure / "
-                             "long-tail reverse conversion) is decided and wired",
             "senders": {
                 # SOURCES READ 2026-09-24, not recalled. The transaction itself could not be
                 # opened from this environment (etherscan.io is blocked by the egress proxy), so
