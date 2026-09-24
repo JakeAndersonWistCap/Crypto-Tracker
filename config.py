@@ -5552,7 +5552,12 @@ PROJECTS = [
             "route_that_would_work": "read docs.aethir.com/aethir-staking/staking-key-information from a host that can reach it and take the Arbitrum contract from there; then an escrow_balance_of read on ATH (contracts.token_arbitrum) against it.",
         },
         "coingecko_id": "aethir",
-        "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
+        # ===== FEES SLUG WIRED 2026-09-24, ON JAKE'S INSTRUCTION — UNCONFIRMED UNTIL A LIVE RUN. =====
+        # api.llama.fi is unreachable from the build environment, so the slug has not answered
+        # yet. The first live run settles it: an "aethir:dailyFees" line at status ok in the Run
+        # Log, and fees_usd rows in the store. A failure there means the slug is wrong, not that
+        # Aethir has no fees — see customer_revenue_route.confirm_on_first_live_run.
+        "defillama_fees_slug": "aethir", "defillama_protocol": None, "defillama_chain": None,
         # ===== customer_revenue_usd: A FREE ROUTE EXISTS AND IS NOT WIRED. Found 2026-09-23. =====
         # DefiLlama's fees adapter for Aethir (dimension-adapters/fees/aethir, Arbitrum, from
         # 2024-07-22) sums DepositServiceFee minus WithdrawServiceFee on AethirCore, in ATH, and
@@ -5566,7 +5571,12 @@ PROJECTS = [
         # defillama_fees_slug stays None until confirmed; then customer_revenue_usd is a
         # restatement of fees_usd, exactly GEODNET's shape.
         "customer_revenue_route": {
-            "status": "FOUND, NOT WIRED — needs a live fetch to confirm before the slug is set",
+            "status": "WIRED 2026-09-24 — UNCONFIRMED until the first live run answers",
+            "confirm_on_first_live_run": "Run Log: 'aethir:dailyFees' at status ok, and "
+                                         "fees_usd + customer_revenue_usd rows for Aethir in the "
+                                         "store. Then set this status to confirmed with the run "
+                                         "id. If dailyFees FAILS, the slug is wrong: unset it "
+                                         "rather than leave a restatement of nothing.",
             "candidate_slug": "aethir",
             "adapter": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/aethir/index.ts",
             "measures": "DepositServiceFee - WithdrawServiceFee on AethirCore (arbitrum "
@@ -5578,6 +5588,47 @@ PROJECTS = [
             "wire_as": "defillama_fees_slug 'aethir' for fees_usd, then a restatement "
                        "customer_revenue_usd = fees_usd carrying the prepayment caveat in the "
                        "label",
+            "wired_on": "2026-09-24",
+        },
+        # ===== customer_revenue_usd IS fees_usd, IN GEODNET'S SHAPE. 2026-09-24. =====
+        # Aethir is archetype 2 only, so fees_usd is fetched and has no column of its own — the
+        # Morpho case. Restated, not recomputed; the caveat travels on the label to the cell.
+        "metric_restatement": {
+            "customer_revenue_usd": {
+                "equals": "fees_usd",
+                "why": "DefiLlama's aethir adapter books developer service-fee deposits into "
+                       "AethirCore, net of withdrawals, as Fees — the only published measure of "
+                       "what Aethir's customers pay. It is the same series, said plainly; there "
+                       "is no second source to cross-check it against.",
+                "label": "End-user spend — THE SAME SERIES AS fees_usd, from DefiLlama's aethir adapter: DepositServiceFee minus WithdrawServiceFee on AethirCore (Arbitrum). That is PREPAYMENT NET OF WITHDRAWALS into the service-fee escrow, not metered consumption: it LEADS actual GPU usage and CAN GO NEGATIVE in a withdrawal-heavy period. Slug wired 2026-09-24; not settled until a live run answers.",
+                "recorded_on": "2026-09-24",
+            },
+        },
+        "defillama_fees_evidence": {
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/aethir/index.ts",
+            "read_on": "2026-09-23",
+            "formula": "dailyFees = sum(DepositServiceFee.amount) - sum(WithdrawServiceFee.amount) "
+                       "on AethirCore 0x226DC7D2AA1F9a565e82faf04772FDbBaF2da42d (arbitrum), in "
+                       "ATH; dailyRevenue = dailyProtocolRevenue = 0.2 x fees",
+            "allow_negative_value": True,
+            "fees_are_derived_from_the_burn": False,
+            "consequence": "fees_usd leads consumption (it is prepayment) and can be negative on "
+                           "a day withdrawals exceed deposits. revenue_usd is the same series x "
+                           "0.2, not independent; it is stored but Aethir has no archetype-3 "
+                           "column for it.",
+        },
+        # ===== THE FLOOR IS MOVED BECAUSE ZERO IS NOT A FLOOR OF THIS QUANTITY. 2026-09-24. =====
+        # The library bound for fees_usd is [0, 1e11]. The adapter declares allowNegativeValue:
+        # true, so a withdrawal-heavy day is a real negative figure, and under a 0 floor it would
+        # be REJECTED — dropped from the store, leaving the trailing-30-day sum made of the
+        # positive days only: an upward bias with no visible cause. This is a declared bound for
+        # a quantity whose range the source documents, not tolerance on the check; the check
+        # still refuses anything outside it with zero tolerance. Symmetric with the ceiling: a
+        # net-withdrawal day is held to the same magnitude as a deposit day.
+        "sanity": {
+            "fees_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
+            "revenue_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
+            "customer_revenue_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
         },
         # ARCHETYPE 2 ONLY. ARCHETYPE 3 IS REFUTED, NOT HELD — and the distinction matters because
         # "held" means "pending evidence" and the evidence is in. There is NO revenue-to-token
@@ -14114,6 +14165,31 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 #             the error of two independently-sourced stocks. Primary only where no measured
 #             route exists.
 # =======================================================================================
+# ===== emissions_tokens IS NOT ALIASED TO pool_release_tokens. DECIDED 2026-09-24, NOT DEFERRED. =====
+# Proposed 2026-09-23 (Part A2 of the eleven-project round), declined the same day with the
+# reason below, and the refusal CONFIRMED by Jake on 2026-09-24. Recorded as a decision so a
+# later pass reading "emissions_tokens gaps while pool_release_tokens fills" does not take it for
+# an oversight and add the one-line restatement. The Gap Report row for emissions_tokens on these
+# projects names pool_release_tokens as the measured release, which is what it is.
+EMISSIONS_ALIAS_DECLINED = {
+    "decision": "emissions_tokens is NOT restated from pool_release_tokens on any project",
+    "projects": ("Chainlink", "GEODNET", "Maple", "Hyperliquid", "Aethir"),
+    "proposed_on": "2026-09-23",
+    "decided_on": "2026-09-24",
+    "decided_by": "Jake",
+    "status": "DECIDED — not deferred, not pending evidence",
+    "why": "pool_release_tokens = d(circulating) - d(total) counts every pre-minted token entering "
+           "circulation: investor, team and ecosystem unlocks as well as reward distribution. It "
+           "is a CEILING on emissions, not emissions. An alias would display an unlock-inclusive "
+           "figure in an emissions cell as if it were emissions.",
+    "what_stands_instead": "the emissions_tokens gap reason names pool_release_tokens as the "
+                           "measured release and says why it is not copied (fetch/gaps.py, "
+                           "distributed_from_premint branch)",
+    "reopen_only_if": "a project's release is shown to be emissions ALONE — no unlock of any "
+                      "other allocation in the window — from the project's own schedule. Not "
+                      "because the emissions cell is empty.",
+}
+
 POOL_RELEASE_ROUTES = {
     "Chainlink": {
         "wallet": "staking_reward_vault 0x996913c8c08472f584ab8834e925b06D0eb1D813",

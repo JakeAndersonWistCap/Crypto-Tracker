@@ -13256,7 +13256,70 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
     assert cands["defillama_staking_owner"]["address"] == "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE"
     assert cands["checker_node_license_nft"]["address"] == "0xC227e25544EdD261A9066932C71a25F4504972f1"
     assert set(a["contracts"]) == {"token_arbitrum"}, "no candidate became a contract"
-    assert a["defillama_fees_slug"] is None and a["customer_revenue_route"]["candidate_slug"] == "aethir"
+    assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
     g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
     print("2026-09-23 round ok: closures, blocked rows and research records all land, nothing wired unverified")
+
+
+def test_aethir_customer_revenue_is_fees_restated_with_the_prepayment_caveat_on_the_cell():
+    """Wired 2026-09-24 on instruction: defillama_fees_slug 'aethir', customer_revenue_usd restated
+    from fees_usd in GEODNET's shape. The caveat is ON THE METRIC — the label is what reaches the
+    cell — and the slug is recorded as unconfirmed until a live run answers.
+
+    ** THE FLOOR MOVES WITH IT. ** DefiLlama's adapter sets allowNegativeValue, and under the
+    library floor of 0 a net-withdrawal day would be REJECTED and the trailing sum would be made
+    of positive days only. The per-project bound keeps the negative day; the check keeps zero
+    tolerance at the new bound.
+    """
+    from fetch.base import FetchOutput, point
+    from fetch.validate import validate_frame
+    from fetch import _restate_metrics
+
+    a = config.PROJECT_BY_NAME["Aethir"]
+    assert a["defillama_fees_slug"] == "aethir"
+    assert "UNCONFIRMED" in a["customer_revenue_route"]["status"]
+    assert "aethir:dailyFees" in a["customer_revenue_route"]["confirm_on_first_live_run"]
+    label = config.metric_label("Aethir", "customer_revenue_usd")
+    for phrase in ("DepositServiceFee minus WithdrawServiceFee", "PREPAYMENT NET OF WITHDRAWALS",
+                   "LEADS actual GPU usage", "CAN GO NEGATIVE"):
+        assert phrase in label, phrase
+    assert config.metric_restatements("Aethir")["customer_revenue_usd"]["equals"] == "fees_usd"
+    assert a["defillama_fees_evidence"]["allow_negative_value"] is True
+
+    day = pd.Timestamp("2026-09-20")
+    frame = pd.concat([point("Aethir", "fees_usd", 41_000.0, "defillama:aethir", 1, day),
+                       point("Aethir", "fees_usd", -12_500.0, "defillama:aethir", 1, day + pd.Timedelta(days=1))],
+                      ignore_index=True)
+    out = FetchOutput()
+    kept = validate_frame(frame, {}, out)
+    assert len(kept) == 2, "a net-withdrawal day is a real figure and must be stored"
+    assert not [r for r in out.review if r["reason"] == "out_of_bounds"]
+    # the library floor still holds everywhere else
+    assert config.sanity_bounds("GEODNET", "fees_usd")[0] == 0
+
+    out2 = FetchOutput()
+    out2.add(kept, "defillama", "Aethir", "fees", 1)
+    _restate_metrics(out2, [a])
+    cr = out2.frame().query("metric == 'customer_revenue_usd'").sort_values("date")
+    assert list(cr.value) == [41_000.0, -12_500.0] and set(cr.source) == {"derived:=fees_usd"}
+
+    # an empty fees_usd gaps the restated row AS a restatement, naming the slug
+    from fetch.gaps import _tier_note
+    r, sug = _tier_note(a, "customer_revenue_usd", {})
+    assert r.startswith("= fees_usd") and "slug 'aethir'" in r and "no sources.yaml" not in r
+    print("aethir customer revenue ok: restated, caveat on the cell, negative days kept")
+
+
+def test_the_emissions_alias_is_a_recorded_decision_not_a_deferral():
+    """Declined 2026-09-23, confirmed by Jake 2026-09-24. Recorded so the empty emissions cell
+    beside a filled pool_release_tokens is never read as an oversight."""
+    from fetch.gaps import _tier_note
+    d = config.EMISSIONS_ALIAS_DECLINED
+    assert d["status"].startswith("DECIDED") and d["decided_on"] == "2026-09-24" and d["decided_by"] == "Jake"
+    assert "CEILING" in d["why"] and "unlock" in d["why"]
+    for name in d["projects"]:
+        assert "emissions_tokens" not in config.metric_restatements(name), name
+        r, _ = _tier_note(config.PROJECT_BY_NAME[name], "emissions_tokens", {})
+        assert "DECIDED 2026-09-24, not deferred" in r and "EMISSIONS_ALIAS_DECLINED" in r, name
+    print("emissions alias ok: declined, recorded as decided, reason names it")

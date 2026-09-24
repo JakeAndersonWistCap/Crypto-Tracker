@@ -740,7 +740,7 @@
   method: dom
   anchor: null                                      # TODO the label text beside the figure
   added: 2026-09-11
-  note: "End-user revenue in dollars, not token flow. CHECKED 2026-09-23: a FREE route exists and is not wired — DefiLlama's fees adapter for aethir measures developer service-fee deposits (net of withdrawals) on AethirCore, Arbitrum, in ATH; see customer_revenue_route in config.py. Not promoted until it fetches on a live run; this scrape stub stays disabled and is not the route."
+  note: "End-user revenue in dollars, not token flow. CHECKED 2026-09-23: a FREE route exists and is not wired — DefiLlama's fees adapter for aethir measures developer service-fee deposits (net of withdrawals) on AethirCore, Arbitrum, in ATH; see customer_revenue_route in config.py. WIRED 2026-09-24 as defillama_fees_slug 'aethir' with customer_revenue_usd restated from fees_usd; unconfirmed until a live run answers. This scrape stub stays disabled and is not the route."
 - project: Venice AI
   metric: net_mint_monthly
   tier: 3

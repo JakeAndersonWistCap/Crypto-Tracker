@@ -240,6 +240,18 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     blocked = project.get(f"{metric}_blocked")
     if blocked:
         return _format_blocked(blocked)
+    # ===== A RESTATED COLUMN GAPS BECAUSE ITS SOURCE COLUMN DID. Added 2026-09-24. =====
+    # It fell through to "no sources.yaml entry", which sends the reader to build a source for a
+    # column that is by declaration a copy. It points at the column it copies instead.
+    restated = config.metric_restatements(name).get(metric)
+    if restated:
+        src = restated["equals"]
+        slug = project.get("defillama_fees_slug")
+        via = (f" via DefiLlama slug {slug!r}" if slug and src in ("fees_usd", "revenue_usd") else "")
+        return (f"= {src} — this column is a RESTATEMENT of {src}{via}, not a separate "
+                f"measurement, and {src} produced nothing this run. {restated.get('why', '')}",
+                f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
+                f"Log for the {src} fetch{via}.")
 
     # ===== THE BUYBACK PAIR ANSWERS FROM ITS ROUTE, NEVER FROM "no contract of kind ...". =====
     # Added 2026-09-23. Seven projects gapped on actual_buyback_* with variants of "no contract
@@ -283,13 +295,17 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 # team and ecosystem unlocks as well as reward distribution, so it is a ceiling on
                 # emissions rather than emissions — a restatement would put unlock figures in an
                 # emissions cell as a displayed number. The row points; it does not copy.
+                # DECIDED, not deferred: config.EMISSIONS_ALIAS_DECLINED (2026-09-24).
                 if "pool_release_tokens" in config.metrics_for_project(project):
+                    decided = config.EMISSIONS_ALIAS_DECLINED
                     return (f"NOT MINTING — the supply already exists and is being RELEASED, and the "
                             f"release IS measured on this project: pool_release_tokens = "
                             f"d(circulating_supply) - d(total_supply), the tokens leaving pre-minted "
                             f"pools each period. {note} That figure is a CEILING on emissions, not "
                             f"emissions itself — it also carries investor, team and ecosystem "
-                            f"unlocks, which is why this column is not aliased to it. DefiLlama's "
+                            f"unlocks, which is why this column is not aliased to it (DECIDED "
+                            f"{decided['decided_on']}, not deferred — see "
+                            f"EMISSIONS_ALIAS_DECLINED in config.py). DefiLlama's "
                             f"unlocks feed is the wrong shape for either quantity: the Pro tier "
                             f"would not answer this.{caveat}",
                             "Read pool_release_tokens for the release (if that row is empty, its "
