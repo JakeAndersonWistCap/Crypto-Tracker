@@ -4659,8 +4659,8 @@ PROJECTS = [
                 # FOR THE RECORD ONLY (Jake, 2026-09-24) — not pursued, per the standing decision.
                 # Addresses as reported, truncated; nothing is wired from them.
                 "behavioural_candidates_2026_09_24": [
-                    {"address_prefix": "0x8f10b468", "distinct_senders": 5_641, "code": True},
-                    {"address_prefix": "0x5fe84b85", "distinct_senders": 5_793, "code": True},
+                    {"address_prefix": "0x8f10b468…", "distinct_senders": 5_641, "code": True},
+                    {"address_prefix": "0x5fe84b85…", "distinct_senders": 5_793, "code": True},
                 ],
                 "published_total_staked": "none found: console.geodnet.com and docs.geodnet.com are "
                                           "unreachable from here, and no aggregator or GitHub "
