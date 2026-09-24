@@ -217,11 +217,18 @@ class LogScan:
             by_party[party] += _amount(e)
         c_table = ", ".join(f"{a} {v / scale:,.2f}" for a, v in
                             sorted(by_party.items(), key=lambda kv: -kv[1])[:8]) or "none"
+        # WHEN THE COUNTED FLOW LAST MOVED, so a zero in the trailing window can be told apart
+        # from a scan that put its transfers somewhere else. Ether.fi, 2026-09-24: 18,982,711.90
+        # ETHFI counted and a 30-day cell of 0 — which is either "nothing arrived in 30 days" or a
+        # dating fault, and the log gave no way to say which.
+        dated = [e["timeStamp"] for e in counted if int(e.get("timeStamp") or 0) > 0]
+        last_moved = (pd.Timestamp(max(dated), unit="s").date().isoformat() if dated else "never")
         summary = (f"{key}: RECONCILED to the wei for {len(holders)} holder(s) at block "
                    f"{to_block:,}; served by {via} in {requests} request(s)"
                    + (f" after refusal(s): {'; '.join(refused)}" if refused else "")
-                   + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s) — "
-                     f"top counterparties: {c_table}. NOT counted: {u_table}.")
+                   + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
+                     f"last on {last_moved} — top counterparties: {c_table}. NOT counted: "
+                     f"{u_table}.")
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
 
@@ -234,6 +241,24 @@ class LogScan:
                     tiers_attempted="2",
                     suggestion=spec.get("hold_suggestion") or
                     "Declare count_from (with a source) for the senders that are purchases.")
+            return
+
+        # 5b. A TRANSFER THAT CANNOT BE DATED IS NOT STORED AS A ZERO ELSEWHERE.
+        # The daily series below buckets by timeStamp and zero-fills every other day. An event
+        # with no timestamp (0 after normalise) would land on 1970-01-01, outside any window, and
+        # leave the window reading a confident 0 while the total sat in the log — the exact
+        # "0 means nothing happened" misreading. Refused and gapped instead, with the count.
+        undated = [e for e in counted if int(e.get("timeStamp") or 0) <= 0]
+        if undated:
+            out.fail(SOURCE, name, f"{key}: {len(undated)} counted transfer(s) carry no "
+                                   f"timestamp — nothing stored. {summary}", TIER)
+            out.gap(name, metric,
+                    reason=(f"the {key} scan reconciles but {len(undated)} of {len(counted)} "
+                            f"counted transfer(s) came back with no timestamp from {via}, so "
+                            f"they cannot be put on a day. Stored nothing rather than a daily "
+                            f"series whose zeros would stand in for them."),
+                    tiers_attempted="2",
+                    suggestion="Check the explorer response's timeStamp field for these logs.")
             return
 
         # 6. THE DAILY SERIES, ZEROS INCLUDED.

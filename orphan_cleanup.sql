@@ -2912,3 +2912,54 @@ SELECT metric, source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last
  WHERE project = 'Pendle' AND metric IN ('locked_tokens', 'locked_tokens_shares')
  GROUP BY metric, source
  ORDER BY metric, first_date;
+
+-- ========================================================================================
+-- AK. Chainlink — actual_buyback_tokens "withdrawn" after the inflow scan.        2026-09-24
+--     AK1-AK2 LOOK. AK3 is the proposed DELETE, commented out.
+-- ========================================================================================
+-- The scan writes explorer:reserve_inflow, which the withdrawn guard already accepts. What it
+-- rejects is the RETIRED differencing route's rows, chain:ethereum:reserve:delta
+-- (cumulative_flow.buyback_fund_balance was set to "" on 2026-09-24). The scan writes daily rows
+-- through YESTERDAY and the store is keyed (date, project, metric), so it overwrote every delta
+-- row up to then — and any delta row dated on/after the scan's last day survived, is the
+-- newest row, and sets the status for the whole series.
+--
+-- SELF-HEALING, TOO: the next run on a LATER day writes the scan through that date and
+-- overwrites the leftover. A second run on the same day does not. AK3 clears it now.
+
+-- AK1. THE SOURCE CENSUS. Expected: explorer:reserve_inflow with many rows ending yesterday,
+--      and chain:ethereum:reserve:delta with one or two rows at the newest date(s). The SUM of
+--      the explorer rows equals the log's 6,047,475.54 only if the run stored full history
+--      (no window); a windowed run stores the last N days.
+SELECT source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date, SUM(value) AS total
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric = 'actual_buyback_tokens'
+ GROUP BY source
+ ORDER BY last_date;
+
+-- AK2. THE ROWS AK3 WOULD DELETE — every retired-route row still in the store.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric = 'actual_buyback_tokens'
+   AND source LIKE 'chain:ethereum:reserve:delta%'
+ ORDER BY date;
+
+-- AK3. THE PROPOSED DELETE. Only after AK1-AK2 read as expected.
+-- DELETE FROM metrics
+--  WHERE project = 'Chainlink' AND metric = 'actual_buyback_tokens'
+--    AND source LIKE 'chain:ethereum:reserve:delta%';
+
+-- ========================================================================================
+-- AL. Ether.fi — actual_buyback_tokens renders 0. READ ONLY; nothing to delete.   2026-09-24
+-- ========================================================================================
+-- Not a first-observation problem: this series is not differenced from anything. The inflow
+-- scan writes one row per day from the wallet's first transfer, zero-filled, and the cell is
+-- the trailing-30-day sum of those rows. A 0 means every stored day in the window is 0.
+-- AL1 shows whether the 18,982,711.90 is in the store at all and on which days; the run log's
+-- "last on YYYY-MM-DD" (added 2026-09-24) gives the date of the latest counted transfer.
+SELECT source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date,
+       SUM(value) AS total, SUM(CASE WHEN value > 0 THEN 1 ELSE 0 END) AS nonzero_days,
+       MAX(CASE WHEN value > 0 THEN date END) AS last_nonzero_date
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric = 'actual_buyback_tokens'
+ GROUP BY source;

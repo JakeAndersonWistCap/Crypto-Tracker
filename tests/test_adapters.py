@@ -14790,3 +14790,66 @@ def test_explorer_scan_budget_is_total_across_both_providers(monkeypatch):
     assert msg.startswith("explorer scan timed out after 0s, provider errors:") and "etherscan" in msg, msg
     assert calls == ["https://etherscan.test"], f"blockscout must never start: {calls}"
     assert config.EXPLORER_SCAN_BUDGET_S == 120
+
+
+def test_chainlink_withdrawn_is_a_leftover_retired_route_row_not_the_scan_source():
+    """3. Chainlink actual_buyback_tokens rendered "withdrawn" after the inflow scan reconciled.
+
+    NOT an unrecognised source: the scan writes explorer:reserve_inflow, which the guard already
+    accepts (only chain: sources are checked for re-purposed contracts). The cause is a row from
+    the RETIRED differencing route, chain:ethereum:reserve:delta, dated on or after the scan's
+    last day. The scan writes through YESTERDAY, the store is keyed (date, project, metric), so
+    every older delta row was overwritten and that one was not — and the latest row sets status.
+    """
+    import build_workbook as bw
+    asof = pd.Timestamp("2026-09-24")
+
+    def mk(d, v, s):
+        return dict(date=pd.Timestamp(d), project="Chainlink", metric="actual_buyback_tokens",
+                    value=v, source=s, tier=2, is_manual=False)
+
+    rows = {pd.Timestamp(d): mk(d, v, "chain:ethereum:reserve:delta")
+            for d, v in [("2026-09-22", 1000.0), ("2026-09-23", 0.0), ("2026-09-24", 0.0)]}
+    for d in pd.date_range("2026-08-20", "2026-09-23"):
+        rows[d] = mk(d, 10.0, "explorer:reserve_inflow")            # the upsert overwrites
+    hist = pd.DataFrame(sorted(rows.values(), key=lambda r: r["date"]))
+    assert config.withdrawn_contract_keys("Chainlink", "actual_buyback_tokens",
+                                          "explorer:reserve_inflow") == []
+
+    def cell(h):
+        o = bw.aggregate(h, pd.DataFrame(), asof)
+        return o[(o.project == "Chainlink") & (o.metric == "actual_buyback_tokens")].iloc[0]
+
+    before = cell(hist)
+    assert before["status"] == "withdrawn" and before["now"] is None
+    assert before["source"] == "chain:ethereum:reserve:delta"
+    # orphan_cleanup.sql AK removes exactly the retired-route rows; then the scan renders.
+    after = cell(hist[hist.source != "chain:ethereum:reserve:delta"])
+    assert after["status"] == "ok" and after["source"] == "explorer:reserve_inflow"
+    assert after["now"] == 290.0, after["now"]      # 29 days of 10.0 in (asof-30d, asof]
+    print("chainlink ok: the leftover retired-route row caused 'withdrawn'; the scan source passes")
+
+
+def test_a_counted_transfer_with_no_timestamp_is_refused_not_zero_filled(monkeypatch):
+    """4. A daily scan series buckets by timeStamp and zero-fills the other days. An undated
+    counted transfer would land on 1970-01-01 and leave the window a confident 0 while the total
+    sat in the log. Refused and gapped instead."""
+    t0 = int(pd.Timestamp("2026-09-01").timestamp())
+    wallet, seller = "0x2f5301a3d59388c509c65f8698f521377d41fd0f", "0x00000000000000000000000000000000000000cc"
+    spec = {"key": "buyback_wallet_inflow", "metric": "actual_buyback_tokens", "chain": "ethereum",
+            "token": "0xtoken", "holders": [wallet], "direction": "in", "store": True}
+    E = 10 ** 18
+    out = _run_scan(monkeypatch, spec,
+                    _flow_logs(wallet, [(100, seller, 5 * E, t0), (200, seller, 2 * E, 0)]),
+                    {wallet: 7 * E}, name="Ether.fi")
+    assert out.frame().empty, "an undated transfer must not become a zero-filled series"
+    gap = next(g for g in out.gaps if g["metric"] == "actual_buyback_tokens")
+    assert "no timestamp" in gap["reason"] and "1 of 2" in gap["reason"], gap["reason"]
+
+    # And when every transfer is dated, the log says when the counted flow last moved — the
+    # line that tells a real 30-day zero from a misplaced one.
+    out = _run_scan(monkeypatch, spec, _flow_logs(wallet, [(100, seller, 5 * E, t0)]),
+                    {wallet: 5 * E}, name="Ether.fi")
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert "last on 2026-09-01" in line, line
+    print("logscan ok: undated transfers refused; last counted transfer date logged")
