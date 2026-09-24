@@ -8252,11 +8252,13 @@ PROJECTS = [
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
                 # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
-                # arithmetic is also available as check_offline_items.hyperliquid_supply_convention:
-                # the same three numbers, the Assistance Fund balance and CoinGecko's total, with
-                # the verdict printed. total_supply_convention is declared from the pasted output,
-                # not by the script.
-                "offline_check": "check_offline_items.py — hyperliquid_supply_convention",
+                # convention arithmetic was settled offline instead — the same three numbers, the
+                # Assistance Fund balance and CoinGecko's total, by hand from pasted output.
+                # RETIRED 2026-09-24: check_offline_items.hyperliquid_supply_convention re-tested
+                # a question the switch above already settled (supply_reference_note.status);
+                # its recurring "NEITHER" verdict on the unrelated, never-to-be-reconciled gap
+                # (supply_reference_note.gap_2026_09_24) read as an open problem when it wasn't
+                # one, so the check was removed rather than left to keep re-asking it.
                 "decimals_from": {
                     "request": {"type": "spotMeta"},
                     "list_path": "tokens",

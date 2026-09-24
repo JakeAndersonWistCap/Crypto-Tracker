@@ -14155,6 +14155,92 @@ def test_beaconchain_measured_figure_suppresses_that_days_issuance_derivation(mo
         "the derivation must not add a second row once beaconchain has already answered"
 
 
+def test_beaconchain_check_makes_no_unauthenticated_baseline_call(monkeypatch):
+    """429, not 401 — Jake's read. Auth was fine; the free tier's 10 req/min quota (beaconcha.in's
+    OpenAPI spec) was spent by an unauthenticated epoch/latest probe run immediately before the
+    real call. That probe served no purpose once the key was confirmed working, so it is gone —
+    this test proves it: the check must issue exactly ONE request, to ethstore/latest, never to
+    epoch/latest, key set or not."""
+    import check_offline_items as coi
+
+    monkeypatch.setenv("BEACONCHAIN_API_KEY", "testkey")
+    calls = []
+
+    class _Resp:
+        status_code = 200
+        text = '{"status":"OK","data":[]}'
+        def json(self):
+            return {"status": "OK", "data": []}
+
+    def fake_get(url, headers=None, timeout=None, **_):
+        calls.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(coi.requests, "get", fake_get)
+    coi.beaconchain()
+
+    assert calls == ["https://beaconcha.in/api/v1/ethstore/latest"], \
+        f"expected exactly one call, to ethstore/latest — got {calls}"
+
+
+def test_beaconchain_check_retries_429_twice_then_reports_the_final_status(monkeypatch):
+    """A short, narrow retry — a few seconds, one or two attempts — scoped to this one endpoint's
+    429, never a blind retry against an API in general. First two calls come back 429 (quota);
+    the third succeeds, and the check must not give up after the first 429."""
+    import check_offline_items as coi
+
+    monkeypatch.setenv("BEACONCHAIN_API_KEY", "testkey")
+    slept = []
+    monkeypatch.setattr(coi.time, "sleep", lambda s: slept.append(s))
+
+    class _Resp:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+            self.text = str(body)
+        def json(self):
+            return self._body
+
+    responses = [_Resp(429, {}), _Resp(429, {}), _Resp(200, {"status": "OK", "data": []})]
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None, **_):
+        calls.append(url)
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(coi.requests, "get", fake_get)
+    coi.beaconchain()
+
+    assert len(calls) == 3, f"expected 3 attempts (2x 429 then success) — got {len(calls)}"
+    assert len(slept) == 2, f"expected exactly 2 retry waits — got {slept}"
+
+
+def test_beaconchain_check_stops_retrying_after_two_attempts(monkeypatch):
+    """At most two retries, per the user's instruction — a persistent 429 must not be retried
+    forever."""
+    import check_offline_items as coi
+
+    monkeypatch.setenv("BEACONCHAIN_API_KEY", "testkey")
+    monkeypatch.setattr(coi.time, "sleep", lambda s: None)
+
+    class _Resp:
+        status_code = 429
+        text = "rate limited"
+        def json(self):
+            raise ValueError("no body")
+
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None, **_):
+        calls.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(coi.requests, "get", fake_get)
+    coi.beaconchain()
+
+    assert len(calls) == 3, f"expected exactly 3 attempts total (1 + 2 retries) — got {len(calls)}"
+
+
 def _kill_network(monkeypatch, coi):
     """Every network path in check_offline_items empties or raises, so a filtered-run test
     exercises only the selection logic — never real network, and never a real RPC/API answer

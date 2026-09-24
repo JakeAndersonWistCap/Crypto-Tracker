@@ -56,6 +56,18 @@ The row is dated to day_start, normalised to midnight by tidy() like every other
 
 ** THE KEY NEVER REACHES A LOG. ** It travels only in the `apikey` header, and every message this
 module produces is scrubbed of it anyway.
+
+** RATE LIMIT: 10 REQUESTS/MINUTE PER IP, FREE TIER. ** Confirmed from beaconcha.in's own OpenAPI
+spec (gobitfly/eth2-beaconchain-explorer, static/openapi/bundled.yaml, read 2026-09-24): "The API
+is free to use under a fair use policy, with rate limits of 10 requests per minute per IP." The
+spec does not document a higher limit for a free-tier API key — only "higher usage plans" (paid)
+get one. Production cadence here is nowhere near that ceiling: exactly ONE project declares a
+`beaconchain` block (Ethereum, one metric), so `run()` makes exactly one call per scheduled run,
+and this tool runs at most once a day. `Http(min_interval=1.0, retries=2)` already retries 429
+with exponential backoff (fetch/base.py, honours Retry-After) for the rare case something else on
+the same IP has spent the quota. The 429 Jake hit was in check_offline_items.py's manual check —
+a raw requests.get with no Http wrapper and an unauthenticated baseline call immediately before
+the real one — not in this production path, which was never the source of that failure.
 """
 from __future__ import annotations
 

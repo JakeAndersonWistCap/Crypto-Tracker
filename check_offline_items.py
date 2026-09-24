@@ -1298,6 +1298,13 @@ def beaconchain():
     here, so this is a source reading, never a live confirmation, until this runs). This check IS
     that live confirmation: it makes the exact call the adapter makes, with
     BEACONCHAIN_API_KEY from .env, and prints the actual shape returned.
+
+    ** NO UNAUTHENTICATED BASELINE CALL. ** There used to be one, against /api/v1/epoch/latest,
+    run immediately before this. It served no purpose once the key was confirmed working, and on
+    the free tier's fair-use limit — 10 requests/minute per IP, beaconcha.in's own OpenAPI spec,
+    read 2026-09-24 — it was spending quota the very call this check exists to test then needed.
+    That is why Jake's run got a 429 here and not a 401: auth was fine, the budget wasn't. Cut
+    2026-09-24 rather than left to burn quota it has no use for.
     """
     head("BEACONCHA.IN — ETH.Store, the wired route for Ethereum's consensus-layer issuance")
     try:
@@ -1308,25 +1315,30 @@ def beaconchain():
     key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
     print(f"  BEACONCHAIN_API_KEY: {'set' if key else 'NOT SET'}")
 
-    print("\n  unauthenticated baseline (epoch/latest, no key needed per the free-tier policy):")
-    try:
-        r = requests.get("https://beaconcha.in/api/v1/epoch/latest", timeout=TIMEOUT)
-        print(f"    HTTP {r.status_code}  {r.text[:200]}")
-    except Exception as e:  # noqa: BLE001
-        print(f"    UNREACHABLE — {e}")
-
     if not key:
         print("\n  NO KEY SET — cannot exercise the authenticated route. Set BEACONCHAIN_API_KEY "
               "in .env and re-run.")
         return
 
+    # 429 on this endpoint means quota, not a broken key — the free tier's fair-use limit is 10
+    # requests/minute per IP (beaconcha.in's OpenAPI spec, read 2026-09-24), tight enough that one
+    # earlier call this run, or a neighbour on the same IP, can exhaust it. A SHORT, NARROW retry:
+    # only on 429, only here, at most twice — never a blind retry against an API in general.
     print("\n  THE WIRED CALL — GET /api/v1/ethstore/latest, header apikey: ***:")
-    try:
-        r = requests.get("https://beaconcha.in/api/v1/ethstore/latest",
-                         headers={"apikey": key}, timeout=TIMEOUT)
-    except Exception as e:  # noqa: BLE001
-        print(f"    UNREACHABLE — {e}")
-        return
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.get("https://beaconcha.in/api/v1/ethstore/latest",
+                             headers={"apikey": key}, timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            print(f"    UNREACHABLE — {e}")
+            return
+        if r.status_code != 429 or attempt == 2:
+            break
+        wait = 5 * (attempt + 1)
+        print(f"    HTTP 429 — quota, not a bad key. Retrying in {wait}s "
+              f"(attempt {attempt + 1}/2)…")
+        time.sleep(wait)
     print(f"    HTTP {r.status_code}")
     try:
         body = r.json()
@@ -1886,134 +1898,12 @@ def maple_transparency():
     print("\n  PASTE BACK. Promotion to primary waits on this output.")
 
 
-HYPE_INFO = "https://api.hyperliquid.xyz/info"
-HYPE_ASSISTANCE_FUND = "0xfefefefefefefefefefefefefefefefefefefefe"
-
-
-def _hl_info(body: dict):
-    r = requests.post(HYPE_INFO, json=body, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r.json()
-
-
-def hyperliquid_supply_convention():
-    """The total_supply convention, settled by arithmetic — Part E of the 2026-09-23 round.
-
-    gross_issuance_tokens for Hyperliquid is blocked on one question: is CoinGecko's total_supply
-    NET of the Assistance Fund burn or GROSS of it? The two issuance formulas differ by the whole
-    burn, so nothing is assumed. tokenDetails is Hyperliquid's OWN supply figure; the AF balance
-    is the burn; CoinGecko's total is the provider's. Six numbers, one subtraction, and the
-    verdict follows the same rule as fetch/hypercore.py._token_details — plus the inverted case
-    that method does not name (Hyperliquid's fees page, read literally, says AF HYPE leaves
-    total supply, which would make THEIR figure the net one).
-
-    api.hyperliquid.xyz returns 000 from the build environment, which is why this lives here.
-    total_supply_convention is declared in config.py from the pasted output — never by script.
-    """
-    head("Hyperliquid — total_supply convention (tokenDetails vs Assistance Fund vs CoinGecko)")
-    try:
-        meta = _hl_info({"type": "spotMeta"})
-        tok = next((t for t in meta.get("tokens", []) if t.get("name") == "HYPE"), None)
-        if not tok:
-            print(f"  spotMeta carries no token named HYPE — names seen: "
-                  f"{[t.get('name') for t in meta.get('tokens', [])][:12]}")
-            return
-        token_id = tok.get("tokenId")
-        det = _hl_info({"type": "tokenDetails", "tokenId": token_id})
-        mx, tot, circ = (float(det[k]) for k in ("maxSupply", "totalSupply", "circulatingSupply"))
-        st = _hl_info({"type": "spotClearinghouseState", "user": HYPE_ASSISTANCE_FUND})
-        af = next((float(b.get("total") or b.get("balance") or 0.0)
-                   for b in st.get("balances", []) if b.get("coin") == "HYPE"), None)
-        print(f"  tokenId (spotMeta)                {token_id}   weiDecimals {tok.get('weiDecimals')}")
-        print(f"  tokenDetails.maxSupply            {mx:>24,.4f}")
-        print(f"  tokenDetails.totalSupply          {tot:>24,.4f}")
-        print(f"  tokenDetails.circulatingSupply    {circ:>24,.4f}")
-        print(f"  tokenDetails.futureEmissions      {det.get('futureEmissions')}")
-        print(f"  Assistance Fund HYPE (spotClearinghouseState) "
-              f"{'(no HYPE balance row)' if af is None else f'{af:,.4f}'}")
-        print(f"  total - circulating               {tot - circ:>24,.4f}")
-        print(f"  max - total                       {mx - tot:>24,.4f}")
-    except Exception as e:  # noqa: BLE001
-        print(f"  UNREACHABLE — {e}")
-        return
-    try:
-        cg = requests.get("https://api.coingecko.com/api/v3/coins/hyperliquid",
-                          params={"localization": "false", "tickers": "false", "market_data": "true",
-                                  "community_data": "false", "developer_data": "false"},
-                          timeout=TIMEOUT)
-        cg.raise_for_status()
-        md = cg.json().get("market_data") or {}
-        provider_total, provider_circ = md.get("total_supply"), md.get("circulating_supply")
-    except Exception as e:  # noqa: BLE001
-        print(f"  CoinGecko UNREACHABLE — {e}; the tokenDetails numbers above still stand")
-        return
-    print(f"  CoinGecko total_supply            {provider_total if provider_total is None else f'{float(provider_total):>24,.4f}'}")
-    print(f"  CoinGecko circulating_supply      {provider_circ if provider_circ is None else f'{float(provider_circ):>24,.4f}'}")
-    if provider_total is None or af is None:
-        print("  NO VERDICT: one of the two comparison sides is missing.")
-        return
-    gap = tot - float(provider_total)
-    tol = max(1.0, abs(tot) * 0.001)
-    print(f"  tokenDetails.total - CoinGecko.total = {gap:,.4f}   (tolerance {tol:,.2f}; AF = {af:,.4f})")
-    if abs(gap - af) <= tol:
-        verdict = ("net_of_burn — Hyperliquid's totalSupply EXCEEDS CoinGecko's by the AF balance: "
-                   "CoinGecko subtracts the burn; issuance = d(supply) + burn")
-    elif abs(gap) <= tol:
-        verdict = "gross — the two AGREE; neither subtracts the AF; issuance = d(supply) alone"
-    elif abs(gap + af) <= tol:
-        verdict = ("INVERTED — CoinGecko's total EXCEEDS Hyperliquid's by the AF balance: "
-                   "Hyperliquid's own totalSupply is the net one (their fees page taken literally) "
-                   "and CoinGecko's is gross")
-    else:
-        verdict = ("NEITHER — the difference matches neither the burn nor zero nor minus the burn; "
-                   "something else sits between the two figures. Do NOT pick the closer one")
-    print(f"  VERDICT: {verdict}")
-
-    # ===== THE FOURTH HYPOTHESIS: futureEmissions. Added 2026-09-24. =====
-    # The three-way test came back NEITHER (43,605,256 on Jake's run). The question now is what
-    # "totalSupply" means beside futureEmissions — whether it already excludes them, and whether
-    # max - total - future reconciles to anything measured. Every identity is PRINTED WITH ITS
-    # NUMBERS; one is flagged only if it matches to the same tolerance as above. Nothing chosen.
-    try:
-        fut = float(det.get("futureEmissions"))
-    except (TypeError, ValueError):
-        print(f"  futureEmissions not numeric ({det.get('futureEmissions')!r}) — fourth test skipped")
-        fut = None
-    if fut is not None:
-        cg_t = float(provider_total)
-        cg_c = None if provider_circ is None else float(provider_circ)
-        rows = [
-            ("M - T            (gone from max)", mx - tot),
-            ("M - T - F", mx - tot - fut),
-            ("T - F            (total net of future emissions)", tot - fut),
-            ("T - F - C", tot - fut - circ),
-            ("T - C            (non-circulating inside total)", tot - circ),
-            ("M - F", mx - fut),
-        ]
-        print("\n  FOURTH HYPOTHESIS — futureEmissions (F). M=max, T=total, C=circulating, A=AF.")
-        for label, v in rows:
-            print(f"    {label:<50} {v:>22,.4f}")
-        # What the unexplained gap (T - CoinGecko) and CoinGecko's total might equal.
-        cands = {"F": fut, "M - T": mx - tot, "M - T - F": mx - tot - fut, "T - F - C": tot - fut - circ,
-                 "A": af, "F - A": fut - af, "M - T + A": mx - tot + af}
-        print(f"  gap = T - CoinGecko.total = {gap:,.4f}. Against each candidate (|gap - x|):")
-        for k, v in cands.items():
-            hit = "  <-- MATCH" if abs(gap - v) <= tol else ""
-            print(f"    {k:<12} {v:>22,.4f}   diff {abs(gap - v):>18,.4f}{hit}")
-        print(f"  CoinGecko.total against: M - F {abs(cg_t - (mx - fut)):,.4f} | T - F "
-              f"{abs(cg_t - (tot - fut)):,.4f} | T - A {abs(cg_t - (tot - af)):,.4f} | M - A "
-              f"{abs(cg_t - (mx - af)):,.4f}")
-        if cg_c is not None:
-            print(f"  CoinGecko.circulating - C = {cg_c - circ:,.4f}")
-    print("  Paste this block back. total_supply_convention is declared in config.py from it.")
-
-
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
-    uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
+    uniswap_firepit_threshold, beaconchain,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency,
