@@ -3195,7 +3195,7 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
     """
     windows = {
         ("2026-02-01", "2026-03-31"): "spans the 2026-03-14 Layer 1 cut",
-        ("2025-09-01", "2025-11-30"): "spans the 2025-10-30 Layer 2 change",
+        ("2025-09-01", "2025-11-30"): "spans the 2025-11-03 Layer 2 change",
         ("2025-06-01", "2025-08-31"): "before 2025-10-30 — neither layer dated",
         ("2026-06-15", "2026-09-12"): "spans the Executive Proposal",
     }
@@ -3206,13 +3206,16 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
     # inside one period now resolves to Layer 1 x Layer 2, Layer 2 being 1.00 throughout both.
     assert config.split_for_window("Sky", "2025-11-15", "2026-02-15")["share_to_buyback"] == 0.75
     assert config.split_for_window("Sky", "2026-03-28", "2026-06-26")["share_to_buyback"] == 0.075
+    assert config.split_for_window("Sky", "2026-08-01", "2026-08-16")["share_to_buyback"] == 0.075
     # THE 55/45 PERIOD STILL RESOLVES AT 0.55 — it was SUPERSEDED on 2026-09-14, not deleted, and
     # a window lying entirely inside it must still get its figure. Dating a regime out of the
     # present must not erase it from the past.
+    # STAGE 2 IS ON-CHAIN FROM 2026-08-17 (Splitter File burn=55%), so a window after it resolves
+    # to 27.5% — the 0.55 period of 2026-08-13 was the Layer 2 figure alone and is gone.
     live = config.split_for_window("Sky", "2026-08-20", "2026-09-12")
-    assert live["share_to_buyback"] == 0.55, f"the superseded period must still resolve: {live}"
-    assert live["status"] == "superseded", \
-        f"status should now say superseded rather than active: {live['status']!r}"
+    assert live["share_to_buyback"] == 0.275 and live["status"] == "active", live
+    assert config.split_for_window("Sky", "2026-08-10", "2026-08-20")["share_to_buyback"] is None, \
+        "a window across the 2026-08-17 File event holds two regimes"
 
     # STAGE 2, live from 2026-09-14. share_to_buyback is the SKY-BUYING share (22.5% + 5%), NOT
     # the 5% burn leg — the burn is only part of what is bought.
@@ -3222,9 +3225,8 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
     # ** A WINDOW SPANNING THE BOUNDARY MUST NOT SILENTLY PICK ONE. ** 2026-09-13 is the last day
     # of the 55/45 and 2026-09-14 the first of Stage 2, so a window covering both contains two
     # regimes and cannot resolve to a single share.
-    spanning = config.split_for_window("Sky", "2026-09-10", "2026-09-20")
-    assert spanning["share_to_buyback"] is None, \
-        f"a window spanning the Stage 2 boundary must not resolve to one share: {spanning}"
+    # 2026-09-14 is the FIRST BURN, not a split boundary — a window across it is one regime.
+    assert config.split_for_window("Sky", "2026-09-10", "2026-09-20")["share_to_buyback"] == 0.275
 
     # THE ALLOCATION ITSELF: the three legs sum to the stated 50% of Net Protocol Surplus, and the
     # burn leg is 5% — separate from the 22.5% that buys SKY and hands it to stakers.
@@ -6600,7 +6602,8 @@ def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share
     # quarterly reporting — and the formula now multiplies THAT. The old behaviour is still the
     # behaviour for any project that declares the uncertainty without declaring a base.
     base = config.revenue_base("Sky")
-    assert base["metric"] == "net_protocol_surplus_usd" and base["effective_from"] == "2026-09-14"
+    assert base["metric"] == "net_protocol_surplus_usd" and base["effective_from"] == "2026-08-17", \
+        "Stage 2's on-chain date (Splitter File burn=55%), not the first burn of 2026-09-14"
     assert b["status"] == "confirmed_different", \
         "the two quantities are still different — resolving the base does not map them together"
 
@@ -6614,11 +6617,11 @@ def test_sky_revenue_base_uncertain_suppresses_implied_buyback_but_not_the_share
         # number by a share that had not been announced.
         bw._WINDOWS["q1"] = ("2026-05-01", "2026-08-01")
         out = bw.base_gated(sky, "NPS*SHARE", window="q1")
-        assert "2026-09-14" in out and "ends before it" in out, out
+        assert "2026-08-17" in out and "ends before it" in out, out
 
         # A WINDOW THAT SPANS THE BOUNDARY: grey too, and it says which. Part one regime and part
         # the other; no single share describes it.
-        bw._WINDOWS["q2"] = ("2026-09-01", "2026-10-01")
+        bw._WINDOWS["q2"] = ("2026-08-01", "2026-09-01")
         spanning = bw.base_gated(sky, "NPS*SHARE", window="q2")
         assert "spans that date" in spanning, spanning
 
@@ -13755,9 +13758,12 @@ def test_the_four_projects_of_2026_09_24_land_as_found():
     assert ref["cumulative_pct_of_supply"] == 0.0051 and ref["governance_figure"]["cumulative_pct_of_supply"] == 0.013
 
     sky = config.PROJECT_BY_NAME["Sky"]["sbe_allocation_layers"]["layer_2"]
-    burns = {r["spell"]: r["burn"] for r in sky["splitter_burn_from_spells"]}
-    assert burns["2024-09-13"] == 1.0 and burns["2025-10-30"] == 1.0 and burns["2026-08-13"] == 0.55
-    assert burns["2025-08-21"] == 0.25
+    # Replaced 2026-09-24 by the on-chain File events; each keeps the spell it executes.
+    ev = sky["splitter_file_events"]
+    burns = {r["date"]: r["burn"] for r in ev if "burn" in r}
+    assert burns["2024-09-17"] == 1.0 and burns["2025-11-03"] == 1.0 and burns["2026-08-17"] == 0.55
+    assert burns["2025-08-25"] == 0.25 and "2026-03-14" not in burns, "03-14 is a hop change only"
+    assert {r["spell"] for r in ev} >= {"2025-10-30", "2026-08-13"}
     q = next(o for o in config.OPEN_QUESTIONS if o["project"] == "Sky" and "lssky" in o["topic"])
     assert q["status"] == "closed" and "1:1 RECEIPT" in q["resolution"]
 

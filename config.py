@@ -9731,95 +9731,73 @@ PROJECTS = [
             "status": "active",
             "destination_split": 0.55,
             "history": [
-                # ===== LAYER 1 DATED, 2026-09-24 — AND EACH SHARE BELOW IS LAYER 1 x LAYER 2. =====
-                # Layer 1 (share of protocol surplus reaching the Smart Burn Engine), from Sky
-                # Frontier Foundation's own Q1 2026 release (PRNewswire, 2026-04-29): "Token buyback
-                # allocations were reduced from 75% to 7.5% of protocol surplus on an interim
-                # basis". Effective date 2026-03-14 from sagix.io's Sky analysis (the release
-                # reports the cut with Q1 results; it does not date it). Supplied by Jake.
-                # Layer 2 (share of each SBE cycle sent to SKY buybacks) is the Splitter's `burn`,
-                # from the spells — sbe_allocation_layers.layer_2.splitter_burn_from_spells. It was
-                # 1.00 from the 2025-10-30 spell to the 2026-08-13 spell, so across both periods
-                # below the combined share IS the Layer 1 figure.
+                # ===== EACH SHARE BELOW IS LAYER 1 x LAYER 2 — A PRODUCT, NOT A COINCIDENCE. =====
+                # Layer 1 = the share of protocol surplus that reaches the Splitter at all.
+                # Layer 2 = the Splitter's `burn`: the share of each cycle it sends to SKY
+                # buybacks. Dates are ON-CHAIN, from the Splitter's own File events (Jake's
+                # sky_splitter_history run, 2026-09-24 — sbe_allocation_layers.layer_2).
                 #
-                # CORROBORATION, NOT PROOF: the 2026-03-12 spell (executing after the governance
-                # delay, i.e. about 2026-03-14) cut the flap rate ~79% (hop x4.8) with burn
-                # unchanged. Same week, same direction; not the same size (75 -> 7.5 is 90%).
+                #   period                   Layer 1             Layer 2 (burn)   product
+                #   2025-11-03 .. 2026-03-13 75% of surplus   x  100%          =  75%
+                #   2026-03-14 .. 2026-08-16 7.5% of surplus  x  100%          =  7.5%
+                #   2026-08-17 ..            50% of NPS       x  55%           =  27.5%
                 #
-                # WHY NOTHING BEFORE 2025-10-30 IS FILLED: Layer 2 changed on that spell (0.25 ->
-                # 1.00) and several times before it, and "reduced from 75%" establishes 75% as the
-                # level BEFORE THE CUT, not when it began. A window earlier than 2025-10-30 would
-                # need both, and neither is dated.
-                _split_period(None, "2025-10-29", None, "unconfirmed",
-                              note="Layer 2 varied (spells: 1.00 / 0.70 / 1.00 / 0.50 / 0.25) and "
-                                   "Layer 1's 75% is sourced only as the level immediately before "
-                                   "the 2026-03-14 cut, not its start. Not filled."),
-                _split_period("2025-10-30", "2026-03-13", 0.75, "superseded",
+                # ** LAYER 2 WAS PINNED AT 100% FROM 2025-11-03 TO 2026-08-16 AND NEVER MOVED TO
+                # 75% OR 7.5%. ** Those two figures are entirely Layer 1, multiplied by a steady
+                # 100%. The 2026-03-14 File event is a hop change only (10,249s family -> 13,787s);
+                # burn stayed 100%. Anyone matching 75%/7.5% against the Splitter's burn will not
+                # find them there, and should not conclude the history is wrong.
+                #
+                # LAYER 1 SOURCE: Sky Frontier Foundation's Q1 2026 release (PRNewswire,
+                # 2026-04-29): allocations "reduced from 75% to 7.5% of protocol surplus on an
+                # interim basis"; the cut executed 2026-03-14 (sagix.io), the same day as the
+                # Splitter's hop File event. Stage 2 states 27.5% of NPS directly (@SkyEcosystem).
+                #
+                # STAGE 2 HAS THREE REAL DATES, AND ONLY ONE IS THE BOUNDARY:
+                #   2026-08-13  governance vote passed (the Executive Vote carrying Stage 2)
+                #   2026-08-17  ON-CHAIN: File(burn = 55%, hop = 3,748s) executed after the
+                #               governance delay                           <- THE BOUNDARY
+                #   2026-09-14  first burn completed under the new regime (2,860,000 SKY)
+                # The 2026-08-13 period at 0.55 is gone: 0.55 was the Layer 2 figure alone, and
+                # from 2026-08-17 the product is Stage 2's 27.5%.
+                #
+                # NOTHING BEFORE 2025-11-03 IS FILLED: Layer 2 was 25% from 2025-08-25 and moved
+                # several times before that, and "reduced from 75%" dates 75% only as the level
+                # before the cut, not when it began.
+                _split_period(None, "2025-11-02", None, "unconfirmed",
+                              note="Layer 2 varied (100/70/100/50/25% — File events) and Layer 1's "
+                                   "75% is sourced only as the level before the 2026-03-14 cut."),
+                _split_period("2025-11-03", "2026-03-13", 0.75, "superseded",
                               source_url="https://www.prnewswire.com/ (Sky Frontier Foundation Q1 2026 "
-                                         "release, 2026-04-29)",
+                                         "release, 2026-04-29); Splitter File events",
                               source_date="2026-04-29",
-                              note="Layer 1 75% of protocol surplus x Layer 2 1.00 (Splitter burn, "
-                                   "2025-10-30 spell). The start is the SPELL date; it executed after "
-                                   "the governance delay, so a window starting in the first days of "
-                                   "this period includes a few days at burn 0.25. The Splitter File "
-                                   "events (check_offline_items.sky_splitter_history) give the block."),
-                _split_period("2026-03-14", "2026-08-12", 0.075, "superseded",
+                              note="Layer 1 75% of protocol surplus x Layer 2 100% (File burn=100%, "
+                                   "2025-11-03)."),
+                _split_period("2026-03-14", "2026-08-16", 0.075, "superseded",
                               source_url="https://www.prnewswire.com/ (Sky Frontier Foundation Q1 2026 "
-                                         "release, 2026-04-29); date from sagix.io",
+                                         "release, 2026-04-29); date from sagix.io and the Splitter's "
+                                         "2026-03-14 File(hop) event",
                               source_date="2026-04-29",
-                              note="INTERIM: Layer 1 7.5% of protocol surplus x Layer 2 1.00. The "
-                                   "release: allocations 'to be restored to 25% each once the "
-                                   "Solvency Reserve reaches $125 million'. Replaces the 2026-04-30 "
-                                   "placeholder boundary and the known_change that kept this period "
-                                   "unconfirmed — the change is now dated and sized."),
-                _split_period("2026-08-13", "2026-09-13", 0.55, "superseded",
-                              source_url="https://messari.io/",
-                              source_date="2026-08-13", destination_split=0.55,
-                              note="Executive Proposal approved 2026-08-13: 55% of each Smart Burn Engine "
-                                   "CYCLE to SKY buybacks, 45% to LSSKY stakers. SUPERSEDED by "
-                                   "fee_split_v2 on 2026-09-14 — dated and kept, NOT deleted, because a "
-                                   "window spanning the boundary needs both regimes proportionally. "
-                                   "Messari cites the Executive Proposal directly; the primary forum URL "
-                                   "is still not captured. THE PRE-2026-08-13 SPLIT REMAINS UNDOCUMENTED "
-                                   "and is deliberately NOT backfilled with this figure. "
-                                   "LAYER 2 FIGURE, NOT LAYER 1 — see sbe_allocation_layers. This 55% is "
-                                   "how the SBE splits what it ALREADY RECEIVED (a per-cycle internal "
-                                   "split), not a share of NPS/protocol surplus. What fraction of "
-                                   "surplus reached the SBE at all during this window is NOT KNOWN "
-                                   "(Layer 1 is sourced only for pre-April 75% and the April interim "
-                                   "7.5% — see sbe_allocation_layers) — so 0.55 x revenue_usd is NOT "
-                                   "necessarily the right figure even once base_gated lifts; it may need "
-                                   "a Layer-1 discount this period's data does not yet supply. Flagged, "
-                                   "not fixed."),
-                # ===== STAGE 2, LIVE FROM 2026-09-14. PRIMARY-SOURCED, AND A DIFFERENT BASE. =====
+                              note="INTERIM: Layer 1 7.5% x Layer 2 100%. The release: allocations 'to "
+                                   "be restored to 25% each once the Solvency Reserve reaches $125 "
+                                   "million'."),
+                # ===== STAGE 2, ON-CHAIN FROM 2026-08-17. PRIMARY-SOURCED, AND A DIFFERENT BASE. =====
                 # share_to_buyback here is 0.275 — the share of Net Protocol Surplus that BUYS SKY,
                 # being the 22.5% staking-rewards leg PLUS the 5% burn leg. It is NOT 0.05: the
                 # burn is only part of what is bought.
-                #
-                # ** AND THE BASE CHANGED, NOT JUST THE PERCENTAGE. ** The old figure was 55% of
-                # each SMART BURN ENGINE CYCLE; this is 27.5% of MONTHLY NET PROTOCOL SURPLUS.
-                # Those are different quantities, so the two numbers are not comparable as rates
-                # and the fall from 55% to 27.5% is not a 2x cut in buying — it is a different
-                # fraction of a different base. See fee_split_v2 for the full allocation.
-                _split_period("2026-09-14", None, 0.275, "active",
+                _split_period("2026-08-17", None, 0.275, "active",
                               source_url="https://x.com/SkyEcosystem/status/2099488996099227965",
                               source_date="2026-09-14", destination_split=None,
                               note="STAGE 2, from Sky's own account: 50% of monthly Net Protocol Surplus "
                                    "allocated three ways — 22.5% SKY buybacks for SKY Staking Rewards, "
                                    "22.5% USDS Staking Rewards, 5% SKY buybacks AND BURNS. "
                                    "share_to_buyback = 0.275 is the SKY-BUYING share (22.5 + 5); only the "
-                                   "5% leg reduces supply. destination_split is None deliberately — a "
-                                   "three-way allocation has no single destination split, and forcing one "
-                                   "would merge a distribute leg with a burn leg. "
-                                   "LAYER 1 FIGURE — see sbe_allocation_layers. Stage 2 states its shares "
-                                   "DIRECTLY as a fraction of NPS, collapsing the old two-layer structure "
-                                   "(a share of surplus to the SBE, then the SBE's own internal split) "
-                                   "into one number. That is why 0.275 is comparable across periods only "
-                                   "with the base itself (NPS vs revenue_usd — see revenue_base_uncertain), "
-                                   "not with the 0.55 figure above, which described a different layer "
-                                   "entirely."),
+                                   "5% leg reduces supply. = Layer 1 50% x Layer 2 55%. Boundary "
+                                   "2026-08-17 is the on-chain File(burn=55%) event; vote 2026-08-13, "
+                                   "first burn 2026-09-14. destination_split is None deliberately — a "
+                                   "three-way allocation has no single destination split."),
             ],
-            "note": "This split has moved before and will move again — it moved again on 2026-09-14. "
+            "note": "This split has moved before and will move again — Stage 2 went on-chain 2026-08-17. "
                     "Each historical period is treated as potentially different from the current one; "
                     "undocumented periods are suppressed, never backfilled with today's number. "
                     "CURRENT REGIME IS STAGE 2 — see fee_split_v2, which carries the three-way "
@@ -10327,6 +10305,8 @@ PROJECTS = [
                               "2026-09-23 and unchanged",
                     "block": 26_039_143,
                     "as_of": "2026-09-23", "status": "confirmed_current",
+                    "reconfirmed": "2026-09-24 (Jake's probe): pip() still 0xc2ff…cdff, pair() "
+                                   "still matches",
                     "superseded": {"value": "0x61A12E5b1d5E9CC1302a32f0df1B5451DE6AE437",
                                    "what": "SWAP_ONLY_FLAP_SKY_ORACLE, per the 2024-09-27 executive vote",
                                    "note": "superseded — the vote no longer describes what is "
@@ -10347,6 +10327,10 @@ PROJECTS = [
                         "destroyed, which is why archetype 4 was removed and archetype 3 kept.",
                 "source_url": "https://vote.makerdao.com/", "as_of": "2026-09-14",
                 "status": "confirmed_current",
+                # CLOSED PERMANENTLY 2026-09-24: Flapper.receiver() read on-chain returns
+                # 0xbe8e3e3618f7474f8cb1d074a26affef007e98fb, an exact match for ChainLog
+                # MCD_PAUSE_PROXY (Jake's probe). A treasury landing spot, not a burn destination.
+                "onchain_read_2026_09_24": "receiver() = MCD_PAUSE_PROXY, exact ChainLog match",
             },
         },
         # protocol_level as of 2026-09-22: SKY.burn() destroys supply outright, so there is no
@@ -10553,7 +10537,7 @@ PROJECTS = [
                      "note": "quantifies the '~87% cut' already on file. 75% -> 7.5% is a 90% "
                              "reduction arithmetically; the ~87% report and the precise 75%/7.5% "
                              "figures are both kept, not reconciled by adjusting either."},
-                    {"period": "2026-09-14 (Stage 2)", "pct": 0.275, "of": "monthly Net Protocol "
+                    {"period": "2026-08-17 (Stage 2, on-chain; vote 08-13, first burn 09-14)", "pct": 0.275, "of": "monthly Net Protocol "
                      "Surplus", "note": "Stage 2 collapses Layer 1 and Layer 2 into one number "
                                         "stated directly as a fraction of NPS."},
                 ],
@@ -10565,43 +10549,37 @@ PROJECTS = [
                     {"period": "2026-08-13", "sky_buyback_pct": 0.55, "lssky_stakers_pct": 0.45,
                      "of": "each Smart Burn Engine cycle"},
                 ],
-                # ===== THE WHOLE LAYER 2 HISTORY, FROM THE SPELLS THAT SET IT. 2026-09-24. =====
-                # Splitter `burn` is the share of each SBE cycle sent to the flapper (SKY buybacks);
-                # the rest goes to the farm. Every value below is the literal
-                # DssExecLib.setValue(MCD_SPLIT, "burn", ...) — or the launch SplitterConfig — in
-                # sky-ecosystem/spells-mainnet, archive/<date>-DssSpell/DssSpell.sol. The date is
-                # the SPELL's; it executes after the governance delay, so the on-chain File event
-                # (check_offline_items.sky_splitter_history) gives the exact block. Two routes to
-                # one history; until the File events are read, the dates are spell dates.
-                "splitter_burn_from_spells": [
-                    {"spell": "2024-09-13", "burn": 1.00, "hop_s": 10_249, "note": "Splitter launched (SplitterConfig)"},
-                    {"spell": "2024-09-27", "burn": 1.00, "hop_s": 11_635},
-                    {"spell": "2024-10-17", "burn": 0.70, "hop_s": 15_649},
-                    {"spell": "2025-02-21", "burn": 1.00, "hop_s": 876},
-                    {"spell": "2025-03-06", "burn": 1.00, "hop_s": 2_160},
-                    {"spell": "2025-03-20", "burn": 1.00, "hop_s": 1_728},
-                    {"spell": "2025-04-03", "burn": 1.00, "hop_s": 1_235},
-                    {"spell": "2025-04-17", "burn": 1.00, "hop_s": 1_728},
-                    {"spell": "2025-05-29", "burn": 0.50, "hop_s": 1_728},
-                    {"spell": "2025-06-26", "burn": 0.50, "hop_s": 2_160},
-                    {"spell": "2025-08-21", "burn": 0.25, "hop_s": 2_160},
-                    {"spell": "2025-10-30", "burn": 1.00, "hop_s": 2_880},
-                    {"spell": "2026-03-12", "burn": 1.00, "hop_s": 13_787,
-                     "note": "hop x4.8 — the flap RATE fell ~79% with burn unchanged. A candidate "
-                             "for the April 2026 Layer 1 cut, NOT confirmed as it: Layer 1 is the "
-                             "share of surplus reaching the Splitter, not a Splitter parameter."},
-                    {"spell": "2026-08-13", "burn": 0.55, "hop_s": 3_748},
-                    {"spell": "2026-09-10", "burn": 0.55, "hop_s": 2_504},
+                # ===== THE WHOLE LAYER 2 HISTORY, ON-CHAIN. 2026-09-24. =====
+                # The Splitter's own File events (20 events: burn and hop), from Jake's run of
+                # check_offline_items.sky_splitter_history. These REPLACE the spell-dated table:
+                # each spell executes after the governance delay, and the File event is when the
+                # parameter actually changed. The spell each one executes is kept beside it.
+                # Rows showing only hop left burn unchanged, and vice versa.
+                "splitter_file_events": [
+                    {"date": "2024-09-17", "burn": 1.00, "hop_s": 10_249, "spell": "2024-09-13", "note": "launch"},
+                    {"date": "2024-09-30", "hop_s": 11_635, "spell": "2024-09-27"},
+                    {"date": "2024-10-21", "burn": 0.70, "hop_s": 15_649, "spell": "2024-10-17"},
+                    {"date": "2025-02-24", "burn": 1.00, "hop_s": 876, "spell": "2025-02-21"},
+                    {"date": "2025-03-10", "hop_s": 2_160, "spell": "2025-03-06"},
+                    {"date": "2025-03-24", "hop_s": 1_728, "spell": "2025-03-20"},
+                    {"date": "2025-04-07", "hop_s": 1_235, "spell": "2025-04-03"},
+                    {"date": "2025-04-21", "hop_s": 1_728, "spell": "2025-04-17"},
+                    {"date": "2025-06-02", "burn": 0.50, "hop_s": 2_160, "spell": "2025-05-29"},
+                    {"date": "2025-06-30", "hop_s": 2_160, "spell": "2025-06-26"},
+                    {"date": "2025-08-25", "burn": 0.25, "spell": "2025-08-21"},
+                    {"date": "2025-11-03", "burn": 1.00, "hop_s": 2_880, "spell": "2025-10-30"},
+                    {"date": "2026-03-14", "hop_s": 13_787, "spell": "2026-03-12",
+                     "note": "Layer 1's cut date (75% -> 7.5%). Layer 2 UNTOUCHED: burn stays 100%."},
+                    {"date": "2026-08-17", "burn": 0.55, "hop_s": 3_748, "spell": "2026-08-13",
+                     "note": "STAGE 2 ON-CHAIN. Vote 2026-08-13; first burn 2026-09-14."},
+                    {"date": "2026-09-13", "hop_s": 2_504, "spell": "2026-09-10"},
                 ],
-                "splitter_source": "https://github.com/sky-ecosystem/spells-mainnet/tree/master/archive",
+                "splitter_source": "Splitter File events via check_offline_items.sky_splitter_history "
+                                   "(Jake, 2026-09-24); spells from "
+                                   "https://github.com/sky-ecosystem/spells-mainnet/tree/master/archive",
                 "splitter_read_on": "2026-09-24",
-                "what_it_answers": "Layer 2 before 2026-08-13: 100% to buybacks from 2025-10-30 "
-                                   "(and 100/70/100/50/25 before that). NOT Layer 1 — the April "
-                                   "2026 cut in the share reaching the Splitter at all.",
-                "not_applied_to_fee_split": "fee_split.history is unchanged: the derived figure "
-                                            "needs BOTH layers for a window, and Layer 1's April "
-                                            "date is still open. Applying Layer 2 alone would "
-                                            "lift a suppression on half a split.",
+                "applied_to_fee_split": "YES, 2026-09-24 — each fee_split.history period is Layer 1 "
+                                        "x this burn; see the table above those periods.",
             },
             "source_url": "insights.skyeco.com (Q1 2026 reporting)",
             "source_date": "2026-09-18",
@@ -10695,7 +10673,11 @@ PROJECTS = [
             },
         },
         "fee_split_v2": {
-            "effective_date": "2026-09-14",
+            # ON-CHAIN 2026-08-17 (Splitter File burn=55%). Moved from 2026-09-14 on 2026-09-24:
+            # 09-14 is the first completed burn, 08-13 the vote. All three kept.
+            "effective_date": "2026-08-17",
+            "vote_date": "2026-08-13",
+            "first_burn_date": "2026-09-14",
             "basis": "50% of monthly Net Protocol Surplus, allocated three ways",
             "confidence": "PRIMARY — Sky's own account, not secondary commentary",
             "source_url": "https://x.com/SkyEcosystem/status/2099488996099227965",
@@ -10775,14 +10757,15 @@ PROJECTS = [
         # "uses the foundation for the bottom line, and DefiLlama to cross-check the savings cost."
         # That is the right structure — protocol's own figure as primary, DefiLlama to validate one
         # component — and is the model to follow once NPS has a recurring source.
-        # ===== THE BASE IS RESOLVED, AND ONLY FROM 2026-09-14. =====
+        # ===== THE BASE IS RESOLVED, AND ONLY FROM STAGE 2 (ON-CHAIN 2026-08-17). =====
         # revenue_base_uncertain below says the implied-buyback formula multiplies the wrong
         # quantity for Sky, and says why the two can never be mapped to one another. This is the
         # fix it names: the formula now multiplies net_protocol_surplus_usd, which is sourced in
         # its own right (manual_quarterly, from Sky's own reporting — see manual_overrides.csv).
         #
-        # ** EFFECTIVE FROM 2026-09-14 AND NOT ONE DAY EARLIER. ** The 27.5%/22.5%/5% allocation
-        # is Stage 2's, and Stage 2 began that day. Before it the 55% Smart Burn Engine regime
+        # ** EFFECTIVE FROM 2026-08-17 AND NOT ONE DAY EARLIER. ** The 27.5%/22.5%/5% allocation
+        # is Stage 2's, and Stage 2 went on-chain that day (Splitter File burn=55%; it was dated
+        # 2026-09-14, the first burn, until 2026-09-24). Before it the 55% Smart Burn Engine regime
         # applied and it was NOT an NPS share — it is a per-cycle internal split of what the SBE
         # had already received (see sbe_allocation_layers). Applying an NPS base to a window that
         # ended before Stage 2 would multiply the right number by a share that did not exist yet,
@@ -10811,7 +10794,9 @@ PROJECTS = [
         ],
         "revenue_base": {
             "metric": "net_protocol_surplus_usd",
-            "effective_from": "2026-09-14",
+            # 2026-08-17 since 2026-09-24: Stage 2's shares apply from the on-chain File event,
+            # not the first burn (2026-09-14). See fee_split.history.
+            "effective_from": "2026-08-17",
             "why": "Sky states Stage 2's shares as percentages of monthly Net Protocol Surplus, "
                    "which is a different quantity from DefiLlama's revenue_usd and cannot be "
                    "mapped to it — see revenue_base_uncertain for the evidence and the two "
@@ -11372,6 +11357,18 @@ PROJECTS = [
                 "as_of": "2026-09-23",
                 "source": "direct on-chain read via check_offline_items.py, both calls pinned to "
                           "block 26,039,143",
+            },
+            # ===== SECOND READ, 2026-09-24 (Jake), AND IT FELL. ===== Block 26,048,156: shares
+            # 30,342,785.11, assets 35,459,772.88, ratio 1.168639 — DOWN from 1.1731. Shares
+            # +31,978 while assets -97,775: a compounding share price does not fall without a
+            # loss, while a queue that pays out more than it takes in does exactly this (gap
+            # 5,246,741 -> 5,116,988). Jake read it as compounding and asked for a revert; the
+            # revert is HELD pending check_offline_items.pendle_compounding_ledger, which settles
+            # it from sPENDLE's own events to the wei. Nothing here changes until it has run.
+            "measured_2026_09_24": {
+                "shares": 30_342_785.11, "assets": 35_459_772.88, "ratio": 1.168639,
+                "block": 26_048_156, "direction_vs_2026_09_23": "DOWN (1.1731 -> 1.1686)",
+                "decides": "check_offline_items.py — pendle_compounding_ledger",
             },
             "naming_differs_from_etherfi": "Ether.fi: locked_tokens = SHARES, "
                                            "locked_tokens_underlying = assets. Pendle: "

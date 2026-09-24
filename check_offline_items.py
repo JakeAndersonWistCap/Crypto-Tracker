@@ -1154,6 +1154,98 @@ def pendle_spendle_virtual():
               f"settles it.")
 
 
+# ===== PENDLE — COMPOUNDING OR 1:1 PLUS A QUEUE? SETTLED BY sPENDLE'S OWN EVENT LEDGER. =====
+# Added 2026-09-24. Two readings of the same gap (PENDLE held above sPENDLE supply) disagree:
+#   COMPOUNDING  stake() mints fewer shares than PENDLE deposited; the gap is accrued yield.
+#   1:1 + QUEUE  stake() mints 1:1 (StakedPendle.sol: _transferIn then _mint(amount)); cooldown()
+#                BURNS the shares at once and the PENDLE leaves only at finalizeCooldown(), so
+#                the gap is PENDLE queued to leave.
+# Under 1:1 + QUEUE two identities hold TO THE WEI at one block, from events alone:
+#   (1) totalSupply = sum Staked - sum CooldownInitiated + sum CooldownCanceled
+#                     - sum instantUnstake gross (Unstaked with fee > 0: amountAfterFee + fee)
+#   (2) held - totalSupply = sum CooldownInitiated - sum CooldownCanceled
+#                            - sum finalized (Unstaked with fee == 0)
+# Under compounding (1) fails: minted shares would be below the Staked amounts. No tolerance.
+PENDLE_EVENTS = {
+    "Staked": "0x9e71bc8eea02a63969f509818f2dafb9254532904319f9dbda79b67bd34a5f3d",
+    "Unstaked": "0x7fc4727e062e336010f2c282598ef5f14facb3de68cf8195c2f23e1454b2b74e",
+    "CooldownCanceled": "0x526c2f609254f61e4f8ad7e187f5cd1a08553c70348f25168012b30ae57abf44",
+    "CooldownInitiated": "0x810500030f51f04e0a6a7c0323c84654a386b2572d248a7ae15432d4496cc9d1",
+}
+EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+
+
+def _words(data: str) -> list[int]:
+    body = (data or "0x")[2:]
+    return [int(body[i:i + 64], 16) for i in range(0, len(body), 64)]
+
+
+def pendle_compounding_ledger():
+    head("PENDLE — does sPENDLE compound, or is the gap an unstake queue? (event ledger, to the wei)")
+    block_hex, _ = eth_block_number()
+    if block_hex is None:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber.")
+        return
+    pin = int(block_hex, 16) - 20
+    pin_hex = hex(pin)
+    impl = None
+    for url in _rpcs_for("ethereum"):
+        try:
+            j = rpc(url, "eth_getStorageAt", [SPENDLE, EIP1967_IMPL_SLOT, pin_hex])
+            if "result" in j:
+                impl = as_address(j["result"])
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    print(f"  pinned to block {pin:,}; sPENDLE implementation (EIP-1967 slot): {impl or 'not read'}")
+    sup_w, _ = eth_call(SPENDLE, SEL_TOTAL_SUPPLY, pin_hex)
+    bal_w, _ = eth_call(PENDLE, SEL_BALANCE_OF + SPENDLE[2:].lower().rjust(64, "0"), pin_hex)
+    if not sup_w or not bal_w or sup_w == "0x" or bal_w == "0x":
+        print("  UNREACHABLE — totalSupply or balanceOf did not return.")
+        return
+    supply, held = int(sup_w, 16), int(bal_w, 16)
+    sums = {"Staked": 0, "CooldownInitiated": 0, "CooldownCanceled": 0,
+            "finalized": 0, "instant_gross": 0}
+    counts = {}
+    for name, topic in PENDLE_EVENTS.items():
+        logs, detail = explorer_logs(1, SPENDLE, [topic], 0)
+        if logs is None:
+            print(f"  {name}: UNAVAILABLE — {detail}. No verdict without every event type.")
+            return
+        logs = [lg for lg in logs if lg["blockNumber"] <= pin]
+        counts[name] = len(logs)
+        for lg in logs:
+            w = _words(lg["data"])
+            if name == "Unstaked":
+                after, fee = w[0], w[1]
+                if fee == 0:
+                    sums["finalized"] += after
+                else:
+                    sums["instant_gross"] += after + fee
+            else:
+                sums[name] += w[0]
+    print(f"  events to block {pin:,}: {counts}")
+    pred_supply = (sums["Staked"] - sums["CooldownInitiated"] + sums["CooldownCanceled"]
+                   - sums["instant_gross"])
+    pred_queue = sums["CooldownInitiated"] - sums["CooldownCanceled"] - sums["finalized"]
+    f = lambda v: f"{v / 1e18:,.6f}"
+    print(f"  totalSupply            {f(supply)}")
+    print(f"  PENDLE held            {f(held)}   held/supply {held / supply:.6f}")
+    print(f"  (1) supply from events {f(pred_supply)}   residual {supply - pred_supply} wei")
+    print(f"  (2) queue from events  {f(pred_queue)}   held - supply {f(held - supply)}   "
+          f"residual {(held - supply) - pred_queue} wei")
+    if supply == pred_supply and held - supply == pred_queue:
+        print("  VERDICT: 1:1 + QUEUE, PROVEN — every share was minted 1:1 and the whole gap is "
+              "PENDLE in cooldown. Nothing accrues to the share.")
+    elif supply == pred_supply:
+        print("  VERDICT: shares ARE minted 1:1 (identity 1 exact); the gap is the queue plus "
+              f"{f((held - supply) - pred_queue)} PENDLE that arrived without a stake() — "
+              "a direct transfer or a path the events above do not cover. Not compounding.")
+    else:
+        print("  VERDICT: identity (1) FAILS — shares were NOT minted 1:1 against Staked amounts. "
+              "Consistent with compounding (or a mint path not in these events). Paste back.")
+
+
 def uniswap_firepit_threshold():
     """The live threshold() on Uniswap's mainnet Fire Pit — governance STORAGE, not a constant.
 
@@ -1688,7 +1780,7 @@ CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
-    maple_dao_multisig, pendle_spendle_virtual, aerodrome_lock_inputs,
+    maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
     uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
     fluid_buyback_destination, aethir_staking_probe, geodnet_staking_candidates,
     maple_transparency,

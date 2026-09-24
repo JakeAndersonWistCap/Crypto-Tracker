@@ -1156,8 +1156,8 @@ def base_gated(project: dict, expr: str, window: str | None = None) -> str:
     # which metric that is and FROM WHEN.
     #
     # A WINDOW THAT ENDS BEFORE THE BASE TAKES EFFECT STAYS GREY, and a window that SPANS the
-    # boundary stays grey too. Sky's 27.5/22.5/5 allocation is Stage 2's and Stage 2 began
-    # 2026-09-14; before it the 55% figure was a per-cycle internal split of what the Smart Burn
+    # boundary stays grey too. Sky's 27.5/22.5/5 allocation is Stage 2's and Stage 2 went
+    # on-chain 2026-08-17 (config.revenue_base); before it the 55% figure was a per-cycle internal split of what the Smart Burn
     # Engine had already received, not a share of surplus. Applying an NPS base to those windows
     # multiplies the right number by a share that did not exist yet — which is the same class of
     # confidently-wrong figure this gate was built to stop, pointing the other way.
