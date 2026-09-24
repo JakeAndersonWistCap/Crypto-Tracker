@@ -3528,6 +3528,9 @@ PROJECTS = [
         # column expects has nothing to point at on an EVM chain; the mechanism that exists is a
         # Cardano validator address this tool has no adapter for.
         "locked_tokens_blocked": {
+            # ANSWERED 2026-09-24 (Jake): the route is a Cardano adapter this tool does not have,
+            # not something a run could fix. Ranks P5 and leaves the open count; the reason stays.
+            "answered": True,
             "status": "NOT READABLE HERE — the staking contract found is a Cardano Plutus validator, not an EVM escrow",
             "wanted": "WMTX staked to EarthNodes, as an escrow balance",
             "why": "World Mobile's own repository worldmobilegroup/wmt-staking-plutus-smart-contract is the EarthNode staking contract, and it is Cardano Plutus (validator address generated per instance — see its README). No EVM staking contract was found in any worldmobilegroup repository on 2026-09-23, and the docs site is unreachable from here. A Cardano validator balance needs a Cardano read, which this tool does not have.",
@@ -12544,125 +12547,35 @@ PROJECTS = [
             # an earlier reading of it as a current-state snapshot came from a partial column
             # list and was wrong, so Ether.fi's 3/6/9-month trajectory comes from real history,
             # not from points accumulating forward from install.
-            # ===== MOVED TO THE CROSS-CHECK METRIC, 2026-09-22 — NOT DELETED. =====
-            # This was locked_tokens, the headline lock figure, and it is now
-            # locked_tokens_dashboard, the cross-check. sETHFI.totalSupply() is read directly
-            # on-chain instead (contracts.sethfi_shares), because this series reports 1.58x more
-            # sETHFI than exists and 30,306,893 more ETHFI than the staking contract holds.
-            #
-            # KEPT, for two reasons that both argue against deleting it. Its history is the only
-            # long series on file for this figure, and a wrong number whose wrongness is
-            # CHARACTERISED is worth more than a deleted one — the 1.58x divergence now renders as
-            # a cross-check disagreement, which is a standing question on the sheet rather than a
-            # note in a config file. Its staleness also stops mattering here: a frozen cross-check
-            # is still a cross-check, which is what makes the tier-4 backfill-only behaviour
-            # harmless for it where it was crippling for the primary.
-            "locked_tokens_dashboard": {
-                "query_id": 8683038,
-                "date_col": "day",
-                "value_col": "staked_supply",
-                "granularity": "daily",
-                # ===== RE-PULLED WEEKLY, BECAUSE A FROZEN CROSS-CHECK STOPS BEING EVIDENCE. =====
-                # The note above says "a frozen cross-check is still a cross-check", and that was
-                # right about STALENESS — the disagreement does not stop being a disagreement — and
-                # wrong about what the series is FOR. This column exists to disagree with the
-                # contract read; a disagreement pinned to 2026-09-10 says nothing about whether
-                # the gap is widening, closing, or was a one-day artefact of the day it was pulled,
-                # and those have different answers about which figure to trust.
-                #
-                # SEVEN DAYS, measured from the newest STORED ROW rather than from when the query
-                # last ran — a query that executed yesterday and returned nothing new has
-                # refreshed nothing. It is a paid query asked once a week instead of once ever
-                # (the tier-4 backfill default) or once a day (what removing the skip would do).
-                #
-                # ** THE 1.58x DIVERGENCE IS NOT WHAT THIS RESOLVES AND MUST NOT BE READ AS IT. **
-                # 141,470,107.5 against 89,748,241.27 sETHFI, and 30,306,893 more ETHFI than the
-                # staking contract holds. That stays FLAGGED as a cross-check disagreement, which
-                # is a standing question on the sheet. Refreshing the series tells us whether the
-                # gap moves; it does not tell us which side is right, and nothing here decides that.
-                "refresh_days": 7,
-                "refresh_rationale": "a cross-check frozen at its first pull cannot show whether "
-                                     "the 1.58x gap is widening, closing or was a one-day "
-                                     "artefact. Weekly is the cadence at which that is legible "
-                                     "without paying for the query daily.",
-                # No drop_current_period: staked_supply is a STOCK, and a stock read part-way
-                # through a day is a valid reading of it. Dropping the current period is for
-                # FLOWS, where an incomplete period understates the total.
-                # ===== THE FLOW HALF IS DROPPED. 2026-09-23. =====
-                # agg_14 and agg_30 were staged as a candidate for the 30-day trajectory column.
-                # Every pull returned floating-point noise around zero (-5.8e-10, -2.4e-09) beside
-                # zeroed deposit/request/processed columns — see quality_warning — so what was
-                # being staged was not a series. Staging kept a dead candidate alive on the
-                # Staging tab; it is dropped rather than left to look like an option. The
-                # LOCK-RATE half (staked_supply, perc_staked, num_holders) is untouched.
-                "flow_half_dropped": {
-                    "on": "2026-09-23",
-                    "cols": ["agg_14", "agg_30"],
-                    "why": "inert on every pull — noise around zero, not a flow; a trajectory "
-                           "built on it would read as a flat, healthy series",
-                    "reopen_if": "the get_vault_details CTE casing is fixed on dune.com/queries/"
-                                 "8683038 and the flow columns carry values; then stage again "
-                                 "before promoting anything",
-                },
-                # Not mapped, and deliberately so: deposit_amount, deposit_users, request_amount,
-                # request_users, processed_amount and processed_users are withdrawal-queue flows.
-                # No metric in the library takes them, they read as inert (see quality_warning),
-                # and inventing a metric to hold a column is how a sheet fills up with numbers
-                # nobody chose.
-                "quality_warning": {
-                    "label": "the FLOW half of query 8683038 is inert — dropped from staging 2026-09-23",
-                    "reason": "In every sample row the deposit/request/processed amount and user columns are 0, "
-                              "and agg_14/agg_30 are floating-point noise (-5.8e-10, -2.4e-09) rather than "
-                              "values. Either there has genuinely been no vault activity, or the "
-                              "get_vault_details CTE is not matching rows — it filters strategy_symbol = "
-                              "'sethfi' in lowercase, a plausible case-sensitivity mismatch. Until that is "
-                              "settled, agg_14/agg_30 must NOT be promoted to the 30-day trajectory column: "
-                              "a trajectory built on noise around zero would read as a flat, healthy series.",
-                    "suggestion": "Check the strategy_symbol casing in the get_vault_details CTE on "
-                                  "dune.com/queries/8683038 against the underlying table, and confirm whether "
-                                  "vault activity is genuinely zero over the period. The LOCK-RATE half of "
-                                  "this query (staked_supply, perc_staked, num_holders) is unaffected and is "
-                                  "trusted — this warning is about the flow columns only.",
-                },
-                "source_url": "https://dune.com/queries/8683038",
-                "note": "Staked sETHFI, 141,470,107.5 as at 2026-09-10. "
-                        "** BOTH CLAIMS IN THE PREVIOUS VERSION OF THIS NOTE WERE WRONG, 2026-09-22. ** "
-                        "It said tier 4 is 'Ether.fi's ONLY automated route for this figure — there is no "
-                        "contract read for it'. There is: sETHFI.totalSupply(), on an address already in "
-                        "config, which had even been read by hand and recorded in lock_ratio.measured. And "
-                        "it said the figure was locked_tokens; it is now locked_tokens_dashboard, a "
-                        "cross-check, because 141,470,107.5 is 1.58x the sETHFI that exists (89,748,241.27 "
-                        "shares) and 30,306,893 more ETHFI than the staking contract holds. "
-                        "The tier-4 backfill-only skip that froze this series at 2026-09-10 is now "
-                        "harmless: a frozen cross-check is still a cross-check. It was only crippling while "
-                        "this was the primary.",
-            },
-            "lock_rate_pct": {
-                "query_id": 8683038,
-                "date_col": "day",
-                # perc_staked, NOT perc_staked_cnt. The two are the same measure on different
-                # scales — 0.17452 against 17.452 in every sample row — and this project stores
-                # percentages as FRACTIONS, displayed with a 0.0% format. Taking the _cnt column
-                # would put a figure 100x too large in the sheet while looking entirely plausible.
-                # The sanity bound below is the backstop: 17.452 fails it and would be rejected to
-                # the Review Queue rather than stored.
-                "value_col": "perc_staked",
-                "granularity": "daily",
-                "source_url": "https://dune.com/queries/8683038",
-                "note": "Share of ETHFI staked, as published, stored as a fraction (0.17452 = 17.452%). "
-                        "Both earlier ambiguities are resolved: the scale is a fraction, and '_cnt' marks "
-                        "the x100 variant of the same measure rather than a holder-count basis.",
-            },
-            "staker_count": {
-                "query_id": 8683038,
-                "date_col": "day",
-                "value_col": "num_holders",
-                "granularity": "daily",
-                "source_url": "https://dune.com/queries/8683038",
-                "note": "sETHFI holders, 13,011 as at 2026-09-10. A demand-side datapoint, not a supply one: "
-                        "it is never used in any float, lock-rate or net-supply calculation.",
-            },
+            # ===== DUNE 8683038 RETIRED FOR ETHER.FI, 2026-09-24 — Jake's call. =====
+            # Two reasons, either sufficient: all three of its metrics now fail on HTTP 402 (the
+            # account's billing cap), and its staked_supply was already suspect — 1.58x the
+            # sETHFI that exists and 30,306,893 more ETHFI than the staking contract holds (the
+            # P1 in OPEN_QUESTIONS, closed the same day by this retirement). The contracts give
+            # the measurement directly: contracts.sethfi_shares (sETHFI.totalSupply(), shares)
+            # and contracts.sethfi (ETHFI.balanceOf(sETHFI), assets), with lock_assets_per_share
+            # derived from the two. The three entries are kept below as a record, not as config.
             **_dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens"),
+        },
+        "retired_dune_queries": {
+            "query_id": 8683038,
+            "retired_on": "2026-09-24",
+            "retired_by": "Jake",
+            "why": "HTTP 402 on all three metrics (Dune billing cap), and staked_supply exceeded "
+                   "what the staking contract holds — the disagreement the P1 recorded. Retiring "
+                   "the disagreeing source settles the P1; it does not explain the difference.",
+            "metrics_it_served": {
+                "locked_tokens_dashboard": "staked_supply — the cross-check; the contract reads "
+                                           "are the measurement",
+                "lock_rate_pct": "perc_staked — the protocol-published rate; the Master tab's "
+                                 "'Lock rate = locked ÷ circulating' row is the computed one",
+                "staker_count": "num_holders — no contract equivalent; closed in UNAVAILABLE",
+            },
+            "flow_half": "agg_14/agg_30 were already dropped from staging (inert) on 2026-09-23",
+            "stored_rows": "orphan_cleanup.sql section AF — SELECT first, delete only on review",
+            "entries_as_they_were": "git show e4e19b1:config.py — the Ether.fi entry's "
+                                    "dune_queries.locked_tokens_dashboard, lock_rate_pct "
+                                    "and staker_count, with their mapping notes",
         },
         "materiality": "medium",
         "notes": "Buyback confirmed.",
@@ -14132,6 +14045,47 @@ UNAVAILABLE = [
             "fetch fault and this closure was wrong."),
     },
 
+    # ===== ETHER.FI'S THREE DUNE-ONLY METRICS — CLOSED WITH THE QUERY. 2026-09-24. =====
+    # Dune 8683038 is retired (see the Ether.fi entry's retired_dune_queries). Each of these had
+    # no route but that query. Closed rather than left as Dune gaps, because no Dune fix is
+    # coming: the billing cap is the account's, and the query was already the disagreeing source.
+    {
+        "project": "Ether.fi", "metric": "staker_count",
+        "closed_on": "2026-09-24",
+        "summary": "NOT READABLE ON-CHAIN. sETHFI's holder count is not a contract value — no "
+                   "function returns it — and its only route was Dune 8683038 (num_holders), "
+                   "now retired.",
+        "what_was_tried": "Dune 8683038 num_holders (retired 2026-09-24: HTTP 402, and the query "
+                          "was the source of the unexplained staked_supply excess). The sETHFI "
+                          "ABI has totalSupply and balanceOf, no holder count.",
+        "impact": "NONE on any supply figure. A demand-side datapoint that was never used in a "
+                  "float, lock-rate or net-supply calculation.",
+        "reopen_if": "a holder-count source that is not the retired query — an explorer's token "
+                     "holder count endpoint on a paid tier, or Ether.fi publishing it.",
+    },
+    {
+        "project": "Ether.fi", "metric": "lock_rate_pct",
+        "closed_on": "2026-09-24",
+        "summary": "The PROTOCOL-PUBLISHED lock rate had one route, Dune 8683038 (perc_staked), "
+                   "now retired. The lock rate itself is not lost: the Master tab computes "
+                   "'Lock rate = locked ÷ circulating' from the contract read.",
+        "what_was_tried": "Dune 8683038 perc_staked (retired). No contract publishes a rate.",
+        "impact": "The computed lock rate on the Master tab stands. This column was the "
+                  "protocol's OWN-denominator figure, a cross-check on it.",
+        "reopen_if": "Ether.fi publishes its staked share on a page robots.txt allows.",
+    },
+    {
+        "project": "Ether.fi", "metric": "locked_tokens_dashboard",
+        "closed_on": "2026-09-24",
+        "summary": "The dashboard cross-check was Dune 8683038's staked_supply — the figure that "
+                   "exceeded what the staking contract holds. Retired with the query; the "
+                   "contract reads are the measurement.",
+        "what_was_tried": "Dune 8683038 staked_supply, retired 2026-09-24.",
+        "impact": "NONE on locked_tokens, which is the on-chain read. The P1 this column carried "
+                  "is closed by the same retirement.",
+        "reopen_if": "a second, independent published figure for staked ETHFI appears.",
+    },
+
     # ===== active_addresses / tx_count — CLOSED ON THE API'S SHAPE. 2026-09-23. =====
     # Both gapped as "no sources.yaml entry", which reads as unfinished work. The info API was
     # checked for what it can return, and a chain-activity aggregate is not among its request
@@ -14794,7 +14748,19 @@ OPEN_QUESTIONS = [
     # ---------------------------------------------------------------- Ether.fi
     {
         "project": "Ether.fi",
-        "topic": "Dune's staked_supply EXCEEDS the ETHFI the staking contract actually holds — reconcile.",
+        "topic": "CLOSED 2026-09-24 — Dune's staked_supply EXCEEDED what the staking contract holds; "
+                 "settled by RETIRING Dune 8683038, not by explaining the difference.",
+        "status": "closed",
+        "closed_on": "2026-09-24",
+        "resolution": "The P1 existed only because two measurements of one quantity disagreed. With "
+                      "Dune 8683038 retired (HTTP 402 on all three of its metrics, and the "
+                      "disagreement below), the contract reads ARE the measurement — "
+                      "sETHFI.totalSupply() for shares and ETHFI.balanceOf(sETHFI) for assets, "
+                      "which is exactly what the suggestion below asked for — and there is "
+                      "nothing left to reconcile. ** THE DIFFERENCE WAS NEVER EXPLAINED. ** What "
+                      "staked_supply summed (a deposit cumulative, a multi-chain union, some "
+                      "other convention) is still unknown; it stopped mattering when the source "
+                      "did. If Dune 8683038 is ever brought back, this reopens with it.",
         "severity": 1,
         "reason": "Settling the compounding question produced a second, unasked-for finding, and it "
                   "is the one that decides what locked_tokens actually measures. "

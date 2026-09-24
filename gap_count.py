@@ -33,7 +33,13 @@ import config          # noqa: E402
 import store as store_mod  # noqa: E402
 from fetch import gaps as gap_detect  # noqa: E402
 
-ORDER = ["P1 critical", "P2 decision", "P3 fixable", "P4 fixable", "P5 by design", "P6 uncovered"]
+ORDER = ["P1 critical", "P2 decision", "P3 fixable", "P4 fixable", "P6 uncovered", "P5 answered"]
+# P5 IS LISTED, NEVER COUNTED AS OPEN (2026-09-24). Its rows carry their own conclusion — checked
+# and absent, refused by robots.txt, deliberately disabled, or pointing at the row that holds the
+# figure — see fetch/gaps.py ANSWERED_SIGNALS. "P5 by design" is the same class's old label, read
+# as P5 answered in an older baseline.
+ANSWERED = "P5 answered"
+OLD_LABELS = {"P5 by design": ANSWERED}
 
 
 def scope(use_all: bool) -> list[dict]:
@@ -53,13 +59,31 @@ def count(db: pathlib.Path, use_all: bool) -> dict:
     st = store_mod.Store(db)
     try:
         projects = scope(use_all)
-        rows = gap_detect.detect(projects, st.load_long(), set(), {}, [])
+        from fetch import registry_reasons        # noqa: PLC0415
+        rows = gap_detect.detect(projects, st.load_long(), set(), registry_reasons(), [])
     finally:
         st.close()
     by_pri = collections.Counter(r.get("priority_label") or "?" for r in rows)
-    by_metric = collections.Counter(r["metric"] for r in rows)
-    return {"total": len(rows), "projects": len(projects),
-            "by_priority": dict(by_pri), "by_metric": dict(by_metric)}
+    open_rows = [r for r in rows if r.get("priority_label") != ANSWERED]
+    by_metric = collections.Counter(r["metric"] for r in open_rows)
+    by_project = collections.Counter(r["project"] for r in open_rows)
+    return {"total": len(open_rows), "answered": len(rows) - len(open_rows),
+            "projects": len(projects), "by_priority": dict(by_pri),
+            "by_metric": dict(by_metric), "by_project": dict(by_project)}
+
+
+def _normalise(baseline: dict) -> dict:
+    """An older baseline, relabelled and re-totalled so it compares with this one: before
+    2026-09-24 the total counted P5 as open."""
+    b = dict(baseline)
+    pri = {}
+    for k, v in (b.get("by_priority") or {}).items():
+        pri[OLD_LABELS.get(k, k)] = pri.get(OLD_LABELS.get(k, k), 0) + v
+    b["by_priority"] = pri
+    if "answered" not in b:
+        b["answered"] = pri.get(ANSWERED, 0)
+        b["total"] = b.get("total", 0) - b["answered"]
+    return b
 
 
 def _table(now: dict, before: dict | None) -> None:
@@ -76,10 +100,19 @@ def _table(now: dict, before: dict | None) -> None:
             b = before["by_priority"].get(k, 0)
             line += f" {b:>8} {n - b:>+8}"
         print(line)
-    line = f"  {'TOTAL':16} {now['total']:>7}"
+    line = f"  {'OPEN (excl. P5)':16} {now['total']:>7}"
     if before:
         line += f" {before['total']:>8} {now['total'] - before['total']:>+8}"
     print(line)
+    if now.get("by_project"):
+        print("\n  OPEN BY PROJECT")
+        for p in sorted(set(now["by_project"]) | set((before or {}).get("by_project") or {})):
+            n = now["by_project"].get(p, 0)
+            line = f"  {p:16} {n:>7}"
+            if before and before.get("by_project"):
+                b = before["by_project"].get(p, 0)
+                line += f" {b:>8} {n - b:>+8}"
+            print(line)
     if before and before.get("projects") != now.get("projects"):
         # A COUNT OVER A DIFFERENT SCOPE IS NOT A COMPARISON. Saying so beats a tidy table that
         # reports a scope change as progress.
@@ -101,7 +134,7 @@ def main(argv=None) -> int:
         print(f"  no such store: {db}\n  Run token_metrics.py first, or pass --db.")
         return 2
     now = count(db, args.all)
-    before = json.loads(pathlib.Path(args.against).read_text()) if args.against else None
+    before = _normalise(json.loads(pathlib.Path(args.against).read_text())) if args.against else None
     _table(now, before)
 
     if args.by_metric:

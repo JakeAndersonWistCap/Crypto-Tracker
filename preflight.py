@@ -133,6 +133,33 @@ def protocol_api_plan() -> list[tuple[str, str, str]]:
     return out
 
 
+def explorer_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    """(attempted, skipped) for Transfer-event scans through block-explorer APIs.
+
+    Attempted only where a routed explorer has its key in .env — the same test fetch/logscan.py
+    applies. The key itself is never printed, only which variable is missing.
+    """
+    from fetch.explorer import ExplorerLogs
+    ex = ExplorerLogs()
+    attempted, skipped = [], []
+    for p in config.PROJECTS:
+        for sc in p.get("log_scans") or []:
+            cid = config.CHAIN_IDS.get(sc["chain"])
+            order = config.explorer_order(cid) if cid is not None else []
+            usable = ex.configured(cid) if cid is not None else []
+            what = (f"{sc['key']}: Transfer {'IN to' if sc['direction'] == 'in' else 'OUT of'} "
+                    f"{len(sc['holders'])} holder(s) on {sc['chain']}"
+                    + ("" if sc.get("store") else " — runs and reconciles, STORES NOTHING (attribution held)"))
+            if usable:
+                attempted.append((p["name"], sc["metric"], f"{what} via {' -> '.join(usable)}"))
+            elif not order:
+                skipped.append((p["name"], sc["metric"], f"{what}: no explorer serves logs free on this chain"))
+            else:
+                skipped.append((p["name"], sc["metric"],
+                                f"{what}: no key in .env ({', '.join(config.EXPLORERS[n]['key_env'] for n in order)})"))
+    return attempted, skipped
+
+
 def tier3_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
     attempted, skipped = [], []
     for e in load_registry():
@@ -263,6 +290,7 @@ def print_plan() -> None:
     tapi = protocol_api_plan()
     t3_go, t3_no = tier3_plan()
     t4_go, t4_no = tier4_plan()
+    tx_go, tx_no = explorer_plan()
 
     print(RULE)
     print("PRE-FLIGHT PLAN — what the first run will attempt. No network calls were made.")
@@ -277,6 +305,7 @@ def print_plan() -> None:
     for label, rows in (("TIER 1 — free APIs and config schedules", t1),
                         ("TIER 2 — contract reads", t2_go),
                         ("PROTOCOL HTTP APIs — no chain RPC, no key", tapi),
+                        ("EXPLORER APIs — Transfer-event scans, reconciled to balanceOf", tx_go),
                         ("TIER 3/5 — protocol pages", t3_go),
                         ("TIER 4 — Dune backfill", t4_go)):
         print(f"\n{label}: {len(rows)} metric reads")
@@ -301,6 +330,7 @@ def print_plan() -> None:
     print("(b) WILL NOT BE ATTEMPTED, AND WHY")
     print(RULE)
     for label, rows in (("TIER 2 — contract reads skipped", t2_no),
+                        ("EXPLORER APIs — scans not run", tx_no),
                         ("TIER 3/5 — registry entries not usable", t3_no),
                         ("TIER 4 — Dune", t4_no)):
         print(f"\n{label}: {len(rows)}")

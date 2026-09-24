@@ -1354,6 +1354,24 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                 f"gross_issuance_tokens={issued:,.4f} from {how}", 2)
 
 
+def registry_reasons() -> dict:
+    """(project, metric) -> the sources.yaml entry's state, as the gap detector reads it.
+
+    A function so gap_count.py counts the report the run WRITES: it used to pass an empty dict,
+    so a deliberately disabled entry counted there as "no sources.yaml entry" (P6) while the
+    run filed it as by design.
+    """
+    reasons = {}
+    for e in load_registry():
+        ok, why = entry_ready(e)
+        if not (e.get("project") and e.get("metric")):
+            continue
+        reasons[(e["project"], e["metric"])] = (
+            {"ready": True, "url": e.get("url"), "anchor": e.get("anchor"), "method": e.get("method")}
+            if ok else why)
+    return reasons
+
+
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
               prior_values_for_delta: dict | None = None,
@@ -1466,14 +1484,5 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # entry that had never been written — and Maple's armed cross-check was reported as "no
     # sources.yaml entry for this metric" when there plainly was one. A ready entry that returned
     # nothing is a different problem from a missing entry and has to say so.
-    registry_reasons = {}
-    for e in load_registry():
-        ok, why = entry_ready(e)
-        if not (e.get("project") and e.get("metric")):
-            continue
-        registry_reasons[(e["project"], e["metric"])] = (
-            {"ready": True, "url": e.get("url"), "anchor": e.get("anchor"), "method": e.get("method")}
-            if ok else why)
-
-    out.gaps = detect_gaps(projects, out.frame(), manual_keys or set(), registry_reasons, out.gaps)
+    out.gaps = detect_gaps(projects, out.frame(), manual_keys or set(), registry_reasons(), out.gaps)
     return out

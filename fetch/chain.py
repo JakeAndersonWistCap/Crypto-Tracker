@@ -1674,6 +1674,24 @@ class Chain:
         INTO the burn address, which say what moved, when, and from where.
         """
         name = project["name"]
+        # ===== A ZERO BETWEEN SCHEDULED BURNS IS EXPECTED, NOT A DECISION. 2026-09-24. =====
+        # GEODNET burns WEEKLY and this read differences daily (config.lumpy_flow), so six days
+        # in seven come out 0 — and every one raised a "[data] ... is ZERO" row asking a human
+        # to decide something already decided. It is not a missing read: derive_flow_from_
+        # cumulative emits a flow only from two successful reads on different dates, so a 0 here
+        # always means the balance did not move. Where the declared cadence is longer than a
+        # day, that is the expected state and it is logged, not raised. A burn that STOPS still
+        # shows: the same-weekday change check compares the burn day with the burn day a week
+        # earlier, and a fall to zero trips it. orphan_cleanup.sql section AE reads the cadence
+        # off the store.
+        lumpy = config.lumpy_flow(name, flow_metric) or {}
+        if lumpy.get("underlying_cadence") in ("weekly", "monthly"):
+            out.log.append(LogEntry(
+                SOURCE, name, 0, "ok",
+                f"{flow_metric} = 0 by differencing {stock_metric}: EXPECTED between "
+                f"{lumpy['underlying_cadence']} burns (config.lumpy_flow) — the balance did not "
+                f"move since the last read. Not raised as a decision row.", TIER))
+            return
         # THE ADDRESS NAMED IS THE ONE THAT WAS READ. Contract kinds are named after the stock
         # metric they serve, so the holders behind `stock_metric` are the contracts of that kind.
         # This used to list burn kinds only, so Chainlink's Reserve (kind buyback_fund_balance,

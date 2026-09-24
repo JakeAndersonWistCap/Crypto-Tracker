@@ -39,7 +39,7 @@ P_CRITICAL = 1              # an open question flagged critical: a headline figu
 P_DECISION = 2              # every other open question — each names a specific action for a human
 P_ACTIONABLE_HEADLINE = 3   # a headline metric blocked on something fixable: an address, a read method
 P_ACTIONABLE = 4            # the same, on a non-headline metric
-P_SUPPRESSED = 5            # [config] splits deliberately suppressed. By design, informational.
+P_SUPPRESSED = 5            # ANSWERED, NOT OPEN — see ANSWERED_SIGNALS. Listed, never counted as open.
 P_UNCOVERED = 6             # no source covers it yet, and none is configured to
 
 PRIORITY_LABEL = {
@@ -47,9 +47,25 @@ PRIORITY_LABEL = {
     P_DECISION: "P2 decision",
     P_ACTIONABLE_HEADLINE: "P3 fixable",
     P_ACTIONABLE: "P4 fixable",
-    P_SUPPRESSED: "P5 by design",
+    P_SUPPRESSED: "P5 answered",
     P_UNCOVERED: "P6 uncovered",
 }
+
+# ===== A ROW WHOSE REASON IS ITS OWN CONCLUSION IS ANSWERED, NOT OPEN. 2026-09-24. =====
+# Twenty-two rows on the 16-project report carried a finished answer — "checked, not tracked",
+# "robots.txt disallows", "deliberately disabled", "see the row that carries it" — and were
+# counted as open work beside rows that genuinely are. They stay ON the Gap Report, with their
+# reasoning, under P5; gap_count counts them separately and never as open. The test is the
+# reason's own words, the same mechanism as ACTIONABLE_SIGNALS, so a new row of the same kind
+# classifies itself and nothing is maintained by hand.
+ANSWERED_SIGNALS = (
+    "deliberately disabled in sources.yaml",      # a human chose to switch the route off
+    "not tracked by defillama — checked",         # searched, recorded, absent
+    "robots.txt disallows",                       # the site said no; it is not worked around
+    "the release is measured on this project",    # emissions: the figure is pool_release_tokens
+    "emissions are minting here",                 # emissions: the figure is gross_issuance_tokens
+    "answered, not open",                         # a *_blocked record marked answered by a human
+)
 
 ACTIONABLE_SIGNALS = (
     "not verified", "unverified", "ambiguous", "not established", "no address", "needs sourcing",
@@ -70,15 +86,14 @@ def _priority(project_name: str, metric: str, reason: str, severity: int | None 
     # file and its reason in the entry's note, is a decision someone made and recorded — the same
     # category as a config-suppressed figure, and not the same as a metric nobody has looked at.
     # Filing both at P6 made the to-do list longer than the work it represents.
-    if "deliberately disabled in sources.yaml" in reason.lower():
+    if any(k in reason.lower() for k in ANSWERED_SIGNALS):
         return P_SUPPRESSED
     # SETTLED ABSENCE IS NOT AN UNCOVERED METRIC. Added 2026-09-23. "Not tracked by DefiLlama"
     # with a date and the slugs that were tried is a question someone answered — the same
     # category as a config-suppressed figure, and not the same as a metric nobody has looked at.
     # Filing it at P6 puts finished work at the bottom of the to-do list, where the next person
     # repeats the search.
-    if "not tracked by defillama — checked" in reason.lower():
-        return P_SUPPRESSED
+    # "not tracked by defillama — checked" is in ANSWERED_SIGNALS above, with the rest.
     if any(k in reason.lower() for k in ACTIONABLE_SIGNALS):
         return P_ACTIONABLE_HEADLINE if metric in HEADLINE_METRICS else P_ACTIONABLE
     return P_UNCOVERED
@@ -159,7 +174,10 @@ METRIC_CONTRACT_KIND = {
 
 def _format_blocked(blocked: dict) -> tuple[str, str]:
     """A project's `{metric}_blocked` record as (reason, suggestion). One formatter, two callers."""
-    return (f"{blocked.get('status', 'blocked')} — WANTED: {blocked.get('wanted')}. "
+    # A human can mark a blocked record ANSWERED: the route is known to be unreachable, not
+    # waiting on anything this tool could do. It then ranks P5 and leaves the open count.
+    prefix = "ANSWERED, NOT OPEN — " if blocked.get("answered") else ""
+    return (f"{prefix}{blocked.get('status', 'blocked')} — WANTED: {blocked.get('wanted')}. "
             f"{blocked.get('why_not_defillama') or blocked.get('why') or ''} "
             f"(established from {blocked.get('source_url')}, read "
             f"{blocked.get('source_date')})",
@@ -214,7 +232,10 @@ def _buyback_gap_reason(project: dict, metric: str, scrape_entries: dict) -> tup
                           f"(marked PARTIAL when it fills); the distributed leg has no stock or "
                           f"burn to read.")
         inner_reason, inner_suggestion = _tier_note(project, burn_metric, scrape_entries)
-        return (f"= {burn_metric} — the bought tokens are the burned tokens, one event under two "
+        # ** NEVER START A REASON WITH "=". ** It opened with "= gross_burn_tokens" until
+        # 2026-09-24, and a spreadsheet stores such text as a formula: the reason rendered
+        # empty on GEODNET and Sky, the only two burn/split routes.
+        return (f"SAME EVENT AS {burn_metric} — the bought tokens are the burned tokens, one event under two "
                 f"names, so this row fills from that one and never has its own source.{share_note} "
                 f"That row's reason: {inner_reason}",
                 f"Resolve {burn_metric}; this row re-labels from it. ({inner_suggestion})")
@@ -248,7 +269,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         src = restated["equals"]
         slug = project.get("defillama_fees_slug")
         via = (f" via DefiLlama slug {slug!r}" if slug and src in ("fees_usd", "revenue_usd") else "")
-        return (f"= {src} — this column is a RESTATEMENT of {src}{via}, not a separate "
+        return (f"SAME SERIES AS {src} — this column is a RESTATEMENT of {src}{via}, not a separate "
                 f"measurement, and {src} produced nothing this run. {restated.get('why', '')}",
                 f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
                 f"Log for the {src} fetch{via}.")

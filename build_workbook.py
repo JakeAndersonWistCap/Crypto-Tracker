@@ -1377,6 +1377,19 @@ def _write_closed_records(ws, start_row: int) -> int:
     return r
 
 
+def _literal(c) -> None:
+    """Keep text that begins with "=" as TEXT. Added 2026-09-24.
+
+    ** openpyxl STORES ANY STRING STARTING WITH "=" AS A FORMULA. ** GEODNET's and Sky's
+    actual_buyback_tokens reasons began "= gross_burn_tokens — ...", so they were written as a
+    broken formula and rendered EMPTY — the "null reason" that survived a fix to the reason path,
+    because the reason path was never the problem. Called on every free-text cell that carries a
+    gap reason or note; never on a cell this file means as a formula.
+    """
+    if isinstance(c.value, str) and c.value.startswith("="):
+        c.data_type = "s"
+
+
 def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
     _header(ws, 1, DATA_HEAD)
     ws["A1"].comment = Comment(f"Raw window aggregates of the store as of {asof.date()} (UTC). Literals — source data. "
@@ -1410,6 +1423,7 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
                 _style(c, "text", FMT_NUM)
             else:
                 c.value = "" if v is None else str(v)
+                _literal(c)
                 _style(c, "text", FMT_TEXT)
                 if col == "status":
                     if v == "manual":
@@ -2143,9 +2157,11 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     stale cell is worse than a visible gap; a blank one is worse still.
     """
     _title(ws, "Gap Report — the to-do list",
-           "Ranked by priority. P1 = a headline metric with NO automated route of any kind, the holes in the answer. P2 = blocked on something "
-           "specific and fixable, usually an address or a read method. P3 = decisions a human must settle. P4 = splits deliberately suppressed "
-           "because we have not documented them. P5 = no source covers it yet. Work top down.")
+           "Ranked by priority. P1 = a headline metric with NO automated route of any kind. P2 = a decision a human must "
+           "make. P3/P4 = blocked on something specific and fixable (an address, a read method), headline first. P6 = no "
+           "source covers it yet. P5 = ANSWERED, NOT OPEN — checked and absent, refused by robots.txt, deliberately "
+           "disabled, or pointing at the row that carries the figure; listed last with its reasoning, never counted as open "
+           "work. Work top down.")
     headers = ["Priority", "Project", "Metric", "Tiers attempted", "Reason unresolved", "What would fix it"]
     _header(ws, 4, headers)
     r = 5
@@ -2159,13 +2175,16 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     g["_config"] = g["metric"].astype(str).str.startswith("[config]")
     if "priority" not in g.columns:
         g["priority"], g["priority_label"] = 5, "P5 uncovered"
-    g = g.sort_values(["priority", "project", "metric"])
+    # ANSWERED ROWS LAST: they are the record of what was settled, not the next thing to do.
+    g["_answered"] = g["priority"] == 5
+    g = g.sort_values(["_answered", "priority", "project", "metric"])
     for row in g.to_dict("records"):
         is_config = bool(row["_config"]) or bool(row["_open"])
         vals = [row.get("priority_label", ""), row["project"], row["metric"], row.get("tiers_attempted", ""),
                 row["reason"], row.get("suggestion", "")]
         for j, v in enumerate(vals, start=1):
             c = ws.cell(row=r, column=j, value=str(v) if v is not None else "")
+            _literal(c)
             c.font = F_BASE
             c.number_format = FMT_TEXT
             c.alignment = Alignment(wrap_text=True, vertical="top")
@@ -2229,6 +2248,7 @@ def write_staging(ws, staged: pd.DataFrame, run_id: str | None):
         t = row.get("tier")
         ws.cell(row=r, column=6, value="" if t is None or pd.isna(t) else int(t)).font = F_BASE
         c = ws.cell(row=r, column=7, value=str(row.get("note") or ""))
+        _literal(c)
         c.font = F_SUB
         c.number_format = FMT_TEXT
         r += 1

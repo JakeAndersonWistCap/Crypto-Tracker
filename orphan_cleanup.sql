@@ -2628,3 +2628,56 @@ SELECT date, metric, value, source, tier, fetched_at
 --  WHERE project = 'GEODNET'
 --    AND source LIKE '%buyback_wallet_polygon_historical%';
 -- COMMIT;
+
+-- ========================================================================================
+-- AE. GEODNET gross_burn_tokens — IS THE POLYGON ZERO A QUIET DAY? READ-ONLY.   2026-09-24
+--     AE1 LOOKS. There is no delete: nothing here is wrong to keep.
+-- ========================================================================================
+-- The live leg differences the Polygon dead-address balance daily; GEODNET burns weekly, so
+-- zeros between burns are expected and are no longer raised as decision rows. What this
+-- establishes from the store is the CADENCE: non-zero days should recur about every 7 days,
+-- on a consistent weekday. If the last non-zero day is weeks old, the Polygon leg has stopped
+-- — and since the Solana leg is not read live (series_handover.composition_change), that
+-- would mean burns moved chains, not that GEODNET stopped burning.
+
+-- AE1. The last 90 days of the live leg: every non-zero day, with its weekday and the gap
+--      since the previous one. Expect gaps of ~7.
+SELECT date,
+       strftime('%w', date)                                       AS weekday_0_sun,
+       value,
+       CAST(julianday(date) - julianday(LAG(date) OVER (ORDER BY date)) AS INTEGER) AS days_since_prev
+  FROM metrics
+ WHERE project = 'GEODNET'
+   AND metric = 'gross_burn_tokens'
+   AND source LIKE 'chain:polygon%'
+   AND value > 0
+   AND date >= date('now', '-90 days')
+ ORDER BY date;
+
+-- ========================================================================================
+-- AF. Ether.fi — ROWS FROM THE RETIRED DUNE QUERY 8683038.
+--     AF1 LOOKS. AF2 is the proposed delete, commented out.                    2026-09-24
+-- ========================================================================================
+-- Dune 8683038 is retired for Ether.fi (HTTP 402 on all three metrics, and its staked_supply
+-- exceeded what the staking contract holds). Its three metrics are CLOSED in config, but a
+-- closure does not hide rows already stored: until these go, locked_tokens_dashboard,
+-- lock_rate_pct and staker_count keep rendering the last Dune values as if current.
+
+-- AF1. THE ROWS. Expect the three metrics, daily, up to the last successful pull.
+SELECT metric, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Ether.fi'
+   AND source LIKE 'dune:8683038%'
+ GROUP BY metric
+ ORDER BY metric;
+
+-- AF2. THE PROPOSED DELETE. Only after reading AF1 — and note the history is not recoverable
+--      once the query is gone: this is a decision that the retired figure should not render,
+--      not a cleanup of noise.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Ether.fi'
+--    AND source LIKE 'dune:8683038%';
+-- COMMIT;
+

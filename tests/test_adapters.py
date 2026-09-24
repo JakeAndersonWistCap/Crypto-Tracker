@@ -4654,13 +4654,38 @@ def _shares_query(project, query_id):
             if spec.get("query_id") == query_id}
 
 
-def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
+# ===== ETHER.FI'S RETIRED DUNE ENTRIES, AS A FIXTURE. 2026-09-24. =====
+# Dune 8683038 is retired from Ether.fi's config. The Dune ADAPTER still serves GEODNET, and the
+# tests below exercise its mechanics (fraction columns, forced re-pulls, backfill-only skips,
+# refresh cadence, one query serving several metrics) on the shape this query had — so they get
+# the entries back for the duration of the test, not from live config.
+RETIRED_ETHERFI_DUNE = {
+    "locked_tokens_dashboard": {"query_id": 8683038, "date_col": "day", "value_col": "staked_supply",
+                                "granularity": "daily", "refresh_days": 7,
+                                "refresh_rationale": "a cross-check frozen at its first pull cannot "
+                                                     "show whether the 1.58x gap is widening",
+                                "source_url": "https://dune.com/queries/8683038"},
+    "lock_rate_pct": {"query_id": 8683038, "date_col": "day", "value_col": "perc_staked",
+                      "granularity": "daily", "source_url": "https://dune.com/queries/8683038"},
+    "staker_count": {"query_id": 8683038, "date_col": "day", "value_col": "num_holders",
+                     "granularity": "daily", "source_url": "https://dune.com/queries/8683038"},
+}
+
+
+def _etherfi_dune_back(monkeypatch):
+    dq = config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"]
+    for k, v in RETIRED_ETHERFI_DUNE.items():
+        monkeypatch.setitem(dq, k, dict(v))
+
+
+def test_etherfi_reads_the_fraction_column_not_its_x100_twin(monkeypatch):
     """8683038 publishes the same lock rate twice: perc_staked 0.17452 and perc_staked_cnt 17.452.
 
     Mapping the wrong one is not a crash, it is a plausible figure a hundred times too large. Two
     defences, both checked here: config maps perc_staked, and lock_rate_pct is bounded at 1.0 so
     the x100 column would be rejected to the Review Queue rather than stored.
     """
+    _etherfi_dune_back(monkeypatch)   # retired 2026-09-24; the adapter's mechanics still tested
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
@@ -4693,13 +4718,14 @@ def test_etherfi_reads_the_fraction_column_not_its_x100_twin():
     print("etherfi ok: daily history, perc_staked (0.17452) stored, perc_staked_cnt refused twice over")
 
 
-def test_forced_repull_takes_the_full_history_not_the_trailing_window():
+def test_forced_repull_takes_the_full_history_not_the_trailing_window(monkeypatch):
     """TOKEN_METRICS_DUNE_ALWAYS after a mapping fix must rebuild the WHOLE series.
 
     Later runs pass a 30-day window. Honouring it on a forced re-pull would rewrite the last
     month, leave every older row at the value the OLD mapping wrote, and report success — a
     half-corrected series that looks corrected.
     """
+    _etherfi_dune_back(monkeypatch)   # retired 2026-09-24; the adapter's mechanics still tested
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
@@ -4772,8 +4798,9 @@ def test_forced_repull_takes_the_full_history_not_the_trailing_window():
           "skipped without it; a genuinely first-time metric still gets the full 120")
 
 
-def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read():
+def test_etherfi_daily_history_is_a_backfill_not_an_ongoing_read(monkeypatch):
     """It is a normal historical source: once the store holds it, tier 4 skips it like any other."""
+    _etherfi_dune_back(monkeypatch)   # retired 2026-09-24; the adapter's mechanics still tested
     import os
 
     os.environ["DUNE_API_KEY"] = "test-key"
@@ -7330,7 +7357,7 @@ def test_no_fetch_rebuilds_the_workbook_without_touching_a_single_source(tmp_pat
     print("--no-fetch ok: workbook rebuilt, no adapter reached, no run_id invented")
 
 
-def test_a_dune_cross_check_refreshes_on_its_cadence_and_a_pure_backfill_still_does_not():
+def test_a_dune_cross_check_refreshes_on_its_cadence_and_a_pure_backfill_still_does_not(monkeypatch):
     """B. "Skip once the store has history" is right for a pure backfill and wrong for a series
     that is still the second opinion on a live figure.
 
@@ -7343,6 +7370,7 @@ def test_a_dune_cross_check_refreshes_on_its_cadence_and_a_pure_backfill_still_d
     that executed yesterday and returned nothing new has refreshed nothing, and timing off the
     execution would keep paying for it while the series sat still.
     """
+    _etherfi_dune_back(monkeypatch)   # retired 2026-09-24; the adapter's mechanics still tested
     from fetch.dune import Dune
 
     q = config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"]["locked_tokens_dashboard"]
@@ -9209,12 +9237,16 @@ def test_etherfi_locked_tokens_comes_from_the_contract_not_from_dune():
         "same address, different call — assets vs shares. Not a duplicate entry."
     assert assets["metric_override"] is None and assets["read_method"] == "escrow_balance_of"
 
-    # THE DUNE SERIES IS KEPT AS A CROSS-CHECK, not deleted: its history is the only long one on
-    # file, and a characterised wrong number is worth more than a discarded one.
+    # DUNE 8683038 IS RETIRED (2026-09-24): the contract reads are the measurement, the P1 that
+    # the disagreement raised is closed by the retirement, and the three Dune-only metrics are
+    # closed in UNAVAILABLE rather than left as Dune gaps.
     q = p["dune_queries"]
-    assert "locked_tokens" not in q, "Dune must no longer feed the headline figure"
-    assert q["locked_tokens_dashboard"]["query_id"] == 8683038
-    assert "locked_tokens_dashboard" in config.metrics_for_project(p)
+    assert not any((v or {}).get("query_id") == 8683038 for v in q.values()), q.keys()
+    assert p["retired_dune_queries"]["query_id"] == 8683038
+    for m in ("locked_tokens_dashboard", "lock_rate_pct", "staker_count"):
+        assert config.unavailable_for("Ether.fi", m), m
+    p1 = next(o for o in config.OPEN_QUESTIONS if o["project"] == "Ether.fi" and "staked_supply" in o["topic"])
+    assert p1["status"] == "closed" and "not by explaining the difference" in p1["topic"]
 
     # BOTH LEGS OF THE RATIO ARE NOW CHAIN READS, which is what lets it fire at all.
     spec = p["lock_ratio"]
@@ -9222,7 +9254,7 @@ def test_etherfi_locked_tokens_comes_from_the_contract_not_from_dune():
               for c in p["contracts"].values()}
     assert spec["numerator"] in served and spec["denominator"] in served, \
         f"both legs must be contract-served for the ratio to fire in one run; served={served}"
-    print("etherfi ok: shares on-chain, Dune demoted to cross-check, both ratio legs live")
+    print("etherfi ok: shares on-chain, Dune retired and its P1 closed, both ratio legs live")
 
 
 def _cleanup_sql_section(heading: str) -> str:
@@ -10533,7 +10565,7 @@ def test_one_contract_can_serve_several_metrics_and_the_guard_knows_it():
           "a balance read serves one, and a retired metric reads as withdrawn")
 
 
-def test_a_repulled_query_writes_every_metric_it_serves():
+def test_a_repulled_query_writes_every_metric_it_serves(monkeypatch):
     """** THE REFRESH CADENCE WAS A PROPERTY OF THE METRIC AND IT HAD TO BE THE QUERY'S. **
 
     Ether.fi's dune:8683038 returns staked_supply, perc_staked and num_holders in ONE response,
@@ -10543,6 +10575,7 @@ def test_a_repulled_query_writes_every_metric_it_serves():
     values sat in the response already in memory. Two series stale by construction, and the paid
     query bought a third of what it fetched.
     """
+    _etherfi_dune_back(monkeypatch)   # retired 2026-09-24; the adapter's mechanics still tested
     import os
     from fetch.dune import Dune
 
@@ -12773,12 +12806,12 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     # 1a — burn / split routes point at the burn row and carry ITS reason, so nobody builds a
     # second source for one event.
     r, sug = reason("Sky", "actual_buyback_tokens")
-    assert r.startswith("= gross_burn_tokens") and "5% supply-reduction leg ONLY" in r, r
+    assert r.startswith("SAME EVENT AS gross_burn_tokens") and "5% supply-reduction leg ONLY" in r, r
     assert "That row's reason:" in r and "Resolve gross_burn_tokens" in sug
     r, _ = reason("GEODNET", "actual_buyback_tokens")
-    assert r.startswith("= gross_burn_tokens"), r
+    assert r.startswith("SAME EVENT AS gross_burn_tokens"), r
     ru, _ = reason("GEODNET", "actual_buyback_usd")
-    assert ru.startswith("FOLLOWS actual_buyback_tokens") and "= gross_burn_tokens" in ru, ru
+    assert ru.startswith("FOLLOWS actual_buyback_tokens") and "SAME EVENT AS gross_burn_tokens" in ru, ru
     # GEODNET's usd column is ALSO sourced from the same Dune query as tokens, not a separate one.
     dq = config.PROJECT_BY_NAME["GEODNET"]["dune_queries"]
     assert dq["actual_buyback_usd"]["query_id"] == dq["actual_buyback_tokens"]["query_id"] == 8683175
@@ -13259,9 +13292,10 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
             assert addr in r, (m, addr)
         assert "no contract of kind" not in r and "NONE CONFIRMED" in r and "ONE" in sug, (m, r[:120])
     assert not config.PROJECT_BY_NAME["Fluid"].get("contracts", {}).get("buyback_fund"), "nothing was picked"
-    q = config.PROJECT_BY_NAME["Ether.fi"]["dune_queries"]["locked_tokens_dashboard"]
-    assert "staging_cols" not in q and q["flow_half_dropped"]["cols"] == ["agg_14", "agg_30"]
-    assert q["value_col"] == "staked_supply", "the lock-rate half is untouched"
+    # (Dune 8683038 itself was retired on 2026-09-24 — the flow half went first, then the rest.)
+    q = config.PROJECT_BY_NAME["Ether.fi"]
+    assert "locked_tokens_dashboard" not in q["dune_queries"]
+    assert "agg_14/agg_30" in q["retired_dune_queries"]["flow_half"]
     # the Aethir and GEODNET research is recorded as candidates, and nothing was wired
     a = config.PROJECT_BY_NAME["Aethir"]
     cands = a["locked_tokens_blocked"]["candidates_2026_09_23"]
@@ -13319,7 +13353,7 @@ def test_aethir_customer_revenue_is_fees_restated_with_the_prepayment_caveat_on_
     # an empty fees_usd gaps the restated row AS a restatement, naming the slug
     from fetch.gaps import _tier_note
     r, sug = _tier_note(a, "customer_revenue_usd", {})
-    assert r.startswith("= fees_usd") and "slug 'aethir'" in r and "no sources.yaml" not in r
+    assert r.startswith("SAME SERIES AS fees_usd") and "slug 'aethir'" in r and "no sources.yaml" not in r
     print("aethir customer revenue ok: restated, caveat on the cell, negative days kept")
 
 
@@ -13597,3 +13631,71 @@ def test_sky_burn_scan_goes_to_the_explorer_first_and_decodes_the_same(monkeypat
     word = int(str(raw[0]["data"]), 16)
     assert word / 10 ** 18 == 2_860_000 and int(raw[0]["blockNumber"]) == 20_663_800
     print("sky scan ok: explorer first, same decode")
+
+
+def test_no_gap_text_starts_with_equals_and_the_writers_keep_it_literal_anyway():
+    """PART D, 2026-09-24. GEODNET's and Sky's actual_buyback_tokens reasons were EMPTY in the
+    workbook, and the reason path was never the cause: they were the only two that began with
+    "= gross_burn_tokens", and openpyxl stores any string starting with "=" as a FORMULA. The
+    spreadsheet evaluated a broken formula and showed nothing. Two guards: no reason starts with
+    "=", and the text writers store a leading "=" as text regardless.
+    """
+    import openpyxl
+    from fetch.gaps import detect
+    import build_workbook as bw
+    empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"])
+    rows = detect(config.PROJECTS, empty, set(), {}, [])
+    bad = [(r["project"], r["metric"]) for r in rows
+           if str(r["reason"]).startswith("=") or str(r["suggestion"]).startswith("=")]
+    assert not bad, bad
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    c = ws.cell(row=1, column=1, value="= gross_burn_tokens — a reason, not a formula")
+    assert c.data_type == "f", "openpyxl's own behaviour, which is the hazard"
+    bw._literal(c)
+    assert c.data_type == "s"
+    g = pd.DataFrame([{"project": "GEODNET", "metric": "actual_buyback_tokens", "tiers_attempted": "2",
+                       "reason": "= leading equals", "suggestion": "=also", "priority": 3,
+                       "priority_label": "P3"}])
+    ws2 = wb.create_sheet("Gap Report")
+    bw.write_gap_report(ws2, g, "run")
+    assert ws2.cell(row=5, column=5).data_type == "s" and ws2.cell(row=5, column=6).data_type == "s"
+    print("equals guard ok: no reason starts with '=', and the writers keep it literal")
+
+
+def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
+    """PART B, 2026-09-24. A row whose reason is its own conclusion — checked and absent, refused
+    by robots.txt, deliberately disabled, or pointing at the row that carries the figure — ranks
+    P5 answered: still on the Gap Report with its reasoning, never counted as open. Classified by
+    the reason's words (ANSWERED_SIGNALS), so nothing is a hand-kept list of keys."""
+    from fetch import gaps as G, registry_reasons
+    import gap_count
+    listed = {("World Mobile", m) for m in ("fees_usd", "revenue_usd", "holders_revenue_usd",
+                                             "protocol_tvl_usd", "[config] revenue-to-buyback split",
+                                             "locked_tokens")}
+    listed |= {("Chainlink", "buyback_fund_balance_dashboard"), ("Chainlink", "[config] revenue-to-buyback split"),
+               ("Near", "total_supply_dashboard"), ("Sky", "locked_tokens_dashboard"),
+               ("Pendle", "locked_tokens_dashboard")}
+    listed |= {(n, "emissions_tokens") for n in ("GEODNET", "Chainlink", "Maple", "Hyperliquid",
+                                                  "Aethir", "Near", "Pendle")}
+    robots = [{"project": p, "metric": m, "tiers_attempted": "3", "suggestion": "x",
+               "reason": f"robots.txt disallows fetching {u}"}
+              for p, m, u in (("Chainlink", "buyback_fund_balance_dashboard", "https://metrics.chain.link/reserve"),
+                              ("Pendle", "locked_tokens_dashboard", "https://app.pendle.finance/spendle/stake/in"))]
+    empty = pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"])
+    rows = G.detect(config.PROJECTS, empty, set(), registry_reasons(), robots)
+    by_key = {(r["project"], r["metric"]): r for r in rows}
+    for k in listed:
+        assert k in by_key, f"{k} must stay LISTED"
+        assert by_key[k]["priority_label"] == "P5 answered", (k, by_key[k]["reason"][:120])
+        assert by_key[k]["reason"], "the reasoning stays visible"
+    # a genuinely open row is untouched
+    assert by_key[("Maple", "actual_buyback_tokens")]["priority_label"] != "P5 answered"
+    # the blocked-record route: answered only because a human marked it
+    wm = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_blocked"]
+    assert wm["answered"] is True and by_key[("World Mobile", "locked_tokens")]["reason"].startswith("ANSWERED, NOT OPEN")
+    # gap_count: an old baseline's "P5 by design" is read as answered and removed from its total
+    old = {"total": 55, "projects": 16, "by_priority": {"P5 by design": 9, "P6 uncovered": 46}, "by_metric": {}}
+    b = gap_count._normalise(old)
+    assert b["answered"] == 9 and b["total"] == 46 and b["by_priority"]["P5 answered"] == 9
+    print("answered ok: 18 listed rows stay visible at P5 and leave the open count")
