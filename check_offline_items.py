@@ -121,7 +121,12 @@ SELECTORS_AETHIR = {"token()": "0xfc0c546a", "supply()": "0x047fc9aa",
                     "totalATH()": "0x0d97beca", "totalDeposited()": "0xff50abdc",
                     "totalEscrowed()": "0xf9168231", "aethirStrategy()": "0x8d214897",
                     # the wrapper at 0x3f69… (DefiLlama's "Aethir staking"), 2026-09-24
-                    "aethir()": "0xb8df02f7", "stAethir()": "0xfa56fc42", "veAethir()": "0x5fe36136"}
+                    "aethir()": "0xb8df02f7", "stAethir()": "0xfa56fc42", "veAethir()": "0x5fe36136",
+                    # VeAethir itself (0x1b49f587…), and the ERC-4626-style accessors probed on
+                    # it DEFENSIVELY even though its verified ABI (Keystone registry) lists none
+                    # of them — a live call is what actually proves absence, not a downloaded ABI.
+                    "owner()": "0x8da5cb5b", "asset()": "0x38d52e0f", "underlying()": "0x6f307dc3",
+                    "totalAssets()": "0x01e1d114"}
 
 # Splitter.file(bytes32 what, uint256 data) emits File(bytes32 indexed what, uint256 data).
 # EVERY change to `burn` and `hop` since deployment is in these logs — which makes the pre-August
@@ -1601,6 +1606,112 @@ def aethir_wrapper_relationship():
           "not touch it.")
 
 
+def _decode_string(word_hex: str) -> str | None:
+    """A dynamic `string` return: 32-byte offset, then 32-byte length, then the UTF-8 bytes."""
+    body = (word_hex or "")[2:]
+    if len(body) < 128:
+        return None
+    try:
+        length = int(body[64:128], 16)
+        data = bytes.fromhex(body[128:128 + length * 2])
+        return data.decode("utf-8", errors="replace")
+    except (ValueError, IndexError):
+        return None
+
+
+# ===== AETHIR — WHAT IS 0x1b49f587…, THE TOKEN BOTH VE POOLS ACTUALLY LOCK? 2026-09-24. =====
+# Jake's read: pool.token() on BOTH the Gaming and AI pools returns 0x1b49f587…, confirmed
+# NEITHER ATH nor the wrapper's stAethir (0xc96aa65f…). The Keystone registry's verified ABI for
+# it names the contract "VeAethir" and shows a PLAIN mintable/burnable OpenZeppelin ERC-20 plus
+# Ownable — balanceOf/transfer/approve, mint(address,uint256), burn(address,uint256), owner() —
+# and NO asset(), underlying(), totalAssets(), convertToAssets() or any other redeemable-
+# underlying accessor. So from the ABI alone this is NOT an ERC-4626 vault: there is no on-chain
+# claim it redeems for. The four accessors are called anyway, LIVE, because a downloaded ABI is
+# not proof of absence — only an on-chain revert/empty answer is.
+#
+# WHAT REMAINS OPEN IS WHO MINTS IT AND WHY. mint()/burn() are owner-gated, so VeAethir's supply
+# is exactly as trustworthy as its owner()'s behaviour — not self-evidently backed by anything,
+# unlike ATH.balanceOf() or a vault's totalAssets(). This reads owner(), checks whether it is the
+# wrapper (0x3f69…) or one of the pools, and checks the wrapper's OWN veAethir() getter against
+# this address — the direct on-chain link (or refutation) the wrapper's ABI offers.
+VE_AETHIR = "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490"
+SEL_NAME = "0x06fdde03"      # keccak("name()")[:4]
+SEL_SYMBOL = "0x95d89b41"    # keccak("symbol()")[:4]
+
+
+def aethir_veaethir_probe():
+    head("AETHIR — 0x1b49f587… ('VeAethir'), what both ve pools actually lock")
+    fmt = lambda v: "n/a" if v is None else f"{v / 1e18:,.2f}"
+    S = SELECTORS_AETHIR
+
+    name = _decode_string(eth_call(VE_AETHIR, SEL_NAME, chain="ethereum")[0] or "")
+    symbol = _decode_string(eth_call(VE_AETHIR, SEL_SYMBOL, chain="ethereum")[0] or "")
+    decimals = _uint(VE_AETHIR, SEL_DECIMALS, "ethereum")
+    supply = _uint(VE_AETHIR, SEL_TOTAL_SUPPLY, "ethereum")
+    owner_word, _ = eth_call(VE_AETHIR, S["owner()"], chain="ethereum")
+    owner = as_address(owner_word)
+    print(f"  name()     {name!r}")
+    print(f"  symbol()   {symbol!r}")
+    print(f"  decimals() {decimals}")
+    print(f"  totalSupply() {fmt(supply)}")
+    print(f"  owner()    {owner}")
+
+    print("\n  ERC-4626-style accessors, called LIVE (not inferred from the ABI):")
+    no_accessor = True
+    for sig in ("asset()", "underlying()", "totalAssets()"):
+        word, where = eth_call(VE_AETHIR, S[sig], chain="ethereum")
+        if word and word != "0x":
+            print(f"    {sig:<16} RETURNED {word} — a redeemable-underlying accessor EXISTS. "
+                  f"The 'plain accounting token' reading below is WRONG.")
+            no_accessor = False
+        else:
+            print(f"    {sig:<16} no data / reverted — {str(where)[:80]}")
+    if no_accessor:
+        print("  CONFIRMED LIVE: no redeemable-underlying accessor answers. VeAethir is not a "
+              "vault over any single on-chain balance; treat it as an accounting token.")
+
+    print(f"\n  owner() code check: {_code(owner, 'ethereum') if owner else 'n/a'}")
+    is_wrapper = bool(owner) and owner.lower() == AETHIR_WRAPPER.lower()
+    print(f"  owner() == the 0x3f69… wrapper: {is_wrapper}")
+    for label, pool in AETHIR_VE_POOLS.items():
+        is_pool = bool(owner) and owner.lower() == pool.lower()
+        print(f"  owner() == {label}: {is_pool}")
+
+    # THE WRAPPER'S OWN GETTER, the direct link (or refutation) its ABI offers.
+    wrapper_ve_word, _ = eth_call(AETHIR_WRAPPER, S["veAethir()"], chain="ethereum")
+    wrapper_ve = as_address(wrapper_ve_word)
+    print(f"\n  wrapper.veAethir() = {wrapper_ve}")
+    matches_wrapper_getter = bool(wrapper_ve) and wrapper_ve.lower() == VE_AETHIR.lower()
+    print(f"  wrapper.veAethir() == 0x1b49f587…: {matches_wrapper_getter}")
+
+    if supply is not None:
+        near = abs(supply / 1e18 - 785_390_000) < 1_000_000
+        print(f"\n  VeAethir.totalSupply() = {fmt(supply)} vs the two pools' summed supply() "
+              f"(785.39M, Jake's 2026-09-24 read) — "
+              f"{'MATCHES within rounding' if near else 'DOES NOT MATCH'}.")
+
+    print("\n  READING IT:")
+    if matches_wrapper_getter and is_wrapper:
+        print("  The wrapper NAMES this contract as its veAethir() and IS its owner() — the "
+              "wrapper is the sole minter. Whether minting is 1:1 against ATH wrapped is NOT "
+              "established by this probe (that needs the wrapper's mint call sites / a Mint "
+              "event trace on VeAethir correlated with the wrapper's Wrap events) — paste back "
+              "and that trace is the next step, not a figure to wire.")
+    elif matches_wrapper_getter and not is_wrapper:
+        print("  The wrapper NAMES this contract as its veAethir() but is NOT its owner() — the "
+              "getter is stale or descriptive only; minting authority sits elsewhere. Paste back.")
+    elif is_wrapper:
+        print("  The wrapper IS the owner (sole minter) even though its own veAethir() getter "
+              "points elsewhere — an inconsistency worth flagging to Aethir, not resolving here.")
+    else:
+        print("  Owner is NEITHER the wrapper NOR either ve pool. VeAethir is minted at the "
+              "discretion of a THIRD party this probe has not identified. Its supply is an "
+              "accounting record with no on-chain proof of what backs it. DO NOT WIRE "
+              "locked_tokens from pool.supply() until owner()'s identity and mint history are "
+              "understood — a plausible-sounding guess here is exactly the error class this "
+              "project exists to catch.")
+
+
 # ===== GEODNET — IS THERE A STAKING CONTRACT AT ALL? 2026-09-24. =====
 # GEODNET's own GIPs describe TWO mechanisms: GEOD "staked in a SuperHex" (a per-hex bounty whose
 # success test is a station hitting 90% RRR — GIP5) and "locked GEOD" that sets a veNFT's voting
@@ -1840,7 +1951,7 @@ CHECKS = (
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
     uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
-    geodnet_staking_candidates,
+    aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency,
 )
 

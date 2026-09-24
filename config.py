@@ -5758,6 +5758,38 @@ PROJECTS = [
                 "pools_supply_sum": 785_390_000,
                 "decides": "check_offline_items.py — aethir_wrapper_relationship",
             },
+            # ===== NEITHER ATH NOR stAethir — A THIRD TOKEN, 0x1b49f587…. Found 2026-09-24. =====
+            # Jake's follow-up read: pool.token() on BOTH the Gaming and AI pools returns
+            # 0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490, confirmed NEITHER ATH (0xbe0Ed4…) nor
+            # the wrapper's stAethir (0xc96aa65f…). The Keystone registry's VERIFIED ABI for this
+            # address names it "VeAethir": a plain OpenZeppelin ERC-20 + Ownable with owner-gated
+            # mint(address,uint256)/burn(address,uint256), and NO asset(), underlying(),
+            # totalAssets() or any other ERC-4626-style redeemable-underlying accessor. So on the
+            # ABI alone it is NOT a vault — there is no single on-chain balance it is a claim on.
+            # What remains open is WHO holds owner() (the sole minter) and whether minting tracks
+            # ATH wrapped 1:1 or is unconstrained. check_offline_items.aethir_veaethir_probe reads
+            # owner() live, calls the four accessors live (a downloaded ABI is not proof of
+            # absence), and cross-checks the wrapper's OWN veAethir() getter against this address.
+            # NOTHING IS WIRED FROM THIS. If owner() turns out to be the wrapper and its getter
+            # matches, that still only establishes WHO mints it — 1:1-against-ATH backing needs a
+            # Mint-event trace against the wrapper's Wrap events, which this probe does not do.
+            "veAethir_token_2026_09_24": {
+                "address": "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490",
+                "found_via": "pool.token() on both Gaming Pool and AI Pool — Jake's read",
+                "confirmed_not": ["ATH (0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B)",
+                                  "the wrapper's stAethir (0xc96aa65f…)"],
+                "registry_name": "VeAethir",
+                "abi_from_registry": "plain ERC-20 (OpenZeppelin) + Ownable: balanceOf/transfer/"
+                                     "approve, mint(address,uint256), burn(address,uint256), "
+                                     "owner(). NO asset()/underlying()/totalAssets()/"
+                                     "convertToAssets() — not an ERC-4626 vault by its ABI.",
+                "registry_source": "https://raw.githubusercontent.com/KeystoneHQ/Smart-Contract-"
+                                   "Metadata-Registry/master/ethereum/"
+                                   "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490.json",
+                "open": "who holds owner() (sole minter), and whether mint() tracks ATH wrapped "
+                       "1:1 — NOT established by the ABI or by this record",
+                "decides": "check_offline_items.py — aethir_veaethir_probe",
+            },
             "possible_overlap": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE — the only address "
                                 "DefiLlama counts as Aethir staking, a wrapper minting "
                                 "stAethir/veAethir. Not one of the three; the probe prints its ATH "

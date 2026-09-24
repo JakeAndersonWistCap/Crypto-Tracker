@@ -13910,3 +13910,87 @@ def test_nearblocks_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch):
     nearblocks.NearBlocks(http=_NearBlocksHttp({})).run([config.PROJECT_BY_NAME["Near"]], None, out)
     assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses"}
     assert all("NEARBLOCKS_API_KEY" in g["reason"] for g in out.gaps)
+
+
+def test_decode_string_reads_the_standard_dynamic_abi_encoding():
+    """offset(32) + length(32) + utf8 bytes, right-padded to a 32-byte multiple — the shape
+    every ERC-20 name()/symbol() call returns."""
+    import check_offline_items as coi
+
+    def encode(s: bytes) -> str:
+        body = s.hex().ljust((len(s.hex()) + 63) // 64 * 64, "0") or "0" * 64
+        return "0x" + (32).to_bytes(32, "big").hex() + len(s).to_bytes(32, "big").hex() + body
+
+    assert coi._decode_string(encode(b"VeAethir")) == "VeAethir"
+    assert coi._decode_string(encode(b"")) == ""
+    assert coi._decode_string("0x") is None
+    assert coi._decode_string(None) is None
+
+
+def test_aethir_veaethir_probe_verdict_follows_owner_and_getter_mechanically(monkeypatch, capsys):
+    """The three-way verdict (wrapper mints it / getter is stale / an unidentified third party)
+    is read off owner() and the wrapper's own veAethir() getter — never guessed. And a live
+    ERC-4626-style accessor that unexpectedly answers must override the 'plain token' reading,
+    since a downloaded ABI is not proof that no such function exists."""
+    import check_offline_items as coi
+
+    def pad(a):
+        return "0x" + a[2:].rjust(64, "0")
+
+    S = coi.SELECTORS_AETHIR
+
+    def make_eth_call(owner_addr, wrapper_getter_addr, extra_accessor=None):
+        def fake(to, data, block="latest", chain="ethereum"):
+            to = to.lower()
+            if to == coi.VE_AETHIR.lower():
+                if data == coi.SEL_NAME or data == coi.SEL_SYMBOL:
+                    return "0x" + "00" * 32, None
+                if data == coi.SEL_DECIMALS:
+                    return hex(18), None
+                if data == coi.SEL_TOTAL_SUPPLY:
+                    return hex(785_390_000 * 10 ** 18), None
+                if data == S["owner()"]:
+                    return pad(owner_addr), None
+                if extra_accessor and data == S[extra_accessor]:
+                    return pad(coi.ATH_ETH.lower()), None
+                if data in (S["asset()"], S["underlying()"], S["totalAssets()"]):
+                    return "0x", None
+            if to == coi.AETHIR_WRAPPER.lower() and data == S["veAethir()"]:
+                return pad(wrapper_getter_addr), None
+            return "0x", None
+        return fake
+
+    monkeypatch.setattr(coi, "_code", lambda a, chain: "CODE" if a else "n/a")
+
+    # 1. Wrapper is owner AND its own getter names VeAethir: the sole-minter reading.
+    monkeypatch.setattr(coi, "eth_call",
+                        make_eth_call(coi.AETHIR_WRAPPER.lower(), coi.VE_AETHIR.lower()))
+    coi.aethir_veaethir_probe()
+    out = capsys.readouterr().out
+    assert "wrapper is the sole minter" in out
+    assert "MATCHES within rounding" in out
+
+    # 2. Owner is neither the wrapper nor either pool: the unidentified-third-party refusal.
+    monkeypatch.setattr(coi, "eth_call", make_eth_call(
+        "0x1234567890123456789012345678901234567890",
+        "0x0000000000000000000000000000000000000000"))
+    coi.aethir_veaethir_probe()
+    out = capsys.readouterr().out
+    assert "THIRD party" in out and "DO NOT WIRE" in out
+
+    # 3. A live ERC-4626-style accessor answers even though it is absent from the downloaded
+    # ABI: this must be surfaced as a correction, not silently absorbed into "no accessor".
+    monkeypatch.setattr(coi, "eth_call",
+                        make_eth_call(coi.AETHIR_WRAPPER.lower(), coi.VE_AETHIR.lower(),
+                                     extra_accessor="asset()"))
+    coi.aethir_veaethir_probe()
+    out = capsys.readouterr().out
+    assert "a redeemable-underlying accessor EXISTS" in out
+    assert "CONFIRMED LIVE: no redeemable-underlying accessor answers" not in out
+
+
+def test_aethir_veaethir_probe_is_registered_and_prints_its_section():
+    import check_offline_items as coi
+
+    assert coi.aethir_veaethir_probe in coi.CHECKS
+    assert coi.VE_AETHIR.lower() == "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490"
