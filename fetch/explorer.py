@@ -31,7 +31,7 @@ import os
 import time
 
 import config
-from .base import Http
+from .base import BudgetExhausted, Http
 
 log = logging.getLogger("token_metrics.fetch.explorer")
 
@@ -41,6 +41,11 @@ TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523
 class ExplorerRefused(Exception):
     """No explorer served the request. The message says what each one answered."""
 
+
+
+class ExplorerTimeout(ExplorerRefused):
+    """The scan's TOTAL time budget ran out. Raised straight through get_logs — never handed to
+    the next provider, which is how one GEODNET scan once spent 2,508s retrying two explorers."""
 
 def pad_address(address: str) -> str:
     """An address as a 32-byte topic word, lower-case, 0x-prefixed."""
@@ -83,6 +88,25 @@ class ExplorerLogs:
         # 5 req/s is the free-tier ceiling on both; 0.25s keeps a margin under it.
         self.http = http or Http(min_interval=float(config.EXPLORER_MIN_INTERVAL_S), retries=2)
         self.requests: dict[str, int] = {}
+        self._deadline: float | None = None
+        self._budget_s: float | None = None
+        self._errors: list[str] = []
+
+    # ------------------------------------------------------------------ the time budget
+    def start_budget(self, seconds: float) -> None:
+        """ONE budget for a whole scan — every holder, both directions, BOTH providers."""
+        self._budget_s, self._deadline, self._errors = float(seconds), time.monotonic() + float(seconds), []
+
+    def clear_budget(self) -> None:
+        self._budget_s = self._deadline = None
+
+    def _timed_out(self, why: str = "") -> ExplorerTimeout:
+        errs = "; ".join(self._errors[-6:]) or why or "none recorded"
+        return ExplorerTimeout(f"explorer scan timed out after {self._budget_s:.0f}s, provider errors: {errs}")
+
+    def _check_budget(self) -> None:
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            raise self._timed_out()
 
     # ------------------------------------------------------------------ plumbing
     @staticmethod
@@ -117,9 +141,15 @@ class ExplorerLogs:
         url, base = self._endpoint(name, chain_id)
         query = {**base, **params, "apikey": key}
         for attempt in (1, 2):
+            self._check_budget()
             try:
-                body = self.http.get(url, params=query)
+                body = (self.http.get(url, params=query, deadline=self._deadline)
+                        if self._deadline is not None else self.http.get(url, params=query))
+            except BudgetExhausted as e:
+                self._errors.append(f"{name}: {self._scrub(e)}")
+                raise self._timed_out() from None
             except Exception as e:  # noqa: BLE001 — reported as a refusal, never swallowed
+                self._errors.append(f"{name}: {self._scrub(e)[:160]}")
                 raise ExplorerRefused(f"{name}: {self._scrub(e)}") from None
             self.requests[name] = self.requests.get(name, 0) + 1
             if not isinstance(body, dict):
@@ -134,6 +164,9 @@ class ExplorerLogs:
             # THE ONE DOCUMENTED TRANSIENT, retried once after a second. Anything else is the
             # explorer's definite answer and goes to the fallback, not round the loop again.
             if attempt == 1 and "rate limit" in str(text).lower():
+                if self._deadline is not None and time.monotonic() + 1.1 >= self._deadline:
+                    self._errors.append(f"{name}: rate limited")
+                    raise self._timed_out()
                 time.sleep(1.1)
                 continue
             raise ExplorerRefused(f"{name}: {self._scrub(msg)} — {self._scrub(text)[:200]}")
@@ -196,6 +229,8 @@ class ExplorerLogs:
         for name in order:
             try:
                 logs, n = self._paged(name, chain_id, address, topics, from_block, to_block)
+            except ExplorerTimeout:
+                raise                            # out of time: do NOT start the next provider
             except ExplorerRefused as e:
                 refused.append(str(e))
                 log.info("explorer: %s", e)

@@ -391,7 +391,8 @@ def sky_splitter(splitter: str | None):
         print("  needs looking at again.")
 
 
-def explorer_logs(chain_id: int, address: str, topics: list, from_block: int = 0):
+def explorer_logs(chain_id: int, address: str, topics: list, from_block: int = 0,
+                 to_block="latest"):
     """(logs, detail) via fetch/explorer.py — Etherscan V2 / Blockscout, paged by record count.
 
     ** THE RPC RANGE CAP DOES NOT APPLY HERE, which is why the two log checks below try this
@@ -411,7 +412,7 @@ def explorer_logs(chain_id: int, address: str, topics: list, from_block: int = 0
     if not ex.configured(chain_id):
         return None, "no explorer key in .env for this chain"
     try:
-        logs, meta = ex.get_logs(chain_id, address, topics, from_block)
+        logs, meta = ex.get_logs(chain_id, address, topics, from_block, to_block)
     except ExplorerRefused as e:
         return None, f"explorers refused: {e}"
     return logs, (f"{len(logs)} log(s), served by {meta['explorer']} in {meta['requests']} "
@@ -2032,6 +2033,148 @@ def maple_transparency():
     print("\n  PASTE BACK. Promotion to primary waits on this output.")
 
 
+def sky_burn_breakdown():
+    """SKY other_burn_balance = 10,565,078,749 — WHO BURNED IT, AND IS THE SCAN SOUND? 2026-09-24.
+
+    There is no stored per-event table: the run decomposes the scan in memory and keeps only the
+    per-bucket totals plus the top six unrecognised senders in the Review Queue basis. So this
+    re-runs the SAME scan fetch/chain.py runs (SKY token, Transfer(*, address(0)), from the
+    from_block on file, explorer first, then chunked eth_getLogs) pinned to one head block, and
+    prints the raw GROUP BY from_address alongside the checks that would expose a scan bug:
+      1. DUPLICATES — events sharing (transactionHash, logIndex). Any at all means a chunk or page
+         was counted twice; a clean scan has zero.
+      2. TOPIC MISREAD — events whose topic0 is not Transfer, whose topic2 is not address(0), or
+         whose data is not exactly one word. fetch/chain.py does not re-check these after the
+         provider filters, so this is where a provider ignoring a topic would show.
+      3. THE SUPPLY IDENTITY — sum(mints) - sum(burns) == SKY.totalSupply() at the same block.
+         It holds only if the burn events are complete AND real; a double count or a non-burn
+         counted as a burn breaks it by exactly the overcount.
+    Nothing is stored. Keys are never printed.
+    """
+    head("SKY — burn events behind other_burn_balance: by sender, duplicates, topics, supply")
+    import config as _config                              # noqa: PLC0415
+    try:
+        from fetch.explorer import normalise              # noqa: PLC0415
+    except ImportError as e:
+        print(f"  UNREACHABLE  fetch.explorer not importable: {e}")
+        return
+    sky = next(p for p in _config.PROJECTS if p["name"] == "Sky")
+    spec = sky["contracts"]["burn_logs"]
+    cfg = spec["burn_logs"]
+    token, from_block = spec["address"], int(cfg["from_block"])
+    proxy = cfg["stage2_burner"]["address"].lower()
+    zero = "0x" + "0" * 64
+    blk_hex, _ = eth_block_number()
+    if blk_hex is None:
+        print("  UNREACHABLE  no Ethereum RPC answered eth_blockNumber — cannot pin the reads.")
+        return
+    head_blk = int(blk_hex, 16)
+    print(f"token {token}  from_block {from_block:,}  pinned to block {head_blk:,}")
+
+    def scan(topics, label):
+        logs, detail = explorer_logs(1, token, topics, from_block, head_blk)
+        if logs is None:
+            print(f"  {label}: explorer unavailable ({detail}) — falling back to eth_getLogs")
+            logs, detail = eth_get_logs(token, topics, from_block, head_blk)
+        print(f"  {label}: {detail}")
+        return None if logs is None else [normalise(e) for e in logs]
+
+    burns = scan([TRANSFER_TOPIC, None, zero], "burns Transfer(*, 0x0)")
+    if burns is None:
+        print("  UNREACHABLE  the burn scan did not complete; nothing below would be a figure.")
+        return
+
+    # ===== 1. DUPLICATES =====
+    keys = {}
+    for e in burns:
+        keys.setdefault((e["transactionHash"], e["logIndex"]), []).append(e)
+    dups = {k: v for k, v in keys.items() if len(v) > 1}
+    dup_wei = sum(int(x["data"], 16) for v in dups.values() for x in v[1:])
+    print(f"\n1. DUPLICATES: {len(burns):,} events, {len(keys):,} distinct (tx, logIndex); "
+          f"{len(dups):,} duplicated key(s) carrying {dup_wei / 1e18:,.2f} SKY of double count")
+    blank = sum(1 for e in burns if not e["transactionHash"])
+    if blank:
+        print(f"   ** {blank:,} event(s) have NO transactionHash — the dedup key is unreliable.")
+
+    # ===== 2. TOPIC MISREAD =====
+    bad0 = [e for e in burns if not e["topics"] or e["topics"][0].lower() != TRANSFER_TOPIC]
+    bad2 = [e for e in burns if len(e["topics"]) < 3 or e["topics"][2].lower() != zero]
+    badn = [e for e in burns if len(e["topics"]) != 3]
+    badd = [e for e in burns if len(str(e["data"])) != 66]
+    print(f"\n2. TOPICS: topic0 != Transfer: {len(bad0):,}   topic2 != address(0): {len(bad2):,}"
+          f"   topic count != 3: {len(badn):,}   data not one word: {len(badd):,}")
+    for e in (bad0 + bad2 + badd)[:5]:
+        print(f"   e.g. block {e['blockNumber']:,} tx {e['transactionHash']} topics {e['topics']}")
+
+    # ===== THE RAW GROUP BY — clean events only, one per key =====
+    clean = [v[0] for v in keys.values()
+             if v[0] not in bad0 and v[0] not in bad2 and v[0] not in badd]
+    by = {}
+    for e in clean:
+        f = "0x" + e["topics"][1][-40:].lower()
+        n, w, txs = by.get(f, (0, 0, set()))
+        txs.add(e["transactionHash"])
+        by[f] = (n + 1, w + int(e["data"], 16), txs)
+    total = sum(w for _, w, _ in by.values())
+    rows = sorted(by.items(), key=lambda kv: -kv[1][1])
+    print(f"\nFROM-ADDRESS BREAKDOWN  (SELECT from_address, COUNT(*), SUM(value) ... GROUP BY "
+          f"from_address ORDER BY SUM(value) DESC) — {len(rows):,} distinct sender(s)")
+    print(f"  {'#':>4} {'from_address':<42} {'events':>8} {'txs':>8} {'SUM(value) SKY':>22} "
+          f"{'share':>7}  code")
+    for i, (f, (n, w, txs)) in enumerate(rows[:40], 1):
+        code = ""
+        if i <= 15:
+            c, _ = _code_at(f)
+            code = "?" if c is None else ("contract" if len(c) > 2 else "EOA")
+        tag = "  <- Pause Proxy (stage2 -> burn_address_balance)" if f == proxy else ""
+        print(f"  {i:>4} {f:<42} {n:>8,} {len(txs):>8,} {w / 1e18:>22,.2f} "
+              f"{(w / total if total else 0):>7.2%}  {code}{tag}")
+    if len(rows) > 40:
+        rest = rows[40:]
+        print(f"  {'rest':>4} {f'{len(rest):,} more sender(s)':<42} "
+              f"{sum(n for _, (n, _, _) in rest):>8,} {'':>8} "
+              f"{sum(w for _, (_, w, _) in rest) / 1e18:>22,.2f}")
+    pp = by.get(proxy, (0, 0, set()))[1]
+    print(f"  TOTAL {total / 1e18:,.2f}   Pause Proxy {pp / 1e18:,.2f}   "
+          f"everything else (= other_burn_balance) {(total - pp) / 1e18:,.2f}  "
+          f"vs stored 10,565,078,749")
+
+    print("\n  LARGEST SINGLE EVENTS")
+    for e in sorted(clean, key=lambda e: -int(e["data"], 16))[:10]:
+        print(f"    block {e['blockNumber']:>11,}  {int(e['data'], 16) / 1e18:>20,.2f} SKY  "
+              f"from 0x{e['topics'][1][-40:]}  tx {e['transactionHash']}")
+
+    # ===== 3. THE SUPPLY IDENTITY =====
+    mints = scan([TRANSFER_TOPIC, zero, None], "mints Transfer(0x0, *)")
+    word, _ = eth_call(token, SEL_TOTAL_SUPPLY, hex(head_blk))
+    if mints is None or word is None:
+        print("\n3. SUPPLY IDENTITY: not computed — the mint scan or totalSupply() did not answer.")
+    else:
+        minted = sum(int(e["data"], 16) for e in
+                     {(e["transactionHash"], e["logIndex"]): e for e in mints}.values())
+        supply = int(word, 16)
+        gap = (minted - total) - supply
+        print(f"\n3. SUPPLY IDENTITY at block {head_blk:,}:  minted {minted / 1e18:,.2f}  - burned "
+              f"{total / 1e18:,.2f}  = {(minted - total) / 1e18:,.2f}   totalSupply() "
+              f"{supply / 1e18:,.2f}   difference {gap / 1e18:,.2f}")
+        print("   ZERO: the burn events are complete and every one is a real burn — the figure is "
+              "a CLASSIFICATION question, not a scan bug. NEGATIVE: burns overcounted by that much. "
+              "POSITIVE: burns missed.")
+    print("\n  PASTE BACK all of the above. Nothing is stored or reclassified until it is read.")
+
+
+def _code_at(addr: str):
+    """(code_hex, endpoint) — '0x' is an EOA. Reported beside a sender, never used to classify."""
+    for url in _rpcs_for("ethereum"):
+        try:
+            j = rpc(url, "eth_getCode", [addr, "latest"])
+            if "result" in j:
+                return j["result"], url
+        except Exception:  # noqa: BLE001
+            continue
+    return None, None
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -2040,7 +2183,7 @@ CHECKS = (
     uniswap_firepit_threshold, beaconchain, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
-    maple_transparency,
+    maple_transparency, sky_burn_breakdown,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

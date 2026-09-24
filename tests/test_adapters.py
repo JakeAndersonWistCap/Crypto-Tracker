@@ -1504,6 +1504,10 @@ def test_the_mkrsky_converter_question_is_answered_from_its_own_source():
     cfg = config.PROJECT_BY_NAME["Sky"]["contracts"]["burn_logs"]["burn_logs"]
     note = cfg["third_mechanism_note"]
     assert "no skyToMkr" in note and "does not exist" in note
+    # ** BUT ONLY TODAY. ** Corrected 2026-09-24: the 2024 converter (sky-ecosystem/sky
+    # fc92c70^) had skyToMkr -> sky.burn(msg.sender, ...), so SKY->MKR conversions before the
+    # 2025-06-01 rewrite are burns from the converting holder, inside other_burn_balance.
+    assert "fc92c70" in note and "CONVERTING HOLDER" in note
     assert "supply correction" in note
     # NOT KEYED ON, and the reason is the standing rule rather than an oversight: the converter's
     # deployed address is not on file, and a decomposition key pointing at an unverified address
@@ -13518,7 +13522,7 @@ class _ExplorerHttp:
     def __init__(self, logs_by_key, refuse=(), balances=None):
         self.logs_by_key, self.refuse, self.calls = logs_by_key, set(refuse), []
 
-    def get(self, url, params=None, headers=None):
+    def get(self, url, params=None, headers=None, deadline=None):
         self.calls.append((url, dict(params)))
         host = "blockscout" if "blockscout" in url else "etherscan"
         if host in self.refuse:
@@ -14729,3 +14733,60 @@ def test_offline_checks_list_flag_prints_names_and_touches_no_network(monkeypatc
     listed = [line for line in out.splitlines() if line.strip()]
     assert listed == [fn.__name__ for fn in coi.CHECKS]
     assert "Done." not in out and "Paste the whole output back" not in out
+
+
+def test_http_deadline_stops_backoff_instead_of_sleeping_past_it(monkeypatch):
+    """Http with a deadline never sleeps past it: a backoff that would overrun raises
+    BudgetExhausted at once. Without a deadline the behaviour is unchanged."""
+    import time
+
+    import requests
+
+    from fetch.base import BudgetExhausted, Http
+
+    h = Http(retries=2)
+
+    def dead(*a, **k):
+        raise requests.ConnectionError("connection refused")
+
+    monkeypatch.setattr(h.s, "get", dead)
+    t0 = time.monotonic()
+    try:
+        h.get("https://example.invalid", deadline=time.monotonic() + 0.5)
+        raise AssertionError("must not return")
+    except BudgetExhausted:
+        pass
+    assert time.monotonic() - t0 < 1.0, "the 2s backoff must not be slept past a 0.5s deadline"
+
+
+def test_explorer_scan_budget_is_total_across_both_providers(monkeypatch):
+    """One budget for the whole scan. Out of time on the first provider, the scan fails at once
+    with the provider errors — the second provider is never started."""
+    import time
+
+    from fetch import explorer as ex
+    from fetch.base import BudgetExhausted
+
+    calls = []
+
+    class _SlowHttp:
+        def get(self, url, params=None, deadline=None):
+            calls.append(url)
+            time.sleep(max(0.0, (deadline or time.monotonic()) - time.monotonic()))
+            raise BudgetExhausted("time budget exhausted (HTTP 503 from etherscan)")
+
+    monkeypatch.setattr(ex.config, "explorer_order", lambda chain_id: ["etherscan", "blockscout"])
+    monkeypatch.setattr(ex.ExplorerLogs, "key", staticmethod(lambda name: "k"))
+    monkeypatch.setattr(ex.ExplorerLogs, "_endpoint", lambda self, name, cid: (f"https://{name}.test", {}))
+    e = ex.ExplorerLogs(http=_SlowHttp())
+    e.start_budget(0.2)
+    t0 = time.monotonic()
+    try:
+        e.get_logs(137, "0xabc", [ex.TRANSFER_TOPIC, None, None], 0, 100)
+        raise AssertionError("must time out")
+    except ex.ExplorerTimeout as err:
+        msg = str(err)
+    assert time.monotonic() - t0 < 1.0
+    assert msg.startswith("explorer scan timed out after 0s, provider errors:") and "etherscan" in msg, msg
+    assert calls == ["https://etherscan.test"], f"blockscout must never start: {calls}"
+    assert config.EXPLORER_SCAN_BUDGET_S == 120

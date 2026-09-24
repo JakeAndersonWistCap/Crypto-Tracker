@@ -696,10 +696,11 @@ class ChainReader:
                           for t in (base.get("topics") or [])]
                 topics = [None if t is None else (t if t.startswith("0x") else "0x" + t)
                           for t in topics]
+                self.explorer.start_budget(config.EXPLORER_SCAN_BUDGET_S)
                 try:
                     logs, meta = self.explorer.get_logs(chain_id, str(base["address"]), topics,
                                                         from_block, to_block)
-                except ExplorerRefused as e:
+                except ExplorerRefused as e:        # includes ExplorerTimeout — falls back to RPC
                     self.log_endpoints_refused.setdefault(chain, []).append(f"explorers: {e}")
                     log.info("chain %s: no explorer served the scan (%s) — falling back to RPC "
                              "eth_getLogs", chain, e)

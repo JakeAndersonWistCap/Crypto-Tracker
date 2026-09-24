@@ -1566,6 +1566,11 @@ EXPLORER_ROUTES_STATUS = {
 }
 EXPLORER_MIN_INTERVAL_S = 0.25          # under the 5 req/s free ceiling on both
 EXPLORER_MAX_REQUESTS_PER_SCAN = 5000   # a runaway guard, not a budget: 5m records at 1,000
+# THE BUDGET, 2026-09-24 (Jake): the WHOLE of one explorer scan — every holder, both directions,
+# both providers — gets 120s of wall clock. mining_wallets_outflow once spent 2,508s retrying
+# Etherscan then Blockscout; out of time, a scan now fails at once and gaps with the providers'
+# own errors instead of starting the next provider.
+EXPLORER_SCAN_BUDGET_S = 120
 
 
 def explorer_order(chain_id: int) -> list[str]:
@@ -10440,9 +10445,22 @@ PROJECTS = [
                     },
                     # ===== THE THIRD MECHANISM, ANSWERED FROM THE CONVERTER'S OWN SOURCE. =====
                     # Read 2026-09-22 from sky-ecosystem/sky src/MkrSky.sol:
-                    #   * THERE IS NO skyToMkr FUNCTION. The converter is ONE-DIRECTIONAL —
-                    #     mkrToSky only — so the SKY->MKR direction is not live because it does
-                    #     not exist in this contract. That answers the question as asked.
+                    #   * THERE IS NO skyToMkr FUNCTION *TODAY*. The converter is ONE-DIRECTIONAL —
+                    #     mkrToSky only — so the SKY->MKR direction is not live now.
+                    #   ** CORRECTED 2026-09-24: IT WAS LIVE FOR THE FIRST ~9 MONTHS OF THE SCAN. **
+                    #     The 2026-09-22 reading was of master, which is the one-direction
+                    #     rewrite (sky-ecosystem/sky commit fc92c70, "One direction converter
+                    #     (#17)", merged 2025-06-01). The converter deployed with SKY in 2024
+                    #     (fc92c70^:src/MkrSky.sol) had
+                    #       skyToMkr(usr, skyAmt): sky.burn(msg.sender, skyAmt); mkr.mint(usr, ..)
+                    #     and its mkrToSky MINTED SKY rather than transferring it. So every
+                    #     SKY->MKR conversion from block 20,663,735 until that converter was
+                    #     retired is a Transfer(CONVERTING HOLDER, 0x0) — a real burn, with the
+                    #     user (not the converter) as `from`, and gross: a round trip mints and
+                    #     burns again, so the total is NOT capped by the 23.46bn migration.
+                    #     These land in other_burn_balance as many unrecognised senders. The
+                    #     leading explanation for its 10,565,078,749, pending the
+                    #     sky_burn_breakdown probe in check_offline_items.py.
                     #   * AND IT IS STILL A SKY BURN SOURCE, by a different route than expected:
                     #     `function burn(uint256 skyAmt) external auth` calls
                     #     sky.burn(address(this), skyAmt), so the `from` is the CONVERTER'S OWN
@@ -10456,8 +10474,12 @@ PROJECTS = [
                     # an unrecognised sender in other_burn_balance with its address named in the
                     # Review Queue, which is the outcome that identifies it safely.
                     "third_mechanism_note": (
-                        "MkrSky converter. One-directional (mkrToSky only, no skyToMkr), so the "
-                        "SKY->MKR direction does not exist. Its auth-only burn(uint256) does "
+                        "MkrSky converter. One-directional TODAY (mkrToSky only, no skyToMkr), "
+                        "so the SKY->MKR direction does not exist in the current contract — but "
+                        "the 2024 converter it replaced (sky-ecosystem/sky fc92c70^, rewritten "
+                        "2025-06-01) had skyToMkr, which burned SKY with the CONVERTING HOLDER "
+                        "as `from`; those gross conversion burns are inside other_burn_balance. "
+                        "The current one's auth-only burn(uint256) does "
                         "burn SKY with the converter itself as `from` — a supply correction "
                         "against already-burned MKR, not a buyback. Left to surface as an "
                         "unrecognised sender rather than keyed on an unverified address."),

@@ -44,7 +44,7 @@ import pandas as pd
 
 import config
 from .base import LogEntry, tidy, today, window
-from .explorer import ExplorerLogs, ExplorerRefused, TRANSFER_TOPIC, pad_address, topic_address
+from .explorer import ExplorerLogs, ExplorerRefused, ExplorerTimeout, TRANSFER_TOPIC, pad_address, topic_address
 
 log = logging.getLogger("token_metrics.fetch.logscan")
 
@@ -113,6 +113,10 @@ class LogScan:
 
         # 2. BOTH DIRECTIONS FOR EVERY HOLDER — reconciliation needs both even when one counts.
         ins, outs, served, requests, refused = {}, {}, set(), 0, []
+        # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
+        budget = getattr(self.explorer, "start_budget", None)
+        if budget:
+            budget(config.EXPLORER_SCAN_BUDGET_S)
         try:
             for h in holders:
                 ins[h], m1 = self.explorer.get_logs(chain_id, token, [TRANSFER_TOPIC, None, pad_address(h)], 0, to_block)
@@ -121,6 +125,12 @@ class LogScan:
                     served.add(m["explorer"])
                     requests += m["requests"]
                     refused += m["refused"]
+        except ExplorerTimeout as e:
+            out.fail(SOURCE, name, f"{key}: {e}", TIER)
+            out.gap(name, metric, reason=str(e), tiers_attempted="2",
+                    suggestion="The providers' own errors are above. Re-runs are cheap now — the "
+                               "scan stops at the budget instead of retrying for most of an hour.")
+            return
         except ExplorerRefused as e:
             out.fail(SOURCE, name, f"{key}: no explorer served the scan — {e}", TIER)
             out.gap(name, metric,
@@ -131,6 +141,9 @@ class LogScan:
                                "served free on this chain, correct EXPLORER_LOG_ROUTES — the "
                                "coverage table is researched, not confirmed.")
             return
+        clear = getattr(self.explorer, "clear_budget", None)
+        if clear:
+            clear()
         via = "+".join(sorted(served))
 
         # 3. RECONCILE, PER HOLDER, TO THE WEI.

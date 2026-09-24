@@ -132,6 +132,10 @@ class HttpError(RuntimeError):
         super().__init__(f"HTTP {status} from {url}" + (f" — {detail}" if detail else ""))
 
 
+class BudgetExhausted(RuntimeError):
+    """A caller's total time budget ran out — distinct from a server's answer."""
+
+
 class Http:
     """Retry with exponential backoff on 429/5xx. Never disables TLS verification."""
 
@@ -147,25 +151,41 @@ class Http:
         """Same retry/backoff policy as get(). Some node APIs only accept POST."""
         return self._request("POST", url, json_body=json_body, headers=headers)
 
-    def get(self, url: str, params: dict | None = None, headers: dict | None = None):
-        return self._request("GET", url, params=params, headers=headers)
+    def get(self, url: str, params: dict | None = None, headers: dict | None = None,
+            deadline: float | None = None):
+        return self._request("GET", url, params=params, headers=headers, deadline=deadline)
 
     def _request(self, verb: str, url: str, params: dict | None = None,
-                 json_body: dict | None = None, headers: dict | None = None):
+                 json_body: dict | None = None, headers: dict | None = None,
+                 deadline: float | None = None):
+        # deadline (time.monotonic()): a caller's TOTAL budget. Each attempt's timeout is clipped
+        # to what remains and a backoff sleep that would overrun it is not taken — the call fails
+        # with BudgetExhausted instead. None keeps the old behaviour exactly.
+        def left() -> float:
+            return float("inf") if deadline is None else deadline - time.monotonic()
+
+        def nap(seconds: float, why) -> None:
+            if seconds >= left():
+                raise BudgetExhausted(f"time budget exhausted before retrying ({why})")
+            time.sleep(seconds)
+
         wait = time.monotonic() - self._last
         if wait < self.min_interval:
-            time.sleep(self.min_interval - wait)
+            nap(self.min_interval - wait, "rate spacing")
         backoff, last_err = 2.0, None
         for attempt in range(self.retries + 1):
+            if left() <= 0:
+                raise BudgetExhausted(f"time budget exhausted ({last_err or 'before the first attempt'})")
+            timeout = min(self.timeout, max(1.0, left()))
             self._last = time.monotonic()
             try:
-                r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=self.timeout)
+                r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)
                      if verb == "POST" else
-                     self.s.get(url, params=params, headers=headers, timeout=self.timeout))
+                     self.s.get(url, params=params, headers=headers, timeout=timeout))
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
                     if attempt < self.retries:
-                        time.sleep(max(float(r.headers.get("Retry-After", backoff)), backoff))
+                        nap(max(float(r.headers.get("Retry-After", backoff)), backoff), last_err)
                         backoff *= 2
                     continue
                 if 400 <= r.status_code < 500:
@@ -183,7 +203,7 @@ class Http:
             except requests.RequestException as e:
                 last_err = e
                 if attempt < self.retries:
-                    time.sleep(backoff)
+                    nap(backoff, e)
                     backoff *= 2
         raise RuntimeError(f"gave up after {self.retries + 1} attempts: {last_err}")
 
