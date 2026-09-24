@@ -9715,28 +9715,47 @@ PROJECTS = [
             "status": "active",
             "destination_split": 0.55,
             "history": [
-                # TWO periods before the Executive Proposal, not one. The April 2026 treasury
-                # overhaul cut buybacks by a reported ~87% to rebuild stablecoin reserves,
-                # explicitly prioritising a $150m solvency buffer over buybacks and staking
-                # rewards. Lumping the regimes either side of that into a single undocumented
-                # period is safe ONLY while it stays undocumented: the moment somebody fills in
-                # one pre-August number, it would be applied across an ~87% cut and the
-                # suppression would lift on a figure that looks entirely reasonable.
-                _split_period(None, "2026-04-30", None, "unconfirmed",
-                              note="Pre-overhaul regime. NOT documented — the Smart Burn Engine ran at a "
-                                   "reported order of $1m/day before April 2026. Do not assume 0.55 "
-                                   "applied. THE 2026-04-30 BOUNDARY IS A PLACEHOLDER, not a known event "
-                                   "date: the overhaul is reported as April 2026 with no day established. "
-                                   "Both periods either side are unconfirmed, so no figure depends on "
-                                   "where the boundary sits — but it must be corrected before either is."),
-                _split_period("2026-05-01", "2026-08-12", None, "unconfirmed",
-                              known_change="April 2026 treasury overhaul cut buybacks by a reported ~87% "
-                                           "to rebuild stablecoin reserves. Neither the exact date nor the "
-                                           "resulting split is documented.",
-                              note="Post-overhaul, pre-Executive-Proposal regime. Materially different from "
-                                   "the period before it and from the 55/45 after it, so it is its own "
-                                   "period. known_change keeps it unconfirmed even if a share is later "
-                                   "filled in, until the change itself is documented."),
+                # ===== LAYER 1 DATED, 2026-09-24 — AND EACH SHARE BELOW IS LAYER 1 x LAYER 2. =====
+                # Layer 1 (share of protocol surplus reaching the Smart Burn Engine), from Sky
+                # Frontier Foundation's own Q1 2026 release (PRNewswire, 2026-04-29): "Token buyback
+                # allocations were reduced from 75% to 7.5% of protocol surplus on an interim
+                # basis". Effective date 2026-03-14 from sagix.io's Sky analysis (the release
+                # reports the cut with Q1 results; it does not date it). Supplied by Jake.
+                # Layer 2 (share of each SBE cycle sent to SKY buybacks) is the Splitter's `burn`,
+                # from the spells — sbe_allocation_layers.layer_2.splitter_burn_from_spells. It was
+                # 1.00 from the 2025-10-30 spell to the 2026-08-13 spell, so across both periods
+                # below the combined share IS the Layer 1 figure.
+                #
+                # CORROBORATION, NOT PROOF: the 2026-03-12 spell (executing after the governance
+                # delay, i.e. about 2026-03-14) cut the flap rate ~79% (hop x4.8) with burn
+                # unchanged. Same week, same direction; not the same size (75 -> 7.5 is 90%).
+                #
+                # WHY NOTHING BEFORE 2025-10-30 IS FILLED: Layer 2 changed on that spell (0.25 ->
+                # 1.00) and several times before it, and "reduced from 75%" establishes 75% as the
+                # level BEFORE THE CUT, not when it began. A window earlier than 2025-10-30 would
+                # need both, and neither is dated.
+                _split_period(None, "2025-10-29", None, "unconfirmed",
+                              note="Layer 2 varied (spells: 1.00 / 0.70 / 1.00 / 0.50 / 0.25) and "
+                                   "Layer 1's 75% is sourced only as the level immediately before "
+                                   "the 2026-03-14 cut, not its start. Not filled."),
+                _split_period("2025-10-30", "2026-03-13", 0.75, "superseded",
+                              source_url="https://www.prnewswire.com/ (Sky Frontier Foundation Q1 2026 "
+                                         "release, 2026-04-29)",
+                              source_date="2026-04-29",
+                              note="Layer 1 75% of protocol surplus x Layer 2 1.00 (Splitter burn, "
+                                   "2025-10-30 spell). The start is the SPELL date; it executed after "
+                                   "the governance delay, so a window starting in the first days of "
+                                   "this period includes a few days at burn 0.25. The Splitter File "
+                                   "events (check_offline_items.sky_splitter_history) give the block."),
+                _split_period("2026-03-14", "2026-08-12", 0.075, "superseded",
+                              source_url="https://www.prnewswire.com/ (Sky Frontier Foundation Q1 2026 "
+                                         "release, 2026-04-29); date from sagix.io",
+                              source_date="2026-04-29",
+                              note="INTERIM: Layer 1 7.5% of protocol surplus x Layer 2 1.00. The "
+                                   "release: allocations 'to be restored to 25% each once the "
+                                   "Solvency Reserve reaches $125 million'. Replaces the 2026-04-30 "
+                                   "placeholder boundary and the known_change that kept this period "
+                                   "unconfirmed — the change is now dated and sized."),
                 _split_period("2026-08-13", "2026-09-13", 0.55, "superseded",
                               source_url="https://messari.io/",
                               source_date="2026-08-13", destination_split=0.55,
@@ -10509,8 +10528,12 @@ PROJECTS = [
                 "describes": "share of NPS / protocol surplus routed to the buyback-and-burn "
                              "machinery as a whole",
                 "history": [
-                    {"period": "pre-2026-04", "pct": 0.75, "of": "protocol surplus"},
-                    {"period": "2026-04 (interim)", "pct": 0.075, "of": "protocol surplus",
+                    # DATED 2026-09-24: 75% to 2026-03-13, 7.5% from 2026-03-14 (Sky Frontier
+                    # Foundation Q1 2026 release, 2026-04-29; the date from sagix.io).
+                    {"period": "to 2026-03-13", "pct": 0.75, "of": "protocol surplus",
+                     "start": "NOT DATED — 'reduced from 75%' fixes the level before the cut only"},
+                    {"period": "2026-03-14 to 2026-08-12 (interim)", "pct": 0.075, "of": "protocol surplus",
+                     "restore": "to 25% each once the Solvency Reserve reaches $125m (release wording)",
                      "note": "quantifies the '~87% cut' already on file. 75% -> 7.5% is a 90% "
                              "reduction arithmetically; the ~87% report and the precise 75%/7.5% "
                              "figures are both kept, not reconciled by adjusting either."},
@@ -15502,8 +15525,23 @@ OPEN_QUESTIONS = [
         # Every window ending before 2026-08-13, or spanning it, stays suppressed until 1 and 2
         # are documented — and known_change on the post-overhaul period keeps it suppressed even
         # if somebody fills in a share, which is the guard that matters here.
-        "project": "Sky", "topic": "pre-2026-08-13 split — the LAYER 2 shares and the April "
-                                   "effective date",
+        "project": "Sky", "topic": "ANSWERED 2026-09-24 — pre-2026-08-13 split dated: 75% to "
+                                   "2026-03-13, 7.5% interim 2026-03-14 to 2026-08-12 (Layer 1), "
+                                   "Layer 2 1.00 across both",
+        "status": "answered", "answered_on": "2026-09-24",
+        "answer": "Layer 1 from Sky Frontier Foundation's own Q1 2026 release (PRNewswire, "
+                  "2026-04-29): buyback allocations 'reduced from 75% to 7.5% of protocol surplus "
+                  "on an interim basis'; the cut executed 2026-03-14 (sagix.io). Layer 2 from the "
+                  "spells: burn 1.00 from the 2025-10-30 spell to the 2026-08-13 spell. "
+                  "fee_split.history now resolves windows wholly inside 2025-10-30..2026-03-13 "
+                  "(0.75) and 2026-03-14..2026-08-12 (0.075). STILL OPEN, separately: (1) before "
+                  "2025-10-30 — Layer 2 varied and Layer 1's 75% is not dated back; (2) "
+                  "2026-08-13..2026-09-13 — config holds the Layer-2-only 0.55 and dates Stage 2 "
+                  "from 2026-09-14, while Jake's history (and Sky's 2026-08-13 post that 'the Stage "
+                  "2 parameter changes are included in today's Executive Vote') puts Stage 2's 50% "
+                  "from 2026-08-13. Not changed without a decision. (3) The implied-buyback cells "
+                  "are still greyed for these windows by base_gated: revenue_base (NPS) is "
+                  "effective only from 2026-09-14.",
         "reason": "The split that applied BEFORE 2026-08-13 is not documented, so every window ending before "
                   "that date, and every window spanning it, is unconfirmed and its derived figure suppressed. "
                   "The current 55% is deliberately NOT applied retroactively. NOTE: that span is now TWO "

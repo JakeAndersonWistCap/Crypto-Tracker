@@ -3194,13 +3194,18 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
     figure that looks entirely reasonable.
     """
     windows = {
-        ("2026-02-01", "2026-03-31"): "pre-overhaul, undocumented",
-        ("2026-05-01", "2026-07-31"): "post-overhaul, undocumented",
+        ("2026-02-01", "2026-03-31"): "spans the 2026-03-14 Layer 1 cut",
+        ("2025-09-01", "2025-11-30"): "spans the 2025-10-30 Layer 2 change",
+        ("2025-06-01", "2025-08-31"): "before 2025-10-30 — neither layer dated",
         ("2026-06-15", "2026-09-12"): "spans the Executive Proposal",
     }
     for (a, b), why in windows.items():
         r = config.split_for_window("Sky", a, b)
         assert r["status"] == "unconfirmed" and r["share_to_buyback"] is None, f"{why}: {r}"
+    # LAYER 1 DATED 2026-09-24 (Sky Frontier Foundation Q1 release + sagix): a window wholly
+    # inside one period now resolves to Layer 1 x Layer 2, Layer 2 being 1.00 throughout both.
+    assert config.split_for_window("Sky", "2025-11-15", "2026-02-15")["share_to_buyback"] == 0.75
+    assert config.split_for_window("Sky", "2026-03-28", "2026-06-26")["share_to_buyback"] == 0.075
     # THE 55/45 PERIOD STILL RESOLVES AT 0.55 — it was SUPERSEDED on 2026-09-14, not deleted, and
     # a window lying entirely inside it must still get its figure. Dating a regime out of the
     # present must not erase it from the past.
@@ -3231,8 +3236,12 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
     assert "NOT STATED" in v["remaining_50_pct"]["status"]
     assert "UNCONFIRMED SECONDARY" in v["remaining_50_pct"]["confidence"]
 
-    # filling in a share does NOT lift the suppression while the change is unresolved
-    period = next(h for h in config.PROJECT_BY_NAME["Sky"]["fee_split"]["history"] if h.get("known_change"))
+    # filling in a share does NOT lift the suppression while the change is unresolved. No Sky
+    # period carries a known_change since 2026-09-24, so one is injected to keep the guard tested.
+    period = next(h for h in config.PROJECT_BY_NAME["Sky"]["fee_split"]["history"]
+                  if h.get("from") == "2026-03-14")
+    saved = dict(period)
+    period["known_change"] = "test: an undated change inside the period"
     period["share_to_buyback"] = 0.30
     try:
         r = config.split_for_window("Sky", "2026-05-01", "2026-07-31")
@@ -3241,9 +3250,11 @@ def test_sky_split_history_cannot_resolve_across_the_april_overhaul():
         errs = config.validate_config(raise_on_error=False)
         assert any("known_change" in e for e in errs), "config must reject the share outright, not just suppress it"
     finally:
-        period["share_to_buyback"] = None
+        period.clear()
+        period.update(saved)
     assert not config.validate_config(raise_on_error=False)
-    print("sky split ok: April overhaul keeps its period unconfirmed, and a filled-in share is rejected")
+    print("sky split ok: dated periods resolve, spans stay unconfirmed, a filled-in share on an "
+          "undated change is rejected")
 
 
 def test_several_contracts_serving_one_metric_are_summed():
