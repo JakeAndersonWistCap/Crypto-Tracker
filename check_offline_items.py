@@ -119,7 +119,9 @@ SPLITTER_BURN_EXPECTED_WAD = 0.55
 # Aethir staking probe (aethir_staking_probe, below). Checked against keccak at import.
 SELECTORS_AETHIR = {"token()": "0xfc0c546a", "supply()": "0x047fc9aa",
                     "totalATH()": "0x0d97beca", "totalDeposited()": "0xff50abdc",
-                    "totalEscrowed()": "0xf9168231", "aethirStrategy()": "0x8d214897"}
+                    "totalEscrowed()": "0xf9168231", "aethirStrategy()": "0x8d214897",
+                    # the wrapper at 0x3f69… (DefiLlama's "Aethir staking"), 2026-09-24
+                    "aethir()": "0xb8df02f7", "stAethir()": "0xfa56fc42", "veAethir()": "0x5fe36136"}
 
 # Splitter.file(bytes32 what, uint256 data) emits File(bytes32 indexed what, uint256 data).
 # EVERY change to `burn` and `hop` since deployment is in these logs — which makes the pre-August
@@ -1544,6 +1546,61 @@ def aethir_staking_probe():
     print("  ve pools are already wired as ATH.balanceOf(pool) on Ethereum.")
 
 
+# ===== AETHIR — IS THE WRAPPER AT 0x3f69… INDEPENDENT, OR WHAT THE POOLS LOCK? 2026-09-24. =====
+# Jake's probe: the Gaming and AI pools report supply() 369.45M and 415.94M but hold 264.95 and
+# 0.00 ATH; the wrapper holds 808.69M ATH. On a Curve-style Voting Escrow supply() is TOKENS
+# LOCKED (totalSupply() is the voting power), so the pools are holding ~785M of SOMETHING — and
+# if that something is the wrapper's receipt, the wrapper's ATH is what backs the pools and
+# adding the two would count the same ATH twice. The wrapper's ABI (Keystone registry):
+# aethir(), stAethir(), veAethir(), wrap(), wrapFor(), unwrap(); its source is verified but not
+# reachable from the build environment. So this reads the addresses and balances that decide it.
+AETHIR_WRAPPER = "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE"
+AETHIR_VE_POOLS = {"Gaming Pool": "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31",
+                   "AI Pool": "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4"}
+
+
+def aethir_wrapper_relationship():
+    head("AETHIR — wrapper 0x3f69… vs the Gaming/AI ve pools: independent, or the same ATH?")
+    fmt = lambda v: "n/a" if v is None else f"{v / 1e18:,.2f}"
+    addr = lambda v: None if v is None else "0x" + hex(v)[2:].rjust(40, "0")
+    wr = {k: addr(_uint(AETHIR_WRAPPER, SELECTORS_AETHIR[f"{k}()"], "ethereum"))
+          for k in ("aethir", "stAethir", "veAethir")}
+    print(f"  wrapper.aethir()   = {wr['aethir']}   (ATH is {ATH_ETH.lower()})")
+    print(f"  wrapper.stAethir() = {wr['stAethir']}")
+    print(f"  wrapper.veAethir() = {wr['veAethir']}")
+    ath_in_wrapper = _bal(ATH_ETH, AETHIR_WRAPPER, "ethereum")
+    st_supply = _uint(wr["stAethir"], SEL_TOTAL_SUPPLY, "ethereum") if wr["stAethir"] else None
+    print(f"  ATH held by wrapper     {fmt(ath_in_wrapper)}")
+    print(f"  stAethir totalSupply    {fmt(st_supply)}")
+    locked_total, pool_tokens = 0, {}
+    for label, pool in AETHIR_VE_POOLS.items():
+        tok = addr(_uint(pool, SELECTORS_AETHIR["token()"], "ethereum"))
+        sup = _uint(pool, SELECTORS_AETHIR["supply()"], "ethereum")
+        pool_tokens[label] = tok
+        held_st = _bal(wr["stAethir"], pool, "ethereum") if wr["stAethir"] else None
+        print(f"\n  {label} {pool}\n    token() = {tok}\n    supply() = {fmt(sup)}   "
+              f"stAethir held = {fmt(held_st)}   ATH held = {fmt(_bal(ATH_ETH, pool, 'ethereum'))}")
+        print(f"    is wrapper.veAethir(): {bool(wr['veAethir']) and pool.lower() == wr['veAethir']}")
+        locked_total += sup or 0
+    st = (wr["stAethir"] or "").lower()
+    locks_receipt = [l for l, t in pool_tokens.items() if t and t == st]
+    locks_ath = [l for l, t in pool_tokens.items() if t and t == ATH_ETH.lower()]
+    print(f"\n  pools' supply() summed  {fmt(locked_total)}")
+    if locks_receipt and len(locks_receipt) == len(AETHIR_VE_POOLS):
+        print("  VERDICT: THE SAME ATH. Both pools lock stAethir, the wrapper's receipt, and the "
+              "wrapper holds the ATH behind it. Read ATH.balanceOf(wrapper) as the aggregate; "
+              "the pools are a breakdown of it and must NOT be added to it.")
+    elif locks_ath and len(locks_ath) == len(AETHIR_VE_POOLS):
+        print("  VERDICT: INDEPENDENT BY TOKEN — the pools lock ATH directly, yet hold almost none; "
+              "their supply() is ATH held elsewhere. Paste back; do not wire either.")
+    else:
+        print("  VERDICT: NOT SETTLED BY TOKEN ADDRESS — the pools lock "
+              f"{sorted(set(t for t in pool_tokens.values() if t))}, neither ATH nor the wrapper's "
+              "stAethir for both. Paste back.")
+    print("  The EigenLayer vault (strategy 777.29M ATH) is a separate question: this check does "
+          "not touch it.")
+
+
 # ===== GEODNET — IS THERE A STAKING CONTRACT AT ALL? 2026-09-24. =====
 # GEODNET's own GIPs describe TWO mechanisms: GEOD "staked in a SuperHex" (a per-hex bounty whose
 # success test is a station hitting 90% RRR — GIP5) and "locked GEOD" that sets a veNFT's voting
@@ -1782,7 +1839,8 @@ CHECKS = (
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
     uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
-    fluid_buyback_destination, aethir_staking_probe, geodnet_staking_candidates,
+    fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
+    geodnet_staking_candidates,
     maple_transparency,
 )
 

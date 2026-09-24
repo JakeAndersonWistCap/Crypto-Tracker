@@ -4656,6 +4656,12 @@ PROJECTS = [
                 "ve_lock": "a lock contract should exist; address not found",
                 "next": "check_offline_items.py — geodnet_staking_candidates (Polygon GEOD "
                         "destinations, last 30 days, contracts ranked by inflow)",
+                # FOR THE RECORD ONLY (Jake, 2026-09-24) — not pursued, per the standing decision.
+                # Addresses as reported, truncated; nothing is wired from them.
+                "behavioural_candidates_2026_09_24": [
+                    {"address_prefix": "0x8f10b468", "distinct_senders": 5_641, "code": True},
+                    {"address_prefix": "0x5fe84b85", "distinct_senders": 5_793, "code": True},
+                ],
                 "published_total_staked": "none found: console.geodnet.com and docs.geodnet.com are "
                                           "unreachable from here, and no aggregator or GitHub "
                                           "source carries a total-staked figure",
@@ -5733,6 +5739,24 @@ PROJECTS = [
                                     "disabled above 85% utilisation",
                 "note": "Enough for a real avg_lock_duration_days later (ve locked__end per "
                         "position). Not built this round.",
+            },
+            # ===== JAKE'S PROBE, 2026-09-24 — AND WHY NOTHING NEW IS WIRED YET. =====
+            # Gaming/AI ve supply() 369.45M / 415.94M against ATH held 264.95 / 0.00; vault
+            # strategy ATH 777,291,046.91; wrapper 0x3f69… ATH 808,689,366.92. On a Curve-style
+            # Voting Escrow supply() is TOKENS LOCKED (totalSupply() is the voting power), so the
+            # pools hold ~785.39M of some token that is not ATH — and 785.39M sits just under the
+            # wrapper's 808.69M. The wrapper's ABI mints stAethir against ATH. If the pools lock
+            # stAethir, the wrapper IS the aggregate and summing it with the pools double-counts.
+            # check_offline_items.aethir_wrapper_relationship reads token() on both pools against
+            # wrapper.stAethir() and says which. The current ATH.balanceOf(pool) wiring is the
+            # wrong measure either way (it reads ~265) and stays blanked by the 1.2bn floor.
+            "probe_2026_09_24": {
+                "gaming_pool": {"supply": 369_450_000, "ath_held": 264.95},
+                "ai_pool": {"supply": 415_940_000, "ath_held": 0.0},
+                "vault_strategy_ath": 777_291_046.91,
+                "wrapper_ath": 808_689_366.92,
+                "pools_supply_sum": 785_390_000,
+                "decides": "check_offline_items.py — aethir_wrapper_relationship",
             },
             "possible_overlap": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE — the only address "
                                 "DefiLlama counts as Aethir staking, a wrapper minting "
