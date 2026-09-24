@@ -1644,6 +1644,43 @@ def hyperliquid_supply_convention():
         verdict = ("NEITHER — the difference matches neither the burn nor zero nor minus the burn; "
                    "something else sits between the two figures. Do NOT pick the closer one")
     print(f"  VERDICT: {verdict}")
+
+    # ===== THE FOURTH HYPOTHESIS: futureEmissions. Added 2026-09-24. =====
+    # The three-way test came back NEITHER (43,605,256 on Jake's run). The question now is what
+    # "totalSupply" means beside futureEmissions — whether it already excludes them, and whether
+    # max - total - future reconciles to anything measured. Every identity is PRINTED WITH ITS
+    # NUMBERS; one is flagged only if it matches to the same tolerance as above. Nothing chosen.
+    try:
+        fut = float(det.get("futureEmissions"))
+    except (TypeError, ValueError):
+        print(f"  futureEmissions not numeric ({det.get('futureEmissions')!r}) — fourth test skipped")
+        fut = None
+    if fut is not None:
+        cg_t = float(provider_total)
+        cg_c = None if provider_circ is None else float(provider_circ)
+        rows = [
+            ("M - T            (gone from max)", mx - tot),
+            ("M - T - F", mx - tot - fut),
+            ("T - F            (total net of future emissions)", tot - fut),
+            ("T - F - C", tot - fut - circ),
+            ("T - C            (non-circulating inside total)", tot - circ),
+            ("M - F", mx - fut),
+        ]
+        print("\n  FOURTH HYPOTHESIS — futureEmissions (F). M=max, T=total, C=circulating, A=AF.")
+        for label, v in rows:
+            print(f"    {label:<50} {v:>22,.4f}")
+        # What the unexplained gap (T - CoinGecko) and CoinGecko's total might equal.
+        cands = {"F": fut, "M - T": mx - tot, "M - T - F": mx - tot - fut, "T - F - C": tot - fut - circ,
+                 "A": af, "F - A": fut - af, "M - T + A": mx - tot + af}
+        print(f"  gap = T - CoinGecko.total = {gap:,.4f}. Against each candidate (|gap - x|):")
+        for k, v in cands.items():
+            hit = "  <-- MATCH" if abs(gap - v) <= tol else ""
+            print(f"    {k:<12} {v:>22,.4f}   diff {abs(gap - v):>18,.4f}{hit}")
+        print(f"  CoinGecko.total against: M - F {abs(cg_t - (mx - fut)):,.4f} | T - F "
+              f"{abs(cg_t - (tot - fut)):,.4f} | T - A {abs(cg_t - (tot - af)):,.4f} | M - A "
+              f"{abs(cg_t - (mx - af)):,.4f}")
+        if cg_c is not None:
+            print(f"  CoinGecko.circulating - C = {cg_c - circ:,.4f}")
     print("  Paste this block back. total_supply_convention is declared in config.py from it.")
 
 

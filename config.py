@@ -4593,11 +4593,27 @@ PROJECTS = [
                     "outflow history.",
         },
         "name": "GEODNET", "symbol": "GEOD",
-        # ===== locked_tokens — SuperHex staking contract NOT FOUND. Researched 2026-09-23. =====
+        # ===== locked_tokens — A BOOTSTRAPPING MECHANISM WINDING DOWN, NOT MISSING DATA. =====
+        # DECIDED BY JAKE 2026-09-24: left as a gap, and the reason is the mechanism, not the
+        # search. SuperHex staking exists to fill COVERAGE GAPS: the Foundation designates a gap
+        # region, community members lock GEOD to incentivise a miner into it, and get the stake
+        # back plus a 10-20% bonus once a station there is producing (GIP5's success benchmark:
+        # 90% RRR over 7 days). As the network matured (21,000+ stations, 170 countries) fewer
+        # gaps need the incentive, so less capital sits locked: ~11.9M -> ~3.9M -> ~3M (Jake's
+        # reported figures). A maturation signal, not a confidence problem — and a mechanism that
+        # may never have had one central contract. The behavioural transfer scan came back empty
+        # and is NOT to be extended. Research history kept below.
         "locked_tokens_blocked": {
-            "status": "MECHANISM DOCUMENTED, CONTRACT NOT FOUND — see superhex_staking",
-            "wanted": "GEOD staked into SuperHex positions (20,000 GEOD per full stake, pooled) on Polygon",
-            "why": "GEODNET's own GIP repository (geodnet/GIP) carries GIP5 'SuperHex Bonus Rewards Requirement', which defines the staking success benchmark and RRR rules and names no contract. GitHub code search finds no GEODNET-authored staking contract; docs.geodnet.com is unreachable from here. No address is guessed.",
+            "answered": True,
+            "status": "BOOTSTRAPPING MECHANISM, STRUCTURALLY WINDING DOWN — not missing data",
+            "wanted": "GEOD staked into SuperHex positions on Polygon",
+            "why": "Jake, 2026-09-24: leave it. SuperHex staking is a coverage-gap bootstrap "
+                       "(lock GEOD to draw a miner into a Foundation-designated gap; stake back "
+                       "plus a 10-20% bonus once producing). With 21,000+ stations in 170 "
+                       "countries fewer gaps need it, and staked GEOD has fallen ~11.9M -> ~3.9M "
+                       "-> ~3M (Jake's reported figures). No central contract may exist; the "
+                       "behavioural transfer scan came back empty and is not extended.",
+            "why_before_2026_09_24": "GEODNET's own GIP repository (geodnet/GIP) carries GIP5 'SuperHex Bonus Rewards Requirement', which defines the staking success benchmark and RRR rules and names no contract. GitHub code search finds no GEODNET-authored staking contract; docs.geodnet.com is unreachable from here. No address is guessed.",
             "source_url": "https://raw.githubusercontent.com/geodnet/GIP/main/GIP202381733411309930.md",
             "source_date": "2026-09-23",
             # ===== THE DOCS PAGES EXIST AND ARE THE PLACE TO LOOK. Found 2026-09-23. =====
@@ -4649,7 +4665,7 @@ PROJECTS = [
                              "projects/geodnet/index.js, 2026-09-23); fees/geodnet.ts is "
                              "burn-based and names only the token and the dead address",
             },
-            "route_that_would_work": "a GEODNET-authored page or GIP naming the SuperHex staking contract on Polygon; then an escrow_balance_of read on GEOD (contracts.token_polygon) against it.",
+            "route_that_would_work": "none pursued, by decision — the quantity is small and shrinking by design. If GEODNET ever names a contract, an escrow_balance_of read on GEOD (contracts.token_polygon) against it.",
         },
         # ===== MEASURED POOL RELEASE — THE MINING WALLETS' OUTFLOW. Wired 2026-09-24. =====
         # POOL_RELEASE_ROUTES: where the pool wallet's outflow can be read, it is primary over

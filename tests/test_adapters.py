@@ -12912,9 +12912,11 @@ def test_the_research_round_records_answers_with_sources_and_never_wires_an_unve
     for m in ("actual_buyback_tokens", "actual_buyback_usd"):
         u = config.unavailable_for("Fluid", m)
         assert u and u["summary"].startswith("PROGRAMME HALTED 2026-05-11"), u
-    # 4c / 4e — GEODNET still searched and not found; Aethir's pools were FOUND on 2026-09-24.
+    # 4c / 4e — GEODNET: not found, then DECIDED 2026-09-24 (Jake) — a bootstrapping mechanism
+    # winding down, answered rather than open. Aethir's pools were FOUND on 2026-09-24.
     b = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]
-    assert "NOT" in b["status"] and b["source_url"].startswith("https://")
+    assert "BOOTSTRAPPING" in b["status"] and b["answered"] is True
+    assert "not extended" in b["why"] and b["source_url"].startswith("https://")
     assert not any(c.get("kind") == "ve_total_supply" for c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].values())
     # 4d — the contract EXISTS and is a Cardano Plutus validator, which is the answer.
     b = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_blocked"]
