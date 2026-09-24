@@ -32,6 +32,7 @@ from .gaps import detect as detect_gaps
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .nearblocks import NearBlocks
+from .beaconchain import BeaconChain
 from .maple_transparency import MapleTransparency
 from .llama import DefiLlama, MorphoBlueApi
 from .schedule import Schedule
@@ -55,6 +56,10 @@ TIER_ORDER = [
     ("growthepie", 1, lambda ctx: GrowThePie()),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
     ("nearblocks", 1, lambda ctx: NearBlocks()),
+    # Ethereum's own consensus-layer issuance (ETH.Store) — keyed (BEACONCHAIN_API_KEY). Ahead
+    # of _derive_issuance in the pipeline, so a measured figure here suppresses that day's
+    # derivation and the derivation remains the fallback for any day this source fails.
+    ("beaconchain", 1, lambda ctx: BeaconChain()),
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),

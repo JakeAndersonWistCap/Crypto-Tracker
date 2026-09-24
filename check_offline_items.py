@@ -1287,14 +1287,74 @@ def uniswap_firepit_threshold():
 
 
 def beaconchain():
-    head("BEACONCHA.IN — reachability of the free tier (Ethereum validator issuance)")
+    """BEACONCHA.IN — the wired route (ETH.Store, Ethereum consensus-layer issuance). 2026-09-24.
+
+    fetch/beaconchain.py stores consensus_rewards_sum_wei from /api/v1/ethstore/latest, auth as
+    an `apikey` header (from beaconcha.in's own OpenAPI spec — its docs site is unreachable from
+    here, so this is a source reading, never a live confirmation, until this runs). This check IS
+    that live confirmation: it makes the exact call the adapter makes, with
+    BEACONCHAIN_API_KEY from .env, and prints the actual shape returned.
+    """
+    head("BEACONCHA.IN — ETH.Store, the wired route for Ethereum's consensus-layer issuance")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    except ImportError:
+        pass
+    key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
+    print(f"  BEACONCHAIN_API_KEY: {'set' if key else 'NOT SET'}")
+
+    print("\n  unauthenticated baseline (epoch/latest, no key needed per the free-tier policy):")
     try:
         r = requests.get("https://beaconcha.in/api/v1/epoch/latest", timeout=TIMEOUT)
-        print(f"  HTTP {r.status_code}  {r.text[:200]}")
-        if r.ok:
-            print("  reachable without a key — usable for validator issuance")
+        print(f"    HTTP {r.status_code}  {r.text[:200]}")
     except Exception as e:  # noqa: BLE001
-        print(f"  UNREACHABLE — {e}")
+        print(f"    UNREACHABLE — {e}")
+
+    if not key:
+        print("\n  NO KEY SET — cannot exercise the authenticated route. Set BEACONCHAIN_API_KEY "
+              "in .env and re-run.")
+        return
+
+    print("\n  THE WIRED CALL — GET /api/v1/ethstore/latest, header apikey: ***:")
+    try:
+        r = requests.get("https://beaconcha.in/api/v1/ethstore/latest",
+                         headers={"apikey": key}, timeout=TIMEOUT)
+    except Exception as e:  # noqa: BLE001
+        print(f"    UNREACHABLE — {e}")
+        return
+    print(f"    HTTP {r.status_code}")
+    try:
+        body = r.json()
+    except ValueError:
+        print(f"    NON-JSON BODY: {r.text[:300]}")
+        return
+    if not isinstance(body, dict):
+        print(f"    top level is {type(body).__name__}, not an object: {str(body)[:300]}")
+        return
+    print(f"    top-level keys: {sorted(body)}")
+    print(f"    status: {body.get('status')!r}")
+    rows = body.get("data")
+    if not isinstance(rows, list) or not rows:
+        print(f"    data: {body.get('data')!r} — no row to inspect")
+        return
+    rec = rows[0]
+    if not isinstance(rec, dict):
+        print(f"    data[0] is {type(rec).__name__}, not an object: {str(rec)[:300]}")
+        return
+    print(f"    data[0] keys: {sorted(rec)}")
+    for k in ("day", "day_start", "day_end", "consensus_rewards_sum_wei", "tx_fees_sum_wei",
+             "apr", "cl_apr", "el_apr"):
+        print(f"      {k:<28} {rec.get(k)!r}")
+    wei = rec.get("consensus_rewards_sum_wei")
+    try:
+        eth = float(wei) / 1e18
+        print(f"\n    consensus_rewards_sum_wei / 1e18 = {eth:,.4f} ETH for this beaconchain-day")
+    except (TypeError, ValueError):
+        print(f"\n    consensus_rewards_sum_wei did not parse as a number: {wei!r}")
+    print("\n  PASTE BACK. If the shape above matches fetch/beaconchain.py's expectations "
+          "(status 'OK', data[0] carrying day_start/day_end/consensus_rewards_sum_wei), the "
+          "adapter will store it on the next run — nothing here writes to the store.")
 
 
 

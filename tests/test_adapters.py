@@ -13994,3 +13994,137 @@ def test_aethir_veaethir_probe_is_registered_and_prints_its_section():
 
     assert coi.aethir_veaethir_probe in coi.CHECKS
     assert coi.VE_AETHIR.lower() == "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490"
+
+
+class _BeaconChainHttp:
+    """Answers the ethstore call with a canned response, recording every call made."""
+
+    def __init__(self, body):
+        self.body, self.calls = body, []
+
+    def get(self, url, params=None, headers=None):
+        self.calls.append((url, params, headers))
+        return self.body
+
+
+def _beaconchain_run(monkeypatch, body, key="bc-secret-456"):
+    from fetch import beaconchain, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("BEACONCHAIN_API_KEY", key)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    http = _BeaconChainHttp(body)
+    out = FetchOutput()
+    beaconchain.BeaconChain(http=http).run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    return out, http
+
+
+def _ethstore_row(day_start, day_end, consensus_wei, tx_fees_wei=999_999e18):
+    """A row shaped exactly like beaconcha.in's own OpenAPI spec (types.APIEthStoreResponse) —
+    tx_fees_sum_wei deliberately huge and wrong-signed-if-summed, so a test that accidentally
+    included it would be caught by a wildly wrong stored value."""
+    return {"day": 1, "day_start": day_start, "day_end": day_end,
+            "apr": 0.05, "cl_apr": 0.045, "el_apr": 0.005,
+            "consensus_rewards_sum_wei": consensus_wei, "tx_fees_sum_wei": tx_fees_wei}
+
+
+def test_beaconchain_stores_the_complete_prior_day_consensus_rewards_only(monkeypatch):
+    """The header is literally `apikey`, not Authorization: Bearer (beaconcha.in's OpenAPI spec:
+    type apiKey, name apikey — the stray 'Bearer' prose beside it describes neither declared
+    form). Only consensus_rewards_sum_wei is stored; tx_fees_sum_wei is not summed in even
+    though the row deliberately carries an enormous, obviously-wrong value for it."""
+    import pandas as pd
+
+    from fetch.base import today
+
+    t = today()
+    start = (t - pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    end = (t - pd.Timedelta(days=1) + pd.Timedelta(hours=23, minutes=59)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = {"status": "OK", "data": [_ethstore_row(start, end, 1_349_850_765_807_000_000_000)]}
+    out, http = _beaconchain_run(monkeypatch, body)
+
+    df = out.frame()
+    row = df[df.metric == "gross_issuance_tokens"]
+    assert len(row) == 1
+    assert abs(row["value"].iloc[0] - 1_349.850765807) < 1e-6, row["value"].iloc[0]
+    assert row["source"].iloc[0] == "beaconchain"
+    assert row["date"].iloc[0] == (t - pd.Timedelta(days=1)).normalize()
+
+    url, params, headers = http.calls[0]
+    assert url == "https://beaconcha.in/api/v1/ethstore/latest"
+    assert headers == {"apikey": "bc-secret-456"}, \
+        "auth must be the literal `apikey` header, not Authorization: Bearer"
+    assert params is None
+    assert "bc-secret-456" not in " ".join(e.message for e in out.log)
+
+
+def test_beaconchain_never_stores_an_incomplete_or_todays_day(monkeypatch):
+    import pandas as pd
+
+    from fetch.base import today
+
+    t = today()
+    wall_now = pd.Timestamp.now("UTC").tz_localize(None)
+    # day_end genuinely still in the future relative to wall-clock now, whatever time of day
+    # this test happens to run at.
+    start = t.strftime("%Y-%m-%dT00:00:00Z")
+    end = (wall_now + pd.Timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = {"status": "OK", "data": [_ethstore_row(start, end, 1_000 * 10**18)]}
+    out, _ = _beaconchain_run(monkeypatch, body)
+    assert out.frame().empty
+    assert any("still in the future" in e.message for e in out.log if e.status == "skipped")
+
+    # day_end has elapsed but day_start is today — still not a complete PRIOR day.
+    start2 = t.strftime("%Y-%m-%dT00:00:00Z")
+    end2 = min(wall_now - pd.Timedelta(minutes=1), t + pd.Timedelta(hours=23, minutes=59))
+    end2 = end2.strftime("%Y-%m-%dT%H:%M:%SZ")
+    body2 = {"status": "OK", "data": [_ethstore_row(start2, end2, 1_000 * 10**18)]}
+    out2, _ = _beaconchain_run(monkeypatch, body2)
+    assert out2.frame().empty
+    assert any("which is today" in e.message for e in out2.log if e.status == "skipped")
+
+
+def test_beaconchain_stores_nothing_when_the_live_shape_differs_from_the_spec(monkeypatch):
+    out, _ = _beaconchain_run(monkeypatch, {"status": "OK", "data": [{"foo": "bar"}]})
+    assert out.frame().empty
+    gaps = {g["metric"]: g["reason"] for g in out.gaps}
+    assert "day_start" in gaps["gross_issuance_tokens"] and "['foo']" in gaps["gross_issuance_tokens"]
+
+    out2, _ = _beaconchain_run(monkeypatch, {"status": "ERROR: invalid apikey", "data": None})
+    assert out2.frame().empty
+    assert "'OK'" in out2.gaps[0]["reason"] and "invalid apikey" in out2.gaps[0]["reason"]
+
+    out3, _ = _beaconchain_run(monkeypatch, {"status": "OK", "data": []})
+    assert out3.frame().empty
+    assert "empty or missing" in out3.gaps[0]["reason"]
+
+
+def test_beaconchain_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch):
+    from fetch import beaconchain
+    from fetch.base import FetchOutput
+
+    monkeypatch.delenv("BEACONCHAIN_API_KEY", raising=False)
+    out = FetchOutput()
+    beaconchain.BeaconChain(http=_BeaconChainHttp({})).run(
+        [config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    assert {g["metric"] for g in out.gaps} == {"gross_issuance_tokens"}
+    assert all("BEACONCHAIN_API_KEY" in g["reason"] for g in out.gaps)
+
+
+def test_beaconchain_measured_figure_suppresses_that_days_issuance_derivation(monkeypatch):
+    """Registered ahead of _derive_issuance in TIER_ORDER for exactly this reason: on a day it
+    answers, the generic d(total_supply_gross)+burn derivation must stand down for Ethereum
+    rather than compute a second, conflicting figure."""
+    import pandas as pd
+
+    from fetch import _derive_issuance
+    from fetch.base import FetchOutput, point
+
+    out = FetchOutput()
+    out.add(point("Ethereum", "gross_issuance_tokens", 1_349.85, "beaconchain", 1,
+                  pd.Timestamp("2026-09-23")), "beaconchain", "Ethereum")
+    _derive_issuance(out, [config.PROJECT_BY_NAME["Ethereum"]], {}, {})
+    df = out.frame()
+    rows = df[(df.project == "Ethereum") & (df.metric == "gross_issuance_tokens")]
+    assert len(rows) == 1 and rows["source"].iloc[0] == "beaconchain", \
+        "the derivation must not add a second row once beaconchain has already answered"

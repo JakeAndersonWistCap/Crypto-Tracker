@@ -147,6 +147,13 @@ def protocol_api_plan() -> list[tuple[str, str, str]]:
         for metric, m in (nb.get("metrics") or {}).items():
             out.append((p["name"], metric, f"nearblocks -> GET {nb['base_url']}{m['path']} "
                                            f"`{m['field']}` ({keyed})"))
+    # beaconcha.in: same pattern, its own key.
+    for p in config.PROJECTS:
+        bc = p.get("beaconchain") or {}
+        keyed = "key set" if os.environ.get(bc.get("key_env", ""), "").strip() else f"NO {bc.get('key_env')} — gap"
+        for metric, m in (bc.get("metrics") or {}).items():
+            out.append((p["name"], metric, f"beaconchain -> GET {bc['base_url']}{m['path']} "
+                                           f"`{m['field']}` ({keyed})"))
     return out
 
 

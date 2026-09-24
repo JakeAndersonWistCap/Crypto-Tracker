@@ -1768,6 +1768,46 @@ PROJECTS = [
             "confirmed_on": "2026-09-23 — date_field 'date', value_field 'value', read off "
                             "live sample rows for both projects and both metrics.",
         },
+        # ===== gross_issuance_tokens — beaconcha.in's ETH.Store, wired 2026-09-24. =====
+        # BEACONCHAIN_API_KEY is in .env. Field names read from beaconcha.in's OWN published
+        # OpenAPI spec (its docs site is egress-blocked here; the spec is published in its
+        # backend repo — see fetch/beaconchain.py's docstring for the exact source and path)
+        # and checked against every live row anyway, the same discipline as growthepie/NearBlocks.
+        #
+        # AUTH IS A HEADER NAMED LITERALLY `apikey`, NOT `Authorization: Bearer`. The spec's
+        # security schemes are `type: apiKey`, `name: apikey`, one `in: query` and one
+        # `in: header` — that machine-readable definition is followed, not a stray line of
+        # prose beside it ('Authorization header with value: `Bearer <token>`') that describes
+        # neither the query nor the header form actually declared.
+        #
+        # CONSENSUS-LAYER REWARDS ONLY (consensus_rewards_sum_wei). The same response also
+        # carries tx_fees_sum_wei / el_apr — execution-layer priority fees and MEV, paid by
+        # senders TO the proposer out of already-circulating ETH. That is a transfer, not
+        # issuance, and is deliberately never read into this metric.
+        #
+        # THIS DOES NOT REPLACE THE DERIVATION. gross_issuance_tokens for Ethereum already
+        # resolves via _derive_issuance (d(total_supply_gross) + gross_burn_tokens, since
+        # burn_mechanism.model is protocol_level_destruction) whenever ultrasound.money answers
+        # gross_burn_tokens in the same run. beaconchain is registered AHEAD of the derivation
+        # in TIER_ORDER (tier 1), so a measured figure here suppresses that day's derivation —
+        # _derive_issuance already stands down whenever the metric is already in the run's
+        # frame — and the derivation remains the fallback for any day this source fails.
+        "beaconchain": {
+            "base_url": "https://beaconcha.in",
+            "key_env": "BEACONCHAIN_API_KEY",
+            "metrics": {
+                "gross_issuance_tokens": {"path": "/api/v1/ethstore/latest",
+                                          "field": "consensus_rewards_sum_wei", "scale": 1e18},
+            },
+            "field_source": "https://raw.githubusercontent.com/gobitfly/"
+                            "eth2-beaconchain-explorer/master/static/openapi/bundled.yaml",
+            "source_read": "2026-09-24",
+            "excludes": "tx_fees_sum_wei, el_apr, cl_apr, apr and the 7d/31d trailing averages — "
+                       "only the raw daily consensus_rewards_sum_wei is stored; everything else "
+                       "in the response is either a rate (not a token amount) or execution-layer "
+                       "fee revenue (a transfer, not issuance).",
+            "live_confirmed": None,      # set from the first run's log line, which prints the row
+        },
         "name": "Ethereum", "symbol": "ETH",
         "coingecko_id": "ethereum",
         # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
