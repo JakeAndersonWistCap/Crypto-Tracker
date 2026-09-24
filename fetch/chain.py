@@ -117,7 +117,12 @@ KIND_METRIC = config.KIND_METRIC
 # double-counts. Declaring the kind keeps the address on file — it is real, and it matters if the
 # bridge model ever changes — without letting it be summed on the intuition that more chains means
 # a more complete figure. Exactly the role burn_executor plays for a burn address.
-REFERENCE_ONLY_KINDS = {"burn_executor", "bridged_representation"}
+# ve_lock_subset: a vote-escrow lock proven, by an independent structural match, to hold a SUBSET
+# of what another already-read contract accounts for — Aethir's Gaming/AI pools lock veAethir,
+# and veAethir.totalSupply() matches ATH.balanceOf(the wrapper that mints it) to the wei, so the
+# pools' own balance is money already counted at the wrapper. Reading both would double-count.
+# Declaring the kind keeps the pool addresses and the evidence on file without a live read.
+REFERENCE_ONLY_KINDS = {"burn_executor", "bridged_representation", "ve_lock_subset"}
 
 # Kinds whose figure is read by calling the CONTRACT ITSELF rather than a token balance, and
 # which therefore need a separate token for symbol() and decimals().

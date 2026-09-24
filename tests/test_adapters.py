@@ -5883,13 +5883,18 @@ def _maple_treasury_metric():
 def _fixture_counterfactuals():
     """ALL of the fixture's counterfactuals, imported from the script that generated them.
 
-    THREE mechanisms now have no live example, and none of them lost one by being fixed away:
+    FOUR mechanisms now have no live example, and none of them lost one by being fixed away:
       disputed    Maple's contract dispute resolved 2026-09-18 (new address, verified_by_label).
       refuted     Sky's burn became real on 2026-09-22 — the refutation is KEPT on the mechanism
                   block as refuted_prior_model, but the project's live status is confirmed.
       suppressed  GEODNET's issuance suppression is still in force and still correct; it now
                   renders n/a rather than RED, because the quantity is zero by construction
                   rather than uncomputable (2026-09-22).
+      out_of_bounds_stock  Aethir's Gaming/AI pools moved off kind ve_total_supply to
+                  ve_lock_subset on 2026-09-24 (the wrapper's three-way match proved them a
+                  subset of its ATH, not an additional locked amount) — the SAME DAY the
+                  out-of-bounds row was written under the old kind. Held at ve_total_supply for
+                  this evaluation so the branch is not shadowed by the repurposed-contract one.
     The fixture holds a row for each. Entering them together, through the generator's own
     definitions, is what keeps the committed JSON and the tests that read it describing the same
     world — and what stops a branch quietly ceasing to be tested the moment its live example
@@ -5901,6 +5906,7 @@ def _fixture_counterfactuals():
     stack.enter_context(mod.forced_dispute())
     stack.enter_context(mod.forced_refutation())
     stack.enter_context(mod.forced_plain_suppression())
+    stack.enter_context(mod.forced_aethir_pool_kind())
     return stack
 
 
@@ -8213,7 +8219,7 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
     ref_only = [(p["name"], k) for p in config.PROJECTS
                 for k, c in (p.get("contracts") or {}).items()
                 if c["kind"] in REFERENCE_ONLY_KINDS]
-    assert len(ref_only) == 11, ref_only    # +Aethir token_ethereum, 2026-09-24
+    assert len(ref_only) == 13, ref_only    # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24
     for name, key in ref_only:
         for (pn, _), d in change.items():
             assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"
@@ -13308,9 +13314,10 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
     cands = a["aethir_staking"]["research_2026_09_23"]
     assert cands["defillama_staking_owner"]["address"] == "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE"
     assert cands["checker_node_license_nft"]["address"] == "0xC227e25544EdD261A9066932C71a25F4504972f1"
-    # none of the 2026-09-23 CANDIDATES became a contract; the pools wired on 2026-09-24 came
-    # from Aethir's own staking page
-    assert set(a["contracts"]) == {"token_arbitrum", "token_ethereum", "staking_gaming_pool", "staking_ai_pool"}
+    # none of the 2026-09-23 CANDIDATES became a contract; the pools wired on 2026-09-24, then
+    # retired the same day once the wrapper three-way match proved them a subset of it
+    assert set(a["contracts"]) == {"token_arbitrum", "token_ethereum", "staking_gaming_pool",
+                                    "staking_ai_pool", "staking_wrapper"}
     assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
     g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
@@ -13711,18 +13718,36 @@ def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
 
 
 def test_the_four_projects_of_2026_09_24_land_as_found():
-    """Aethir's pools wired as ATH held (never the ve's decaying totalSupply, never eATH); Fluid's
-    buyback recorded HALTED with the treasury read once; Sky's Layer 2 history from the executed
-    spells and lssky answered 1:1 from source; GEODNET's premise recorded, nothing guessed."""
+    """Aethir's pools wired 2026-09-24 as ATH held (never the ve's decaying totalSupply, never
+    eATH), then retired the SAME DAY once the wrapper three-way match proved them a subset of the
+    wrapper's ATH balance; Fluid's buyback recorded HALTED with the treasury read once; Sky's
+    Layer 2 history from the executed spells and lssky answered 1:1 from source; GEODNET's premise
+    recorded, nothing guessed."""
+    from fetch.chain import REFERENCE_ONLY_KINDS
     a = config.PROJECT_BY_NAME["Aethir"]
     for key, addr in (("staking_gaming_pool", "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31"),
                       ("staking_ai_pool", "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4")):
         c = a["contracts"][key]
-        assert c["address"] == addr and c["chain"] == "ethereum" and c["kind"] == "ve_total_supply"
-        assert c["read_method"] == "escrow_balance_of" and c["underlying"] == "token_ethereum"
-        assert c["holder_has_code"] is True and c["supply_is_partial"] is True
+        assert c["address"] == addr and c["chain"] == "ethereum"
+        assert c["kind"] == "ve_lock_subset" and c["kind"] in REFERENCE_ONLY_KINDS, \
+            "retired 2026-09-24 — a subset of staking_wrapper, never read"
+    w = a["contracts"]["staking_wrapper"]
+    assert w["address"] == "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE" and w["chain"] == "ethereum"
+    assert w["kind"] == "ve_total_supply", "THE read for locked_tokens now"
+    assert w["read_method"] == "escrow_balance_of" and w["underlying"] == "token_ethereum"
+    assert w["holder_has_code"] is True and w["supply_is_partial"] is True, \
+        "excludes the still-unwired EigenLayer vault leg"
     assert a["contracts"]["token_ethereum"]["kind"] == "bridged_representation", "never summed into supply"
+    assert config.KIND_METRIC["ve_total_supply"] == "locked_tokens"
+    lo, _hi = config.sanity_bounds("Aethir", "locked_tokens")
+    assert lo == 500_000_000, \
+        "old 1.2bn floor (Jake's unverified eigenpodmanager claim) would reject the proven figure"
     st = a["aethir_staking"]
+    match = st["wrapper_three_way_match_2026_09_24"]
+    assert (match["ath_balance_of_wrapper"] == match["stAethir_total_supply"]
+            == match["veAethir_total_supply"] == 808_689_366.92)
+    assert "SNAPSHOT" in match["proof_type"]
+    assert "Mint-event trace" in match["rigorous_version_not_built"]
     assert st["pools"]["eigenlayer_ath_vault"] == "0x3cFc70a2999a6C35A6A908D634E9B1fb85B98Ab0"
     assert "NOT WIRED" in st["eigenlayer_vault"]["status"]
     assert not any(c["address"].lower() in {v.lower() for v in st["eath_receipt"].values() if v.startswith("0x")}

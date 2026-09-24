@@ -5732,7 +5732,7 @@ PROJECTS = [
         },
         "name": "Aethir", "symbol": "ATH",
         # ===== locked_tokens — RESEARCHED 2026-09-23, NOT FOUND, SEARCH RECORDED. =====
-        # ===== STAKING — FOUND 2026-09-24 FROM AETHIR'S OWN PAGE; TWO OF THREE POOLS WIRED. =====
+        # ===== WIRED 2026-09-24 FROM THE STAKING WRAPPER — see wrapper_three_way_match_2026_09_24. =====
         "aethir_staking": {
             "source": "Aethir's staking page, supplied by Jake 2026-09-24",
             "pools": {
@@ -5780,23 +5780,24 @@ PROJECTS = [
                 "note": "Enough for a real avg_lock_duration_days later (ve locked__end per "
                         "position). Not built this round.",
             },
-            # ===== JAKE'S PROBE, 2026-09-24 — AND WHY NOTHING NEW IS WIRED YET. =====
+            # ===== JAKE'S PROBE, 2026-09-24 — ANSWERED THE SAME DAY, see wrapper_three_way_match. =====
             # Gaming/AI ve supply() 369.45M / 415.94M against ATH held 264.95 / 0.00; vault
             # strategy ATH 777,291,046.91; wrapper 0x3f69… ATH 808,689,366.92. On a Curve-style
             # Voting Escrow supply() is TOKENS LOCKED (totalSupply() is the voting power), so the
             # pools hold ~785.39M of some token that is not ATH — and 785.39M sits just under the
-            # wrapper's 808.69M. The wrapper's ABI mints stAethir against ATH. If the pools lock
-            # stAethir, the wrapper IS the aggregate and summing it with the pools double-counts.
-            # check_offline_items.aethir_wrapper_relationship reads token() on both pools against
-            # wrapper.stAethir() and says which. The current ATH.balanceOf(pool) wiring is the
-            # wrong measure either way (it reads ~265) and stays blanked by the 1.2bn floor.
+            # wrapper's 808.69M. ANSWERED: the pools lock veAethir, and veAethir.totalSupply()
+            # matches the wrapper's ATH balance to the wei — the wrapper IS the aggregate, and the
+            # 785.39M gap from pools_supply_sum is veAethir minted but not yet locked into either
+            # pool. See wrapper_three_way_match_2026_09_24.
             "probe_2026_09_24": {
                 "gaming_pool": {"supply": 369_450_000, "ath_held": 264.95},
                 "ai_pool": {"supply": 415_940_000, "ath_held": 0.0},
                 "vault_strategy_ath": 777_291_046.91,
                 "wrapper_ath": 808_689_366.92,
                 "pools_supply_sum": 785_390_000,
-                "decides": "check_offline_items.py — aethir_wrapper_relationship",
+                "decided": "wrapper_three_way_match_2026_09_24 — wrapper is the aggregate; "
+                          "staking_wrapper wired for locked_tokens, staking_gaming_pool/"
+                          "staking_ai_pool retired (ve_lock_subset)",
             },
             # ===== NEITHER ATH NOR stAethir — A THIRD TOKEN, 0x1b49f587…. Found 2026-09-24. =====
             # Jake's follow-up read: pool.token() on BOTH the Gaming and AI pools returns
@@ -5806,13 +5807,13 @@ PROJECTS = [
             # mint(address,uint256)/burn(address,uint256), and NO asset(), underlying(),
             # totalAssets() or any other ERC-4626-style redeemable-underlying accessor. So on the
             # ABI alone it is NOT a vault — there is no single on-chain balance it is a claim on.
-            # What remains open is WHO holds owner() (the sole minter) and whether minting tracks
-            # ATH wrapped 1:1 or is unconstrained. check_offline_items.aethir_veaethir_probe reads
-            # owner() live, calls the four accessors live (a downloaded ABI is not proof of
-            # absence), and cross-checks the wrapper's OWN veAethir() getter against this address.
-            # NOTHING IS WIRED FROM THIS. If owner() turns out to be the wrapper and its getter
-            # matches, that still only establishes WHO mints it — 1:1-against-ATH backing needs a
-            # Mint-event trace against the wrapper's Wrap events, which this probe does not do.
+            # WHO holds owner() is STILL not established (this record does not answer it) — but
+            # WHETHER mint() tracks ATH wrapped 1:1 is now answered STRUCTURALLY, not by owner():
+            # veAethir.totalSupply() = ATH.balanceOf(wrapper) to the wei (Jake's live reads,
+            # wrapper_three_way_match_2026_09_24). That is a SNAPSHOT proof — it shows the peg
+            # holds NOW, not that it has held at every point historically. The rigorous version
+            # (owner()==wrapper confirmed, plus a Mint-event trace on veAethir correlated against
+            # the wrapper's Wrap events) is still not built.
             "veAethir_token_2026_09_24": {
                 "address": "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490",
                 "found_via": "pool.token() on both Gaming Pool and AI Pool — Jake's read",
@@ -5826,15 +5827,50 @@ PROJECTS = [
                 "registry_source": "https://raw.githubusercontent.com/KeystoneHQ/Smart-Contract-"
                                    "Metadata-Registry/master/ethereum/"
                                    "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490.json",
-                "open": "who holds owner() (sole minter), and whether mint() tracks ATH wrapped "
-                       "1:1 — NOT established by the ABI or by this record",
-                "decides": "check_offline_items.py — aethir_veaethir_probe",
+                "open": "who holds owner() (sole minter) — STILL not established. 1:1 backing is "
+                       "answered structurally as a SNAPSHOT, not historically — see "
+                       "wrapper_three_way_match_2026_09_24.",
+                "decides": "check_offline_items.py — aethir_veaethir_probe (owner() still unread)",
             },
             "possible_overlap": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE — the only address "
                                 "DefiLlama counts as Aethir staking, a wrapper minting "
-                                "stAethir/veAethir. Not one of the three; the probe prints its ATH "
-                                "so a fourth pool, or a feeder into one of the three, is visible "
-                                "before anything is added.",
+                                "stAethir/veAethir. RESOLVED 2026-09-24: not a fourth pool or a "
+                                "feeder into one of the three — it IS the aggregate the Gaming/AI "
+                                "pools' veAethir locks are a subset of. See "
+                                "wrapper_three_way_match_2026_09_24.",
+            # ===== THE THREE-WAY MATCH — THE EVIDENCE FOR staking_wrapper. 2026-09-24. =====
+            # Jake's live reads, same block: ATH.balanceOf(wrapper) = stAethir.totalSupply() =
+            # veAethir.totalSupply() = 808,689,366.92, ALL THREE TO THE WEI. Three independent
+            # quantities agreeing that precisely is not coincidence — it proves the wrapper mints
+            # both receipt tokens EXACTLY against ATH it holds, i.e. 1:1 backing, structurally.
+            "wrapper_three_way_match_2026_09_24": {
+                "ath_balance_of_wrapper": 808_689_366.92,
+                "stAethir_total_supply": 808_689_366.92,
+                "veAethir_total_supply": 808_689_366.92,
+                "match": "to the wei, all three quantities",
+                "interpretation": "PROVES 1:1 backing STRUCTURALLY: the wrapper mints stAethir "
+                                  "and veAethir exactly against ATH it holds, so all three read "
+                                  "the same outstanding amount. The Gaming/AI pools' combined "
+                                  "785.39M supply() (probe_2026_09_24) undercounts by ~23.3M — "
+                                  "veAethir minted but not yet deposited into either pool, not a "
+                                  "fourth pool or a double count.",
+                "proof_type": "SNAPSHOT, NOT HISTORICAL. One block, three numbers agreeing shows "
+                              "the peg holds NOW, not that it has held continuously. A mismatch "
+                              "introduced and later closed between two reads would not appear in "
+                              "a single snapshot.",
+                "rigorous_version_not_built": "A Mint-event trace on veAethir (owner-gated "
+                                              "mint(address,uint256)) correlated against the "
+                                              "wrapper's own Wrap events would prove the peg held "
+                                              "at every point, not just this one — Jake's call to "
+                                              "leave this as a snapshot proof for now, not build "
+                                              "the trace.",
+                "wired_as": "locked_tokens = ATH.balanceOf(wrapper) directly — "
+                           "contracts.staking_wrapper. staking_gaming_pool / staking_ai_pool "
+                           "retired from locked_tokens (kind ve_lock_subset, reference only, "
+                           "never read) — their balances are a proven subset of this figure, "
+                           "not additional locked ATH.",
+                "source": "Jake's live reads, 2026-09-24",
+            },
             "research_2026_09_23": {
                 "defillama_staking_owner": {
                     "address": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE", "chain": "ethereum",
@@ -5969,17 +6005,27 @@ PROJECTS = [
             "fees_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
             "revenue_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
             "customer_revenue_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
-            # ** 264.947427 WAS STORED AND RENDERED AS "review". Bound added 2026-09-24. ** The
-            # floor is Jake's: the offline probe read ~1,204,990,000 ATH on the EigenLayer side
-            # alone, so a total below 1.2bn is missing that leg or mis-scaled. The ceiling is
-            # max supply (42bn). Outside it the read is rejected at write time, and a row stored
-            # before this bound is blanked on the sheet (build_workbook.withheld_for, case 9).
-            # WITH ONLY THE TWO VE POOLS WIRED, EVERY READ BELOW THE FLOOR IS REJECTED — the
-            # column stays blank until the vault leg is wired from the probe's figures.
-            "locked_tokens": {"min": 1_200_000_000, "max": 42_000_000_000,
-                              "why": "Aethir locked_tokens must be at least ~1.2bn (the "
-                                     "EigenLayer leg alone, per the offline probe) and below max "
-                                     "supply (42bn)."},
+            # ** 264.947427 WAS STORED AND RENDERED AS "review". Bound added 2026-09-24, REVISED
+            # the same day. ** The original 1.2bn floor was Jake's own unconfirmed claim from an
+            # earlier round ("eigenpodmanager alone reads 1,204,990,000") — no probe output ever
+            # showed such a component, and EigenPodManager does not hold ATH; it was never real
+            # evidence. It is replaced now because it would otherwise reject the wrapper figure
+            # this round wires: ATH.balanceOf(wrapper) = stAethir.totalSupply() =
+            # veAethir.totalSupply() = 808,689,366.92, matched to the wei — see
+            # wrapper_three_way_match_2026_09_24 — real, structurally-proven evidence, and below
+            # the old floor. The new floor (500M) sits comfortably under that figure while still
+            # catching the same class of bug the old one was built for (264.947427 is ~7 orders
+            # of magnitude below either floor — an unscaled or wrong-decimals read, not a
+            # boundary case). The ceiling stays max supply (42bn). Outside [min, max] the read is
+            # rejected at write time, and a row stored before this bound is blanked on the sheet
+            # (build_workbook.withheld_for, case 9).
+            "locked_tokens": {"min": 500_000_000, "max": 42_000_000_000,
+                              "why": "Aethir locked_tokens (staking_wrapper's ATH balance) is "
+                                     "808,689,366.92 as of 2026-09-24, proven three ways to the "
+                                     "wei — see wrapper_three_way_match_2026_09_24. 500M floors "
+                                     "well under that with room for the figure to move, while "
+                                     "still catching an unscaled/wrong-decimals read; 42bn "
+                                     "ceiling is ATH's max supply."},
         },
         # ARCHETYPE 2 ONLY. ARCHETYPE 3 IS REFUTED, NOT HELD — and the distinction matters because
         # "held" means "pending evidence" and the evidence is in. There is NO revenue-to-token
@@ -6099,16 +6145,15 @@ PROJECTS = [
             #     Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7
             # Both from docs.aethir.com/aethir-tokenomics/token-overview, 2026-09-14.
             #
-            # ===== THE STAKING POOLS, WIRED 2026-09-24. =====
-            # Addresses from Aethir's own staking page (supplied by Jake). The page does not state
-            # the chain; two independent public registries hold all three under ETHEREUM and none
-            # under Arbitrum (KeystoneHQ Smart-Contract-Metadata-Registry ethereum/, 0xtorch
-            # datasource evms/chains/1), with the Gaming and AI pools recorded as Curve-style
-            # "Voting Escrow" contracts. holder_has_code makes a wrong chain fail loudly rather
-            # than read zero.
-            # ** READ AS ATH.balanceOf(pool), NEVER THE POOL'S totalSupply(). ** On a vote escrow
-            # totalSupply() is decaying VOTING POWER, not tokens locked (Aerodrome's lesson). The
-            # balance is what the pool holds, which is the figure asked for.
+            # ===== THE WRAPPER, WIRED 2026-09-24 — THE GAMING/AI POOLS RETIRED THE SAME DAY. =====
+            # Jake's live reads settle aethir_staking.probe_2026_09_24 and .veAethir_token_2026_09_24:
+            # ATH.balanceOf(wrapper) = stAethir.totalSupply() = veAethir.totalSupply() = 808,689,366.92,
+            # ALL THREE TO THE WEI. That proves 1:1 backing STRUCTURALLY — the wrapper mints both
+            # receipt tokens exactly against ATH it holds — so locked_tokens is read directly off the
+            # wrapper's ATH balance, not summed from the two ve pools' supply() (785.39M, which
+            # undercounts veAethir minted but not yet deposited into either pool). See
+            # aethir_staking.wrapper_three_way_match_2026_09_24 for the evidence and its limits (a
+            # SNAPSHOT proof, not a historical one).
             # ETHEREUM ATH is declared here as the underlying ONLY. bridged_representation keeps it
             # out of every supply sum — the bridge model is still unestablished (see above), and
             # the Arbitrum deployment stays the one supply read.
@@ -6119,30 +6164,60 @@ PROJECTS = [
                                                   "2026-09-14); corroborated by the Arbitrum token "
                                                   "bridge list (l1Address)",
                 token_standard="erc20",
-                purpose="ATH on ETHEREUM — the balanceOf target for the Ethereum staking pools. "
+                purpose="ATH on ETHEREUM — the balanceOf target for the staking wrapper. "
                         "REFERENCE ONLY for supply: never summed."),
+            "staking_wrapper": _contract(
+                "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE", "ethereum", "ve_total_supply", "ATH",
+                "https://aethir.com/",
+                verified="2026-09-24",
+                provenance="Structural proof, Jake's live reads 2026-09-24: ATH.balanceOf(wrapper) = "
+                           "stAethir.totalSupply() = veAethir.totalSupply() = 808,689,366.92, all "
+                           "three to the wei — see aethir_staking.wrapper_three_way_match_2026_09_24. "
+                           "Same DefiLlama/Keystone provenance as research_2026_09_23."
+                           "defillama_staking_owner.",
+                read_method="escrow_balance_of", underlying="token_ethereum", token_standard="erc20",
+                holder_has_code=True, supply_is_partial=True,
+                partial_reason="EXCLUDES the EigenLayer ATH Vault (0x3cFc70a2999a6C35A6A908D634E9B1"
+                               "fb85B98Ab0) — a structurally separate mechanism (totalATH / "
+                               "totalDeposited / totalEscrowed / aethirStrategy, not wrap / "
+                               "stAethir / veAethir) whose own strategy balance is "
+                               "777,291,046.91 ATH and is NOT corroborated as related to this "
+                               "wrapper. See aethir_staking.eigenlayer_vault — still NOT WIRED. "
+                               "The true total locked may be substantially larger than this figure.",
+                purpose="THE read for locked_tokens: ATH.balanceOf(the wrapper that mints stAethir "
+                        "and veAethir 1:1 against deposited ATH). Covers the Gaming and AI pools' "
+                        "veAethir locks as a proven subset — see staking_gaming_pool / "
+                        "staking_ai_pool, retired from this metric the same day."),
+            # ===== THE GAMING/AI POOLS, RETIRED 2026-09-24 — KEPT ON FILE, NEVER READ. =====
+            # Both pools lock veAethir (0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490), not ATH
+            # directly — pool.token() on each returns that address (Jake's read, 2026-09-24; see
+            # aethir_staking.veAethir_token_2026_09_24). veAethir.totalSupply() matches the
+            # wrapper's ATH balance to the wei (wrapper_three_way_match_2026_09_24), so whatever
+            # these two pools hold is already inside the wrapper figure staking_wrapper reads.
+            # Summing them on top would double-count. ve_lock_subset is REFERENCE_ONLY_KINDS: no
+            # read is issued for either address at all.
             "staking_gaming_pool": _contract(
-                "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31", "ethereum", "ve_total_supply", "ATH",
+                "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31", "ethereum", "ve_lock_subset", "ATH",
                 "https://aethir.com/",
                 verified="2026-09-24",
-                provenance="Aethir's staking page (Gaming Pool), supplied by Jake 2026-09-24; chain "
-                           "from the Keystone and 0xtorch registries (Ethereum only)",
-                read_method="escrow_balance_of", underlying="token_ethereum", token_standard="erc20",
-                holder_has_code=True, supply_is_partial=True,
-                partial_reason="TWO OF THREE POOLS. The EigenLayer ATH Vault is not read yet — its "
-                               "ATH moves into an EigenLayer strategy, so its own balance can "
-                               "undercount; see aethir_staking.eigenlayer_vault.",
-                purpose="Aethir Gaming Pool — a Curve-style vote escrow, locks up to 4 years."),
+                provenance="Aethir's staking page (Gaming Pool), supplied by Jake 2026-09-24; "
+                           "pool.token() (Jake's read, 2026-09-24) returns veAethir, proven a "
+                           "subset of staking_wrapper's ATH balance — see "
+                           "wrapper_three_way_match_2026_09_24",
+                token_standard="erc20",
+                purpose="Aethir Gaming Pool — a Curve-style vote escrow locking veAethir, up to 4 "
+                        "years. RETIRED from locked_tokens 2026-09-24: its balance is a proven "
+                        "subset of staking_wrapper, not an additional locked amount."),
             "staking_ai_pool": _contract(
-                "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4", "ethereum", "ve_total_supply", "ATH",
+                "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4", "ethereum", "ve_lock_subset", "ATH",
                 "https://aethir.com/",
                 verified="2026-09-24",
-                provenance="Aethir's staking page (AI Pool), supplied by Jake 2026-09-24; chain from "
-                           "the Keystone and 0xtorch registries (Ethereum only)",
-                read_method="escrow_balance_of", underlying="token_ethereum", token_standard="erc20",
-                holder_has_code=True, supply_is_partial=True,
-                partial_reason="TWO OF THREE POOLS — see staking_gaming_pool.",
-                purpose="Aethir AI Pool — a Curve-style vote escrow, locks up to 4 years."),
+                provenance="Aethir's staking page (AI Pool), supplied by Jake 2026-09-24; "
+                           "pool.token() (Jake's read, 2026-09-24) returns veAethir — see "
+                           "staking_gaming_pool",
+                token_standard="erc20",
+                purpose="Aethir AI Pool — a Curve-style vote escrow locking veAethir, up to 4 "
+                        "years. RETIRED from locked_tokens 2026-09-24 — see staking_gaming_pool."),
         },
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",

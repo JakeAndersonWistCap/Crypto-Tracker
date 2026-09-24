@@ -136,6 +136,35 @@ def forced_dispute():
     finally:
         treasury["destination_status"] = previous
 
+
+@contextlib.contextmanager
+def forced_aethir_pool_kind():
+    """Hold Aethir's Gaming/AI pools at kind ve_total_supply for the duration of the block.
+
+    THE out_of_bounds_stock ROW LOST ITS LIVE EXAMPLE ON 2026-09-24, the same day it was added,
+    when the wrapper's three-way match (ATH.balanceOf(wrapper) = stAethir.totalSupply() =
+    veAethir.totalSupply(), all to the wei) proved staking_gaming_pool / staking_ai_pool hold a
+    subset of the wrapper's ATH rather than an additional locked amount. Their kind moved to
+    ve_lock_subset (REFERENCE_ONLY_KINDS) the same day, which means the stored row this fixture
+    covers — 264.947427 from ethereum:staking_gaming_pool+staking_ai_pool, written when both
+    pools were still kind ve_total_supply — now reads as a REPURPOSED contract (withdrawn) before
+    withheld_for's out-of-bounds check ever runs, exactly the disputed_destination situation
+    forced_dispute() describes for Maple. The bound the row exceeds is still real (see
+    config.py sanity["locked_tokens"]), and out_of_bounds_stock is not this project's alone —
+    holding the kind here for the fixture's evaluation keeps the branch covered without
+    resurrecting the retired reads anywhere live.
+    """
+    a = config.PROJECT_BY_NAME["Aethir"]
+    contracts = a["contracts"]
+    previous = {k: contracts[k]["kind"] for k in ("staking_gaming_pool", "staking_ai_pool")}
+    for k in previous:
+        contracts[k]["kind"] = "ve_total_supply"
+    try:
+        yield
+    finally:
+        for k, kind in previous.items():
+            contracts[k]["kind"] = kind
+
 # Every transition type the fixture must cover. The coverage test asserts this set is fully
 # exercised AND that confidence_for has not grown a RED branch nobody added a row for.
 TRANSITIONS = (
@@ -317,9 +346,13 @@ ROWS = [
              "83,344.4791 recorded: a residual of 148,589.523 the flow never reported"),
 
     # ---- out_of_bounds_stock ---------------------------------------------------------
-    # THE LIVE ROW, 2026-09-24. Aethir locked_tokens stored 264.947427 from the two ve pools,
-    # against ~1.2bn ATH on the EigenLayer side alone, and rendered as "review". The bound was
-    # declared after the row was written, so only the read-time check can reach it.
+    # THE LIVE ROW, WRITTEN 2026-09-24, RETIRED THE SAME DAY. Aethir locked_tokens stored
+    # 264.947427 from the two ve pools while they were still kind ve_total_supply, against the
+    # floor in force at the time (1.2bn, itself since revised to 500M). The pools moved to kind
+    # ve_lock_subset (reference only) later the same day once the wrapper's three-way match
+    # proved them a subset of its ATH — see forced_aethir_pool_kind() above, which holds them at
+    # their original kind for this evaluation so the branch keeps a live example instead of
+    # reading as a repurposed contract (withdrawn) before the bound check ever runs.
     dict(transition="out_of_bounds_stock", date="2026-09-14", project="Aethir",
          metric="locked_tokens", value=264.947427,
          source="chain:sum(ethereum:staking_gaming_pool+ethereum:staking_ai_pool):PARTIAL", tier=2,
@@ -394,7 +427,7 @@ def _evaluate(rows: list[dict]) -> dict:
                           "metric": r["metric"], "value": r["value"], "source": r["source"],
                           "tier": r["tier"], "is_manual": False, "entered_on": ""}
                          for r in rows])
-    with forced_dispute(), forced_refutation(), forced_plain_suppression():
+    with forced_dispute(), forced_refutation(), forced_plain_suppression(), forced_aethir_pool_kind():
         out = bw.aggregate(long, pd.DataFrame(), pd.Timestamp(ASOF),
                            gaps=pd.DataFrame(), review=pd.DataFrame())
     by_key = {(r["project"], r["metric"]): r for r in out.to_dict("records")}

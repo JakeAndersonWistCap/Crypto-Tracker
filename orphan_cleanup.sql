@@ -2737,7 +2737,11 @@ SELECT metric, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
 -- raw-unit sum is not the expected cause. The run log already holds one line per component
 -- ("locked_tokens component ethereum:staking_gaming_pool=…"); AG2 reads them. Runs from
 -- 2026-09-24 on also carry "(raw N / 10^D from <token>.decimals())" on each line.
--- The sheet blanks this row now (build_workbook.withheld_for case 9, the 1.2bn floor).
+-- The sheet blanks this row (build_workbook.withheld_for case 9, the sanity floor — 1.2bn when
+-- this section was written, revised to 500M the same day by AI below; 264.947427 sits under
+-- either one). SUPERSEDED BY AI: staking_gaming_pool / staking_ai_pool no longer feed
+-- locked_tokens AT ALL as of AI's wiring — this section is about the rows they already wrote,
+-- not a live source any more.
 
 -- AG1. EVERY STORED ROW, with its source. Expect sum(ethereum:staking_gaming_pool+…):PARTIAL.
 SELECT date, value, source, tier, fetched_at
@@ -2758,7 +2762,7 @@ SELECT run_id, ts, message
 -- BEGIN;
 -- DELETE FROM metrics
 --  WHERE project = 'Aethir' AND metric = 'locked_tokens'
---    AND value < 1200000000;
+--    AND value < 500000000;
 -- COMMIT;
 
 -- ========================================================================================
@@ -2787,4 +2791,41 @@ SELECT source, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
 --    SET metric = 'treasury_holding_tokens_chain'
 --  WHERE project = 'Maple' AND metric = 'treasury_holding_tokens'
 --    AND source LIKE 'chain:ethereum:treasury%';
+-- COMMIT;
+
+-- ========================================================================================
+-- AI. Aethir — locked_tokens moves from the two ve pools to the wrapper.        2026-09-24
+--     AI1 LOOKS. AI2 is the proposed UPDATE, commented out. NOTHING IS DELETED.
+-- ========================================================================================
+-- Jake's live reads: ATH.balanceOf(wrapper 0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE) =
+-- stAethir.totalSupply() = veAethir.totalSupply() = 808,689,366.92, all three to the wei —
+-- see config.py PROJECT_BY_NAME['Aethir']['aethir_staking']['wrapper_three_way_match_2026_09_24'].
+-- That proves the Gaming/AI pools lock veAethir, a proven SUBSET of the wrapper's ATH — reading
+-- both double-counts nothing today (the pools' own ATH.balanceOf reads ~265, already below any
+-- floor, see AG), but going forward staking_gaming_pool / staking_ai_pool carry kind
+-- 've_lock_subset' (REFERENCE_ONLY_KINDS) and are NEVER READ AGAIN — no new rows will land under
+-- their sources. staking_wrapper is the sole live source for locked_tokens from here on. This
+-- is a SOURCE CHANGE (withheld_for's 'withdrawn': a contract re-purposed, its kind changed), not
+-- a value dispute — AI2 relabels the OLD rows so a future series-continuity check does not read
+-- one series switching sources mid-stream as noise; it does not touch the AG rows, which stay
+-- under locked_tokens as the pre-fix, sub-floor history AG3 already proposes deleting.
+
+-- AI1. ANY locked_tokens ROWS SOURCED FROM THE RETIRED POOLS, distinct from the wrapper's own.
+SELECT source, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'locked_tokens'
+   AND (source LIKE '%staking_gaming_pool%' OR source LIKE '%staking_ai_pool%')
+ GROUP BY source
+ ORDER BY source;
+
+-- AI2. THE PROPOSED RELABEL. Only after AI1 confirms these are pool-sourced, pre-retirement
+--      rows (not the wrapper's). Moves them out of the live locked_tokens series into a
+--      clearly-named retired one, purely for series-continuity bookkeeping — it does not
+--      change or delete any value.
+-- BEGIN;
+-- UPDATE metrics
+--    SET metric = 'locked_tokens_retired_pool_subset'
+--  WHERE project = 'Aethir' AND metric = 'locked_tokens'
+--    AND (source LIKE '%staking_gaming_pool%' OR source LIKE '%staking_ai_pool%');
 -- COMMIT;
