@@ -14111,6 +14111,50 @@ def test_near_account_flow_ignores_non_transfer_actions(monkeypatch):
         "a FUNCTION_CALL deposit must not be counted as a native TRANSFER"
 
 
+def test_near_buyback_probe_separates_direction_and_excluded_senders(monkeypatch, capsys):
+    """NearBlocks returns receipts where the wallet is sender OR receiver when no from/to is
+    given. The probe must show that split, and name the adapter's overstatement when an outbound
+    row is present — it is the diagnostic that runs before fetch/nearblocks.py is touched."""
+    import check_offline_items as coi
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    acct = "buybacks.multisignature.near"
+    one = str(10 ** 24)
+
+    def row(snd, rcv, action="TRANSFER"):
+        return {"predecessor_account_id": snd, "receiver_account_id": rcv, "block_timestamp": "0",
+                "actions": [{"action": action, "method": None, "deposit": one}]}
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, body):
+            self._b, self.text = body, str(body)
+
+        def json(self):
+            return self._b
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _Resp({"cursor": None, "txns": [row("fefundsadmin.sputnik-dao.near", acct),
+                                               row(acct, "someone.near")]})
+
+    monkeypatch.setattr(coi.requests, "get", fake_get)
+    coi.near_buyback_inflow_probe()
+    out = capsys.readouterr().out
+    assert "NONE IS AN INBOUND TRANSFER FROM OUTSIDE THE THREE WALLETS" in out, out
+    assert "1 OUTBOUND row(s) present" in out and "1.0000 NEAR against 0.0000" in out, out
+    assert "nb-secret-123" not in out
+
+
+def test_pendle_press_reconciliation_is_recorded_and_never_summed():
+    d = (config.PROJECT_BY_NAME["Pendle"]["non_comparable"]["locked_tokens"]
+         ["discrepancy_2026_09_23"]["closed_by_reconciliation"])
+    assert abs(d["spendle_assets"] + d["legacy_vependle"] - d["sum"]) < 0.01
+    assert d["sum"] == 99_038_977.33
+    assert "never" in d and "locked_tokens" in d["never"]
+    assert config.PROJECT_BY_NAME["Pendle"]["contracts"]["vependle_legacy"]["metric_override"] != "locked_tokens"
+
+
 def test_nearblocks_stores_complete_days_and_never_today(monkeypatch):
     import pandas as pd
 

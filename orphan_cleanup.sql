@@ -2383,6 +2383,12 @@ SELECT s.date, s.value AS shares_value, l.value AS locked_value, s.source
 --     rows are the same read of the same contract on the same day, so the one already under
 --     locked_tokens_shares is kept and its duplicate discarded. Nothing is lost.
 --     Commented out deliberately. Run Z1-Z3 first.
+--
+--     ** SUPERSEDED 2026-09-24 — DO NOT RUN Z4. USE AJ. ** Z4 was written when locked_tokens
+--     had no spendle_underlying rows. It now has them (35.46M on the live run), and Z4's
+--     UPDATE has no source filter: it would move the NEW assets rows into locked_tokens_shares
+--     too, blanking the very figure it was meant to restore. AJ does the same move scoped to
+--     source = 'chain:ethereum:spendle'.
 -- BEGIN;
 -- DELETE FROM metrics
 --  WHERE project = 'Pendle' AND metric = 'locked_tokens'
@@ -2829,3 +2835,80 @@ SELECT source, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
 --  WHERE project = 'Aethir' AND metric = 'locked_tokens'
 --    AND (source LIKE '%staking_gaming_pool%' OR source LIKE '%staking_ai_pool%');
 -- COMMIT;
+
+-- ========================================================================================
+-- AJ. Pendle — locked_tokens blank on measuring_point_changed. Z, re-scoped.      2026-09-24
+--     AJ1-AJ3 LOOK. AJ4 is the proposed MOVE, commented out. NOTHING IS DELETED except exact
+--     same-day duplicates of rows already kept under locked_tokens_shares.
+-- ========================================================================================
+-- The live run blanked locked_tokens with measuring_point_changed: the series now holds TWO
+-- sources (build_workbook.withheld_for, case 5):
+--     chain:ethereum:spendle              sPENDLE.totalSupply() — the SHARE count,
+--                                         2026-09-11..2026-09-23 (section Z established every
+--                                         one of these is shares, checked against git)
+--     chain:ethereum:spendle_underlying   PENDLE.balanceOf(sPENDLE) — the ASSETS, 35.46M,
+--                                         from the first run after the 2026-09-23 fix
+-- They are two different QUANTITIES, not two reads of one, so this is not a handover to
+-- declare. The old rows belong under locked_tokens_shares, which is where section Z always
+-- meant them to go; Z4 was simply never run, and cannot be run now (see the note on Z4).
+--
+-- ** SCOPED BY EXACT SOURCE. ** 'chain:ethereum:spendle%' would also match
+-- 'chain:ethereum:spendle_underlying' — the rows being restored. Every statement below uses
+-- source = 'chain:ethereum:spendle' (or that string with a ':'-suffix marker, which the chain
+-- adapter appends for PARTIAL; none is expected here).
+--
+-- EXPECTED AFTER AJ4: locked_tokens holds ONLY chain:ethereum:spendle_underlying rows, so one
+-- measuring point, and the 35.46M renders again. locked_tokens_shares holds the full share
+-- history from 2026-09-11, one source.
+
+-- AJ1. THE SOURCE CENSUS — exactly TWO rows expected: chain:ethereum:spendle (values ~30-34M,
+--      2026-09-11..2026-09-23) and chain:ethereum:spendle_underlying (~35.46M, from the first
+--      post-fix run). A third source, or spendle values outside ~29-35M, means stop.
+SELECT source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Pendle' AND metric = 'locked_tokens'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- AJ2. THE ROWS THAT WOULD MOVE — every one of them, with its value. This is the list to read
+--      before AJ4.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Pendle' AND metric = 'locked_tokens'
+   AND (source = 'chain:ethereum:spendle' OR source LIKE 'chain:ethereum:spendle:%')
+ ORDER BY date;
+
+-- AJ3. THE COLLISIONS — dates already present under locked_tokens_shares (written by
+--      contracts.spendle since metric_override was set on 2026-09-23). The store is keyed
+--      (date, project, metric), so these cannot be UPDATEd across; AJ4 drops them from the
+--      locked_tokens side instead. Each pair should be the same read on the same day — the
+--      two value columns should match. If they do not, stop.
+SELECT s.date, s.value AS shares_row, l.value AS old_locked_row, l.source
+  FROM metrics s
+  JOIN metrics l ON l.date = s.date AND l.project = s.project
+ WHERE s.project = 'Pendle' AND s.metric = 'locked_tokens_shares'
+   AND l.metric = 'locked_tokens'
+   AND (l.source = 'chain:ethereum:spendle' OR l.source LIKE 'chain:ethereum:spendle:%')
+ ORDER BY s.date;
+
+-- AJ4. THE PROPOSED MOVE. Only after AJ1-AJ3 read as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Pendle' AND metric = 'locked_tokens'
+--    AND (source = 'chain:ethereum:spendle' OR source LIKE 'chain:ethereum:spendle:%')
+--    AND date IN (SELECT date FROM metrics
+--                  WHERE project = 'Pendle' AND metric = 'locked_tokens_shares');
+-- UPDATE metrics
+--    SET metric = 'locked_tokens_shares'
+--  WHERE project = 'Pendle' AND metric = 'locked_tokens'
+--    AND (source = 'chain:ethereum:spendle' OR source LIKE 'chain:ethereum:spendle:%');
+-- COMMIT;
+
+-- AJ5. VERIFY. locked_tokens: ONE source (chain:ethereum:spendle_underlying).
+--      locked_tokens_shares: ONE source (chain:ethereum:spendle), continuous from 2026-09-11.
+SELECT metric, source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Pendle' AND metric IN ('locked_tokens', 'locked_tokens_shares')
+ GROUP BY metric, source
+ ORDER BY metric, first_date;

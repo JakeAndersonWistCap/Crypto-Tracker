@@ -2309,6 +2309,18 @@ PROJECTS = [
                 "wired_on": "2026-09-24",
             },
         ],
+        # ===== WHAT THE BUYBACK CELLS HOLD — so 3.57M is not read as "the buyback fund". 2026-09-24.
+        "metric_labels": {
+            "buyback_fund_balance": "NEAR Intents revenue wallets COMBINED — fefundsadmin (front-end "
+                                    "fund) + 1csfundsadmin (1Click fund) + buybacks.multisignature."
+                                    "near — not the buyback wallet alone (the Run Log line gives "
+                                    "each wallet's share). PARTIAL: liquid native NEAR only; wNEAR "
+                                    "and any staked NEAR in these wallets are not counted.",
+            "actual_buyback_tokens": "Native NEAR TRANSFERs into buybacks.multisignature.near "
+                                     "(NearBlocks), excluding hops from the other two revenue "
+                                     "wallets. wNEAR inflow not counted; not reconciled to a "
+                                     "balance.",
+        },
         # ===== treasury_holding_tokens — n/a, and the Base contract entry is retired to a record.
         # 2026-09-23. =====
         # The Intents Treasury on Base (0x2CfF890f...) holds a multi-asset basket. There is no
@@ -2478,9 +2490,15 @@ PROJECTS = [
                     "address_source": "AGGREGATOR-SOURCED — DefiLlama fees/near-intents adapter, "
                                       "read 2026-09-23; see intents_revenue_wallets. Not verified "
                                       "against NEAR Intents' own material.",
-                    "partial": "native NEAR only. The adapter's `moves` CTE also counts wrap.near "
-                               "(an FT) received by these wallets, which view_account cannot see; "
-                               "an ft_balance_of call on wrap.near would complete it.",
+                    # WHAT PARTIAL MEANS HERE — spelled out 2026-09-24 after the first live read
+                    # (3,571,370.86). It is NOT "one of three wallets": the read is all-or-nothing
+                    # and a single failed account stores nothing, so every stored row is all three.
+                    # It IS two exclusions: wrapped NEAR and staked NEAR.
+                    "partial": "all three wallets summed (the read is all-or-nothing), but "
+                               "LIQUID NATIVE NEAR ONLY: (1) wNEAR (wrap.near, an FT) held by these "
+                               "wallets is not seen by view_account — an ft_balance_of call on "
+                               "wrap.near would add it; (2) result.locked (NEAR staked by the "
+                               "account itself) is not read, only result.amount.",
                     "no_flow": "a STOCK, deliberately not differenced — see "
                                "actual_buyback_tokens_blocked.",
                 },
@@ -11632,14 +11650,18 @@ PROJECTS = [
                 read_method="escrow_balance_of", holder_has_code=True, underlying="token",
                 token_standard="erc20", metric_override="locked_tokens_legacy_vependle",
                 purpose="PENDLE STILL HELD BY THE DEPRECATED vePENDLE CONTRACT — the other half "
-                        "of what the press's >100M 'staked' figures likely combine with sPENDLE's "
-                        "35.46M (see OPEN_QUESTIONS' Pendle entry, answered 2026-09-24: a "
-                        "third-party tracker matched the hub's figure to PENDLE.balanceOf"
-                        "(vePENDLE) = 97,869,428). This is OUR OWN on-chain read of the same "
-                        "quantity, not a repeat of the tracker's number — see whether the two "
-                        "agree once this runs live. NEVER SUMMED into locked_tokens: two "
-                        "different contracts, kept separate on instruction, joined only in the "
-                        "'sPENDLE + old vePENDLE' sanity-check column."),
+                        "of the press's >100M 'staked' figures. First live read 63,579,204.45; "
+                        "with sPENDLE's 35,459,772.88 that is 99,038,977.33, within ~1% of the "
+                        "press (CryptoBriefing 2026-07, CoinPaprika 2026-09) — see non_comparable."
+                        "locked_tokens.discrepancy_2026_09_23.closed_by_reconciliation. NEVER "
+                        "SUMMED into locked_tokens: two different contracts with different "
+                        "mechanics, joined only in the 'sPENDLE + old vePENDLE' sanity-check "
+                        "column.",
+                # CORRECTED 2026-09-24: this entry first said the tracker matched the hub to
+                # PENDLE.balanceOf(vePENDLE) = 97,869,428. Our own read is 63.58M, so the 97.87M
+                # is the hub's COMBINED sPENDLE + vePENDLE figure — which our sum then agrees with
+                # to ~1.2%. The first reading of the tracker's README was wrong; the number wasn't.
+                note="LIVE-CONFIRMED 2026-09-24: 63,579,204.45 PENDLE."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",
@@ -11732,8 +11754,10 @@ PROJECTS = [
                        "2026-09-24 from source).",
                 "use_instead": "locked_tokens_shares (sPENDLE.totalSupply()) for PENDLE actively "
                                "staked, excluding the queue. External 'sPENDLE staked' figures "
-                               "near 100M are the hub's sPENDLE + vePENDLE sum or the virtual "
-                               "boost balance — never compare them to either.",
+                               "near 100M are sPENDLE + legacy vePENDLE — CONFIRMED 2026-09-24 "
+                               "(35.46M + 63.58M = 99.04M, within ~1% of the press; see "
+                               "discrepancy_2026_09_23.closed_by_reconciliation). Compare them to "
+                               "the A3 'sPENDLE + old vePENDLE' column, never to locked_tokens.",
                 # ===== A 3x DISAGREEMENT, AND IT POINTS THE WRONG WAY FOR THE BOOST. Added 2026-09-23.
                 # Reporting puts sPENDLE staking above 100,000,000 PENDLE by early July 2026 —
                 # about 36% of supply. sPENDLE.totalSupply() reads 34,100,000.
@@ -11899,6 +11923,36 @@ PROJECTS = [
                     "do_not": "pick the larger figure because it flatters the lock rate, or the "
                               "smaller because it is ours. A 3x error here moves the lock rate "
                               "from 12% to 36% and nothing else on the sheet would look wrong.",
+                    # ===== CLOSED 2026-09-24 BY OUR OWN LIVE READ — CANDIDATE (b), LEGACY vePENDLE. =====
+                    # The first live run after 2e8fd96 read the deprecated vePENDLE contract directly
+                    # (contracts.vependle_legacy). New contract + old contract lands within ~1% of the
+                    # press figure, so the 3x was never an error in our read: the press counts PENDLE
+                    # still sitting in the unmigrated vePENDLE escrow as "staked", and our
+                    # locked_tokens (correctly) does not. Definition mismatch, not a measurement one.
+                    "closed_by_reconciliation": {
+                        "closed_on": "2026-09-24",
+                        "by": "first live run after commit 2e8fd96 (Jake)",
+                        "spendle_assets": 35_459_772.88,          # locked_tokens, PENDLE.balanceOf(sPENDLE)
+                        "legacy_vependle": 63_579_204.45,         # locked_tokens_legacy_vependle
+                        "sum": 99_038_977.33,
+                        "press_figure": ">100M staked, ~36% of supply",
+                        "press_sources": ("CryptoBriefing, 2026-07", "CoinPaprika, 2026-09"),
+                        "agreement": "within ~1% of the press figure, from two independent outlets "
+                                     "two months apart",
+                        "hub_figure": "the 97,869,428 recorded in OPEN_QUESTIONS' Pendle entry is the "
+                                      "hub's COMBINED sPENDLE + vePENDLE figure, not vePENDLE alone "
+                                      "(our direct vePENDLE read is 63.58M). The sum agrees with it "
+                                      "to ~1.2%; the hub uses sPENDLE supply (excludes the unstake "
+                                      "queue) where locked_tokens uses assets (includes it).",
+                        "verdict": "CANDIDATE (b) CONFIRMED — the reported figure includes legacy "
+                                   "vePENDLE. Candidates (a) and (c) are not needed to explain the gap. "
+                                   "locked_tokens was correct and narrower than the press definition.",
+                        "never": "sum these two into locked_tokens. They are different contracts with "
+                                 "different mechanics: sPENDLE is the live stake (14-day cooldown, "
+                                 "StakedPendle.sol); vePENDLE is a deprecated escrow whose balance only "
+                                 "falls as holders migrate out. They meet only in the A3 sanity-check "
+                                 "column 'sPENDLE + old vePENDLE'.",
+                    },
                 },
             },
         },
@@ -15551,6 +15605,10 @@ OPEN_QUESTIONS = [
                   "PENDLE.balanceOf(vePENDLE) (97,869,428 per the tracker's match against the hub "
                   "API), or cite the virtual balance — neither is PENDLE locked in sPENDLE. "
                   "locked_tokens reads PENDLE.balanceOf(sPENDLE), unaffected either way. "
+                  "(The 97,869,428 is the hub's COMBINED figure, not vePENDLE alone. CONFIRMED BY "
+                  "OUR OWN READ 2026-09-24: vePENDLE 63,579,204.45 + sPENDLE assets 35,459,772.88 "
+                  "= 99,038,977.33, within ~1% of the >100M press figures — see Pendle's "
+                  "non_comparable.locked_tokens.discrepancy_2026_09_23.closed_by_reconciliation.) "
                   "** ONE CORRECTION THIS FORCES: sPENDLE DOES NOT COMPOUND. ** The 2026-09-23 "
                   "reading (assets 35,557,548 vs shares 30,310,807, 'ratio 1.1731') is the 14-day "
                   "UNSTAKE QUEUE — PENDLE whose sPENDLE was burned by cooldown() and which has not "

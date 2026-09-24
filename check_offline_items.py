@@ -1375,6 +1375,140 @@ def beaconchain():
 
 
 
+def near_buyback_inflow_probe():
+    """NEAR actual_buyback_tokens — WHAT DID THE NEARBLOCKS CALL RETURN? 2026-09-24.
+
+    The live run stored buyback_fund_balance but nothing for actual_buyback_tokens. This makes
+    fetch/nearblocks.py's exact call (same account, action, dates, page size, order), follows the
+    cursor the same way, and breaks the answer down instead of summing it: direction (in / out /
+    self), sender (one of the two excluded near-intents wallets or not), action kind, deposit.
+    A second request without the action filter shows whether inflow arrives as native TRANSFER at
+    all, or as FUNCTION_CALLs (wrap.near ft_transfer) the TRANSFER filter never sees.
+
+    NearBlocks' own source (services/account/txn.ts, read 2026-09-24): with no from/to the query
+    returns receipts where the account is the SENDER OR the RECEIVER; after_date is exclusive
+    (>= start of the NEXT day) and before_date is exclusive (< start of that day). Nothing is
+    stored. The key is sent as a Bearer header and never printed.
+    """
+    head("NEAR — buyback inflow: what NearBlocks' v1 account-txns call actually returns")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    except ImportError:
+        pass
+    import config as _config                              # noqa: PLC0415
+    import pandas as _pd                                  # noqa: PLC0415
+
+    flow = next(f for f in _config.PROJECT_BY_NAME["Near"]["near_account_flows"]
+                if f["metric"] == "actual_buyback_tokens")
+    key = os.environ.get(flow["key_env"], "").strip()
+    print(f"  {flow['key_env']}: {'set' if key else 'NOT SET'}")
+    if not key:
+        print("  NO KEY SET — the adapter would have gapped with 'needs an API key'. Set it and re-run.")
+        return
+    account, action = flow["account"], flow.get("action", "TRANSFER")
+    exclude = {s.lower() for s in flow.get("exclude_senders") or []}
+    scale = 10 ** int(flow.get("yocto_exponent", 24))
+    today = _pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    after = (today - _pd.Timedelta(days=35)).strftime("%Y-%m-%d")
+    before = (today - _pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    url = flow["base_url"].rstrip("/") + f"/v1/account/{account}/txns"
+    hdr = {"Authorization": f"Bearer {key}"}
+    print(f"  GET {url}")
+    print(f"  the adapter's window: after_date={after} before_date={before} (both exclusive — "
+          f"effectively {(_pd.Timestamp(after) + _pd.Timedelta(days=1)).date()}.."
+          f"{(_pd.Timestamp(before) - _pd.Timedelta(days=1)).date()})")
+
+    def fetch(params, pages):
+        rows, cursor = [], None
+        for i in range(pages):
+            p = dict(params, **({"cursor": cursor} if cursor else {}))
+            try:
+                r = requests.get(url, params=p, headers=hdr, timeout=TIMEOUT)
+            except Exception as e:  # noqa: BLE001
+                print(f"    page {i + 1}: UNREACHABLE — {str(e).replace(key, '***')}")
+                return rows, "unreachable"
+            print(f"    page {i + 1}: HTTP {r.status_code}", end="")
+            if r.status_code != 200:
+                print(f" — {r.text[:300]}")
+                return rows, f"http {r.status_code}"
+            try:
+                body = r.json()
+            except ValueError:
+                print(f" — NON-JSON: {r.text[:200]}")
+                return rows, "non-json"
+            if not isinstance(body, dict) or "txns" not in body:
+                print(f" — no `txns` key; top level {sorted(body) if isinstance(body, dict) else type(body).__name__}")
+                return rows, "shape"
+            page = body.get("txns") or []
+            cursor = body.get("cursor")
+            print(f" — {len(page)} row(s), next cursor {cursor!r}")
+            rows += page
+            if not cursor or not page:
+                return rows, "complete"
+        return rows, f"stopped at {pages} pages with the cursor still set"
+
+    print(f"\n  A. THE ADAPTER'S CALL — action={action}, per_page=50, order=asc:")
+    rows, how = fetch({"action": action, "after_date": after, "before_date": before,
+                       "per_page": 50, "order": "asc"}, 20)
+    print(f"    -> {len(rows)} row(s), {how}")
+    if rows:
+        print(f"    first row keys: {sorted(rows[0]) if isinstance(rows[0], dict) else type(rows[0]).__name__}")
+    buckets = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        snd = str(r.get("predecessor_account_id") or "").lower()
+        rcv = str(r.get("receiver_account_id") or "").lower()
+        direction = ("self" if snd == rcv == account else "IN" if rcv == account
+                     else "OUT" if snd == account else "neither")
+        who = "excluded wallet" if snd in exclude else "other sender"
+        dep = sum(float(a.get("deposit") or 0) for a in (r.get("actions") or [])
+                  if isinstance(a, dict) and a.get("action") == action) / scale
+        k = (direction, who)
+        n, s = buckets.get(k, (0, 0.0))
+        buckets[k] = (n + 1, s + dep)
+    if buckets:
+        print("    breakdown (direction, sender) -> rows, NEAR deposited:")
+        for (d, w), (n, s) in sorted(buckets.items()):
+            print(f"      {d:<8} {w:<16} {n:>6}  {s:>22,.4f}")
+    counted_in = buckets.get(("IN", "other sender"), (0, 0.0))
+    out_rows = sum(n for (d, _), (n, _s) in buckets.items() if d == "OUT")
+    adapter_sum = sum(s for (_d, w), (_n, s) in buckets.items() if w == "other sender")
+
+    print(f"\n  B. SAME WINDOW, NO action FILTER — first page only, action kinds seen:")
+    raw, how_b = fetch({"after_date": after, "before_date": before, "per_page": 50,
+                        "order": "desc"}, 1)
+    kinds = {}
+    for r in raw:
+        for a in (r.get("actions") or []) if isinstance(r, dict) else []:
+            if isinstance(a, dict):
+                kk = (a.get("action"), a.get("method"))
+                kinds[kk] = kinds.get(kk, 0) + 1
+    for (kind, method), n in sorted(kinds.items(), key=lambda x: -x[1])[:12]:
+        print(f"      {str(kind):<16} {str(method):<28} {n:>4}")
+
+    print("\n  VERDICT (mechanical):")
+    if how in ("unreachable", "non-json", "shape") or how.startswith("http"):
+        print(f"    THE CALL FAILED ({how}). The adapter logged a FAILED line and gapped.")
+    elif not rows:
+        print("    THE CALL RAN AND RETURNED NO TRANSFER ROWS in the window. The adapter logged "
+              "'0 TRANSFER txn(s) seen … 0 stored'. See B for what the wallet DOES receive.")
+    elif counted_in[0] == 0:
+        print("    ROWS CAME BACK BUT NONE IS AN INBOUND TRANSFER FROM OUTSIDE THE THREE WALLETS "
+              "— everything was excluded or outbound. The adapter logged '… none left after "
+              "exclusion'.")
+    else:
+        print(f"    {counted_in[0]} inbound TRANSFER(s) from outside the three wallets, "
+              f"{counted_in[1]:,.4f} NEAR — the adapter SHOULD have stored rows.")
+    if out_rows:
+        print(f"    ** {out_rows} OUTBOUND row(s) present. The adapter does not filter on "
+              f"receiver, so it would count them as inflow: its sum for this window would be "
+              f"{adapter_sum:,.4f} NEAR against {counted_in[1]:,.4f} truly inbound. NOT FIXED — "
+              f"held until this output is read.")
+    print("\n  PASTE BACK. Nothing in fetch/nearblocks.py changes until this has been read.")
+
+
 def aerodrome_lock_inputs():
     """WHICH OF THE THREE READS IS WRONG — four calls, ONE block, on Base.
 
@@ -1903,7 +2037,7 @@ CHECKS = (
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
-    uniswap_firepit_threshold, beaconchain,
+    uniswap_firepit_threshold, beaconchain, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency,
