@@ -1205,6 +1205,40 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                                 "ratio as though nothing were being issued."))
             continue
 
+        # ===== A DECLARED FIRST-PARTY GROSS SUPPLY: ISSUANCE IS ITS CHANGE, NOTHING ELSE. =====
+        # Hyperliquid, 2026-09-24: its own tokenDetails.totalSupply is stored as
+        # total_supply_gross and the provider's convention is abandoned rather than guessed, so
+        # the convention-keyed rules below do not apply. Same two-reading and same-day guards.
+        decl = p.get("issuance_from_gross_supply")
+        if decl:
+            g_now = gross.get(name)
+            if g_now is None:
+                continue                   # total_supply_gross's own gap covers it
+            g_prior = prior_values.get((name, "total_supply_gross"))
+            g_prior_date = prior_dates.get((name, "total_supply_gross"))
+            if g_prior is None or (g_prior_date and str(g_prior_date)[:10] >= str(g_now[1])[:10]):
+                out.gap(name, "gross_issuance_tokens",
+                        reason=("cannot be derived yet: it is the CHANGE in total_supply_gross and "
+                                "the store holds no earlier-dated reading of it"),
+                        tiers_attempted="1",
+                        suggestion="It resolves itself on the next run on a later day.")
+                continue
+            g_delta = g_now[0] - g_prior
+            if g_delta < 0:
+                out.review_item(name, "gross_issuance_tokens", "negative_derived_issuance", "rejected",
+                                value=float(g_delta), prior_value=float(g_prior), date=g_now[1],
+                                source="derived:d_supply_gross", tier=2)
+                out.gap(name, "gross_issuance_tokens",
+                        reason=f"d(total_supply_gross) = {g_delta:,.4f}: {decl['negative_means']}",
+                        tiers_attempted="1",
+                        suggestion="Nothing to fix; the next period with no burn derives normally.")
+                continue
+            out.add(point(name, "gross_issuance_tokens", float(g_delta), "derived:d_supply_gross",
+                          2, g_now[1]), SOURCE_DERIVED, name,
+                    f"gross_issuance_tokens={g_delta:,.4f} from d(total_supply_gross) "
+                    f"(declared first-party gross supply)", 2)
+            continue
+
         mech = config.burn_mechanism(p)
         rule = config.issuance_supply_rule(p, mech.get("model"))
         # A TRANSFER BURN WITH AN UNDECLARED SUPPLY CONVENTION REFUSES, and says which test to

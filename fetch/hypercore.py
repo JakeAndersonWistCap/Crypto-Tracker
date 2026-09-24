@@ -326,47 +326,25 @@ class HyperCoreInfo:
             return
 
         total, circ, cap = fields["totalSupply"], fields["circulatingSupply"], fields["maxSupply"]
+        # ===== STORED AS total_supply_gross FROM 2026-09-24 — THE PRIMARY, BY DECISION. =====
+        # The convention test ran to exhaustion: eight identities against the ~43.6M gap between
+        # this figure and CoinGecko's, all off by millions (Jake, 2026-09-24). So reconciliation
+        # stops. Hyperliquid's own figure is first-party and needs none: it is the primary, and
+        # CoinGecko's total_supply stays beside it as a labelled reference. "Gross" is right for
+        # the Assistance Fund leg specifically: max - total is ~1.09M against a fund of ~40M, so
+        # the fund's HYPE is INSIDE this total and a transfer to the fund does not move it.
+        metric = read.get("metric") or "total_supply_gross"
+        out.add(point(name, metric, total, f"{SOURCE}:tokenDetails", TIER, when), SOURCE, name,
+                f"{metric}={total:,.4f} from Hyperliquid's own tokenDetails "
+                f"(circulatingSupply={circ:,.4f}, maxSupply={cap:,.4f})", TIER)
         provider = self.prior.get((name, "total_supply"))
-        af = self.prior.get((name, "burn_address_balance"))
-        detail = (f"Hyperliquid's own tokenDetails: totalSupply={total:,.4f}, "
-                  f"circulatingSupply={circ:,.4f}, maxSupply={cap:,.4f}")
-        out.log.append(LogEntry(SOURCE, name, 0, "ok", detail, TIER))
-
-        if provider is None or af is None:
-            out.skipped(SOURCE, name,
-                        f"supply convention: {detail}. The comparison needs the provider's "
-                        f"total_supply and the Assistance Fund balance in the same run and "
-                        f"{'total_supply' if provider is None else 'burn_address_balance'} is "
-                        f"not there yet, so no verdict is offered.", TIER)
-            return
-
-        # THE WHOLE TEST, IN ONE SUBTRACTION. If Hyperliquid's figure exceeds the provider's by
-        # the fund's balance, the provider is subtracting the burn and the convention is
-        # net_of_burn. If the two agree, both are gross and the AF sits inside them.
-        gap = total - provider
-        tol = max(1.0, abs(total) * 0.001)
-        if abs(gap - af) <= tol:
-            verdict = ("net_of_burn — Hyperliquid's totalSupply EXCEEDS the provider's by the "
-                       "Assistance Fund balance, so the provider is subtracting the burn and "
-                       "issuance is d(supply) + burn")
-        elif abs(gap) <= tol:
-            verdict = ("gross — the two figures AGREE, so neither subtracts the Assistance Fund "
-                       "and issuance is the supply delta alone")
-        else:
-            verdict = ("NEITHER — the difference matches neither the burn nor zero, so something "
-                       "else is between the two figures and no convention can be declared from "
-                       "them. Do NOT pick the closer one")
-        out.review_item(
-            name, "total_supply", "supply_convention_evidence", "stored_flagged",
-            value=total, prior_value=provider, date=when,
-            source=f"{SOURCE}:tokenDetails", tier=TIER,
-            basis=(f"{detail}. Provider total_supply={provider:,.4f}, Assistance Fund "
-                   f"balance={af:,.4f}. Hyperliquid minus provider = {gap:,.4f}, against a fund "
-                   f"balance of {af:,.4f}. VERDICT: {verdict}. NOTHING IS DERIVED FROM THIS "
-                   f"AUTOMATICALLY — set total_supply_convention in config.py and "
-                   f"gross_issuance_tokens follows. The figures are not stored as a metric "
-                   f"because whether Hyperliquid's own totalSupply includes the fund is the "
-                   f"question being asked, and storing it under a name would assert the answer."))
+        if provider is not None:
+            # REPORTED, NOT RECONCILED: the difference is logged so a change in it is visible,
+            # and nothing is concluded from it.
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    f"tokenDetails.totalSupply - CoinGecko total_supply = "
+                                    f"{total - provider:,.4f} (unexplained; not reconciled — see "
+                                    f"config supply_reference_note)", TIER))
 
     def _extra_read(self, project: dict, api: dict, read: dict, out, when) -> None:
         """One additional request against the same info endpoint, with its own shape."""

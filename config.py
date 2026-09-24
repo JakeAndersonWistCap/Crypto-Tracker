@@ -241,7 +241,10 @@ METRICS = {
     # identical — a tier-1 provider figure and a tier-2 contract figure fighting over one metric
     # name, with _resolve_tier_collisions keeping the provider's — and so is the remedy. The
     # LABEL is the one thing that does not fit, so it is overridden per project below.
-        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI", "World Mobile")},
+        # HYPERLIQUID from 2026-09-24: its own tokenDetails.totalSupply, first-party (see its
+        # supply_reference_note). Gross of the Assistance Fund, which sits inside the total.
+        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI", "World Mobile",
+                          "Hyperliquid")},
     # ===== ONE TOKEN, THREE BURN MECHANISMS, THREE SERIES. Added 2026-09-22. =====
     # Sky.burn(from, value) emits Transfer(from, address(0), value) whoever calls it and for
     # whatever reason — read from src/Sky.sol, not assumed. SKY is burned by mechanisms that mean
@@ -8070,7 +8073,9 @@ PROJECTS = [
             # total_supply_gross would assert the answer. It is reported as evidence instead:
             # the three numbers and the subtraction, once, for the convention to be declared from.
             {
-                "metric": "total_supply",
+                # STORED from 2026-09-24 as total_supply_gross — the primary. See
+                # supply_reference_note on this project.
+                "metric": "total_supply_gross",
                 "shape": "token_details",
                 "request": {"type": "tokenDetails"},
                 "token_id_from_meta": True,
@@ -8100,6 +8105,39 @@ PROJECTS = [
                         "never hard-coded: it appears nowhere else this tool reads, and a value "
                         "copied off a third-party page goes stale silently.",
             }],
+        },
+        # ===== SUPPLY: HYPERLIQUID'S OWN FIGURE IS PRIMARY; COINGECKO IS A REFERENCE. 2026-09-24.
+        # Eight candidate identities for the ~43.6M gap between tokenDetails.totalSupply
+        # (998,911,203.55 at Jake's probe) and CoinGecko's total_supply all failed by millions —
+        # the closest, the Assistance Fund, by 3.86M. Reconciliation STOPS (Jake's decision).
+        "supply_reference_note": {
+            "primary": "total_supply_gross = tokenDetails.totalSupply (official info API)",
+            "reference": "total_supply = CoinGecko — kept, labelled, NOT reconciled",
+            "gap_2026_09_24": 43_604_124,
+            "tested": "eight identities incl. AF, futureEmissions, max-total; none within millions",
+            "status": "UNRESOLVED BY DECISION — not an open question to keep re-testing",
+        },
+        # ===== ISSUANCE FROM THE PRIMARY'S CHANGE. 2026-09-24 (Jake). =====
+        # d(total_supply_gross) is newly minted HYPE: the fund's HYPE is inside the total (max -
+        # total ~1.09M against a ~40M fund), so a transfer to it does not move the figure.
+        # ** EXPECT ZERO. ** HYPE is pre-minted (emissions_model: distributed_from_premint) — the
+        # 1bn existed at genesis and futureEmissions is a reserve INSIDE totalSupply. So this
+        # column reads 0 when nothing is minted, which is true, and is NOT "no emissions": those
+        # are releases from the reserve, visible as futureEmissions falling. A NEGATIVE change is a
+        # protocol burn outside the fund (the ~1.09M below max), not negative issuance.
+        "issuance_from_gross_supply": {
+            "declared": "2026-09-24 (Jake)",
+            "negative_means": "tokenDetails.totalSupply FELL — HYPE destroyed outside the "
+                              "Assistance Fund (the ~1.09M already below max). A burn, not negative "
+                              "issuance; nothing is stored for the period.",
+        },
+        "metric_labels": {
+            "total_supply_gross": "Total supply — Hyperliquid's own tokenDetails (PRIMARY; includes "
+                                  "the Assistance Fund and the future-emissions reserve)",
+            "total_supply": "Total supply — CoinGecko (REFERENCE; ~43.6M below Hyperliquid's own "
+                            "figure, reason unresolved)",
+            "gross_issuance_tokens": "HYPE MINTED — 0 by design: HYPE is pre-minted, so emissions "
+                                     "are releases from the reserve, not issuance",
         },
         "buyback_destination": "burn",          # resolved — no longer disputed
         "destination_effect": "removed_from_supply",
@@ -11726,6 +11764,21 @@ PROJECTS = [
         # confirmed from source), and the flow is measurable from LogBuyback events on the proxy
         # — an event route, not a balance, exactly the inflow principle — blocked by the Ethereum
         # 10-block cap like every other log scan. Jake decides which address is the fund.
+        # ===== TREASURY ROLE CONFIRMED BY TRACE, CLOSED PERMANENTLY 2026-09-24. =====
+        # Jake's run of check_offline_items.fluid_buyback_destination: the buyback proxy sent 100%
+        # of the FLUID it bought (1.04M) to TREASURY_ADDRESS, which then disbursed 33.84M onward in
+        # 19 transfers to three destinations (81.5% / 15.1% / 3.4%). Outflow ~33x the buyback
+        # inflow means TREASURY_ADDRESS is Fluid's GENERAL treasury (the "Treasury DSA" of IGP137)
+        # receiving buybacks as one inflow among many — not a buyback-only wallet. That is exactly
+        # the wiring already in place: treasury_holding_tokens = TREASURY_ADDRESS, and
+        # buyback_fund_balance not applicable. No change.
+        "treasury_trace_2026_09_24": {
+            "buyback_to_treasury": "100% of 1.04M FLUID bought, proxy -> TREASURY_ADDRESS",
+            "treasury_outflow": "33.84M FLUID in 19 transfers to three destinations (81.5% / 15.1% / 3.4%)",
+            "verdict": "GENERAL treasury receiving buybacks among other inflows — current wiring is "
+                       "correct; the destination question is CLOSED",
+            "source": "check_offline_items.fluid_buyback_destination, Jake's run 2026-09-24",
+        },
         "buyback_contracts_found_2026_09_23": {
             "buyback_proxy": "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1",
             "buyback_implementation": "0xC27293043EF9B6c911AEf47e4A563baE8a91654f",

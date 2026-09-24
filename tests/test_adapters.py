@@ -3808,84 +3808,64 @@ def test_hypercore_info_reads_the_assistance_fund_without_any_chain():
     print("hypercore ok: 48,420,000 HYPE read over plain HTTPS, no chain and no RPC involved")
 
 
-def test_token_details_settles_the_supply_convention_and_is_not_stored_as_a_metric():
-    """** gross_issuance_tokens HAS BEEN BLOCKED ON ONE QUESTION. ** Is the stored total_supply
-    NET of the Assistance Fund burn or GROSS of it? The two formulas differ by the ENTIRE burn,
-    so there is no safe default — and the test needs a supply figure from Hyperliquid ITSELF to
-    compare the provider's against.
-
-    tokenDetails is that figure, and it does return them: maxSupply, totalSupply and
-    circulatingSupply, as decimal strings in HUMAN units. Confirmed 2026-09-22 from the
-    documented example response and from a maintained SDK's typed response.
-
-    ** IT IS NOT STORED AS A METRIC. ** Hyperliquid's fees page says Assistance Fund HYPE is
-    "removing the tokens permanently from the circulating and total supply" — which taken
-    literally would make this figure net too, and whether it includes the fund is precisely the
-    question. Storing it under total_supply_gross would assert the answer. So the three numbers
-    and the subtraction are reported as EVIDENCE, once.
-    """
+def test_token_details_is_the_primary_supply_and_nothing_is_reconciled():
+    """2026-09-24 (Jake): eight identities for the ~43.6M gap to CoinGecko all failed, so the
+    convention test stops. tokenDetails.totalSupply is stored as total_supply_gross — the
+    primary — and the difference to CoinGecko is logged, not judged. No review row, no verdict."""
     from fetch.hypercore import HyperCoreInfo
 
     class ByType:
-        """Answers each info request type with its own payload, as the real endpoint does."""
-
-        def __init__(self, hl_total):
-            self.hl_total = hl_total
-
         def post(self, url, json_body=None, headers=None):
             t = (json_body or {}).get("type")
             if t == "spotClearinghouseState":
-                return {"balances": [{"coin": "HYPE", "total": "48420000.0"}]}
+                return {"balances": [{"coin": "HYPE", "total": "40000000.0"}]}
             if t == "spotMeta":
-                return {"tokens": [{"name": "USDC", "weiDecimals": 8, "tokenId": "0x" + "0" * 32},
-                                   {"name": "HYPE", "weiDecimals": 8,
+                return {"tokens": [{"name": "HYPE", "weiDecimals": 8,
                                     "tokenId": "0x0d01dc56dcaaca66ad901c959b4011ec"}]}
             if t == "tokenDetails":
                 assert json_body["tokenId"] == "0x0d01dc56dcaaca66ad901c959b4011ec", json_body
                 return {"name": "HYPE", "maxSupply": "1000000000.0",
-                        "totalSupply": self.hl_total, "circulatingSupply": "333000000.0",
-                        "szDecimals": 2, "weiDecimals": 8}
+                        "totalSupply": "998911203.55", "circulatingSupply": "333000000.0"}
             return {"error": f"unexpected type {t}"}
 
-    def run(hl_total, provider=951_580_000.0, af=48_420_000.0):
-        h = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): provider,
-                                        ("Hyperliquid", "burn_address_balance"): af})
-        h.http = ByType(hl_total)
+    h = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_307_079.55})
+    h.http = ByType()
+    out = FetchOutput()
+    h.run([config.PROJECT_BY_NAME["Hyperliquid"]], None, out)
+    frame = out.frame()
+    row = frame[frame.metric == "total_supply_gross"]
+    assert row["value"].tolist() == [998_911_203.55] and row["source"].iloc[0] == "hypercore_info:tokenDetails"
+    assert not [r for r in out.review if r["reason"] == "supply_convention_evidence"]
+    assert any("CoinGecko total_supply = 43,604,124.0000" in e.message and "not reconciled" in e.message
+               for e in out.log)
+
+
+def test_hyperliquid_issuance_is_the_change_in_its_own_gross_supply():
+    """Declared route (issuance_from_gross_supply): d(total_supply_gross), same guards as
+    everywhere — two dated readings, no same-day pair — and a FALL is a burn, not issuance."""
+    import pandas as pd
+
+    from fetch import _derive_issuance
+    from fetch.base import point
+
+    def derive(now, prior, prior_date="2026-09-23"):
         out = FetchOutput()
-        h.run([config.PROJECT_BY_NAME["Hyperliquid"]], None, out)
+        out.add(point("Hyperliquid", "total_supply_gross", now, "hypercore_info:tokenDetails", 1,
+                      pd.Timestamp("2026-09-24")), "hypercore_info", "Hyperliquid")
+        _derive_issuance(out, [config.PROJECT_BY_NAME["Hyperliquid"]],
+                         {("Hyperliquid", "total_supply_gross"): prior},
+                         {("Hyperliquid", "total_supply_gross"): prior_date})
         return out
 
-    # NET OF BURN: Hyperliquid's figure exceeds the provider's by exactly the fund's balance.
-    out = run("1000000000.0")
-    ev = [r for r in out.review if r["reason"] == "supply_convention_evidence"]
-    assert len(ev) == 1, out.review
-    assert "VERDICT: net_of_burn" in ev[0]["basis"], ev[0]["basis"]
-    assert "issuance is d(supply) + burn" in ev[0]["basis"]
-    # ** NOT STORED. ** No metric row carries Hyperliquid's own supply figure.
-    frame = out.frame()
-    assert 1_000_000_000.0 not in set(frame.value), frame
-    assert "total_supply_gross" not in set(frame.metric)
-    assert "NOTHING IS DERIVED FROM THIS AUTOMATICALLY" in ev[0]["basis"]
-
-    # GROSS: the two agree, so neither subtracts the fund.
-    same = run("951580000.0")
-    ev2 = [r for r in same.review if r["reason"] == "supply_convention_evidence"]
-    assert "VERDICT: gross" in ev2[0]["basis"], ev2[0]["basis"]
-
-    # ** NEITHER, AND IT SAYS SO RATHER THAN PICKING THE CLOSER ONE. ** A difference that matches
-    # neither the burn nor zero means something else sits between the two figures, and choosing
-    # the nearer reading is how a wrong convention gets declared with confidence.
-    odd = run("970000000.0")
-    ev3 = [r for r in odd.review if r["reason"] == "supply_convention_evidence"]
-    assert "VERDICT: NEITHER" in ev3[0]["basis"] and "Do NOT pick the closer one" in ev3[0]["basis"]
-
-    # NO COMPARISON WITHOUT BOTH SIDES — and the skip says which side is missing.
-    lone = run("1000000000.0", provider=None)
-    assert not [r for r in lone.review if r["reason"] == "supply_convention_evidence"]
-    assert [e for e in lone.log if e.status == "skipped" and "supply convention" in e.message
-            and "total_supply is not there yet" in e.message]
-    print("tokenDetails ok: the three supply figures arrive, the subtraction names the "
-          "convention, and nothing is stored under a name that would assert it")
+    out = derive(998_911_203.55, 998_911_203.55)
+    f = out.frame()
+    assert f[f.metric == "gross_issuance_tokens"]["value"].tolist() == [0.0], \
+        "nothing minted is a measured zero here — HYPE is pre-minted"
+    out = derive(998_900_000.0, 998_911_203.55)
+    assert "gross_issuance_tokens" not in set(out.frame().metric)
+    assert any("A burn, not negative issuance" in g["reason"] for g in out.gaps)
+    out = derive(998_911_203.55, 998_911_203.55, prior_date="2026-09-24")
+    assert "gross_issuance_tokens" not in set(out.frame().metric), "a same-day pair is not a delta"
 
 
 def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_blanks():

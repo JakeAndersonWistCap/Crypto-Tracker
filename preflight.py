@@ -80,6 +80,9 @@ def tier2_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]
                       "ve_total_supply": "locked_tokens", "buyback_fund_balance": "buyback_fund_balance",
                       "treasury_holding": "treasury_holding_tokens",
                       "spl_mint": "total_supply", "spl_token_account": "burn_address_balance"}.get(c["kind"], key)
+            # The adapter writes to metric_override when one is set (Maple's daoMultisig serves
+            # treasury_holding_tokens_chain from 2026-09-24); the plan must say the same.
+            metric = c.get("metric_override") or metric
             where = f"{key} on {c['chain']}"
             # Reference-only entries are kept in config for the mechanism (and for eth_getCode),
             # and no metric is read from them. The plan must say that, or a Firepit reads as a
@@ -130,6 +133,12 @@ def protocol_api_plan() -> list[tuple[str, str, str]]:
         base = (api.get("endpoints") or [api.get("endpoint", "?")])[0]
         out.append((p["name"], api.get("metric", "?"),
                     f"{api['kind']} -> POST {base}{api.get('path', '')}"))
+    # Protocol pages read by a plain GET (robots.txt checked on every run).
+    for p in config.PROJECTS:
+        page = p.get("transparency_page") or {}
+        for metric, m in (page.get("metrics") or {}).items():
+            out.append((p["name"], metric, f"page -> GET {page['url']} `{m['field']}`"
+                                           + (f" ({m['granularity']})" if m.get("granularity") else "")))
     # NearBlocks: keyed, so the plan says whether the key is present (never the key itself).
     import os
     for p in config.PROJECTS:
