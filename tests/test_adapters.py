@@ -5038,7 +5038,9 @@ def test_data_tab_distinguishes_closed_missing_from_an_open_one():
     assert cell.value == "missing"
     assert cell.comment is not None, "a closed-and-documented 'missing' must carry a comment saying so"
     assert "CLOSED" in cell.comment.text and "not an open gap" in cell.comment.text
-    assert "Reserve address" in cell.comment.text or "never published" in cell.comment.text.lower()
+    # the closure's reason changed on 2026-09-24 (the programme HALTED); the test is that the
+    # Data tab says CLOSED and carries the closure's own words, whatever they are
+    assert "PROGRAMME HALTED" in cell.comment.text
 
     # AND THE NEGATIVE: an ordinary applicable-but-genuinely-unsourced metric gets no such
     # comment — only a metric matching config.UNAVAILABLE does.
@@ -8209,7 +8211,7 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
     ref_only = [(p["name"], k) for p in config.PROJECTS
                 for k, c in (p.get("contracts") or {}).items()
                 if c["kind"] in REFERENCE_ONLY_KINDS]
-    assert len(ref_only) == 10, ref_only
+    assert len(ref_only) == 11, ref_only    # +Aethir token_ethereum, 2026-09-24
     for name, key in ref_only:
         for (pn, _), d in change.items():
             assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"
@@ -12882,16 +12884,17 @@ def test_the_research_round_records_answers_with_sources_and_never_wires_an_unve
     assert found["treasury_address_hardcoded"] == "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"
     assert found["reserve_contract"] == "0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2"
     assert found["does_not_burn"] is True and "LogBuyback" in found["flow_route"]
-    assert not any(c.get("kind") == "buyback_fund_balance" for c in fl["contracts"].values()), \
-        "never wire an address whose role is not established — the closure stands until Jake decides"
+    # SUPERSEDED 2026-09-24: the treasury is the one fund (Fluid's own materials), wired as
+    # treasury_holding; buyback_fund_balance is n/a, and the closures now say the programme HALTED.
+    assert not any(c.get("kind") == "buyback_fund_balance" for c in fl["contracts"].values())
+    assert fl["contracts"]["treasury"]["kind"] == "treasury_holding"
     for m in ("actual_buyback_tokens", "actual_buyback_usd"):
         u = config.unavailable_for("Fluid", m)
-        assert u and "0x9Afb8C17" in u["reopen_candidate_2026_09_23"], "the closure stays, and says why it might not"
-    # 4c / 4e — searched and not found, with the search on record; nothing guessed.
-    for name in ("Aethir", "GEODNET"):
-        b = config.PROJECT_BY_NAME[name]["locked_tokens_blocked"]
-        assert "NOT" in b["status"] and b["source_url"].startswith("https://")
-        assert not any(c.get("kind") == "ve_total_supply" for c in config.PROJECT_BY_NAME[name]["contracts"].values())
+        assert u and u["summary"].startswith("PROGRAMME HALTED 2026-05-11"), u
+    # 4c / 4e — GEODNET still searched and not found; Aethir's pools were FOUND on 2026-09-24.
+    b = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]
+    assert "NOT" in b["status"] and b["source_url"].startswith("https://")
+    assert not any(c.get("kind") == "ve_total_supply" for c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].values())
     # 4d — the contract EXISTS and is a Cardano Plutus validator, which is the answer.
     b = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_blocked"]
     assert "Cardano Plutus" in b["status"] and "wmt-staking-plutus-smart-contract" in b["source_url"]
@@ -13286,23 +13289,23 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
     for m in ("active_addresses", "tx_count"):
         u = config.unavailable_for("Hyperliquid", m)
         assert u and "mod.ts" in u["what_was_tried"] and "hypurrscan" in u["reopen_if"], m
-    for m in ("buyback_fund_balance", "treasury_holding_tokens"):
-        r, sug = _tier_note(config.PROJECT_BY_NAME["Fluid"], m, {})
-        for addr in ("0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1", "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09",
-                     "0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2"):
-            assert addr in r, (m, addr)
-        assert "no contract of kind" not in r and "NONE CONFIRMED" in r and "ONE" in sug, (m, r[:120])
-    assert not config.PROJECT_BY_NAME["Fluid"].get("contracts", {}).get("buyback_fund"), "nothing was picked"
+    # SUPERSEDED 2026-09-24: one treasury, read once; the fund row is not applicable.
+    fl = config.PROJECT_BY_NAME["Fluid"]
+    assert fl["contracts"]["treasury"]["address"] == "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"
+    assert "NO BUYBACK FUND EXISTS SEPARATELY" in config.not_applicable_reason("Fluid", "buyback_fund_balance")
+    assert "buyback_fund_balance_blocked" not in fl and "treasury_holding_tokens_blocked" not in fl
     # (Dune 8683038 itself was retired on 2026-09-24 — the flow half went first, then the rest.)
     q = config.PROJECT_BY_NAME["Ether.fi"]
     assert "locked_tokens_dashboard" not in q["dune_queries"]
     assert "agg_14/agg_30" in q["retired_dune_queries"]["flow_half"]
     # the Aethir and GEODNET research is recorded as candidates, and nothing was wired
     a = config.PROJECT_BY_NAME["Aethir"]
-    cands = a["locked_tokens_blocked"]["candidates_2026_09_23"]
+    cands = a["aethir_staking"]["research_2026_09_23"]
     assert cands["defillama_staking_owner"]["address"] == "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE"
     assert cands["checker_node_license_nft"]["address"] == "0xC227e25544EdD261A9066932C71a25F4504972f1"
-    assert set(a["contracts"]) == {"token_arbitrum"}, "no candidate became a contract"
+    # none of the 2026-09-23 CANDIDATES became a contract; the pools wired on 2026-09-24 came
+    # from Aethir's own staking page
+    assert set(a["contracts"]) == {"token_arbitrum", "token_ethereum", "staking_gaming_pool", "staking_ai_pool"}
     assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
     g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
@@ -13700,3 +13703,44 @@ def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
     b = gap_count._normalise(old)
     assert b["answered"] == 9 and b["total"] == 46 and b["by_priority"]["P5 answered"] == 9
     print("answered ok: 18 listed rows stay visible at P5 and leave the open count")
+
+
+def test_the_four_projects_of_2026_09_24_land_as_found():
+    """Aethir's pools wired as ATH held (never the ve's decaying totalSupply, never eATH); Fluid's
+    buyback recorded HALTED with the treasury read once; Sky's Layer 2 history from the executed
+    spells and lssky answered 1:1 from source; GEODNET's premise recorded, nothing guessed."""
+    a = config.PROJECT_BY_NAME["Aethir"]
+    for key, addr in (("staking_gaming_pool", "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31"),
+                      ("staking_ai_pool", "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4")):
+        c = a["contracts"][key]
+        assert c["address"] == addr and c["chain"] == "ethereum" and c["kind"] == "ve_total_supply"
+        assert c["read_method"] == "escrow_balance_of" and c["underlying"] == "token_ethereum"
+        assert c["holder_has_code"] is True and c["supply_is_partial"] is True
+    assert a["contracts"]["token_ethereum"]["kind"] == "bridged_representation", "never summed into supply"
+    st = a["aethir_staking"]
+    assert st["pools"]["eigenlayer_ath_vault"] == "0x3cFc70a2999a6C35A6A908D634E9B1fb85B98Ab0"
+    assert "NOT WIRED" in st["eigenlayer_vault"]["status"]
+    assert not any(c["address"].lower() in {v.lower() for v in st["eath_receipt"].values() if v.startswith("0x")}
+                   for c in a["contracts"].values()), "eATH is never read"
+
+    f = config.PROJECT_BY_NAME["Fluid"]
+    assert f["buyback_programme"]["status"] == "HALTED" and f["buyback_programme"]["halted_on"] == "2026-05-11"
+    after = config.split_for_window("Fluid", "2026-06-26", "2026-09-23")
+    assert after["share_to_buyback"] == 0.0, "a window wholly after the halt has a documented zero"
+    assert config.split_for_window("Fluid", "2026-04-01", "2026-06-01")["share_to_buyback"] is None
+    ref = f["buyback_reference"]
+    assert ref["cumulative_pct_of_supply"] == 0.0051 and ref["governance_figure"]["cumulative_pct_of_supply"] == 0.013
+
+    sky = config.PROJECT_BY_NAME["Sky"]["sbe_allocation_layers"]["layer_2"]
+    burns = {r["spell"]: r["burn"] for r in sky["splitter_burn_from_spells"]}
+    assert burns["2024-09-13"] == 1.0 and burns["2025-10-30"] == 1.0 and burns["2026-08-13"] == 0.55
+    assert burns["2025-08-21"] == 0.25
+    q = next(o for o in config.OPEN_QUESTIONS if o["project"] == "Sky" and "lssky" in o["topic"])
+    assert q["status"] == "closed" and "1:1 RECEIPT" in q["resolution"]
+
+    g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["premise_test_2026_09_24"]
+    assert "two mechanisms" in g["finding"]
+    import check_offline_items as coi
+    names = {fn.__name__ for fn in coi.CHECKS}
+    assert {"aethir_staking_probe", "geodnet_staking_candidates"} <= names
+    print("2026-09-24 four projects ok")

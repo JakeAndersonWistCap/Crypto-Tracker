@@ -116,6 +116,11 @@ SKY_SPLITTER_FROM_BLOCK = 17_000_000
 SELECTORS_SPLITTER_PARAMS = {"burn()": "0x44df8e70", "hop()": "0xb0b8579b"}
 SPLITTER_BURN_EXPECTED_WAD = 0.55
 
+# Aethir staking probe (aethir_staking_probe, below). Checked against keccak at import.
+SELECTORS_AETHIR = {"token()": "0xfc0c546a", "supply()": "0x047fc9aa",
+                    "totalATH()": "0x0d97beca", "totalDeposited()": "0xff50abdc",
+                    "totalEscrowed()": "0xf9168231", "aethirStrategy()": "0x8d214897"}
+
 # Splitter.file(bytes32 what, uint256 data) emits File(bytes32 indexed what, uint256 data).
 # EVERY change to `burn` and `hop` since deployment is in these logs — which makes the pre-August
 # split a matter of reading the chain rather than of finding a document nobody published.
@@ -184,7 +189,7 @@ def _assert_selectors() -> None:
     # this checked the three DICTS only, and a fourth wrong selector survived it — list(), a bare
     # module constant. Bare constants are named here explicitly rather than discovered, so adding
     # one and forgetting to register it is a visible omission and not a silent gap.
-    tables = [SELECTORS, SELECTORS_SPLITTER, SELECTORS_SPLITTER_PARAMS,
+    tables = [SELECTORS, SELECTORS_SPLITTER, SELECTORS_SPLITTER_PARAMS, SELECTORS_AETHIR,
               {"list()": CHAINLOG_LIST, "getAddress(bytes32)": CHAINLOG_GET,
                "totalSupply()": SEL_TOTAL_SUPPLY, "balanceOf(address)": SEL_BALANCE_OF,
                "decimals()": SEL_DECIMALS, "threshold()": SEL_THRESHOLD,
@@ -255,6 +260,15 @@ def _rpcs_for(chain: str) -> list:
                 seen.add(u)
                 out.append(u)
         return out
+    if chain != "ethereum":
+        # ARBITRUM AND POLYGON (2026-09-24): the pipeline's own list, keyed endpoint first, so the
+        # probe and the run read through the same endpoints. Imported lazily — this script is
+        # otherwise standalone.
+        try:
+            from fetch.chain import rpc_endpoints        # noqa: PLC0415
+            return rpc_endpoints(chain)
+        except Exception:  # noqa: BLE001
+            return []
     return ETH_RPCS
 
 
@@ -1359,6 +1373,137 @@ def fluid_buyback_destination():
     print("  Reserve is. PASTE BACK the tables — the choice is recorded in config from them.")
 
 
+# ===== AETHIR — WHICH CHAIN, WHAT HOLDS ATH, AND WHAT THE EIGENLAYER VAULT COUNTS. 2026-09-24. =====
+# Three pools from Aethir's staking page (supplied by Jake). Two public contract registries place
+# all three on Ethereum only (Keystone metadata registry ethereum/, 0xtorch datasource chains/1),
+# and the Gaming and AI pools are wired on that basis as ATH.balanceOf(pool). This probe confirms
+# the chain from bytecode on BOTH chains, and answers what the wiring could not settle offline:
+#   - ve pools: token() must be ATH; supply() is the locked total in the ve's own accounting and
+#     should equal ATH.balanceOf(pool) (totalSupply() is decaying VOTING POWER — never the lock).
+#   - EigenLayer vault: its ATH moves into an EigenLayer strategy (DepositToStrategy), so
+#     ATH.balanceOf(vault) can undercount. totalATH / totalDeposited / totalEscrowed and the
+#     strategy's own ATH balance are printed side by side so the right measure is CHOSEN from
+#     them, not guessed.
+#   - eATH is the 1:1 receipt for vault deposits: printed for reconciliation, never summed.
+ATH_ETH = "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"
+ATH_ARB = "0xc87B37a581ec3257B734886d9d3a581F5A9d056c"
+AETHIR_POOLS = {
+    "EigenLayer ATH Vault": "0x3cFc70a2999a6C35A6A908D634E9B1fb85B98Ab0",
+    "Gaming Pool": "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31",
+    "AI Pool": "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4",
+    # not one of Aethir's three: the only address DefiLlama counts as Aethir staking. Printed
+    # so it is seen whether it holds ATH of its own (a fourth pool) or feeds one of the three.
+    "DefiLlama staking owner (wrapper)": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE",
+}
+EATH = {"ethereum": "0x68ff002b30360d3c613c2d6bc7e8c3e1f94883b9",
+        "arbitrum": "0x1903aa5b603819b9debd2f4b202b686e9e393aff"}
+# (SELECTORS_AETHIR is declared with the other selector tables, near the top.)
+
+
+def _code(addr: str, chain: str) -> str:
+    for url in _rpcs_for(chain):
+        try:
+            j = rpc(url, "eth_getCode", [addr, "latest"])
+            if "result" in j:
+                return "CODE" if j["result"] not in ("0x", "0x0", "") else "no code"
+        except Exception:  # noqa: BLE001
+            continue
+    return "UNREACHABLE"
+
+
+def _uint(to: str, data: str, chain: str):
+    word, _ = eth_call(to, data, chain=chain)
+    return None if not word or word == "0x" else int(word, 16)
+
+
+def _bal(token: str, holder: str, chain: str):
+    return _uint(token, SEL_BALANCE_OF + holder.lower()[2:].rjust(64, "0"), chain)
+
+
+def aethir_staking_probe():
+    head("AETHIR — the three staking pools: chain, ATH held, and what the vault counts")
+    fmt = lambda v: "n/a" if v is None else f"{v / 1e18:,.2f}"
+    for label, addr in AETHIR_POOLS.items():
+        print(f"\n  {label}  {addr}")
+        for chain, ath in (("ethereum", ATH_ETH), ("arbitrum", ATH_ARB)):
+            code = _code(addr, chain)
+            line = f"    {chain:<9} {code:<11}"
+            if code == "CODE":
+                line += f" ATH.balanceOf = {fmt(_bal(ath, addr, chain))}"
+            print(line)
+        if label in ("Gaming Pool", "AI Pool"):
+            tok = _uint(addr, SELECTORS_AETHIR["token()"], "ethereum")
+            print(f"    ve token() = {None if tok is None else '0x' + hex(tok)[2:].rjust(40, '0')}"
+                  f"   (must be ATH {ATH_ETH.lower()})")
+            print(f"    ve supply() = {fmt(_uint(addr, SELECTORS_AETHIR['supply()'], 'ethereum'))}"
+                  f"   (should equal ATH.balanceOf above)")
+        if label == "EigenLayer ATH Vault":
+            for sig in ("totalATH()", "totalDeposited()", "totalEscrowed()"):
+                print(f"    {sig:<17} = {fmt(_uint(addr, SELECTORS_AETHIR[sig], 'ethereum'))}")
+            strat = _uint(addr, SELECTORS_AETHIR["aethirStrategy()"], "ethereum")
+            if strat:
+                s_addr = "0x" + hex(strat)[2:].rjust(40, "0")
+                print(f"    aethirStrategy() = {s_addr}; ATH.balanceOf(strategy) = "
+                      f"{fmt(_bal(ATH_ETH, s_addr, 'ethereum'))}")
+    for chain, a in EATH.items():
+        print(f"\n  eATH totalSupply on {chain:<9} = {fmt(_uint(a, SEL_TOTAL_SUPPLY, chain))}  "
+              f"(receipt, 1:1 — reconcile against the vault, NEVER add)")
+    print("\n  PASTE BACK. The vault's locked_tokens leg is chosen from these numbers; the two")
+    print("  ve pools are already wired as ATH.balanceOf(pool) on Ethereum.")
+
+
+# ===== GEODNET — IS THERE A STAKING CONTRACT AT ALL? 2026-09-24. =====
+# GEODNET's own GIPs describe TWO mechanisms: GEOD "staked in a SuperHex" (a per-hex bounty whose
+# success test is a station hitting 90% RRR — GIP5) and "locked GEOD" that sets a veNFT's voting
+# power (the governance-platform GIP). No address for either is published anywhere this project
+# can read. This scan looks for them by BEHAVIOUR: GEOD Transfer destinations on Polygon over a
+# recent window, ranked by volume, marked contract vs EOA by bytecode, with the count of
+# transfers that are whole multiples of 1,000 GEOD (SuperHex increments). Candidates only —
+# nothing is wired from this without GEODNET's own material naming the address.
+GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+
+
+def geodnet_staking_candidates(days: int = 30):
+    head(f"GEODNET — GEOD destinations on Polygon, last {days} days: contracts by inflow")
+    head_hex = None
+    for url in _rpcs_for("polygon"):
+        try:
+            j = rpc(url, "eth_blockNumber")
+            head_hex = j.get("result")
+            if head_hex:
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if not head_hex:
+        print("  UNREACHABLE — no Polygon RPC answered eth_blockNumber.")
+        return
+    from_block = int(head_hex, 16) - days * 43_200          # ~2s Polygon blocks
+    logs, detail = explorer_logs(137, GEOD_POLYGON, [TRANSFER_TOPIC], from_block)
+    if logs is None:
+        print(f"  UNAVAILABLE — {detail}")
+        return
+    print(f"  {detail}")
+    agg = {}
+    for lg in logs:
+        if len(lg["topics"]) < 3:
+            continue
+        to = "0x" + lg["topics"][2][-40:].lower()
+        v = int(lg["data"], 16)
+        a = agg.setdefault(to, [0, 0, 0, set()])
+        a[0] += v
+        a[1] += 1
+        a[2] += 1 if v and v % (1_000 * 10 ** 18) == 0 else 0
+        a[3].add("0x" + lg["topics"][1][-40:].lower())
+    ranked = sorted(agg.items(), key=lambda kv: -kv[1][0])[:25]
+    print(f"\n  {'destination':<44} {'GEOD in':>16} {'txs':>6} {'x1000':>6} {'senders':>8}  code")
+    for addr, (v, n, whole, senders) in ranked:
+        print(f"  {addr:<44} {v / 1e18:>16,.0f} {n:>6} {whole:>6} {len(senders):>8}  "
+              f"{_code(addr, 'polygon')}")
+    print("\n  READING IT: a staking or lock contract is a CONTRACT with many distinct senders and")
+    print("  whole-number deposits. If no such row appears, SuperHex stakes are not held in one")
+    print("  contract (per-hex, or custodial in GEODNET's console) — say so and stop hunting.")
+
+
 HYPE_INFO = "https://api.hyperliquid.xyz/info"
 HYPE_ASSISTANCE_FUND = "0xfefefefefefefefefefefefefefefefefefefefe"
 
@@ -1450,7 +1595,7 @@ CHECKS = (
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, aerodrome_lock_inputs,
     uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
-    fluid_buyback_destination,
+    fluid_buyback_destination, aethir_staking_probe, geodnet_staking_candidates,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

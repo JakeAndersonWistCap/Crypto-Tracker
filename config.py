@@ -4582,6 +4582,33 @@ PROJECTS = [
             # contracts miner wallets interact with) both return 000 from here, so the pages are
             # named and not read. No aggregator names the contract either: DefiLlama has no
             # GEODNET TVL adapter at all, only the burn-based fees adapter.
+            # ===== THE PREMISE, TESTED 2026-09-24: TWO MECHANISMS, NOT ONE. =====
+            # GEODNET's own GIPs (geodnet/GIP): the governance-platform GIP says participation needs
+            # "a Location NFT, staked GEOD tokens in a SuperHex, or locked GEOD tokens", and voting
+            # power comes from a veNFT built from all three. So:
+            #   SUPERHEX STAKING is per hex: GIP5 defines its "staking success benchmark" as a
+            #     station installed in THAT SuperHex reaching 90% RRR over 7 days — a bounty on a
+            #     location, pooled per hex. There may be no single staking contract at all
+            #     (per-hex positions, or custodial accounting in GEODNET's console).
+            #   GEOD LOCKING (the veNFT) is a separate, ve-style mechanism, and THAT one implies a
+            #     lock contract. No address for either is published in anything readable here.
+            # check_offline_items.geodnet_staking_candidates settles which by BEHAVIOUR: contracts
+            # receiving GEOD from many senders in whole-number amounts. No candidate is wired
+            # without GEODNET's own material naming it.
+            "premise_test_2026_09_24": {
+                "finding": "two mechanisms: per-SuperHex staking (a bounty per hex) and a separate "
+                           "GEOD lock feeding a veNFT",
+                "sources": ["https://raw.githubusercontent.com/geodnet/GIP/main/GIP336751715674082436.md",
+                            "https://raw.githubusercontent.com/geodnet/GIP/main/GIP202381733411309930.md"],
+                "superhex": "architecturally possibly unreadable by a single balance — per-hex or "
+                            "custodial; not established",
+                "ve_lock": "a lock contract should exist; address not found",
+                "next": "check_offline_items.py — geodnet_staking_candidates (Polygon GEOD "
+                        "destinations, last 30 days, contracts ranked by inflow)",
+                "published_total_staked": "none found: console.geodnet.com and docs.geodnet.com are "
+                                          "unreachable from here, and no aggregator or GitHub "
+                                          "source carries a total-staked figure",
+            },
             "docs_pages_2026_09_23": {
                 "index_mirror": "https://raw.githubusercontent.com/api-evangelist/geodnet/main/llms/geodnet-llms.txt",
                 "pages": [
@@ -5608,18 +5635,60 @@ PROJECTS = [
         },
         "name": "Aethir", "symbol": "ATH",
         # ===== locked_tokens — RESEARCHED 2026-09-23, NOT FOUND, SEARCH RECORDED. =====
-        "locked_tokens_blocked": {
-            "status": "STAKING EXISTS, CONTRACT NOT IDENTIFIED — Aethir's docs are unreachable from here and nothing on GitHub names it",
-            "wanted": "ATH staked by Checker Node operators and Cloud Hosts on Arbitrum, as an escrow balance",
-            "why": "Aethir's docs index (docs.aethir.com, via two llms.txt mirrors on GitHub) has pages for 'Aethir Staking', 'Staking Key Information', 'Staking as Cloud Host' and 'Staking Parameters', so a staking mechanism is documented. The pages' content is not reachable from this environment and GitHub code search finds no Aethir-authored repository with the contract. No address is guessed.",
-            "source_url": "https://raw.githubusercontent.com/reclear-io/llmref/main/registry/aethir/2026.07.02/llms.txt",
-            "source_date": "2026-09-23",
-            # ===== CANDIDATES FOUND 2026-09-23, NONE WIRED. =====
-            # arbiscan, polygonscan and docs.aethir.com all return 000 from here, so every
-            # address below is AGGREGATOR-SOURCED and stays a candidate until read against
-            # Aethir's own material. Wiring an unverified address is the one thing this file
-            # never does.
-            "candidates_2026_09_23": {
+        # ===== STAKING — FOUND 2026-09-24 FROM AETHIR'S OWN PAGE; TWO OF THREE POOLS WIRED. =====
+        "aethir_staking": {
+            "source": "Aethir's staking page, supplied by Jake 2026-09-24",
+            "pools": {
+                "eigenlayer_ath_vault": "0x3cFc70a2999a6C35A6A908D634E9B1fb85B98Ab0",
+                "gaming_pool": "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31",
+                "ai_pool": "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4",
+            },
+            "chain_finding": "ETHEREUM for all three: KeystoneHQ Smart-Contract-Metadata-Registry "
+                             "(ethereum/<addr>.json, all three) and 0xtorch datasource "
+                             "(evms/chains/1, Gaming and AI). No Arbitrum entry anywhere. Not "
+                             "probed live from here (explorers and RPCs unreachable); "
+                             "check_offline_items.aethir_staking_probe confirms from bytecode on "
+                             "both chains.",
+            "pool_kinds": {
+                "gaming_pool / ai_pool": "Curve-style Voting Escrow (MAXTIME, locked, supply, "
+                                         "token, balanceOf, create_lock) — read as "
+                                         "ATH.balanceOf(pool); supply() should equal it",
+                "eigenlayer_ath_vault": "TransparentUpgradeableProxy, implementation "
+                                        "0x7b8558f6b42211C75656222Fe3be0780BD9A6ea2; functions "
+                                        "include totalATH, totalDeposited, totalEscrowed, "
+                                        "aethirStrategy, eATH, depositCap",
+            },
+            "eigenlayer_vault": {
+                "status": "NOT WIRED — the right measure is not established",
+                "why": "the vault emits DepositToStrategy: deposited ATH moves into an EigenLayer "
+                       "strategy (aethirStrategy()), so ATH.balanceOf(vault) can undercount, while "
+                       "ATH.balanceOf(strategy) can include deposits made to the strategy directly. "
+                       "totalATH / totalDeposited / totalEscrowed are the vault's own accounting, "
+                       "and which of them is 'ATH staked' is not established without the source "
+                       "(the implementation is not on GitHub).",
+                "decide_from": "check_offline_items.py — aethir_staking_probe prints all of them "
+                               "side by side with eATH supply on both chains",
+            },
+            "eath_receipt": {
+                "ethereum": "0x68ff002b30360d3c613c2d6bc7e8c3e1f94883b9",
+                "arbitrum": "0x1903aa5b603819b9debd2f4b202b686e9e393aff",
+                "rule": "1:1 receipt for ATH deposited in the EigenLayer vault. NEVER summed with "
+                        "the vault's ATH — reconcile against it only.",
+            },
+            "terms": {
+                "ai_and_gaming_pools": "lock up to 4 years; 30-day withdrawal vesting; manual "
+                                       "claiming; no compounding",
+                "eigenlayer_vault": "redemption opened 2026-06-13 with a 30-day vest; withdrawals "
+                                    "disabled above 85% utilisation",
+                "note": "Enough for a real avg_lock_duration_days later (ve locked__end per "
+                        "position). Not built this round.",
+            },
+            "possible_overlap": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE — the only address "
+                                "DefiLlama counts as Aethir staking, a wrapper minting "
+                                "stAethir/veAethir. Not one of the three; the probe prints its ATH "
+                                "so a fourth pool, or a feeder into one of the three, is visible "
+                                "before anything is added.",
+            "research_2026_09_23": {
                 "defillama_staking_owner": {
                     "address": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE", "chain": "ethereum",
                     "what": "the ONLY address DefiLlama counts as Aethir 'staking': ATH on "
@@ -5871,6 +5940,51 @@ PROJECTS = [
             #   Solana
             #     Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7
             # Both from docs.aethir.com/aethir-tokenomics/token-overview, 2026-09-14.
+            #
+            # ===== THE STAKING POOLS, WIRED 2026-09-24. =====
+            # Addresses from Aethir's own staking page (supplied by Jake). The page does not state
+            # the chain; two independent public registries hold all three under ETHEREUM and none
+            # under Arbitrum (KeystoneHQ Smart-Contract-Metadata-Registry ethereum/, 0xtorch
+            # datasource evms/chains/1), with the Gaming and AI pools recorded as Curve-style
+            # "Voting Escrow" contracts. holder_has_code makes a wrong chain fail loudly rather
+            # than read zero.
+            # ** READ AS ATH.balanceOf(pool), NEVER THE POOL'S totalSupply(). ** On a vote escrow
+            # totalSupply() is decaying VOTING POWER, not tokens locked (Aerodrome's lesson). The
+            # balance is what the pool holds, which is the figure asked for.
+            # ETHEREUM ATH is declared here as the underlying ONLY. bridged_representation keeps it
+            # out of every supply sum — the bridge model is still unestablished (see above), and
+            # the Arbitrum deployment stays the one supply read.
+            "token_ethereum": _contract(
+                "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B", "ethereum", "bridged_representation", "ATH",
+                "https://docs.aethir.com/aethir-tokenomics/token-overview",
+                verified="2026-09-14", provenance="Aethir's own token overview (recorded above since "
+                                                  "2026-09-14); corroborated by the Arbitrum token "
+                                                  "bridge list (l1Address)",
+                token_standard="erc20",
+                purpose="ATH on ETHEREUM — the balanceOf target for the Ethereum staking pools. "
+                        "REFERENCE ONLY for supply: never summed."),
+            "staking_gaming_pool": _contract(
+                "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31", "ethereum", "ve_total_supply", "ATH",
+                "https://aethir.com/",
+                verified="2026-09-24",
+                provenance="Aethir's staking page (Gaming Pool), supplied by Jake 2026-09-24; chain "
+                           "from the Keystone and 0xtorch registries (Ethereum only)",
+                read_method="escrow_balance_of", underlying="token_ethereum", token_standard="erc20",
+                holder_has_code=True, supply_is_partial=True,
+                partial_reason="TWO OF THREE POOLS. The EigenLayer ATH Vault is not read yet — its "
+                               "ATH moves into an EigenLayer strategy, so its own balance can "
+                               "undercount; see aethir_staking.eigenlayer_vault.",
+                purpose="Aethir Gaming Pool — a Curve-style vote escrow, locks up to 4 years."),
+            "staking_ai_pool": _contract(
+                "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4", "ethereum", "ve_total_supply", "ATH",
+                "https://aethir.com/",
+                verified="2026-09-24",
+                provenance="Aethir's staking page (AI Pool), supplied by Jake 2026-09-24; chain from "
+                           "the Keystone and 0xtorch registries (Ethereum only)",
+                read_method="escrow_balance_of", underlying="token_ethereum", token_standard="erc20",
+                holder_has_code=True, supply_is_partial=True,
+                partial_reason="TWO OF THREE POOLS — see staking_gaming_pool.",
+                purpose="Aethir AI Pool — a Curve-style vote escrow, locks up to 4 years."),
         },
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
@@ -10377,6 +10491,43 @@ PROJECTS = [
                     {"period": "2026-08-13", "sky_buyback_pct": 0.55, "lssky_stakers_pct": 0.45,
                      "of": "each Smart Burn Engine cycle"},
                 ],
+                # ===== THE WHOLE LAYER 2 HISTORY, FROM THE SPELLS THAT SET IT. 2026-09-24. =====
+                # Splitter `burn` is the share of each SBE cycle sent to the flapper (SKY buybacks);
+                # the rest goes to the farm. Every value below is the literal
+                # DssExecLib.setValue(MCD_SPLIT, "burn", ...) — or the launch SplitterConfig — in
+                # sky-ecosystem/spells-mainnet, archive/<date>-DssSpell/DssSpell.sol. The date is
+                # the SPELL's; it executes after the governance delay, so the on-chain File event
+                # (check_offline_items.sky_splitter_history) gives the exact block. Two routes to
+                # one history; until the File events are read, the dates are spell dates.
+                "splitter_burn_from_spells": [
+                    {"spell": "2024-09-13", "burn": 1.00, "hop_s": 10_249, "note": "Splitter launched (SplitterConfig)"},
+                    {"spell": "2024-09-27", "burn": 1.00, "hop_s": 11_635},
+                    {"spell": "2024-10-17", "burn": 0.70, "hop_s": 15_649},
+                    {"spell": "2025-02-21", "burn": 1.00, "hop_s": 876},
+                    {"spell": "2025-03-06", "burn": 1.00, "hop_s": 2_160},
+                    {"spell": "2025-03-20", "burn": 1.00, "hop_s": 1_728},
+                    {"spell": "2025-04-03", "burn": 1.00, "hop_s": 1_235},
+                    {"spell": "2025-04-17", "burn": 1.00, "hop_s": 1_728},
+                    {"spell": "2025-05-29", "burn": 0.50, "hop_s": 1_728},
+                    {"spell": "2025-06-26", "burn": 0.50, "hop_s": 2_160},
+                    {"spell": "2025-08-21", "burn": 0.25, "hop_s": 2_160},
+                    {"spell": "2025-10-30", "burn": 1.00, "hop_s": 2_880},
+                    {"spell": "2026-03-12", "burn": 1.00, "hop_s": 13_787,
+                     "note": "hop x4.8 — the flap RATE fell ~79% with burn unchanged. A candidate "
+                             "for the April 2026 Layer 1 cut, NOT confirmed as it: Layer 1 is the "
+                             "share of surplus reaching the Splitter, not a Splitter parameter."},
+                    {"spell": "2026-08-13", "burn": 0.55, "hop_s": 3_748},
+                    {"spell": "2026-09-10", "burn": 0.55, "hop_s": 2_504},
+                ],
+                "splitter_source": "https://github.com/sky-ecosystem/spells-mainnet/tree/master/archive",
+                "splitter_read_on": "2026-09-24",
+                "what_it_answers": "Layer 2 before 2026-08-13: 100% to buybacks from 2025-10-30 "
+                                   "(and 100/70/100/50/25 before that). NOT Layer 1 — the April "
+                                   "2026 cut in the share reaching the Splitter at all.",
+                "not_applied_to_fee_split": "fee_split.history is unchanged: the derived figure "
+                                            "needs BOTH layers for a window, and Layer 1's April "
+                                            "date is still open. Applying Layer 2 alone would "
+                                            "lift a suppression on half a split.",
             },
             "source_url": "insights.skyeco.com (Q1 2026 reporting)",
             "source_date": "2026-09-18",
@@ -11382,6 +11533,13 @@ PROJECTS = [
         # source string says schedule:config:declared and the confidence machinery treats it as
         # what it is. The day the schedule is sourced, `sourced` flips and this note goes.
         "not_applicable": {
+            # ===== NO SEPARATE FUND BY DESIGN. Declared 2026-09-24. =====
+            "buyback_fund_balance":
+                "NO BUYBACK FUND EXISTS SEPARATELY. Fluid's own materials: bought-back tokens "
+                "'stay within the governance treasury, where the community decides whether to "
+                "burn, redistribute, or reinvest'. The treasury is read once, as "
+                "treasury_holding_tokens (contracts.treasury). And the programme itself was "
+                "HALTED on 2026-05-11. Declared 2026-09-24.",
             # ===== FLUID STAKING IS NOT DEPLOYED. Declared 2026-09-23. =====
             # An April 2026 analysis describes FLUID staking as PROSPECTIVE, and Fluid's own docs
             # carry no staking. So locked_tokens has nothing behind it — not an unfound contract,
@@ -11406,6 +11564,16 @@ PROJECTS = [
             "cumulative_pct_of_supply": 0.0051,
             "as_of": "2026-08-31",
             "source": "Tokenomist (free view), read 2026-09-23",
+            # ** A SECOND FIGURE, AND THE TWO DO NOT RECONCILE. 2026-09-24. ** Fluid's own
+            # post-mortem puts the programme at ~1.3% of supply when it HALTED on 2026-05-11;
+            # Tokenomist shows 0.51% as at 2026-08-31, LATER. A cumulative buyback cannot fall
+            # after a halt, so the two measure different things (a tracked tranche, a different
+            # supply base, or on-chain-only). Both kept, with dates; neither adjusted to the other.
+            "governance_figure": {"cumulative_pct_of_supply": 0.013, "as_of": "2026-05-11",
+                                  "source": "Fluid governance post-mortem (Resolv incident), "
+                                            "supplied by Jake 2026-09-24"},
+            "do_not_reconcile": "1.3% at the halt vs 0.51% later — different definitions, not a "
+                                "fall. Do not average or pick one.",
             "use": "SANITY BOUND ONLY. If a buyback series is ever sourced, its cumulative to "
                    "2026-08-31 should land near 0.51% of supply. Do NOT turn one cumulative "
                    "point into a rate — that is a cadence nobody published.",
@@ -11465,58 +11633,20 @@ PROJECTS = [
                 "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/main/deployments/mainnet/ReserveContract.json",
                 "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/main/contracts/reserve/SPEC.md",
             ],
-            "decision_needed": "confirm TREASURY_ADDRESS as buyback_fund_balance (and reopen the actual_buyback closures onto the LogBuyback route), or keep the closure. Not made here.",
+            "decision_resolved_2026_09_24": "TREASURY_ADDRESS is the governance treasury and the only fund — see contracts.treasury and buyback_programme.",
+        "decision_needed_was": "confirm TREASURY_ADDRESS as buyback_fund_balance (and reopen the actual_buyback closures onto the LogBuyback route), or keep the closure. Not made here.",
             # ===== THE EVIDENCE TO DECIDE IT FROM, 2026-09-24. =====
             # check_offline_items.fluid_buyback_destination follows the bought FLUID two hops by
             # Transfer events (proxy -> ?, TREASURY_ADDRESS -> ?) and sums LogBuyback.buyAmount,
             # on the explorer API — the RPC range cap no longer blocks it. Its table decides this.
             "evidence_check": "check_offline_items.py — fluid_buyback_destination",
         },
-        # ===== THE TWO STOCK ROWS NAME THE CANDIDATES, NOT "no contract of kind". 2026-09-23. =====
-        # buyback_fund_balance and treasury_holding_tokens were still gapping on the generic
-        # "no contract of kind ... declared" while buyback_contracts_found_2026_09_23 above holds
-        # three addresses from Instadapp's own repo. The rows now say what is on file and what
-        # is NOT decided. ** NONE IS PICKED HERE. ** A balance read on the wrong one of the three
-        # is a plausible wrong number, which is worse than a gap.
-        "buyback_fund_balance_blocked": {
-            "status": "THREE CANDIDATES ON FILE, NONE CONFIRMED AS THE FUND — decision open",
-            "wanted": "FLUID held at the buyback's resting destination, as a balance",
-            "why": "From Instadapp's fluid-contracts-public: FluidBuybackProxy "
-                   "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1 holds bought FLUID only until a "
-                   "rebalancer calls collectFluidTokensToTreasury; TREASURY_ADDRESS "
-                   "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09 is the hardcoded recipient of "
-                   "that call; FluidReserveContract 0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2 "
-                   "is the protocol reserve. Which of them is 'The Fluid Reserve' of the buyback "
-                   "announcement is NOT established by name, and the proxy's balance is a "
-                   "transit figure rather than a fund. Nothing is burned, so the burn route "
-                   "does not apply.",
-            "source_url": "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/"
-                          "main/contracts/periphery/buyback/SPEC.md",
-            "source_date": "2026-09-23",
-            "route_that_would_work": "Fluid's own announcement or docs naming where bought FLUID "
-                                     "rests; then ONE balanceOf read on that address. A balance "
-                                     "is a STOCK — the buyback FLOW stays the LogBuyback scan, "
-                                     "blocked by the 10-block cap (see actual_buyback closures).",
-        },
-        "treasury_holding_tokens_blocked": {
-            "status": "THREE CANDIDATES ON FILE, NONE CONFIRMED AS THE TREASURY — decision open",
-            "wanted": "FLUID held by the protocol treasury, as a balance",
-            "why": "The same three addresses as buyback_fund_balance_blocked: TREASURY_ADDRESS "
-                   "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09 (the buyback contract's hardcoded "
-                   "delivery target — a name in code, not a confirmed treasury), "
-                   "FluidReserveContract 0xFb3102759F2d57F547b9C519db49Ce1fFDE15dB2 (the "
-                   "reserve, per its own SPEC.md), and the buyback proxy "
-                   "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1 (transit only). Whether "
-                   "TREASURY_ADDRESS and the reserve are the same treasury, or the treasury is "
-                   "a third address, is the open question.",
-            "source_url": "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/"
-                          "main/contracts/reserve/SPEC.md",
-            "source_date": "2026-09-23",
-            "route_that_would_work": "Fluid's own governance or docs page naming the treasury; "
-                                     "then a treasury_holding contract on that ONE address. Do "
-                                     "not sum the candidates — that double-counts a transfer in "
-                                     "flight between them.",
-        },
+        # ===== ONE TREASURY, NOT TWO DECISIONS. Settled 2026-09-24. =====
+        # Fluid's own materials: bought-back tokens "stay within the governance treasury, where the
+        # community decides whether to burn, redistribute, or reinvest". There is no separate
+        # buyback fund by design, so buyback_fund_balance is not applicable and the treasury is
+        # read ONCE, as treasury_holding_tokens, at contracts.treasury. The three-candidate
+        # records of 2026-09-23 are superseded; the address is the one all three sources agree on.
         # ===== "DOES A FLUID STAKING OR LOCK MECHANISM EXIST" — ANSWERED 2026-09-23: NO. =====
         # What exists in fluid-contracts-public is FluidLendingStakingRewards
         # (contracts/protocols/lending/stakingRewards/main.sol): a Synthetix-style pool that
@@ -11537,12 +11667,64 @@ PROJECTS = [
         "coingecko_id": "instadapp",
         "defillama_fees_slug": "fluid", "defillama_protocol": "fluid", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
+        # ===== THE BUYBACK WAS HALTED ON 2026-05-11. Recorded 2026-09-24. =====
+        # Fluid's governance post "Post-Mortem, Treasury Actions, and Forward Strategy Following
+        # Resolv Incident" (2026-05-11, supplied by Jake) records an IMMEDIATE HALT to FLUID
+        # buybacks, after the programme had bought roughly 1.3% of supply and was judged
+        # ineffective for price support. The 'active' status below had been stale since then.
+        # STILL HALTED as far as Fluid's own governance record shows: the only payloads that move
+        # revenue for buybacks are IGP108, IGP111 and IGP112 (all before the halt); IGP113-IGP140
+        # (read 2026-09-24, the last being the September 2026 Foundation grant) contain none.
+        # The forum and blog are unreachable from here, so a restart announced there without a
+        # payload would not be seen — the payload record is the executed one.
         "fee_split": {"share_to_buyback": None, "source_url": "https://docs.fluid.io/",
                       "source_date": "2026-09-14", "programmed": False, "status": "active",
-                      "note": "BUYBACK IS ACTIVE, not pending. It triggered in October 2025 on surpassing "
-                              "$10m revenue, launching 'The Fluid Reserve'. The revenue SHARE is not a "
-                              "single documented number — the first month was 100% of Ethereum mainnet "
-                              "revenue (~$1.7m), which is a launch condition, not a standing rule."},
+                      "note": "HALTED 2026-05-11 — see buyback_programme and history. It triggered in "
+                              "October 2025 on surpassing $10m revenue, launching 'The Fluid "
+                              "Reserve'. The revenue SHARE was never a single documented number — "
+                              "the first month was 100% of Ethereum mainnet revenue (~$1.7m), a "
+                              "launch condition, not a standing rule.",
+                      # A window wholly after the halt has a documented share of ZERO, so its
+                      # implied buyback is 0, not n/a. A window spanning the halt, or wholly
+                      # inside the undocumented-share period, stays unconfirmed.
+                      "history": [
+                          _split_period("2025-10-01", "2026-05-10", None, "unconfirmed",
+                                        source_url="https://docs.fluid.io/",
+                                        source_date="2026-09-14",
+                                        note="active, share never documented as one number"),
+                          _split_period("2026-05-11", None, 0.0, "active",
+                                        source_url="https://gov.fluid.io/",
+                                        source_date="2026-05-11",
+                                        note="HALTED — governance post-mortem following the Resolv "
+                                             "incident. No payload after IGP112 collects revenue "
+                                             "for buybacks (checked through IGP140, 2026-09-24)."),
+                      ]},
+        "buyback_programme": {
+            "status": "HALTED",
+            "halted_on": "2026-05-11",
+            "source": "Fluid governance post 'Post-Mortem, Treasury Actions, and Forward Strategy "
+                      "Following Resolv Incident', 2026-05-11 (supplied by Jake)",
+            "ran": "October 2025 to 2026-05-11",
+            "bought_pct_of_supply_at_halt": 0.013,
+            "why_halted": "judged ineffective for price support",
+            "still_halted_check": {
+                "checked_on": "2026-09-24",
+                "source": "https://github.com/Instadapp/fluid-governance/tree/main/contracts/payloads",
+                "finding": "buyback revenue collection appears only in IGP108 (first buyback), "
+                           "IGP111 and IGP112 (monthly program), all before the halt. IGP113-"
+                           "IGP140 contain none. NOT checked: the forum and blog (unreachable "
+                           "from here).",
+            },
+            "executed_by": "Team Multisig 0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e — IGP108/111/112 "
+                           "move collected revenue there 'for buybacks'",
+            "same_post_also_records": {
+                "emissions": "a significant reduction in FLUID emissions",
+                "foundation_grant": "the $250k/month Foundation grant suspended for four months "
+                                    "(March-June 2026). RESUMED since: IGP124 established the monthly "
+                                    "grant, IGP139 raised it to $350k, IGP140 sent the September "
+                                    "2026 grant.",
+            },
+        },
         "burn_split": None,
         # ============ VESTING IS COMPLETE. THAT IS A DECLARATION, NOT A GAP. ============
         # Vesting ENDED IN 2025 and there are no further scheduled unlocks. Allocations, for the
@@ -11690,14 +11872,41 @@ PROJECTS = [
             "token": _contract(
                 "0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb", "ethereum", "erc20_total_supply", "FLUID",
                 "https://etherscan.io/address/0x6f40d4a6237c257fff2db00fa0510deeecd303eb",
-                verified="2026-09-14", provenance="Etherscan only — NOT repo-confirmed",
+                verified="2026-09-14", provenance="Etherscan, and SINCE 2026-09-24 Fluid's own code: "
+                                                  "FLUID_TOKEN_ADDRESS in fluid-contracts-public "
+                                                  "contracts/periphery/buyback/variables.sol, and "
+                                                  "fluid-governance IGP137",
                 token_standard="erc20",
                 purpose="FLUID token — the supply read.",
                 note="PROVENANCE IS ETHERSCAN ONLY, and that is deliberately recorded rather than rounded "
                      "up to 'verified against protocol docs'. Instadapp/fluid-contracts-public's own "
                      "technical docs (docs/docs.md) never mention this address — the only addresses in "
                      "that file are the native-ETH sentinel 0xEeee...EEeE. Usable, but do NOT upgrade its "
-                     "confidence without a second independent source."),
+                     "confidence without a second independent source. SECOND SOURCE FOUND 2026-09-24 "
+                     "in Fluid's own buyback contract constants and governance payload IGP137."),
+            # ===== THE GOVERNANCE TREASURY — THE ONE FUND. Wired 2026-09-24. =====
+            # Three sources, one of them Fluid's own: fluid-governance IGP137 calls it the
+            # "Treasury DSA" and withdraws 5,000,000 FLUID from it; fluid-contracts-public hardcodes
+            # it as TREASURY_ADDRESS, the destination of every bought-back FLUID; DefiLlama's
+            # registries/treasury.js ('treasury/instadapp') tracks it with FLUID as its own token.
+            # CROSS-CHECK on the first run: DefiLlama reports the tracked treasury at $22.35m, of
+            # which $22.34m is FLUID (Jake, 2026-09-24). treasury_holding_tokens x price_usd should
+            # land there; a figure far off means the wrong address or a moved treasury.
+            "treasury": _contract(
+                "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09", "ethereum", "treasury_holding", "FLUID",
+                "https://github.com/Instadapp/fluid-governance/blob/main/contracts/payloads/IGP137/description.md",
+                verified="2026-09-24",
+                provenance="Fluid governance IGP137 ('Treasury DSA'); TREASURY_ADDRESS in "
+                           "fluid-contracts-public; DefiLlama registries/treasury.js treasury/instadapp",
+                token_standard="erc20", underlying="token",
+                purpose="Fluid governance treasury (an Instadapp DSA). Bought-back FLUID rests here; "
+                        "there is no separate buyback fund."),
+        },
+        "treasury_reference": {
+            "defillama_tracked_treasury_usd": 22_350_000,
+            "of_which_own_token_usd": 22_340_000,
+            "as_of": "2026-09-24", "source": "DefiLlama treasury page, via Jake",
+            "check": "treasury_holding_tokens x price_usd ~= $22.34m on the first run",
         },
         # BUYBACK IS ACTIVE — CORRECTED 2026-09-14. It was previously recorded as
         # threshold-gated-and-unconfirmed, which is now wrong: the threshold was CROSSED in October
@@ -13912,43 +14121,47 @@ UNAVAILABLE = [
     # A PERMANENT GAP, ACCEPTED. Five independent sources checked, none publishes the address.
     {
         "project": "Fluid", "metric": "actual_buyback_tokens",
-        # ** REOPEN CANDIDATE, 2026-09-23. ** The buyback contracts are in Fluid's own repository
-        # (see the project's buyback_contracts_found_2026_09_23): a proxy that emits LogBuyback
-        # and a hardcoded TREASURY_ADDRESS that receives the bought FLUID. Whether that address is
-        # "the Reserve" this closure names is not established, so the closure stands until Jake
-        # decides; but "never disclosed" is no longer the state of the world.
-        "reopen_candidate_2026_09_23": "Fluid's repo names the buyback proxy (0x9Afb8C17...) and the FLUID recipient (0x28849D2b...); decision needed on whether that is the Reserve",
-        "closed_on": "2026-09-14",
-        "summary": "The Fluid Reserve address has never been disclosed by Fluid, in any source.",
+        # ===== CLOSED ON A DIFFERENT, CORRECT STATE. 2026-09-24. =====
+        # Was "the Reserve address was never disclosed" — true of the address, and superseded by
+        # the programme itself stopping. The history (Oct 2025 - May 2026) is real and was
+        # executed from the Team Multisig; it is not measured here, and the flow since the halt
+        # is zero by governance, not by a failed read.
+        "closed_on": "2026-09-24",
+        "summary": "PROGRAMME HALTED 2026-05-11. Fluid's governance post-mortem following the Resolv incident stopped FLUID buybacks after ~1.3% of supply had been bought; no payload since restarts them.",
         "what_was_tried": (
-            "Five sources, all checked 2026-09-14 and none carrying an address: (1) Fluid's own blog "
-            "announcement of The Fluid Reserve; (2) Messari's report on it; (3) the official X "
-            "announcement; (4) Instadapp/fluid-contracts-public — README.md and docs/docs.md, whose only "
-            "addresses are the native-ETH sentinel 0xEeee...EEeE; (5) Instadapp/fluid-governance — README "
-            "and docs. The buyback is real and ACTIVE (~$3.2m spent Oct-Dec 2025); the destination address "
-            "simply is not public."),
+            "Fluid's governance post-mortem of 2026-05-11 (supplied by Jake) records the halt. "
+            "Fluid's executed governance payloads were read for a restart: buyback revenue "
+            "collection appears only in IGP108, IGP111 and IGP112, all before the halt; IGP113 to "
+            "IGP140 (September 2026) contain none. The forum and blog are unreachable from here."),
         "impact": (
-            "NONE on whether the buyback exists or its size — both are known from Fluid's own reporting. "
-            "What is lost is the on-chain confirmation of it. The IMPLIED buyback from the revenue side is "
-            "unaffected and remains the figure used."),
+            "Implied buyback: a window wholly after 2026-05-11 now reads 0 (fee_split.history), not "
+            "n/a. The Oct 2025 - May 2026 history is unmeasured on-chain; its size is known only "
+            "as ~1.3% of supply (governance) and 0.51% (Tokenomist, different definition)."),
         "reopen_if": (
-            "Fluid publishes the Reserve address, or a governance proposal names it. Do NOT re-run the "
-            "five sources above — they are closed."),
+            "a governance payload or post restarts FLUID buybacks — then the flow is Transfer "
+            "events of FLUID INTO the treasury (contracts.treasury) from the executing wallet."),
     },
     {
         "project": "Fluid", "metric": "actual_buyback_usd",
-        # ** REOPEN CANDIDATE, 2026-09-23. ** The buyback contracts are in Fluid's own repository
-        # (see the project's buyback_contracts_found_2026_09_23): a proxy that emits LogBuyback
-        # and a hardcoded TREASURY_ADDRESS that receives the bought FLUID. Whether that address is
-        # "the Reserve" this closure names is not established, so the closure stands until Jake
-        # decides; but "never disclosed" is no longer the state of the world.
-        "reopen_candidate_2026_09_23": "Fluid's repo names the buyback proxy (0x9Afb8C17...) and the FLUID recipient (0x28849D2b...); decision needed on whether that is the Reserve",
-        "closed_on": "2026-09-14",
-        "summary": "Same as actual_buyback_tokens: the Reserve address was never disclosed.",
-        "what_was_tried": "See the actual_buyback_tokens entry — five sources, none carrying an address.",
-        "impact": "Implied buyback still computes. ~$3.2m spent Oct-Dec 2025 is known from Fluid's own "
-                  "reporting but cannot be confirmed on-chain.",
-        "reopen_if": "Fluid publishes the Reserve address.",
+        # ===== CLOSED ON A DIFFERENT, CORRECT STATE. 2026-09-24. =====
+        # Was "the Reserve address was never disclosed" — true of the address, and superseded by
+        # the programme itself stopping. The history (Oct 2025 - May 2026) is real and was
+        # executed from the Team Multisig; it is not measured here, and the flow since the halt
+        # is zero by governance, not by a failed read.
+        "closed_on": "2026-09-24",
+        "summary": "PROGRAMME HALTED 2026-05-11 — see actual_buyback_tokens.",
+        "what_was_tried": (
+            "Fluid's governance post-mortem of 2026-05-11 (supplied by Jake) records the halt. "
+            "Fluid's executed governance payloads were read for a restart: buyback revenue "
+            "collection appears only in IGP108, IGP111 and IGP112, all before the halt; IGP113 to "
+            "IGP140 (September 2026) contain none. The forum and blog are unreachable from here."),
+        "impact": (
+            "Implied buyback: a window wholly after 2026-05-11 now reads 0 (fee_split.history), not "
+            "n/a. The Oct 2025 - May 2026 history is unmeasured on-chain; its size is known only "
+            "as ~1.3% of supply (governance) and 0.51% (Tokenomist, different definition)."),
+        "reopen_if": (
+            "a governance payload or post restarts FLUID buybacks — then the flow is Transfer "
+            "events of FLUID INTO the treasury (contracts.treasury) from the executing wallet."),
     },
     {
         "project": "Aerodrome", "metric": "locked_tokens_dashboard",
@@ -15040,8 +15253,27 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Sky",
-        "topic": "lssky reads totalSupply() — is it a 1:1 receipt, or does it compound like "
-                 "sPENDLE, sETHFI and stSYRUP?",
+        # ===== ANSWERED FROM SOURCE 2026-09-24: A 1:1 RECEIPT. Kept so it is not re-asked. =====
+        "status": "closed",
+        "closed_on": "2026-09-24",
+        "resolution": "1:1 RECEIPT, NOT AN ACCRUING SHARE — from the source, not the docs. "
+                      "sky-ecosystem/lockstake src/LockstakeEngine.sol: lock() takes `wad` SKY "
+                      "(sky.transferFrom) and mints exactly `wad` lsSKY to the urn "
+                      "(lssky.mint(urn, wad)); _free() burns exactly `wad` lsSKY and returns "
+                      "`wad` minus the exit fee, the fee being BURNED as SKY; liquidation burns "
+                      "the urn's lsSKY (onKick) and re-mints only the refund (onRemove). "
+                      "src/LockstakeSky.sol is a plain token: mint/burn by the engine only, no "
+                      "exchange rate, no accrual. Rewards are paid by the farm (getReward), never "
+                      "folded into the share. So LSSKY.totalSupply() IS SKY locked, and "
+                      "locked_tokens is already correct — NO WIRING CHANGE. "
+                      "** THE SUGGESTED CHECK BELOW WAS WRONG. ** SKY.balanceOf(lssky) would read "
+                      "~0: the SKY sits in the ENGINE, and when an urn delegates, in its "
+                      "VoteDelegate — so a balance read on either would UNDERCOUNT, and the share "
+                      "count is the only single figure that is the lock.",
+        "sources": ["https://github.com/sky-ecosystem/lockstake/blob/master/src/LockstakeEngine.sol",
+                    "https://github.com/sky-ecosystem/lockstake/blob/master/src/LockstakeSky.sol"],
+        "topic": "ANSWERED 2026-09-24 — lssky is a 1:1 receipt (from LockstakeEngine source), "
+                 "not a compounding share like sPENDLE, sETHFI and stSYRUP.",
         "severity": 2,
         "reason": "FOUND BY AUDIT 2026-09-23, not by a bad number. Sky's locked_tokens is "
                   "LSSKY.totalSupply() — a SHARE count — and three of this project's four other "
@@ -15198,7 +15430,10 @@ OPEN_QUESTIONS = [
                   "periods, not one — see the April 2026 buyback reduction question, which is the harder "
                   "half of this and must be settled first. One number for the whole span would be wrong.",
         "suggestion": "Document each period separately in Sky fee_split.history: pre-overhaul, and "
-                      "post-overhaul to 2026-08-12. Do not collapse them into one. LAYER 2 NEEDS NO "
+                      "post-overhaul to 2026-08-12. Do not collapse them into one. LAYER 2 IS "
+                      "ANSWERED (2026-09-24): sbe_allocation_layers.layer_2.splitter_burn_from_spells "
+                      "holds every burn/hop value from the executed spells. What stays open is "
+                      "LAYER 1's April date. LAYER 2 NEEDS NO "
                       "DOCUMENT (2026-09-24): run check_offline_items.py with ETHERSCAN_API_KEY set — "
                       "sky_splitter_history reads every Splitter File(burn) event through the "
                       "explorer API and prints the dated table; paste it back and each row becomes "
