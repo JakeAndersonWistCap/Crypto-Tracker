@@ -33,6 +33,7 @@ from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .llama import DefiLlama, MorphoBlueApi
 from .schedule import Schedule
+from .logscan import LogScan
 from .near import NearNode
 from .tron import TronNode
 from .scrape import Scrape, entry_ready, load_registry
@@ -59,6 +60,8 @@ TIER_ORDER = [
     ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                           prior_delta=ctx["prior_delta"])),
     ("near_rpc", 2, lambda ctx: NearNode(prior_values=ctx["prior_values"])),
+    # Transfer-event FLOWS via block-explorer APIs, reconciled to balanceOf before storing.
+    ("explorer", 2, lambda ctx: LogScan()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),
@@ -436,6 +439,18 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
     for p in projects:
         name = p["name"]
         if "pool_release_tokens" not in config.metrics_for_project(p):
+            continue
+        # ** A MEASURED RELEASE WINS, AND THE DERIVATION STANDS DOWN RATHER THAN COMPETING. **
+        # POOL_RELEASE_ROUTES: where a Transfer-event scan of the pool wallet exists and passed
+        # its reconciliation this run, it is primary. Writing the derived figure beside it would
+        # hand the choice to the tier-collision guard. If the scan failed, nothing measured is in
+        # the frame and the derivation runs exactly as before — the column never goes blank
+        # because a new route did not answer.
+        if (name, "pool_release_tokens") in {(r.project, r.metric) for r in
+                                             frame[["project", "metric"]].itertuples(index=False)}:
+            out.skipped(SOURCE_DERIVED, name,
+                        "pool_release_tokens: NOT derived — a measured release (Transfer events "
+                        "out of the pool wallets) is in the frame this run and is primary.", tier=2)
             continue
         circ, total = latest.get((name, "circulating_supply")), latest.get((name, "total_supply"))
         if circ is None or total is None:

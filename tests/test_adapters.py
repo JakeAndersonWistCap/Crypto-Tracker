@@ -7720,7 +7720,7 @@ def test_world_mobiles_two_user_counts_disagree_and_neither_is_quietly_dropped()
           "labelled as floors")
 
 
-def test_the_chainlink_reserve_inflow_is_derived_and_a_fall_is_reported_not_swallowed():
+def test_the_chainlink_reserve_inflow_is_derived_and_a_fall_is_reported_not_swallowed(monkeypatch):
     """F. Chainlink's archetype 3 block had a fund BALANCE and no FLOW — the Reserve's LINK was
     read, how much arrived in a period was not. The delta against the last earlier-dated reading
     is that flow and it costs no extra call.
@@ -7733,6 +7733,11 @@ def test_the_chainlink_reserve_inflow_is_derived_and_a_fall_is_reported_not_swal
     harmless for a dead-address balance (it cannot fall) and would have hidden exactly this.
     """
     link = config.PROJECT_BY_NAME["Chainlink"]
+    # RETIRED 2026-09-24: the inflow scan (log_scans.reserve_inflow) replaced this route. The
+    # differencing MECHANISM is still what every other stock->flow pair uses, so it stays tested
+    # here on the declaration Chainlink used to carry.
+    assert config.cumulative_flow_for("Chainlink", "buyback_fund_balance") is None
+    monkeypatch.setitem(link, "cumulative_flow", {"buyback_fund_balance": "actual_buyback_tokens"})
     assert config.cumulative_flow_for("Chainlink", "buyback_fund_balance") == "actual_buyback_tokens"
     # PER PROJECT, not per metric. Uniswap's TokenJar holds fee tokens that get swept and GEODNET
     # has no fund at all; a global entry would derive a "buyback" on all three from whatever each
@@ -8375,7 +8380,9 @@ def test_every_declared_flow_has_a_stock_the_check_can_find():
     assert not missing, f"every declared flow must invert back to its own stock: {missing}"
 
     # THE THREE THAT WERE INVISIBLE, named so this cannot regress quietly.
-    assert bw.flow_stock("Chainlink", "actual_buyback_tokens") == "buyback_fund_balance"
+    # Chainlink's buyback is READ from events since 2026-09-24, not differenced, so it has no
+    # stock to telescope against — the scan's own wei reconciliation is that check now.
+    assert bw.flow_stock("Chainlink", "actual_buyback_tokens") is None
     assert bw.flow_stock("Sky", "governance_burn_tokens") == "governance_burn_balance"
     assert bw.flow_stock("Sky", "other_burn_tokens") == "other_burn_balance"
     # AND THE ALIAS still resolves through its parent: burn_revenue_funded is a re-labelled copy
@@ -10461,8 +10468,12 @@ def test_a_contract_that_serves_a_derived_flow_is_not_read_as_withdrawn():
     second hand-maintained copy of the same relationship that was missed because it is spelled
     differently and lives in another file. Both are derived from config.stock_for_flow now.
     """
+    # Since 2026-09-24 the Reserve's stock no longer feeds the flow, so a leftover differenced
+    # row IS from a route that stopped serving it — and the scan's own rows are not.
     assert config.withdrawn_contract_keys(
-        "Chainlink", "actual_buyback_tokens", "chain:ethereum:reserve:delta") == []
+        "Chainlink", "actual_buyback_tokens", "chain:ethereum:reserve:delta") == ["reserve"]
+    assert config.withdrawn_contract_keys(
+        "Chainlink", "actual_buyback_tokens", "explorer:reserve_inflow") == []
     assert config.withdrawn_contract_keys(
         "Uniswap", "gross_burn_tokens", "chain:ethereum:burn_dead:delta") == []
 
@@ -10912,10 +10923,10 @@ def test_the_buyback_route_is_derived_from_the_destination_already_on_file():
         assert config.buyback_route(name)["route"] == route, name
 
     # CHAINLINK RESOLVES TO ITS OWN FUND, because it declares cumulative_flow on the Reserve.
-    assert config.buyback_route("Chainlink")["metric"] == "buyback_fund_balance"
+    assert "log_scans.reserve_inflow" in config.buyback_route("Chainlink")["reason"]
     # MAPLE DOES NOT, and the reason names the findable thing rather than a generic contract.
     assert config.buyback_route("Maple")["metric"] is None
-    assert "no fund address is declared" in config.buyback_route("Maple")["reason"]
+    assert "HELD" in config.buyback_route("Maple")["reason"]
 
     # ** AERODROME IS "none", NOT "distribute", AND THE DIFFERENCE MATTERS. ** No AERO is ever
     # bought: 100% of fees go to voters in the PAIR'S tokens. A "distribute" gap would invite
@@ -12730,17 +12741,18 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     def reason(name, metric):
         return _tier_note(config.PROJECT_BY_NAME[name], metric, {})
 
-    # 1b — fund KNOWN, scan blocked by the provider cap. Neither says "no contract declared".
+    # 1b — fund KNOWN, and since 2026-09-24 READ: the explorer scan is the route. Neither row
+    # says "no contract declared", and neither offers a balance read.
     for name, addr in (("Maple", "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"),
                        ("Ether.fi", "0x2f5301a3D59388c509C65f8698f521377D41Fd0F")):
         r, sug = reason(name, "actual_buyback_tokens")
-        assert "10 blocks" in r and addr in r, (name, r)
+        assert addr in r and "Transfer events INTO" in r, (name, r)
         assert "no contract of kind" not in r
-        assert "Transfer events INTO" in r, "the inflow, never a balance"
-        assert "balance read" in r and "understates the buyback by the buyback" in r
+        assert "reconciled to balanceOf" in r, "the inflow, never a balance"
         # 1d — usd follows, verbatim.
         ru, _ = reason(name, "actual_buyback_usd")
-        assert ru.startswith("FOLLOWS actual_buyback_tokens") and "10 blocks" in ru, ru
+        assert ru.startswith("FOLLOWS actual_buyback_tokens") and addr in ru, ru
+    assert "HELD" in reason("Maple", "actual_buyback_tokens")[0]
 
     # 1c — no readable destination, with THAT reason.
     r, _ = reason("Pendle", "actual_buyback_tokens")
@@ -12807,8 +12819,8 @@ def test_the_pool_release_family_records_what_is_measurable_what_is_blocked_and_
             if "pool_release_tokens" in config.metrics_for_project(p)} == five
     assert "NOT newly minted" in config.METRICS["pool_release_tokens"]["label"]
     R = config.POOL_RELEASE_ROUTES
-    assert "10 blocks" in R["Chainlink"]["measured"] and "BLOCKED" in R["Chainlink"]["measured"]
-    assert "UNCONFIRMED FROM THIS ENVIRONMENT" in R["GEODNET"]["measured"]
+    assert "UNBLOCKED 2026-09-24, NOT WIRED" in R["Chainlink"]["measured"]
+    assert "WIRED 2026-09-24" in R["GEODNET"]["measured"] and "mining_wallets_outflow" in R["GEODNET"]["measured"]
     assert "PERMANENTLY" in R["Hyperliquid"]["measured"] and "permanently" in R["Hyperliquid"]["derived"]
     # 3c — found, sourced, NOT wired (no kind means 'release pool' and the scan is capped anyway).
     m = R["Maple"]
@@ -13323,3 +13335,265 @@ def test_the_emissions_alias_is_a_recorded_decision_not_a_deferral():
         r, _ = _tier_note(config.PROJECT_BY_NAME[name], "emissions_tokens", {})
         assert "DECIDED 2026-09-24, not deferred" in r and "EMISSIONS_ALIAS_DECLINED" in r, name
     print("emissions alias ok: declined, recorded as decided, reason names it")
+
+
+# =====================================================================================
+# PART A, 2026-09-24 — block-explorer log scans. Stubs in Etherscan's documented shape.
+# =====================================================================================
+def _elog(block, idx, topics, value, ts=None, tx=None):
+    return {"address": "0xtoken", "topics": topics, "data": hex(int(value)),
+            "blockNumber": hex(block), "timeStamp": hex(ts if ts is not None else 1_758_000_000 + block),
+            "logIndex": hex(idx), "transactionHash": tx or f"0x{block:x}{idx:x}"}
+
+
+class _ExplorerHttp:
+    """Answers getLogs from a fixed list, honouring fromBlock/page/offset like Etherscan."""
+
+    def __init__(self, logs_by_key, refuse=(), balances=None):
+        self.logs_by_key, self.refuse, self.calls = logs_by_key, set(refuse), []
+
+    def get(self, url, params=None, headers=None):
+        self.calls.append((url, dict(params)))
+        host = "blockscout" if "blockscout" in url else "etherscan"
+        if host in self.refuse:
+            return {"status": "0", "message": "NOTOK",
+                    "result": f"Free API access is not supported for this chain {params.get('apikey')}"}
+        key = (params.get("address", "").lower(), params.get("topic1"), params.get("topic2"))
+        rows = [r for r in self.logs_by_key.get(key, []) if int(r["blockNumber"], 16) >= int(params["fromBlock"])]
+        off, page = int(params["offset"]), int(params["page"])
+        chunk = rows[(page - 1) * off: page * off]
+        if not chunk:
+            return {"status": "0", "message": "No records found", "result": []}
+        return {"status": "1", "message": "OK", "result": chunk}
+
+
+def _explorer(monkeypatch, logs_by_key, refuse=(), max_records=3):
+    from fetch.explorer import ExplorerLogs
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "SECRETKEY123")
+    monkeypatch.setenv("BLOCKSCOUT_API_KEY", "BSKEY456")
+    monkeypatch.setitem(config.EXPLORERS["etherscan"], "max_records", max_records)
+    monkeypatch.setitem(config.EXPLORERS["blockscout"], "max_records", max_records)
+    ex = ExplorerLogs(http=_ExplorerHttp(logs_by_key, refuse))
+    return ex
+
+
+def test_explorer_pages_by_record_count_and_never_leaks_the_key(monkeypatch):
+    """Full pages move the cursor to their LAST block (not past it — it may hold more), a page
+    that is all one block pages within it, duplicates drop by (tx, logIndex), and a refusal
+    goes to the fallback explorer with the key scrubbed from the message."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address, ExplorerRefused
+    holder = "0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6"
+    t2 = pad_address(holder)
+    # 3 per page: blocks 10,11,11 | 11,11,11 (one block fills a page) | 11,12
+    rows = [_elog(10, 0, [TRANSFER_TOPIC, pad_address("0xa"), t2], 1)]
+    rows += [_elog(11, i, [TRANSFER_TOPIC, pad_address("0xa"), t2], 1) for i in range(6)]
+    rows += [_elog(12, 0, [TRANSFER_TOPIC, pad_address("0xa"), t2], 1)]
+    ex = _explorer(monkeypatch, {("0xtoken", None, t2): rows})
+    logs, meta = ex.get_logs(1, "0xtoken", [TRANSFER_TOPIC, None, t2])
+    assert len(logs) == 8 and meta["explorer"] == "etherscan", (len(logs), meta)
+    assert [l["blockNumber"] for l in logs] == [10] + [11] * 6 + [12]
+    assert all(isinstance(l["blockNumber"], int) and isinstance(l["timeStamp"], int) for l in logs)
+    params = [c[1] for c in ex.http.calls]
+    assert params[0]["topic0_2_opr"] == "and" and "topic1" not in params[0]
+    assert any(p["page"] > 1 for p in params), "a page that is all one block must page within it"
+
+    # Etherscan refuses the chain -> Blockscout serves it, and the key is not in any message
+    ex2 = _explorer(monkeypatch, {("0xtoken", None, t2): rows}, refuse=["etherscan"])
+    logs2, meta2 = ex2.get_logs(1, "0xtoken", [TRANSFER_TOPIC, None, t2])
+    assert meta2["explorer"] == "blockscout" and len(logs2) == 8
+    assert "not supported" in meta2["refused"][0] and "SECRETKEY123" not in meta2["refused"][0]
+    # BSC: nothing routed, so it says so rather than returning an empty history
+    try:
+        ex2.get_logs(56, "0xtoken", [TRANSFER_TOPIC])
+        raise AssertionError("an unrouted chain must refuse, not return []")
+    except ExplorerRefused as e:
+        assert "no explorer is routed for chain 56" in str(e)
+    print("explorer ok: record-count paging, in-block paging, fallback, key scrubbed")
+
+
+class _Call:
+    def __init__(self, v):
+        self.v = v
+
+    def call(self, block_identifier=None):
+        return self.v
+
+
+class _Fns:
+    def __init__(self, balances, dec):
+        self.balances, self.dec = balances, dec
+
+    def balanceOf(self, h):
+        return _Call(self.balances[h.lower()])
+
+    def decimals(self):
+        return _Call(self.dec)
+
+
+class _FakeReader:
+    def __init__(self, balances, dec=18, head=1_000):
+        self.balances, self.dec, self.head = {k.lower(): v for k, v in balances.items()}, dec, head
+
+    def web3(self, chain):
+        import types
+        return types.SimpleNamespace(eth=types.SimpleNamespace(block_number=self.head))
+
+    def erc20(self, chain, token):
+        import types
+        return types.SimpleNamespace(functions=_Fns(self.balances, self.dec))
+
+    @staticmethod
+    def checksum(a):
+        return a
+
+
+def _flow_logs(holder, inflows, outflows=()):
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    h = pad_address(holder)
+    ins = [_elog(b, 0, [TRANSFER_TOPIC, pad_address(frm), h], v, ts=ts) for b, frm, v, ts in inflows]
+    outs = [_elog(b, 1, [TRANSFER_TOPIC, h, pad_address(to)], v, ts=ts) for b, to, v, ts in outflows]
+    return {("0xtoken", None, h): ins, ("0xtoken", h, None): outs}
+
+
+def _run_scan(monkeypatch, spec, logs, balances, name="Chainlink"):
+    from fetch.base import FetchOutput
+    from fetch.logscan import LogScan
+    ex = _explorer(monkeypatch, logs, max_records=1000)
+    ls = LogScan(explorer=ex, reader=_FakeReader(balances))
+    out = FetchOutput()
+    ls._scan({"name": name}, spec, None, out)
+    return out
+
+
+def test_a_flow_scan_reconciles_to_the_wei_before_storing_anything(monkeypatch):
+    """in - out == balanceOf at the pinned block, or nothing is stored — the one check that proves
+    the record-count pagination returned everything. Attribution is declared: only the Payment
+    Abstraction sender counts for Chainlink, and zero days inside the covered span are rows."""
+    day = 86_400
+    t0 = int(pd.Timestamp("2026-09-01").timestamp())
+    pay, other = "0x5680681ed3767b96914ce741a308155c7fb9171d", "0x00000000000000000000000000000000000000bb"
+    reserve = "0x9a709b7b69ea42d5eeb1cebc48674c69e1569ec6"
+    spec = {"key": "reserve_inflow", "metric": "actual_buyback_tokens", "chain": "ethereum",
+            "token": "0xtoken", "holders": [reserve], "direction": "in", "store": True,
+            "count_from": [pay]}
+    E = 10 ** 18
+    logs = _flow_logs(reserve, [(100, pay, 5 * E, t0), (200, other, 2 * E, t0 + day),
+                                (300, pay, 3 * E, t0 + 3 * day)])
+    out = _run_scan(monkeypatch, spec, logs, {reserve: 10 * E})
+    got = out.frame().sort_values("date")
+    assert set(got.metric) == {"actual_buyback_tokens"} and set(got.source) == {"explorer:reserve_inflow"}
+    by = {str(d)[:10]: v for d, v in zip(got.date, got.value)}
+    assert by["2026-09-01"] == 5.0 and by["2026-09-02"] == 0.0 and by["2026-09-04"] == 3.0, by
+    assert by["2026-09-03"] == 0.0, "a covered day with nothing counted is an observed zero"
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert "served by etherscan" in line and other in line, line   # uncounted sender is named
+
+    # ONE WEI OFF: nothing stored, the gap says by how much
+    out2 = _run_scan(monkeypatch, spec, logs, {reserve: 10 * E + 1})
+    assert out2.frame().empty
+    g = next(g for g in out2.gaps if g["metric"] == "actual_buyback_tokens")
+    assert "INCOMPLETE OR WRONG" in g["reason"] and "1 wei unaccounted" in g["reason"]
+    assert "tolerance" in g["suggestion"]
+
+    # HELD ON ATTRIBUTION: runs, reconciles, stores nothing, names the counterparties
+    held = dict(spec, store=False, count_from=None, hold_reason="general treasury.")
+    out3 = _run_scan(monkeypatch, held, logs, {reserve: 10 * E}, name="Maple")
+    assert out3.frame().empty
+    g3 = next(g for g in out3.gaps if g["metric"] == "actual_buyback_tokens")
+    assert g3["reason"].startswith("THE SCAN WORKS AND RECONCILES") and pay in g3["reason"]
+    print("flow scan ok: wei reconciliation gates storage; attribution declared; zeros observed")
+
+
+def test_an_outflow_scan_excludes_hops_between_its_own_wallets(monkeypatch):
+    """GEODNET's two mining wallets: mining -> distribution is internal and never counts; a
+    transfer to the dead address is not release; each wallet reconciles on its own."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    E, t0 = 10 ** 18, int(pd.Timestamp("2026-09-10").timestamp())
+    mine, dist = "0xfa5fed5cc2b6dd8f370651d17242c52ed711b14f", "0x8fb9dd00b9a3d893da96d444817d0b77330d5478"
+    miner, dead = "0x00000000000000000000000000000000000000c1", "0x000000000000000000000000000000000000dead"
+    src = "0x00000000000000000000000000000000000000f0"
+    logs = {}
+    for k, v in _flow_logs(mine, [(10, src, 100 * E, t0)], [(20, dist, 60 * E, t0)]).items():
+        logs[k] = v
+    for k, v in _flow_logs(dist, [(20, mine, 60 * E, t0)],
+                           [(30, miner, 25 * E, t0), (31, dead, 5 * E, t0)]).items():
+        logs[k] = v
+    spec = {"key": "mining_wallets_outflow", "metric": "pool_release_tokens", "chain": "polygon",
+            "token": "0xtoken", "holders": [mine, dist], "direction": "out", "store": True,
+            "exclude_counterparties": [dead]}
+    out = _run_scan(monkeypatch, spec, logs, {mine: 40 * E, dist: 30 * E}, name="GEODNET")
+    got = out.frame()
+    assert list(got.value) and got.value.iloc[0] == 25.0 and got.value.sum() == 25.0, list(got.value)
+    print("outflow scan ok: internal hop and burn excluded, 25 released")
+
+
+def test_no_explorer_key_is_a_gap_that_says_so_never_a_balance_read(monkeypatch):
+    from fetch.base import FetchOutput
+    from fetch.explorer import ExplorerLogs
+    from fetch.logscan import LogScan
+    monkeypatch.delenv("ETHERSCAN_API_KEY", raising=False)
+    monkeypatch.delenv("BLOCKSCOUT_API_KEY", raising=False)
+    spec = config.PROJECT_BY_NAME["Chainlink"]["log_scans"][0]
+    out = FetchOutput()
+    LogScan(explorer=ExplorerLogs(http=_ExplorerHttp({})), reader=_FakeReader({}))._scan(
+        config.PROJECT_BY_NAME["Chainlink"], spec, None, out)
+    g = next(g for g in out.gaps if g["metric"] == "actual_buyback_tokens")
+    assert "ETHERSCAN_API_KEY" in g["reason"] and "NOT replaced by a balance read" in g["reason"]
+    # Chainlink's differencing route is retired: the stock no longer feeds a flow
+    assert config.cumulative_flow_for("Chainlink", "buyback_fund_balance") is None
+    print("no key ok: a named gap, and the differencing route is retired")
+
+
+def test_the_four_scans_are_declared_as_the_round_asked(monkeypatch):
+    specs = {p["name"]: {s["key"]: s for s in p.get("log_scans") or []} for p in config.PROJECTS}
+    c = specs["Chainlink"]["reserve_inflow"]
+    assert c["count_from"] == ["0x5680681ED3767B96914CE741a308155C7fB9171d"] and c["store"]
+    e = specs["Ether.fi"]["buyback_wallet_inflow"]
+    assert e["holders"] == ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F"] and e["store"]
+    m = specs["Maple"]["treasury_inflow"]
+    assert m["holders"] == ["0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"] and m["store"] is False
+    g = specs["GEODNET"]["mining_wallets_outflow"]
+    assert g["direction"] == "out" and g["chain"] == "polygon" and len(g["holders"]) == 2
+    assert "Mining allocation ONLY" in config.metric_label("GEODNET", "pool_release_tokens")
+    for n in ("Ether.fi", "Maple"):
+        assert "actual_buyback_tokens_blocked" not in config.PROJECT_BY_NAME[n], n
+    assert config.explorer_order(8453) == ["blockscout"] and config.explorer_order(56) == []
+    print("scan declarations ok")
+
+
+def test_a_measured_pool_release_makes_the_derivation_stand_down():
+    from fetch import _derive_pool_release
+    from fetch.base import FetchOutput, point
+    out = FetchOutput()
+    d = pd.Timestamp("2026-09-20")
+    for m, v in (("circulating_supply", 500.0), ("total_supply", 1000.0), ("pool_release_tokens", 7.0)):
+        out.add(point("GEODNET", m, v, "explorer:mining_wallets_outflow" if m == "pool_release_tokens" else "coingecko", 2, d),
+                "x", "GEODNET", "", 2)
+    _derive_pool_release(out, [config.PROJECT_BY_NAME["GEODNET"]],
+                         {("GEODNET", "circulating_supply"): 400.0, ("GEODNET", "total_supply"): 1000.0},
+                         {("GEODNET", "circulating_supply"): "2026-09-19", ("GEODNET", "total_supply"): "2026-09-19"})
+    rel = out.frame().query("metric == 'pool_release_tokens'")
+    assert list(rel.source) == ["explorer:mining_wallets_outflow"], list(rel.source)
+    assert any("measured release" in e.message for e in out.log if e.status == "skipped")
+    print("pool release ok: measured wins, derivation stands down")
+
+
+def test_sky_burn_scan_goes_to_the_explorer_first_and_decodes_the_same(monkeypatch):
+    """A2(a): scan_logs is the one chokepoint, so Sky's burn scan reaches the explorer with no
+    change to its gates. Explorer logs arrive with INT blockNumber, which the decoder reads."""
+    from fetch.chain import ChainReader
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    sky = "0x56072C95FAA701256059aa122697B133aDEd9279"
+    burner = "0xbe8e3e3618f7474f8cb1d074a26affef007e98fb"
+    zero = pad_address(config.BURN_ADDRESSES["zero"])
+    rows = [_elog(20_663_800, 0, [TRANSFER_TOPIC, pad_address(burner), zero], 2_860_000 * 10 ** 18)]
+    ex = _explorer(monkeypatch, {(sky.lower(), None, zero): rows})
+    r = ChainReader()
+    r.explorer = ex
+    raw, chunks, used = r.scan_logs("ethereum", {"address": sky, "topics": [TRANSFER_TOPIC, None, zero]},
+                                    20_663_735, 26_000_000)
+    assert len(raw) == 1 and chunks == 1
+    assert r.log_endpoint_used["ethereum"].startswith("etherscan explorer API (1 request(s)")
+    word = int(str(raw[0]["data"]), 16)
+    assert word / 10 ** 18 == 2_860_000 and int(raw[0]["blockNumber"]) == 20_663_800
+    print("sky scan ok: explorer first, same decode")

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from urllib.parse import urlparse
 
 import requests
@@ -365,6 +366,33 @@ def sky_splitter(splitter: str | None):
         print("  needs looking at again.")
 
 
+def explorer_logs(chain_id: int, address: str, topics: list, from_block: int = 0):
+    """(logs, detail) via fetch/explorer.py — Etherscan V2 / Blockscout, paged by record count.
+
+    ** THE RPC RANGE CAP DOES NOT APPLY HERE, which is why the two log checks below try this
+    first. ** Needs ETHERSCAN_API_KEY or BLOCKSCOUT_API_KEY in .env; returns (None, why) without
+    one, and the caller falls back to eth_getLogs. Logs come back with INT blockNumber/timeStamp.
+    """
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    except ImportError:
+        pass
+    try:
+        from fetch.explorer import ExplorerLogs, ExplorerRefused   # noqa: PLC0415
+    except ImportError as e:
+        return None, f"fetch.explorer not importable: {e}"
+    ex = ExplorerLogs()
+    if not ex.configured(chain_id):
+        return None, "no explorer key in .env for this chain"
+    try:
+        logs, meta = ex.get_logs(chain_id, address, topics, from_block)
+    except ExplorerRefused as e:
+        return None, f"explorers refused: {e}"
+    return logs, (f"{len(logs)} log(s), served by {meta['explorer']} in {meta['requests']} "
+                  f"request(s)" + (f" after: {'; '.join(meta['refused'])}" if meta["refused"] else ""))
+
+
 def eth_get_logs(address: str, topics: list, from_block: int, to_block: int, chunk: int = 50_000):
     """Every matching log between two blocks, chunked, trying each endpoint.
 
@@ -467,6 +495,28 @@ def sky_splitter_history(splitter: str | None, from_block: int):
     if not splitter:
         print("  SKIPPED — the Splitter's address is not on file and is NOT guessed here.")
         return
+    # THE EXPLORER FIRST (2026-09-24): the RPC route is capped at 10 blocks per request on
+    # Alchemy's free tier, which is what left this history unread. Rows are normalised to
+    # (block, name, raw, date) either way.
+    ex_logs, ex_detail = explorer_logs(1, splitter, [FILE_TOPIC_UINT], from_block)
+    if ex_logs is not None:
+        print(f"  {ex_detail}")
+        if not ex_logs:
+            print("  NO File EVENTS from the explorer. Same caution as below: a scan that began")
+            print("  after every change is not a history.")
+            return
+        rows = []
+        for lg in ex_logs:
+            topics = lg.get("topics") or []
+            if len(topics) < 2:
+                continue
+            what = topics[1].lower()
+            name = ("burn" if what == WHAT_BURN else "hop" if what == WHAT_HOP else what)
+            rows.append((lg["blockNumber"], name, int(lg.get("data") or "0x0", 16),
+                         time.strftime("%Y-%m-%d", time.gmtime(lg["timeStamp"]))))
+        _print_splitter_rows(sorted(rows))
+        return
+    print(f"  explorer route unavailable ({ex_detail}) — trying RPC eth_getLogs")
     head_hex, _ = eth_block_number()
     if not head_hex:
         print("  UNREACHABLE — no endpoint answered eth_blockNumber.")
@@ -493,14 +543,20 @@ def sky_splitter_history(splitter: str | None, from_block: int):
         what = topics[1].lower()
         name = ("burn" if what == WHAT_BURN else "hop" if what == WHAT_HOP else what)
         raw = int(lg.get("data") or "0x0", 16)
-        rows.append((int(lg["blockNumber"], 16), name, raw, lg["blockNumber"]))
-    rows.sort()
+        rows.append((int(lg["blockNumber"], 16), name, raw, block_time(lg["blockNumber"])))
+    _print_splitter_rows(sorted(rows))
+
+
+def _print_splitter_rows(rows: list) -> None:
+    """The File-event table, one row per parameter change: (block, name, raw, date)."""
     print(f"\n  {'block':>10}  {'date':<12} {'what':<8} {'raw':>22}  reading")
-    for blk, name, raw, blk_hex in rows:
-        when = block_time(blk_hex)
+    for blk, name, raw, when in rows:
         reading = (f"{raw / 1e18:.6f} WAD = {raw / 1e16:.2f}% to buybacks" if name == "burn"
                    else f"{raw} s = {raw / 3600:.2f} h" if name == "hop" else "")
         print(f"  {blk:>10,}  {when:<12} {name:<8} {raw:>22}  {reading}")
+    print("\n  LAYER 2 ONLY. This is the Splitter's own division of what reaches it; the April")
+    print("  2026 LAYER 1 change (the share of surplus reaching the Splitter at all) is not a")
+    print("  Splitter parameter and is not in these events.")
     print("\n  PASTE BACK the whole table. Each row is one dated period boundary for Sky's")
     print("  fee_split.history LAYER 2 — and the pre-2026-08-13 periods stop being 'unconfirmed'")
     print("  the moment this table exists. Do NOT fill a period from the period after it.")
@@ -1243,6 +1299,66 @@ def aerodrome_lock_inputs():
 #     that prints a section header, so forgetting to register the NEXT one fails the suite.
 # The ordering is the reporting order and is deliberate: Sky first, because it is the one with
 # an open question, and beaconchain last, because it is the slowest.
+# ===== FLUID — WHICH OF THE THREE CANDIDATES IS THE FUND? Added 2026-09-24. =====
+# The buyback proxy swaps into FLUID (LogBuyback) and a rebalancer later calls
+# collectFluidTokensToTreasury, which moves FLUID to the HARDCODED TREASURY_ADDRESS. So the first
+# hop is settled by the code; the question the scan answers is the SECOND: does TREASURY_ADDRESS
+# keep the FLUID (it is the fund), or pass it on (and to which of the other candidates)?
+FLUID_TOKEN = "0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb"
+FLUID_BUYBACK_PROXY = "0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1"
+FLUID_CANDIDATES = {
+    "0x9afb8c1798b93a8e04a18553ee65bafa41a012f1": "FluidBuybackProxy",
+    "0x28849d2b63fa8d361e5fc15cb8abb13019884d09": "TREASURY_ADDRESS",
+    "0xfb3102759f2d57f547b9c519db49ce1ffde15db2": "FluidReserveContract",
+}
+# keccak of the event signatures, from contracts/periphery/buyback/events.sol (checked in tests)
+LOGBUYBACK_TOPIC = "0x8f05f94eed0b7316abb05990df81da789c0a1f51415a0ff7e8b03f58826018cb"
+TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+
+def _pad(addr: str) -> str:
+    return "0x" + addr.lower()[2:].rjust(64, "0")
+
+
+def fluid_buyback_destination():
+    """Follow bought FLUID two hops, from Transfer events: proxy -> ?, and that -> ?.
+
+    Also sums LogBuyback.buyAmount where tokenOut == FLUID — the buyback flow itself — so the
+    destination totals can be compared against what was bought. Evidence only: nothing here
+    writes config, and the candidate is chosen by Jake from the printed table.
+    """
+    head("FLUID — where does the bought FLUID go? (Transfer events, two hops)")
+    buys, d = explorer_logs(1, FLUID_BUYBACK_PROXY, [LOGBUYBACK_TOPIC, None, _pad(FLUID_TOKEN)])
+    if buys is None:
+        print(f"  UNAVAILABLE — {d}. This check needs an explorer key; the RPC route is capped.")
+        return
+    bought = sum(int(str(b["data"])[2 + 64:2 + 128] or "0", 16) for b in buys) / 1e18
+    print(f"  LogBuyback (tokenOut = FLUID): {len(buys)} event(s), {bought:,.2f} FLUID bought — {d}")
+
+    def hop(src: str, label: str):
+        logs, det = explorer_logs(1, FLUID_TOKEN, [TRANSFER_TOPIC, _pad(src), None])
+        if logs is None:
+            print(f"  {label}: UNAVAILABLE — {det}")
+            return {}
+        tally = {}
+        for lg in logs:
+            to = "0x" + lg["topics"][2][-40:].lower()
+            tally[to] = tally.get(to, 0) + int(lg["data"], 16)
+        total = sum(tally.values()) / 1e18
+        print(f"\n  FLUID OUT of {label} ({src}): {total:,.2f} over {len(logs)} transfer(s) — {det}")
+        for to, v in sorted(tally.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"    {to}  {v / 1e18:>18,.2f}  {v / 1e18 / total:6.1%}  {FLUID_CANDIDATES.get(to, '')}")
+        return tally
+
+    first = hop(FLUID_BUYBACK_PROXY, "the buyback proxy")
+    treasury = "0x28849d2b63fa8d361e5fc15cb8abb13019884d09"
+    if treasury in first:
+        hop(treasury, "TREASURY_ADDRESS")
+    print("\n  READING IT: if TREASURY_ADDRESS receives the proxy's FLUID and sends little or")
+    print("  none onward, it is the fund. If it forwards most of it to the Reserve contract, the")
+    print("  Reserve is. PASTE BACK the tables — the choice is recorded in config from them.")
+
+
 HYPE_INFO = "https://api.hyperliquid.xyz/info"
 HYPE_ASSISTANCE_FUND = "0xfefefefefefefefefefefefefefefefefefefefe"
 
@@ -1334,6 +1450,7 @@ CHECKS = (
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, aerodrome_lock_inputs,
     uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
+    fluid_buyback_destination,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

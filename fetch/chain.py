@@ -674,6 +674,37 @@ class ChainReader:
         history is ~5.4m blocks (20,663,735 to ~26,039,143); nothing serves that unchunked, and
         the 400 it now returns is the server saying so.
         """
+        # ===== AN EXPLORER FIRST, WHERE ONE IS ROUTED AND KEYED. Added 2026-09-24. =====
+        # The RPC traversal below is capped at 10 blocks per request on Alchemy's free tier and
+        # refused outright by publicnode, which blocked every scan through here. An explorer
+        # pages by record count, so a multi-million-block history is a handful of requests.
+        # Its logs come back in this method's shape (ints for blockNumber), so no caller changes.
+        # WHICH SOURCE SERVED is recorded exactly where the RPC path records it, so the existing
+        # "SERVED BY" log line reports the explorer — or, after a refusal, why it fell back.
+        from .explorer import ExplorerLogs, ExplorerRefused
+        chain_id = config.CHAIN_IDS.get(chain)
+        if chain_id is not None:
+            if not hasattr(self, "explorer"):
+                self.explorer = ExplorerLogs()
+            if self.explorer.configured(chain_id):
+                topics = [None if t is None else (t.hex() if hasattr(t, "hex") else str(t))
+                          for t in (base.get("topics") or [])]
+                topics = [None if t is None else (t if t.startswith("0x") else "0x" + t)
+                          for t in topics]
+                try:
+                    logs, meta = self.explorer.get_logs(chain_id, str(base["address"]), topics,
+                                                        from_block, to_block)
+                except ExplorerRefused as e:
+                    self.log_endpoints_refused.setdefault(chain, []).append(f"explorers: {e}")
+                    log.info("chain %s: no explorer served the scan (%s) — falling back to RPC "
+                             "eth_getLogs", chain, e)
+                else:
+                    self.log_endpoint_used[chain] = (
+                        f"{meta['explorer']} explorer API ({meta['requests']} request(s), paged "
+                        f"by record count)" + (f" after: {'; '.join(meta['refused'])}"
+                                              if meta["refused"] else ""))
+                    return logs, meta["requests"], chunk
+
         block, chunks, used, out = from_block, 0, chunk, []
         while block <= to_block:
             logs, upper, used = self._get_logs_resilient(chain, base, block, to_block, used)

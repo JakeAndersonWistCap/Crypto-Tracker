@@ -1475,6 +1475,68 @@ BURN_ADDRESSES = {
     "zero": "0x0000000000000000000000000000000000000000",
 }
 
+# =======================================================================================
+# BLOCK-EXPLORER LOG APIs — event scans without the RPC range cap. Added 2026-09-24.
+#
+# Alchemy's free tier caps eth_getLogs at 10 blocks per request and publicnode refuses the
+# method, which blocked every Ethereum event scan in this file. Explorers index logs server-side
+# and page by RECORD COUNT, so the cap does not apply. See fetch/explorer.py.
+#
+# ** THE COVERAGE TABLE IS RESEARCHED, NOT YET CONFIRMED LIVE. ** Jake's research of 2026-09-24:
+# Etherscan's free tier serves LOGS on Ethereum, Arbitrum and Polygon, and since November 2025
+# NOT on Base, Optimism or BSC; since July 2026 its free per-request maximum is 1,000 records
+# (down from 10,000). Neither explorer is reachable from the build environment, so the first live
+# run is the confirmation — every scan logs which explorer served it and what any refusal said.
+# A chain where neither serves logs is REPORTED as such; it never falls back to a balance read.
+# =======================================================================================
+CHAIN_IDS = {"ethereum": 1, "optimism": 10, "bsc": 56, "polygon": 137, "base": 8453,
+             "arbitrum": 42161}
+
+EXPLORERS = {
+    "etherscan": {
+        "base_url": "https://api.etherscan.io/v2/api",
+        "key_env": "ETHERSCAN_API_KEY",
+        "max_records": 1000,           # free tier since July 2026 — researched, confirm live
+        "limits": "5 req/s, 100,000 req/day (free)",
+    },
+    "blockscout": {
+        # One host per chain, Etherscan-compatible /api. BSC has no Blockscout instance on file.
+        "hosts": {
+            1: "https://eth.blockscout.com/api",
+            10: "https://optimism.blockscout.com/api",
+            137: "https://polygon.blockscout.com/api",
+            8453: "https://base.blockscout.com/api",
+            42161: "https://arbitrum.blockscout.com/api",
+        },
+        "key_env": "BLOCKSCOUT_API_KEY",
+        "max_records": 1000,
+        "limits": "5 req/s (keyed)",
+    },
+}
+
+# Per chain: which explorer first, which as fallback. Researched 2026-09-24, NOT confirmed live.
+EXPLORER_LOG_ROUTES = {
+    1: ["etherscan", "blockscout"],
+    42161: ["etherscan", "blockscout"],
+    137: ["etherscan", "blockscout"],
+    8453: ["blockscout"],       # Etherscan free: no logs on Base since Nov 2025
+    10: ["blockscout"],         # ... nor on Optimism
+    56: [],                     # ... nor on BSC, and no Blockscout host is on file for BSC
+}
+EXPLORER_ROUTES_STATUS = {
+    "researched_on": "2026-09-24", "researched_by": "Jake",
+    "confirmed_live": None,
+    "confirm_by": "the first run with ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY set: each scan's log "
+                  "line names the explorer that served it, and a refusal quotes the explorer",
+}
+EXPLORER_MIN_INTERVAL_S = 0.25          # under the 5 req/s free ceiling on both
+EXPLORER_MAX_REQUESTS_PER_SCAN = 5000   # a runaway guard, not a budget: 5m records at 1,000
+
+
+def explorer_order(chain_id: int) -> list[str]:
+    """Explorers to try for this chain's logs, first to last. Empty = none serves them free."""
+    return list(EXPLORER_LOG_ROUTES.get(int(chain_id)) or [])
+
 # ---------------------------------------------------------------------------------------
 # Contract-address confidence.
 #
@@ -3367,9 +3429,33 @@ PROJECTS = [
         # WHAT IT EXCLUDES, said on the label so no reader has to infer it: the staking-reward
         # leg. This is the Reserve's inflow, not Chainlink's total Payment Abstraction revenue,
         # and reading it as the latter would understate by whatever the pools receive.
+        # ===== THE DIFFERENCING ROUTE IS RETIRED 2026-09-24; THE INFLOW SCAN REPLACES IT. =====
+        # buyback_fund_balance is still read as a stock. Its delta no longer feeds
+        # actual_buyback_tokens: a balance delta cannot say whether a zero means nothing arrived
+        # or the read went nowhere (the "0 by differencing" P2). The Transfer events INTO the
+        # Reserve FROM the Payment Abstraction layer are the flow itself — the same filter
+        # DefiLlama's chainlink adapter applies (fromAddressFilter: paymentLayer). An empty
+        # string here means "declared: no flow from this stock", not "unset".
         "cumulative_flow": {
-            "buyback_fund_balance": "actual_buyback_tokens",
+            "buyback_fund_balance": "",
         },
+        "log_scans": [
+            {
+                "key": "reserve_inflow",
+                "metric": "actual_buyback_tokens",
+                "chain": "ethereum",
+                "token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+                "holders": ["0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6"],
+                "direction": "in",
+                "store": True,
+                "attribution": "count_from",
+                "count_from": ["0x5680681ED3767B96914CE741a308155C7fB9171d"],
+                "count_from_source": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/chainlink/index.ts "
+                                     "(paymentLayer; Revenue = LINK transferred from the Payment "
+                                     "Abstraction layer to the Reserve), read 2026-09-24",
+                "wired_on": "2026-09-24",
+            },
+        ],
         "metric_labels": {
             "actual_buyback_tokens": "LINK inflow to Reserve (Payment Abstraction) — EXCLUDES the "
                                      "staking-reward leg, which is a separate route from source",
@@ -4511,6 +4597,32 @@ PROJECTS = [
             },
             "route_that_would_work": "a GEODNET-authored page or GIP naming the SuperHex staking contract on Polygon; then an escrow_balance_of read on GEOD (contracts.token_polygon) against it.",
         },
+        # ===== MEASURED POOL RELEASE — THE MINING WALLETS' OUTFLOW. Wired 2026-09-24. =====
+        # POOL_RELEASE_ROUTES: where the pool wallet's outflow can be read, it is primary over
+        # d(circulating) - d(total). Both mining wallets are scanned; transfers BETWEEN them are
+        # internal hops and do not count, and nothing sent to a burn address counts as release.
+        # ** NARROWER THAN THE DERIVED FIGURE, AND THE LABEL SAYS SO. ** The derivation carries
+        # every pre-minted pool (ecosystem, team, investors); this is the mining allocation only.
+        # If the scan fails or does not reconcile, the derivation runs as before.
+        "log_scans": [
+            {
+                "key": "mining_wallets_outflow",
+                "metric": "pool_release_tokens",
+                "chain": "polygon",
+                "token": "0xAC0F66379A6d7801D7726d5a943356A172549Adb",
+                "holders": ["0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F",
+                            "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478"],
+                "direction": "out",
+                "store": True,
+                "attribution": "dedicated_wallet",
+                "attribution_sources": ["contracts.mining_polygon / mining_distribution_polygon "
+                                        "(verified 2026-09-17)"],
+                "exclude_counterparties": ["0x000000000000000000000000000000000000dEaD",
+                                           "0x0000000000000000000000000000000000000000"],
+                "wired_on": "2026-09-24",
+            },
+        ],
+        # (the pool_release_tokens label is in this entry's single metric_labels dict below)
         # ===== buyback_wallet_polygon_historical RETIRED 2026-09-23. =====
         # It was a contract of kind buyback_fund_balance on a project whose buyback BURNS
         # (buyback_destination burn, archetype narrowed), so the metric it served is not one
@@ -4616,6 +4728,11 @@ PROJECTS = [
         },
         "metric_labels": {
             # ===== SAY ON THE SHEET WHAT THESE FIGURES ARE. Added 2026-09-23. =====
+            # MEASURED POOL RELEASE, 2026-09-24 — see log_scans.mining_wallets_outflow.
+            "pool_release_tokens": "Released from the MINING pool — GEOD paid out of the two "
+                                   "Polygon mining wallets (measured, Transfer events). Mining "
+                                   "allocation ONLY: the derived fallback, when it shows, also "
+                                   "carries other pools.",
             # All three come out of DefiLlama's burn-derived adapter, so a reader comparing them
             # with the burn column is comparing a number with itself. The label is the only place
             # that travels with the cell.
@@ -6029,14 +6146,33 @@ PROJECTS = [
         # The gap used to read "no contract of kind buyback_fund_balance declared", which was
         # false: contracts.treasury (the daoMultisig, 0xd6d4Bcde...) IS the fund. What is missing
         # is not an address but the Transfer-event scan into it.
-        "actual_buyback_tokens_blocked": {
-            "status": "BLOCKED — fund address known, inflow scan blocked by the provider cap",
-            "wanted": "SYRUP Transfer events INTO contracts.treasury (0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196), summed per period",
-            "why": "Ethereum eth_getLogs is capped at 10 blocks per request on the Alchemy free tier (confirmed from the provider's error body, 2026-09-23), below the scanner's MIN_LOG_CHUNK floor, which is not lowered to force a result. The scan is the ONLY correct route: a buyback wallet exists to SPEND, so a differenced balance is inflow MINUS spending and understates the buyback by the buyback. Gapped with this reason rather than substituted with a balance read.",
-            "source_url": "https://raw.githubusercontent.com/maple-labs/address-registry/main/contracts/MapleAddressRegistryETH.sol",
-            "source_date": "2026-09-18",
-            "route_that_would_work": "the same scan on a logs endpoint that serves more than 10 blocks per request (a paid Alchemy tier, or another provider). Wiring is one contract read_method away once that exists; nothing else is missing.",
-        },
+        # ===== THE SCAN IS WIRED 2026-09-24; THE FIGURE IS HELD ON ATTRIBUTION. =====
+        # The range cap is gone (explorer API), so the scan runs, reconciles and prints the
+        # treasury's SYRUP counterparties every run. What it cannot do is say which inflows are
+        # PURCHASES: the daoMultisig is Maple's general treasury, and it receives SYRUP for other
+        # reasons too (allocations, migrations, returns). A total of every inflow would book all
+        # of them as buyback. So nothing is stored until the purchase senders are declared.
+        "log_scans": [
+            {
+                "key": "treasury_inflow",
+                "metric": "actual_buyback_tokens",
+                "chain": "ethereum",
+                "token": "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66",
+                "holders": ["0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"],
+                "direction": "in",
+                "store": False,
+                "hold_reason": "Maple's daoMultisig (0xd6d4Bcde…) is the general DAO treasury, not a "
+                               "dedicated buyback wallet, so its SYRUP inflows include non-purchase "
+                               "transfers, and no source on file names the buyback's sender (a DEX "
+                               "settlement, an aggregator, a Maple contract).",
+                "hold_suggestion": "Read this run's counterparty table and Maple's transparency "
+                                   "page's monthly buyback figures; declare count_from for the "
+                                   "sender(s) whose totals match, with that source. Then set "
+                                   "store True.",
+                "source_url": "https://raw.githubusercontent.com/maple-labs/address-registry/main/contracts/MapleAddressRegistryETH.sol",
+                "wired_on": "2026-09-24",
+            },
+        ],
         "coingecko_id": "syrup",
         "defillama_fees_slug": "maple", "defillama_protocol": "maple", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
@@ -9642,6 +9778,10 @@ PROJECTS = [
                                      "Infura's actual limits first, do not assume"),
                     },
                     "from_block_discover": "deployment",
+                # UNBLOCKED 2026-09-24: scan_logs tries a block-explorer API first (no range cap)
+                # when ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY is set; the RPC route above stays as
+                # the fallback and its record stays as the reason it is not the primary.
+                "explorer_route": "fetch/explorer.py via ChainReader.scan_logs — confirmed live: not yet",
                     # 10,000 is what free endpoints generally serve for eth_getLogs. A full
                     # history is roughly 2.6m blocks, so expect ~260 chunks on the first run; the
                     # adapter logs the count and the chunk size every time.
@@ -11306,6 +11446,11 @@ PROJECTS = [
                 "https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/main/contracts/reserve/SPEC.md",
             ],
             "decision_needed": "confirm TREASURY_ADDRESS as buyback_fund_balance (and reopen the actual_buyback closures onto the LogBuyback route), or keep the closure. Not made here.",
+            # ===== THE EVIDENCE TO DECIDE IT FROM, 2026-09-24. =====
+            # check_offline_items.fluid_buyback_destination follows the bought FLUID two hops by
+            # Transfer events (proxy -> ?, TREASURY_ADDRESS -> ?) and sums LogBuyback.buyAmount,
+            # on the explorer API — the RPC range cap no longer blocks it. Its table decides this.
+            "evidence_check": "check_offline_items.py — fluid_buyback_destination",
         },
         # ===== THE TWO STOCK ROWS NAME THE CANDIDATES, NOT "no contract of kind". 2026-09-23. =====
         # buyback_fund_balance and treasury_holding_tokens were still gapping on the generic
@@ -11918,15 +12063,32 @@ PROJECTS = [
                          "rather than the eETH and EIGEN this address is described as receiving.",
         },
         "name": "Ether.fi", "symbol": "ETHFI",
-        # ===== actual_buyback_tokens — WALLET KNOWN FROM THREE SOURCES, ROUTE BLOCKED. 2026-09-23.
-        "actual_buyback_tokens_blocked": {
-            "status": "BLOCKED — buyback wallet known, inflow scan blocked by the provider cap",
-            "wanted": "ETHFI Transfer events INTO the buyback wallet 0x2f5301a3D59388c509C65f8698f521377D41Fd0F (the CoW-swap taker in DefiLlama's adapter), summed per period",
-            "why": "Ethereum eth_getLogs is capped at 10 blocks per request on the Alchemy free tier (confirmed from the provider's error body, 2026-09-23), below the scanner's MIN_LOG_CHUNK floor, which is not lowered to force a result. The scan is the ONLY correct route: a buyback wallet exists to SPEND, so a differenced balance is inflow MINUS spending and understates the buyback by the buyback. Gapped with this reason rather than substituted with a balance read." + " Three sources name the wallet: DefiLlama's ether-fi-stake adapter (taker on the buyback swaps), Ether.fi's own test suite (test/TestSetup.sol declares it buybackWallet), and Ether.fi's gitbook (100% of eETH withdrawal fees fund weekly ETHFI buybacks). See buyback_wallet.",
-            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/ether-fi-stake/index.ts",
-            "source_date": "2026-09-23",
-            "route_that_would_work": "the same scan on a logs endpoint above the 10-block cap. The bought ETHFI is then DISTRIBUTED to sETHFI holders, so the inflow to this wallet is the buyback and its outflow is the distribution — read the inflow, never the balance.",
-        },
+        # ===== actual_buyback_tokens — WIRED 2026-09-24 ON AN EXPLORER SCAN. =====
+        # Was blocked 2026-09-23 by the RPC range cap (Alchemy free: 10 blocks per eth_getLogs).
+        # The wallet is named by THREE sources — DefiLlama's ether-fi-stake adapter (the taker on
+        # the buyback swaps), Ether.fi's own test suite (test/TestSetup.sol, buybackWallet) and
+        # Ether.fi's gitbook (100% of eETH withdrawal fees fund weekly ETHFI buybacks) — and it
+        # is a DEDICATED wallet, so every ETHFI inflow except a mint is a purchase. The bought
+        # ETHFI is then distributed to sETHFI holders: the INFLOW is the buyback, the outflow is
+        # the distribution, and the balance is neither. See fetch/logscan.py for the gates.
+        "log_scans": [
+            {
+                "key": "buyback_wallet_inflow",
+                "metric": "actual_buyback_tokens",
+                "chain": "ethereum",
+                "token": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB",
+                "holders": ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F"],
+                "direction": "in",
+                "store": True,
+                "attribution": "dedicated_wallet",
+                "attribution_sources": [
+                    "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/ether-fi-stake/index.ts",
+                    "Ether.fi test/TestSetup.sol (buybackWallet)",
+                    "Ether.fi gitbook — 100% of eETH withdrawal fees fund weekly ETHFI buybacks",
+                ],
+                "wired_on": "2026-09-24",
+            },
+        ],
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
@@ -12660,6 +12822,21 @@ def buyback_route(project_name: str) -> dict:
                 "reason": "the bought tokens are burned, so the buyback flow and the burn flow "
                           "are one event under two names — taken from gross_burn_tokens rather "
                           "than sourced again, because two reads of one event can disagree"}
+    # ===== A DECLARED TRANSFER-EVENT SCAN IS THE ROUTE, WHEREVER THE TOKENS GO. 2026-09-24. =====
+    # The flow is read directly from the events, so neither "no fund address is declared" nor
+    # "distributed, no stock to read" is the reason any more. fetch/logscan.py raises the specific
+    # gap when the scan fails, fails to reconcile, or is held on attribution.
+    scan = next((sc for sc in p.get("log_scans") or [] if sc.get("metric") == "actual_buyback_tokens"),
+                None)
+    if scan and dest in ("hold", "distribute"):
+        return {"route": "treasury_inflow" if dest == "hold" else "distribute", "metric": None,
+                "reason": (f"the flow is read directly: Transfer events INTO "
+                           f"{', '.join(scan['holders'])} on {scan['chain']} (log_scans."
+                           f"{scan['key']}), via a block-explorer API and reconciled to "
+                           f"balanceOf before anything is stored"
+                           + ("" if scan.get("store") else
+                              " — HELD: the scan runs, but which inflows are purchases is not "
+                              "established, so nothing is stored. " + scan.get("hold_reason", "")))}
     if dest == "hold":
         stock = next((s for s, f in (p.get("cumulative_flow") or {}).items()
                       if f == "actual_buyback_tokens"), None)
@@ -14150,21 +14327,6 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # unresolved, why it matters, and what would settle it. Delete an entry once it is settled
 # and the corresponding config change is made.
 # =======================================================================================
-# =======================================================================================
-# PRE-MINTED POOL RELEASE — WHICH ROUTE IS LIVE, PER PROJECT. 2026-09-23.
-#
-# Release from a pre-minted pool raises CIRCULATING supply while TOTAL stays flat. It is not
-# minting and must never share a column with gross_issuance_tokens — see the pool_release_tokens
-# metric label.
-#
-# TWO ROUTES, and where both exist the MEASURED one is primary:
-#   MEASURED  Transfer events OUT of the named pool wallet. A balance falls for reasons other
-#             than distribution and rises on top-ups; the outflow is the quantity.
-#   DERIVED   d(circulating) - d(total). Needs no addresses and works for all five today, but
-#             inherits CoinGecko's classification of what counts as circulating AND compounds
-#             the error of two independently-sourced stocks. Primary only where no measured
-#             route exists.
-# =======================================================================================
 # ===== emissions_tokens IS NOT ALIASED TO pool_release_tokens. DECIDED 2026-09-24, NOT DEFERRED. =====
 # Proposed 2026-09-23 (Part A2 of the eleven-project round), declined the same day with the
 # reason below, and the refusal CONFIRMED by Jake on 2026-09-24. Recorded as a decision so a
@@ -14190,16 +14352,29 @@ EMISSIONS_ALIAS_DECLINED = {
                       "because the emissions cell is empty.",
 }
 
+# =======================================================================================
+# PRE-MINTED POOL RELEASE — WHICH ROUTE IS LIVE, PER PROJECT. 2026-09-23.
+#
+# Release from a pre-minted pool raises CIRCULATING supply while TOTAL stays flat. It is not
+# minting and must never share a column with gross_issuance_tokens — see the pool_release_tokens
+# metric label.
+#
+# TWO ROUTES, and where both exist the MEASURED one is primary:
+#   MEASURED  Transfer events OUT of the named pool wallet. A balance falls for reasons other
+#             than distribution and rises on top-ups; the outflow is the quantity.
+#   DERIVED   d(circulating) - d(total). Needs no addresses and works for all five today, but
+#             inherits CoinGecko's classification of what counts as circulating AND compounds
+#             the error of two independently-sourced stocks. Primary only where no measured
+#             route exists.
+# =======================================================================================
 POOL_RELEASE_ROUTES = {
     "Chainlink": {
         "wallet": "staking_reward_vault 0x996913c8c08472f584ab8834e925b06D0eb1D813",
         "chain": "ethereum", "wallet_known": True, "verified": "2026-09-17",
         # ** BLOCKED BY THE SAME CAP AS EVERY OTHER ETHEREUM LOG SCAN. Stated 2026-09-23. **
-        "measured": "BLOCKED — Alchemy's free tier caps eth_getLogs at 10 blocks per request "
-                    "(confirmed from the provider's error body, 2026-09-23), below MIN_LOG_CHUNK, "
-                    "which is not lowered to force a result. Wiring is ready; the endpoint is not. "
-                    "Same blocker, same fix, as Sky's burn scan and the Maple/Ether.fi buyback "
-                    "inflows: a logs endpoint above the cap.",
+        "measured": "UNBLOCKED 2026-09-24, NOT WIRED — the explorer API removes the RPC range "
+                    "cap that blocked it. Not in this round's list, so not added: it is one "
+                    "log_scans entry (direction out, holder staking_reward_vault) when wanted.",
         "derived": "live — the cross-check tier, primary until the scan runs",
     },
     "GEODNET": {
@@ -14212,10 +14387,11 @@ POOL_RELEASE_ROUTES = {
         # says nothing about the provider. A flat method refusal and a range limit look alike in
         # a run log and are different problems: no chunking fixes a refusal, and that fix is a
         # keyed Polygon endpoint (POLYGON_RPC_URL, PREPENDED so the public ones stay as fallback).
-        "measured": "UNCONFIRMED FROM THIS ENVIRONMENT: the precondition (does the public Polygon "
-                    "RPC serve eth_getLogs) needs one live run from a host that can reach it. Not "
-                    "wired until that run has been read — the adapter already distinguishes a "
-                    "method refusal from a range limit and prints the provider's own body.",
+        "measured": "WIRED 2026-09-24 — log_scans.mining_wallets_outflow on the GEODNET "
+                    "entry, via a block-explorer API (Etherscan V2 serves Polygon logs free, "
+                    "per the researched table), reconciled per wallet to balanceOf at a "
+                    "pinned block. PRIMARY WHEN IT PASSES; the derivation runs when it does "
+                    "not. Confirmed live: not yet.",
         "derived": "live",
     },
     "Maple": {
@@ -15028,7 +15204,12 @@ OPEN_QUESTIONS = [
                   "periods, not one — see the April 2026 buyback reduction question, which is the harder "
                   "half of this and must be settled first. One number for the whole span would be wrong.",
         "suggestion": "Document each period separately in Sky fee_split.history: pre-overhaul, and "
-                      "post-overhaul to 2026-08-12. Do not collapse them into one.",
+                      "post-overhaul to 2026-08-12. Do not collapse them into one. LAYER 2 NEEDS NO "
+                      "DOCUMENT (2026-09-24): run check_offline_items.py with ETHERSCAN_API_KEY set — "
+                      "sky_splitter_history reads every Splitter File(burn) event through the "
+                      "explorer API and prints the dated table; paste it back and each row becomes "
+                      "a dated period. LAYER 1's April date is not a Splitter parameter and is not "
+                      "in those events.",
     },
     {
         # TOPIC REWORDED 2026-09-15, not marked settled. The mechanism half closed and the topic

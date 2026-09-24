@@ -362,6 +362,18 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
 
     # A metric served by a node API read (TRON's BURN_TRX) has a source configured; if it produced
     # nothing the adapter has already raised a specific gap naming the failure.
+    # ===== A DECLARED TRANSFER-EVENT SCAN THAT PRODUCED NOTHING. 2026-09-24. =====
+    # fetch/logscan.py raises its own specific gap on every failure path (no key, refused,
+    # unreconciled, held on attribution), and those win over this. This answers only when the
+    # scan did not run at all this pass.
+    scan = next((sc for sc in project.get("log_scans") or [] if sc.get("metric") == metric), None)
+    if scan:
+        return (f"read from Transfer events {'INTO' if scan['direction'] == 'in' else 'OUT OF'} "
+                f"{', '.join(scan['holders'])} on {scan['chain']} (log_scans.{scan['key']}) via a "
+                f"block-explorer API; the scan produced nothing this run and raised no gap of its "
+                f"own, so it did not run this pass.",
+                "Check that the 'explorer' adapter ran (a --sources filter excludes it) and that "
+                "ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY are in .env.")
     node_api = project.get("node_api") or {}
     # extra_reads share the node and carry their own kind (NEAR's view_account balance).
     extra = {r.get("metric"): r.get("kind") for r in (node_api.get("extra_reads") or [])}
@@ -397,7 +409,11 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                         f"({blocked.get('evidence')}) — {blocked.get('requests_needed')} would "
                         f"be needed. {blocked.get('do_not')}",
                         f"A logs endpoint above the cap: {ways}. Nothing in config is missing; "
-                        f"the route is wired and waiting on the provider.")
+                        f"the route is wired and waiting on the provider. SINCE 2026-09-24 the "
+                        f"scan goes to a block-explorer API FIRST (no range cap) when "
+                        f"ETHERSCAN_API_KEY or BLOCKSCOUT_API_KEY is in .env — if this row still "
+                        f"shows with a key set, the Run Log line for {key} says what the explorer "
+                        f"answered.")
             return (f"read from Transfer-to-zero LOGS on contracts.{key}; the scan produced "
                     f"nothing this run — check the Run Log for the chain adapter's row.",
                     f"See contracts.{key} and the chain adapter's Run Log line for the cause.")
