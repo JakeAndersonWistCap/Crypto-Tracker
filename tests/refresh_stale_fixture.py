@@ -177,6 +177,7 @@ TRANSITIONS = (
     "implausible_delta",
     "unreconciled_flow",
     "out_of_bounds_stock",
+    "classification_pending",
     "control",
 )
 
@@ -360,6 +361,18 @@ ROWS = [
          why="a stock stored below its declared floor. The write path now rejects the same "
              "value; this is the row it cannot reach"),
 
+    # ---- classification_pending ------------------------------------------------------
+    # THE LIVE ROW. Sky other_burn_balance, 2026-09-24: real by the supply identity (minted -
+    # burned = totalSupply() to the wei) and dominated by the MKR_SKY over-mint correction and
+    # the old Lockstake Engine's lockSky deposits, so its label is undecided. Blanked with the
+    # reason until the split is chosen (config Sky.classification_pending).
+    dict(transition="classification_pending", date="2026-09-24", project="Sky",
+         metric="other_burn_balance", value=10_565_078_749.77,
+         source="chain:ethereum:burn_logs", tier=2,
+         written_under="current config",
+         why="a correct figure whose meaning is not settled — withheld on the label, not the "
+             "arithmetic"),
+
     # ---- controls --------------------------------------------------------------------
     # A GUARD THAT BLANKS EVERYTHING PASSES EVERY ASSERTION ABOVE. These must stay ok.
     dict(transition="control", date="2026-09-14", project="Ether.fi",
@@ -471,6 +484,7 @@ def _marker(reason: str) -> str:
     for m in ("ORPHANED", "MEASURING CONTRACT WITHDRAWN", "DERIVATION SUPPRESSED",
               "MEASURING POINT CHANGED", "MECHANISM REFUTED", "OF THE CUMULATIVE",
               "DO NOT SUM TO THE STOCK", "DESTINATION DISPUTED", "OUTSIDE ITS DECLARED BOUND",
+              "BLOCKED — ",
               "not applicable",
               "no value in the store"):
         if m in reason:

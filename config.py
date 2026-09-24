@@ -1394,6 +1394,18 @@ def cross_check_waiting_on_primary(project_name: str, metric: str) -> dict | Non
     return None
 
 
+def classification_pending(project_name: str, metric: str) -> dict | None:
+    """The project's classification_pending record when it names `metric`, else None.
+
+    A figure that is REAL but whose meaning is undecided. Sky's other_burn_balance passed the
+    supply identity to the wei and is still withheld, because 10.57bn of "SKY destroyed" is
+    mostly converter over-mint correction and staking deposits — the number is right and the
+    label is not. Read by build_workbook.withheld_for, which blanks the cell with the reason.
+    """
+    rec = (PROJECT_BY_NAME.get(project_name) or {}).get("classification_pending") or {}
+    return rec if metric in (rec.get("metrics") or ()) else None
+
+
 def destination_disputed(project_name: str, metric: str) -> dict | None:
     """The contracts serving this metric whose ROLE is disputed, or None.
 
@@ -10010,6 +10022,74 @@ PROJECTS = [
             "note": "staked SKY is represented by a liquid token; nothing is time-locked.",
         },
         "name": "Sky", "symbol": "SKY",
+        # ===== other_burn_balance IS REAL AND NOT YET CLASSIFIED. Recorded 2026-09-24. =====
+        # The supply identity closed to the wei at the probe's pinned block: minted
+        # 34,454,036,757.37 - burned 10,994,232,553.76 = 23,459,804,203.61 = totalSupply(). Every
+        # burn event is real and none is double-counted, so the 10.57bn is not a scan fault. What
+        # it MEANS is the open question: it is dominated by two senders that are migration and
+        # staking plumbing rather than Sky's token economics, and a sheet that shows it as
+        # "SKY destroyed" invites a reading nobody has agreed to. Withheld (status "blocked")
+        # until the split below is decided — build_workbook.withheld_for, case 5.
+        "classification_pending": {
+            "metrics": ("other_burn_balance", "other_burn_tokens"),
+            "reason": ("10.57bn confirmed real by supply identity; dominated by two "
+                       "migration-infrastructure senders (identified 2026-09-24, classification "
+                       "pending), see config note"),
+            "since": "2026-09-24",
+            "resolves_when": "the three-way split (Pause Proxy / migration infrastructure / "
+                             "long-tail reverse conversion) is decided and wired",
+            "senders": {
+                # SOURCES READ 2026-09-24, not recalled. The transaction itself could not be
+                # opened from this environment (etherscan.io is blocked by the egress proxy), so
+                # the attribution below is from Sky's own spell, init script and vote text; the
+                # calling method on the tx is inferred from them, not read.
+                "0xA1Ea1bA18E88C381C724a75F23a130420C403f9a": {
+                    "name": "MKR_SKY — the one-direction MKR->SKY converter (ChainLog; "
+                            "sky-ecosystem/spells-mainnet src/test/addresses_mainnet.sol)",
+                    "amount": "4,769,188,384.88 SKY, one event, block 22,817,692",
+                    "what": "burnExtraSky() in the 2025-06-26 executive spell (earliest "
+                            "execution 2025-06-30 14:00 UTC): mkrSky.burn(sky.balanceOf(mkrSky) "
+                            "- mkr.totalSupply() * rate). The converter was PRE-MINTED "
+                            "MKR-supply x 24,000 SKY; the legacy converter kept MINTING fresh "
+                            "SKY for MKR converted after that, so the same MKR was backed twice. "
+                            "This burn removes the duplicate backing — it cancels an over-mint "
+                            "that never circulated. A one-off supply correction, not a burn of "
+                            "anyone's tokens.",
+                    "sources": [
+                        "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2025-06-26-DssSpell/DssSpell.sol",
+                        "https://github.com/sky-ecosystem/sky/pull/21 (deploy/SkyInit.sol burnExtraSky)",
+                        "https://raw.githubusercontent.com/sky-ecosystem/executive-votes/main/2025/executive-vote-2025-06-26-SPK-farming-MKR-to-SKY-partial-upgrade-phase-three.md",
+                    ],
+                    "vote_quote": "This excess SKY is a result of the legacy contract continuing "
+                                  "to mint new SKY after a balance of SKY was pre-minted to the "
+                                  "new MKR_SKY conversion contract.",
+                },
+                "0x2b16C07D5fD5cC701a0a871eae2aad6DA5fc8f12": {
+                    "name": "LOCKSTAKE_ENGINE_OLD_V1 — the MKR-based Lockstake (Seal) Engine, "
+                            "ilk LSE-MKR-A (sky-ecosystem/spells-mainnet addresses_mainnet.sol)",
+                    "amount": "the remainder after MKR_SKY and the ~2.4bn long tail — take the "
+                              "exact figure from the sky_burn_breakdown probe; 115 events, "
+                              "blocks 21,885,917-21,886,650",
+                    "what": "lockSky(): the engine pulls the user's SKY and calls the LEGACY "
+                            "converter's skyToMkr(address(this), skyWad), which burns SKY FROM "
+                            "THE ENGINE and mints MKR to lock (sky-ecosystem/lockstake at "
+                            "2865563^, src/LockstakeEngine.sol L323-329). That is the engine's "
+                            "only path that burns SKY. Each event is a user DEPOSITING SKY into "
+                            "an MKR-denominated staking position — the SKY comes back (freeSky "
+                            "mints it via mkrToSky) when the position is freed. A conversion "
+                            "into collateral, not destruction.",
+                    "cluster": "the 2025-02-18 emergency spell set LSE-MKR-A to a 45M debt "
+                               "ceiling, 20% stability fee, 125% liquidation ratio and exit fee "
+                               "0%. Block 21,885,917 is ~2025-02-19 by block-time estimate, so "
+                               "the 115-event burst is consistent with a rush of SKY deposits "
+                               "right after it was cast. The dating is an ESTIMATE, not read.",
+                    "sources": [
+                        "https://github.com/sky-ecosystem/lockstake/blob/2865563%5E/src/LockstakeEngine.sol",
+                        "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2025-02-18-oos-DssSpell/DssSpell.sol",
+                    ],
+                },
+            },
+        },
         "coingecko_id": "sky",
         "defillama_fees_slug": "sky", "defillama_protocol": "sky", "defillama_chain": None,
         # ===== ARCHETYPE 4 ADDED 2026-09-22, AND SCOPED TO ONE LEG. =====
@@ -10399,6 +10479,21 @@ PROJECTS = [
                     "named_senders": {},
                     "stage2_metric": "burn_address_balance",
                     "other_metric": "other_burn_balance",
+                    # ** THE PAUSE PROXY HAS BURNED TWICE, AND ONLY ONE OF THEM IS STAGE 2. **
+                    # Found 2026-09-24 in sky-ecosystem/spells-mainnet — every SKY burn in the
+                    # executive spell archive. NOT YET ACTED ON: burn_address_balance still sums
+                    # both. The probe's figures agree to the display rounding: burned
+                    # 10,994,232,553.76 - other 10,565,078,749 = ~429,153,804 = the two below.
+                    "pause_proxy_burns_on_file": [
+                        {"spell": "2025-06-26", "amount": "426,292,860.23",
+                         "what": "offset for SKY minted to fund SKY rewards and Early Bird "
+                                 "Rewards (vesting 366.7M, mintable vests 37M, early bird "
+                                 "22.6M) — an emissions correction, NOT the Stage 2 leg",
+                         "source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2025-06-26-DssSpell/DssSpell.sol"},
+                        {"spell": "2026-09-10", "amount": "2,860,943.76",
+                         "what": "Treasury Management Function — the first Stage 2 burn",
+                         "source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2026-09-10-DssSpell/DssSpell.sol"},
+                    ],
                     "stage2_burner": {
                         "address": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
                         "discover_by": None,

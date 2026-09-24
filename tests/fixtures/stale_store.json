@@ -12,6 +12,7 @@
     "implausible_delta",
     "unreconciled_flow",
     "out_of_bounds_stock",
+    "classification_pending",
     "control"
   ],
   "rows": [
@@ -190,6 +191,17 @@
       "tier": 2,
       "written_under": "config before Aethir's sanity.locked_tokens bound",
       "why": "a stock stored below its declared floor. The write path now rejects the same value; this is the row it cannot reach"
+    },
+    {
+      "transition": "classification_pending",
+      "date": "2026-09-24",
+      "project": "Sky",
+      "metric": "other_burn_balance",
+      "value": 10565078749.77,
+      "source": "chain:ethereum:burn_logs",
+      "tier": 2,
+      "written_under": "current config",
+      "why": "a correct figure whose meaning is not settled \u2014 withheld on the label, not the arithmetic"
     },
     {
       "transition": "control",
@@ -390,6 +402,17 @@
       "expect_confidence": "RED",
       "expect_blank": true,
       "expect_reason_contains": "OUTSIDE ITS DECLARED BOUND"
+    },
+    {
+      "transition": "classification_pending",
+      "project": "Sky",
+      "metric": "other_burn_balance",
+      "written_under": "current config",
+      "why": "a correct figure whose meaning is not settled \u2014 withheld on the label, not the arithmetic",
+      "expect_status": "blocked",
+      "expect_confidence": "RED",
+      "expect_blank": true,
+      "expect_reason_contains": "BLOCKED \u2014 "
     },
     {
       "transition": "control",

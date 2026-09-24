@@ -6140,7 +6140,10 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     #
     # Eight to nine on 2026-09-24: out_of_bounds arrived with the out_of_bounds_stock
     # transition and Aethir's 264.947427 locked_tokens row, the live figure that prompted it.
-    EXPECTED_MECHANISMS = 9
+    #
+    # Nine to ten on 2026-09-24: blocked arrived with the classification_pending transition and
+    # Sky's other_burn_balance row — real by the supply identity, withheld on its label.
+    EXPECTED_MECHANISMS = 10
 
     tree = ast.parse(inspect.getsource(bw.withheld_for))
     returns = [n for n in ast.walk(tree)

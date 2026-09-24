@@ -283,7 +283,7 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tu
 # The reason travels with the row in `note`, so nothing is lost by blanking: what the figure was,
 # why it is withheld, and how to clear it are all still there.
 # =========================================================================================
-WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed",
+WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed", "blocked",
                      "measuring_point_changed", "implausible_delta", "unreconciled_flow",
                      "refuted", "out_of_bounds")
 
@@ -417,6 +417,16 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
             f"DESTINATION DISPUTED — the role of contract(s) {', '.join(disputed['contracts'])} as "
             f"this project's destination is in doubt, so no figure is shown whatever the store "
             f"holds. {disputed.get('why', '')}").strip()
+
+    # 4b. REAL BUT UNCLASSIFIED. The figure passed every check and its meaning is undecided —
+    #     Sky's other_burn_balance, confirmed by the supply identity and dominated by migration
+    #     plumbing (config Sky.classification_pending). Blanked like the rest: a reader acts on
+    #     the number under the label, and the label is what is not settled.
+    pending = config.classification_pending(project, metric)
+    if pending:
+        return "blocked", (
+            f"BLOCKED — {pending['reason']}. Cleared by: "
+            f"{pending.get('resolves_when', 'see config')}.")
 
     # 5. TWO MEASURING POINTS. A window spanning the change reports the move between two different
     #    addresses as though it were a flow.

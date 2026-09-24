@@ -2109,18 +2109,20 @@ def sky_burn_breakdown():
     # ===== THE RAW GROUP BY — clean events only, one per key =====
     clean = [v[0] for v in keys.values()
              if v[0] not in bad0 and v[0] not in bad2 and v[0] not in badd]
-    by = {}
+    by, span = {}, {}
     for e in clean:
         f = "0x" + e["topics"][1][-40:].lower()
         n, w, txs = by.get(f, (0, 0, set()))
         txs.add(e["transactionHash"])
         by[f] = (n + 1, w + int(e["data"], 16), txs)
+        lo, hi = span.get(f, (e["blockNumber"], e["blockNumber"]))
+        span[f] = (min(lo, e["blockNumber"]), max(hi, e["blockNumber"]))
     total = sum(w for _, w, _ in by.values())
     rows = sorted(by.items(), key=lambda kv: -kv[1][1])
     print(f"\nFROM-ADDRESS BREAKDOWN  (SELECT from_address, COUNT(*), SUM(value) ... GROUP BY "
           f"from_address ORDER BY SUM(value) DESC) — {len(rows):,} distinct sender(s)")
     print(f"  {'#':>4} {'from_address':<42} {'events':>8} {'txs':>8} {'SUM(value) SKY':>22} "
-          f"{'share':>7}  code")
+          f"{'share':>7} {'first_block':>11} {'last_block':>11}  code")
     for i, (f, (n, w, txs)) in enumerate(rows[:40], 1):
         code = ""
         if i <= 15:
@@ -2128,7 +2130,8 @@ def sky_burn_breakdown():
             code = "?" if c is None else ("contract" if len(c) > 2 else "EOA")
         tag = "  <- Pause Proxy (stage2 -> burn_address_balance)" if f == proxy else ""
         print(f"  {i:>4} {f:<42} {n:>8,} {len(txs):>8,} {w / 1e18:>22,.2f} "
-              f"{(w / total if total else 0):>7.2%}  {code}{tag}")
+              f"{(w / total if total else 0):>7.2%} {span[f][0]:>11,} {span[f][1]:>11,}  "
+              f"{code}{tag}")
     if len(rows) > 40:
         rest = rows[40:]
         print(f"  {'rest':>4} {f'{len(rest):,} more sender(s)':<42} "
@@ -2138,6 +2141,13 @@ def sky_burn_breakdown():
     print(f"  TOTAL {total / 1e18:,.2f}   Pause Proxy {pp / 1e18:,.2f}   "
           f"everything else (= other_burn_balance) {(total - pp) / 1e18:,.2f}  "
           f"vs stored 10,565,078,749")
+
+    # THE LEGACY CONVERTER AND THE OLD ENGINE STOPPED BURNING IN 2025. If nothing but the
+    # Pause Proxy burned after the 2025-06-26 spell's cast (block 22,817,692, the MKR_SKY
+    # burnExtraSky event), every non-Pause-Proxy bucket is a CLOSED historical total.
+    late = [(f, n) for f, (n, _, _) in rows if f != proxy and span[f][1] > 22_817_692]
+    print(f"\n  senders other than the Pause Proxy burning AFTER block 22,817,692: "
+          f"{len(late)}" + (" — " + ", ".join(f"{f} ({n})" for f, n in late[:10]) if late else ""))
 
     print("\n  LARGEST SINGLE EVENTS")
     for e in sorted(clean, key=lambda e: -int(e["data"], 16))[:10]:
