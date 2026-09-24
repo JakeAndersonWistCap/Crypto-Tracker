@@ -62,6 +62,11 @@ def tier1_plan() -> list[tuple[str, str, str]]:
             out.append((name, "gross_issuance_tokens", "schedule:config (no network)"))
             if sched.get("also_emissions"):
                 out.append((name, "emissions_tokens", "schedule:config (no network)"))
+        # A RESTATED COLUMN FILLS FROM ITS SOURCE COLUMN, so it is planned wherever that is.
+        planned = {m for n, m, _s in out if n == name}
+        for metric, spec in config.metric_restatements(name).items():
+            if spec["equals"] in planned:
+                out.append((name, metric, f"restated from {spec['equals']} (no network)"))
     return out
 
 
@@ -136,6 +141,9 @@ def tier3_plan() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]
         if ok:
             attempted.append((proj, metric, f"tier {e.get('tier')} {e['method']} {e['url']}"))
         else:
+            restated = config.metric_restatements(proj).get(metric)
+            if restated:
+                why = f"{why} — NOT the route: restated from {restated['equals']} (see tier 1)"
             skipped.append((proj, metric, why))
     return attempted, skipped
 
