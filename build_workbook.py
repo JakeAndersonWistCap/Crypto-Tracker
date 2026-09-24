@@ -2026,7 +2026,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Net supply change Q3 (−9m window)", lambda r, p: calc(f"{iss(r, 'q3')}-{burn(r, p, 'q3')}"), FMT_NUM, "calc"),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, "gross_issuance_tokens", "Issuance"),
-        ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("burn_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
+        # FOOTNOTES FIRST: burned SKY that is deliberately NOT in any burn column above
+        # (Sky's five-way split, 2026-09-24). Leading, so the text that explains a small
+        # headline next to a huge on-chain total is the first thing in the cell.
+        ("Notes", lambda r, p: "; ".join(x for x in [*("FOOTNOTE — " + t for t in config.burn_footnotes(p["name"])),
+                                                     p.get("notes", ""), (p.get("burn_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key,
                        ["fees_usd", "price_usd", "gross_burn_tokens", "sky_stage2_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],

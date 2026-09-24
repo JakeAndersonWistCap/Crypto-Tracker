@@ -1420,6 +1420,33 @@ def a4_burn_metric(project_name: str) -> str:
     return (PROJECT_BY_NAME.get(project_name) or {}).get("a4_burn_metric") or "gross_burn_tokens"
 
 
+def burn_footnotes(project_name: str) -> list[str]:
+    """The project's burn footnotes as sheet text — real destruction that is not its live burn.
+
+    A footnote with a closure_check is titled "closed" only when the recorded probe count is 0.
+    Unrun, it says so; non-zero, it says the flow is STILL ACTIVE. Never asserted from source:
+    for Sky, Sky.burn is permissionless, so only the chain can say a sender has stopped.
+    """
+    out = []
+    for f in (PROJECT_BY_NAME.get(project_name) or {}).get("burn_footnotes") or []:
+        check = f.get("closure_check")
+        if not check:
+            out.append(f["text"])
+            continue
+        n = check.get("result")
+        if n == 0:
+            head = (f"{f['title_closed']} (probe {check.get('checked_on')}: 0 senders after block "
+                    f"{check['after_block']:,})")
+        elif n is None:
+            head = (f"{f['title_closed'].split(',')[0]} — closure NOT YET CONFIRMED: run "
+                    f"`{check['command']}` and record its count")
+        else:
+            head = (f"{f['title_closed'].split(',')[0]} — STILL ACTIVE: {n} sender(s) burning "
+                    f"after block {check['after_block']:,} (probe {check.get('checked_on')})")
+        out.append(f"{head}. {f['text']}")
+    return out
+
+
 def classification_pending(project_name: str, metric: str) -> dict | None:
     """The project's classification_pending record when it names `metric`, else None.
 
@@ -10051,6 +10078,35 @@ PROJECTS = [
         # A4 headline's burn: the Stage 2 flow, not gross_burn_tokens (blocked — see
         # classification_pending). config.a4_burn_metric reads this.
         "a4_burn_metric": "sky_stage2_burn_tokens",
+        # ===== FOOTNOTES, NOT FIGURES. The five-way split, 2026-09-24. =====
+        # Real SKY destruction that is not the Stage 2 mechanism. Rendered as text in the A4
+        # Notes column (config.burn_footnotes) and never summed into a burn column.
+        "burn_footnotes": [
+            {"key": "emissions_offset",
+             "text": "Emissions offset, 426,292,860.23 SKY burned from the Pause Proxy in the "
+                     "2025-06-26 spell to offset SKY minted for SKY rewards and Early Bird "
+                     "Rewards. A one-off correction, not the Stage 2 buy-and-burn, and not "
+                     "netted against issuance."},
+            {"key": "migration_flows",
+             "title_closed": "SKY<->MKR migration flows, closed 2025",
+             "text": "10.57bn SKY in total: converter over-mint correction 4,769,188,384.88 "
+                     "(MKR_SKY burnExtraSky, 2025-06-26 spell — duplicate backing that never "
+                     "circulated); staking-engine deposits ~3.4bn (LOCKSTAKE_ENGINE_OLD_V1 "
+                     "lockSky — SKY converted into MKR collateral, REVERSIBLE: re-minted when "
+                     "freed); long-tail reverse conversions ~2.4bn (~301 holders, legacy "
+                     "converter skyToMkr). None of it is Sky's token economics.",
+             # ** CLOSED IS AN OBSERVATION, NOT A DEDUCTION. ** Sky.burn is permissionless (any
+             # holder may burn their own SKY), and disabling the legacy converter revoked only its
+             # SKY MINT rights (SkyInit.disableOldConverterMkrSky: sky.deny) — so no source proves
+             # these senders stopped. The probe's count is the evidence. Enter it here.
+             "closure_check": {
+                 "command": "python check_offline_items.py sky_burn_breakdown",
+                 "reads": "senders other than the Pause Proxy burning AFTER block 22,817,692",
+                 "after_block": 22_817_692,
+                 "result": None,
+                 "checked_on": None,
+             }},
+        ],
         # ===== other_burn_balance IS REAL AND NOT YET CLASSIFIED. Recorded 2026-09-24. =====
         # The supply identity closed to the wei at the probe's pinned block: minted
         # 34,454,036,757.37 - burned 10,994,232,553.76 = 23,459,804,203.61 = totalSupply(). Every
@@ -10084,21 +10140,29 @@ PROJECTS = [
                                      "sky_stage2_burn_tokens",
                 },
                 "other_burn_balance": {
-                    "reason": ("10.57bn confirmed real by supply identity; dominated by two "
-                               "migration-infrastructure senders (identified 2026-09-24, "
-                               "classification pending), see config note"),
-                    "resolves_when": "the split (Pause Proxy / migration infrastructure / "
-                                     "long-tail reverse conversion) is decided and wired",
+                    "reason": ("10.57bn confirmed real by supply identity and RESOLVED by the "
+                               "five-way split (2026-09-24): it is not a burn metric but the "
+                               "SKY<->MKR migration flows — converter over-mint correction "
+                               "(4,769,188,384.88), staking-engine deposits (reversible) and "
+                               "long-tail reverse conversions — shown as ONE footnote on the A4 "
+                               "tab, never as a live figure; see config note"),
+                    "resolves_when": "not to be shown as a figure: the five-way split moved it to "
+                                     "the A4 footnote (burn_footnotes)",
                 },
                 "other_burn_tokens": {
-                    "reason": ("differenced from other_burn_balance: 10.57bn confirmed real by "
-                               "supply identity; dominated by two migration-infrastructure "
-                               "senders (identified 2026-09-24, classification pending), see "
-                               "config note"),
+                    "reason": ("differenced from other_burn_balance, which the five-way split "
+                               "(2026-09-24) resolved as the SKY<->MKR migration flows — a "
+                               "footnote on the A4 tab, not a burn rate; see config note"),
                     "resolves_when": "the same as other_burn_balance",
                 },
             },
             "since": "2026-09-24",
+            # ===== THE FIVE-WAY SPLIT, APPLIED 2026-09-24 (Jake confirmed both decisions). =====
+            #   Stage 2 buy-and-burn     -> sky_stage2_burn_balance / _tokens, the live metric
+            #   Emissions offset         -> footnote, NOT netted into anything
+            #   Converter over-mint      -> footnote  } rendered as ONE footnote, "SKY<->MKR
+            #   Staking-engine deposits  -> footnote  } migration flows", when the closure check
+            #   Long-tail reverse conv.  -> footnote  } below reads zero
             "senders": {
                 # SOURCES READ 2026-09-24, not recalled. The transaction itself could not be
                 # opened from this environment (etherscan.io is blocked by the egress proxy), so
@@ -10200,15 +10264,18 @@ PROJECTS = [
             # THE SHEET MUST NOT CLAIM AN ADDRESS HOLDS THESE TOKENS. The metric name is shared
             # with the transfer-burn projects because the QUANTITY is the same and every piece of
             # machinery downstream keys on it; the label is where the difference is stated.
-            # AND IT IS NOW THE STAGE 2 LEG ALONE, not every SKY burn — see burn_logs.
-            "burn_address_balance": "Cumulative SKY destroyed by the STAGE 2 buy-and-burn only — "
-                                    "summed from Transfer-to-zero events whose sender is the Stage 2 "
-                                    "burner. A PROTOCOL burn: these tokens do not exist any more and "
-                                    "no address holds them. Governance and converter burns are "
-                                    "SEPARATE series, never added to this one",
-            "gross_burn_tokens": "SKY destroyed by the Stage 2 buy-and-burn in the period — the "
-                                 "revenue-funded, recurring leg, and the only one a rate can be "
-                                 "computed from",
+            # ** CORRECTED 2026-09-24: IT IS THE PAUSE PROXY'S WHOLE HISTORY, NOT STAGE 2. ** The
+            # Pause Proxy burned for two unrelated reasons (burn_logs.pause_proxy_burns_on_file);
+            # the Stage 2 leg alone is sky_stage2_burn_balance. Both labels say so, since the
+            # rows are blocked but still listed on the Data tab.
+            "burn_address_balance": "Cumulative SKY destroyed FROM THE PAUSE PROXY, all of it — "
+                                    "the 2025-06-26 emissions offset (426,292,860.23) PLUS the "
+                                    "Stage 2 buy-and-burn from 2026-09-10. Not one figure; "
+                                    "BLOCKED. A PROTOCOL burn: no address holds them. The Stage 2 "
+                                    "leg alone is sky_stage2_burn_balance",
+            "gross_burn_tokens": "SKY burned from the Pause Proxy in the period, differenced from "
+                                 "burn_address_balance — BLOCKED with it. The Stage 2 rate is "
+                                 "sky_stage2_burn_tokens",
         },
         # ===== EACH BURN SERIES DIFFERENCES INTO ITS OWN FLOW. =====
         # burn_address_balance -> gross_burn_tokens is the global mapping and still applies. The

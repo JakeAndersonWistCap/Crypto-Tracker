@@ -14945,3 +14945,31 @@ def test_a4_headline_reads_the_stage2_flow_for_sky_and_gross_burn_for_everyone_e
     assert yield_meta["metric_fn"]("Sky") == "sky_stage2_burn_tokens"
     assert yield_meta["metric_fn"]("Uniswap") == "gross_burn_tokens"
     print("a4 ok: Sky's headline reads the Stage 2 flow; other projects unchanged")
+
+
+def test_sky_five_way_split_footnotes_and_closure_states():
+    """Emissions offset and the SKY<->MKR migration flows are FOOTNOTES, not figures. The
+    migration footnote is titled "closed 2025" only on a recorded probe count of 0 — Sky.burn is
+    permissionless, so closure is observed, never deduced."""
+    import copy
+    sky = config.PROJECT_BY_NAME["Sky"]
+    notes = config.burn_footnotes("Sky")
+    assert len(notes) == 2 and notes[0].startswith("Emissions offset, 426,292,860.23")
+    assert "not netted" in notes[0]
+    assert "closure NOT YET CONFIRMED" in notes[1] and "REVERSIBLE" in notes[1], notes[1]
+    assert "4,769,188,384.88" in notes[1]
+    saved = copy.deepcopy(sky["burn_footnotes"])
+    try:
+        chk = sky["burn_footnotes"][1]["closure_check"]
+        chk.update(result=0, checked_on="2026-09-25")
+        assert config.burn_footnotes("Sky")[1].startswith(
+            "SKY<->MKR migration flows, closed 2025 (probe 2026-09-25: 0 senders after block 22,817,692)")
+        chk.update(result=3)
+        assert "STILL ACTIVE: 3 sender(s)" in config.burn_footnotes("Sky")[1]
+    finally:
+        sky["burn_footnotes"] = saved
+    # other_burn_balance's blocked reason names the resolution, not just the flag.
+    r = config.classification_pending("Sky", "other_burn_balance")["reason"]
+    assert "RESOLVED by the five-way split" in r and "footnote" in r, r
+    assert config.burn_footnotes("Uniswap") == []
+    print("split ok: two footnotes, closure only on a recorded zero, reason names the split")
