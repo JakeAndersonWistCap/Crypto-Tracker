@@ -1,12 +1,16 @@
 """
-fetch/maple_transparency.py — the PARSER for maple.finance/transparency. Not wired into a run.
+fetch/maple_transparency.py — tier 3: maple.finance/transparency, Maple's own published figures.
 
-** NOT WIRED, AND WHY. ** robots.txt is the gate for this page, and it has never been read. The
-only evidence is run 20260921T100546Z's line "robots.txt disallows https://maple.finance/
-transparency", which cannot tell a Disallow rule from a robots.txt that answered 401/403 (the
-stdlib robot parser treats both as "disallowed"). fetch/scrape.robots_verdict now says which,
-and check_offline_items.maple_transparency prints the robots.txt body, the verdict and — only if
-allowed — this parser's output. Promotion to primary waits on that output.
+** PRIMARY FOR MAPLE'S TREASURY SINCE 2026-09-24. ** Jake's run of
+check_offline_items.maple_transparency: robots.txt answered HTTP 200 with "User-agent: * /
+Allow: /", and the page parsed to SYRUP Holdings 79,210,000 and Liquid Assets $4,310,000, with 5
+of 13 buyback rows in the server-rendered HTML. The 2026-09-21 "robots.txt disallows" was never
+a rule — it was the stdlib parser's reading of a status code. robots.txt is still checked on
+every run (fetch.scrape.robots_verdict), and a refusal stops the fetch.
+
+KNOWN, PERMANENT LIMIT: the Token Buybacks table shows 5 rows server-side; the other 8 are paged
+client-side and are not reachable without a browser. Accepted (Jake, 2026-09-24) — not a bug.
+The series therefore starts at the oldest visible month and grows one month at a time.
 
 THE PAGE (Jake, 2026-09-24): Astro v5.18.1, server-side rendered, so the figures are in the HTML
 and no browser is needed. Tags are replaced by spaces before matching, so adjacent cells never
@@ -27,9 +31,17 @@ parse, which is refused rather than stored.
 from __future__ import annotations
 
 import html
+import logging
 import re
 
 import pandas as pd
+
+from .base import USER_AGENT, point, tidy, today, window
+
+log = logging.getLogger("token_metrics.fetch.maple_transparency")
+
+SOURCE = "maple_page"
+TIER = 3
 
 URL = "https://maple.finance/transparency"
 
@@ -106,3 +118,100 @@ def parse(markup_or_text: str) -> dict:
     if m:
         out["showing"] = tuple(int(x) for x in m.groups())
     return out
+
+
+def month_end(month_start: pd.Timestamp) -> pd.Timestamp:
+    """A monthly figure is dated to its LAST day — the convention Sky's monthly NPS uses."""
+    return (month_start + pd.offsets.MonthEnd(0)).normalize()
+
+
+class MapleTransparency:
+    """Treasury holding (stock) and monthly buybacks (flows) for any project with a
+    `transparency_page` block. One GET per day; the page is cached for the rest of it."""
+
+    SOURCE = SOURCE
+    TIER = TIER
+
+    def __init__(self, get=None, **_ignored):
+        self._get = get
+
+    def _fetch(self, url: str) -> str:
+        from .scrape import CACHE_DIR
+        f = CACHE_DIR / str(today().date()) / "maple_transparency.html"
+        if f.exists():
+            return f.read_text(encoding="utf-8")
+        if self._get is not None:
+            text = self._get(url)
+        else:
+            import requests
+            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=45)
+            r.raise_for_status()
+            text = r.text
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        return text
+
+    def run(self, projects: list[dict], window_days, out):
+        for p in projects:
+            spec = p.get("transparency_page")
+            if spec:
+                self._project(p["name"], spec, window_days, out)
+
+    def _gap_all(self, name, spec, out, reason, suggestion):
+        for metric in spec["metrics"]:
+            out.gap(name, metric, reason=reason, tiers_attempted="3", suggestion=suggestion)
+
+    def _project(self, name: str, spec: dict, window_days, out):
+        from .scrape import robots_verdict
+        url = spec["url"]
+        allowed, why = robots_verdict(url)
+        if not allowed:
+            out.fail(SOURCE, name, f"robots.txt disallows {url} — {why}", TIER)
+            self._gap_all(name, spec, out, f"robots.txt disallows {url} — {why}",
+                          "Not worked around. The daoMultisig read is the labelled reference.")
+            return
+        try:
+            text = self._fetch(url)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{url}: {e}", TIER)
+            self._gap_all(name, spec, out, f"{url} did not answer: {e}", "Check the page.")
+            return
+        got = parse(text)
+        for why_refused in got["refused"]:
+            out.skipped(SOURCE, name, f"{url}: {why_refused}", TIER)
+        metrics = spec["metrics"]
+
+        m = next((k for k, v in metrics.items() if v["field"] == "holdings_syrup"), None)
+        if m:
+            if got["holdings_syrup"] is None:
+                out.fail(SOURCE, name, f"{m}: 'SYRUP Holdings' not found on {url}", TIER)
+                out.gap(name, m, reason=f"'SYRUP Holdings' was not found on {url} — a redesign, "
+                                        f"or the label moved", tiers_attempted="3",
+                        suggestion="Re-check HOLDINGS_RE in fetch/maple_transparency.py.")
+            else:
+                liquid = got["liquid_assets_usd"]
+                liquid_txt = "n/a" if liquid is None else f"${liquid:,.0f}"
+                out.add(point(name, m, got["holdings_syrup"], SOURCE, TIER, today()), SOURCE, name,
+                        f"{m}={got['holdings_syrup']:,.0f} SYRUP (the page rounds to "
+                        f"±{got['holdings_rounding']:,.0f}); Liquid Assets {liquid_txt}", TIER)
+
+        bb = got["buybacks"]
+        cutoff = today()
+        done = bb[[month_end(mo) < cutoff for mo in bb["month"]]] if not bb.empty else bb
+        shown = got["showing"]
+        limit = (f"{len(bb)} of {shown[2]} rows are server-rendered; the rest are paged "
+                 f"client-side and unreachable (accepted limit)") if shown else f"{len(bb)} row(s)"
+        for metric, v in metrics.items():
+            if v["field"] not in ("syrup", "usd"):
+                continue
+            if done.empty:
+                out.fail(SOURCE, name, f"{metric}: no complete month in the Token Buybacks table "
+                                       f"({limit})", TIER)
+                out.gap(name, metric, reason=f"no complete month parsed from {url} ({limit})",
+                        tiers_attempted="3", suggestion="Re-check BUYBACK_RE.")
+                continue
+            rows = [(month_end(r.month), float(getattr(r, v["field"]))) for r in done.itertuples()]
+            frame = window(tidy(sorted(rows), name, metric, SOURCE, TIER), window_days)
+            out.add(frame, SOURCE, name,
+                    f"{metric} = Token Buybacks `{v['field']}`, monthly, "
+                    f"{min(rows)[0].date()}..{max(rows)[0].date()} dated to month-end; {limit}", TIER)

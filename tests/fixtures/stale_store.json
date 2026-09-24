@@ -85,7 +85,7 @@
       "transition": "disputed_destination",
       "date": "2026-09-14",
       "project": "Maple",
-      "metric": "treasury_holding_tokens",
+      "metric": "treasury_holding_tokens_chain",
       "value": 0.5125357033239131,
       "source": "chain:ethereum:treasury",
       "tier": 2,
@@ -306,7 +306,7 @@
     {
       "transition": "disputed_destination",
       "project": "Maple",
-      "metric": "treasury_holding_tokens",
+      "metric": "treasury_holding_tokens_chain",
       "written_under": "config before destination_status='disputed' was set on treasury",
       "why": "the first of these bugs found. Suppressing the WRITE could not touch this row",
       "expect_status": "disputed",

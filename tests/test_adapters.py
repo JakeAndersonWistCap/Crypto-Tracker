@@ -4994,18 +4994,17 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     assert config.not_applicable_reason("Maple", "buyback_fund_balance_dashboard") is not None, \
         "the vacated metric name must be explained, not left as an unexplained permanent gap"
 
-    # The cross-check still exists and still pairs the two readings — the names moved, the
-    # comparison did not. prefer='secondary' says which side is AUTOMATED, not which is truer.
-    checks = config.PROJECT_BY_NAME["Maple"]["cross_checks"]
-    pair = next(c for c in checks if c["primary"] == "treasury_holding_tokens_reported")
-    assert pair["secondary"] == "treasury_holding_tokens"
-    assert pair["prefer"] == "secondary", \
-        "prefer the automated side — a manual figure cannot refresh itself"
-
-    # The chain read serves the primary metric DIRECTLY again: no override, and labelled partial.
+    # ===== PROMOTED 2026-09-24. ===== robots.txt answered "Allow: /" on Jake's run; the page is
+    # read by fetch/maple_transparency.py (a plain GET — it is server-rendered), not by this
+    # Playwright entry, which stays disabled. No cross-check: the ~3.4x gap is known and a 5%
+    # check would fire every run. The daoMultisig is a labelled reference on its own name.
+    page = config.PROJECT_BY_NAME["Maple"]["transparency_page"]
+    assert page["metrics"]["treasury_holding_tokens"]["field"] == "holdings_syrup"
+    assert page["metrics"]["actual_buyback_tokens"]["granularity"] == "monthly"
+    assert "Allow: /" in page["robots_checked"]
+    assert not config.PROJECT_BY_NAME["Maple"].get("cross_checks")
     treasury = config.PROJECT_BY_NAME["Maple"]["contracts"]["treasury"]
-    assert treasury["metric_override"] is None, \
-        "the override is what left treasury_holding_tokens with no source when the page refused"
+    assert treasury["metric_override"] == "treasury_holding_tokens_chain"
     assert treasury["supply_is_partial"] is True, "23.09M is part of the treasury, not all of it"
     assert "77.66" in treasury["partial_reason"] and "23.09" in treasury["partial_reason"]
     assert treasury["destination_status"] == "verified_by_label"
@@ -5020,8 +5019,8 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     assert "treasury_holding_tokens_chain_crosscheck" not in config.METRICS
     assert config.not_applicable_reason("Maple", "treasury_holding_tokens_chain_crosscheck") is None, \
         "a retired metric needs no explanation — there is no cell for one to appear in"
-    print("maple ok: page entry disabled on robots.txt, chain read restored as a PARTIAL primary, "
-          "published figure carried manually, floor still rejects an unscaled 77.66")
+    print("maple ok: page primary via fetch/maple_transparency, chain read a PARTIAL reference, "
+          "floor still rejects an unscaled 77.66")
 
 
 def test_data_tab_distinguishes_closed_missing_from_an_open_one():
@@ -6990,16 +6989,16 @@ def test_the_chain_read_serves_the_primary_metric_again_and_says_it_is_partial()
     df = out.frame()
     by = dict(zip(df["metric"], df["value"]))
 
-    assert "treasury_holding_tokens" in by, \
-        f"the chain read must serve the primary metric again; got {sorted(by)}"
-    assert by["treasury_holding_tokens"] == 23_090_000.0
+    # DEMOTED 2026-09-24: the page serves treasury_holding_tokens; this read has its own name.
+    assert "treasury_holding_tokens" not in by, sorted(by)
+    assert by["treasury_holding_tokens_chain"] == 23_090_000.0
     assert "treasury_holding_tokens_chain_crosscheck" not in by, \
         "the metric_override is gone, and so is the metric — retired 2026-09-22"
     assert "treasury_holding_tokens_chain_crosscheck" not in config.METRICS
 
-    row = df[df["metric"] == "treasury_holding_tokens"].iloc[0]
+    row = df[df["metric"] == "treasury_holding_tokens_chain"].iloc[0]
     assert ":PARTIAL" in row["source"], f"must be labelled partial: {row['source']}"
-    reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "treasury_holding_tokens")
+    reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "treasury_holding_tokens_chain")
     assert "77.66M" in reason and "23.09" in reason, \
         f"the partial reason must name BOTH figures, not just say 'partial': {reason}"
     print("R4 ok:", row["source"], "|", reason[:110])
@@ -7015,7 +7014,7 @@ def test_a_partial_reason_comes_from_the_contract_not_the_projects_supply_note()
     project = _maple_treasury_project()
     project["supply_partial_reason"] = "SYRUP is not fully enumerated across chains"
     c.run([project], None, out)
-    reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "treasury_holding_tokens")
+    reason = " ".join(g["reason"] for g in out.gaps if g["metric"] == "treasury_holding_tokens_chain")
     assert "daoMultisig" in reason, reason
     assert "not fully enumerated" not in reason, \
         f"the project's supply note leaked onto the treasury metric: {reason}"
@@ -13828,19 +13827,39 @@ def test_robots_refusal_says_whether_it_was_a_rule_or_a_status_code():
     assert rp.can_fetch(USER_AGENT, url) and "no robots.txt" in how
 
 
-def test_maple_page_is_not_wired_into_any_run_until_robots_is_read():
-    """Promotion waits on the robots verdict. The page entry stays disabled and nothing in the
-    tier order imports the parser."""
-    import pathlib
+def test_maple_page_run_stores_holdings_and_complete_months_only(monkeypatch, tmp_path):
+    """Promoted 2026-09-24 on Jake's run (robots.txt "Allow: /"). The fetcher stores the holding
+    as today's stock and each COMPLETE month of buybacks, dated to month-end; a month that has
+    not ended is not stored. robots.txt is still checked on every run."""
+    import pandas as pd
 
-    import yaml
+    from fetch import maple_transparency as mt
+    from fetch import scrape
+    from fetch.base import FetchOutput, today
 
-    import fetch
+    monkeypatch.setattr(scrape, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    this_month = today().strftime("%b %Y")
+    html = (f"<div>SYRUP Holdings</div><div>79.21M</div><div>Liquid Assets</div><div>$4.31M</div>"
+            f"<p>Showing 1-5 of 13</p><table>"
+            f"<tr><td>{this_month}</td><td>$10.00</td><td>100.00</td><td>$0.1000</td></tr>"
+            f"<tr><td>Aug 2026</td><td>$147,098.00</td><td>676,293.73</td><td>$0.2175</td></tr>"
+            f"</table>")
+    out = FetchOutput()
+    mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], None, out)
+    df = out.frame()
+    assert df[df.metric == "treasury_holding_tokens"]["value"].tolist() == [79_210_000]
+    tok = df[df.metric == "actual_buyback_tokens"]
+    assert tok["value"].tolist() == [676_293.73], "the unfinished month must not be stored"
+    assert tok["date"].iloc[0] == pd.Timestamp("2026-08-31"), "dated to month-end"
+    assert df[df.metric == "actual_buyback_usd"]["value"].tolist() == [147_098.00]
+    assert set(df["source"]) == {"maple_page"}
+    assert any("2 of 13 rows" in e.message for e in out.log)
 
-    entries = yaml.safe_load(pathlib.Path("sources.yaml").read_text(encoding="utf-8"))
-    page = [e for e in entries if e.get("url") == "https://maple.finance/transparency"]
-    assert page and all(e["enabled"] is False for e in page)
-    assert "maple_transparency" not in pathlib.Path(fetch.__file__).read_text()
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (False, "a Disallow rule"))
+    out = FetchOutput()
+    mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], None, out)
+    assert out.frame().empty and {g["metric"] for g in out.gaps} >= {"treasury_holding_tokens"}
 
 
 class _NearBlocksHttp:

@@ -292,8 +292,16 @@ METRICS = {
     # its OWN name rather than overwriting the chain read, so the ~3x gap between what Maple
     # publishes (77.66M) and what the daoMultisig holds (23.09M) stays visible in the sheet
     # instead of being resolved by whichever source happened to write last.
+    # THE DAOMULTISIG READ, DEMOTED 2026-09-24 when Maple's transparency page became fetchable
+    # (robots.txt: "Allow: /") and took treasury_holding_tokens. Its own name, so the ~3.4x gap
+    # between what Maple publishes and what this one address holds stays on the sheet as a
+    # labelled reference instead of being overwritten or blanking the primary.
+    "treasury_holding_tokens_chain": {
+        "label": "Treasury — daoMultisig balance only (reference; PARTIAL against Maple's figure)",
+        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
     "treasury_holding_tokens_reported": {
-        "label": "Treasury holding — as published by Maple (manual, robots-disallowed page)",
+        "label": "Treasury holding — as published by Maple (manual snapshots; automated from 2026-09-24)",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
         "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
     "burn_mint_ratio":            {"label": "Burn ÷ mint ratio (as published by the protocol)",
@@ -6597,8 +6605,10 @@ PROJECTS = [
                 verified="2026-09-18", provenance="Etherscan address label 'Maple Finance: DAO', matching "
                                                   "the daoMultisig entry in maple-labs/address-registry",
                 holder_has_code=True, token_standard="erc20", underlying="token",
-                # NO metric_override as of 2026-09-21: this read serves treasury_holding_tokens
-                # itself again, because the page that displaced it cannot be fetched.
+                # DEMOTED 2026-09-24: the page is fetchable (robots.txt "Allow: /", Jake's run)
+                # and serves treasury_holding_tokens. This read moves to its own name as the
+                # labelled reference. Stored rows under the old name: orphan_cleanup.sql AH.
+                metric_override="treasury_holding_tokens_chain",
                 supply_is_partial=True,
                 partial_reason="daoMultisig balance — KNOWN TO BE PARTIAL against Maple's own "
                                "reported figure: 23.09M SYRUP on-chain vs 77.66M on "
@@ -6636,8 +6646,30 @@ PROJECTS = [
         # under a million SYRUP means the address is wrong AGAIN and must be rejected to the Review
         # Queue rather than stored. The Uniswap 100m burn floor exists for the same reason and
         # caught the same class of error.
+        # ===== MAPLE'S OWN PAGE, PRIMARY FROM 2026-09-24. =====
+        # Jake's run of check_offline_items.maple_transparency: robots.txt HTTP 200, "User-agent: *
+        # / Allow: /"; SYRUP Holdings 79,210,000; Liquid Assets $4,310,000; Token Buybacks 5 of 13
+        # rows server-rendered. The 2026-09-21 refusal was the stdlib robot parser, never a rule.
+        # Read by fetch/maple_transparency.py (plain GET, no browser; cached for the day).
+        "transparency_page": {
+            "url": "https://maple.finance/transparency",
+            "robots_checked": "2026-09-24 — HTTP 200, 'User-agent: * / Allow: /' (Jake's run)",
+            "live_confirmed": "2026-09-24 — holdings 79,210,000; liquid assets $4,310,000; 5 buyback rows",
+            "metrics": {
+                "treasury_holding_tokens": {"field": "holdings_syrup"},
+                "actual_buyback_tokens": {"field": "syrup", "granularity": "monthly"},
+                "actual_buyback_usd": {"field": "usd", "granularity": "monthly"},
+            },
+            "known_limit": "the Token Buybacks table renders 5 of 13 months server-side; the other "
+                           "8 are paged client-side and unreachable without a browser. Accepted as "
+                           "permanent (Jake, 2026-09-24). The series grows a month at a time.",
+            "rounding": "SYRUP Holdings is published to 0.01M, so the figure is ±5,000 SYRUP.",
+        },
         "sanity": {
-            # BACK TO THE CHAIN READ'S FLOOR, 2026-09-21 — treasury_holding_tokens is the
+            # THE CHAIN READ'S FLOOR, now on its own name (demoted 2026-09-24).
+            "treasury_holding_tokens_chain": {"min": 1_000_000, "max": 1_000_000_000},
+            # treasury_holding_tokens is Maple's page from 2026-09-24 (79.21M); the band is
+            # unchanged. Previously: BACK TO THE CHAIN READ'S FLOOR, 2026-09-21 — treasury_holding_tokens is the
             # daoMultisig read again (robots.txt disallows the page that briefly took it over).
             # THE FLOOR IS THE REAL GUARD, and it is here rather than in sources.yaml because
             # validate_frame calls config.sanity_bounds() — the registry's own sanity_min /
@@ -6664,12 +6696,17 @@ PROJECTS = [
         # was read, and carried under its own metric — see manual_overrides.csv.
         "manual_quarterly": ["treasury_holding_tokens_reported"],
         "metric_labels": {
-            "treasury_holding_tokens": "SYRUP held at the daoMultisig chain address — PARTIAL "
-                                       "(23.09M on-chain vs Maple's own reported 77.66M; see "
-                                       "treasury_holding_tokens_reported and OPEN_QUESTIONS)",
-            "treasury_holding_tokens_reported": "SYRUP held per Maple's own transparency page "
-                                                "(maple.finance/transparency) — entered by hand, "
-                                                "because robots.txt disallows fetching that page",
+            "treasury_holding_tokens": "SYRUP held — Maple's own transparency page (SYRUP "
+                                       "Holdings), primary from 2026-09-24; published to ±5,000",
+            "treasury_holding_tokens_chain": "SYRUP at the daoMultisig address only — a labelled "
+                                             "REFERENCE, ~3.4x below Maple's own figure (23.09M vs "
+                                             "79.21M) because it is one address, not the treasury",
+            "treasury_holding_tokens_reported": "SYRUP per Maple's page, entered by hand before the "
+                                                "page was automated (2026-09-24); superseded by "
+                                                "treasury_holding_tokens",
+            "actual_buyback_tokens": "SYRUP bought per month — Maple's Token Buybacks table "
+                                     "(first-party); monthly, dated to month-end",
+            "actual_buyback_usd": "USD spent on buybacks per month — Maple's Token Buybacks table",
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
@@ -6715,33 +6752,11 @@ PROJECTS = [
                                  "a view, not an observation.",
             "confirm": "the ticker is SYRUP, not MPL — verify before any figure is quoted",
         },
-        "cross_checks": [
-            # FLIPPED 2026-09-18. primary/secondary now name what actually WRITES to each metric,
-            # not just a documentation preference (contrast Chainlink's locked_tokens pair, where
-            # "prefer: secondary" is pure narrative and both metrics are chain reads on the same
-            # tier — here the two are on DIFFERENT tiers, so which is "primary" is a real
-            # data-flow fact, not just which column a reader should trust more).
-            {"primary": "treasury_holding_tokens_reported",
-             "primary_source": "https://maple.finance/transparency (MANUAL — robots-disallowed)",
-             "secondary": "treasury_holding_tokens",
-             "secondary_source": "tier 2 daoMultisig contract read, labelled PARTIAL",
-             "tolerance": 0.05, "prefer": "secondary",
-             "note": "REVERSED AGAIN 2026-09-21, and this time not over which figure is better. "
-                     "The 2026-09-18 promotion made maple.finance/transparency the primary source "
-                     "for treasury_holding_tokens; maple.finance/robots.txt DISALLOWS /transparency, "
-                     "so the scrape refused — correctly, we respect robots.txt and do not route "
-                     "around it — and the metric went BLANK. A blank cell is worse than a partial "
-                     "one: it says nothing about Maple's treasury at all. "
-                     "SO: the daoMultisig chain read serves treasury_holding_tokens again, labelled "
-                     "PARTIAL, and Maple's published 77.66M is carried by hand under "
-                     "treasury_holding_tokens_reported (manual_quarterly + manual_overrides.csv). "
-                     "prefer='secondary' is deliberate and is NOT a judgement that 23.09M is the "
-                     "truer number — it says which side is AUTOMATED. The manual side cannot "
-                     "refresh itself, so preferring it would pin the sheet to whatever date "
-                     "somebody last read the page. The two sit side by side under different names "
-                     "precisely so the ~3x gap stays visible rather than being settled by whichever "
-                     "source wrote last. The gap is unchanged and still open — see OPEN_QUESTIONS."},
-        ],
+        # ===== NO CROSS-CHECK FROM 2026-09-24. ===== The page (79.21M) and the daoMultisig
+        # (23.09M) are known to differ ~3.4x because they measure different things — the page is
+        # Maple's whole treasury figure, the chain read one address. A 5% check between them fires
+        # every run and says nothing. The daoMultisig stays on the sheet as a labelled reference
+        # (treasury_holding_tokens_chain). History of the pair: git show f586787:config.py.
         "materiality": "medium",
         "notes": "Archetype 3. No burn — confirmed. SPLIT IS TIERED, not the stale flat 25%: 10% below "
                  "$1.5m monthly net revenue, 20% from $1.5m-$2m, and a further tier above $2m whose rate "
@@ -13643,6 +13658,12 @@ def series_granularity(project_name: str, metric: str) -> str:
     # a real daily flow being summed and mark a current series stale.
     if served_by_a_live_read:
         return "daily"
+    # A PUBLISHED PAGE'S OWN TABLE, declared on the page block that reads it — the same standing
+    # as a contract's declared granularity: the declaration sits beside the read that produces
+    # the rows. Maple's Token Buybacks table is one row a month (2026-09-24).
+    page = ((p.get("transparency_page") or {}).get("metrics") or {}).get(metric) or {}
+    if page.get("granularity"):
+        return page["granularity"]
     q = (p.get("dune_queries") or {}).get(metric) or {}
     if str(q.get("date_col") or "").lower() == "month":
         return "monthly"

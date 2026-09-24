@@ -2760,3 +2760,31 @@ SELECT run_id, ts, message
 --  WHERE project = 'Aethir' AND metric = 'locked_tokens'
 --    AND value < 1200000000;
 -- COMMIT;
+
+-- ========================================================================================
+-- AH. Maple — the daoMultisig rows move to treasury_holding_tokens_chain.       2026-09-24
+--     AH1 LOOKS. AH2 is the proposed UPDATE, commented out. NOTHING IS DELETED.
+-- ========================================================================================
+-- From 2026-09-24 treasury_holding_tokens is Maple's own page (79.21M) and the daoMultisig read
+-- writes treasury_holding_tokens_chain. The daoMultisig rows already stored under
+-- treasury_holding_tokens (23.09M-ish, source chain:ethereum:treasury…) would sit in the same
+-- series as the page rows, and a series read from two places is BLANKED on the sheet
+-- (withheld_for case 5, "measuring point changed"). So until AH2 runs, Maple's treasury shows
+-- blank even though the page is being read. Moving the rows keeps both histories, each under
+-- the name that describes it.
+
+-- AH1. THE ROWS. Expect only chain:ethereum:treasury sources, values in the tens of millions.
+SELECT source, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Maple' AND metric = 'treasury_holding_tokens'
+ GROUP BY source
+ ORDER BY source;
+
+-- AH2. THE PROPOSED MOVE. Only after AH1 shows nothing but chain:ethereum:treasury rows.
+-- BEGIN;
+-- UPDATE metrics
+--    SET metric = 'treasury_holding_tokens_chain'
+--  WHERE project = 'Maple' AND metric = 'treasury_holding_tokens'
+--    AND source LIKE 'chain:ethereum:treasury%';
+-- COMMIT;

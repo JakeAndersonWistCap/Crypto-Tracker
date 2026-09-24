@@ -32,6 +32,7 @@ from .gaps import detect as detect_gaps
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .nearblocks import NearBlocks
+from .maple_transparency import MapleTransparency
 from .llama import DefiLlama, MorphoBlueApi
 from .schedule import Schedule
 from .logscan import LogScan
@@ -65,6 +66,8 @@ TIER_ORDER = [
     ("near_rpc", 2, lambda ctx: NearNode(prior_values=ctx["prior_values"])),
     # Transfer-event FLOWS via block-explorer APIs, reconciled to balanceOf before storing.
     ("explorer", 2, lambda ctx: LogScan()),
+    # Maple's own transparency page — server-rendered, so a plain GET (no browser).
+    ("maple_page", 3, lambda ctx: MapleTransparency()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),

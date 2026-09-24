@@ -453,6 +453,16 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     f"source that publishes it. Do NOT add a burn-address contract entry — reading a dead "
                     f"address here returns other people's discarded tokens, not the protocol burn.")
 
+    # A METRIC THAT EXISTS ONLY BECAUSE A CONTRACT WAS REDIRECTED TO IT (metric_override) has no
+    # kind of its own to look up, so it fell through to "no source configured" — false: the
+    # contract is right there. Maple's treasury_holding_tokens_chain, 2026-09-24.
+    redirected_here = [k for k, c in (project.get("contracts") or {}).items()
+                       if c.get("metric_override") == metric]
+    if redirected_here:
+        return (f"contract {redirected_here[0]} serves this metric (metric_override) and wrote "
+                f"nothing this run",
+                "See the chain adapter's Run Log line for that contract.")
+
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:
         contracts = project.get("contracts") or {}

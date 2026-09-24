@@ -452,7 +452,11 @@
   sanity_max: 500000000
   change_threshold_pct: 30
   added: 2026-09-14
-  note: "** DISABLED 2026-09-21: maple.finance/robots.txt DISALLOWS /transparency. **
+  note: "** SUPERSEDED 2026-09-24, AND STAYS DISABLED. ** robots.txt answered HTTP 200 'User-agent: * /
+    Allow: /' on Jake's run, and the page is server-rendered, so fetch/maple_transparency.py reads it
+    with a plain GET (config Maple.transparency_page) — primary for treasury_holding_tokens and the
+    source of actual_buyback_tokens/_usd. This browser entry is not needed. History below.
+    ** DISABLED 2026-09-21: maple.finance/robots.txt DISALLOWS /transparency. **
     ** 2026-09-24: THAT IS INFERRED, NOT READ. ** Nobody has read the file. The refusal came from
     the stdlib robot parser, which says 'disallowed' both for a Disallow rule and for a robots.txt
     that answered 401/403 (and it fetched robots.txt as Python-urllib, a UA CDNs often refuse).
