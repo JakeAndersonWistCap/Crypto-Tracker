@@ -8674,7 +8674,8 @@ def test_a_daily_flow_with_no_same_weekday_point_says_so_rather_than_pretending(
 
 
 def test_a_flow_that_is_lumpy_by_design_is_not_change_checked_at_all():
-    """GEODNET burns weekly; the chain read differences daily. A burn day carries a week of burn
+    """GEODNET burns daily, but each differenced reading carries every day since the last run (corrected
+    2026-09-24 — this was recorded as a weekly burn). A reading can carry several days of burn
     and the days between carry zero, so 35,000 -> 105,000 is the mechanism working. No threshold
     separates that from a fault, so the check is declared off for this series WITH its reason
     rather than quietly widened."""

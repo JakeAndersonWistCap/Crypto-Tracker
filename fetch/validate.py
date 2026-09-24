@@ -114,12 +114,10 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
     # are not comparable. A guard that fires every run is one nobody reads.
     today = pd.Timestamp(pd.Timestamp.now("UTC").date())
     for (project, metric), g in df.groupby(["project", "metric"]):
-        # (a) LUMPY BY DESIGN. GEODNET burns weekly and the chain read differences daily, so a
-        # burn day carries a week's burn and the days between carry zero. 35,000 -> 105,000 is the
-        # mechanism, not a fault, and no threshold distinguishes it from one.
-        # (a) LUMPY BY DESIGN. GEODNET burns weekly and the chain read differences daily, so a
-        # burn day carries a week's burn and the days between carry zero. 35,000 -> 105,000 is the
-        # mechanism, not a fault, and no adjacent-day threshold distinguishes it from one.
+        # (a) LUMPY BY DESIGN. GEODNET burns ~35,000 a DAY, but runs are not daily and each
+        # differenced reading carries every day since the last one, so 35,000 -> 105,000 is a
+        # 3-day read gap, not a fault, and no adjacent-day threshold distinguishes it from one.
+        # (Recorded until 2026-09-24 as "burns weekly" — wrong; see LUMPY_FLOWS.)
         #
         # ** IT USED TO BE EXEMPTED ENTIRELY, AND THAT IS A CHECK THAT DOES NOT RUN. Changed
         # 2026-09-23. ** A series nobody checks is a series where a scraper redesign lands

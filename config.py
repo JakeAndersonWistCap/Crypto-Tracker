@@ -4940,6 +4940,10 @@ PROJECTS = [
                 "geodnet_own_cadence": "WEEKLY — multiple sources including CMC AI describe weekly "
                                        "burn reporting (e.g. weekly onchain revenue ~$200,000 as of "
                                        "2026-07).",
+                # ** REPORTING, NOT BURNING. 2026-09-24. ** The on-chain burn is DAILY — ~35,000
+                # GEOD a day into the Polygon dead address (LUMPY_FLOWS evidence). Reading this
+                # field as the burn cadence is what put "weekly burn read daily" on the zero row.
+                "on_chain_burn_cadence": "DAILY, ~35,000 GEOD/day on Polygon (store, 2026-09-14..23)",
                 "our_query_cadence": "MONTHLY — Dune query 8683175's date_col is 'month'; every CTE "
                                      "buckets to month at the final step (see dune_queries.note).",
                 "effect": "our stored gross_burn_tokens series is a monthly AGGREGATION of a process "
@@ -13088,21 +13092,32 @@ def drop_current_day(project_name: str, metric: str, source: str) -> bool:
 
 # SERIES WHOSE UNDERLYING PROCESS IS LUMPIER THAN THE OBSERVATION CADENCE, with the evidence.
 #
-# GEODNET burns WEEKLY. The chain read differences a cumulative balance DAILY, so most days show
-# nothing and burn days show a week's worth: 35,000 -> 105,000 is the mechanism working exactly as
-# designed, not a data fault. A day-on-day change check on such a series is guaranteed to fire and
-# tells a reader nothing. Declared per series, with the source of the cadence claim, rather than
-# inferred — a silent exemption is how a real break gets missed.
+# ** GEODNET'S ENTRY WAS WRONG ABOUT WHY, CORRECTED 2026-09-24. ** It said GEODNET burns WEEKLY
+# and read 35,000 -> 105,000 as a week of burn landing on one day. The store says otherwise
+# (orphan_cleanup.sql section AE, Jake's run of 2026-09-24): seven consecutive readings 09-14..09-23,
+# every one exactly 35,000 x the days since the previous reading — 70,000 after a 2-day gap,
+# 105,000 after a 3-day gap. GEODNET burns ~35,000 GEOD EVERY DAY; what is lumpy is OUR READ
+# SPACING, because runs are not daily and a differenced flow correctly carries every unread day.
+# The series stays declared lumpy, because the day-on-day change check would still fire on a
+# 3-day accumulation — but the underlying cadence is DAILY, and a zero is therefore an ANOMALY,
+# never a quiet day. Declared per series, with the evidence, rather than inferred.
 LUMPY_FLOWS = {
     ("GEODNET", "gross_burn_tokens"): {
-        "underlying_cadence": "weekly",
-        "observed_cadence": "daily",
-        "why": "GEODNET executes its burn weekly; the chain read differences the cumulative "
-               "balance daily, so a burn day carries a week of burn and the days between carry "
-               "zero. Day-on-day moves of several hundred percent are the mechanism, not a fault.",
-        "source": "config PROJECTS['GEODNET'].cadence_mismatch.geodnet_own_cadence — multiple "
-                  "sources describe the burn as weekly; our Dune query 8683175 aggregates monthly",
+        "underlying_cadence": "daily",
+        "observed_cadence": "per run — runs are not daily, and each reading carries every day "
+                            "since the previous one",
+        "why": "GEODNET burns ~35,000 GEOD per day on Polygon. Each stored value is the "
+               "dead-address balance delta since the previous reading, so it is 35,000 x the days "
+               "between reads: 70,000 after a 2-day gap, 105,000 after 3. Moves of 2-3x are the "
+               "read spacing, not the burn. A ZERO IS AN ANOMALY on this series — a burn that did "
+               "not happen or a read that did not advance — never an expected quiet day.",
+        "source": "the store itself — orphan_cleanup.sql section AE, run by Jake 2026-09-24",
+        "evidence": "orphan_cleanup.sql section AE on Jake's store, 2026-09-24: 09-14 70,000 (2d), "
+                    "09-16/17/18 35,000 (1d each), 09-21 105,000 (3d), 09-22/23 35,000 (1d each)",
         "recorded_on": "2026-09-21",
+        "corrected_on": "2026-09-24",
+        "was": "underlying_cadence 'weekly' — GEODNET REPORTS weekly (cadence_mismatch); that was "
+               "read as the burn cadence, and a 3-day read gap was read as a weekly burn",
     },
     # ===== MAPLE'S FEES ARE BOOKED, NOT ACCRUED. Added 2026-09-23. =====
     # $1,949,229 on one day and $15,855 on another, from the same source with nothing wrong.
@@ -13135,7 +13150,7 @@ LUMPY_FLOWS = {
     # Confirmed with the fee split on 2026-09-23: buybacks run on a BIWEEKLY cycle and the
     # dedicated contract buys across the following week. A 7-day window therefore contains two
     # weeks of buying or none of it, and neither is a change in the protocol — the same shape as
-    # GEODNET's weekly burn read daily.
+    # GEODNET's daily burn read at irregular spacing.
     ("Pendle", "actual_buyback_tokens"): {
         "underlying_cadence": "biweekly",
         "observed_cadence": "daily",
@@ -13156,7 +13171,7 @@ LUMPY_FLOWS = {
     },
     # ===== A RANDOMISED CADENCE IS THE STRONGEST CASE FOR THIS THERE IS. Added 2026-09-23. =====
     # World Mobile buys back at "randomized intervals" — their own blog — so unlike GEODNET's
-    # weekly burn or Pendle's biweekly buyback there is no period a window could be matched to.
+    # daily burn read at irregular spacing, or Pendle's biweekly buyback, there is no period a window could be matched to.
     # Any fixed window compares an interval that happened to contain a buyback with one that did
     # not, and neither is a change in the protocol.
     ("World Mobile", "actual_buyback_tokens"): {

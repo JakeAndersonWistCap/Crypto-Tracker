@@ -2615,6 +2615,10 @@ SELECT DISTINCT source
 -- The read was refused as unverified from the start, so AD1 is EXPECTED EMPTY; it is here so
 -- that is seen rather than assumed, and because any row that did land is now orphaned.
 
+-- ** RUN BY JAKE 2026-09-24: AD1 RETURNED NO ROWS. ** The retired wallet never wrote anything,
+-- so there is nothing to clean and AD2 is not to be run. Kept as the record that it was checked.
+-- (AD is GEODNET's retired wallet. Ether.fi's Dune 8683038 retirement is section AF.)
+
 -- AD1. THE ROWS, if any. Expect none: the read was refused while the entry existed.
 SELECT date, metric, value, source, tier, fetched_at
   FROM metrics
@@ -2630,32 +2634,75 @@ SELECT date, metric, value, source, tier, fetched_at
 -- COMMIT;
 
 -- ========================================================================================
--- AE. GEODNET gross_burn_tokens — IS THE POLYGON ZERO A QUIET DAY? READ-ONLY.   2026-09-24
---     AE1 LOOKS. There is no delete: nothing here is wrong to keep.
+-- AE. GEODNET gross_burn_tokens — FIND THE ZEROS AND SAY WHICH KIND. READ-ONLY.  2026-09-24
+--     AE1-AE3 LOOK. There is no delete: a zero is evidence, not debris.
 -- ========================================================================================
--- The live leg differences the Polygon dead-address balance daily; GEODNET burns weekly, so
--- zeros between burns are expected and are no longer raised as decision rows. What this
--- establishes from the store is the CADENCE: non-zero days should recur about every 7 days,
--- on a consistent weekday. If the last non-zero day is weeks old, the Polygon leg has stopped
--- — and since the Solana leg is not read live (series_handover.composition_change), that
--- would mean burns moved chains, not that GEODNET stopped burning.
+-- ** THE FIRST VERSION OF THIS SECTION COULD NOT ANSWER ITS OWN QUESTION. ** Its AE1 filtered
+-- value > 0, so "no zeros in the window" was the filter, not the data. What it DID show refuted
+-- the premise it was written for: seven consecutive readings 09-14..09-23, each exactly 35,000 x
+-- days_since_prev (Jake, 2026-09-24). GEODNET burns ~35,000 GEOD per DAY; the "weekly burn read
+-- daily" explanation was wrong and is corrected in LUMPY_FLOWS. On a daily burn a zero is an
+-- ANOMALY, and these three queries say which one.
 
--- AE1. The last 90 days of the live leg: every non-zero day, with its weekday and the gap
---      since the previous one. Expect gaps of ~7.
-SELECT date,
-       strftime('%w', date)                                       AS weekday_0_sun,
-       value,
-       CAST(julianday(date) - julianday(LAG(date) OVER (ORDER BY date)) AS INTEGER) AS days_since_prev
-  FROM metrics
- WHERE project = 'GEODNET'
-   AND metric = 'gross_burn_tokens'
-   AND source LIKE 'chain:polygon%'
-   AND value > 0
-   AND date >= date('now', '-90 days')
+-- AE1. THE WHOLE LIVE SERIES, ZEROS INCLUDED. per_day should sit at ~35,000 on every row; a zero
+--      shows per_day 0, and next_value / days_to_next say whether the following read caught up.
+WITH s AS (
+  SELECT date, value, fetched_at,
+         CAST(julianday(date) - julianday(LAG(date) OVER (ORDER BY date)) AS INTEGER) AS days_since_prev,
+         LEAD(value) OVER (ORDER BY date) AS next_value,
+         CAST(julianday(LEAD(date) OVER (ORDER BY date)) - julianday(date) AS INTEGER) AS days_to_next
+    FROM metrics
+   WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens' AND source LIKE 'chain:polygon%'
+)
+SELECT date, value, days_since_prev,
+       ROUND(value / NULLIF(days_since_prev, 0)) AS per_day,
+       next_value, days_to_next, fetched_at
+  FROM s
  ORDER BY date;
 
+-- AE2. EACH ZERO AGAINST THE TWO BALANCE READS IT WAS DIFFERENCED FROM. A zero is only ever
+--      stored from two SUCCESSFUL reads that returned the same balance, so it is never a missing
+--      read. What separates the three kinds is the wall-clock gap between those reads and whether
+--      the next reading caught up:
+--        hours_between_reads < 24, next reading ~70,000/day-1  -> TIMING: two reads inside one
+--                                                                burn interval. Not an anomaly.
+--        hours_between_reads >= 24, next reading catches up   -> THE READ DID NOT ADVANCE: a
+--                                                                stale balance (lagging node).
+--        no catch-up (next reading ~35,000 x its own days)   -> THE BURN DID NOT HAPPEN that day.
+WITH b AS (
+  SELECT date, value, fetched_at,
+         LAG(date)       OVER (ORDER BY date) AS prev_date,
+         LAG(value)      OVER (ORDER BY date) AS prev_balance,
+         LAG(fetched_at) OVER (ORDER BY date) AS prev_fetched_at
+    FROM metrics
+   WHERE project = 'GEODNET' AND metric = 'burn_address_balance' AND source LIKE 'chain:polygon%'
+),
+z AS (
+  SELECT date FROM metrics
+   WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+     AND source LIKE 'chain:polygon%' AND value = 0
+)
+SELECT z.date AS zero_date, b.prev_date, b.prev_balance, b.value AS balance,
+       b.prev_fetched_at, b.fetched_at,
+       ROUND((julianday(b.fetched_at) - julianday(b.prev_fetched_at)) * 24, 1) AS hours_between_reads
+  FROM z JOIN b ON b.date = z.date
+ ORDER BY z.date;
+
+-- AE3. EVERY RUN THAT RAISED THE DECISION ROW. The row is not stored in config: the chain read
+--      raises it on any run whose differenced value is 0, so this is its complete history. If the
+--      newest run_id here is the LATEST run, the zero is current and the row is live; if not, it
+--      is historical and the latest report does not carry it.
+SELECT run_id, ts, metric
+  FROM gap_report
+ WHERE project = 'GEODNET' AND metric LIKE '[data] gross_burn_tokens is ZERO%'
+ ORDER BY ts;
+SELECT run_id, ts, date, value, prior_value, action
+  FROM review_queue
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens' AND reason = 'unattributable_zero'
+ ORDER BY ts;
+
 -- ========================================================================================
--- AF. Ether.fi — ROWS FROM THE RETIRED DUNE QUERY 8683038.
+-- AF. Ether.fi — ROWS FROM THE RETIRED DUNE QUERY 8683038. (Part C1 of the 2026-09-24 round.)
 --     AF1 LOOKS. AF2 is the proposed delete, commented out.                    2026-09-24
 -- ========================================================================================
 -- Dune 8683038 is retired for Ether.fi (HTTP 402 on all three metrics, and its staked_supply
