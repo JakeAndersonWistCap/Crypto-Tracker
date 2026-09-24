@@ -9529,6 +9529,19 @@ PROJECTS = [
                 "Proxy, and that is already read as treasury_holding_tokens, which is the metric "
                 "for it. Reading a balance on an executor would be the Uniswap Firepit mistake "
                 "again. Declared 2026-09-15.",
+            # ===== NO SECOND BURN CATEGORY EXISTS. Declared 2026-09-24. =====
+            # contracts.burn_logs.stage2_burner, 2026-09-23: the Stage 2 burner IS the Pause Proxy,
+            # so "governance burns from the Pause Proxy" were never a category beside Stage 2 —
+            # they were Stage 2 mislabelled. The reader stopped producing governance_burn_* that
+            # day; left applicable, the two would gap on every run however well the scan worked.
+            "governance_burn_balance":
+                "NOT A SEPARATE CATEGORY. The Pause Proxy's burns ARE the Stage 2 buy-and-burn "
+                "(contracts.burn_logs.stage2_burner, from the executive of 2026-09-11), and they "
+                "are read into burn_address_balance / gross_burn_tokens. Everything not from the "
+                "Pause Proxy is other_burn_*. Declared 2026-09-24.",
+            "governance_burn_tokens":
+                "NOT A SEPARATE CATEGORY — see governance_burn_balance. The flow is "
+                "gross_burn_tokens. Declared 2026-09-24.",
         },
         "fee_split": {
             "share_to_buyback": 0.55,
