@@ -413,6 +413,14 @@ METRICS = {
     # convention, and renaming a series with history to match a newer one is the kind of change
     # that should be asked for rather than slipped in. See the note on Pendle's lock_ratio.
     "locked_tokens_shares":       {"label": "Staking-receipt shares outstanding (NOT the tokens locked)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Pendle"]},
+    # ===== THE DEPRECATED CONTRACT'S OWN BALANCE, A SECOND FIGURE, NEVER SUMMED IN. 2026-09-24. =====
+    # Jake's instruction: locked_tokens stays exactly what it is (PENDLE.balanceOf(sPENDLE), the
+    # new contract, 35.46M) and this is the OTHER number — PENDLE.balanceOf(the old vePENDLE
+    # contract), which never migrated out. Together they are the two real pools of PENDLE the
+    # >100M press figures likely combine (see OPEN_QUESTIONS' Pendle entry, answered 2026-09-24:
+    # the >100M is the hub's sPENDLE + vePENDLE sum, or the virtual boost balance — neither is
+    # PENDLE locked in sPENDLE alone).
+    "locked_tokens_legacy_vependle": {"label": "PENDLE remaining in the deprecated, unmigrated vePENDLE contract — NEVER summed into locked_tokens", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Pendle"]},
     # DERIVED, not fetched: assets divided by shares. For a compounding stake this is the accrued
     # rate — how much of the underlying one share currently claims — and its DIRECTION is the
     # signal. A rising ratio is rewards accruing. Bounded below at 0 and generously above,
@@ -11606,6 +11614,32 @@ PROJECTS = [
                      "power. If virtual or boosted balances are included in totalSupply(), this figure "
                      "OVERSTATES real PENDLE staked by up to 4x. The address is right and the read "
                      "succeeds; what is unresolved is what the number means."),
+            # ===== THE OLD CONTRACT'S OWN BALANCE, A SECOND FIGURE. Wired 2026-09-24, Jake's =====
+            # ===== INSTRUCTION. locked_tokens (above) is UNCHANGED by this addition. =====
+            # The KEY 'vePendle' was already on file (deployment_registry.deprecated_confirms_
+            # migration names it, and contracts.spendle's note already cited the deprecated block
+            # as corroboration that vePENDLE is not the lock source) — the VALUE, this address,
+            # is read here for the first time, straight from the same deployments/1-core.json
+            # deployment_registry already reads treasury/governance/dev_multisig/s_pendle from.
+            "vependle_legacy": _contract(
+                "0x4f30A9D41B80ecC5B94306AB4364951AE3170210", "ethereum", "stake_underlying", "PENDLE",
+                PENDLE_DEPLOYMENTS_1_CORE,
+                verified="2026-09-24",
+                provenance="Pendle's own deployments/1-core.json, 'deprecated' block, key "
+                          "'vePendle' — read 2026-09-24 for the address; the key was already on "
+                          "file. Same file and read method as contracts.spendle_underlying, "
+                          "pointed at the OLD contract instead of the new one.",
+                read_method="escrow_balance_of", holder_has_code=True, underlying="token",
+                token_standard="erc20", metric_override="locked_tokens_legacy_vependle",
+                purpose="PENDLE STILL HELD BY THE DEPRECATED vePENDLE CONTRACT — the other half "
+                        "of what the press's >100M 'staked' figures likely combine with sPENDLE's "
+                        "35.46M (see OPEN_QUESTIONS' Pendle entry, answered 2026-09-24: a "
+                        "third-party tracker matched the hub's figure to PENDLE.balanceOf"
+                        "(vePENDLE) = 97,869,428). This is OUR OWN on-chain read of the same "
+                        "quantity, not a repeat of the tracker's number — see whether the two "
+                        "agree once this runs live. NEVER SUMMED into locked_tokens: two "
+                        "different contracts, kept separate on instruction, joined only in the "
+                        "'sPENDLE + old vePENDLE' sanity-check column."),
         },
         "buyback_destination": "distribute", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "yield_payout",

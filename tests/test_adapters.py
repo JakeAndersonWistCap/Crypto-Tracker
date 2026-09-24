@@ -6749,6 +6749,74 @@ def test_sky_notes_reflect_stage_2_not_the_stale_55_45():
     print("Sky notes ok: Stage 2 stated, stale 55%-burned framing gone, confirmed in a built workbook")
 
 
+def test_pendle_legacy_vependle_is_a_second_figure_never_summed_into_locked_tokens():
+    """Jake's instruction, 2026-09-24: locked_tokens stays exactly PENDLE.balanceOf(sPENDLE) —
+    unchanged by this addition — and a SECOND contract, the deprecated vePENDLE escrow, is wired
+    as its own figure. The address (0x4f30A9D41B80ecC5B94306AB4364951AE3170210) comes straight
+    from Pendle's own deployments/1-core.json 'deprecated' block, key 'vePendle' — the key was
+    already on file, the value is read here for the first time."""
+    p = config.PROJECT_BY_NAME["Pendle"]
+    contracts = p["contracts"]
+
+    # locked_tokens' own contract is untouched: still the new sPENDLE contract, still metric
+    # locked_tokens, still escrow_balance_of.
+    live = contracts["spendle_underlying"]
+    assert live["address"] == "0x999999999991E178D52Cd95AFd4b00d066664144"
+    assert live["metric_override"] == "locked_tokens"
+
+    legacy = contracts["vependle_legacy"]
+    assert legacy["address"] == "0x4f30A9D41B80ecC5B94306AB4364951AE3170210"
+    assert legacy["chain"] == "ethereum" and legacy["kind"] == "stake_underlying"
+    assert legacy["read_method"] == "escrow_balance_of" and legacy["underlying"] == "token"
+    assert legacy["holder_has_code"] is True
+    assert legacy["metric_override"] == "locked_tokens_legacy_vependle", \
+        "must NEVER share locked_tokens' metric name — that would sum the two contracts"
+    assert legacy["verified"] == "2026-09-24"
+    assert "deployments/1-core.json" in legacy["source_url"]
+
+    assert config.METRICS["locked_tokens_legacy_vependle"]["only_projects"] == ["Pendle"]
+    assert config.KIND_METRIC["stake_underlying"] != "locked_tokens_legacy_vependle", \
+        "the metric comes from metric_override, not from the kind's default mapping"
+    print("Pendle legacy vePENDLE ok: second contract wired, locked_tokens itself untouched")
+
+
+def test_pendle_a3_shows_the_legacy_vependle_figure_beside_locked_and_a_sanity_sum():
+    """The two figures Jake asked to see side by side, confirmed against a real built workbook:
+    'PENDLE in the new sPENDLE contract' (the existing 'Tokens locked (ve)' column) and 'PENDLE
+    still in the old, unmigrated vePENDLE contract' (the new column), plus the sum column that is
+    the sanity check against the press's >100M figures."""
+    import pathlib as _pl
+    import tempfile
+
+    import openpyxl
+
+    import build_workbook as bw
+    import store as store_mod
+
+    db = _pl.Path(__file__).resolve().parent / "_scratch" / "metrics.db"
+    if not db.exists():
+        print("Pendle legacy vePENDLE sheet ok: skipped, no _scratch/metrics.db to render against")
+        return
+    st = store_mod.Store(str(db))
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        out_path = bw.build_workbook(st, tmp.name)
+    wb = openpyxl.load_workbook(out_path)
+    ws = wb["A3 Revenue Buyback"]
+    header_row = next(r for r in range(1, 10)
+                      if any(ws.cell(row=r, column=c).value == "Project" for c in range(1, 6)))
+    headers = {ws.cell(row=header_row, column=c).value: c for c in range(1, ws.max_column + 1)
+              if ws.cell(row=header_row, column=c).value}
+    locked_col = next(h for h in headers if h.startswith("Tokens locked (ve)"))
+    legacy_col = next(h for h in headers if "OLD vePENDLE" in h)
+    sum_col = next(h for h in headers if h.startswith("sPENDLE + old vePENDLE"))
+    # The legacy column and the sanity sum sit right after the existing lock columns — adjacent
+    # to what Jake already reads as "PENDLE in the new sPENDLE contract", not buried elsewhere.
+    assert headers[legacy_col] > headers[locked_col]
+    assert headers[sum_col] == headers[legacy_col] + 1
+    print(f"Pendle A3 ok: '{locked_col}' (col {headers[locked_col]}), '{legacy_col}' "
+          f"(col {headers[legacy_col]}), '{sum_col}' (col {headers[sum_col]}) all present")
+
+
 def test_geodnet_pool_release_renders_beside_gross_burn_on_a4():
     """GEODNET's issuance is suppressed (n/a — all supply is pre-minted, so nothing is MINTED),
     which used to leave gross_burn_tokens the only headline figure visible on A4 and Jake having

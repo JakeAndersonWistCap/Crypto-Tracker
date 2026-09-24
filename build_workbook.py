@@ -1960,6 +1960,26 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{R.D(r, 'locked_tokens_dashboard', 'now')}-1"),
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
+        # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====
+        # locked_tokens (the column above, via contracts.spendle_underlying) is PENDLE.balanceOf
+        # (sPENDLE) — the NEW contract, unchanged by this addition. This column is PENDLE.balanceOf
+        # (the DEPRECATED vePENDLE contract, 0x4f30A9…3170210, address from Pendle's own
+        # deployments/1-core.json, verified 2026-09-24) — Jake's instruction: a second figure,
+        # never summed into locked_tokens. Blank for every project but Pendle.
+        ("PENDLE still in the OLD vePENDLE contract (deprecated, unmigrated) — NEVER summed into locked_tokens",
+         lambda r, p: pull(R.D(r, "locked_tokens_legacy_vependle", "now")),
+         FMT_NUM, "pull", False, {"metric": "locked_tokens_legacy_vependle"}),
+        # THE SANITY CHECK JAKE ASKED FOR: does new-contract + old-contract land near the ~100M+
+        # the press reports? If it does, that is real corroboration this explanation (migration
+        # left two pools of real PENDLE, not one inflated number) is the right one.
+        # GATED ON ISNUMBER(the legacy figure): that column is blank for every project but
+        # Pendle, and "blank + a number" evaluates to the number in Excel — without the guard
+        # every other project would show a "sum" that is silently just its own locked_tokens.
+        ("sPENDLE + old vePENDLE (tokens) — sanity check against the press's >100M figures",
+         lambda r, p: calc(f"IF(ISNUMBER({R.D(r, 'locked_tokens_legacy_vependle', 'now')}),"
+                           f"{R.D(r, 'locked_tokens', 'now')}+{R.D(r, 'locked_tokens_legacy_vependle', 'now')},"
+                           f"{NA})"),
+         FMT_NUM, "calc", False, {"metric": "locked_tokens_legacy_vependle"}),
         ("Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)",
          lambda r, p: calc(
              f"{circ(r)}"
