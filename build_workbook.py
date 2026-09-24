@@ -1797,6 +1797,20 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r)}*{price(r)}"), FMT_USD, "calc"),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", True, {"metric": "gross_issuance_tokens"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
+        # ===== POOL RELEASE, BESIDE BURN. Added 2026-09-24, for GEODNET. =====
+        # GROSS ISSUANCE reads n/a here for any premint project whose issuance_derivation is
+        # suppressed (GEODNET: all supply pre-minted, nothing is MINTED, so the quantity that
+        # column asks for is genuinely zero — see config.py issuance_derivation.na_reason). The
+        # crossover Jake actually wants — tokens ENTERING CIRCULATION vs tokens leaving it — is
+        # real for those projects too, just measured as pool_release_tokens (distribution from a
+        # pre-minted pool) rather than as minting. Blank for every project without the metric,
+        # same convention as Net mint Q0 above; filled and placed beside GROSS BURN so the two
+        # numbers Jake needs are in adjacent cells instead of two unrelated ones he has to hunt
+        # down and compare by hand.
+        ("Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)",
+         lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")), FMT_NUM, "pull", True, {"metric": "pool_release_tokens"}),
+        ("Release ÷ burn (x) — premint projects, in place of burn ÷ issuance",
+         lambda r, p: calc(f"{R.D(r, 'pool_release_tokens', 'q0')}/{burn(r)}"), FMT_X, "calc"),
         ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
@@ -1828,8 +1842,9 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         *_trajectory(R, "gross_issuance_tokens", "Issuance"),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("burn_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
-    end = _write_table(ws, R, projects, specs, data_by_key, ["fees_usd", "price_usd", "gross_burn_tokens", "gross_issuance_tokens", "circulating_supply"],
-                       key_cols={8, 10, 12, 14})
+    end = _write_table(ws, R, projects, specs, data_by_key,
+                       ["fees_usd", "price_usd", "gross_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],
+                       key_cols={8, 10, 12, 16})
     _confidence_tally(ws, end + 2, scoped_projects(), specs, data_by_key)
     _set_widths(ws, {"A": 16, "B": 8, "C": 12, "D": 11, "E": 11, **{get_column_letter(i): 14 for i in range(6, 34)}, "AH": 60, "AI": 60})
     return projects, end

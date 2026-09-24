@@ -6749,6 +6749,52 @@ def test_sky_notes_reflect_stage_2_not_the_stale_55_45():
     print("Sky notes ok: Stage 2 stated, stale 55%-burned framing gone, confirmed in a built workbook")
 
 
+def test_geodnet_pool_release_renders_beside_gross_burn_on_a4():
+    """GEODNET's issuance is suppressed (n/a — all supply is pre-minted, so nothing is MINTED),
+    which used to leave gross_burn_tokens the only headline figure visible on A4 and Jake having
+    to find pool_release_tokens (the measured, premint-distribution analogue of issuance) on his
+    own, on a different tab, to see the crossover. 'Pool release Q0 (tokens)' now sits directly
+    beside 'GROSS BURN Q0 (tokens)' on A4 for exactly this reason — confirmed against a real
+    built workbook, not just the column spec in code."""
+    import pathlib as _pl
+    import tempfile
+
+    import openpyxl
+
+    import build_workbook as bw
+    import store as store_mod
+
+    db = _pl.Path(__file__).resolve().parent / "_scratch" / "metrics.db"
+    if not db.exists():
+        print("GEODNET pool release ok: skipped, no _scratch/metrics.db to render against")
+        return
+    st = store_mod.Store(str(db))
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        out_path = bw.build_workbook(st, tmp.name)
+    wb = openpyxl.load_workbook(out_path)
+    ws = next(s for s in wb.sheetnames if s.startswith("A4"))
+    ws = wb[ws]
+    header_row = next(r for r in range(1, 10)
+                      if any(ws.cell(row=r, column=c).value == "Project" for c in range(1, 6)))
+    headers = {ws.cell(row=header_row, column=c).value: c for c in range(1, ws.max_column + 1)
+              if ws.cell(row=header_row, column=c).value}
+    burn_col = next(h for h in headers if h.startswith("GROSS BURN Q0"))
+    iss_col = next(h for h in headers if h.startswith("GROSS ISSUANCE Q0"))
+    release_col = next(h for h in headers if h.startswith("Pool release Q0"))
+    # Burn, burn($), issuance, issuance($), release — one small cluster, release last so it sits
+    # right beside issuance (the figure it stands in for when issuance is n/a) and still close
+    # enough to burn that both headline numbers are visible without scrolling.
+    assert headers[release_col] == headers[iss_col] + 2 == headers[burn_col] + 4, \
+        (f"expected the burn/issuance/release cluster to stay contiguous — got burn at "
+         f"{headers[burn_col]}, issuance at {headers[iss_col]}, release at {headers[release_col]}")
+    geo_row = next(r for r in range(header_row + 1, ws.max_row + 1)
+                  if ws.cell(row=r, column=headers["Project"]).value == "GEODNET")
+    release_val = ws.cell(row=geo_row, column=headers[release_col]).value
+    assert release_val not in (None, ""), \
+        "GEODNET must have a real pool_release_tokens figure rendered, not a blank cell"
+    print(f"GEODNET pool release ok: '{release_col}' beside '{burn_col}', GEODNET row = {release_val!r}")
+
+
 if __name__ == "__main__":
     # EVERY test_* IN THIS MODULE, IN DEFINITION ORDER — discovered, not hand-listed.
     #
