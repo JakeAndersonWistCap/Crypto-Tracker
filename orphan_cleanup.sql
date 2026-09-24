@@ -2728,3 +2728,35 @@ SELECT metric, COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last,
 --    AND source LIKE 'dune:8683038%';
 -- COMMIT;
 
+
+-- ========================================================================================
+-- AG. Aethir — locked_tokens 264.947427, and WHERE IT CAME FROM.            2026-09-24
+--     AG1-AG2 LOOK. AG3 is the proposed delete, commented out.
+-- ========================================================================================
+-- The chain path divides each pool's ATH.balanceOf by decimals() read from ATH itself, so a
+-- raw-unit sum is not the expected cause. The run log already holds one line per component
+-- ("locked_tokens component ethereum:staking_gaming_pool=…"); AG2 reads them. Runs from
+-- 2026-09-24 on also carry "(raw N / 10^D from <token>.decimals())" on each line.
+-- The sheet blanks this row now (build_workbook.withheld_for case 9, the 1.2bn floor).
+
+-- AG1. EVERY STORED ROW, with its source. Expect sum(ethereum:staking_gaming_pool+…):PARTIAL.
+SELECT date, value, source, tier, fetched_at
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'locked_tokens'
+ ORDER BY date;
+
+-- AG2. THE COMPONENTS, per run. Each pool's own figure; if they sum to ~265 and each divides
+--      by 10^18, the pools genuinely hold ~265 ATH on Ethereum and the 1.2bn is elsewhere.
+SELECT run_id, ts, message
+  FROM run_log
+ WHERE project = 'Aethir'
+   AND (message LIKE 'locked_tokens component%' OR message LIKE '%locked_tokens%PARTIAL%')
+ ORDER BY ts;
+
+-- AG3. THE PROPOSED DELETE. Only after AG1/AG2 are read. The row is already withheld from the
+--      sheet, so this is tidying, not a fix.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Aethir' AND metric = 'locked_tokens'
+--    AND value < 1200000000;
+-- COMMIT;

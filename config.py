@@ -5822,6 +5822,17 @@ PROJECTS = [
             "fees_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
             "revenue_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
             "customer_revenue_usd": {"min": -100_000_000_000, "max": 100_000_000_000},
+            # ** 264.947427 WAS STORED AND RENDERED AS "review". Bound added 2026-09-24. ** The
+            # floor is Jake's: the offline probe read ~1,204,990,000 ATH on the EigenLayer side
+            # alone, so a total below 1.2bn is missing that leg or mis-scaled. The ceiling is
+            # max supply (42bn). Outside it the read is rejected at write time, and a row stored
+            # before this bound is blanked on the sheet (build_workbook.withheld_for, case 9).
+            # WITH ONLY THE TWO VE POOLS WIRED, EVERY READ BELOW THE FLOOR IS REJECTED — the
+            # column stays blank until the vault leg is wired from the probe's figures.
+            "locked_tokens": {"min": 1_200_000_000, "max": 42_000_000_000,
+                              "why": "Aethir locked_tokens must be at least ~1.2bn (the "
+                                     "EigenLayer leg alone, per the offline probe) and below max "
+                                     "supply (42bn)."},
         },
         # ARCHETYPE 2 ONLY. ARCHETYPE 3 IS REFUTED, NOT HELD — and the distinction matters because
         # "held" means "pending evidence" and the evidence is in. There is NO revenue-to-token

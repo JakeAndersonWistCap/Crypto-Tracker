@@ -285,7 +285,7 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tu
 # =========================================================================================
 WITHHELD_STATUSES = ("orphaned", "withdrawn", "suppressed", "disputed",
                      "measuring_point_changed", "implausible_delta", "unreconciled_flow",
-                     "refuted")
+                     "refuted", "out_of_bounds")
 
 # A DIFFERENCED FLOW WHOSE PARENT STOCK IT CAN BE SANITY-CHECKED AGAINST.
 # gross_burn_tokens is the change in burn_address_balance between two observations, so one day's
@@ -511,6 +511,23 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
                 f"assumed. The reading may be real; it is not this metric. {mech.get('note') or ''} "
                 f"Source: {mech.get('source_url') or mech.get('source_note') or 'see burn_mechanism in config'}. "
                 f"Clear the superseded rows; the adapter already refuses to write new ones.").strip()
+
+    # 9. THE STORED STOCK IS OUTSIDE ITS DECLARED BOUND. Added 2026-09-24.
+    #    fetch.validate rejects an out-of-bound value at WRITE time, and cannot reach a row
+    #    stored before the bound was declared. Aethir's locked_tokens was that row: 264.947427
+    #    ATH, stored before the 1.2bn floor existed, rendering as "review" and readable as real.
+    #    The same config.sanity_bounds the write path uses, so the two cannot disagree. Stocks
+    #    only: a flow's `now` is a window sum and the bounds are per observation.
+    latest = row.get("latest_value")
+    if latest is not None and (config.METRICS.get(metric) or {}).get("kind") == "stock":
+        lo, hi = config.sanity_bounds(project, metric)
+        if (lo is not None and latest < lo) or (hi is not None and latest > hi):
+            why = ((config.PROJECT_BY_NAME.get(project) or {}).get("sanity") or {}).get(metric, {}).get("why", "")
+            return "out_of_bounds", (
+                f"OUTSIDE ITS DECLARED BOUND — the stored figure {latest:,.6f} is outside "
+                f"[{'-inf' if lo is None else f'{lo:,.0f}'}, {'inf' if hi is None else f'{hi:,.0f}'}], the range the write path now enforces. It was stored "
+                f"before that bound existed, and a new read outside it is rejected, not stored. "
+                f"{why} Clear the stored row; see orphan_cleanup.sql.").strip()
     return None
 
 
@@ -818,6 +835,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                             f"figure was low. {hole.get('do_not', '')}".strip())
             else:
                 row["now"] = float(latest["value"])
+                # Kept apart from `now`, which is blanked when a figure is withheld: case 9 of
+                # withheld_for needs the stored value itself, on both of its calls.
+                row["latest_value"] = row["now"]
                 row["m1"] = _at_or_before(s, asof - pd.Timedelta(days=short))
                 for i, q in enumerate(["q0", "q1", "q2", "q3"]):
                     row[q] = _window_mean(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))

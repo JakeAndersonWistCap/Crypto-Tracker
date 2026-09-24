@@ -147,6 +147,7 @@ TRANSITIONS = (
     "changed_measuring_point",
     "implausible_delta",
     "unreconciled_flow",
+    "out_of_bounds_stock",
     "control",
 )
 
@@ -315,6 +316,17 @@ ROWS = [
          why="the END of the span. 27,031,934.0021 - 26,800,000 = 231,934.0021 moved, against "
              "83,344.4791 recorded: a residual of 148,589.523 the flow never reported"),
 
+    # ---- out_of_bounds_stock ---------------------------------------------------------
+    # THE LIVE ROW, 2026-09-24. Aethir locked_tokens stored 264.947427 from the two ve pools,
+    # against ~1.2bn ATH on the EigenLayer side alone, and rendered as "review". The bound was
+    # declared after the row was written, so only the read-time check can reach it.
+    dict(transition="out_of_bounds_stock", date="2026-09-14", project="Aethir",
+         metric="locked_tokens", value=264.947427,
+         source="chain:sum(ethereum:staking_gaming_pool+ethereum:staking_ai_pool):PARTIAL", tier=2,
+         written_under="config before Aethir's sanity.locked_tokens bound",
+         why="a stock stored below its declared floor. The write path now rejects the same "
+             "value; this is the row it cannot reach"),
+
     # ---- controls --------------------------------------------------------------------
     # A GUARD THAT BLANKS EVERYTHING PASSES EVERY ASSERTION ABOVE. These must stay ok.
     dict(transition="control", date="2026-09-14", project="Ether.fi",
@@ -425,7 +437,8 @@ def _marker(reason: str) -> str:
     # unreconciled_flow reason interpolates both totals and the residual.
     for m in ("ORPHANED", "MEASURING CONTRACT WITHDRAWN", "DERIVATION SUPPRESSED",
               "MEASURING POINT CHANGED", "MECHANISM REFUTED", "OF THE CUMULATIVE",
-              "DO NOT SUM TO THE STOCK", "DESTINATION DISPUTED", "not applicable",
+              "DO NOT SUM TO THE STOCK", "DESTINATION DISPUTED", "OUTSIDE ITS DECLARED BOUND",
+              "not applicable",
               "no value in the store"):
         if m in reason:
             return m

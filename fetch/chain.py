@@ -732,6 +732,9 @@ class ChainReader:
         raw = getattr(c.functions, call)(*args).call()
         dec_source = self.erc20(chain, decimals_from) if decimals_from else c
         decimals = dec_source.functions.decimals().call()
+        # The integer and the divisor, kept for the component log line: a figure off by orders
+        # of magnitude (Aethir, 2026-09-24) is settled by these two numbers, not by the quotient.
+        self.last_scaled = (int(raw), int(decimals))
         return float(raw) / (10 ** int(decimals))
 
     def raw_call(self, chain: str, address: str, call: str, *args) -> float:
@@ -1049,6 +1052,7 @@ class Chain:
                         log.info("%s/%s: %s() = %.0f seconds = %.4f days", name, key,
                                  spec.get("call") or "cooldownDuration", seconds, value)
                     elif holder:
+                        self.reader.last_scaled = None
                         value = self.reader.scaled(chain, read_address, "balanceOf", holder)
                     elif decimals_address:
                         # Only the principal path needs a separate decimals source, and the kwarg
@@ -1124,8 +1128,12 @@ class Chain:
                         partial_reasons[metric] = spec["partial_reason"]
                 if spec.get("destination_status") == "disputed":
                     disputed[metric].append(key)
+                detail = ""
+                if holder and getattr(self.reader, "last_scaled", None):
+                    raw, dec = self.reader.last_scaled
+                    detail = f" (raw {raw} / 10^{dec} from {read_address}.decimals())"
                 out.log.append(LogEntry(SOURCE, name, 0, "ok",
-                                        f"{metric} component {chain}:{key}={value:,.4f}", TIER))
+                                        f"{metric} component {chain}:{key}={value:,.4f}{detail}", TIER))
 
             for metric, missing in refused.items():
                 if metric not in parts:

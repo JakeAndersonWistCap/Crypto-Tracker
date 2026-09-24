@@ -6129,7 +6129,10 @@ def test_stale_store_fixture_covers_every_red_branch_and_cannot_quietly_rot():
     # Seven to eight on 2026-09-22, the same way: unreconciled_flow arrived with the
     # transition, the Hyperliquid flow row and the two stock rows that give it a span to
     # telescope over. The bump was the LAST edit of that change, not the first.
-    EXPECTED_MECHANISMS = 8
+    #
+    # Eight to nine on 2026-09-24: out_of_bounds arrived with the out_of_bounds_stock
+    # transition and Aethir's 264.947427 locked_tokens row, the live figure that prompted it.
+    EXPECTED_MECHANISMS = 9
 
     tree = ast.parse(inspect.getsource(bw.withheld_for))
     returns = [n for n in ast.walk(tree)
@@ -8258,7 +8261,8 @@ def test_the_ultrasound_burn_entry_is_still_an_xhr_page_load_not_a_direct_json_f
     # loads — so no method can reach an API path without the page.
     src = inspect.getsource(scrape.Scrape._scrape_one)
     head = src[:src.index("captured")]
-    assert re.search(r"robots_allows\(url\)", head), head[:400]
+    # robots_verdict since 2026-09-24 (it also says WHY); same check, same argument.
+    assert re.search(r"robots_verdict\(url\)", head), head[:400]
     assert 'url = entry["project"], entry["metric"], entry["url"]' in src, \
         "the url checked and loaded is the entry's own url field"
     assert "page.goto(url" in src, "the same url is what gets loaded"
@@ -8834,7 +8838,7 @@ def test_robots_is_checked_against_the_page_url_not_a_captured_api_path():
 
     tree = ast.parse(textwrap.dedent(inspect.getsource(Scrape._scrape_one)))
     calls = [n for n in ast.walk(tree)
-             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "robots_allows"]
+             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "robots_verdict"]
     assert len(calls) == 1, f"expected exactly one robots check, found {len(calls)}"
     arg = calls[0].args[0]
     assert isinstance(arg, ast.Name) and arg.id == "url", \
@@ -13744,3 +13748,71 @@ def test_the_four_projects_of_2026_09_24_land_as_found():
     names = {fn.__name__ for fn in coi.CHECKS}
     assert {"aethir_staking_probe", "geodnet_staking_candidates"} <= names
     print("2026-09-24 four projects ok")
+
+
+def test_maple_transparency_parser_reads_the_strings_jake_quoted():
+    """The page's own text as quoted 2026-09-24, in both shapes it arrives in: textContent (no
+    space between label and figure) and HTML (every cell its own element)."""
+    from fetch.maple_transparency import parse
+
+    got = parse("SYRUP Holdings78.78M Liquid Assets$4.41M Showing 1-5 of 13 "
+                "Aug 2026 $147,098.00 676,293.73 $0.2175")
+    assert got["holdings_syrup"] == 78_780_000
+    assert got["holdings_rounding"] == 5_000, "the page itself rounds to 0.01M"
+    assert got["liquid_assets_usd"] == 4_410_000
+    assert got["showing"] == (1, 5, 13)
+    bb = got["buybacks"]
+    assert len(bb) == 1 and str(bb["month"].iloc[0].date()) == "2026-08-01"
+    assert bb["usd"].iloc[0] == 147_098.00 and bb["syrup"].iloc[0] == 676_293.73
+
+    html = ("<div><span>SYRUP Holdings</span><span>78.78M</span></div><table><tr><td>Aug 2026"
+            "</td><td>$147,098.00</td><td>676,293.73</td><td>$0.2175</td></tr></table>")
+    got = parse(html)
+    assert got["holdings_syrup"] == 78_780_000 and len(got["buybacks"]) == 1, \
+        "adjacent cells must not run together — tags become spaces"
+
+
+def test_maple_buyback_row_that_does_not_multiply_out_is_refused_not_stored():
+    """USD = SYRUP x price to the price's own 4 dp. A row outside that is mis-aligned columns."""
+    from fetch.maple_transparency import parse
+
+    got = parse("Aug 2026 $147,098.00 676,293.73 $0.2175 Jul 2026 $90,000.00 676,293.73 $0.2175")
+    assert list(got["buybacks"]["month"].dt.strftime("%Y-%m")) == ["2026-08"]
+    assert any("Jul 2026" in r and "mis-aligned" in r for r in got["refused"])
+    assert parse("nothing here")["holdings_syrup"] is None, "absent is None, never 0"
+
+
+def test_robots_refusal_says_whether_it_was_a_rule_or_a_status_code():
+    """Run 20260921T100546Z said only 'robots.txt disallows'. The stdlib parser returns the same
+    False for a Disallow rule and for a robots.txt that answered 403 — the reason separates them.
+    The VERDICTS are unchanged: 403 still refuses."""
+    from fetch.base import USER_AGENT
+    from fetch.scrape import robots_from_response
+
+    url = "https://maple.finance/transparency"
+    rp, how = robots_from_response("https://maple.finance/robots.txt", 403, "")
+    assert not rp.can_fetch(USER_AGENT, url) and "answered HTTP 403" in how and "no rule" in how
+
+    rp, how = robots_from_response("https://maple.finance/robots.txt", 200,
+                                   "User-agent: *\nDisallow: /transparency\n")
+    assert not rp.can_fetch(USER_AGENT, url) and "HTTP 200" in how
+
+    rp, _ = robots_from_response("https://maple.finance/robots.txt", 200, "User-agent: *\nDisallow:\n")
+    assert rp.can_fetch(USER_AGENT, url)
+    rp, how = robots_from_response("https://maple.finance/robots.txt", 404, "")
+    assert rp.can_fetch(USER_AGENT, url) and "no robots.txt" in how
+
+
+def test_maple_page_is_not_wired_into_any_run_until_robots_is_read():
+    """Promotion waits on the robots verdict. The page entry stays disabled and nothing in the
+    tier order imports the parser."""
+    import pathlib
+
+    import yaml
+
+    import fetch
+
+    entries = yaml.safe_load(pathlib.Path("sources.yaml").read_text(encoding="utf-8"))
+    page = [e for e in entries if e.get("url") == "https://maple.finance/transparency"]
+    assert page and all(e["enabled"] is False for e in page)
+    assert "maple_transparency" not in pathlib.Path(fetch.__file__).read_text()

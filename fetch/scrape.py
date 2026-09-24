@@ -148,31 +148,77 @@ def entry_ready(entry: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------------------
 # Politeness
 # ---------------------------------------------------------------------------------------
-_ROBOTS: dict[str, urllib.robotparser.RobotFileParser | None] = {}
+_ROBOTS: dict[str, tuple[urllib.robotparser.RobotFileParser | None, str]] = {}
+
+
+def robots_from_response(url: str, status: int, text: str) -> tuple[urllib.robotparser.RobotFileParser, str]:
+    """A parser for one robots.txt answer, and a sentence saying what the answer was.
+
+    The stdlib's own status handling, kept exactly: 401/403 disallow everything, any other 4xx
+    means there is no robots.txt, and a 5xx disallows. Only the REASON is new — the verdicts are
+    the ones this tool has always applied. Shared with check_offline_items so the offline answer
+    and the run's answer cannot differ.
+    """
+    rp = urllib.robotparser.RobotFileParser()
+    rp.set_url(url)
+    if status in (401, 403):
+        rp.disallow_all = True
+        how = (f"robots.txt ITSELF answered HTTP {status} — no rule was read; the robots "
+               f"convention treats that as disallow-all")
+    elif 400 <= status < 500:
+        rp.allow_all = True
+        how = f"no robots.txt (HTTP {status})"
+    elif status >= 500:
+        rp.disallow_all = True
+        how = f"robots.txt answered HTTP {status}; treated as disallow-all until it answers"
+    else:
+        rp.parse(text.splitlines())
+        how = f"robots.txt read (HTTP {status})"
+    return rp, how
+
+
+def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, str]:
+    """(parser, how robots.txt answered). None means "no robots.txt could be read"."""
+    if root in _ROBOTS:
+        return _ROBOTS[root]
+    import requests
+    url = f"{root}/robots.txt"
+    try:
+        # THE TOOL'S OWN USER AGENT, not urllib's default. Until 2026-09-24 robots.txt was read
+        # by RobotFileParser.read(), which sends "Python-urllib/3.x" — a UA many CDNs refuse
+        # outright — so "robots.txt disallows" could mean a 403 on robots.txt itself.
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
+    except Exception as e:  # noqa: BLE001 — unreachable robots.txt is permissive
+        _ROBOTS[root] = (None, f"robots.txt unreachable ({type(e).__name__}); treated as permissive")
+        return _ROBOTS[root]
+    rp, how = robots_from_response(url, r.status_code, r.text)
+    _ROBOTS[root] = (rp, how)
+    return _ROBOTS[root]
+
+
+def robots_verdict(url: str) -> tuple[bool, str]:
+    """(allowed, why). WHY names the case: a matching Disallow rule, a status code on robots.txt
+    itself, or no robots.txt. A robots.txt we cannot fetch is treated as permissive, which is the
+    conventional reading, but an explicit Disallow is always honoured."""
+    if os.environ.get("TOKEN_METRICS_IGNORE_ROBOTS", "").strip() in ("1", "true", "yes"):
+        return True, "TOKEN_METRICS_IGNORE_ROBOTS is set"
+    parts = urllib.parse.urlparse(url)
+    rp, how = _robots_for(f"{parts.scheme}://{parts.netloc}")
+    if rp is None:
+        return True, how
+    try:
+        ok = rp.can_fetch(USER_AGENT, url)
+    except Exception as e:  # noqa: BLE001
+        return True, f"{how}; can_fetch raised {e}, treated as permissive"
+    if ok:
+        return True, how
+    if rp.disallow_all:
+        return False, how
+    return False, f"{how} and a Disallow rule matches {parts.path or '/'} for this user agent"
 
 
 def robots_allows(url: str) -> bool:
-    """Respect robots.txt. A robots.txt we cannot fetch is treated as permissive, which is the
-    conventional reading, but a explicit Disallow is always honoured."""
-    if os.environ.get("TOKEN_METRICS_IGNORE_ROBOTS", "").strip() in ("1", "true", "yes"):
-        return True
-    parts = urllib.parse.urlparse(url)
-    root = f"{parts.scheme}://{parts.netloc}"
-    if root not in _ROBOTS:
-        rp = urllib.robotparser.RobotFileParser()
-        rp.set_url(f"{root}/robots.txt")
-        try:
-            rp.read()
-        except Exception:  # noqa: BLE001 — unreachable robots.txt is permissive
-            rp = None
-        _ROBOTS[root] = rp
-    rp = _ROBOTS[root]
-    if rp is None:
-        return True
-    try:
-        return rp.can_fetch(USER_AGENT, url)
-    except Exception:  # noqa: BLE001
-        return True
+    return robots_verdict(url)[0]
 
 
 def cache_key(entry: dict) -> str:
@@ -358,9 +404,10 @@ class Scrape:
 
     def _scrape_one(self, context, entry: dict, out):
         proj, metric, url = entry["project"], entry["metric"], entry["url"]
-        if not robots_allows(url):
-            out.fail(SOURCE, proj, f"{metric}: robots.txt disallows {url}", TIER)
-            out.gap(proj, metric, reason=f"robots.txt disallows fetching {url}", tiers_attempted="3",
+        allowed, why = robots_verdict(url)
+        if not allowed:
+            out.fail(SOURCE, proj, f"{metric}: robots.txt disallows {url} — {why}", TIER)
+            out.gap(proj, metric, reason=f"robots.txt disallows fetching {url} — {why}", tiers_attempted="3",
                     suggestion="Use a different published source, or enter the figure via manual_overrides.csv")
             return
         captured: list = []

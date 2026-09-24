@@ -1504,6 +1504,64 @@ def geodnet_staking_candidates(days: int = 30):
     print("  contract (per-hex, or custodial in GEODNET's console) — say so and stop hunting.")
 
 
+# ===== MAPLE — robots.txt FIRST, then the transparency page. 2026-09-24. =====
+# The only record of Maple's robots.txt is run 20260921T100546Z's "robots.txt disallows
+# https://maple.finance/transparency", and that line could not tell a Disallow rule from a
+# robots.txt that answered 401/403. This prints the file itself and the verdict by the same rule
+# the run applies (fetch.scrape.robots_from_response). The PAGE is fetched only if that verdict
+# allows it — a disallowed page is closed, however cleanly it would parse.
+def maple_transparency():
+    head("MAPLE — robots.txt, then maple.finance/transparency (holdings, liquid assets, buybacks)")
+    from fetch.base import USER_AGENT
+    from fetch.maple_transparency import URL, parse
+    from fetch.scrape import robots_from_response
+
+    robots_url = "https://maple.finance/robots.txt"
+    try:
+        r = requests.get(robots_url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+    except Exception as e:  # noqa: BLE001
+        print(f"  robots.txt UNREACHABLE — {type(e).__name__}. The page is NOT fetched: the "
+              f"question is what robots.txt says, and it has not answered.")
+        return
+    print(f"  robots.txt: HTTP {r.status_code}, {len(r.text)} bytes. The file:")
+    for line in r.text.splitlines()[:60]:
+        print(f"    | {line}")
+    rp, how = robots_from_response(robots_url, r.status_code, r.text)
+    allowed = rp.can_fetch(USER_AGENT, URL)
+    print(f"\n  VERDICT for {URL} as {USER_AGENT!r}: {'ALLOWED' if allowed else 'DISALLOWED'} — {how}")
+    if not allowed:
+        print("  CLOSED. The page is not fetched. (If the file above shows no rule covering "
+              "/transparency, the refusal is the status code, not a rule — say so and decide.)")
+        return
+
+    try:
+        page = requests.get(URL, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+        page.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        print(f"  page UNREACHABLE — {e}")
+        return
+    got = parse(page.text)
+    fmt = lambda v: "NOT FOUND" if v is None else f"{v:,.0f}"
+    print(f"\n  SYRUP Holdings   {fmt(got['holdings_syrup'])} SYRUP"
+          + (f"  (page rounds to ±{got['holdings_rounding']:,.0f})" if got["holdings_rounding"] else ""))
+    print(f"  Liquid Assets    ${fmt(got['liquid_assets_usd'])}")
+    bb = got["buybacks"]
+    print(f"  Token Buybacks   {len(bb)} row(s) in the server-rendered HTML"
+          + (f"; the page says 'Showing {got['showing'][0]}-{got['showing'][1]} of "
+             f"{got['showing'][2]}'" if got["showing"] else ""))
+    for row in bb.itertuples(index=False):
+        print(f"    {row.month:%Y-%m}  ${row.usd:>14,.2f}  {row.syrup:>16,.2f} SYRUP  @ ${row.avg_price}")
+    for why in got["refused"]:
+        print(f"  REFUSED: {why}")
+    if got["showing"] and len(bb) < got["showing"][2]:
+        import re as _re
+        hints = sorted(set(_re.findall(r'[?&](page|offset|cursor|p)=[^"&\s]*', page.text)))[:10]
+        print(f"  PAGINATION: {got['showing'][2] - len(bb)} row(s) are not in the HTML. Query-"
+              f"parameter hints in the markup: {hints or 'none'} — none means paging is "
+              f"client-side and those rows are unreachable without a browser.")
+    print("\n  PASTE BACK. Promotion to primary waits on this output.")
+
+
 HYPE_INFO = "https://api.hyperliquid.xyz/info"
 HYPE_ASSISTANCE_FUND = "0xfefefefefefefefefefefefefefefefefefefefe"
 
@@ -1596,6 +1654,7 @@ CHECKS = (
     maple_dao_multisig, pendle_spendle_virtual, aerodrome_lock_inputs,
     uniswap_firepit_threshold, beaconchain, hyperliquid_supply_convention,
     fluid_buyback_destination, aethir_staking_probe, geodnet_staking_candidates,
+    maple_transparency,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

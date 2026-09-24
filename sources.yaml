@@ -453,6 +453,12 @@
   change_threshold_pct: 30
   added: 2026-09-14
   note: "** DISABLED 2026-09-21: maple.finance/robots.txt DISALLOWS /transparency. **
+    ** 2026-09-24: THAT IS INFERRED, NOT READ. ** Nobody has read the file. The refusal came from
+    the stdlib robot parser, which says 'disallowed' both for a Disallow rule and for a robots.txt
+    that answered 401/403 (and it fetched robots.txt as Python-urllib, a UA CDNs often refuse).
+    fetch/scrape.robots_verdict now reads it with the tool's own UA and says which case it is;
+    check_offline_items.maple_transparency prints the file and the verdict, and parses the page
+    only if allowed (fetch/maple_transparency.py). Still disabled until that output is read.
     Run 20260921T100546Z: 'FAILED scrape / Maple: treasury_holding_tokens: robots.txt disallows
     https://maple.finance/transparency'. The scraper checked, was refused, and stopped — which is
     the correct behaviour. We respect robots.txt; we do not route around it, and this entry is not

@@ -11,6 +11,7 @@
     "changed_measuring_point",
     "implausible_delta",
     "unreconciled_flow",
+    "out_of_bounds_stock",
     "control"
   ],
   "rows": [
@@ -178,6 +179,17 @@
       "tier": 1,
       "written_under": "current config",
       "why": "the END of the span. 27,031,934.0021 - 26,800,000 = 231,934.0021 moved, against 83,344.4791 recorded: a residual of 148,589.523 the flow never reported"
+    },
+    {
+      "transition": "out_of_bounds_stock",
+      "date": "2026-09-14",
+      "project": "Aethir",
+      "metric": "locked_tokens",
+      "value": 264.947427,
+      "source": "chain:sum(ethereum:staking_gaming_pool+ethereum:staking_ai_pool):PARTIAL",
+      "tier": 2,
+      "written_under": "config before Aethir's sanity.locked_tokens bound",
+      "why": "a stock stored below its declared floor. The write path now rejects the same value; this is the row it cannot reach"
     },
     {
       "transition": "control",
@@ -367,6 +379,17 @@
       "expect_confidence": "GREEN",
       "expect_blank": false,
       "expect_reason_contains": ""
+    },
+    {
+      "transition": "out_of_bounds_stock",
+      "project": "Aethir",
+      "metric": "locked_tokens",
+      "written_under": "config before Aethir's sanity.locked_tokens bound",
+      "why": "a stock stored below its declared floor. The write path now rejects the same value; this is the row it cannot reach",
+      "expect_status": "out_of_bounds",
+      "expect_confidence": "RED",
+      "expect_blank": true,
+      "expect_reason_contains": "OUTSIDE ITS DECLARED BOUND"
     },
     {
       "transition": "control",
