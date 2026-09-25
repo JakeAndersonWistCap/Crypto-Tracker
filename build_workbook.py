@@ -97,12 +97,14 @@ CLOSED_TEXT = "none available"
 # Data sheet layout (column letters)
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
-             "last_success", "entered_on", "note"]
+             "last_success", "entered_on", "note", "q0_covered_days", "q0_events"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
              "Y1 (flow: 365d sum · stock: 365d avg)", "Points", "Status", "Confidence", "Why not green",
-             "Last successful fetch", "Entered on (manual)", "Note"]
+             "Last successful fetch", "Entered on (manual)", "Note",
+             # APPENDED, so every existing column letter is unchanged. Flows only (not monthly).
+             "Q0: days of the 90 the series existed for", "Q0: days with a non-zero value (events)"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 
 # Config table layout
@@ -816,6 +818,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # a 30-day sum, so "covers 30 of 30" would be answering a question nobody asked.
                 w_start = asof - pd.Timedelta(days=short)
                 row["covered_days"], row["window_days"] = _window_coverage(s, w_start, asof)
+                # THE SAME TWO QUESTIONS FOR THE Q0 WINDOW, which A4's headline annualises
+                # (x days_per_year / period_days). A Q0 sum over a series that began 42 days ago
+                # is a 42-day sum; a Q0 holding ONE discrete burn is an event, not a rate. Both
+                # are what A4's window caveat reads (_a4_window_caveat). Added 2026-09-25.
+                q_start = asof - pd.Timedelta(days=period)
+                row["q0_covered_days"], _ = _window_coverage(s, q_start, asof)
+                row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ===== ** A DECLARED SOURCE HOLE COMES OFF THE COVERAGE. Added 2026-09-23. **
                 # The coverage above asks how long the series has EXISTED, which is the right
                 # question for one that started late and the wrong one for one that stopped and
@@ -1594,7 +1603,47 @@ def _basis_iss(R: Refs, p: dict):
     return lambda r, w="q0": R.D(r, m, w)
 
 
-def _a4_headline(R: Refs, burn) -> list[tuple]:
+def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
+    """Why A4's headline for this project is NOT YET A RATE, in numbers — or "" when it is.
+
+    THE TWO SIDES OF THE CROSSOVER ARE TRUNCATED DIFFERENTLY, and "unaffected" was the wrong word
+    for that (corrected 2026-09-25). A continuous schedule in a part-filled Q0 window is short in
+    proportion to the days elapsed; a discrete burn is either in the window or not. Their ratio is
+    what actually happened in the window on both sides, with no padding, and it moves as the
+    window fills even when nothing about the economics changes: linearly on the issuance side, in
+    steps of one burn on the burn side. So it is not comparable across periods until the window
+    is full AND holds at least three burn events (a 90-day window holds ~3 monthly burns).
+    """
+    name = p["name"]
+    period, ann = GLOBALS["period_days"], GLOBALS["days_per_year"]
+
+    def num(v):
+        return isinstance(v, (int, float)) and v == v
+
+    parts, until = [], []
+    iss = data_by_key.get(f"{name}|{config.issuance_basis(name)}") or {}
+    c = iss.get("q0_covered_days")
+    if num(c) and 0 < c < period and num(iss.get("q0")):
+        shown, true = iss["q0"] * ann / period, iss["q0"] / c * ann
+        parts.append(f"ISSUANCE covers {int(c)} of {period} days, so annualised as if full it reads "
+                     f"{shown:,.0f}/yr against a {true:,.0f}/yr run-rate ({period / c:.2f}x low)")
+        until.append(f"the issuance window fills ({period - int(c)} more day(s))")
+    b = data_by_key.get(f"{name}|{config.a4_burn_metric(name)}") or {}
+    k, bc = b.get("q0_events"), b.get("q0_covered_days")
+    if num(k) and 0 < k < 3:
+        parts.append(f"BURN is {int(k)} discrete event(s) in the window, not a rate"
+                     + (f" (the series covers {int(bc)} of {period} days)"
+                        if num(bc) and bc < period else ""))
+        until.append("at least 3 burn events are in it")
+    if not parts:
+        return ""
+    return ("NOT A STABLE RATE YET — " + "; ".join(parts) + ". Burn yield and burn ÷ issuance show "
+            "what actually happened in this window on both sides, with no padding; they will move "
+            "as the window fills even if nothing changes, and are not comparable across periods "
+            "until " + " and ".join(until) + ".")
+
+
+def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
     """Burn yield in TOKEN terms (price-independent, comparable across protocols) and the
     crossover against whichever issuance applies — pool release where the supply is pre-minted."""
     circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
@@ -1606,6 +1655,10 @@ def _a4_headline(R: Refs, burn) -> list[tuple]:
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
         ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
          lambda r, p: calc(f"{burn(r, p)}/{_basis_iss(R, p)(r)}"), FMT_X, "calc", True),
+        # RIGHT BESIDE THE TWO FIGURES IT QUALIFIES. Empty where the window is full and the burn
+        # is a stream; otherwise it says, with numbers, why the pair is not yet a rate.
+        ("Q0 WINDOW CAVEAT — read before the yield and crossover",
+         lambda r, p: _a4_window_caveat(p, data_by_key or {}), FMT_TEXT, "text", True),
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
          lambda r, p: calc(_net_change(R, r, p, _basis_iss(R, p), burn)), FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
@@ -1979,7 +2032,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         # columns) — not duplicated. The crossover now runs on config.issuance_basis: pool
         # release for pre-minted supply (GEODNET, Hyperliquid), gross issuance for everyone else.
         *_valuation_head(R),
-        *_a4_headline(R, burn),
+        *_a4_headline(R, burn, data_by_key),
         ("Burn execution", lambda r, p: pull(R.C(r, "Burn execution")), FMT_TEXT, "pull"),
         ("Burn status", lambda r, p: pull(R.C(r, "Burn status")), FMT_TEXT, "pull", False, {"status_fill": "burn_split"}),
         ("Documented share of fees burned (config)", lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False, {"gate": "burn_split"}),

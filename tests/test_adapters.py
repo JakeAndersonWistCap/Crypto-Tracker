@@ -15021,3 +15021,42 @@ def test_an_as_buyback_row_is_judged_against_the_series_it_was_copied_from():
     r = o[(o.project == "GEODNET") & (o.metric == "actual_buyback_tokens")].iloc[0]
     assert r["status"] != "withdrawn" and "WITHDRAWN" not in str(r["note"]), (r["status"], r["note"])
     print("relabel ok: :as-buyback rows judged by their origin; unmarked rows still guarded")
+
+
+def test_a4_window_caveat_says_why_the_crossover_is_not_yet_a_rate():
+    """Issuance (a continuous schedule) is short in proportion to the days of Q0 it has existed;
+    a discrete monthly burn is simply in the window or not. Their ratio is what happened in the
+    window, not a rate, until the window is full and holds >= 3 burns — and the sheet says so
+    beside the two figures, with numbers. Sky, 2026-09-24: 42 of 90 days of 1,076,707.84/day,
+    one Stage 2 burn of 2,860,943.76."""
+    import build_workbook as bw
+    asof = pd.Timestamp("2026-09-24")
+    rows = [dict(date=d, project="Sky", metric="sky_stage2_burn_tokens",
+                 value=2_860_943.76 if d == pd.Timestamp("2026-09-13") else 0.0,
+                 source="chain:ethereum:burn_logs[sky_stage2_burn_tokens]", tier=2, is_manual=False)
+            for d in pd.date_range("2026-09-10", "2026-09-24")]
+    rows += [dict(date=d, project="Sky", metric="gross_issuance_tokens", value=96_903_706 / 90,
+                  source="schedule:config", tier=1, is_manual=False)
+             for d in pd.date_range("2026-08-13", "2026-09-23")]
+    o = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof)
+    by = {r["key"]: r for r in o.to_dict("records")}
+    iss, burn = by["Sky|gross_issuance_tokens"], by["Sky|sky_stage2_burn_tokens"]
+    assert iss["q0_covered_days"] == 42 and abs(iss["q0"] - 45_221_729.47) < 0.01, iss["q0"]
+    assert burn["q0_events"] == 1 and burn["q0"] == 2_860_943.76
+    assert abs(burn["q0"] / iss["q0"] - 0.0632648) < 1e-7          # the ratio on the sheet
+
+    cav = bw._a4_window_caveat(config.PROJECT_BY_NAME["Sky"], by)
+    assert cav.startswith("NOT A STABLE RATE YET"), cav
+    assert "ISSUANCE covers 42 of 90 days" in cav and "183,399,236/yr" in cav and "392,998,363/yr" in cav
+    assert "BURN is 1 discrete event(s) in the window, not a rate" in cav
+    assert "no padding" in cav and "at least 3 burn events" in cav and "48 more day(s)" in cav
+    assert "unaffected" not in cav
+
+    # A FULL window holding three burns says nothing: the caveat is not a permanent label.
+    full = {"Sky|gross_issuance_tokens": dict(iss, q0_covered_days=90),
+            "Sky|sky_stage2_burn_tokens": dict(burn, q0_events=3, q0_covered_days=90)}
+    assert bw._a4_window_caveat(config.PROJECT_BY_NAME["Sky"], full) == ""
+    # A continuous daily burn (hundreds of events) never trips the burn half.
+    assert bw._a4_window_caveat(config.PROJECT_BY_NAME["Uniswap"],
+                                {"Uniswap|gross_burn_tokens": {"q0_events": 90, "q0_covered_days": 90}}) == ""
+    print("caveat ok: 42/90-day issuance and a single burn are called what they are")
