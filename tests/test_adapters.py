@@ -14956,16 +14956,23 @@ def test_sky_five_way_split_footnotes_and_closure_states():
     notes = config.burn_footnotes("Sky")
     assert len(notes) == 2 and notes[0].startswith("Emissions offset, 426,292,860.23")
     assert "not netted" in notes[0]
-    assert "closure NOT YET CONFIRMED" in notes[1] and "REVERSIBLE" in notes[1], notes[1]
-    assert "4,769,188,384.88" in notes[1]
+    # THE RECORDED RESULT (2026-09-24 probe): one residual sender — so NOT "closed 2025", and
+    # its amount is said to be unknown rather than assumed small.
+    assert "closed 2025" not in notes[1], notes[1]
+    assert ("effectively dormant since the 2025-06-26 spell (block 22,817,692, executable from "
+            "2025-06-30); 1 residual sender confirmed active as of 2026-09-24 "
+            "(0xe751bf33164b8786c71d59c48f668d22408e142d, 3 burn(s), amount not yet pulled)") in notes[1], notes[1]
+    assert "REVERSIBLE" in notes[1] and "4,769,188,384.88" in notes[1]
     saved = copy.deepcopy(sky["burn_footnotes"])
     try:
         chk = sky["burn_footnotes"][1]["closure_check"]
+        chk["detail"]["amount_sky"] = 1234.5
+        assert "3 burn(s), 1,234.50 SKY)" in config.burn_footnotes("Sky")[1]
         chk.update(result=0, checked_on="2026-09-25")
         assert config.burn_footnotes("Sky")[1].startswith(
             "SKY<->MKR migration flows, closed 2025 (probe 2026-09-25: 0 senders after block 22,817,692)")
-        chk.update(result=3)
-        assert "STILL ACTIVE: 3 sender(s)" in config.burn_footnotes("Sky")[1]
+        chk.update(result=None)
+        assert "closure NOT YET CONFIRMED" in config.burn_footnotes("Sky")[1]
     finally:
         sky["burn_footnotes"] = saved
     # other_burn_balance's blocked reason names the resolution, not just the flag.

@@ -2148,6 +2148,23 @@ def sky_burn_breakdown():
     late = [(f, n) for f, (n, _, _) in rows if f != proxy and span[f][1] > 22_817_692]
     print(f"\n  senders other than the Pause Proxy burning AFTER block 22,817,692: "
           f"{len(late)}" + (" — " + ", ".join(f"{f} ({n})" for f, n in late[:10]) if late else ""))
+    # EVERY LATE EVENT, NOT JUST THE COUNT. A residual sender is only "immaterial" once its
+    # amount is on the page; the count alone leaves that as an assumption. Added 2026-09-25 for
+    # 0xe751bf33164b8786c71d59c48f668d22408e142d (3 burns, not in Sky's spell address registry).
+    other_total = total - by.get(proxy, (0, 0, set()))[1]
+    for f, _ in late:
+        c, _ = _code_at(f)
+        kind = "?" if c is None else ("CONTRACT" if len(c) > 2 else "EOA")
+        mine = sorted((e for e in clean if "0x" + e["topics"][1][-40:].lower() == f),
+                      key=lambda e: e["blockNumber"])
+        amt = sum(int(e["data"], 16) for e in mine)
+        print(f"\n  LATE SENDER {f} — {kind}, {len(mine)} burn(s), total {amt / 1e18:,.6f} SKY "
+              f"({(amt / other_total if other_total else 0):.8%} of everything-else)")
+        for e in mine:
+            when = (time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(e["timeStamp"]))
+                    if e.get("timeStamp") else block_time(hex(e["blockNumber"])))
+            print(f"    block {e['blockNumber']:>11,}  {when}  {int(e['data'], 16) / 1e18:>20,.6f} SKY  "
+                  f"tx {e['transactionHash']}")
 
     print("\n  LARGEST SINGLE EVENTS")
     for e in sorted(clean, key=lambda e: -int(e["data"], 16))[:10]:

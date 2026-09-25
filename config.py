@@ -1441,8 +1441,17 @@ def burn_footnotes(project_name: str) -> list[str]:
             head = (f"{f['title_closed'].split(',')[0]} — closure NOT YET CONFIRMED: run "
                     f"`{check['command']}` and record its count")
         else:
-            head = (f"{f['title_closed'].split(',')[0]} — STILL ACTIVE: {n} sender(s) burning "
-                    f"after block {check['after_block']:,} (probe {check.get('checked_on')})")
+            # "EFFECTIVELY DORMANT", NOT "CLOSED": a residual sender is confirmed, so closure is
+            # not claimed — and its amount is stated, or stated as not yet pulled, so a small
+            # residual reads as small only once there is a number behind it.
+            d = check.get("detail") or {}
+            amt = d.get("amount_sky")
+            what = (f"{d.get('sender', '?')}, {d.get('burns', '?')} burn(s), "
+                    + (f"{amt:,.2f} SKY" if amt is not None else "amount not yet pulled"))
+            head = (f"{f['title_closed'].split(',')[0]} — effectively dormant since "
+                    f"{check.get('dormant_since') or 'block ' + format(check['after_block'], ',')}"
+                    f"; {n} residual sender{'s' if n != 1 else ''} confirmed active as of "
+                    f"{check.get('checked_on')} ({what})")
         out.append(f"{head}. {f['text']}")
     return out
 
@@ -10103,8 +10112,25 @@ PROJECTS = [
                  "command": "python check_offline_items.py sky_burn_breakdown",
                  "reads": "senders other than the Pause Proxy burning AFTER block 22,817,692",
                  "after_block": 22_817_692,
-                 "result": None,
-                 "checked_on": None,
+                 "dormant_since": "the 2025-06-26 spell (block 22,817,692, executable from "
+                                  "2025-06-30)",
+                 # ** NON-ZERO. Recorded 2026-09-25 from Jake's run of the probe on 2026-09-24. **
+                 # One sender has burned SKY since that block. It is NOT in Sky's spell address
+                 # registry (sky-ecosystem/spells-mainnet src/test/addresses_mainnet.sol, as of
+                 # its 2026-09-24 commit) or in the sky, lockstake, dss-flappers or chainlog
+                 # repos, and a web search found no public label. Its amount, dates and
+                 # contract/EOA status were NOT in that probe output; the probe now prints them
+                 # (the LATE SENDER block). Nothing below is filled in until that is read.
+                 "result": 1,
+                 "checked_on": "2026-09-24",
+                 "detail": {
+                     "sender": "0xe751bf33164b8786c71d59c48f668d22408e142d",
+                     "burns": 3,
+                     "amount_sky": None,       # PENDING — from the probe's LATE SENDER line
+                     "dates": None,            # PENDING
+                     "kind": None,             # PENDING — CONTRACT or EOA, from eth_getCode
+                     "identified_as": "unidentified — not a known Sky contract on file",
+                 },
              }},
         ],
         # ===== other_burn_balance IS REAL AND NOT YET CLASSIFIED. Recorded 2026-09-24. =====
