@@ -1440,6 +1440,18 @@ def cross_check_waiting_on_primary(project_name: str, metric: str) -> dict | Non
     return None
 
 
+def issuance_schedule_end(project_name: str) -> str | None:
+    """The DECLARED last day of a project's issuance schedule, or None if it runs on.
+
+    Read from the schedule's own last step (`until`, inclusive — fetch/schedule.py issues on that
+    day). None for every schedule without one (Bitcoin, Zcash, ...) and every project without a
+    schedule, which is what keeps the stream-expiry caveat from ever firing on them.
+    """
+    sched = (PROJECT_BY_NAME.get(project_name) or {}).get("issuance_schedule") or {}
+    steps = sorted(sched.get("steps") or [], key=lambda s: s["from"])
+    return str(steps[-1]["until"])[:10] if steps and steps[-1].get("until") else None
+
+
 def a4_burn_metric(project_name: str) -> str:
     """The flow archetype 4's headline burn columns read for this project.
 

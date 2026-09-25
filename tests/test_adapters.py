@@ -15060,3 +15060,57 @@ def test_a4_window_caveat_says_why_the_crossover_is_not_yet_a_rate():
     assert bw._a4_window_caveat(config.PROJECT_BY_NAME["Uniswap"],
                                 {"Uniswap|gross_burn_tokens": {"q0_events": 90, "q0_covered_days": 90}}) == ""
     print("caveat ok: 42/90-day issuance and a single burn are called what they are")
+
+
+def test_issuance_stream_expiry_caveat_fires_after_the_declared_end_and_clears_90_days_later():
+    """The mirror of the part-filled window: once a schedule's declared end has passed, Q0 keeps
+    summing its last days while the true rate is zero, so the annualised figure OVERSTATES. Sky's
+    LSSKY stream: 1,076,707.84/day from 2026-08-13, last issuing day 2026-11-10 (until is
+    inclusive). The end date is the schedule's own; the day count is computed."""
+    import build_workbook as bw
+    assert config.issuance_schedule_end("Sky") == "2026-11-10"
+    assert config.issuance_schedule_end("Uniswap") is None
+    assert config.issuance_schedule_end("Bitcoin") is None       # a schedule that runs on
+
+    rows = [dict(date=d, project="Sky", metric="gross_issuance_tokens", value=96_903_706 / 90,
+                 source="schedule:config", tier=1, is_manual=False)
+            for d in pd.date_range("2026-08-13", "2026-11-10")]
+    sky = config.PROJECT_BY_NAME["Sky"]
+
+    def at(day):
+        o = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp(day))
+        by = {r["key"]: r for r in o.to_dict("records")}
+        return by["Sky|gross_issuance_tokens"], bw._a4_window_caveat(sky, by)
+
+    # 2026-11-10: the stream's LAST issuing day — not expired; the window is still one day short.
+    row, cav = at("2026-11-10")
+    assert row["schedule_end"] == "2026-11-10" and not (row["q0_pre_end_days"] == row["q0_pre_end_days"])
+    assert "STREAM ENDED" not in cav and "ISSUANCE covers 89 of 90 days" in cav, cav
+    # 2026-11-11: the first day with no issuance. Fires, with the exact wording, and the
+    # run-rate clause (which assumes a running stream) does not.
+    row, cav = at("2026-11-11")
+    assert row["q0_pre_end_days"] == 89, row["q0_pre_end_days"]
+    assert cav.startswith("ISSUANCE STREAM ENDED 2026-11-10 — Q0 window still includes 89 pre-expiry "
+                          "day(s); annualised figure reflects a schedule that no longer applies, "
+                          "not current issuance. Clears once the full 90-day window is entirely "
+                          "post-expiry."), cav
+    assert "run-rate" not in cav
+    # Counting down — the last day it fires, and the day it clears (end + 90 days).
+    assert at("2027-02-07")[0]["q0_pre_end_days"] == 1 and "STREAM ENDED" in at("2027-02-07")[1]
+    row, cav = at("2027-02-08")
+    assert row["q0_pre_end_days"] == 0 and cav == "", cav
+
+    # NEVER on a project without a declared end: a continuous burn and an open-ended schedule.
+    uni = [dict(date=d, project="Uniswap", metric="gross_burn_tokens", value=100_000.0,
+                source="chain:ethereum:burn_dead:delta", tier=2, is_manual=False)
+           for d in pd.date_range("2026-06-01", "2026-12-01")]
+    btc = [dict(date=d, project="Bitcoin", metric="gross_issuance_tokens", value=450.0,
+                source="schedule:config", tier=1, is_manual=False)
+           for d in pd.date_range("2026-06-01", "2026-12-01")]
+    o = bw.aggregate(pd.DataFrame(uni + btc), pd.DataFrame(), pd.Timestamp("2026-12-01"))
+    by = {r["key"]: r for r in o.to_dict("records")}
+    for k in ("Uniswap|gross_burn_tokens", "Bitcoin|gross_issuance_tokens"):
+        assert by[k]["schedule_end"] != by[k]["schedule_end"] or by[k]["schedule_end"] is None, by[k]
+    assert "STREAM ENDED" not in bw._a4_window_caveat(config.PROJECT_BY_NAME["Uniswap"], by)
+    print("expiry ok: fires 2026-11-11 (89 days) to 2027-02-07 (1 day), clears 2027-02-08; "
+          "silent without a declared end")

@@ -97,14 +97,17 @@ CLOSED_TEXT = "none available"
 # Data sheet layout (column letters)
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
-             "last_success", "entered_on", "note", "q0_covered_days", "q0_events"]
+             "last_success", "entered_on", "note", "q0_covered_days", "q0_events",
+             "schedule_end", "q0_pre_end_days"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
              "Y1 (flow: 365d sum · stock: 365d avg)", "Points", "Status", "Confidence", "Why not green",
              "Last successful fetch", "Entered on (manual)", "Note",
              # APPENDED, so every existing column letter is unchanged. Flows only (not monthly).
-             "Q0: days of the 90 the series existed for", "Q0: days with a non-zero value (events)"]
+             "Q0: days of the 90 the series existed for", "Q0: days with a non-zero value (events)",
+             "Schedule end (declared in config; schedule:config rows only)",
+             "Q0: days on or before the schedule end (only once it has passed)"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 
 # Config table layout
@@ -825,6 +828,20 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 q_start = asof - pd.Timedelta(days=period)
                 row["q0_covered_days"], _ = _window_coverage(s, q_start, asof)
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
+                # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
+                # The mirror of a part-filled window: after the declared end the true rate is zero,
+                # but Q0 keeps summing the stream's last days until they age out. The end date is
+                # the schedule's OWN (config.issuance_schedule_end), and the count uses the same
+                # window and first-observation basis as q0_covered_days — never typed in.
+                end = (config.issuance_schedule_end(name)
+                       if str(latest["source"]).startswith("schedule:config") else None)
+                if end:
+                    row["schedule_end"] = end
+                    end_ts = pd.Timestamp(end)
+                    if asof > end_ts:
+                        lo = max(q_start + pd.Timedelta(days=1), s.index.min())
+                        hi = min(end_ts, asof)
+                        row["q0_pre_end_days"] = max(int((hi - lo).days) + 1, 0) if hi >= lo else 0
                 # ===== ** A DECLARED SOURCE HOLE COMES OFF THE COVERAGE. Added 2026-09-23. **
                 # The coverage above asks how long the series has EXISTED, which is the right
                 # question for one that started late and the wrong one for one that stopped and
@@ -1623,7 +1640,17 @@ def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
     parts, until = [], []
     iss = data_by_key.get(f"{name}|{config.issuance_basis(name)}") or {}
     c = iss.get("q0_covered_days")
-    if num(c) and 0 < c < period and num(iss.get("q0")):
+    # THE MIRROR CASE, checked first: a schedule past its declared end OVERSTATES what is issued
+    # now (the true rate is zero) for as long as the window still reaches back into it. When it
+    # fires, the "run-rate" wording below does not apply — there is no running rate.
+    pre = iss.get("q0_pre_end_days")
+    expired = ""
+    if iss.get("schedule_end") and num(pre) and pre > 0:
+        expired = (f"ISSUANCE STREAM ENDED {iss['schedule_end']} — Q0 window still includes "
+                   f"{int(pre)} pre-expiry day(s); annualised figure reflects a schedule that no "
+                   f"longer applies, not current issuance. Clears once the full {period}-day "
+                   f"window is entirely post-expiry.")
+    elif num(c) and 0 < c < period and num(iss.get("q0")):
         shown, true = iss["q0"] * ann / period, iss["q0"] / c * ann
         parts.append(f"ISSUANCE covers {int(c)} of {period} days, so annualised as if full it reads "
                      f"{shown:,.0f}/yr against a {true:,.0f}/yr run-rate ({period / c:.2f}x low)")
@@ -1635,12 +1662,11 @@ def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
                      + (f" (the series covers {int(bc)} of {period} days)"
                         if num(bc) and bc < period else ""))
         until.append("at least 3 burn events are in it")
-    if not parts:
-        return ""
-    return ("NOT A STABLE RATE YET — " + "; ".join(parts) + ". Burn yield and burn ÷ issuance show "
-            "what actually happened in this window on both sides, with no padding; they will move "
-            "as the window fills even if nothing changes, and are not comparable across periods "
-            "until " + " and ".join(until) + ".")
+    stable = ("NOT A STABLE RATE YET — " + "; ".join(parts) + ". Burn yield and burn ÷ issuance "
+              "show what actually happened in this window on both sides, with no padding; they "
+              "will move as the window fills even if nothing changes, and are not comparable "
+              "across periods until " + " and ".join(until) + ".") if parts else ""
+    return " | ".join(x for x in (expired, stable) if x)
 
 
 def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
