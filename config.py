@@ -1281,6 +1281,26 @@ def contract_serves(spec: dict) -> set:
     return {s for s in served if s}
 
 
+def relabelled_from(project_name: str, metric: str) -> str | None:
+    """The metric an `:as-buyback` row of `metric` was copied from, per the project's route.
+
+    fetch._derive_buyback re-labels a burn series as actual_buyback_tokens where the bought
+    tokens ARE the burned tokens: the whole burn on the "burn" route (GEODNET: gross_burn_tokens)
+    or the supply-reduction leg on the "split" route (Sky: sky_stage2_burn_tokens). The row keeps
+    its origin's source, so it has to be judged against its origin's contracts.
+    """
+    if metric != "actual_buyback_tokens":
+        return None
+    route = buyback_route(project_name) or {}
+    if route.get("route") == "burn":
+        return route.get("metric")
+    if route.get("route") == "split":
+        leg = next((l for l in stage_split_legs(project_name)
+                    if l.get("effect") == "supply_reduction" and l.get("cross_check_metric")), None)
+        return leg and leg["cross_check_metric"]
+    return None
+
+
 def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list[str]:
     """Contract keys named in a stored row's source that STILL EXIST but no longer serve `metric`.
 
@@ -1302,6 +1322,16 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
     body = ":".join(part for part in src.split(":")[1:] if part not in SOURCE_MARKERS)
     pieces = body[4:-1].split("+") if body.startswith("sum(") and body.endswith(")") else [body]
     allowed = _flow_parents(project_name, metric)
+    # ** A RE-LABELLED ROW IS JUDGED AGAINST WHAT IT WAS COPIED FROM. Fixed 2026-09-25. **
+    # GEODNET's actual_buyback_tokens carried chain:polygon:burn_polygon:delta:as-buyback and
+    # rendered WITHDRAWN. Not a parsing fault — the markers strip and the key resolves to
+    # burn_polygon — but burn_polygon serves burn_address_balance, and the allowed set here knew
+    # only actual_buyback_tokens' OWN parents. The :as-buyback marker says the row is the burn
+    # flow under another name, so the burn flow's parents are the right test, and only for
+    # rows that carry the marker.
+    origin = relabelled_from(project_name, metric) if "as-buyback" in src.split(":") else None
+    if origin:
+        allowed = allowed | _flow_parents(project_name, origin)
     withdrawn = []
     for piece in pieces:
         key = piece.split(":")[-1]
@@ -11474,11 +11504,16 @@ PROJECTS = [
             {"key": "burn", "share": 0.05,
              "label": "Implied burn (5% of NPS) — THE ONLY supply reduction",
              "effect": "supply_reduction",
-             "cross_check_metric": "gross_burn_tokens",
+             # ** REPOINTED 2026-09-25 from gross_burn_tokens. ** That is the Pause Proxy's
+             # whole burn history differenced (blocked — it holds the 2025 emissions offset), so
+             # re-labelling it as the buyback's burn leg would carry the 426M into
+             # actual_buyback_tokens. The Stage 2 flow is this leg exactly.
+             "cross_check_metric": "sky_stage2_burn_tokens",
              "note": "the buy-and-burn leg. This is the figure to compare against the burn "
-                     "actually observed on chain (burn_address_balance's delta, from the "
-                     "Transfer-to-zero read) — implied against actual, the same comparison the "
-                     "A3 tab makes everywhere else."},
+                     "actually observed on chain (sky_stage2_burn_tokens: Pause Proxy burns "
+                     "from the 2026-09-10 spell onward, from the Transfer-to-zero read) — "
+                     "implied against actual, the same comparison the A3 tab makes everywhere "
+                     "else."},
         ],
         "revenue_base": {
             "metric": "net_protocol_surplus_usd",

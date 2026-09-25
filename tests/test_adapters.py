@@ -7987,7 +7987,9 @@ def test_skys_stage_2_legs_render_separately_and_the_burn_leg_is_checked_against
 
     # C3: THE BURN LEG HAS AN ACTUAL TO BE CHECKED AGAINST, and it is a measurement rather than
     # another derivation — Sky's burn is read from Transfer-to-zero events.
-    assert legs["burn"]["cross_check_metric"] == "gross_burn_tokens"
+    # REPOINTED 2026-09-25 to the Stage 2 flow: gross_burn_tokens is the Pause Proxy's whole
+    # history (blocked), which would carry the 2025 emissions offset into the buyback's burn leg.
+    assert legs["burn"]["cross_check_metric"] == "sky_stage2_burn_tokens"
     assert config.cumulative_flow_for("Sky", "burn_address_balance") == "gross_burn_tokens"
 
     # NO OTHER PROJECT ACQUIRES LEGS BY DEFAULT. The row must be empty where the question does
@@ -12858,7 +12860,8 @@ def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_
     """A split destination's supply-reduction leg is a burn, so it re-labels like GEODNET's.
 
     22.5 of Stage 2's 27.5 points go to stakers (distributed — no stock, no burn); 5 points are
-    bought and burned. The burn leg is gross_burn_tokens under a second name, marked PARTIAL so
+    bought and burned. The burn leg is sky_stage2_burn_tokens (repointed 2026-09-25 from
+    gross_burn_tokens, the blocked Pause Proxy total) under a second name, marked PARTIAL so
     the sheet cannot read one leg as the whole buyback.
     """
     import fetch
@@ -12869,9 +12872,9 @@ def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_
 
     # (1) WITH A BURN SERIES: re-labelled, PARTIAL, priced on the day.
     out = FetchOutput()
-    out.add(pd.concat([point("Sky", "gross_burn_tokens", 300_000.0, "chain:ethereum:burn_logs:delta", 2,
+    out.add(pd.concat([point("Sky", "sky_stage2_burn_tokens", 300_000.0, "chain:ethereum:burn_logs[sky_stage2_burn_tokens]", 2,
                              pd.Timestamp("2026-09-20")),
-                       point("Sky", "gross_burn_tokens", 250_000.0, "chain:ethereum:burn_logs:delta", 2,
+                       point("Sky", "sky_stage2_burn_tokens", 250_000.0, "chain:ethereum:burn_logs[sky_stage2_burn_tokens]", 2,
                              pd.Timestamp("2026-09-21"))], ignore_index=True),
             "chain", "Sky", "burn", 2)
     out.add(pd.concat([point("Sky", "price_usd", 0.08, "coingecko", 1, pd.Timestamp("2026-09-20")),
@@ -12881,11 +12884,18 @@ def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_
     df = out.frame()
     toks = df[df.metric == "actual_buyback_tokens"].sort_values("date")
     assert list(toks.value) == [300_000.0, 250_000.0], toks.to_dict()
+    # AND THE BLOCKED PAUSE PROXY FLOW IS NOT WHAT FEEDS IT: a gross_burn_tokens row alone relabels
+    # nothing, so the 2025 emissions offset cannot reach the buyback column.
+    only_gross = FetchOutput()
+    only_gross.add(point("Sky", "gross_burn_tokens", 426_292_860.23, "chain:ethereum:burn_logs:delta", 2,
+                         pd.Timestamp("2026-09-21")), "chain", "Sky", "burn", 2)
+    fetch._derive_buyback(only_gross, [sky])
+    assert only_gross.frame().query("metric == 'actual_buyback_tokens'").empty
     src = toks.source.iloc[0]
     assert ":as-buyback" in src and ":PARTIAL" in src, f"one leg of two must read PARTIAL: {src}"
     usd = df[df.metric == "actual_buyback_usd"].sort_values("date")
     assert list(usd.value) == [24_000.0, 25_000.0], "usd = tokens x price on the flow's own date"
-    msg = [e.message for e in out.log if "actual_buyback_tokens = gross_burn_tokens" in e.message]
+    msg = [e.message for e in out.log if "actual_buyback_tokens = sky_stage2_burn_tokens" in e.message]
     assert msg and "5% supply-reduction leg ONLY" in msg[0] and "27.5% buy_pressure" in msg[0], msg
 
     # (2) WITHOUT ONE (Sky's scan is cap-blocked): nothing re-labelled, and it says so — not a
@@ -12896,7 +12906,7 @@ def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_
     fetch._derive_buyback(out2, [sky])
     assert out2.frame()[out2.frame().metric == "actual_buyback_tokens"].empty
     skipped = [e.message for e in out2.log if e.status == "skipped" and "nothing to re-label" in e.message]
-    assert skipped and "Not a separate gap: see gross_burn_tokens" in skipped[0], out2.log
+    assert skipped and "Not a separate gap: see sky_stage2_burn_tokens" in skipped[0], out2.log
 
 
 def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tokens():
@@ -12943,8 +12953,8 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     # 1a — burn / split routes point at the burn row and carry ITS reason, so nobody builds a
     # second source for one event.
     r, sug = reason("Sky", "actual_buyback_tokens")
-    assert r.startswith("SAME EVENT AS gross_burn_tokens") and "5% supply-reduction leg ONLY" in r, r
-    assert "That row's reason:" in r and "Resolve gross_burn_tokens" in sug
+    assert r.startswith("SAME EVENT AS sky_stage2_burn_tokens") and "5% supply-reduction leg ONLY" in r, r
+    assert "That row's reason:" in r and "Resolve sky_stage2_burn_tokens" in sug
     r, _ = reason("GEODNET", "actual_buyback_tokens")
     assert r.startswith("SAME EVENT AS gross_burn_tokens"), r
     ru, _ = reason("GEODNET", "actual_buyback_usd")
@@ -14980,3 +14990,34 @@ def test_sky_five_way_split_footnotes_and_closure_states():
     assert "RESOLVED by the five-way split" in r and "footnote" in r, r
     assert config.burn_footnotes("Uniswap") == []
     print("split ok: two footnotes, closure only on a recorded zero, reason names the split")
+
+
+def test_an_as_buyback_row_is_judged_against_the_series_it_was_copied_from():
+    """GEODNET actual_buyback_tokens rendered WITHDRAWN with source
+    chain:polygon:burn_polygon:delta:as-buyback. Not a parse fault: the markers strip and the key
+    resolves to burn_polygon. burn_polygon serves burn_address_balance, and the guard knew only
+    actual_buyback_tokens' own parents. A row carrying :as-buyback is the burn flow renamed, so
+    it is judged against the burn flow's parents — for any marker order, and only with the marker."""
+    import build_workbook as bw
+    g = "chain:polygon:burn_polygon:delta:as-buyback"
+    assert config.strip_source_annotations(g) == g           # markers are left for the key split
+    assert config.withdrawn_contract_keys("GEODNET", "actual_buyback_tokens", g) == []
+    assert config.withdrawn_contract_keys("GEODNET", "actual_buyback_tokens",
+                                          "chain:polygon:burn_polygon:as-buyback:delta") == []
+    # WITHOUT the marker the same contract still does not serve the buyback: the guard is intact.
+    assert config.withdrawn_contract_keys("GEODNET", "actual_buyback_tokens",
+                                          "chain:polygon:burn_polygon:delta") == ["burn_polygon"]
+    # The split route (Sky) follows its supply-reduction leg — now the Stage 2 flow.
+    assert config.relabelled_from("Sky", "actual_buyback_tokens") == "sky_stage2_burn_tokens"
+    assert config.relabelled_from("GEODNET", "actual_buyback_tokens") == "gross_burn_tokens"
+    assert config.relabelled_from("GEODNET", "gross_burn_tokens") is None
+    s_src = "chain:ethereum:burn_logs[sky_stage2_burn_tokens][logs@1-2]:as-buyback:PARTIAL"
+    assert config.withdrawn_contract_keys("Sky", "actual_buyback_tokens", s_src) == []
+
+    rows = [dict(date=pd.Timestamp(d), project="GEODNET", metric="actual_buyback_tokens",
+                 value=v, source=g, tier=2, is_manual=False)
+            for d, v in [("2026-09-22", 1000.0), ("2026-09-23", 1200.0)]]
+    o = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-24"))
+    r = o[(o.project == "GEODNET") & (o.metric == "actual_buyback_tokens")].iloc[0]
+    assert r["status"] != "withdrawn" and "WITHDRAWN" not in str(r["note"]), (r["status"], r["note"])
+    print("relabel ok: :as-buyback rows judged by their origin; unmarked rows still guarded")

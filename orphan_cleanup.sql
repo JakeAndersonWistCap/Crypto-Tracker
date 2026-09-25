@@ -2963,3 +2963,52 @@ SELECT source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date,
   FROM metrics
  WHERE project = 'Ether.fi' AND metric = 'actual_buyback_tokens'
  GROUP BY source;
+
+-- ========================================================================================
+-- AM. Sky — actual_buyback_tokens rows copied from the BLOCKED gross_burn_tokens.  2026-09-25
+--     AM1-AM2 LOOK. AM3 is the proposed DELETE, commented out.
+-- ========================================================================================
+-- Until 2026-09-25 Sky's supply-reduction leg re-labelled gross_burn_tokens — the Pause
+-- Proxy's WHOLE burn history differenced, including the 2025-06-26 emissions offset
+-- (426,292,860.23). Those rows rendered WITHDRAWN only because the guard mis-judged every
+-- :as-buyback row; with that fixed, any that remain would pass and show. The leg now
+-- re-labels sky_stage2_burn_tokens, whose rows carry "[sky_stage2_burn_tokens]" in the source.
+-- Expected: zero or a handful of rows, all from on or before 2026-09-24.
+
+-- AM1. THE SOURCE CENSUS.
+SELECT source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date, SUM(value) AS total
+  FROM metrics
+ WHERE project = 'Sky' AND metric IN ('actual_buyback_tokens', 'actual_buyback_usd')
+ GROUP BY source
+ ORDER BY first_date;
+
+-- AM2. THE ROWS AM3 WOULD DELETE — token rows re-labelled from anything but the Stage 2 flow,
+--      and the actual_buyback_usd twins priced from them. The twin's source is
+--      "derived:tokens*price" and does not say which token row it came from, so it is matched
+--      by DATE to a token row being removed.
+SELECT date, metric, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Sky'
+   AND (   (metric = 'actual_buyback_tokens'
+            AND source LIKE '%as-buyback%' AND source NOT LIKE '%sky_stage2_burn_tokens%')
+        OR (metric = 'actual_buyback_usd' AND source LIKE 'derived:tokens*price%'
+            AND date IN (SELECT date FROM metrics
+                          WHERE project = 'Sky' AND metric = 'actual_buyback_tokens'
+                            AND source LIKE '%as-buyback%'
+                            AND source NOT LIKE '%sky_stage2_burn_tokens%')))
+ ORDER BY date, metric;
+
+-- AM3. THE PROPOSED DELETE. Only after AM1-AM2 read as expected. The usd twins go FIRST —
+--      their date match reads the token rows, which must still be there.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Sky' AND metric = 'actual_buyback_usd' AND source LIKE 'derived:tokens*price%'
+--    AND date IN (SELECT date FROM metrics
+--                  WHERE project = 'Sky' AND metric = 'actual_buyback_tokens'
+--                    AND source LIKE '%as-buyback%'
+--                    AND source NOT LIKE '%sky_stage2_burn_tokens%');
+-- DELETE FROM metrics
+--  WHERE project = 'Sky' AND metric = 'actual_buyback_tokens'
+--    AND source LIKE '%as-buyback%'
+--    AND source NOT LIKE '%sky_stage2_burn_tokens%';
+-- COMMIT;
