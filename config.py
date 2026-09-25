@@ -175,9 +175,24 @@ METRICS = {
     # the A1 tab from stored issuance and stake, not stored.
     "staking_yield_pct":          {"label": "Validator staking yield (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Ethereum",)},
     # Annualised on-chain settlement volume — The Block's "adjusted on-chain volume", entered by
-    # hand quarterly (no free API carries it: growthepie's metrics and Etherscan's daily stats
-    # were checked 2026-09-24). A RATE STATED AS OF A DATE, so kind stock: a quarterly hand entry
-    # summed as a flow would mean nothing across a 90-day window.
+    # hand quarterly. A RATE STATED AS OF A DATE, so kind stock: a quarterly hand entry summed as
+    # a flow would mean nothing across a 90-day window.
+    # ** NO FREE API CARRIES IT — RE-CHECKED 2026-09-25 AGAINST THE SOURCES THEMSELVES. **
+    #   growthepie: its own metric registry (github.com/growthepie/gtp, backend/src/config.py at
+    #     999907b, 2026-09-22) — tvl, txcount, daa, stables_mcap, fees, rent_paid, profit,
+    #     txcosts(_median/_avg/_swap/_native_median), fdv, market_cap, throughput, tps,
+    #     app_revenue, costs, costs_l1, costs_blobs, blob_size/_count, data_posted, fees_paid,
+    #     fees_per_mbyte, blob_producers, gas_fees, success_rate, token_volume, token_price,
+    #     eth_exported, eth_supply, eth_issuance_rate. None is value transferred on-chain:
+    #     token_volume is an APP TOKEN's trading volume, eth_exported is ETH bridged OUT of
+    #     Ethereum, tvl is a stock. The live API was unreachable from the environment that
+    #     re-checked (egress blocked), so this is the registry, not a live response.
+    #   Etherscan: the 14 daily stats actions (dailyavgblocksize, dailyavgblocktime,
+    #     dailyavggaslimit, dailyavggasprice, dailyavghashrate, dailyavgnetdifficulty,
+    #     dailyblkcount, dailyblockrewards, dailygasused, dailynetutilization, dailynewaddress,
+    #     dailytx, dailytxnfee, dailyuncleblkcount) — counts, gas and fees, no value transferred,
+    #     and every one is marked "PRO endpoint" (paid). Read from the OpenAPI spec at
+    #     github.com/purrproof/etherscan-openapi (672112a); docs.etherscan.io was blocked.
     "settlement_volume_annual_usd": {"label": "On-chain settlement volume, annualised ($, The Block adjusted — manual quarterly)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e14, "only_projects": ("Ethereum", "Plume")},
     # Hyperliquid's staking-reward reserve (tokenDetails.futureEmissions) — pre-minted, INSIDE
     # totalSupply. Its decline over a window is rewards paid; that is the validator-yield input.
