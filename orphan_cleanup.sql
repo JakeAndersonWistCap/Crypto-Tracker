@@ -3012,3 +3012,26 @@ SELECT date, metric, value, source, fetched_at
 --    AND source LIKE '%as-buyback%'
 --    AND source NOT LIKE '%sky_stage2_burn_tokens%';
 -- COMMIT;
+
+-- ========================================================================================
+-- AN. Ether.fi — is actual_buyback_tokens = 0 a real "no inflow in 30 days"?       2026-09-25
+--     READ ONLY. Nothing to delete.
+-- ========================================================================================
+-- The inflow scan's run-log line ends its count with ", last on YYYY-MM-DD" since b4a7bd4.
+--   last_on present, days_before_run > 30  -> the 0 is a genuine trailing-30-day zero.
+--   last_on present, days_before_run <= 30 -> the 0 CONTRADICTS the scan: a counted transfer
+--                                             is inside the window. Stop and report.
+--   last_on NULL (no phrase in the message) -> the run predates b4a7bd4; the 0 is not
+--                                             confirmed either way. Re-run first.
+SELECT run_id, substr(ts, 1, 10) AS run_date,
+       CASE WHEN instr(message, ', last on ') > 0
+            THEN substr(message, instr(message, ', last on ') + 10, 10) END AS last_on,
+       CASE WHEN instr(message, ', last on ') > 0
+            THEN CAST(julianday(substr(ts, 1, 10))
+                      - julianday(substr(message, instr(message, ', last on ') + 10, 10)) AS INTEGER)
+            END AS days_before_run,
+       message
+  FROM run_log
+ WHERE project = 'Ether.fi' AND message LIKE '%buyback_wallet_inflow%RECONCILED%'
+ ORDER BY ts DESC
+ LIMIT 3;
