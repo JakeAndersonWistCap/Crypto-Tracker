@@ -869,6 +869,23 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                     groups[key] = _as_stored(mine, observed.columns)
                 elif observed is not None and not observed.empty:
                     _VIEW_BLOCKS[key] = f"BLOCKED — {spec['block_reason']}"
+            elif spec["kind"] == "declared_curve":
+                # A MODEL, EVALUATED ON THE CALENDAR (World Mobile, A8 2026-09-28): each day is
+                # S(t1) - S(t0) with S(t) = S0 (t+1)^k, t in years since spec["t0"]. It needs no
+                # stored input, so it never inherits what bridging does to the EVM supply sum.
+                curve = config.issuance_curve(name)
+                if curve and any(g[0] == name for g in groups):   # only where the project has data
+                    k, s0 = float(curve["k"]), config.issuance_curve_s0(curve)
+                    t0 = pd.Timestamp(spec["t0"])
+                    days = pd.date_range(max(t0, asof - pd.Timedelta(days=2 * 365)),
+                                         asof - pd.Timedelta(days=1), freq="D")
+                    t = ((days - t0).days.to_numpy(dtype=float)) / 365.25
+                    s = lambda x: s0 * (x + 1.0) ** k  # noqa: E731
+                    view = pd.DataFrame({"date": days, "project": name, "metric": metric,
+                                         "value": s(t + 1 / 365.25) - s(t),
+                                         "source": spec["source_label"], "tier": 1})
+                    cols = observed.columns if observed is not None and not observed.empty else view.columns
+                    groups[key] = _as_stored(view, cols)
         # A DERIVED RELEASE OVER A FLAT CIRCULATING FIGURE MEASURES NOTHING.
         rel, circ = groups.get((name, "pool_release_tokens")), groups.get((name, "circulating_supply"))
         if (rel is not None and not rel.empty and circ is not None and (name, "pool_release_tokens") not in _VIEW_BLOCKS

@@ -966,6 +966,72 @@ def near_block_supply():
     print("  PASTE BACK: expect ~2.5%/yr less the burnt gas; issuance = this change + burn.")
 
 
+# World Mobile on Cardano: policy + asset name from the Cardano Foundation token registry,
+# mappings/<policy><asset hex>.json (name "World Mobile Token X", ticker WMTX, decimals 6, url
+# worldmobiletoken.com), read 2026-09-28. The legacy WMT policy is the pre-migration token.
+WMTX_CARDANO = ("e5a42a1a1d3d1da71b0449663c32798725888d2eb0843c4dabeca05a",
+                "576f726c644d6f62696c65546f6b656e58")
+WMT_LEGACY_CARDANO = ("1d7f33bd23d85e1a25d87d86fac4f199c3197a2f7afeb662a0f34e1e",
+                      "776f726c646d6f62696c65746f6b656e")
+WMTX_EVM = (("ethereum", "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7"),
+            ("bsc", "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7"),
+            ("arbitrum", "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7"),
+            ("base", "0x3e31966d4f81C72D2a55310A6365A56A4393E98D"))
+
+
+def wm_cardano_supply():
+    """A8 (2026-09-28): is World Mobile's Cardano supply disjoint from the EVM sum?
+
+    Koios (api.koios.rest, free, keyless) asset_info gives the Cardano policy's total_supply
+    (minted minus burned, 6 decimals). Beside it: the four EVM totalSupply() reads and the
+    whitepaper curve's aggregate for today (t0 = 2022-04-16, the curve's own implied start).
+      BURN-AND-MINT: Cardano + EVM ~ the curve's aggregate, and the sum is the total.
+      LOCK-AND-MINT: Cardano alone ~ the aggregate (the bridge's lock is inside it), and adding
+                     the EVM sum double counts — the total is Cardano alone.
+    The probe prints both sums against the curve; the closer one names the model. Neither is
+    wired until Jake has seen this."""
+    head("WORLD MOBILE — Cardano native WMTX vs the EVM sum vs the whitepaper curve")
+    card = {}
+    for label, (policy, name) in (("WMTX", WMTX_CARDANO), ("WMT legacy", WMT_LEGACY_CARDANO)):
+        try:
+            r = requests.post("https://api.koios.rest/api/v1/asset_info",
+                              json={"_asset_list": [[policy, name]]}, timeout=TIMEOUT)
+            r.raise_for_status()
+            row = (r.json() or [{}])[0]
+            card[label] = int(row["total_supply"]) / 1e6
+            print(f"  Cardano {label:<10} total_supply {card[label]:>18,.0f}  "
+                  f"(mint_cnt {row.get('mint_cnt')}, burn_cnt {row.get('burn_cnt')})")
+        except Exception as e:  # noqa: BLE001
+            print(f"  Cardano {label:<10} UNREACHABLE — {e}")
+    evm = {}
+    for chain, addr in WMTX_EVM:
+        v = _uint(addr, SEL_TOTAL_SUPPLY, chain)
+        evm[chain] = None if v is None else v / 1e18
+        print(f"  {chain:<9} totalSupply {'UNREACHABLE' if v is None else f'{v / 1e18:,.0f}':>18}")
+    try:
+        import pandas as pd                               # noqa: PLC0415
+        import config                                     # noqa: PLC0415
+        c = config.issuance_curve("World Mobile")
+        t = (pd.Timestamp.now().normalize() - pd.Timestamp("2022-04-16")).days / 365.25
+        model = config.issuance_curve_s0(c) * (t + 1) ** float(c["k"])
+        print(f"  curve aggregate today (MODEL, t={t:.2f}y) {model:,.0f}")
+    except Exception as e:  # noqa: BLE001
+        model = None
+        print(f"  curve not evaluated — {e}")
+    if "WMTX" in card and None not in evm.values():
+        esum = sum(evm.values())
+        print(f"  EVM sum {esum:,.0f}   Cardano + EVM {card['WMTX'] + esum:,.0f}   Cardano alone "
+              f"{card['WMTX']:,.0f}")
+        if model:
+            both, alone = abs(card["WMTX"] + esum - model), abs(card["WMTX"] - model)
+            print(f"  -> {'BURN-AND-MINT (sum)' if both < alone else 'LOCK-AND-MINT (Cardano alone)'}"
+                  f" fits the curve better ({min(both, alone):,.0f} away).")
+        print("  NOTE: Ethereum WMTx was deprecated 2026-09-25 after the 2026-09-20 exploit mint and "
+              "holders were re-issued on Base; if Base has grown by Ethereum's pre-exploit supply "
+              "while Ethereum has not fallen, the EVM sum now counts those holders twice.")
+    print("  PASTE BACK the lines above; the Cardano leg is wired once the model is agreed.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2337,6 +2403,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
+    wm_cardano_supply,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

@@ -865,7 +865,15 @@ def _derive_observed_minting(out: FetchOutput, projects: list[dict],
         out.add(flow, SOURCE_DERIVED, name,
                 f"{metric} = the change in {supply_metric} — MEASURED, not modelled: "
                 f"{spec['why']}", 2)
-        if spec.get("partial_reason"):
+        if spec.get("role") == "cross_check":
+            # STORED FOR COMPARISON ONLY (World Mobile, A8): config.ISSUANCE_PRIMARY replaces the
+            # series at read time, so this delta is never the displayed issuance.
+            out.review_item(name, metric, "observed_minting_cross_check", "stored_flagged",
+                            value=float(flow["value"].iloc[0]), date=latest.date,
+                            source=src, tier=2,
+                            basis=(f"CROSS-CHECK ONLY — the displayed {metric} is "
+                                   f"ISSUANCE_PRIMARY's model. {spec['partial_reason']}"))
+        elif spec.get("partial_reason"):
             out.review_item(name, metric, "supply_partial", "stored_flagged",
                             value=float(flow["value"].iloc[0]), date=latest.date,
                             source=src, tier=2,

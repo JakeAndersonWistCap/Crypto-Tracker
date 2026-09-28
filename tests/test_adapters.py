@@ -2327,8 +2327,11 @@ def test_world_mobiles_emissions_come_from_observed_minting_not_from_the_model()
     src = str(got.source.iloc[0])
     assert "d_total_supply_gross" in src and src.endswith(":delta"), src
     assert "PARTIAL" in src, "Cardano is excluded, and the row has to say so"
-    part = [r for r in out.review if r["reason"] == "supply_partial"]
-    assert part and "can only be too small" in part[0]["basis"], part
+    # A8 2026-09-28: the delta is still stored, but only as the cross-check — bridging and the
+    # 2026-09-20 exploit mint move it, so it is no longer "a lower bound".
+    part = [r for r in out.review if r["reason"] == "observed_minting_cross_check"]
+    assert part and "CROSS-CHECK ONLY" in part[0]["basis"], part
+    assert "NOT a bound in either direction" in part[0]["basis"]
 
     # ** ONE OBSERVATION IS NOT A FLOW. ** Same rule as every other differenced series: two dated
     # readings or nothing, never a 0 that reads as "nothing was minted".
@@ -17394,3 +17397,42 @@ def test_near_issuance_is_derived_from_the_block_header_supply_and_the_guard_rea
     assert len(iss) == 1 and abs(iss.value.iloc[0] - 85_000.0) < 1e-3, iss
     assert iss.source.iloc[0].startswith("derived:d_total_supply_protocol+burn")
     assert config.issuance_primary("Near")["observed_source_prefix"] == "derived:d_total_supply_protocol"
+
+
+def test_world_mobile_emissions_are_the_whitepaper_curve_on_the_calendar_not_evm_minting():
+    """A8, Jake 2026-09-28: the four-chain EVM sum rose +41.45M in the week of the 2026-09-20
+    Ethereum exploit, against a curve of ~0.7M/week. Observed EVM minting is bridging, not
+    emissions. The whitepaper curve S(t) = S0 (t+1)^0.1141 is primary, as a MODEL, evaluated on
+    the calendar from t0 = 2022-04-16 (the curve's own implied start), so no stored supply moves
+    it — and every consumer reads it, including when the stored series holds the exploit week."""
+    import build_workbook as bw
+
+    spec = config.issuance_primary("World Mobile")
+    assert spec["kind"] == "declared_curve" and spec["metric"] == "emissions_tokens"
+    assert spec["t0"] == "2022-04-16" and "unconfirmed" in spec["source_label"]
+    assert spec["source_label"].startswith("model:")
+    assert config.PROJECT_BY_NAME["World Mobile"]["observed_minting"]["role"] == "cross_check"
+
+    asof = pd.Timestamp("2026-09-28")
+    days = pd.date_range("2026-06-01", "2026-09-27")
+    stored = [{"date": d, "project": "World Mobile", "metric": "emissions_tokens",
+               "value": 41_451_547.0 if d == pd.Timestamp("2026-09-21") else 100_000.0,
+               "source": "derived:d_total_supply_gross|PARTIAL:delta", "tier": 2,
+               "is_manual": False, "entered_on": ""} for d in days]
+    groups = {("World Mobile", "emissions_tokens"): pd.DataFrame(stored)}
+    bw._VIEW_BLOCKS.clear()
+    bw._issuance_views(groups, asof)
+    view = groups[("World Mobile", "emissions_tokens")]
+    assert (view["source"] == spec["source_label"]).all()
+    assert view["date"].max() == asof - pd.Timedelta(days=1)
+
+    c = config.issuance_curve("World Mobile")
+    k, s0 = float(c["k"]), config.issuance_curve_s0(c)
+    q0 = view[view["date"] > asof - pd.Timedelta(days=90)]["value"].sum()
+    t = lambda d: (pd.Timestamp(d) - pd.Timestamp("2022-04-16")).days / 365.25  # noqa: E731
+    # rows dated 07-01 .. 09-27, each S(next day) - S(day): exactly S(09-28) - S(07-01)
+    exact = s0 * ((t(asof) + 1) ** k - (t(asof - pd.Timedelta(days=89)) + 1) ** k)
+    assert abs(q0 - exact) / exact < 1e-9
+    week = q0 / 89 * 7
+    assert 650_000 < week < 750_000, f"{week:,.0f}/week — Jake's ~0.7M/week"
+    assert 41_000_000 not in set(view["value"].round()), "the exploit week is not issuance"

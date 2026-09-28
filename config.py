@@ -61,7 +61,8 @@ GEODNET_BURN_QUERY = "https://dune.com/queries/8683175"
 #
 # CARDANO IS THE ORIGINAL CHAIN AND IS NOT IN THE SUM. World Mobile's own chain list is Base,
 # Ethereum, BNB Chain and Cardano; WMT on Cardano is a native asset under a policy id, not an
-# ERC-20, so no EVM read reaches it and no Cardano policy id is on file. The four EVM
+# ERC-20, so no EVM read reaches it and its Cardano policy id (e5a42a1a…ca05a, token registry,
+# 2026-09-28) is read only by the wm_cardano_supply probe. The four EVM
 # deployments are summed under burn-and-mint (see the block comment on contracts.token); the
 # Cardano leg is simply outside them.
 #
@@ -80,8 +81,10 @@ WMTX_CARDANO_PARTIAL = (
     "0x3e31966d4f81C72D2a55310A6365A56A4393E98D) ARE summed, and correctly: World Mobile's MiCA "
     "regulatory whitepaper documents the contract's burn function as serving cross-chain "
     "bridging, which is burn-and-mint, so the four are disjoint and their sum is the minted EVM "
-    "supply. Cardano is the ORIGINAL chain and sits outside it entirely — WMT there is a native "
-    "asset under a policy id, not an ERC-20, and no policy id is on file. SIZE THE EXCLUSION BY "
+    "supply. Cardano is the ORIGINAL chain and sits outside it entirely — WMTX there is a native "
+    "asset under policy e5a42a1a1d3d1da71b0449663c32798725888d2eb0843c4dabeca05a (Cardano "
+    "Foundation token registry, read 2026-09-28), not an ERC-20; its Koios read is the "
+    "check_offline_items wm_cardano_supply probe, not yet wired. SIZE THE EXCLUSION BY "
     "SUBTRACTION, not by estimate: aggregate supply from the whitepaper's Section XI curve "
     "(decay_curve_confirmed) minus this sum is the Cardano-native residual. Ethereum alone reads "
     "1,493,853,279 against an aggregate around 1.5bn, so the residual is expected to be small — "
@@ -4380,15 +4383,23 @@ PROJECTS = [
         # ** IT INHERITS total_supply_gross's PARTIALITY, and here the direction IS known. **
         # Cardano is excluded, so a mint on Cardano is invisible and the figure is a LOWER BOUND.
         # That is a better failure than the curve's, whose error had no known sign.
+        # ** DEMOTED TO A CROSS-CHECK 2026-09-28 (A8). ** The supply delta is BRIDGING as much
+        # as minting — +41.45M in the week of the 2026-09-20 Ethereum exploit — so it is stored
+        # for comparison and ISSUANCE_PRIMARY's declared_curve view replaces it for every
+        # consumer. Its error is no longer one-signed: bridging in from Cardano inflates it.
         "observed_minting": {
+            "role": "cross_check",
             "metric": "emissions_tokens",
             "supply_metric": "total_supply_gross",
             "why": "the whitepaper's curve cannot be anchored — World Mobile has no single "
                    "launch date (see issuance_curve.why_demoted) — so the column comes from what "
                    "the contracts actually minted.",
-            "partial_reason": "total_supply_gross sums the EVM deployments only; Cardano is "
-                              "excluded, so a mint there is invisible and this is a LOWER BOUND.",
+            "partial_reason": "total_supply_gross sums the EVM deployments only. A Cardano -> "
+                              "EVM bridge transfer raises it with no new tokens, and the "
+                              "2026-09-20 exploit mint on Ethereum raised it with tokens that "
+                              "were never emissions, so it is NOT a bound in either direction.",
             "declared_on": "2026-09-23",
+            "demoted_on": "2026-09-28",
         },
         # ===== W2: THE BUYBACK SHARE IS UNPUBLISHED, AND THE CADENCE IS RANDOM. 2026-09-23. =====
         # World Mobile says only that "a portion" of earnings funds buybacks, and that they run
@@ -4814,9 +4825,11 @@ PROJECTS = [
                         "supply it contributes a visible zero in the adapter's component line. Still "
                         "resolve by asking World Mobile, not by deleting a verified deployment.",
             "cardano": "IN THE PROTOCOL'S LIST, NOT IN CONFIG. The original chain. NOT CAPTURED: there is "
-                       "no Cardano adapter and no Cardano policy id on file, so its supply is outside the "
-                       "partial Ethereum-only read entirely. This widens supply_is_partial beyond what "
-                       "partial_reason currently says.",
+                       "no Cardano adapter, so its supply is outside the EVM sum entirely. Policy id "
+                       "e5a42a1a1d3d1da71b0449663c32798725888d2eb0843c4dabeca05a, asset "
+                       "576f726c644d6f62696c65546f6b656e58 (WMTX, 6 decimals) — Cardano Foundation "
+                       "token registry, mappings/<policy><asset>.json, read 2026-09-28; read by the "
+                       "wm_cardano_supply probe (Koios asset_info) until the bridge model is agreed.",
             "source_date": "2026-09-15",
         },
         # A STALE FIGURE WITH A DATE ON IT — recorded so it is not re-adopted as a correction.
@@ -5004,6 +5017,17 @@ PROJECTS = [
         #               bad read, and it is worth stopping for rather than widening the band.
         # NOT a bound on total_supply: that metric holds CoinGecko's 2,000,000,000 cap, which is
         # a correct reading of a different quantity and would fail this band every run.
+        #
+        # ===== A8 (2026-09-28): THE BAND STILL HOLDS ONCE CARDANO IS ADDED, UNCHANGED. =====
+        # Under burn-and-mint, Cardano + EVM is the aggregate, and the aggregate lives between
+        # the curve's origin (S0 = 1,413,073,572) and the ERC20Capped 2bn — the same two ends.
+        # Under lock-and-mint the sum double counts and SHOULD fail the top end; that is the
+        # band doing its job. Two things it will now catch that it did not have to before:
+        #   - the 2026-09-20 exploit mint (~53.8M on Ethereum) sits inside today's EVM sum;
+        #   - Ethereum WMTx was deprecated 2026-09-25 and holders re-issued on Base: if Base
+        #     grows by the pre-exploit Ethereum supply while Ethereum does not fall, the sum
+        #     approaches 3bn and the read is REJECTED. That rejection is correct — the fix is to
+        #     drop the deprecated Ethereum leg on a primary statement, never to widen the band.
         "sanity": {
             # See the token contract's note: the curve's own bounds, not a hand-picked ceiling.
             # 1.42bn = mainnet launch on the whitepaper's Fig. 1; 2.0bn = the ERC20Capped cap in
@@ -14418,6 +14442,10 @@ VALIDATOR_YIELD = {
 #   first_party    only rows whose source starts with source_prefix count. Until they cover the
 #                  window the series is BLOCKED with block_reason rather than shown from the
 #                  derivation.
+#   declared_curve the project's issuance_curve evaluated on the CALENDAR from t0: each day is
+#                  S(t+1d) - S(t), S(t) = S0 (t+1)^k. A MODEL, and its source string says so. No
+#                  guard: the stored series it replaces is not an issuance measurement (see the
+#                  World Mobile entry).
 ISSUANCE_PRIMARY = {
     # observed_source_prefix (2026-09-28): the guard's cross-check is the issuance derived from
     # the block-header supply (d(total_supply_protocol) + burn); rows derived from CoinGecko's
@@ -14435,6 +14463,25 @@ ISSUANCE_PRIMARY = {
                                  "cover the window. The derived d(total_supply) + burn figure is "
                                  "MECHANISM_ASSUMED and read ~3x high against ~2,700 ETH/day, so "
                                  "it is not shown in its place"},
+    # WORLD MOBILE (A8, Jake 2026-09-28): OBSERVED EVM MINTING IS NOT EMISSIONS. The four-chain
+    # EVM sum moves with bridging from Cardano and, on 2026-09-20, with an exploit mint on
+    # Ethereum: 1,714,232,116 (09-21) -> 1,755,683,663 (09-28), +41.45M in a week against a curve
+    # of ~0.7M/week. The whitepaper curve is primary, as a MODEL, until a Cardano read exists.
+    #
+    # ** t0 = 2022-04-16 IS THE CURVE'S OWN IMPLIED START, NOT A DOCUMENTED DATE. ** It is what
+    # the pre-exploit EVM sum implied when inverted through the curve (reported as the
+    # "[confirm] ... launch date the curve implies" gap, recorded 2026-09-23), and World Mobile's
+    # 2022 FAQ says staking rewards were paid "before mainnet launch" — so emission in 2022-04 is
+    # plausible, not confirmed. Fixed here so that bridging can no longer move t. Moving t0 by
+    # three months moves the annual figure by ~5%.
+    "World Mobile": {"kind": "declared_curve", "metric": "emissions_tokens",
+                     "t0": "2022-04-16",
+                     "t0_basis": "implied by the curve from the pre-exploit EVM supply sum "
+                                 "(recorded 2026-09-23); not a documented first-emission date",
+                     "source_label": "model:whitepaper curve S(t)=S0(t+1)^0.1141, t0=2022-04-16 "
+                                     "(implied, unconfirmed)",
+                     "source_url": "https://worldmobiletoken.com/WhitePaper.pdf",
+                     "source_section": "Section XI, Inflation Mechanics"},
     # GEODNET (fix 2): the issuance basis is pool_release_tokens (pre-minted). The derived route
     # is d(circulating) - d(total) from CoinGecko, whose circulating figure has not moved, so it
     # reads ~0 and burn/release read 108x. The measured mining-wallet outflow is primary.
