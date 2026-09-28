@@ -13960,15 +13960,22 @@ def test_maple_buyback_row_that_does_not_multiply_out_is_refused_not_stored():
 
 
 def test_robots_refusal_says_whether_it_was_a_rule_or_a_status_code():
-    """Run 20260921T100546Z said only 'robots.txt disallows'. The stdlib parser returns the same
-    False for a Disallow rule and for a robots.txt that answered 403 — the reason separates them.
-    The VERDICTS are unchanged: 403 still refuses."""
+    """Run 20260921T100546Z said only 'robots.txt disallows'; the reason now says whether a rule
+    or a status code decided it. ** AND THE STATUS VERDICTS FOLLOW RFC 9309 (2026-09-28), not the
+    stdlib: 4xx (401/403 included) = unavailable = may access; 5xx and 429 = unreachable =
+    complete disallow.** beaconcha.in's robots.txt answered 403 two runs running and was refused."""
     from fetch.base import USER_AGENT
     from fetch.scrape import robots_from_response
 
     url = "https://maple.finance/transparency"
-    rp, how = robots_from_response("https://maple.finance/robots.txt", 403, "")
-    assert not rp.can_fetch(USER_AGENT, url) and "answered HTTP 403" in how and "no rule" in how
+    for code in (401, 403, 404, 410):
+        rp, how = robots_from_response("https://maple.finance/robots.txt", code, "")
+        assert rp.can_fetch(USER_AGENT, url), code
+        assert f"answered HTTP {code}" in how and "UNAVAILABLE" in how and "s2.3.1.3" in how, how
+    for code in (429, 500, 503):
+        rp, how = robots_from_response("https://maple.finance/robots.txt", code, "")
+        assert not rp.can_fetch(USER_AGENT, url), code
+        assert ("UNREACHABLE" in how or "429" in how) and "s2.3.1.4" in how, how
 
     rp, how = robots_from_response("https://maple.finance/robots.txt", 200,
                                    "User-agent: *\nDisallow: /transparency\n")
@@ -13976,8 +13983,23 @@ def test_robots_refusal_says_whether_it_was_a_rule_or_a_status_code():
 
     rp, _ = robots_from_response("https://maple.finance/robots.txt", 200, "User-agent: *\nDisallow:\n")
     assert rp.can_fetch(USER_AGENT, url)
-    rp, how = robots_from_response("https://maple.finance/robots.txt", 404, "")
-    assert rp.can_fetch(USER_AGENT, url) and "no robots.txt" in how
+
+    # A NETWORK ERROR fetching robots.txt is "unreachable" too — complete disallow (s2.3.1.4).
+    import fetch.scrape as scrape
+    real = scrape._ROBOTS.copy()
+    try:
+        scrape._ROBOTS.clear()
+        import requests as _rq
+        orig = _rq.get
+        _rq.get = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("reset"))
+        try:
+            ok, why = scrape.robots_verdict("https://example.invalid/data")
+        finally:
+            _rq.get = orig
+        assert not ok and "UNREACHABLE" in why and "s2.3.1.4" in why, why
+    finally:
+        scrape._ROBOTS.clear()
+        scrape._ROBOTS.update(real)
 
 
 def test_maple_page_run_stores_holdings_and_complete_months_only(monkeypatch, tmp_path):

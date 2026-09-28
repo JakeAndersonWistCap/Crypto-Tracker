@@ -154,23 +154,31 @@ _ROBOTS: dict[str, tuple[urllib.robotparser.RobotFileParser | None, str]] = {}
 def robots_from_response(url: str, status: int, text: str) -> tuple[urllib.robotparser.RobotFileParser, str]:
     """A parser for one robots.txt answer, and a sentence saying what the answer was.
 
-    The stdlib's own status handling, kept exactly: 401/403 disallow everything, any other 4xx
-    means there is no robots.txt, and a 5xx disallows. Only the REASON is new — the verdicts are
-    the ones this tool has always applied. Shared with check_offline_items so the offline answer
-    and the run's answer cannot differ.
+    ** RFC 9309, NOT THE STDLIB'S CONVENTION. Corrected 2026-09-28. ** This mirrored Python's
+    RobotFileParser, which treats 401/403 on robots.txt as disallow-all. RFC 9309 says otherwise:
+      2xx          parse the file and apply its rules.
+      4xx          "unavailable" (s2.3.1.3): the crawler MAY access any resources — 401 and 403
+                   included. beaconcha.in's robots.txt answered 403 on two consecutive runs and
+                   the ethstore reads were refused for it.
+      429          treated as UNREACHABLE (common practice): the server is shedding load, so
+                   disallow for now and retry on a later run — never read as "no rules".
+      5xx          "unreachable" (s2.3.1.4): assume complete disallow.
+    Shared with check_offline_items so the offline answer and the run's answer cannot differ.
     """
     rp = urllib.robotparser.RobotFileParser()
     rp.set_url(url)
-    if status in (401, 403):
+    if status == 429:
         rp.disallow_all = True
-        how = (f"robots.txt ITSELF answered HTTP {status} — no rule was read; the robots "
-               f"convention treats that as disallow-all")
+        how = ("robots.txt answered HTTP 429 (rate limited) — treated as UNREACHABLE: disallow "
+               "for now, retry on a later run (RFC 9309 s2.3.1.4 by common practice)")
     elif 400 <= status < 500:
         rp.allow_all = True
-        how = f"no robots.txt (HTTP {status})"
+        how = (f"robots.txt answered HTTP {status} — UNAVAILABLE, so any resource may be "
+               f"accessed (RFC 9309 s2.3.1.3)")
     elif status >= 500:
         rp.disallow_all = True
-        how = f"robots.txt answered HTTP {status}; treated as disallow-all until it answers"
+        how = (f"robots.txt answered HTTP {status} — UNREACHABLE, complete disallow until it "
+               f"answers (RFC 9309 s2.3.1.4)")
     else:
         rp.parse(text.splitlines())
         how = f"robots.txt read (HTTP {status})"
@@ -188,8 +196,15 @@ def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, s
         # by RobotFileParser.read(), which sends "Python-urllib/3.x" — a UA many CDNs refuse
         # outright — so "robots.txt disallows" could mean a 403 on robots.txt itself.
         r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
-    except Exception as e:  # noqa: BLE001 — unreachable robots.txt is permissive
-        _ROBOTS[root] = (None, f"robots.txt unreachable ({type(e).__name__}); treated as permissive")
+    except Exception as e:  # noqa: BLE001
+        # ** A NETWORK ERROR IS "UNREACHABLE", NOT "NO FILE". Corrected 2026-09-28. ** RFC 9309
+        # s2.3.1.4: robots.txt unreachable "due to server or network errors" -> the crawler MUST
+        # assume complete disallow. This used to be read as permissive.
+        rp = urllib.robotparser.RobotFileParser()
+        rp.set_url(url)
+        rp.disallow_all = True
+        _ROBOTS[root] = (rp, f"robots.txt UNREACHABLE ({type(e).__name__}) — complete disallow "
+                             f"until it answers (RFC 9309 s2.3.1.4)")
         return _ROBOTS[root]
     rp, how = robots_from_response(url, r.status_code, r.text)
     _ROBOTS[root] = (rp, how)
@@ -197,9 +212,9 @@ def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, s
 
 
 def robots_verdict(url: str) -> tuple[bool, str]:
-    """(allowed, why). WHY names the case: a matching Disallow rule, a status code on robots.txt
-    itself, or no robots.txt. A robots.txt we cannot fetch is treated as permissive, which is the
-    conventional reading, but an explicit Disallow is always honoured."""
+    """(allowed, why). WHY names the case: a matching Disallow rule, or the status robots.txt
+    itself answered with, read per RFC 9309 (see robots_from_response). An explicit Disallow is
+    always honoured."""
     if os.environ.get("TOKEN_METRICS_IGNORE_ROBOTS", "").strip() in ("1", "true", "yes"):
         return True, "TOKEN_METRICS_IGNORE_ROBOTS is set"
     parts = urllib.parse.urlparse(url)

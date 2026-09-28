@@ -2007,6 +2007,14 @@ PROJECTS = [
         # _derive_issuance already stands down whenever the metric is already in the run's
         # frame — and the derivation remains the fallback for any day this source fails.
         "beaconchain": {
+            # ** ROBOTS.TXT GOVERNS CRAWLING; THE KEY AUTHORISES THIS ENDPOINT. Recorded
+            # 2026-09-28. ** /api/v1/ethstore is a keyed API Jake registered for — the key is the
+            # permission to call it. robots.txt is still checked (a courtesy this tool pays every
+            # host), read per RFC 9309: beaconcha.in's robots.txt answered HTTP 403 on two
+            # consecutive runs, which is "unavailable" (s2.3.1.3, may access), not a Disallow.
+            # The stdlib reading of 403 as disallow-all refused these reads until 2026-09-28.
+            "authorisation": "BEACONCHAIN_API_KEY — the registered key is the permission for "
+                             "this endpoint; robots.txt governs crawling, not keyed API use",
             "base_url": "https://beaconcha.in",
             "key_env": "BEACONCHAIN_API_KEY",
             "metrics": {
