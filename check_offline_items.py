@@ -1116,6 +1116,29 @@ def geod_archive_probe():
     print("  PASTE BACK: the first endpoint whose 365d line shows two numbers serves the backfill.")
 
 
+def plume_growthepie():
+    """C3 (2026-09-28): Plume's last 7 days of daa and txcount as the API serves them, and the
+    transactions per active address. Compare the latest day with www.growthepie.com/chains/plume
+    (not reachable from the sandbox). growthepie's backend excludes the current day at source
+    (json_creation.download_data), so every row printed is a complete day."""
+    head("PLUME — growthepie fundamentals: daily active addresses vs transactions")
+    try:
+        rows = requests.get("https://api.growthepie.com/v1/fundamentals.json", timeout=TIMEOUT).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    by = {}
+    for r in rows:
+        if r.get("origin_key") == "plume" and r.get("metric_key") in ("daa", "txcount"):
+            by.setdefault(r["date"], {})[r["metric_key"]] = float(r["value"])
+    for d in sorted(by)[-7:]:
+        daa, tx = by[d].get("daa"), by[d].get("txcount")
+        per = f"{tx / daa:,.0f} tx/address" if daa and tx else ""
+        print(f"  {d}  daa {daa if daa is None else f'{daa:,.0f}':>10}  txcount "
+              f"{tx if tx is None else f'{tx:,.0f}':>12}  {per}")
+    print("  PASTE BACK the latest line and the site's figure for the same date.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2487,7 +2510,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
-    wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe,
+    wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

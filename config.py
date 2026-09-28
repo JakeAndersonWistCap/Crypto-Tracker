@@ -3341,6 +3341,20 @@ PROJECTS = [
                                            "'txcount' are all present, 2026-09-23.",
             "confirmed_on": "2026-09-23 — date_field 'date', value_field 'value', read off "
                             "live sample rows for both projects and both metrics.",
+            # ===== C3 (2026-09-28): 449 ACTIVE ADDRESSES AGAINST ~189K TX/DAY IS GROWTHEPIE'S
+            # OWN PAIR, AND THE LATEST ROW IS NEVER A PARTIAL DAY. Read from growthepie's backend
+            # (github.com/growthepie/gtp-backend @999907b):
+            #   - fundamentals.json is built from json_creation.download_data, which selects
+            #     kpi."date" < date_trunc('day', now()) for every metric except market cap/FDV —
+            #     today is excluded at the source, so no today-skip is needed here;
+            #   - daa is hll_cardinality over fact_active_addresses_hll per day (unique active
+            #     addresses, select_daa.sql.j2), txcount counts transactions with gas_used > 0
+            #     (sql_queries.py, origin_key plume). ~420 tx per address a day means a few
+            #     high-volume senders (bots, oracles, system accounts), not a misread.
+            # The website could not be opened from here: check_offline_items plume_growthepie.
+            "current_day_excluded_at_source": "json_creation.download_data: date < date_trunc('day', now())",
+            "daa_definition": "unique active addresses per day (hll over fact_active_addresses_hll)",
+            "checked_on": "2026-09-28",
         },
         "name": "Plume", "symbol": "PLUME",
         # As Ethereum: The Block's adjusted on-chain volume, hand-entered quarterly IF The Block
