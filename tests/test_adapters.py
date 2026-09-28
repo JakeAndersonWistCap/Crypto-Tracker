@@ -2641,6 +2641,9 @@ def _derive(project_name: str, model: str, supply_now: float, supply_prior: floa
     from fetch import _derive_issuance
 
     p = dict(config.PROJECT_BY_NAME[project_name])
+    # These tests are about the formula over total_supply; a protocol supply read (Near, and
+    # Ethereum since A9) is exercised by its own tests.
+    p.pop("issuance_supply_metric", None)
     p["burn_mechanism"] = {"model": model, "status": status, "source_url": "x", "source_date": None, "note": ""}
     out = _issuance_frame(p["name"], supply_now, burn)
     _derive_issuance(out, [p],
@@ -14469,8 +14472,23 @@ def _beaconchain_run(monkeypatch, body, key="bc-secret-456"):
     beaconchain._day_cache_file().unlink(missing_ok=True)
     http = _BeaconChainHttp(body)
     out = FetchOutput()
-    beaconchain.BeaconChain(http=http).run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    beaconchain.BeaconChain(http=http).run([_bc_fixture_project()], None, out)
     return out, http
+
+
+def _bc_fixture_project() -> dict:
+    """Ethereum with the consensus-rewards read put back. Config dropped it on 2026-09-28 (A9:
+    issuance now comes from Etherscan ethsupply2), but these tests exercise the ADAPTER's
+    mechanics — the prior-day rule, the response shape, the key header — and that field is the
+    one they were written against."""
+    import copy
+
+    p = copy.deepcopy(config.PROJECT_BY_NAME["Ethereum"])
+    p["beaconchain"]["metrics"] = {
+        "gross_issuance_tokens": {"path": "/api/v1/ethstore/latest",
+                                  "field": "consensus_rewards_sum_wei", "scale": 1e18},
+        **p["beaconchain"]["metrics"]}
+    return p
 
 
 def _ethstore_row(day_start, day_end, consensus_wei, tx_fees_wei=999_999e18):
@@ -14665,8 +14683,8 @@ def test_beaconchain_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch)
     out = FetchOutput()
     beaconchain.BeaconChain(http=_BeaconChainHttp({})).run(
         [config.PROJECT_BY_NAME["Ethereum"]], None, out)
-    # both figures ETH.Store gives — issuance and the validator yield — need the same key
-    assert {g["metric"] for g in out.gaps} == {"gross_issuance_tokens", "staking_yield_pct"}
+    # A9 2026-09-28: beaconcha.in serves the validator yield only; issuance is Etherscan's
+    assert {g["metric"] for g in out.gaps} == {"staking_yield_pct"}
     assert all("BEACONCHAIN_API_KEY" in g["reason"] for g in out.gaps)
 
 
@@ -15583,11 +15601,13 @@ def test_declared_or_first_party_issuance_is_primary_in_every_consumer():
                "derived:d_total_supply_protocol+burn")
     r = agg(base + low).loc[("Near", "gross_issuance_tokens")]
     assert r["status"] == "blocked" and "declared 32,200,000 vs observed 1,073,333" in r["note"], r["note"]
-    # (c) Ethereum: derived rows only -> BLOCKED waiting for beaconcha.in; first-party -> shown
+    # (c) Ethereum: CoinGecko-derived rows only -> BLOCKED waiting for Etherscan (A9, 2026-09-28:
+    #     first-party is now d(total_supply_protocol) + d(BurntFees)); first-party -> shown
     eth_d = rows("Ethereum", "gross_issuance_tokens", 101.2, "derived:d_supply+burn")
     r = agg(eth_d).loc[("Ethereum", "gross_issuance_tokens")]
-    assert r["status"] == "blocked" and "beaconcha.in" in r["note"]
-    eth_b = rows("Ethereum", "gross_issuance_tokens", 2_700.0, "beaconchain", dates=days[-5:])
+    assert r["status"] == "blocked" and "Etherscan ethsupply2" in r["note"]
+    eth_b = rows("Ethereum", "gross_issuance_tokens", 2_700.0,
+                 "derived:d_total_supply_protocol+burn", dates=days[-5:])
     r = agg(eth_d[:-5] + eth_b).loc[("Ethereum", "gross_issuance_tokens")]
     assert r["status"] not in bw.WITHHELD_STATUSES and r["q0"] == 5 * 2_700.0, (r["status"], r["q0"])
     # (d) GEODNET: derived release over a flat circulating figure -> BLOCKED; measured -> primary
@@ -17436,3 +17456,73 @@ def test_world_mobile_emissions_are_the_whitepaper_curve_on_the_calendar_not_evm
     week = q0 / 89 * 7
     assert 650_000 < week < 750_000, f"{week:,.0f}/week — Jake's ~0.7M/week"
     assert 41_000_000 not in set(view["value"].round()), "the exploit week is not issuance"
+
+
+def test_ethereum_burn_and_issuance_come_from_etherscan_ethsupply2(monkeypatch):
+    """A9, Jake 2026-09-28: one free-tier call (stats/ethsupply2) gives cumulative BurntFees and
+    the supply components. burn = d(BurntFees); issuance = d(EthSupply + Eth2Staking), reached as
+    d(total_supply_protocol) + burn. The key never reaches a log; a refusal quotes Etherscan."""
+    from fetch import _derive_issuance
+    from fetch.base import FetchOutput, today
+    from fetch.etherscan_supply import EtherscanSupply
+
+    key = "es-secret-789"
+    monkeypatch.setenv("ETHERSCAN_API_KEY", key)
+    wei = 10 ** 18
+    body = {"status": "1", "message": "OK", "result": {
+        "EthSupply": str(120_000_000 * wei), "Eth2Staking": str(6_000_000 * wei),
+        "BurntFees": str(4_600_000 * wei), "WithdrawnTotal": str(30_000_000 * wei)}}
+
+    class _Http:
+        def __init__(self, b):
+            self.b, self.calls = b, []
+
+        def get(self, url, params=None, headers=None):
+            self.calls.append((url, dict(params or {})))
+            return self.b
+
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    prior_day = str((today() - pd.Timedelta(days=1)).date())
+    prior = {("Ethereum", "burn_cumulative_tokens"): 4_599_000.0,
+             ("Ethereum", "total_supply_protocol"): 121_398_000.0}
+    dates = {k: prior_day for k in prior}
+    a = EtherscanSupply(prior_dates=dates, prior_delta=prior)
+    a.http = _Http(body)
+    out = FetchOutput()
+    a.run([eth], None, out)
+    url, params = a.http.calls[0]
+    assert url == "https://api.etherscan.io/v2/api" and params["action"] == "ethsupply2"
+    assert params["chainid"] == 1 and params["module"] == "stats"
+    df = out.frame().set_index("metric")
+    assert df.loc["burn_cumulative_tokens", "value"] == 4_600_000.0
+    assert df.loc["total_supply_protocol", "value"] == 121_400_000.0, "EthSupply + Eth2Staking - BurntFees"
+    assert df.loc["gross_burn_tokens", "value"] == 1_000.0
+    assert str(df.loc["gross_burn_tokens", "source"]).startswith("etherscan:ethsupply2.BurntFees")
+    assert key not in " ".join(e.message for e in out.log)
+
+    # issuance = d(total_supply_protocol) + burn = 2,000 + 1,000 = d(EthSupply + Eth2Staking)
+    _derive_issuance(out, [eth], prior, dates)
+    iss = out.frame().query("metric == 'gross_issuance_tokens'")
+    assert list(iss["value"]) == [3_000.0], iss
+    assert str(iss["source"].iloc[0]).startswith("derived:d_total_supply_protocol+burn")
+    assert str(iss["source"].iloc[0]).startswith(config.issuance_primary("Ethereum")["source_prefix"])
+
+    # the stitch from the DefiLlama derivation to d(BurntFees) is DECLARED, so it is not blanked
+    import build_workbook as bw
+    points = ("derived:defillama_burned_fee_revenue/price", "etherscan:ethsupply2.BurntFees")
+    spans = {points[0]: (pd.Timestamp("2026-07-01"), pd.Timestamp("2026-09-28")),
+             points[1]: (pd.Timestamp("2026-09-29"), pd.Timestamp("2026-09-30"))}
+    assert bw.handover_refusal("Ethereum", "gross_burn_tokens", points, spans) is None
+    overlap = {points[0]: spans[points[0]], points[1]: (pd.Timestamp("2026-09-28"), pd.Timestamp("2026-09-30"))}
+    assert "OVERLAP" in bw.handover_refusal("Ethereum", "gross_burn_tokens", points, overlap)
+    # beaconcha.in is kept for the yield only
+    assert set(eth["beaconchain"]["metrics"]) == {"staking_yield_pct"}
+
+    # a refusal (plan, rate limit, bad key) stores nothing and quotes Etherscan, scrubbed
+    a2 = EtherscanSupply()
+    a2.http = _Http({"status": "0", "message": "NOTOK", "result": f"Invalid API Key {key}"})
+    out2 = FetchOutput()
+    a2.run([eth], None, out2)
+    assert out2.frame().empty
+    reasons = " ".join(g["reason"] for g in out2.gaps)
+    assert "NOTOK" in reasons and key not in reasons and "***" in reasons

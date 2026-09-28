@@ -360,9 +360,17 @@ METRICS = {
     # 2026-09-28 as the issuance derivation's input (issuance = delta + burn), replacing
     # CoinGecko's total, which barely moved over a window of ~8M NEAR of expected issuance.
     "total_supply_protocol": {
-        "label": "Total supply — protocol (NEAR block header total_supply; net of burn)",
+        "label": "Total supply — protocol's own figure, net of burn (NEAR block header; "
+                 "Ethereum: Etherscan ethsupply2 EthSupply + Eth2Staking - BurntFees)",
         "kind": "stock", "unit": "tokens", "archetypes": [1],
-        "tiers": [2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near",)},
+        # Bounds are NEAR's; Ethereum's own band (100m-140m) is on its project entry.
+        "tiers": [1, 2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near", "Ethereum")},
+    # Ethereum's cumulative EIP-1559 burn (Etherscan ethsupply2 BurntFees). A STOCK whose daily
+    # change is gross_burn_tokens. Bounded by what could possibly have been burned: 0 .. supply.
+    "burn_cumulative_tokens": {
+        "label": "Cumulative burn (protocol counter; Ethereum: EIP-1559 BurntFees)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1],
+        "tiers": [1], "sanity_min": 0, "sanity_max": 1.4e8, "only_projects": ("Ethereum",)},
     "treasury_holding_tokens_chain": {
         "label": "Treasury — daoMultisig balance only (reference; PARTIAL against Maple's figure)",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
@@ -2108,6 +2116,34 @@ PROJECTS = [
         # in TIER_ORDER (tier 1), so a measured figure here suppresses that day's derivation —
         # _derive_issuance already stands down whenever the metric is already in the run's
         # frame — and the derivation remains the fallback for any day this source fails.
+        # ===== A9 (Jake, 2026-09-28): BURN AND ISSUANCE FROM ETHERSCAN, NOT BEACONCHA.IN. =====
+        # One free-tier call (stats/ethsupply2, ETHERSCAN_API_KEY) gives cumulative BurntFees and
+        # the supply components (fetch/etherscan_supply.py). gross_burn_tokens = d(BurntFees) is
+        # the primary burn from the first day it has two readings, and the DefiLlama
+        # revenue/price derivation stands down beside it (it is logged as the cross-check);
+        # series_handover below declares the switch so the stitched series is not blanked.
+        # Issuance = d(total_supply_protocol) + burn = d(EthSupply + Eth2Staking), via
+        # issuance_supply_metric. beaconcha.in keeps the staking yield only.
+        "etherscan_supply": {
+            "key_env": "ETHERSCAN_API_KEY", "chainid": 1,
+            "burn_metric": "burn_cumulative_tokens", "supply_metric": "total_supply_protocol",
+            "doc_url": "https://docs.etherscan.io/api-reference/endpoint/ethsupply2",
+            "doc_read": "2026-09-28 (via search; docs host unreachable from the sandbox)",
+            "free_tier": "listed among the free stats endpoints; the first live call settles it "
+                         "(check_offline_items etherscan_ethsupply2)",
+        },
+        "issuance_supply_metric": "total_supply_protocol",
+        "series_handover": {
+            "gross_burn_tokens": {
+                "ordered_points": ("derived:defillama_burned_fee_revenue/price",
+                                   "etherscan:ethsupply2.BurntFees"),
+                "why": "DefiLlama burned-fee revenue / price, then from the first day with two "
+                       "ethsupply2 readings, d(BurntFees). The derivation stands down on every "
+                       "run in which the Etherscan flow exists, so the legs cannot overlap going "
+                       "forward; an overlap in the store still blanks the series.",
+                "declared_on": "2026-09-28",
+            },
+        },
         "beaconchain": {
             # ** ROBOTS.TXT GOVERNS CRAWLING; THE KEY AUTHORISES THIS ENDPOINT. Recorded
             # 2026-09-28. ** /api/v1/ethstore is a keyed API Jake registered for — the key is the
@@ -2119,12 +2155,10 @@ PROJECTS = [
                              "this endpoint; robots.txt governs crawling, not keyed API use",
             "base_url": "https://beaconcha.in",
             "key_env": "BEACONCHAIN_API_KEY",
+            # gross_issuance_tokens (consensus_rewards_sum_wei) REMOVED 2026-09-28 (A9): issuance
+            # now comes from Etherscan ethsupply2 (see etherscan_supply). A beaconcha.in figure
+            # beside it would make _derive_issuance stand down on the days the quota allows.
             "metrics": {
-                "gross_issuance_tokens": {"path": "/api/v1/ethstore/latest",
-                                          "field": "consensus_rewards_sum_wei", "scale": 1e18,
-                                          "log_note": "consensus-layer rewards only, excludes "
-                                                      "tx_fees_sum_wei/el_apr (a transfer to the "
-                                                      "proposer, not issuance)"},
                 # ===== THE VALIDATOR YIELD, FROM THE SAME RESPONSE. Added 2026-09-24 (Jake). =====
                 # `apr`, NOT cl_apr: the total staker return — consensus rewards PLUS execution-
                 # layer priority fees and MEV. Right for a yield (what a staker earns); wrong for
@@ -2416,6 +2450,8 @@ PROJECTS = [
         # LOUDLY at the sanity gate instead of storing a plausible 37% overstatement.
         "sanity": {
             "total_supply_dashboard": {"min": 100_000_000, "max": 140_000_000, "change_threshold_pct": 5},
+            # Same band, same reasoning: ~122m, growing well under 1%/yr.
+            "total_supply_protocol": {"min": 100_000_000, "max": 140_000_000},
         },
         "contracts": {},
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
@@ -14457,12 +14493,15 @@ ISSUANCE_PRIMARY = {
     "Pendle": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
                "rate_path": ("issuance_rate_declared", "annual_rate"),
                "supply_metric": "total_supply", "max_ratio": 10},
+    # A9 (2026-09-28): the first-party figure is d(EthSupply + Eth2Staking) from Etherscan
+    # ethsupply2, i.e. d(total_supply_protocol) + d(BurntFees). beaconcha.in keeps the yield.
     "Ethereum": {"kind": "first_party", "metric": "gross_issuance_tokens",
-                 "source_prefix": "beaconchain",
-                 "block_reason": "waiting for beaconcha.in's consensus_rewards_sum (ETH.Store) to "
-                                 "cover the window. The derived d(total_supply) + burn figure is "
-                                 "MECHANISM_ASSUMED and read ~3x high against ~2,700 ETH/day, so "
-                                 "it is not shown in its place"},
+                 "source_prefix": "derived:d_total_supply_protocol",
+                 "block_reason": "waiting for Etherscan ethsupply2 readings (d(total_supply_"
+                                 "protocol) + d(BurntFees)) to cover the window. The older "
+                                 "d(CoinGecko total_supply) + burn figure is MECHANISM_ASSUMED "
+                                 "and read ~3x high against ~2,700 ETH/day, so it is not shown "
+                                 "in its place"},
     # WORLD MOBILE (A8, Jake 2026-09-28): OBSERVED EVM MINTING IS NOT EMISSIONS. The four-chain
     # EVM sum moves with bridging from Cardano and, on 2026-09-20, with an exploit mint on
     # Ethereum: 1,714,232,116 (09-21) -> 1,755,683,663 (09-28), +41.45M in a week against a curve

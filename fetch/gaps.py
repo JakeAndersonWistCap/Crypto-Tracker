@@ -426,10 +426,17 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # A SECOND FIELD FROM A RESPONSE ALREADY FETCHED — say which, so nobody hunts for a source.
     bc = (project.get("beaconchain") or {}).get("metrics") or {}
     if metric in bc:
-        return (f"beaconcha.in ETH.Store `{bc[metric].get('field')}` is configured (the same "
-                f"response as gross_issuance_tokens) but stored nothing this run",
+        return (f"beaconcha.in ETH.Store `{bc[metric].get('field')}` is configured but stored "
+                f"nothing this run",
                 f"Read the beaconchain lines in the Run Log for {name}: a 401/429 is the key or "
                 f"quota, 'has not finished' means the latest day is still open.")
+    es = project.get("etherscan_supply") or {}
+    if metric in (es.get("burn_metric"), es.get("supply_metric")):
+        return ("Etherscan stats/ethsupply2 is configured (one call gives BurntFees and the supply "
+                "components) but stored nothing this run",
+                f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
+                f"Etherscan's message (a rate limit, the key, or a plan); or run "
+                f"check_offline_items.py etherscan_ethsupply2.")
     fut = next((r for r in (node_api.get("extra_reads") or []) if r.get("future_emissions_metric") == metric), None)
     if fut:
         return (f"read from the same tokenDetails response as {fut.get('metric')} "
@@ -827,6 +834,9 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m |= {f["metric"] for f in project.get("near_account_flows") or []}
     elif source == "beaconchain":
         m = set((project.get("beaconchain") or {}).get("metrics") or {})
+    elif source == "etherscan_supply":
+        es = project.get("etherscan_supply") or {}
+        m = {es["burn_metric"], es["supply_metric"], "gross_burn_tokens"} if es else set()
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
     elif source == "maple_page":

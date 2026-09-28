@@ -41,6 +41,7 @@ from .schedule import Schedule
 from .logscan import LogScan
 from .near import NearNode
 from .tron import TronNode
+from .etherscan_supply import EtherscanSupply
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
                        check_level_breaks, check_reference_values, validate_frame)
@@ -62,6 +63,9 @@ TIER_ORDER = [
     # of _derive_issuance in the pipeline, so a measured figure here suppresses that day's
     # derivation and the derivation remains the fallback for any day this source fails.
     ("beaconchain", 1, lambda ctx: BeaconChain()),
+    # Ethereum's cumulative burn and protocol supply (Etherscan stats/ethsupply2, A9).
+    ("etherscan_supply", 1, lambda ctx: EtherscanSupply(prior_dates=ctx["prior_dates"],
+                                                        prior_delta=ctx["prior_delta"])),
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
@@ -1047,10 +1051,22 @@ def _derive_chain_burn(out: FetchOutput, projects: list[dict]) -> None:
         if not decl:
             continue
         if (name, "gross_burn_tokens") in have:
+            # THE CROSS-CHECK (Ethereum, A9): the derivation stands down, and says what it would
+            # have read for the latest priced revenue day beside the measured flow.
+            xc = ""
+            meas = frame[(frame.project == name) & (frame.metric == "gross_burn_tokens")]
+            rev = frame[(frame.project == name) & (frame.metric == "revenue_usd")].sort_values("date")
+            for r in rev.iloc[::-1].itertuples(index=False):
+                px = price_on.get((name, str(r.date)[:10]))
+                if px and px > 0:
+                    xc = (f" Cross-check: DefiLlama revenue/price for {str(r.date)[:10]} reads "
+                          f"{float(r.value) / px:,.2f}/day; the measured flow this run is "
+                          f"{float(meas['value'].iloc[-1]):,.2f} ({meas['source'].iloc[-1]}).")
+                    break
             out.skipped(SOURCE_DERIVED, name,
                         "gross_burn_tokens: NOT derived from revenue — the metric already has a "
                         "figure this run. A derivation beside a measurement is a second measuring "
-                        "point, and the two alternating blank the column.", tier=2)
+                        "point, and the two alternating blank the column." + xc, tier=2)
             continue
 
         rev = frame[(frame.project == name) & (frame.metric == "revenue_usd")]

@@ -1032,6 +1032,45 @@ def wm_cardano_supply():
     print("  PASTE BACK the lines above; the Cardano leg is wired once the model is agreed.")
 
 
+def etherscan_ethsupply2():
+    """A9 (2026-09-28): is stats/ethsupply2 on the free tier for the key in .env?
+
+    Prints the four fields (wei -> ETH) and the supply they imply, EthSupply + Eth2Staking -
+    BurntFees. A 'NOTOK' answer is printed verbatim with the key scrubbed: a message naming a
+    plan means the endpoint is not on this key's tier and the DefiLlama-derived burn stays
+    primary. The key is never printed; only the host is."""
+    head("ETHEREUM — Etherscan stats/ethsupply2 (BurntFees, EthSupply, Eth2Staking)")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    key = os.environ.get("ETHERSCAN_API_KEY", "").strip()
+    if not key:
+        print("  NO ETHERSCAN_API_KEY in .env — nothing to test.")
+        return
+    try:
+        r = requests.get("https://api.etherscan.io/v2/api", timeout=TIMEOUT,
+                         params={"chainid": 1, "module": "stats", "action": "ethsupply2",
+                                 "apikey": key})
+        body = r.json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  api.etherscan.io UNREACHABLE — {str(e).replace(key, '***')}")
+        return
+    res = body.get("result")
+    if str(body.get("status")) != "1" or not isinstance(res, dict):
+        print(f"  REFUSED: status {body.get('status')!r} message {body.get('message')!r} "
+              f"result {str(res).replace(key, '***')[:200]!r}")
+        return
+    f = {k: int(v) / 1e18 for k, v in res.items()}
+    for k, v in f.items():
+        print(f"  {k:<15} {v:>20,.4f} ETH")
+    print(f"  supply = EthSupply + Eth2Staking - BurntFees = "
+          f"{f['EthSupply'] + f['Eth2Staking'] - f['BurntFees']:,.4f} ETH")
+    print("  PASTE BACK: FREE TIER CONFIRMED if the four fields printed. Expect supply ~121-122M "
+          "and BurntFees in the millions.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2403,7 +2442,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
-    wm_cardano_supply,
+    wm_cardano_supply, etherscan_ethsupply2,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded
