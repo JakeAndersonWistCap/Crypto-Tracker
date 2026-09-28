@@ -13347,8 +13347,14 @@ PROJECTS = [
                         "share of Stake/Liquid/Cash revenue buys monthly. ALL bought ETHFI goes to "
                         "sETHFI holders.",
                 "receiving_address": "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
-                "status": "SILENT since 2026-06-30 — last counted inflow, 87 days before run "
-                          "20260925T084404Z (reconciled to the wei)",
+                # CORRECTED 2026-09-28 (Jake, run 20260928T142424Z). 2026-06-30 was a NON-CoW
+                # inflow, counted before attribution became CoW settlements only. On the CoW-only
+                # count the last purchase is 2026-04-01: 1,099 transfers, 17,984,520.10 ETHFI.
+                "last_purchase": "2026-04-01",
+                "last_purchase_source": "log_scans.buyback_wallet_inflow, CoW settlements only "
+                                        "(count_from GPv2Settlement), run 20260928T142424Z: "
+                                        "1,099 transfers, 17,984,520.10 ETHFI",
+                "status": "SILENT since 2026-04-01 — the last CoW purchase (reconciled to the wei)",
                 "sources": ["etherfi-protocol/smart-contracts script/deploys/Deployed.s.sol "
                             "(buyback wallet, PRIMARY)",
                             "etherfi.gitbook.io/gov/ethfi-buyback-program via aragon "

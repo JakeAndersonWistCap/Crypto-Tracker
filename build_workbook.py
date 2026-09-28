@@ -1080,8 +1080,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     gd = groups.get((name, "buyback_last_inflow_date"))
                     if gd is not None and not gd.empty:
                         serial = float(gd.sort_values("date").iloc[-1]["value"])
-                        scanned = pd.Timestamp("1899-12-30") + pd.Timedelta(days=int(serial))
-                        last_nz = scanned if last_nz is None else max(last_nz, scanned)
+                        # THE SCAN'S DATE IS AUTHORITATIVE (2026-09-28), not max() with the
+                        # stored series: it is computed on the scan's CURRENT attribution, and
+                        # stored rows can predate an attribution change — Ether.fi's non-CoW
+                        # 2026-06-30 inflow made the flag read June when the last CoW purchase
+                        # was 2026-04-01.
+                        last_nz = pd.Timestamp("1899-12-30") + pd.Timedelta(days=int(serial))
                 if last_nz is not None:
                     row["last_nonzero_date"] = last_nz.strftime("%Y-%m-%d")
                 # SILENT = more than 2x the LONGEST documented cadence since the last non-zero
@@ -1095,9 +1099,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row["silent_days"] = silent
                     if observed_quiet > limit:
                         labels = "/".join(l for l, _ in cad["cadences"])
-                        row["silence_flag"] = (f"program silent for {silent} days against a "
-                                               f"documented {labels} cadence (last non-zero "
-                                               f"{last_nz.date()}; flagged past {limit} days)")
+                        row["silence_flag"] = (f"silent since {last_nz.date()} — {silent} days "
+                                               f"against a documented {labels} cadence (last "
+                                               f"non-zero {last_nz.date()}; flagged past {limit} days)")
                         row["note"] = (f"PROGRAM SILENT — {row['silence_flag']}"
                                        + (f" | {row['note']}" if row["note"] else ""))
             base_source = str(latest["source"]).split(":")[0]

@@ -13713,7 +13713,7 @@ def test_a_flow_scan_reconciles_to_the_wei_before_storing_anything(monkeypatch):
     # direction, the first counted inflow, and the dates this run actually stored.
     store_line = next(e.message for e in out.log if "this run STORED" in e.message)
     assert "series starts 2026-09-01 (the holders' first Transfer in either direction" in store_line
-    assert "first counted inflow 2026-09-01" in store_line and "(full history)" in store_line, store_line
+    assert "first counted inflow 2026-09-01" in store_line and "(the full reconciled series, every run)" in store_line, store_line
 
     # ONE WEI OFF: nothing stored, the gap says by how much
     out2 = _run_scan(monkeypatch, spec, logs, {reserve: 10 * E + 1})
@@ -15209,7 +15209,7 @@ def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
     bb = by["Ether.fi|actual_buyback_tokens"]
     assert bb["q0"] == 0.0 and bb["status"] != "n/a"                   # the zero stays
     assert bb["last_nonzero_date"] == "2026-06-30" and bb["silent_days"] == 87
-    assert bb["silence_flag"].startswith("program silent for 87 days against a documented "
+    assert bb["silence_flag"].startswith("silent since 2026-06-30 — 87 days against a documented "
                                          "weekly/monthly cadence"), bb["silence_flag"]
     suffix, note = bw._program_flag(config.PROJECT_BY_NAME["Ether.fi"], by)
     assert suffix == " · no inflow since 2026-06-30 · SILENT 87d" and "PROGRAM SILENT" in note
@@ -16382,3 +16382,29 @@ def test_ethstore_is_called_at_most_once_a_day_and_a_failure_is_not_retried(monk
     assert Refuses.calls == 1, "one attempt a day, even when it fails"
     msg = next(e.message for e in out.log if e.status == "failed")
     assert "not retried until tomorrow" in msg and "bc-secret-456" not in msg
+
+
+def test_ether_fi_silence_uses_the_scans_cow_only_date_not_older_stored_rows():
+    """Run 20260928T142424Z: the CoW-only last purchase is 2026-04-01, but a non-CoW 2026-06-30
+    inflow stored before attribution changed still sat in the store, and max() with it made the
+    flag read June. The scan's own date is authoritative, and the scan now re-stores its whole
+    series so old-rule rows are overwritten."""
+    import build_workbook as bw
+
+    asof = pd.Timestamp("2026-09-28")
+    serial = float((pd.Timestamp("2026-04-01") - pd.Timestamp("1899-12-30")).days)
+    rows = [{"date": pd.Timestamp("2026-06-30"), "project": "Ether.fi", "metric": "actual_buyback_tokens",
+             "value": 500_000.0, "source": "explorer:buyback_wallet_inflow", "tier": 2,
+             "is_manual": False, "entered_on": ""}]
+    rows += [{"date": d, "project": "Ether.fi", "metric": "actual_buyback_tokens", "value": 0.0,
+              "source": "explorer:buyback_wallet_inflow", "tier": 2, "is_manual": False, "entered_on": ""}
+             for d in pd.date_range("2026-08-29", "2026-09-27")]
+    rows.append({"date": pd.Timestamp("2026-09-27"), "project": "Ether.fi",
+                 "metric": "buyback_last_inflow_date", "value": serial, "source": "explorer:x",
+                 "tier": 2, "is_manual": False, "entered_on": ""})
+    r = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof, gaps=pd.DataFrame(),
+                     review=pd.DataFrame()).set_index(["project", "metric"]).loc[("Ether.fi", "actual_buyback_tokens")]
+    assert r["last_nonzero_date"] == "2026-04-01", r["last_nonzero_date"]
+    assert str(r["silence_flag"]).startswith("silent since 2026-04-01"), r["silence_flag"]
+    old = config.PROJECT_BY_NAME["Ether.fi"]["buyback_programmes"]["old"]
+    assert old["last_purchase"] == "2026-04-01" and "SILENT since 2026-04-01" in old["status"]

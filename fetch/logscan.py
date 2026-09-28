@@ -369,7 +369,11 @@ class LogScan:
         days = pd.date_range(start, last, freq="D")
         frame = tidy([(d, by_day.get(d, 0.0)) for d in days], name, metric,
                      f"{SOURCE}:{key}", TIER)
-        frame = window(frame, window_days)
+        # THE WHOLE RECONCILED SERIES, EVERY RUN (2026-09-28). Storing only the run's window left
+        # days outside it as an EARLIER run counted them: Ether.fi's 2026-06-30 inflow was stored
+        # before attribution became CoW-only and stayed in the store (and in Q0, Y1 and the
+        # silence date) after the scan stopped counting it. The scan covers every block anyway,
+        # so re-writing every day is an idempotent upsert that keeps history on today's rules.
         # ** SAY WHICH DATE IS WHICH. Corrected 2026-09-28. ** "30 daily row(s) from 2025-05-09"
         # read as thirty rows starting then. It meant: the series STARTS at the holders' first
         # Transfer in EITHER direction (not necessarily an inflow, and not a counted one), and
@@ -384,7 +388,7 @@ class LogScan:
                 f"either direction" + (", clamped to from_date" if spec.get("from_date") else "")
                 + f"; first counted inflow {first_in_s}), zero-filled daily to {last.date()}; "
                 f"this run STORED {len(frame)} daily row(s) covering {stored}"
-                + (f" (its {window_days}-day window)" if window_days else " (full history)")
+                + " (the full reconciled series, every run)"
                 + f". Zeros are observed — the scan covers every block. {summary}", TIER)
 
         # THE LAST COUNTED INFLOW, STORED AS A VALUE. Added 2026-09-28. A window of zeros says
