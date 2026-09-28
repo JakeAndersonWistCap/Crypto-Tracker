@@ -162,8 +162,23 @@ cache is disposable — delete it and the next run reseeds — and never trusted
 still reconcile cached + new events to `balanceOf` to the wei before storing, and a failed
 reconciliation drops whatever no reconciliation has vouched for.
 
-NearBlocks is paced to its free plan (6 credits a minute, one credit per 25 rows), and the NEAR
-buyback read runs before the activity stats.
+NearBlocks is paced to its free plan (6 credits a minute, billed per 25 rows of `per_page`),
+and the NEAR buyback read is incremental: one call on a routine run.
+
+**Every source is bounded.** Sources run concurrently, each on its own thread with a wall-clock
+budget (`TIER_BUDGET_S` in `fetch/__init__.py`, override with `TOKEN_METRICS_BUDGET_<SOURCE>`).
+A source over budget is abandoned: what it produced is kept, it is logged `TIER TIMED OUT`, and
+the gaps it could have filled say so. Outputs are merged in tier order, so which figure wins a
+collision does not depend on which source finished first. Every HTTP call has a connect and a
+read timeout, and a `Retry-After` longer than 65s is not waited (the call fails and the next run
+retries). Anything outstanding for more than 30s is logged as a `HEARTBEAT` line naming the
+source and host. `TOKEN_METRICS_SERIAL=1` runs the sources one at a time.
+
+**Checks that need running once a day run once a day** — DefiLlama's restructure and recovery
+checks, the RWA-category rebuild, NearBlocks' daily stats — and a page scrape that returns
+nothing on two consecutive days is re-checked weekly. `TOKEN_METRICS_DAILY_CHECKS=always`
+forces them all. `python token_metrics.py --no-fetch` rebuilds the workbook from the store with
+no network at all.
 
 ## Contract addresses are unverified — read this before trusting tier 2
 

@@ -1559,9 +1559,10 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # Sized from the run log of 20260928T090446Z (coingecko 62s, defillama 62s, explorer 126s,
 # chain 27s, scrape 18s, near_rpc 13s, nearblocks 13s) with room for a first run of the day and
 # for a cache seed; override one with TOKEN_METRICS_BUDGET_<SOURCE> (e.g. ..._BUDGET_EXPLORER).
+# coingecko is 240 because WITHOUT a key it paces 6s a call: 31 calls = ~186s.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 240, "beaconchain": 60, "coingecko": 150, "hypercore_info": 60,
+    "nearblocks": 240, "beaconchain": 60, "coingecko": 240, "hypercore_info": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "maple_page": 60,
     "scrape": 240, "dune": 420,
 }
