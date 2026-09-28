@@ -15246,7 +15246,7 @@ def test_run_sql_resolves_the_update_target_in_sections_z_and_aj(capsys):
             builtins.input = real_input
         out = capsys.readouterr().out
         assert "Could not tell which table" not in out, out[-600:]
-        assert "Rows this DELETE would remove from metrics (0)" in out, out[-900:]
+        assert "Rows this would remove from metrics (0)" in out, out[-900:]
         assert "Rows this UPDATE would change in metrics (0)" in out, out[-900:]
         assert rc == 1       # nothing matches: "already been run" — the correct answer post-move
         n = sqlite3.connect(f"{d}/m.db").execute(

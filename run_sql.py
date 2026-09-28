@@ -547,8 +547,9 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path,
             print(f"\n  Could not preview the rows: {e}")
             print("  Refusing to delete something I cannot show you first.\n")
             return 1
-        print(f"\n  Rows this {verb} would {'remove from' if verb == 'DELETE' else 'change in'} "
-              f"{table} ({len(rows)}):")
+        # The DELETE wording is unchanged (tests and habits read it); an UPDATE says it changes.
+        print(f"\n  Rows this would remove from {table} ({len(rows)}):" if verb == "DELETE" else
+              f"\n  Rows this UPDATE would change in {table} ({len(rows)}):")
         print(render(cur, rows[:200]))
         if len(rows) > 200:
             print(f"    ... and {len(rows) - 200} more")
@@ -587,7 +588,9 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path,
     except sqlite3.Error as e:
         print(f"\n  SQL ERROR, rolled back: {e}\n")
         return 1
-    print(f"\n  {removed} row(s) deleted or updated. Re-run `python run_sql.py {letter}` to verify.\n")
+    only_deletes = all((write_target(d) or ("",))[0] == "DELETE" for d in deletes)
+    print(f"\n  {'Deleted' if only_deletes else 'Deleted or updated'} {removed} row(s). "
+          f"Re-run `python run_sql.py {letter}` to verify.\n")
     return 0
 
 
