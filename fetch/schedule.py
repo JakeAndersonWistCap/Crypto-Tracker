@@ -76,7 +76,11 @@ class Schedule:
             if sched.get("also_emissions"):
                 metrics.append("emissions_tokens")
             for metric in metrics:
+                # A schedule that is only PART of the emissions says so on its rows (Aethir, B3).
+                src = (config.mark_source(SOURCE, "PARTIAL")
+                       if metric == "emissions_tokens" and sched.get("emissions_partial_reason")
+                       else SOURCE)
                 df = pd.DataFrame({"date": per_day.index, "project": p["name"],
                                    "metric": metric, "value": per_day.values,
-                                   "source": SOURCE, "tier": TIER})
+                                   "source": src, "tier": TIER})
                 out.add(df[LONG_COLUMNS], SOURCE, p["name"], sched.get("note", "issuance schedule"), TIER)

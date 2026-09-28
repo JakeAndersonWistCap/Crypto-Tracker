@@ -17622,3 +17622,22 @@ def test_chainlink_staking_rewards_are_the_vault_outflow_and_the_yield_is_over_p
     assert "D[emissions_tokens:q0]" in f and "D[locked_tokens_principal:now]" in f, f
     assert "gross_issuance_tokens" not in f and "D[locked_tokens:now]" not in f, f
     assert "*1.0/" in f, f
+
+
+def test_aethir_supplier_emissions_come_from_the_checker_node_bucket_marked_partial():
+    """B3, 2026-09-28: the configured schedule is the Checker Node BASE reward — a supplier bucket —
+    so it now feeds emissions_tokens as well as gross_issuance_tokens (A2's supply trajectory was
+    n/a for want of it). The emissions rows carry PARTIAL: compute-provider rewards and the checker
+    bonus have no declared schedule."""
+    from fetch.base import FetchOutput
+    from fetch.schedule import Schedule
+
+    out = FetchOutput()
+    Schedule().run([config.PROJECT_BY_NAME["Aethir"]], 30, out)
+    df = out.frame()
+    em = df[df.metric == "emissions_tokens"]
+    gi = df[df.metric == "gross_issuance_tokens"]
+    assert not em.empty and len(em) == len(gi)
+    assert abs(em["value"].iloc[-1] - 4_200_000_000 / 1461) < 1e-6
+    assert (em["source"].astype(str).str.contains("PARTIAL")).all()
+    assert not gi["source"].astype(str).str.contains("PARTIAL").any()

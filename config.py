@@ -6757,6 +6757,18 @@ PROJECTS = [
                 # rather than carrying the rate forward into a pool that has been exhausted.
                 {"from": "2024-06-12", "tokens_per_day": 4_200_000_000 / 1461, "until": "2028-06-11"},
             ],
+            # ===== B3 (Jake, 2026-09-28): THIS STEP IS SUPPLIER EMISSIONS, SO IT FEEDS BOTH. =====
+            # Checker Node base rewards are paid to node operators — a SUPPLIER bucket, not a
+            # team or investor unlock (docs.aethir.com/aethir-tokenomics/token-overview). So the
+            # same per-day figure is emissions_tokens, and A2's supply trajectory stops reading
+            # n/a. PARTIAL, and the rows say so: the compute-provider rewards and the checker
+            # bonus are supplier buckets too, but neither has a declared schedule (see phase_2
+            # and the staking-pool note), so emissions UNDERSTATES what suppliers receive.
+            "also_emissions": True,
+            "emissions_partial_reason": "Checker Node BASE rewards only. Compute-provider "
+                                        "rewards and the Checker Node bonus are supplier "
+                                        "buckets with no declared schedule, so this UNDERSTATES "
+                                        "supplier emissions.",
             # PHASE 2, DECLARED AS A BOUND NOT A STEP. Aethir's own token overview puts 55% of total
             # supply (~23.1bn ATH) to Checker Nodes & Compute Providers, with Phase 1 frontloaded
             # and PHASE 2 RUNNING 2028-06-12 to 2032-06-12, monthly and DECAYING. Phases 1+2
