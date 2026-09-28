@@ -71,6 +71,7 @@ the real one — not in this production path, which was never the source of that
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -82,6 +83,40 @@ log = logging.getLogger("token_metrics.fetch.beaconchain")
 
 SOURCE = "beaconchain"
 TIER = 1
+
+
+def _day_cache_file():
+    from .logcache import LogCache
+    return LogCache().root / "beaconchain-day.json"
+
+
+def _day_cache_read(url: str):
+    """(state, body) stored today for url, else None. Failures are kept too: a refused call
+    is not retried the same day."""
+    try:
+        st = json.loads(_day_cache_file().read_text())
+    except (OSError, ValueError):
+        return None
+    rec = st.get(url)
+    if rec and rec.get("date") == str(today().date()):
+        state, body = rec["state"], rec["body"]
+        if state != "ok":
+            body = f"{body} (the day's one attempt, cached — not retried until tomorrow UTC)"
+        return state, body
+    return None
+
+
+def _day_cache_write(url: str, result) -> None:
+    f = _day_cache_file()
+    try:
+        st = json.loads(f.read_text())
+    except (OSError, ValueError):
+        st = {}
+    st[url] = {"date": str(today().date()), "state": result[0], "body": result[1]}
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st))
+    tmp.replace(f)
 
 
 class BeaconChain:
@@ -124,14 +159,23 @@ class BeaconChain:
         for metric, m in spec["metrics"].items():
             url = spec["base_url"].rstrip("/") + m["path"]
             if url not in bodies:
-                allowed, why = robots_verdict(url)
-                if not allowed:
-                    bodies[url] = ("robots", why)
+                # AT MOST ONE CALL A DAY (2026-09-28). Run 20260928T142424Z: the MONTHLY quota was
+                # exhausted (ratelimit-window: month, remaining 0, reset 207,324s — the October
+                # rollover). ETH.Store publishes one figure a day, so the day's answer — or the
+                # day's failure — is kept and re-used; nothing calls it twice in one UTC day.
+                cached = _day_cache_read(url)
+                if cached is not None:
+                    bodies[url] = tuple(cached)
                 else:
-                    try:
-                        bodies[url] = ("ok", self.http.get(url, headers={"apikey": key}))
-                    except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-                        bodies[url] = ("error", self._scrub(spec, e))
+                    allowed, why = robots_verdict(url)
+                    if not allowed:
+                        bodies[url] = ("robots", why)
+                    else:
+                        try:
+                            bodies[url] = ("ok", self.http.get(url, headers={"apikey": key}))
+                        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                            bodies[url] = ("error", self._scrub(spec, e))
+                        _day_cache_write(url, bodies[url])
             state, body = bodies[url]
             if state == "robots":
                 out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {body}", TIER)

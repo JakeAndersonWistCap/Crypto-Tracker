@@ -14390,6 +14390,8 @@ def _beaconchain_run(monkeypatch, body, key="bc-secret-456"):
 
     monkeypatch.setenv("BEACONCHAIN_API_KEY", key)
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    # each call here stands for a separate DAY: clear the once-a-day ethstore cache first
+    beaconchain._day_cache_file().unlink(missing_ok=True)
     http = _BeaconChainHttp(body)
     out = FetchOutput()
     beaconchain.BeaconChain(http=http).run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
@@ -16356,3 +16358,27 @@ def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path)
 def pathlib_exists(p):
     import pathlib
     return pathlib.Path(p).exists()
+
+
+def test_ethstore_is_called_at_most_once_a_day_and_a_failure_is_not_retried(monkeypatch):
+    """Run 20260928T142424Z: beaconcha.in's MONTHLY quota was exhausted (reset 207,324s away).
+    ETH.Store is a daily figure: the day's answer, or the day's failure, is cached and re-used."""
+    from fetch import beaconchain, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("BEACONCHAIN_API_KEY", "bc-secret-456")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+
+    class Refuses:
+        calls = 0
+
+        def get(self, url, params=None, headers=None):
+            Refuses.calls += 1
+            raise RuntimeError("HTTP 429 from beaconcha.in: the server asks for a 207,324s wait")
+
+    for _ in range(3):
+        out = FetchOutput()
+        beaconchain.BeaconChain(http=Refuses()).run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    assert Refuses.calls == 1, "one attempt a day, even when it fails"
+    msg = next(e.message for e in out.log if e.status == "failed")
+    assert "not retried until tomorrow" in msg and "bc-secret-456" not in msg
