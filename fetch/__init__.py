@@ -1371,7 +1371,8 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
             gross_delta = gross_now[0] - gross_prior
             crosscheck = None
             got = burn.get(name)
-            if got is not None:
+            # C2: retired where the two providers' read timing is known to be all it measures.
+            if got is not None and not p.get("issuance_net_burn_crosscheck_retired"):
                 crosscheck = (value - prior) + got[0]
                 # A real mint shows in both. A divergence is read timing between two providers,
                 # and it is worth seeing rather than silently preferring one.

@@ -9106,6 +9106,21 @@ PROJECTS = [
     },
     {
         "name": "Uniswap", "symbol": "UNI",
+        # ===== C2 (2026-09-28): THE NET+BURN ISSUANCE CROSS-CHECK IS RETIRED HERE. =====
+        # Review row "issuance_route_divergence, 0 vs 136,000": the gross route read
+        # d(totalSupply) = 0 (exactly 1,000,000,000 both times — UNI minted nothing); the
+        # cross-check read d(CoinGecko total_supply) + the chain's burn delta = 136,000. That is
+        # one day's burn (~100-134k UNI/day at this entry's own rate): CoinGecko's net figure lags
+        # the chain read by about a day, so it has not yet subtracted the burn the chain has
+        # already counted. Timing between two providers, never a mint — it fired on 219,999.99
+        # before (see _derive_issuance). The gross route is the contract's own totalSupply and is
+        # unaffected; only the cross-check stops.
+        "issuance_net_burn_crosscheck_retired": {
+            "on": "2026-09-28",
+            "why": "d(CoinGecko net supply) + chain burn differs from d(contract totalSupply) by "
+                   "~one day's burn because CoinGecko lags the chain; UNI's totalSupply has not "
+                   "moved from 1,000,000,000.",
+        },
         # ===== WHEN THE FEE SWITCH TURNED ON, CHAIN BY CHAIN. Recorded 2026-09-22. =====
         # RECORD ONLY — nothing reads this and nothing should read it yet. It is here because the
         # fee switch is the single biggest discontinuity in Uniswap's fee series, and a reader

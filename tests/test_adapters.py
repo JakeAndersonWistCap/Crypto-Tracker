@@ -9965,7 +9965,8 @@ def test_issuance_prefers_the_single_source_gross_delta_over_net_plus_burn():
         return {"date": pd.Timestamp(date), "project": project, "metric": metric,
                 "value": value, "source": src, "tier": tier, "is_manual": False, "entered_on": ""}
 
-    uni = config.PROJECT_BY_NAME["Uniswap"]
+    uni = {k: v for k, v in config.PROJECT_BY_NAME["Uniswap"].items()
+           if k != "issuance_net_burn_crosscheck_retired"}   # the MECHANISM, as for any project
 
     # THE LIVE CASE: gross unchanged, net+burn would have said 219,999.99. That is the drift
     # shape exactly — the chain's burn delta lands in the window while CoinGecko's net figure
@@ -17685,3 +17686,23 @@ def test_sky_senders_the_footnotes_account_for_are_not_unrecognised():
     from fetch import chain
     src = inspect.getsource(chain)
     assert "burn_senders_accounted" in src and "last_block.get(a, 0) <= closed_at" in src
+
+
+def test_uniswap_net_burn_issuance_crosscheck_is_retired_as_read_timing():
+    """C2, 2026-09-28: 0 (contract totalSupply) vs 136,000 (CoinGecko net + chain burn) is one
+    day's burn — CoinGecko lags the chain. The gross route still stores 0; no divergence row."""
+    from fetch import _derive_issuance
+    from fetch.base import point
+
+    p = config.PROJECT_BY_NAME["Uniswap"]
+    assert p["issuance_net_burn_crosscheck_retired"]["on"] == "2026-09-28"
+    out = _issuance_frame("Uniswap", 888_000_000.0, 136_000.0)
+    out.add(point("Uniswap", "total_supply_gross", 1_000_000_000.0, "chain:ethereum:token", 2,
+                  pd.Timestamp("2026-09-14")), "chain", "Uniswap", "", 2)
+    _derive_issuance(out, [p], {("Uniswap", "total_supply"): 888_000_000.0,
+                                ("Uniswap", "total_supply_gross"): 1_000_000_000.0},
+                     {("Uniswap", "total_supply"): "2026-09-13",
+                      ("Uniswap", "total_supply_gross"): "2026-09-13"})
+    iss = out.frame().query("metric == 'gross_issuance_tokens'")
+    assert list(iss["value"]) == [0.0], iss
+    assert not [r for r in out.review if r["reason"] == "issuance_route_divergence"]
