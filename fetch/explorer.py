@@ -31,7 +31,7 @@ import os
 import time
 
 import config
-from .base import BudgetExhausted, Http
+from .base import BudgetExhausted, Http, sleep
 
 log = logging.getLogger("token_metrics.fetch.explorer")
 
@@ -170,7 +170,7 @@ class ExplorerLogs:
                 if self._deadline is not None and time.monotonic() + 1.1 >= self._deadline:
                     self._errors.append(f"{name}: rate limited")
                     raise self._timed_out()
-                time.sleep(1.1)
+                sleep(1.1, f"{name} explorer rate-limit pause")
                 continue
             raise ExplorerRefused(f"{name}: {self._scrub(msg)} — {self._scrub(text)[:200]}")
         raise ExplorerRefused(f"{name}: rate limited twice")

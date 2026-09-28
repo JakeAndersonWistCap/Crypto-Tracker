@@ -17,18 +17,20 @@ flagged. A failed source is logged and reported as a gap; it never kills the run
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
 
 import pandas as pd
 
 import config
 
-from .base import (FetchOutput, LogEntry, derive_flow_from_cumulative, new_run_id,
+from .base import (FetchOutput, LogEntry, derive_flow_from_cumulative, inflight, new_run_id,
                    point, today)  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
 from .dune import Dune
-from .gaps import detect as detect_gaps
+from .gaps import detect as detect_gaps, note_timeouts
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .nearblocks import NearBlocks
@@ -1467,24 +1469,25 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
            "known_absent": known_absent or set(),
            "last_dates": last_dates or {}}
     out = FetchOutput()
+    todo = [(name, tier, build) for name, tier, build in TIER_ORDER
+            if not sources or name in sources]
+    results = _dispatch(todo, projects, window_days, ctx)
 
-    for name, tier, build in TIER_ORDER:
-        if sources and name not in sources:
-            continue
-        log.info("tier %d — %s (window=%s)", tier, name, window_days or "full history")
+    # MERGED IN TIER_ORDER, NOT IN COMPLETION ORDER. Sources run concurrently, each into its own
+    # FetchOutput; folding them back in the fixed order below is what keeps the tier-collision
+    # guard (first frame wins) and every later step exactly as deterministic as the old serial
+    # loop, whichever source happened to finish first.
+    for name, tier, sub, seconds, timed_out in results:
         before = len(out.frames)
-        # WALL CLOCK PER SOURCE, recorded whether it succeeds, crashes or does nothing. A source
-        # that takes two minutes and returns nothing is the single most useful line in a slow
-        # run's log, and it is exactly the one a rows-only summary cannot show.
-        t0 = time.monotonic()
-        try:
-            build(ctx).run(projects, window_days, out)
-        except Exception as e:  # noqa: BLE001 — never let one source kill the run
-            out.fail(name, None, f"adapter crashed: {e}", tier)
-        finally:
-            out.timings.append({"source": name, "tier": tier,
-                                "seconds": time.monotonic() - t0,
-                                "frames": len(out.frames) - before})
+        out.frames.extend(sub.frames)
+        out.log.extend(sub.log)
+        out.review.extend(sub.review)
+        out.gaps.extend(sub.gaps)
+        out.staged.extend(sub.staged)
+        out.timings.append({"source": name, "tier": tier, "seconds": seconds,
+                            "frames": len(sub.frames), "timed_out": timed_out})
+        if timed_out:
+            out.timed_out[name] = (tier, TIER_BUDGET_S.get(name, DEFAULT_BUDGET_S))
         # validate each tier's own output, so a rejection names the tier that produced it
         for i in range(before, len(out.frames)):
             out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out)
@@ -1540,4 +1543,130 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # sources.yaml entry for this metric" when there plainly was one. A ready entry that returned
     # nothing is a different problem from a missing entry and has to say so.
     out.gaps = detect_gaps(projects, out.frame(), manual_keys or set(), registry_reasons(), out.gaps)
+    note_timeouts(out.gaps, out.timed_out)
     return out
+
+
+# ===== WALL-CLOCK BUDGET PER SOURCE, ENFORCED HERE. Added 2026-09-28. =====
+# A run hung for over an hour inside beaconchain: one source held the whole run. Each source now
+# runs on its own thread (named after the source, which is what the heartbeat and the in-flight
+# registry report) and gets the seconds below. On exhaustion the dispatcher ABANDONS it: whatever
+# it had already produced is kept, the rest is gapped "tier timed out after Ns", and the run
+# moves on. Python cannot kill a thread, so the abandoned one is a daemon that dies with the
+# process; nothing reads its output after the cut-off.
+# Sized from the run log of 20260928T090446Z (coingecko 62s, defillama 62s, explorer 126s,
+# chain 27s, scrape 18s, near_rpc 13s, nearblocks 13s) with room for a first run of the day and
+# for a cache seed; override one with TOKEN_METRICS_BUDGET_<SOURCE> (e.g. ..._BUDGET_EXPLORER).
+TIER_BUDGET_S = {
+    "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
+    "nearblocks": 240, "beaconchain": 60, "coingecko": 150, "hypercore_info": 60,
+    "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "maple_page": 60,
+    "scrape": 240, "dune": 420,
+}
+DEFAULT_BUDGET_S = 120
+HEARTBEAT_AFTER_S = 30.0
+
+
+def _budget(name: str) -> float:
+    env = os.environ.get("TOKEN_METRICS_BUDGET_" + name.upper().replace(":", "_").replace("-", "_"))
+    return float(env) if env else float(TIER_BUDGET_S.get(name, DEFAULT_BUDGET_S))
+
+
+class Heartbeat:
+    """Logs anything outstanding for more than HEARTBEAT_AFTER_S — which source, which host —
+    every HEARTBEAT_AFTER_S while it lasts, so a stall is visible instead of a frozen shell."""
+
+    def __init__(self, every: float = HEARTBEAT_AFTER_S):
+        self.every, self._stop = every, threading.Event()
+        self._t = threading.Thread(target=self._loop, name="heartbeat", daemon=True)
+
+    def __enter__(self):
+        self._t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._t.join(timeout=2)
+
+    def beat(self) -> list[str]:
+        lines = [f"still waiting {secs:.0f}s — [{src}] {what}"
+                 for src, what, secs in sorted(inflight(), key=lambda x: -x[2])
+                 if secs >= self.every]
+        for line in lines:
+            log.info("HEARTBEAT %s", line)
+        return lines
+
+    def _loop(self):
+        while not self._stop.wait(self.every):
+            self.beat()
+
+
+def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
+    """Run every source concurrently, each under its own budget.
+
+    Returns [(name, tier, FetchOutput, seconds, timed_out)] in the ORDER GIVEN — never in
+    completion order. TOKEN_METRICS_SERIAL=1 runs them one after another (same budgets).
+    """
+    serial = os.environ.get("TOKEN_METRICS_SERIAL", "").strip() in ("1", "true", "yes")
+    state = {}
+
+    def start(name, tier, build):
+        sub = FetchOutput()
+
+        def work():
+            try:
+                build(ctx).run(projects, window_days, sub)
+            except Exception as e:  # noqa: BLE001 — never let one source kill the run
+                sub.fail(name, None, f"adapter crashed: {e}", tier)
+
+        log.info("tier %d — %s (window=%s, budget %.0fs)", tier, name,
+                 window_days or "full history", _budget(name))
+        t = threading.Thread(target=work, name=name, daemon=True)
+        state[name] = {"tier": tier, "sub": sub, "thread": t, "t0": time.monotonic()}
+        t.start()
+
+    def settle(name, wait: bool):
+        st = state[name]
+        budget = _budget(name)
+        left = budget - (time.monotonic() - st["t0"])
+        st["thread"].join(timeout=max(0.0, left) if wait else 0)
+        if st["thread"].is_alive() and time.monotonic() - st["t0"] >= budget:
+            return _abandon(name, st, budget)
+        if not st["thread"].is_alive():
+            st["result"] = (name, st["tier"], st["sub"], time.monotonic() - st["t0"], False)
+            return st["result"]
+        return None
+
+    with Heartbeat():
+        if serial:
+            for name, tier, build in todo:
+                start(name, tier, build)
+                settle(name, wait=True)
+        else:
+            for name, tier, build in todo:
+                start(name, tier, build)
+            pending = [n for n, _, _ in todo]
+            while pending:
+                for n in list(pending):
+                    if settle(n, wait=False) is not None:
+                        pending.remove(n)
+                if pending:
+                    time.sleep(0.2)
+    return [state[n]["result"] for n, _, _ in todo]
+
+
+def _abandon(name, st, budget) -> tuple:
+    """Keep what the source produced before the cut-off; stop reading its output."""
+    sub = st["sub"]
+    kept = FetchOutput(frames=list(sub.frames), log=list(sub.log), review=list(sub.review),
+                       gaps=list(sub.gaps), staged=list(sub.staged))
+    waiting = [what for src, what, _ in inflight() if src == name]
+    kept.fail(name, None,
+              f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "
+              f"{len(kept.frames)} frame(s) it had produced; everything else it serves is gapped "
+              f"for this run. Still waiting on: {'; '.join(waiting) or 'nothing registered'}.",
+              st["tier"])
+    log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s)", name, budget,
+                "; ".join(waiting) or "nothing registered")
+    st["result"] = (name, st["tier"], kept, time.monotonic() - st["t0"], True)
+    return st["result"]

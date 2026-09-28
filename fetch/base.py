@@ -6,15 +6,20 @@ A failed source must never kill the run: failures are logged, gaps are reported.
 """
 from __future__ import annotations
 
+import contextlib
+import itertools
 import logging
 import os
+import threading
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import pandas as pd
 import requests
+import requests.adapters
 
 log = logging.getLogger("token_metrics.fetch")
 
@@ -56,6 +61,8 @@ class FetchOutput:
     # an operational fact about one run, not a figure about a project, and putting it in the
     # store would make it look like one.
     timings: list = field(default_factory=list)
+    # {source: (tier, budget seconds)} for every source the dispatcher abandoned this run.
+    timed_out: dict = field(default_factory=dict)
 
     def add(self, df: pd.DataFrame | None, source: str, project: str | None, message: str = "", tier: int | None = None):
         n = 0 if df is None else len(df)
@@ -155,19 +162,99 @@ def retry_after(value) -> float | None:
         return None
 
 
+# ===== EVERY HTTP CALL IS BOUNDED. 2026-09-28, after a run hung for over an hour. =====
+# CONNECT and READ timeouts are separate: a host that never accepts the connection fails in
+# CONNECT_TIMEOUT_S, and one that accepts and then goes quiet fails in the read timeout.
+CONNECT_TIMEOUT_S = float(os.environ.get("TOKEN_METRICS_CONNECT_TIMEOUT", 10))
+READ_TIMEOUT_S = float(os.environ.get("TOKEN_METRICS_READ_TIMEOUT", 60))
+DEFAULT_TIMEOUT = (CONNECT_TIMEOUT_S, READ_TIMEOUT_S)
+# ** THE LONGEST A 429 IS EVER WAITED OUT. ** beaconcha.in's limiter (gobitfly/eth2-beaconchain-
+# explorer, ratelimit/ratelimit.go) sets Retry-After to the seconds until its quota window
+# resets — the next UTC HOUR, or the next UTC MONTH — and Http slept for whatever it said. That
+# was the hang of 2026-09-28. A Retry-After longer than this is not waited: the call fails at
+# once, naming the wait the server asked for, and the next run tries again.
+MAX_RETRY_WAIT_S = float(os.environ.get("TOKEN_METRICS_MAX_RETRY_WAIT", 65))
+# Rate-limit headers worth printing when a 429 is refused — counts and windows, never keys.
+_RATE_HEADERS = ("retry-after", "ratelimit-reset", "ratelimit-window", "x-ratelimit-remaining-minute",
+                 "x-ratelimit-remaining-hour", "x-ratelimit-remaining-day",
+                 "x-ratelimit-remaining-month", "x-ratelimit-reset", "x-ratelimit-limit")
+
+
+class RateLimited(RuntimeError):
+    """A 429 whose Retry-After is longer than MAX_RETRY_WAIT_S. Not waited; the message says why."""
+
+
+# ===== WHAT THE RUN IS WAITING ON, FOR THE HEARTBEAT. =====
+# Every outstanding HTTP request (any requests-based client, web3 included — see
+# _instrumented_send) and every deliberate sleep (Http's retry naps, NearBlocks' pacing) is
+# registered here with the source running it (the dispatcher names each source's thread) and the
+# host. fetch.Heartbeat reads it and logs anything outstanding for more than 30 seconds, so a
+# stall is visible instead of looking like a frozen shell.
+_INFLIGHT: dict[int, tuple[str, str, float]] = {}
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT_SEQ = itertools.count()
+
+
+@contextlib.contextmanager
+def waiting_on(what: str):
+    token = next(_INFLIGHT_SEQ)
+    with _INFLIGHT_LOCK:
+        _INFLIGHT[token] = (threading.current_thread().name, what, time.monotonic())
+    try:
+        yield
+    finally:
+        with _INFLIGHT_LOCK:
+            _INFLIGHT.pop(token, None)
+
+
+def inflight() -> list[tuple[str, str, float]]:
+    """(source, what, seconds outstanding) for everything currently being waited on."""
+    now = time.monotonic()
+    with _INFLIGHT_LOCK:
+        return [(src, what, now - t0) for src, what, t0 in _INFLIGHT.values()]
+
+
+def sleep(seconds: float, what: str) -> None:
+    """time.sleep, registered so the heartbeat can name it."""
+    if seconds <= 0:
+        return
+    with waiting_on(what):
+        time.sleep(seconds)
+
+
+# ===== THE SAFETY NET UNDER EVERY requests CALL, web3's included. =====
+# Registers the request for the heartbeat and, if a caller passed no timeout, applies
+# DEFAULT_TIMEOUT rather than letting it wait for ever. tests/test_adapters.py also checks
+# statically that every call in fetch/ passes one explicitly — this is the backstop, not the rule.
+_ORIGINAL_SEND = requests.adapters.HTTPAdapter.send
+
+
+def _instrumented_send(self, request, stream=False, timeout=None, **kw):
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT
+    host = urllib.parse.urlsplit(request.url).netloc
+    with waiting_on(f"{request.method} {host}"):
+        return _ORIGINAL_SEND(self, request, stream=stream, timeout=timeout, **kw)
+
+
+if getattr(requests.adapters.HTTPAdapter.send, "__name__", "") != "_instrumented_send":
+    requests.adapters.HTTPAdapter.send = _instrumented_send
+
+
 class Http:
     """Retry with exponential backoff on 429/5xx. Never disables TLS verification."""
 
-    def __init__(self, min_interval: float = 0.0, retries: int = 4, timeout: int = 60,
-                 rate_limit_wait: float | None = None):
+    def __init__(self, min_interval: float = 0.0, retries: int = 4, timeout: float = READ_TIMEOUT_S,
+                 rate_limit_wait: float | None = None, max_retry_wait: float | None = None):
         # rate_limit_wait: the wait on a 429 that carries no Retry-After, for a source whose
         # limiter window is known (NearBlocks: one minute). None keeps the exponential backoff.
         self.rate_limit_wait = rate_limit_wait
+        self.max_retry_wait = MAX_RETRY_WAIT_S if max_retry_wait is None else float(max_retry_wait)
         self.s = requests.Session()
         self.s.headers["User-Agent"] = USER_AGENT
         self.min_interval = float(os.environ.get("TOKEN_METRICS_MIN_INTERVAL", min_interval))
         self.retries = int(os.environ.get("TOKEN_METRICS_RETRIES", retries))
-        self.timeout = timeout
+        self.timeout = float(timeout)          # the READ timeout; connect is CONNECT_TIMEOUT_S
         self._last = 0.0
 
     def post(self, url: str, json_body: dict | None = None, headers: dict | None = None):
@@ -187,10 +274,12 @@ class Http:
         def left() -> float:
             return float("inf") if deadline is None else deadline - time.monotonic()
 
+        host = urllib.parse.urlsplit(url).netloc
+
         def nap(seconds: float, why) -> None:
             if seconds >= left():
                 raise BudgetExhausted(f"time budget exhausted before retrying ({why})")
-            time.sleep(seconds)
+            sleep(seconds, f"sleeping {seconds:.0f}s before retrying {host} ({why})")
 
         wait = time.monotonic() - self._last
         if wait < self.min_interval:
@@ -199,7 +288,8 @@ class Http:
         for attempt in range(self.retries + 1):
             if left() <= 0:
                 raise BudgetExhausted(f"time budget exhausted ({last_err or 'before the first attempt'})")
-            timeout = min(self.timeout, max(1.0, left()))
+            read = min(self.timeout, max(1.0, left()))
+            timeout = (min(CONNECT_TIMEOUT_S, read), read)
             self._last = time.monotonic()
             try:
                 r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)
@@ -207,11 +297,19 @@ class Http:
                      self.s.get(url, params=params, headers=headers, timeout=timeout))
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
+                    asked = retry_after(r.headers.get("Retry-After"))
+                    if r.status_code == 429 and asked is not None and asked > self.max_retry_wait:
+                        seen = {k: r.headers.get(k) for k in _RATE_HEADERS if r.headers.get(k)}
+                        raise RateLimited(
+                            f"HTTP 429 from {host}: the server asks for a {asked:,.0f}s wait "
+                            f"(~{asked / 3600:.1f}h) — longer than the {self.max_retry_wait:.0f}s "
+                            f"this tool waits, so NOT waited; retried on the next run. Its "
+                            f"rate-limit headers: {seen or 'none'}")
                     if attempt < self.retries:
-                        wait = retry_after(r.headers.get("Retry-After"))
+                        wait = asked
                         if wait is None and r.status_code == 429 and self.rate_limit_wait:
                             wait = self.rate_limit_wait
-                        nap(max(wait or 0.0, backoff), last_err)
+                        nap(min(max(wait or 0.0, backoff), self.max_retry_wait), last_err)
                         backoff *= 2
                     continue
                 if 400 <= r.status_code < 500:

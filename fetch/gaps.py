@@ -776,3 +776,23 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         r["priority_label"] = PRIORITY_LABEL[r["priority"]]
     rows.sort(key=lambda r: (r["priority"], r["project"], r["metric"]))
     return rows
+
+
+def note_timeouts(gaps: list[dict], timed_out: dict) -> None:
+    """Every gap a timed-out source could have filled says so first. Added 2026-09-28.
+
+    timed_out is {source: (tier, budget seconds)} from fetch._dispatch. A gap whose metric is
+    served by that tier gets "TIER TIMED OUT ..." ahead of its own reason — "may simply not have
+    been reached", because a tier holds several sources and this does not know which one serves
+    which project."""
+    if not timed_out:
+        return
+    by_tier: dict[int, list[str]] = {}
+    for name, (tier, budget) in timed_out.items():
+        by_tier.setdefault(tier, []).append(f"{name} (tier {tier}) timed out after {budget:.0f}s")
+    for g in gaps:
+        tiers = (config.METRICS.get(g.get("metric")) or {}).get("tiers") or []
+        hit = [msg for t in tiers for msg in by_tier.get(t, [])]
+        if hit and not str(g.get("reason", "")).startswith("TIER TIMED OUT"):
+            g["reason"] = (f"TIER TIMED OUT this run — {'; '.join(hit)} and was abandoned, so "
+                           f"this may simply not have been reached. {g.get('reason', '')}")

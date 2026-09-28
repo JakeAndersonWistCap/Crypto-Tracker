@@ -15765,3 +15765,160 @@ def test_plume_defillama_fees_is_declared_absent_and_rechecked_weekly(tmp_path):
 
     attempt(1, "ok", "plume:dailyFees")
     assert st.declared_absent([plume]) == set(), "a success ends the skip on its own"
+
+
+# =====================================================================================
+# 2026-09-28 — the beaconchain hang. Every HTTP call bounded; every source under a budget.
+# =====================================================================================
+def test_a_retry_after_longer_than_the_cap_fails_at_once_instead_of_sleeping(monkeypatch):
+    """beaconcha.in's limiter (ratelimit/ratelimit.go) sets Retry-After to the seconds until its
+    hourly or monthly quota resets. Http honoured it uncapped and the run slept for over an hour."""
+    from fetch import base
+
+    naps = []
+    monkeypatch.setattr(base.time, "sleep", lambda s: naps.append(s))
+
+    class R:
+        status_code = 429
+        headers = {"Retry-After": "3600", "x-ratelimit-remaining-month": "0"}
+
+    h = base.Http(retries=2)
+    monkeypatch.setattr(h.s, "get", lambda *a, **k: R())
+    try:
+        h.get("https://beaconcha.in/api/v1/ethstore/latest")
+        raise AssertionError("must not return")
+    except base.RateLimited as e:
+        assert "3,600s" in str(e) and "NOT waited" in str(e) and "remaining-month" in str(e)
+    assert naps == [], f"nothing is slept when the server asks for longer than the cap: {naps}"
+
+    # a short Retry-After is still honoured, and a long backoff is capped
+    class Short:
+        status_code = 503
+        headers = {"Retry-After": "5"}
+
+    class Ok:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return {"ok": 1}
+
+        def raise_for_status(self):
+            pass
+
+    seq = iter([Short(), Ok()])
+    monkeypatch.setattr(h.s, "get", lambda *a, **k: next(seq))
+    assert h.get("https://x.example/") == {"ok": 1} and naps == [5.0]
+
+
+def test_every_http_call_in_fetch_passes_an_explicit_timeout():
+    """A2: no requests/urllib/httpx call in fetch/ without a timeout, and web3 providers carry
+    one in request_kwargs. Static, so a new call without one fails here before it can hang."""
+    import ast
+    from pathlib import Path
+
+    verbs = {"get", "post", "put", "delete", "head", "request", "patch", "urlopen"}
+    offenders = []
+    for path in sorted(Path("fetch").glob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+            owner = ast.unparse(f.value) if isinstance(f, ast.Attribute) else ""
+            kw = {k.arg for k in node.keywords}
+            # the HTTP clients fetch/ uses: the requests module, Http's session (self.s), and
+            # urllib/httpx should either ever appear
+            if name in verbs and (owner in ("requests", "httpx", "urllib.request", "self.s")
+                                  or name == "urlopen"):
+                if "timeout" not in kw:
+                    offenders.append(f"{path}:{node.lineno} {ast.unparse(node)[:80]}")
+            if name == "HTTPProvider":
+                rk = next((k.value for k in node.keywords if k.arg == "request_kwargs"), None)
+                if rk is None or "timeout" not in ast.unparse(rk):
+                    offenders.append(f"{path}:{node.lineno} HTTPProvider without a timeout")
+    assert not offenders, "HTTP calls without an explicit timeout:\n" + "\n".join(offenders)
+    # and the backstop: a requests call that forgets one still gets the default
+    import requests.adapters
+    from fetch import base
+    assert requests.adapters.HTTPAdapter.send.__name__ == "_instrumented_send"
+    assert base.DEFAULT_TIMEOUT[0] <= 10 and base.DEFAULT_TIMEOUT[1] <= 60
+
+
+def test_a_source_that_hangs_is_abandoned_at_its_budget_and_the_rest_merge_in_tier_order(monkeypatch):
+    """A3: the dispatcher, not the adapter, enforces each source's wall clock. A hung source is
+    abandoned with what it produced so far, gapped 'tier timed out', and the others are merged
+    in TIER_ORDER however they finished — the collision guard stays deterministic."""
+    import threading
+
+    import fetch
+    from fetch.base import point
+
+    release = threading.Event()
+
+    class Hangs:
+        def run(self, projects, window_days, out):
+            out.add(point("Ethereum", "price_usd", 1.0, "hangs", 1, pd.Timestamp("2026-09-20")),
+                    "hangs", "Ethereum", "first figure", 1)
+            release.wait(30)            # the beaconchain hang, in miniature
+
+    class Slow:
+        def run(self, projects, window_days, out):
+            import time
+            time.sleep(0.6)
+            out.add(point("Ethereum", "tx_count", 5.0, "slow", 1, pd.Timestamp("2026-09-20")),
+                    "slow", "Ethereum", "slow", 1)
+
+    class Fast:
+        def run(self, projects, window_days, out):
+            out.add(point("Ethereum", "tx_count", 7.0, "fast", 2, pd.Timestamp("2026-09-20")),
+                    "fast", "Ethereum", "fast", 2)
+
+    monkeypatch.setattr(fetch, "TIER_ORDER", [("slow", 1, lambda c: Slow()),
+                                              ("hangs", 1, lambda c: Hangs()),
+                                              ("fast", 2, lambda c: Fast())])
+    monkeypatch.setitem(fetch.TIER_BUDGET_S, "hangs", 1.5)
+    import time as _t
+    t0 = _t.monotonic()
+    out = fetch.fetch_all([config.PROJECT_BY_NAME["Ethereum"]], 30)
+    release.set()
+    assert _t.monotonic() - t0 < 10, "the run must not wait on the hung source"
+    df = out.frame()
+    assert set(df.source) >= {"hangs", "slow"}, "what the hung source produced is kept"
+    tx = df[(df.metric == "tx_count")]
+    assert list(tx.source) == ["slow"], \
+        "tier 1 'slow' finished LAST but was declared first, so it wins the collision"
+    msg = next(e.message for e in out.log if e.source == "hangs" and e.status == "failed")
+    assert "TIER TIMED OUT after 2s" in msg or "TIER TIMED OUT after 1s" in msg, msg
+    assert out.timed_out["hangs"][0] == 1
+    assert any(g["reason"].startswith("TIER TIMED OUT this run") for g in out.gaps), \
+        "gaps a tier-1 source could have filled say it timed out"
+
+
+def test_the_heartbeat_names_the_source_and_host_of_a_long_wait(monkeypatch):
+    """A4: a call outstanding for more than 30s is logged with its source and host."""
+    import threading
+
+    import fetch
+    from fetch import base
+
+    started, done = threading.Event(), threading.Event()
+
+    def worker():
+        with base.waiting_on("GET beaconcha.in"):
+            started.set()
+            done.wait(5)
+
+    t = threading.Thread(target=worker, name="beaconchain")
+    t.start()
+    started.wait(2)
+    try:
+        hb = fetch.Heartbeat(every=0.0)
+        lines = hb.beat()
+        assert any("[beaconchain] GET beaconcha.in" in line for line in lines), lines
+        assert fetch.HEARTBEAT_AFTER_S == 30.0
+    finally:
+        done.set()
+        t.join()
+    assert not [x for x in base.inflight() if x[0] == "beaconchain"], "cleared when it returns"

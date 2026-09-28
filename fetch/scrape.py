@@ -42,7 +42,8 @@ from pathlib import Path
 
 import yaml
 
-from .base import USER_AGENT, derive_flow_from_cumulative, json_path_get, parse_number, point, today
+from .base import (USER_AGENT, derive_flow_from_cumulative, json_path_get, parse_number, point, today,
+                   waiting_on)
 
 log = logging.getLogger("token_metrics.fetch.scrape")
 
@@ -195,7 +196,7 @@ def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, s
         # THE TOOL'S OWN USER AGENT, not urllib's default. Until 2026-09-24 robots.txt was read
         # by RobotFileParser.read(), which sends "Python-urllib/3.x" — a UA many CDNs refuse
         # outright — so "robots.txt disallows" could mean a 403 on robots.txt itself.
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=(10, 20))
     except Exception as e:  # noqa: BLE001
         # ** A NETWORK ERROR IS "UNREACHABLE", NOT "NO FILE". Corrected 2026-09-28. ** RFC 9309
         # s2.3.1.4: robots.txt unreachable "due to server or network errors" -> the crawler MUST
@@ -438,7 +439,8 @@ class Scrape:
 
         page.on("response", on_response)
         try:
-            page.goto(url, timeout=PAGE_TIMEOUT_MS, wait_until=entry.get("wait_until", "networkidle"))
+            with waiting_on(f"page load {urllib.parse.urlparse(url).netloc} (Playwright)"):
+                page.goto(url, timeout=PAGE_TIMEOUT_MS, wait_until=entry.get("wait_until", "networkidle"))
             if entry.get("wait_for"):
                 page.wait_for_selector(entry["wait_for"], timeout=PAGE_TIMEOUT_MS)
             method = entry["method"]

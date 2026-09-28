@@ -82,7 +82,7 @@ from collections import deque
 
 import pandas as pd
 
-from .base import Http, tidy, today, window
+from .base import Http, sleep as base_sleep, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.nearblocks")
 
@@ -106,7 +106,8 @@ RATE_LIMIT_WAIT = 60.0
 FLOW_PER_PAGE = 50
 
 _clock = time.monotonic   # module-level so tests can swap in a fake clock
-_sleep = time.sleep
+def _sleep(seconds: float) -> None:
+    base_sleep(seconds, f"NearBlocks free-plan pacing, {seconds:.0f}s")
 
 
 def credits_for(rows: int) -> int:

@@ -144,7 +144,7 @@ class MapleTransparency:
             text = self._get(url)
         else:
             import requests
-            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=45)
+            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=(10, 45))
             r.raise_for_status()
             text = r.text
         f.parent.mkdir(parents=True, exist_ok=True)

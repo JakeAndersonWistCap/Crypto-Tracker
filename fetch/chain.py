@@ -369,7 +369,7 @@ class ChainReader:
         errors = []
         for url in endpoints:
             try:
-                w3 = Web3(HTTPProvider(url, request_kwargs={"timeout": 30}))
+                w3 = Web3(HTTPProvider(url, request_kwargs={"timeout": (10, 30)}))
                 if w3.is_connected():
                     # HOST ONLY — see rpc_host. A keyed endpoint carries its key in the path.
                     log.info("chain %s connected via %s", chain, rpc_host(url))
@@ -607,7 +607,7 @@ class ChainReader:
                         f"public endpoints stay as fallback), not a narrower range.") from e
                 log.info("chain %s: %s refused eth_getLogs (%s) — falling back to %s",
                          chain, tried[-1], redact_urls(e)[:80], rpc_host(nxt))
-                w3 = Web3(HTTPProvider(nxt, request_kwargs={"timeout": 60}))
+                w3 = Web3(HTTPProvider(nxt, request_kwargs={"timeout": (10, 60)}))
                 self._w3[chain] = w3
 
     def burn_transfer_events(self, chain: str, token: str, burn_to: str, from_block: int,
