@@ -325,6 +325,9 @@ def _check_component_labels(project: dict, metric: str, components: list) -> Non
                 f"anything that is not a key.")
 
 
+BURN_CONFIRMATIONS = 20   # burn events at least this deep are final and cached (fetch/logcache.py)
+
+
 class ChainReader:
     """Holds one working web3 connection per chain, trying the fallback list in order."""
 
@@ -345,6 +348,9 @@ class ChainReader:
         # Every range/bad-request body the providers returned, so the working chunk size is READ
         # from what they said rather than guessed at.
         self.log_range_errors: dict[str, list[str]] = {}
+        # INCREMENTAL BURN SCANS (2026-09-28): events already read, see fetch/logcache.py.
+        self.log_cache = None
+        self.log_incremental: dict[str, str] = {}
 
     def web3(self, chain: str):
         if chain in self._w3:
@@ -632,20 +638,33 @@ class ChainReader:
 
         w3 = self.web3(chain)
         head = int(w3.eth.block_number)
-        if max_blocks is not None and head - from_block > max_blocks:
-            # REFUSE, DO NOT TRUNCATE. A silently shortened window returns a smaller number that
-            # looks exactly like a quieter period.
-            raise RuntimeError(
-                f"the log window is {head - from_block:,} blocks (from {from_block:,} to {head:,}), "
-                f"over the configured max_blocks_per_run of {max_blocks:,}. Refusing rather than "
-                f"scanning a shortened window, which would return a smaller total that reads as a "
-                f"quieter period. Raise max_blocks_per_run, or move from_block forward and carry "
-                f"the earlier total as a declared starting point.")
+        # max_blocks_per_run: REFUSE, DO NOT TRUNCATE — checked below against the blocks this run
+        # actually scans. A silently shortened window returns a smaller number that looks
+        # exactly like a quieter period.
 
         topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
         base = {"address": self.checksum(token), "topics": [topic, None, to_topic]}
-        raw, chunks, used = self.scan_logs(chain, base, from_block, head, chunk)
+
+        # ** INCREMENTAL (2026-09-28). ** Events at or below a block BURN_CONFIRMATIONS behind
+        # the head are final; they are cached (fetch/logcache.py) and the next run scans only
+        # from the block after. The first run, or a changed from_block (a different stream),
+        # reads from from_block as before. Everything returned is still the whole history.
+        from .logcache import LogCache, stream_id
+        if self.log_cache is None:
+            self.log_cache = LogCache()
+        sid = stream_id(chain, token, [topic, None, to_topic], int(from_block))
+        cached = self.log_cache.load(sid)
+        start = int(from_block) if cached["scanned_to"] is None else max(
+            int(from_block), int(cached["scanned_to"]) + 1)
+        if max_blocks is not None and head - start > max_blocks:
+            raise RuntimeError(
+                f"the log window is {head - start:,} blocks (from {start:,} to {head:,}), "
+                f"over the configured max_blocks_per_run of {max_blocks:,}. Refusing rather than "
+                f"scanning a shortened window, which would return a smaller total that reads as a "
+                f"quieter period. Raise max_blocks_per_run, or move from_block forward and carry "
+                f"the earlier total as a declared starting point.")
+        raw, chunks, used = self.scan_logs(chain, base, start, head, chunk)
         events = []
         if True:
             for entry in raw:
@@ -659,7 +678,16 @@ class ChainReader:
                                "value": word,
                                "block": int(entry["blockNumber"])})
         self.log_chunk_used[chain] = used
-        return events, from_block, head, chunks
+        safe = head - BURN_CONFIRMATIONS
+        if safe >= start:
+            final = cached["events"] + [e for e in events if e["block"] <= safe]
+            self.log_cache.save(sid, final, safe, safe)
+        self.log_incremental[chain] = (
+            f"full history from block {start:,} read, cached to {safe:,}"
+            if cached["scanned_to"] is None else
+            f"incremental: {len(cached['events']):,} cached event(s) to block "
+            f"{cached['scanned_to']:,}, {len(events):,} new over blocks {start:,}-{head:,}")
+        return cached["events"] + events, from_block, head, chunks
 
     def scan_logs(self, chain: str, base: dict, from_block: int, to_block: int,
                   chunk: int = 10_000) -> tuple[list, int, int]:
@@ -1319,8 +1347,12 @@ class Chain:
         if ranges:
             log.info("%s/%s: %d range/bad-request response(s) while scanning: %s",
                      project["name"], key, len(ranges), " || ".join(ranges[:3]))
+        inc = getattr(self.reader, "log_incremental", {}).get(chain)
+        if inc:
+            log.info("%s/%s: %s", project["name"], key, inc)
         out.log.append(LogEntry(SOURCE, project["name"], 0, "ok",
                                 f"{key}: eth_getLogs served by {served}"
+                                + (f" ({inc})" if inc else "")
                                 + (f"; provider range message(s): {' || '.join(ranges[:2])}"
                                    if ranges else "")
                                 + (f" after {len(refused_by)} refusal(s): {'; '.join(refused_by)}"

@@ -16,3 +16,10 @@ def _nearblocks_fake_clock(monkeypatch):
         now[0] += s
     monkeypatch.setattr(nearblocks, "_sleep", fake_sleep)
     return pauses
+
+
+@pytest.fixture(autouse=True)
+def _isolated_logcache(monkeypatch, tmp_path):
+    """fetch/logcache.py persists scanned events between runs. Each test gets its own empty
+    cache, so no test reads another's events or writes into the working tree's .cache/."""
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logcache"))

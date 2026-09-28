@@ -45,7 +45,10 @@ class ExplorerRefused(Exception):
 
 class ExplorerTimeout(ExplorerRefused):
     """The scan's TOTAL time budget ran out. Raised straight through get_logs — never handed to
-    the next provider, which is how one GEODNET scan once spent 2,508s retrying two explorers."""
+    the next provider, which is how one GEODNET scan once spent 2,508s retrying two explorers.
+    Carries `partial` (the whole blocks read so far) and `resume_from` when raised mid-page."""
+    partial: list | None = None
+    resume_from: int | None = None
 
 def pad_address(address: str) -> str:
     """An address as a 32-byte topic word, lower-case, 0x-prefixed."""
@@ -194,7 +197,16 @@ class ExplorerLogs:
                     f"{name}: stopped at {cap} requests without exhausting the range (cursor "
                     f"block {cursor:,}). Raise EXPLORER_MAX_REQUESTS_PER_SCAN deliberately, or "
                     f"narrow the scan — a truncated history is not returned as a complete one.")
-            res = self._call(name, chain_id, {**params, "fromBlock": cursor, "page": page})
+            try:
+                res = self._call(name, chain_id, {**params, "fromBlock": cursor, "page": page})
+            except ExplorerTimeout as e:
+                # WHAT WAS READ BEFORE THE BUDGET RAN OUT, for a resumable seed (fetch/logcache.py).
+                # Only blocks BELOW the cursor are whole: the cursor block itself may hold more
+                # matching logs than the last page fitted.
+                e.partial = sorted((x for x in out if x["blockNumber"] < cursor),
+                                   key=lambda x: (x["blockNumber"], x["logIndex"]))
+                e.resume_from = cursor
+                raise
             n += 1
             if not isinstance(res, list):
                 raise ExplorerRefused(f"{name}: result is {type(res).__name__}, not a list")

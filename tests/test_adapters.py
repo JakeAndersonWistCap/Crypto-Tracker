@@ -13544,7 +13544,10 @@ class _ExplorerHttp:
             return {"status": "0", "message": "NOTOK",
                     "result": f"Free API access is not supported for this chain {params.get('apikey')}"}
         key = (params.get("address", "").lower(), params.get("topic1"), params.get("topic2"))
-        rows = [r for r in self.logs_by_key.get(key, []) if int(r["blockNumber"], 16) >= int(params["fromBlock"])]
+        top = params.get("toBlock")
+        top = float("inf") if top in (None, "latest") else int(top)
+        rows = [r for r in self.logs_by_key.get(key, [])
+                if int(params["fromBlock"]) <= int(r["blockNumber"], 16) <= top]
         off, page = int(params["offset"]), int(params["page"])
         chunk = rows[(page - 1) * off: page * off]
         if not chunk:
@@ -14893,6 +14896,12 @@ def test_a_counted_transfer_with_no_timestamp_is_refused_not_zero_filled(monkeyp
     assert out.frame().empty, "an undated transfer must not become a zero-filled series"
     gap = next(g for g in out.gaps if g["metric"] == "actual_buyback_tokens")
     assert "no timestamp" in gap["reason"] and "1 of 2" in gap["reason"], gap["reason"]
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.logcache import LogCache, stream_id
+    lc = LogCache()
+    assert lc.load(stream_id(1, "0xtoken", [TRANSFER_TOPIC, None, pad_address(wallet)]))[
+        "scanned_to"] is None, "a stream holding an undated event is not cached — it would " \
+                               "refuse every later run"
 
     # And when every transfer is dated, the log says when the counted flow last moved — the
     # line that tells a real 30-day zero from a misplaced one.
@@ -15489,3 +15498,163 @@ def test_http_429_without_retry_after_waits_the_configured_window(monkeypatch):
     date = email.utils.formatdate(_time.time() + 30, usegmt=True)
     assert 25 <= run([R(429, {"Retry-After": date}), R(200)])[0] <= 31
     assert base.retry_after("garbage") is None and base.retry_after(None) is None
+
+
+def _incremental_setup(monkeypatch):
+    E, t0 = 10 ** 18, int(pd.Timestamp("2026-09-01").timestamp())
+    pay = "0x5680681ed3767b96914ce741a308155c7fb9171d"
+    reserve = "0x9a709b7b69ea42d5eeb1cebc48674c69e1569ec6"
+    spec = {"key": "reserve_inflow", "metric": "actual_buyback_tokens", "chain": "ethereum",
+            "token": "0xtoken", "holders": [reserve], "direction": "in", "store": True,
+            "count_from": [pay]}
+    return E, t0, pay, reserve, spec
+
+
+def test_log_scans_are_incremental_after_the_first_run(monkeypatch):
+    """Run 20260928T090446Z: every scan re-read full history each run. The second run asks
+    only for blocks after the first run's pinned block, and still reconciles the WHOLE history
+    (cached + new) to balanceOf before storing."""
+    from fetch.base import FetchOutput
+    from fetch.logscan import LogScan, CONFIRMATIONS
+    E, t0, pay, reserve, spec = _incremental_setup(monkeypatch)
+    day = 86_400
+    logs = _flow_logs(reserve, [(100, pay, 5 * E, t0), (300, pay, 3 * E, t0 + day),
+                                (1_500, pay, 4 * E, t0 + 3 * day)])
+    ex = _explorer(monkeypatch, logs, max_records=1000)
+
+    out1 = FetchOutput()
+    LogScan(explorer=ex, reader=_FakeReader({reserve: 8 * E}, head=1_000))._scan(
+        {"name": "Chainlink"}, spec, None, out1)
+    assert "full history read" in next(e.message for e in out1.log if "RECONCILED" in e.message)
+    assert all(int(c[1]["fromBlock"]) == 0 for c in ex.http.calls)
+
+    ex.http.calls.clear()
+    out2 = FetchOutput()
+    LogScan(explorer=ex, reader=_FakeReader({reserve: 12 * E}, head=2_000))._scan(
+        {"name": "Chainlink"}, spec, None, out2)
+    froms = {int(c[1]["fromBlock"]) for c in ex.http.calls}
+    assert froms == {1_000 - CONFIRMATIONS + 1}, f"only newer blocks are asked for: {froms}"
+    line = next(e.message for e in out2.log if "RECONCILED" in e.message)
+    assert "incremental: 2 cached event(s) to block 980, 1 new to block 1,980" in line, line
+    got = out2.frame()
+    got = got[got.metric == "actual_buyback_tokens"]
+    assert got.value.sum() == 12.0, "the whole history, cached + new, is the series"
+
+    # THE CACHE IS NOT TRUSTED: a balance the cached + new events do not explain refuses, and
+    # the proven cache is kept (not advanced) for the re-run.
+    ex.http.calls.clear()
+    out3 = FetchOutput()
+    LogScan(explorer=ex, reader=_FakeReader({reserve: 12 * E + 1}, head=2_500))._scan(
+        {"name": "Chainlink"}, spec, None, out3)
+    assert out3.frame().empty
+    assert "1 wei unaccounted" in next(g["reason"] for g in out3.gaps)
+    ex.http.calls.clear()
+    out4 = FetchOutput()
+    LogScan(explorer=ex, reader=_FakeReader({reserve: 12 * E}, head=2_500))._scan(
+        {"name": "Chainlink"}, spec, None, out4)
+    assert {int(c[1]["fromBlock"]) for c in ex.http.calls} == {2_000 - CONFIRMATIONS + 1}, \
+        "a failed reconciliation does not advance the cache"
+    assert not out4.frame().empty
+
+
+def test_a_seed_that_runs_out_of_budget_resumes_next_run(monkeypatch):
+    """GEODNET's mining_wallets_outflow timed out inside 120s on every run, so it never stored
+    anything. The seed now keeps the whole blocks it read and the next run continues from there;
+    nothing is stored until the full history reconciles. A seed that then fails to reconcile is
+    dropped — it was never proven."""
+    from fetch import explorer as exmod
+    from fetch.base import FetchOutput
+    from fetch.logcache import LogCache
+    from fetch.logscan import LogScan
+    E, t0, pay, reserve, spec = _incremental_setup(monkeypatch)
+    inflows = [(100 + 10 * i, pay, E, t0 + i * 3_600) for i in range(9)]   # 9 logs, 3 per page
+    logs = _flow_logs(reserve, inflows)
+    ex = _explorer(monkeypatch, logs, max_records=3)
+    real_call, calls = exmod.ExplorerLogs._call, [0]
+
+    def call_then_time_out(self, name, chain_id, params):
+        calls[0] += 1
+        if calls[0] == 3:
+            raise exmod.ExplorerTimeout("explorer scan timed out after 120s, provider errors: none")
+        return real_call(self, name, chain_id, params)
+    monkeypatch.setattr(exmod.ExplorerLogs, "_call", call_then_time_out)
+
+    out1 = FetchOutput()
+    LogScan(explorer=ex, reader=_FakeReader({reserve: 9 * E}))._scan({"name": "Chainlink"}, spec, None, out1)
+    assert out1.frame().empty
+    g = next(g for g in out1.gaps if g["metric"] == "actual_buyback_tokens")
+    # pages: blocks 100-120 | 120-140 (cursor now 140) | timeout -> blocks < 140 are whole
+    assert "SEEDING, RESUMABLE" in g["reason"] and "to block 139 of 980" in g["reason"], g["reason"]
+
+    monkeypatch.setattr(exmod.ExplorerLogs, "_call", real_call)
+    ex.http.calls.clear()
+    out2 = FetchOutput()
+    LogScan(explorer=ex, reader=_FakeReader({reserve: 9 * E}))._scan({"name": "Chainlink"}, spec, None, out2)
+    assert int(ex.http.calls[0][1]["fromBlock"]) == 140, "resumes where the seed stopped"
+    got = out2.frame()
+    assert got[got.metric == "actual_buyback_tokens"].value.sum() == 9.0
+
+    # a seed that does not reconcile is removed, not kept to fail forever
+    lc = LogCache()
+    spec2 = dict(spec, key="reserve_inflow_b", holders=["0x00000000000000000000000000000000000000cc"])
+    monkeypatch.setattr(exmod.ExplorerLogs, "_call", call_then_time_out)
+    calls[0] = 0
+    logs2 = _flow_logs(spec2["holders"][0], inflows)
+    ex2 = _explorer(monkeypatch, logs2, max_records=3)
+    LogScan(explorer=ex2, reader=_FakeReader({}))._scan({"name": "Chainlink"}, spec2, None, FetchOutput())
+    assert list(lc.root.glob("*.json.gz")), "the partial seed was cached"
+    before = {f.name for f in lc.root.glob("*.json.gz")}
+    monkeypatch.setattr(exmod.ExplorerLogs, "_call", real_call)
+    out3 = FetchOutput()
+    LogScan(explorer=ex2, reader=_FakeReader({spec2["holders"][0]: 1})) \
+        ._scan({"name": "Chainlink"}, spec2, None, out3)
+    assert out3.frame().empty
+    after = {f.name for f in lc.root.glob("*.json.gz")}
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.logcache import stream_id
+    h2 = pad_address(spec2["holders"][0])
+    seed = {lc.path(stream_id(1, "0xtoken", t)).name
+            for t in ([TRANSFER_TOPIC, None, h2], [TRANSFER_TOPIC, h2, None])}
+    assert seed & before and not (seed & after), (seed, before, after)
+    assert before - seed == after, "the proven streams of the first scan are untouched"
+
+
+def test_sky_burn_scan_is_incremental_and_caches_only_final_blocks():
+    """Sky's burn_logs re-read ~2M blocks from 20,663,735 every run. Events BURN_CONFIRMATIONS
+    deep are final and cached; the next run scans from the block after, and still returns the
+    whole history. Blocks near the head are re-read, never cached."""
+    import types
+
+    from fetch import chain as chainmod
+    token = "0x56072C95FAA701256059aa122697B133aDEd9279"
+    sender = "0x" + "ab" * 20
+    burns = {20_663_800: 5, 20_663_900: 7, 20_700_000: 11}   # block -> value
+
+    class R(chainmod.ChainReader):
+        head = 20_663_950
+
+        def web3(self, chain):
+            return types.SimpleNamespace(eth=types.SimpleNamespace(block_number=self.head))
+
+        def scan_logs(self, chain, base, from_block, to_block, chunk=10_000):
+            self.asked = (from_block, to_block)
+            raw = [{"data": hex(v), "topics": [base["topics"][0], "0x" + "0" * 24 + sender[2:],
+                                                base["topics"][2]], "blockNumber": b}
+                   for b, v in burns.items() if from_block <= b <= to_block]
+            return raw, 1, chunk
+
+    r = R()
+    ev, first, last, _ = r.burn_transfer_events("ethereum", token, "0x" + "0" * 40, 20_663_735)
+    assert r.asked == (20_663_735, 20_663_950) and [e["value"] for e in ev] == [5, 7]
+    assert "full history" in r.log_incremental["ethereum"]
+    # 20_663_900 is <= head - 20, so cached; the next run starts at head - 20 + 1
+    R.head = 20_700_010
+    r2 = R()
+    ev2, first2, _, _ = r2.burn_transfer_events("ethereum", token, "0x" + "0" * 40, 20_663_735)
+    assert r2.asked == (20_663_950 - chainmod.BURN_CONFIRMATIONS + 1, 20_700_010), r2.asked
+    assert [e["value"] for e in ev2] == [5, 7, 11] and first2 == 20_663_735
+    assert "incremental: 2 cached event(s)" in r2.log_incremental["ethereum"]
+    # a different from_block is a different stream: full read again
+    r3 = R()
+    r3.burn_transfer_events("ethereum", token, "0x" + "0" * 40, 20_663_000)
+    assert r3.asked[0] == 20_663_000

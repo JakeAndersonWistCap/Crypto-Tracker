@@ -44,6 +44,7 @@ import pandas as pd
 
 import config
 from .base import LogEntry, tidy, today, window
+from .logcache import LogCache, stream_id
 from .explorer import ExplorerLogs, ExplorerRefused, ExplorerTimeout, TRANSFER_TOPIC, pad_address, topic_address
 
 log = logging.getLogger("token_metrics.fetch.logscan")
@@ -60,15 +61,53 @@ def _amount(entry: dict) -> int:
     return int(str(data), 16)
 
 
+def _merge(cached: list, new: list) -> list:
+    """Cached + new, one copy of each log by (transaction, logIndex), in chain order."""
+    seen, merged = set(), []
+    for e in list(cached) + list(new):
+        k = (e["transactionHash"], int(e["logIndex"]))
+        if k not in seen:
+            seen.add(k)
+            merged.append(e)
+    merged.sort(key=lambda e: (int(e["blockNumber"]), int(e["logIndex"])))
+    return merged
+
+
 class LogScan:
     """Runs every project's `log_scans`, each against one token and one or more holders."""
 
-    def __init__(self, explorer: ExplorerLogs | None = None, reader=None):
+    def __init__(self, explorer: ExplorerLogs | None = None, reader=None,
+                 cache: LogCache | None = None):
         self.explorer = explorer or ExplorerLogs()
+        self.cache = cache or LogCache()
         if reader is None:
             from .chain import ChainReader
             reader = ChainReader()
         self.reader = reader
+
+    def _save_progress(self, streams, e, to_block) -> str:
+        """Out of budget mid-scan: keep what was read, so the seed resumes. Nothing here is
+        proven — proven_to is left where it was."""
+        done = []
+        dated = lambda evs: all(int(x.get("timeStamp") or 0) > 0 for x in evs)  # noqa: E731
+        for sid, st, new, _, _ in streams:
+            if new and dated(new):
+                self.cache.save(sid, _merge(st["events"], new), to_block, st["proven_to"])
+                done.append(len(new))
+        cur = getattr(e, "stream", None)
+        partial = getattr(e, "partial", None)
+        if cur and partial and dated(partial):
+            sid, st, start = cur
+            upto = int(e.resume_from) - 1
+            if upto >= start:
+                self.cache.save(sid, _merge(st["events"], partial), upto, st["proven_to"])
+                return (f"{len(streams)} stream(s) read in full and {len(partial):,} event(s) of "
+                        f"the next cached, to block {upto:,} of {to_block:,} "
+                        f"({upto / max(to_block, 1):.0%} of the chain); the next run resumes there")
+        if done:
+            return (f"{len(done)} stream(s) read in full and cached; the next run resumes at the "
+                    f"stream that ran out")
+        return ""
 
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
@@ -112,24 +151,52 @@ class LogScan:
         to_block = head - CONFIRMATIONS
 
         # 2. BOTH DIRECTIONS FOR EVERY HOLDER — reconciliation needs both even when one counts.
+        # INCREMENTAL (2026-09-28, fetch/logcache.py): each stream's events already read are
+        # loaded from the cache and only blocks after its `scanned_to` are asked for. The first
+        # run seeds from block 0; a seed too big for the budget is saved as far as it got and
+        # resumed next run. Reconciliation below still covers the WHOLE history, cached + new.
         ins, outs, served, requests, refused = {}, {}, set(), 0, []
+        streams, fetched_new = [], 0     # (sid, cached state, new events, holder, direction)
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
         if budget:
             budget(config.EXPLORER_SCAN_BUDGET_S)
         try:
             for h in holders:
-                ins[h], m1 = self.explorer.get_logs(chain_id, token, [TRANSFER_TOPIC, None, pad_address(h)], 0, to_block)
-                outs[h], m2 = self.explorer.get_logs(chain_id, token, [TRANSFER_TOPIC, pad_address(h), None], 0, to_block)
-                for m in (m1, m2):
-                    served.add(m["explorer"])
-                    requests += m["requests"]
-                    refused += m["refused"]
+                for way, topics in (("in", [TRANSFER_TOPIC, None, pad_address(h)]),
+                                    ("out", [TRANSFER_TOPIC, pad_address(h), None])):
+                    sid = stream_id(chain_id, token, topics)
+                    st = self.cache.load(sid)
+                    start = 0 if st["scanned_to"] is None else int(st["scanned_to"]) + 1
+                    if start > to_block:
+                        new, meta = [], {"explorer": "cache", "requests": 0, "refused": []}
+                    else:
+                        try:
+                            new, meta = self.explorer.get_logs(chain_id, token, topics, start, to_block)
+                        except ExplorerTimeout as e:
+                            e.stream = (sid, st, start)
+                            raise
+                    streams.append((sid, st, new, h, way))
+                    fetched_new += len(new)
+                    events = _merge(st["events"], new)
+                    (ins if way == "in" else outs)[h] = events
+                    if meta["explorer"] != "cache":
+                        served.add(meta["explorer"])
+                    requests += meta["requests"]
+                    refused += meta["refused"]
         except ExplorerTimeout as e:
-            out.fail(SOURCE, name, f"{key}: {e}", TIER)
-            out.gap(name, metric, reason=str(e), tiers_attempted="2",
-                    suggestion="The providers' own errors are above. Re-runs are cheap now — the "
-                               "scan stops at the budget instead of retrying for most of an hour.")
+            seeded = self._save_progress(streams, e, to_block)
+            out.fail(SOURCE, name, f"{key}: {e}" + (f" — {seeded}" if seeded else ""), TIER)
+            out.gap(name, metric,
+                    reason=str(e) + (f". SEEDING, RESUMABLE: {seeded}" if seeded else ""),
+                    tiers_attempted="2",
+                    suggestion=("The first run reads full history and may need several runs "
+                                "inside the budget; each resumes where the last stopped "
+                                "(fetch/logcache.py). Nothing is stored until the whole history "
+                                "reconciles." if seeded else
+                                "The providers' own errors are above. Re-runs are cheap now — "
+                                "the scan stops at the budget instead of retrying for most of "
+                                "an hour."))
             return
         except ExplorerRefused as e:
             out.fail(SOURCE, name, f"{key}: no explorer served the scan — {e}", TIER)
@@ -144,7 +211,15 @@ class LogScan:
         clear = getattr(self.explorer, "clear_budget", None)
         if clear:
             clear()
-        via = "+".join(sorted(served))
+        via = "+".join(sorted(served)) or "cache only"
+        cached_n = sum(len(st["events"]) for _, st, _, _, _ in streams)
+        resumed = [st["scanned_to"] for _, st, _, _, _ in streams if st["scanned_to"] is not None]
+        increment = (f"incremental: {cached_n:,} cached event(s) to block {min(resumed):,}, "
+                     f"{fetched_new:,} new to block {to_block:,}"
+                     if len(resumed) == len(streams) else
+                     f"full history read ({fetched_new:,} event(s)) and cached"
+                     if not resumed else
+                     f"seed completed: {cached_n:,} cached + {fetched_new:,} new event(s)")
 
         # 3. RECONCILE, PER HOLDER, TO THE WEI.
         for h in holders:
@@ -175,7 +250,21 @@ class LogScan:
                                     "indexed to the pinned block, or the token moves balances "
                                     "without Transfer events. Re-run once; a second difference is "
                                     "real and is NOT to be absorbed by a tolerance."))
+                # THE CACHE IS NOT ADVANCED, and anything in it no reconciliation has vouched for
+                # is dropped, so an unproven segment cannot keep this scan failing.
+                for sid, _, _, _, _ in streams:
+                    log.info("%s/%s: logcache %s", name, key,
+                             self.cache.cut_back(sid, lambda e: int(e["blockNumber"])))
                 return
+
+        # RECONCILED: every stream is proven to the pinned block. Saved before attribution, which
+        # reads the events but does not change them.
+        # A stream holding an UNDATED event is not cached: step 5b refuses a counted one, and a
+        # cached copy would refuse every later run too. It is re-read until the source dates it.
+        for sid, st, new, h, way in streams:
+            events = (ins if way == "in" else outs)[h]
+            if all(int(e.get("timeStamp") or 0) > 0 for e in events):
+                self.cache.save(sid, events, to_block, to_block)
 
         # 4. WHAT COUNTS.
         internal = set(holders)
@@ -227,7 +316,7 @@ class LogScan:
         dated = [e["timeStamp"] for e in counted if int(e.get("timeStamp") or 0) > 0]
         last_moved = (pd.Timestamp(max(dated), unit="s").date().isoformat() if dated else "never")
         summary = (f"{key}: RECONCILED to the wei for {len(holders)} holder(s) at block "
-                   f"{to_block:,}; served by {via} in {requests} request(s)"
+                   f"{to_block:,}; served by {via} in {requests} request(s), {increment}"
                    + (f" after refusal(s): {'; '.join(refused)}" if refused else "")
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
                      f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "

@@ -154,6 +154,17 @@ where the selector still matches but now points at a different number. Three def
 Tier 3 is polite: one run a day, responses cached per day, `robots.txt` respected, and an
 honest user agent naming the tool.
 
+**Log scans are incremental.** Every Transfer-event scan (the explorer `log_scans` and Sky's
+`burn_logs`) keeps the events it has read in `.cache/logscan/` (`TOKEN_METRICS_LOGCACHE`) and
+the next run asks only for blocks after the last one scanned. The first run reads full history;
+one too large for the 120s budget is saved as far as it got and resumed by the next run. The
+cache is disposable — delete it and the next run reseeds — and never trusted: explorer scans
+still reconcile cached + new events to `balanceOf` to the wei before storing, and a failed
+reconciliation drops whatever no reconciliation has vouched for.
+
+NearBlocks is paced to its free plan (6 credits a minute, one credit per 25 rows), and the NEAR
+buyback read runs before the activity stats.
+
 ## Contract addresses are unverified — read this before trusting tier 2
 
 The brief requires every address be verified against the **protocol's own documentation**, not
