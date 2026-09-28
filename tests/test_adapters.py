@@ -3459,16 +3459,19 @@ def test_a_component_on_an_uncovered_chain_is_refused_and_makes_the_sum_PARTIAL(
         f"the PARTIAL marker was an inversion and must be gone: {supply.source.iloc[0]}"
     # THE SUPPLY METRIC HAS NO COVERAGE GAP ANY MORE. A reference-only contract is a decision,
     # not a to-do item, and the Gap Report is a to-do list. Scoped to the supply metric on
-    # purpose: burn_solana_token_account is STILL an uncovered-chain gap and must stay one — the
-    # Solana burn destination is a real component of the burn figure that nothing reads.
+    # purpose. (The Solana BURN account is no longer an uncovered-chain gap: since 2026-09-28 it
+    # is read by fetch/solana.py and summed — see the assertion below.)
     supply_gaps = " ".join(str(g.get("reason", "")) for g in out.gaps
                            if g.get("metric") == "total_supply_gross")
     assert "'solana'" not in supply_gaps and "'iotex'" not in supply_gaps, \
         f"a mirror deployment is not a supply gap: {supply_gaps}"
     burn_gaps = " ".join(str(g.get("reason", "")) for g in out.gaps
                          if g.get("metric") in ("burn_address_balance", "gross_burn_tokens"))
-    assert "'solana'" in burn_gaps, \
-        "the Solana BURN destination is a real unread component and must stay on the Gap Report"
+    # READ NOW, NOT REFUSED (2026-09-28). The test network stub makes the Solana call fail, so
+    # the required component stops the burn being stored narrower, and says so.
+    assert "EVM adapter does not cover" not in burn_gaps, burn_gaps
+    assert "NOT STORED THIS RUN — a required component failed: burn_solana_token_account" in burn_gaps, \
+        burn_gaps
     print("uncovered-chain refusal ok on a synthetic project; GEODNET reads the whole cap, "
           "unmarked, with its mirrors declared reference-only")
 
@@ -3575,6 +3578,7 @@ def test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code(
 
         c = Chain()
         c.reader = NoCodeAnywhereStub()
+        c.solana = _Sol(value=0.0)     # GEODNET's Solana burn leg is summed from 2026-09-28
         out = FetchOutput()
         c.run([config.PROJECT_BY_NAME[project_name]], None, out)
         rows = dict(zip(out.frame().metric, out.frame().value))
@@ -3959,7 +3963,8 @@ def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_
 
     DUNE, CHAIN = "dune:8683175", "chain:polygon:burn_polygon"
     decl = config.declared_handover("GEODNET", "gross_burn_tokens")
-    assert decl and tuple(decl["ordered_points"]) == (DUNE, CHAIN), decl
+    # EXTENDED 2026-09-28 with a third leg, the Polygon + Solana sum (the Solana burn account).
+    assert decl and tuple(decl["ordered_points"]) == (DUNE, CHAIN, config.GEODNET_BURN_SUM_POINT), decl
     assert decl.get("composition_change"), \
         "the legs cover different chains — that has to be stated, not left for the reader to find"
 
@@ -3977,7 +3982,8 @@ def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_
     why = bw.handover_refusal("GEODNET", "gross_burn_tokens", (DUNE, CHAIN), overlapped)
     assert why and "OVERLAP" in why and "counted twice" in why, why
 
-    # REFUSED — A THIRD SOURCE. The declaration covers the pair it names and no other.
+    # REFUSED — AN UNDECLARED SOURCE. The declaration covers the points it names and no other
+    # (the Solana account read ALONE is not the declared sum).
     third = dict(clean, **{"chain:solana:burn_solana_token_account":
                            (pd.Timestamp("2026-09-20"), pd.Timestamp("2026-09-21"))})
     why = bw.handover_refusal("GEODNET", "gross_burn_tokens", tuple(third), third)
@@ -16990,3 +16996,159 @@ def test_world_mobile_treasury_routes_are_accepted_limits_and_customer_revenue_s
         assert gp._priority("World Mobile", m, r) == gp.P_SUPPRESSED, m
     r, _ = gp._tier_note(wm, "customer_revenue_usd", {})
     assert gp._priority("World Mobile", "customer_revenue_usd", r) != gp.P_SUPPRESSED, r
+
+
+def _geod_burn_project():
+    """GEODNET with only the two burn legs and the Polygon token (for decimals)."""
+    import copy
+    p = copy.deepcopy(config.PROJECT_BY_NAME["GEODNET"])
+    p["contracts"] = {k: v for k, v in p["contracts"].items()
+                      if k in ("token_polygon", "burn_polygon", "burn_solana_token_account")}
+    return p
+
+
+class _Sol:
+    def __init__(self, value=29_407_004.000000001, fail=None):
+        self.value, self.fail, self.calls = value, fail, 0
+
+    def token_account_balance(self, address):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError(self.fail)
+        assert address == "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED"
+        return self.value, 29_407_004_000_000_001, 9, "api.mainnet-beta.solana.com"
+
+
+def test_geodnet_burn_is_the_polygon_plus_solana_sum_and_a_failed_solana_read_stores_nothing():
+    """1, 2026-09-28: the Solana burn account is confirmed (GEOD mint, incinerator owner, no close
+    authority or delegate) and summed into burn_address_balance with ONE getTokenAccountBalance
+    call. If that read fails the day's burn is not stored — a Polygon-only reading between two
+    summed ones would be a change of measuring point."""
+    p = _geod_burn_project()
+    c = Chain()
+    c.reader = StubReader(symbol="GEOD", supply=1_000_000_000.0, balance=38_586_932.38)
+    c.solana = _Sol()
+    out = FetchOutput()
+    c.run([p], None, out)
+    f = out.frame()
+    b = f[f.metric == "burn_address_balance"]
+    assert len(b) == 1 and abs(float(b.value.iloc[0]) - 67_993_936.38) < 1e-3, b
+    assert b.source.iloc[0] == config.GEODNET_BURN_SUM_POINT, b.source.iloc[0]
+    assert c.solana.calls == 1
+    assert any("getTokenAccountBalance via api.mainnet-beta.solana.com" in e.message for e in out.log)
+    assert not [g for g in out.gaps if "EVM adapter does not cover" in g["reason"]]
+    ev = p["contracts"]["burn_solana_token_account"]["sink_evidence"]
+    assert ev["owner"].startswith("1nc1nerator") and ev["mint"].startswith("7JA5eZ")
+
+    c2 = Chain()
+    c2.reader = StubReader(symbol="GEOD", supply=1_000_000_000.0, balance=38_586_932.38)
+    c2.solana = _Sol(fail="HTTP 429 from api.mainnet-beta.solana.com")
+    out2 = FetchOutput()
+    c2.run([p], None, out2)
+    assert "burn_address_balance" not in set(out2.frame().metric), "never stored narrower"
+    g = next(g for g in out2.gaps if g["metric"] == "burn_address_balance")
+    assert g["reason"].startswith("NOT STORED THIS RUN — a required component failed"), g["reason"]
+
+
+def test_the_switch_to_the_sum_stores_no_flow_and_the_handover_keeps_the_series():
+    """The day the Solana leg joins, the stock jumps by the whole Solana balance. That is not a
+    day's burn: the delta across a change of measuring point is refused. The workbook accepts
+    the three-leg series because the handover declares it — Dune, then Polygon, then the sum."""
+    import build_workbook as bw
+    p = _geod_burn_project()
+    c = Chain(prior_values={("GEODNET", "burn_address_balance"): 38_586_932.38},
+              prior_dates={("GEODNET", "burn_address_balance"): "2026-09-27"},
+              prior_sources={("GEODNET", "burn_address_balance"): "chain:polygon:burn_polygon"})
+    c.reader = StubReader(symbol="GEOD", supply=1_000_000_000.0, balance=38_586_932.38)
+    c.solana = _Sol()
+    out = FetchOutput()
+    c.run([p], None, out)
+    assert "gross_burn_tokens" not in set(out.frame().metric), "29.4M is not one day's burn"
+    assert any("measuring point CHANGED" in g["reason"] for g in out.gaps if g["metric"] == "gross_burn_tokens")
+
+    def row(d, m, v, src):
+        return {"date": pd.Timestamp(d), "project": "GEODNET", "metric": m, "value": v, "source": src,
+                "tier": 2, "is_manual": False, "entered_on": ""}
+    SUM = config.GEODNET_BURN_SUM_POINT
+    long = pd.DataFrame([
+        row("2026-08-31", "gross_burn_tokens", 1_500_000.0, "dune:8683175"),
+        row("2026-09-26", "gross_burn_tokens", 35_000.0, "chain:polygon:burn_polygon:delta"),
+        row("2026-09-27", "gross_burn_tokens", 0.0, "chain:polygon:burn_polygon:delta"),
+        row("2026-09-29", "gross_burn_tokens", 100_000.0, SUM + ":delta"),
+        row("2026-09-27", "burn_address_balance", 38_586_932.38, "chain:polygon:burn_polygon"),
+        row("2026-09-28", "burn_address_balance", 67_993_936.38, SUM),
+        row("2026-09-29", "burn_address_balance", 68_093_936.38, SUM)])
+    data = bw.aggregate(long, pd.DataFrame(), pd.Timestamp("2026-09-30"))
+    geo = data[data.project == "GEODNET"].set_index("metric")
+    for m in ("gross_burn_tokens", "burn_address_balance"):
+        assert geo.loc[m, "status"] != "measuring_point_changed", (m, geo.loc[m, "note"])
+    assert abs(geo.loc["burn_address_balance", "now"] - 68_093_936.38) < 1e-3
+
+
+def test_the_solana_reader_retries_briefly_then_falls_back_and_scales_exactly():
+    import pytest
+    from fetch.solana import SolanaRPC
+
+    class H:
+        def __init__(self, answers):
+            self.answers, self.urls = answers, []
+
+        def post(self, url, body):
+            self.urls.append(url)
+            a = self.answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+    ok = {"jsonrpc": "2.0", "result": {"value": {"amount": "29407004000000001", "decimals": 9}}}
+    rpc = SolanaRPC(["https://a.example", "https://b.example"],
+                    http=H([RuntimeError("gave up after 3 attempts: HTTP 429"), ok]))
+    v, raw, dec, host = rpc.token_account_balance("5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED")
+    assert (raw, dec, host) == (29_407_004_000_000_001, 9, "b.example")
+    assert abs(v - 29_407_004.000000001) < 1e-6
+    assert rpc.http.urls == ["https://a.example", "https://b.example"]
+    bad = SolanaRPC(["https://a.example"], http=H([{"error": {"code": -32602, "message": "invalid"}}]))
+    with pytest.raises(RuntimeError, match="no Solana RPC answered"):
+        bad.token_account_balance("x")
+    assert config.solana_rpc_endpoints() == ["https://api.mainnet-beta.solana.com"]
+
+
+def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
+    """4, 2026-09-28: CoinGecko's GEOD total is 1bn minus the POLYGON burn only (961,518,067.62,
+    exact), so ~29.4M burned on Solana still counts as supply. Every circulating denominator on
+    GEODNET subtracts the MEASURED un-netted burn (provider total - (gross - summed burn)); a
+    negative one is an error (n/a), and no other project is touched."""
+    import build_workbook as bw
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}]"
+    expr = bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
+    assert expr == ("IF(ROUND(D[total_supply]-(D[total_supply_gross]-D[burn_address_balance]),2)>=0,"
+                    "D[circulating_supply]-ROUND(D[total_supply]-(D[total_supply_gross]-"
+                    "D[burn_address_balance]),2),NA())"), expr
+    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == "D[circulating_supply]"
+    # the arithmetic on Jake's figures: CoinGecko nets Polygon only -> the Solana balance comes out
+    tot, gross, burned = 1e9 - 38_586_932.38, 1e9, 38_586_932.38 + 29_407_004.0
+    assert round(tot - (gross - burned), 2) == 29_407_004.0
+    ev = config.PROJECT_BY_NAME["GEODNET"]["burn_reconciliation"]
+    assert ev["summed"]["total"] == 67_993_936.38 and ev["difference"] == 9_610_000.38
+    assert "lock-and-mint" in config.OPEN_QUESTIONS[0]["note_2026_09_28"]
+
+
+def test_a_declared_leg_that_has_not_started_yet_does_not_blank_the_series():
+    """GEODNET's handover gained the sum as a third leg on 2026-09-28. Until the first summed run
+    lands, the store holds Dune + Polygon only: that must still be accepted. Legs present keep
+    their declared order and must not overlap; an undeclared source is still refused."""
+    import build_workbook as bw
+    DUNE, POLY, SUM = "dune:8683175", "chain:polygon:burn_polygon", config.GEODNET_BURN_SUM_POINT
+    ts = lambda a, b: (pd.Timestamp(a), pd.Timestamp(b))  # noqa: E731
+    two = {DUNE: ts("2025-01-01", "2026-08-31"), POLY: ts("2026-09-14", "2026-09-27")}
+    assert bw.handover_refusal("GEODNET", "gross_burn_tokens", (DUNE, POLY), two) is None
+    skip = {DUNE: ts("2025-01-01", "2026-08-31"), SUM: ts("2026-09-29", "2026-09-30")}
+    assert bw.handover_refusal("GEODNET", "gross_burn_tokens", (DUNE, SUM), skip) is None
+    bad = dict(two, **{SUM: ts("2026-09-27", "2026-09-30")})
+    why = bw.handover_refusal("GEODNET", "gross_burn_tokens", (DUNE, POLY, SUM), bad)
+    assert why and "OVERLAP" in why, why
+    one = {POLY: ts("2026-09-14", "2026-09-27"), "chain:polygon:burn_other": ts("2026-09-28", "2026-09-30")}
+    assert "outside it" in bw.handover_refusal("GEODNET", "gross_burn_tokens", tuple(one), one)

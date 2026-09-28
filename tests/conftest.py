@@ -25,3 +25,18 @@ def _isolated_logcache(monkeypatch, tmp_path):
     monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logcache"))
     # once-a-day checks run every time in tests; the test of the gate itself unsets this
     monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "always")
+
+
+@pytest.fixture(autouse=True)
+def _no_solana_network(monkeypatch):
+    """fetch/solana.py reads a live Solana RPC. No test reaches it: the default transport raises
+    at once. A test that needs a Solana value replaces Chain.solana (or passes its own http)."""
+    from fetch import solana
+
+    class _NoNetwork:
+        def __init__(self, *a, **k):
+            pass
+
+        def post(self, url, body):
+            raise RuntimeError("no Solana RPC in tests")
+    monkeypatch.setattr(solana, "Http", _NoNetwork)

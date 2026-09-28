@@ -647,6 +647,27 @@ DEFAULT_RPC = {
     ],
 }
 
+# ===== SOLANA JSON-RPC, for SPL token-account reads only (fetch/solana.py). 2026-09-28. =====
+# ONE public endpoint is declared: Solana's own mainnet-beta, the one Jake's probe read GEODNET's
+# burn account through. No second public endpoint has been checked from here (the build
+# environment cannot reach Solana RPCs), so none is guessed at. Same overrides as the EVM chains:
+# SOLANA_RPC_URL is PREPENDED (a keyed endpoint, tried first), RPC_SOLANA REPLACES the list.
+SOLANA_RPC = ["https://api.mainnet-beta.solana.com"]
+
+
+def solana_rpc_endpoints() -> list[str]:
+    import os
+    env = os.environ.get("RPC_SOLANA", "").strip()
+    if env:
+        return [u.strip() for u in env.split(",") if u.strip()]
+    pre = [u.strip() for u in os.environ.get("SOLANA_RPC_URL", "").split(",") if u.strip()]
+    out = []
+    for u in pre + SOLANA_RPC:
+        if u not in out:
+            out.append(u)
+    return out
+
+
 # Chains the tier 2 EVM adapter can read. Anything else needs its own adapter, and the gap
 # report says so rather than the adapter failing obscurely.
 EVM_CHAINS = set(DEFAULT_RPC)
@@ -1522,15 +1543,22 @@ PROGRAM_CADENCE = {
                 "silent_after_days": 2,
                 "declared_by": "Jake, 2026-09-28",
                 "source": "LUMPY_FLOWS[('GEODNET', 'gross_burn_tokens')]: daily underlying cadence",
-                # ===== THE ZERO P2 IS CLOSED: A GENUINE QUIET PERIOD. 2026-09-28 (Jake). =====
-                # orphan_cleanup.sql section AP on Jake's store: burn_polygon read 38,586,932.38
-                # on both 2026-09-25 and 2026-09-28, and was unchanged 2026-09-23 -> 09-24; every
-                # chain read on the last four runs was ok. The balance really did not move. This
-                # detector now owns the question the "ZERO and a balance read cannot say why" row
-                # asked (fetch/chain.py defers to it for any flow with a cadence here).
-                "zero_closed": {"on": "2026-09-28", "evidence": "orphan_cleanup.sql AP: "
-                                "38,586,932.38 on 2026-09-25 and 2026-09-28; unchanged 09-23 -> "
-                                "09-24; all reads ok on the last four runs"}},
+                # ===== CORRECTED THE SAME DAY: NOT A QUIET PERIOD — BURNING MOVED TO SOLANA. =====
+                # Recorded 2026-09-28 as "a genuine quiet period" from orphan_cleanup.sql AP (the
+                # Polygon balance really did not move: 38,586,932.38 on 09-25 and 09-28, unchanged
+                # 09-23 -> 09-24, every read ok). Jake's Solana probe the same day showed the burn
+                # token account growing ~50-55K GEOD/day through 09-25..09-27. The balance read was
+                # right and the conclusion was wrong: the burns happened on the other chain. The
+                # silence detector now watches gross_burn_tokens as the delta of the Polygon +
+                # Solana SUM (fetch/chain.py, GEODNET_BURN_SUM_POINT), so a chain move can no
+                # longer read as silence.
+                "zero_closed": {"on": "2026-09-28", "status": "CORRECTED 2026-09-28",
+                                "was": "a genuine quiet period (orphan_cleanup.sql AP: Polygon "
+                                       "38,586,932.38 on 2026-09-25 and 2026-09-28; unchanged "
+                                       "09-23 -> 09-24; all reads ok on the last four runs)",
+                                "actually": "burns moved to Solana — the burn token account grew "
+                                            "~50-55K GEOD/day 09-19..09-27, including 09-25..09-27",
+                                "watches": "the Polygon + Solana sum"}},
     # Sky's Stage 2 buy-and-burn runs through the monthly executive (2026-09-10 spell was the
     # first). Declared so its burn is annualised as DISCRETE, never over covered days.
     "Sky": {"metric": "sky_stage2_burn_tokens",
@@ -1826,7 +1854,8 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
               read_method=None, token_standard=None, underlying=None, call=None, call_arg=None,
               supply_is_partial=False, partial_reason="", holder_has_code=None,
               destination_status=None, destination_note="", metric_override=None,
-              granularity=None, emission_tail=None, burn_logs=None):
+              granularity=None, emission_tail=None, burn_logs=None, required_component=False,
+              sink_evidence=None):
     """Data-only helper. verified=None means NOT checked against the protocol's own docs.
 
     candidates / ambiguous: where two or more addresses circulate publicly and we have not
@@ -1838,6 +1867,12 @@ def _contract(address, chain, kind, expected_symbol, source_url, verified=UNVERI
         "address": address,
         "chain": chain,
         "kind": kind,
+        # required_component: a summed metric is NOT stored on a run where this component is
+        # refused or fails, rather than stored narrower (GEODNET's Solana burn leg, 2026-09-28).
+        "required_component": bool(required_component),
+        # sink_evidence: what established that a burn destination really is one (mint, owner,
+        # whether it can ever fall), when, and by which command.
+        "sink_evidence": sink_evidence,
         "expected_symbol": expected_symbol,
         "source_url": source_url,
         "verified": verified,
@@ -1960,6 +1995,11 @@ _SKY_SPLIT_DECIDED = (
     "(sky_stage2_burn_balance / sky_stage2_burn_tokens, the A4 headline); the 2025 emissions "
     "offset and the SKY<->MKR migration flows (converter over-mint, staking-engine deposits, "
     "long-tail reverse conversions) are footnotes on the A4 tab, never summed into a burn column.")
+
+
+# GEODNET's live burn read from 2026-09-28: Polygon dead address + Solana burn token account,
+# summed by fetch/chain.py. The measuring point of that sum, as fetch.base._measuring_point sees it.
+GEODNET_BURN_SUM_POINT = "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)"
 
 
 # ===== WORLD MOBILE'S TREASURY: AN ACCEPTED LIMIT. 2026-09-28 (Jake). =====
@@ -5373,6 +5413,42 @@ PROJECTS = [
                            "separate grounds. Recorded so that lifting the suppression cannot "
                            "silently reintroduce the net-of-burn error.",
         },
+        # ===== ...BUT NET OF THE POLYGON BURN ONLY. 2026-09-28 (Jake). =====
+        # The exact match above is 1bn minus the POLYGON dead-address balance alone. On
+        # 2026-09-21 the Solana burn account already held ~29M GEOD (29,407,004 on 09-28, growing
+        # ~50-55K/day), and none of it is in the 38,481,932.38 CoinGecko subtracted — so
+        # CoinGecko's total (and, it is assumed, its circulating) still counts the Solana burn as
+        # supply, overstating both by ~29.4M. Netted out at READ TIME where net-of-burn supply is
+        # a denominator: burn yield, net supply change %, free float, the A3 buyback/lock rates
+        # (build_workbook._circ). The amount netted is MEASURED each build, never a constant:
+        #   CoinGecko total_supply - (total_supply_gross - burn_address_balance [the sum])
+        # which is the Solana balance while CoinGecko nets Polygon only and falls to ~0 on its own
+        # if it starts netting both. The stored circulating_supply is left as CoinGecko's figure.
+        "supply_unnetted_burn": {
+            "declared": "2026-09-28 (Jake)", "provider": "CoinGecko",
+            "evidence": "total_supply_convention_evidence above: 1e9 - 961,518,067.62 = "
+                        "38,481,932.38 = the Polygon burn to the token, while the Solana burn "
+                        "account held ~29M",
+            "assumed": "that circulating_supply carries the same un-netted Solana burn as "
+                       "total_supply — CoinGecko's circulating methodology for GEOD is not on "
+                       "file (and the figure is not updating: ISSUANCE_PRIMARY's block reason)",
+            "applied_in": ("A4 burn yield", "A4 net supply change %", "A2 free float and its "
+                           "ratios", "A3 buyback / lock % of supply"),
+        },
+        # ===== THE BURN RECONCILES TO GEODNET'S OWN FIGURE. Checked 2026-09-28. =====
+        # GEODNET's X account (June 2026 burn stats): 58,383,936 GEOD burned to date. Summed
+        # dead-address + Solana burn account on 2026-09-28: 38,586,932.38 + 29,407,004.00 =
+        # 67,993,936.38 — above it by 9,610,000.38, i.e. ~90 days at ~107K/day if the June
+        # figure is as of month-end (~96 days at 100K/day). Consistent with the ~100K/day
+        # combined rate.
+        "burn_reconciliation": {
+            "checked_on": "2026-09-28",
+            "reported": {"value": 58_383_936, "source": "GEODNET's X account, June 2026 burn stats"},
+            "summed": {"polygon": 38_586_932.38, "solana": 29_407_004.00, "total": 67_993_936.38},
+            "difference": 9_610_000.38,
+            "reading": "consistent with ~3 months of burns at ~100-107K GEOD/day combined; the "
+                       "exact as-of date of the June figure is not on file",
+        },
         # ARCHETYPE 3 ADDED 2026-09-18 — RESOLVED, not a new hypothesis. See OPEN_QUESTIONS'
         # GEODNET record: Version A (fiat revenue -> 80% buys GEOD on the open market -> burned) is
         # confirmed by GEODNET's own X account plus three corroborating sources; Version B (clients
@@ -5833,16 +5909,33 @@ PROJECTS = [
                      "the supply figure, and now cannot."),
             "burn_solana_token_account": _contract(
                 "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED", "solana", "spl_token_account", "GEOD",
-                GEODNET_BURN_QUERY, verified="2026-09-11",
-                provenance="Dune query 8683175 — the original documented source of this address",
+                GEODNET_BURN_QUERY, verified="2026-09-28",
+                provenance="Dune query 8683175 (the original documented source of this address), "
+                           "CONFIRMED A BURN SINK by Jake's run of check_offline_items.py "
+                           "geod_solana_burn_account on 2026-09-28 — see sink_evidence",
+                # SUMMED, NOT OPTIONAL: if this read fails the day's burn_address_balance is not
+                # stored at all. A Polygon-only figure between two summed ones would put a change
+                # of measuring point into the delta and blank the series (fetch/chain.py).
+                required_component=True,
+                sink_evidence={
+                    "checked_on": "2026-09-28", "by": "Jake",
+                    "command": "python check_offline_items.py geod_solana_burn_account",
+                    "mint": "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu (= GEOD Solana mint)",
+                    "owner": "1nc1nerator11111111111111111111111111111111 (the Solana incinerator)",
+                    "close_authority": None, "delegate": None,
+                    "never_falls": "by construction — no key can sign for the incinerator, and "
+                                   "there is no close authority or delegate",
+                    "balance": "29,407,004.000000001 GEOD (decimals 9)",
+                    "growth": "~50,000-55,000 GEOD/day 2026-09-19..09-27, including 09-25..09-27 "
+                              "when Polygon burn_polygon did not move",
+                    "unreadable": "5 older transactions — public RPC 429, a rate limit, not a fault",
+                    "conclusion": "BURNING HAS MOVED TO SOLANA. Polygon's 'quiet' days were burns "
+                                  "on the other chain.",
+                },
                 purpose="TRANSFER BURN — Solana burn destination. This is a TOKEN-ACCOUNT read, not an "
                         "incinerator balance, so it needs a Solana RPC adapter rather than the EVM one.",
-                note="NOT SUMMED YET (2026-09-28). GIP-7 proposes Solana as GEODNET's primary chain, "
-                     "so burns may have moved here and the Polygon zeros would read as quiet days. "
-                     "Before this is summed into burn_address_balance, `python check_offline_items.py "
-                     "geod_solana_burn_account` must show: mint = 7JA5...mKHu (GEOD's Solana mint), "
-                     "an owner nobody can sign for (the incinerator), and a balance that never falls. "
-                     "The public Solana RPC is blocked from the build environment, so this is unrun."),
+                note="SUMMED from 2026-09-28 (Jake confirmed mint, controller and no falls). Read by "
+                     "fetch/solana.py with one getTokenAccountBalance call per run."),
             # buyback_wallet_polygon_historical RETIRED 2026-09-23 — see retired_contracts.
 
             # ============ THREE WALLETS FROM GEODNET'S OWN TOKENOMICS PAGE, ALL POLYGON ============
@@ -6005,20 +6098,35 @@ PROJECTS = [
         # what the handover declaration is for and the declaration does not settle it. See
         # composition_change below; it renders as an AMBER disclosure on the row.
         "series_handover": {
+            # ===== EXTENDED 2026-09-28: A THIRD LEG, THE POLYGON + SOLANA SUM. =====
+            # From the first run that reads the Solana burn account, the live read is the SUM
+            # (fetch/chain.py labels it chain:sum(...)). The day of the switch stores NO flow:
+            # derive_flow_from_cumulative refuses a delta across a change of measuring point, so
+            # the 29.4M Solana balance never lands as one day's burn. The Polygon-only leg is
+            # narrower than both neighbours — see composition_change.
+            "burn_address_balance": {
+                "ordered_points": ("chain:polygon:burn_polygon", GEODNET_BURN_SUM_POINT),
+                "why": "the dead-address balance, then from 2026-09-28 the dead-address balance "
+                       "PLUS the Solana burn token account (incinerator-owned).",
+                "composition_change": "THE STOCK WIDENS AT THE SWITCH by the whole Solana balance "
+                                      "(29,407,004 GEOD on 2026-09-28). Readings before it are "
+                                      "Polygon only and understate the cumulative burn by that "
+                                      "much; do not difference across the boundary.",
+                "declared": "2026-09-28",
+            },
             "gross_burn_tokens": {
-                "ordered_points": ("dune:8683175", "chain:polygon:burn_polygon"),
+                "ordered_points": ("dune:8683175", "chain:polygon:burn_polygon", GEODNET_BURN_SUM_POINT),
                 "why": "Dune 8683175 is the monthly historical backfill; the Polygon dead-address "
                        "delta is the live read. The backfill drops its current period "
                        "(drop_current_period: True) precisely so the two do not meet.",
-                "composition_change": "THE LEGS COVER DIFFERENT CHAINS. The Dune leg sums Polygon "
-                                      "and Solana burns; the live leg reads Polygon only, because "
-                                      "burn_solana_token_account needs a Solana RPC adapter that "
-                                      "does not exist. The series therefore NARROWS at the "
-                                      "handover by the Solana burn rate, and a month-on-month "
-                                      "comparison across the boundary understates the later month "
-                                      "by that amount. Quantify it from the Dune query's "
-                                      "sol_tokens_burned column before comparing across it.",
-                "declared": "2026-09-22",
+                "composition_change": "THE MIDDLE LEG IS NARROWER. The Dune leg sums Polygon and "
+                                      "Solana burns; the live leg read Polygon ONLY from the "
+                                      "handover until 2026-09-28, when the Solana burn account "
+                                      "was added and the live read became the sum. Days in the "
+                                      "Polygon-only leg understate the burn by the Solana rate "
+                                      "(~50-55K GEOD/day by 2026-09-19..27, when burning had "
+                                      "moved to Solana); the switch day itself has no flow.",
+                "declared": "2026-09-22", "extended": "2026-09-28",
             },
         },
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones
@@ -14460,6 +14568,16 @@ def declared_na(project_name: str, metric: str) -> str | None:
     return not_applicable_reason(project_name, metric)
 
 
+def supply_unnetted_burn(project_name: str) -> dict | None:
+    """The declaration that a provider's supply figures still count some burned tokens.
+
+    GEODNET, 2026-09-28: CoinGecko nets the Polygon dead-address balance out of total_supply and
+    not the Solana burn account. build_workbook._circ nets the measured difference out wherever
+    circulating supply is a denominator.
+    """
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("supply_unnetted_burn")
+
+
 def relation_exempt(project_name: str, greater: str, lesser: str) -> str | None:
     """Why this impossible-relation comparison is not an identity for this project, or None.
 
@@ -16042,6 +16160,21 @@ OPEN_QUESTIONS = [
                   "This is not a small error either way: it is the difference between the right supply "
                   "figure and one inflated by a multiple. Until it is settled, only Polygon is read and "
                   "total_supply is labelled PARTIAL — which understates, but understates KNOWABLY.",
+        # ===== 2026-09-28: SUMMING THE SOLANA BURN SINK DOES NOT REOPEN THIS. =====
+        # The warning above is about SUPPLY: a Solana MINT summed with Polygon's totalSupply
+        # double-counts under lock-and-mint. The burn sum adds two BURN SINKS, which hold distinct
+        # destroyed tokens under either model: under lock-and-mint the Polygon GEOD backing a
+        # burned Solana token stays locked in the NTT manager for good (nobody can redeem it);
+        # under burn-and-mint it was destroyed on Polygon when the Solana token was minted.
+        # Either way the burned Solana GEOD is out of circulation and is not the Polygon dead
+        # balance counted again. The evidence on file LEANS LOCK-AND-MINT: Polygon totalSupply()
+        # reads exactly 1,000,000,000 and does not move although Solana GEOD exists — a
+        # burn-and-mint bridge would have reduced it. Inference, not a read of the NTT manager's
+        # mode; the supply question stays closed by decision as recorded.
+        "note_2026_09_28": "Summing the Solana BURN account is not the double-count this record "
+                           "warns about: burn sinks hold distinct destroyed tokens under either "
+                           "NTT model. Polygon totalSupply fixed at 1bn while Solana GEOD exists "
+                           "leans lock-and-mint (inferred, not read).",
         "suggestion": "Check docs.geodnet.com for the NTT configuration, or read the NTT manager contract "
                       "directly — the mode is on-chain state. Then either add the Solana and IoTeX "
                       "deployments as summed components (burn-and-mint) or keep Polygon as the sole read "

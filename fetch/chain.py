@@ -38,7 +38,7 @@ import pandas as pd
 
 import config
 
-from .base import FetchOutput, LogEntry, derive_flow_from_cumulative, point, today
+from .base import FetchOutput, LogEntry, derive_flow_from_cumulative, point, today, waiting_on
 
 log = logging.getLogger("token_metrics.fetch.chain")
 
@@ -891,6 +891,8 @@ class Chain:
     def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
                  prior_sources: dict | None = None, prior_delta: dict | None = None):
         self.reader = ChainReader()
+        from .solana import SolanaRPC
+        self.solana = SolanaRPC()
         self.prior = prior_values or {}
         # When each prior figure was observed. A delta needs an interval, not just a number to
         # subtract — see derive_flow_from_cumulative.
@@ -981,7 +983,8 @@ class Chain:
 
         # 3. CHAIN COVERAGE. The EVM adapter cannot read Solana, Tron or HyperCore.
         chain = spec.get("chain")
-        if chain not in config.EVM_CHAINS:
+        # EXCEPT an SPL token account on Solana, read by fetch/solana.py (2026-09-28).
+        if chain not in config.EVM_CHAINS and not (chain == "solana" and spec["kind"] == "spl_token_account"):
             out.gap(name, metric,
                     reason=f"contract {key!r} is on {chain!r}, which the EVM adapter does not cover",
                     tiers_attempted="2",
@@ -1047,6 +1050,8 @@ class Chain:
             for key, spec in (p.get("contracts") or {}).items():
                 if spec.get("kind") in REFERENCE_ONLY_KINDS or not spec.get("address"):
                     continue
+                if spec.get("chain") not in config.EVM_CHAINS:
+                    continue            # a Solana SPL account has no symbol()/decimals() to batch
                 if self._gate(p, key, spec, scratch):
                     by_chain[spec["chain"]].add(spec["address"])
         for chain, addrs in sorted(by_chain.items()):
@@ -1089,6 +1094,9 @@ class Chain:
             # makes the resulting sum partial. Dropping one burn path and reporting the rest as if
             # it were the whole is precisely the understatement this tool exists to prevent.
             refused: dict[str, list[str]] = defaultdict(list)
+            # A REQUIRED component that failed (spec required_component): the metric is not stored
+            # this run at all — a narrower sum between two full ones breaks the delta.
+            required_refused: dict[str, list[str]] = defaultdict(list)
             for key, spec in contracts.items():
                 chain, kind = spec["chain"], spec["kind"]
                 # ** REFERENCE-ONLY IS CHECKED BEFORE THE GATE, not after. ** The gate exists to
@@ -1114,6 +1122,23 @@ class Chain:
                 metric = spec.get("metric_override") or KIND_METRIC.get(kind)
                 if metric is None:
                     out.unconfigured(SOURCE, name, f"{key}: unknown contract kind {kind!r}", TIER)
+                    continue
+                # ===== A SOLANA SPL TOKEN ACCOUNT. 2026-09-28 (GEODNET's burns moved there). =====
+                # One getTokenAccountBalance call; summed with the EVM components like any other.
+                if kind == "spl_token_account":
+                    try:
+                        with waiting_on(f"Solana getTokenAccountBalance {key}"):
+                            value, raw, dec, host = self.solana.token_account_balance(spec["address"])
+                    except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                        out.fail(SOURCE, name, f"{key} ({chain}): {e}", TIER)
+                        refused[metric].append(f"{key} ({chain}): read failed")
+                        if spec.get("required_component"):
+                            required_refused[metric].append(f"{key} ({chain}): {e}")
+                        continue
+                    parts[metric].append((f"{chain}:{key}", value))
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                            f"{metric} component {chain}:{key}={value:,.6f} (raw {raw} / "
+                                            f"10^{dec}, getTokenAccountBalance via {host})", TIER))
                     continue
                 # A balance read is balanceOf ON THE TOKEN, with this contract as the holder. The
                 # token MUST be the deployment on the SAME CHAIN as the holder: calling an Ethereum
@@ -1293,7 +1318,19 @@ class Chain:
                 out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                         f"{metric} component {chain}:{key}={value:,.4f}{detail}", TIER))
 
+            for metric, why in required_refused.items():
+                parts.pop(metric, None)
+                out.gap(p["name"], metric,
+                        reason=(f"NOT STORED THIS RUN — a required component failed: {'; '.join(why)}. "
+                                f"The sum is not stored narrower: a partial reading between two full "
+                                f"ones is a change of measuring point, and its delta would be refused "
+                                f"on both sides."),
+                        tiers_attempted="2",
+                        suggestion="Transient (a rate limit) resolves on the next run. If it persists, "
+                                   "set SOLANA_RPC_URL to a keyed endpoint in .env.")
             for metric, missing in refused.items():
+                if metric in required_refused:
+                    continue
                 if metric not in parts:
                     out.gap(p["name"], metric,
                             reason=f"every component was refused: {'; '.join(missing)}",
@@ -1913,8 +1950,8 @@ class Chain:
             log.debug("%s: %s zero not flagged — declared n/a", name, flow_metric)
             return
         # ** NOR ON A FLOW WITH A DOCUMENTED CADENCE. ** (2026-09-28) GEODNET's zero was checked
-        # (orphan_cleanup.sql AP: the balance genuinely did not move, every read ok) and the P2
-        # closed as a quiet period. Where a program's cadence is declared, the silence detector
+        # (orphan_cleanup.sql AP: the Polygon balance genuinely did not move, every read ok) — and
+        # turned out to be burning moving to Solana, now summed in (config zero_closed). Where a program's cadence is declared, the silence detector
         # (build_workbook, config.PROGRAM_CADENCE) judges a run of zeros against it; a per-run
         # "cannot say why" row beside it is the same question asked worse.
         cad = config.program_cadence(name, flow_metric)

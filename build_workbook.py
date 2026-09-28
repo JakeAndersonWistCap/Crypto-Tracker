@@ -382,11 +382,17 @@ def handover_refusal(project: str, metric: str, points, spans: dict) -> str | No
     decl = config.declared_handover(project, metric)
     if not decl:
         return "no handover is declared for this series"
-    ordered = tuple(decl.get("ordered_points") or ())
-    if set(points) != set(ordered):
-        extra = sorted(set(points) - set(ordered))
+    declared = tuple(decl.get("ordered_points") or ())
+    # THE LEGS PRESENT MUST ALL BE DECLARED; A DECLARED LEG MAY BE ABSENT (2026-09-28). GEODNET's
+    # handover gained a third leg (the Polygon + Solana sum) that has no rows until the first run
+    # reads it — and a store whose Polygon rows were cleaned has no middle leg. Requiring every
+    # declared point would blank the series in both cases. Order and no-overlap are still checked
+    # over the legs that ARE present, in the declared order.
+    extra = sorted(set(points) - set(declared))
+    if extra or len(set(points) & set(declared)) < 2:
         return (f"the stored series reads from {sorted(points)}, and the declared handover covers "
-                f"{list(ordered)}" + (f" — {extra} is outside it" if extra else ""))
+                f"{list(declared)}" + (f" — {extra} is outside it" if extra else ""))
+    ordered = tuple(p for p in declared if p in set(points))
     for earlier, later in zip(ordered, ordered[1:]):
         a, b = spans.get(earlier), spans.get(later)
         if a is None or b is None:
@@ -2035,13 +2041,33 @@ def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
     return " | ".join(x for x in (expired, stable) if x)
 
 
+def _circ(R: Refs, r, p: dict) -> str:
+    """circulating_supply "now" — NET of any burn the provider has not netted, where declared.
+
+    GEODNET, 2026-09-28 (config supply_unnetted_burn): CoinGecko's total_supply is 1bn minus the
+    POLYGON burn exactly (961,518,067.62 = 1e9 - 38,481,932.38 on 2026-09-21), so ~29.4M GEOD
+    burned on Solana still counts as supply. The un-netted burn is measured, not assumed:
+        CoinGecko total - (contract totalSupply - summed burn balance)
+    which is the Solana balance while CoinGecko nets Polygon only, and falls to ~0 by itself if
+    it starts netting both. Negative means CoinGecko nets MORE than we can see burned: the
+    denominator becomes an error and the cell reads n/a rather than guessing.
+    """
+    c = R.D(r, "circulating_supply", "now")
+    if not config.supply_unnetted_burn(p["name"]):
+        return c
+    tot, gross, burned = (R.D(r, m, "now") for m in ("total_supply", "total_supply_gross",
+                                                     "burn_address_balance"))
+    adj = f"ROUND({tot}-({gross}-{burned}),2)"
+    return f"IF({adj}>=0,{c}-{adj},NA())"
+
+
 def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
     """Burn yield in TOKEN terms (price-independent, comparable across protocols) and the
     crossover against whichever issuance applies — pool release where the supply is pre-minted."""
-    circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
+    circ = lambda r, p: _circ(R, r, p)  # noqa: E731
     return [
         ("PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)",
-         lambda r, p: calc(f"{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/{circ(r)}"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
+         lambda r, p: calc(f"{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/({circ(r, p)})"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
         ("Issuance basis for the crossover",
          lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
@@ -2054,7 +2080,7 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
          lambda r, p: calc(_net_change(R, r, p, _basis_iss(R, p), burn)), FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
-         lambda r, p: calc(f"({_net_change(R, r, p, _basis_iss(R, p), burn)})*{ANN}/{circ(r)}"), FMT_PCT, "calc", True),
+         lambda r, p: calc(f"({_net_change(R, r, p, _basis_iss(R, p), burn)})*{ANN}/({circ(r, p)})"), FMT_PCT, "calc", True),
     ]
 
 
@@ -2073,17 +2099,17 @@ def _a2_headline(R: Refs) -> list[tuple]:
     """Free float, its market cap, Free Float / ARR (the note's WMTx headline) and the supply
     trajectory. Where the lock cannot be read the cells SAY SO — circulating is never passed
     off as free float, which would overstate it by everything staked."""
-    circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
+    circ = lambda r, p: _circ(R, r, p)  # noqa: E731
     lock = lambda r: R.D(r, "locked_tokens", "now")  # noqa: E731
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     arr = lambda r: f"{R.D(r, 'customer_revenue_usd', 'q0')}*{ANN}"  # noqa: E731
     emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
-    ff = lambda r: f"IF(AND(ISNUMBER({circ(r)}),ISNUMBER({lock(r)})),{circ(r)}-{lock(r)},{NA})"  # noqa: E731
+    ff = lambda r, p: f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r)})),{circ(r, p)}-{lock(r)},{NA})"  # noqa: E731
 
     def cell(expr_fn):
         def build(r, p):
             why = _free_float_reason(p)
-            return why if why else calc(expr_fn(r))
+            return why if why else calc(expr_fn(r, p))
         return build
 
     partial = {"partial_fn": lambda p: config.lock_partial_reason(p["name"]),
@@ -2092,13 +2118,13 @@ def _a2_headline(R: Refs) -> list[tuple]:
     return [
         ("FREE FLOAT = circulating − locked (tokens)", cell(ff), FMT_NUM, "calc", True,
          {"metric": "locked_tokens", **partial, "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
-        ("Free float market cap ($, spot)", cell(lambda r: f"({ff(r)})*{price(r)}"), FMT_USD, "calc", False,
+        ("Free float market cap ($, spot)", cell(lambda r, p: f"({ff(r, p)})*{price(r)}"), FMT_USD, "calc", False,
          {"metric": "locked_tokens", **partial, "partial_fmt": '$#,##0" PARTIAL↑";($#,##0)" PARTIAL↑"'}),
         ("FREE FLOAT ÷ ARR (x) = free float market cap ÷ customer revenue annualised — headline",
-         cell(lambda r: f"({ff(r)})*{price(r)}/({arr(r)})"), FMT_X, "calc", True,
+         cell(lambda r, p: f"({ff(r, p)})*{price(r)}/({arr(r)})"), FMT_X, "calc", True,
          {"metric": "customer_revenue_usd", **partial, "partial_fmt": '0.00"x PARTIAL↑";(0.00"x)" PARTIAL↑"'}),
         ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",
-         lambda r, p: _free_float_reason(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r)})"), FMT_PCT, "calc", True,
+         lambda r, p: _free_float_reason(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r, p)})"), FMT_PCT, "calc", True,
          {"metric": "emissions_tokens", **partial, "partial_fmt": '0.0%" PARTIAL↓";(0.0%)" PARTIAL↓"'}),
     ]
 
@@ -2611,7 +2637,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     # Pointing the formula at the metric the protocol actually names is what lets base_gated stop
     # greying the cell; see config.revenue_base.
     rev = lambda r, p, w="q0": R.D(r, config.revenue_base_metric(p["name"]), w)  # noqa: E731
-    circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
+    circ = lambda r, p: _circ(R, r, p)  # noqa: E731
     # The split that applied to each window — NEVER the current split applied backwards.
     share = lambda r, w="q0": R.C(r, WINDOW_SHARE_COL[w])  # noqa: E731
     st = lambda r, w="q0": R.C(r, WINDOW_STATUS_COL[w])  # noqa: E731
@@ -2639,17 +2665,17 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Implied buyback Q0 ($) = revenue × share", lambda r, p: base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
-        ("Circulating supply", lambda r, p: pull(circ(r)), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
+        ("Circulating supply", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)))),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}*{ann}/({circ(r, p)})", share(r)))),
          FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False,
          {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False,
          {"metric": "actual_buyback_tokens", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
-        ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'actual_buyback_tokens', 'q0'))}/{circ(r)}"), FMT_PCT, "calc", True),
+        ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'actual_buyback_tokens', 'q0'))}/({circ(r, p)})"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
          lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
@@ -2702,7 +2728,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # locked_tokens would have put a ratio on the sheet whose numerator was not the number
         # printed directly above it.
         ("Lock rate = locked ÷ circulating",
-         lambda r, p: calc(f"{R.D(r, config.lock_display_metric(p['name']), 'now')}/{circ(r)}"),
+         lambda r, p: calc(f"{R.D(r, config.lock_display_metric(p['name']), 'now')}/({circ(r, p)})"),
          FMT_PCT, "calc"),
         ("Tokens locked — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "locked_tokens_dashboard", "now")),
          FMT_NUM, "pull", False, {"metric": "locked_tokens_dashboard"}),
@@ -2735,7 +2761,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          FMT_NUM, "calc", False, {"metric": "locked_tokens_legacy_vependle"}),
         ("Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)",
          lambda r, p: calc(
-             f"{circ(r)}"
+             f"({circ(r, p)})"
              f"-IF(ISNUMBER({R.D(r, 'locked_tokens', 'now')}),{R.D(r, 'locked_tokens', 'now')},0)"
              f"-IF(AND({R.C(r, 'Destination effect on float')}=\"locked_supply\","
              f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)"),
@@ -2758,9 +2784,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Umbrella staked $ (Aave only) — protocol risk cover, NOT AAVE supply, excluded from every float figure",
          lambda r, p: pull(R.D(r, "umbrella_staked_usd", "now")), FMT_USD, "pull", False, {"metric": "umbrella_staked_usd"}),
         *_trajectory(R, "revenue_usd", "Revenue"),
-        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: base_gated(p, gated(st(r, 'q1'), f"{rev(r, p, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/{circ(r)}", share(r, 'q1')), window='q1'), FMT_PCT, "calc", False, {"gate_window": "q1"}),
-        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: base_gated(p, gated(st(r, 'q2'), f"{rev(r, p, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/{circ(r)}", share(r, 'q2')), window='q2'), FMT_PCT, "calc", False, {"gate_window": "q2"}),
-        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: base_gated(p, gated(st(r, 'q3'), f"{rev(r, p, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/{circ(r)}", share(r, 'q3')), window='q3'), FMT_PCT, "calc", False, {"gate_window": "q3"}),
+        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: base_gated(p, gated(st(r, 'q1'), f"{rev(r, p, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/({circ(r, p)})", share(r, 'q1')), window='q1'), FMT_PCT, "calc", False, {"gate_window": "q1"}),
+        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: base_gated(p, gated(st(r, 'q2'), f"{rev(r, p, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/({circ(r, p)})", share(r, 'q2')), window='q2'), FMT_PCT, "calc", False, {"gate_window": "q2"}),
+        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: base_gated(p, gated(st(r, 'q3'), f"{rev(r, p, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/({circ(r, p)})", share(r, 'q3')), window='q3'), FMT_PCT, "calc", False, {"gate_window": "q3"}),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("fee_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],
