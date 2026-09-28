@@ -747,6 +747,7 @@ def _relabel_views(groups: dict) -> None:
         tok = og.copy()
         tok["metric"] = "actual_buyback_tokens"
         tok["source"] = tok["source"].astype(str).map(mark)
+        tok = _as_stored(tok, og.columns)
         groups[(name, "actual_buyback_tokens")] = tok
         if config.dune_query_declared(name, "actual_buyback_usd"):
             continue
@@ -759,7 +760,26 @@ def _relabel_views(groups: dict) -> None:
         usd["metric"] = "actual_buyback_usd"
         usd["source"] = "derived:tokens*price"
         if not usd.empty:
-            groups[(name, "actual_buyback_usd")] = usd
+            groups[(name, "actual_buyback_usd")] = _as_stored(usd, og.columns)
+
+
+# ===== EVERY VIEW EMITS A STORED ROW'S COLUMNS. Fixed 2026-09-28 after a build crash. =====
+# Run 20260928T142424Z: aggregate() died on latest["is_manual"] — the declared-issuance view built
+# NEAR's series from scratch and copied the stored columns from the derived series it replaced,
+# which that store did not have. A view row must be indistinguishable in SHAPE from a stored one
+# (store.load_long: date, project, metric, value, source, tier, fetched_at, is_manual, entered_on,
+# source_note), whatever else is or is not in the store.
+_STORED_DEFAULTS = {"tier": None, "fetched_at": "", "is_manual": False, "entered_on": "",
+                    "source_note": ""}
+
+
+def _as_stored(view: pd.DataFrame, columns) -> pd.DataFrame:
+    """The view with every stored column present, defaulted where a view has no value for it."""
+    view = view.copy()
+    for col in list(columns) + list(_STORED_DEFAULTS):
+        if col not in view.columns:
+            view[col] = _STORED_DEFAULTS.get(col, "")
+    return view
 
 
 # (project, metric) -> reason, set by the read-time views on each aggregate() call and read by
@@ -808,10 +828,7 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                                          "value": level.values * float(rate) / ann,
                                          "source": f"declared:{rate:.2%}/yr x {spec['supply_metric']}",
                                          "tier": 1})
-                    for col in (observed.columns if observed is not None else []):
-                        if col not in view.columns:
-                            view[col] = False if col == "is_manual" else ""
-                    groups[key] = view
+                    groups[key] = _as_stored(view, sup.columns)
                     decl = float(rate) * float(sup["value"].iloc[-1])
                     if observed is not None and not observed.empty:
                         ob = in_q0(observed)
@@ -829,7 +846,7 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                 mine = (observed[observed["source"].astype(str).str.startswith(spec["source_prefix"])]
                         if observed is not None and not observed.empty else None)
                 if mine is not None and not in_q0(mine).empty:
-                    groups[key] = mine
+                    groups[key] = _as_stored(mine, observed.columns)
                 elif observed is not None and not observed.empty:
                     _VIEW_BLOCKS[key] = f"BLOCKED — {spec['block_reason']}"
         # A DERIVED RELEASE OVER A FLAT CIRCULATING FIGURE MEASURES NOTHING.
@@ -2143,7 +2160,7 @@ def _restatement_views(groups: dict) -> None:
             if view.empty:
                 continue
             view["metric"], view["source"] = metric, restated
-            groups[(name, metric)] = view
+            groups[(name, metric)] = _as_stored(view, src.columns)
 
 
 def _protocol_yield(R: Refs, data_by_key: dict | None = None):

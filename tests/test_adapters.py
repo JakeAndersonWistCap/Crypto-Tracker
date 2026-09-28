@@ -16297,3 +16297,62 @@ def test_final_block_timestamps_are_cached_and_recent_ones_are_not():
     r2.block_timestamp("ethereum", 900)
     r2.block_timestamp("ethereum", 1_010)
     assert calls == [900, 1_010, 1_010], "the final block comes from disk; the recent one is re-read"
+
+
+def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path):
+    """Run 20260928T142424Z: fetch fine, BUILD CRASHED — aggregate() hit latest["is_manual"] on a
+    view row. The declared-issuance view built NEAR's series from scratch and copied stored columns
+    from a derived series that store did not have. The fixture never had that shape (NEAR supply
+    with no derived issuance). This store holds every view type, in the shapes that failed."""
+    import build_workbook as bw
+    import store as store_mod
+
+    st = store_mod.Store(str(tmp_path / "m.db"))
+    days = pd.date_range(pd.Timestamp.now("UTC").tz_localize(None).normalize() - pd.Timedelta(days=120),
+                         periods=119)
+
+    def rows(project, metric, value, source, dates=days):
+        return pd.DataFrame({"date": dates, "project": project, "metric": metric,
+                             "value": value, "source": source, "tier": 2})
+
+    st.upsert(pd.concat([
+        rows("Near", "total_supply", 1.288e9, "near_rpc"),               # declared view, NO derived
+        rows("Near", "locked_tokens", 5.57e8, "near_rpc"),
+        rows("Pendle", "holders_revenue_usd", 10_000.0, "defillama"),     # restatement view
+        rows("Pendle", "total_supply", 2.8e8, "coingecko"),               # declared view (Pendle)
+        rows("Hyperliquid", "gross_burn_tokens", 5_000.0, "hypercore:x:delta"),   # burn = buyback view
+        rows("Hyperliquid", "price_usd", 40.0, "coingecko"),
+        rows("Ethereum", "gross_issuance_tokens", 101.0, "derived:d_supply+burn"),  # first-party block
+        rows("GEODNET", "pool_release_tokens", 1_000.0, config.POOL_RELEASE_DERIVED_SOURCE),
+        rows("GEODNET", "circulating_supply", 462_370_402.0, "coingecko"),       # flat circulating
+        pd.DataFrame({"date": pd.to_datetime(["2026-06-30", "2026-07-31", "2026-08-31"]),
+                      "project": "Maple", "metric": "actual_buyback_usd",
+                      "value": [375_000.0, 136_768.0, 147_098.0], "source": "maple_page", "tier": 3}),
+    ], ignore_index=True))
+    csv = tmp_path / "overrides.csv"
+    csv.write_text("date,project,metric,value,source_note,entered_on\n"
+                   f"{days[-1].date()},GEODNET,locked_tokens,3000000,test,{days[-1].date()}\n")
+    st.load_overrides_csv(csv)
+
+    # every view's rows carry every stored column
+    long = st.load_long()
+    groups = {k: g for k, g in long.groupby(["project", "metric"])}
+    bw._relabel_views(groups)
+    bw._restatement_views(groups)
+    bw._VIEW_BLOCKS.clear()
+    bw._issuance_views(groups, days[-1] + pd.Timedelta(days=1))
+    for key in [("Near", "gross_issuance_tokens"), ("Pendle", "actual_buyback_usd"),
+                ("Hyperliquid", "actual_buyback_tokens"), ("Hyperliquid", "actual_buyback_usd")]:
+        missing = set(long.columns) - set(groups[key].columns)
+        assert not missing, f"{key} view lacks stored columns {missing}"
+
+    try:
+        out = bw.build_workbook(st, str(tmp_path / "w.xlsx"))
+    finally:
+        bw._SCOPE = list(bw.PROJECTS)
+    assert pathlib_exists(out)
+
+
+def pathlib_exists(p):
+    import pathlib
+    return pathlib.Path(p).exists()
