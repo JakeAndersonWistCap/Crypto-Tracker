@@ -825,6 +825,11 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
         if spec:
             metric, key = spec["metric"], (name, spec["metric"])
             observed = groups.get(key)
+            # THE GUARD'S CROSS-CHECK READS ONLY THE CURRENT DERIVATION (NEAR, 2026-09-28): rows
+            # derived from CoinGecko's slow total are not the series the guard should test now.
+            pref = spec.get("observed_source_prefix")
+            if pref and observed is not None and not observed.empty:
+                observed = observed[observed["source"].astype(str).str.startswith(pref)]
             if spec["kind"] == "declared_rate":
                 rate = p
                 for k in spec["rate_path"]:

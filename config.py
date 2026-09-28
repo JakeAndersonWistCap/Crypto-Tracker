@@ -352,6 +352,14 @@ METRICS = {
     # (robots.txt: "Allow: /") and took treasury_holding_tokens. Its own name, so the ~3.4x gap
     # between what Maple publishes and what this one address holds stays on the sheet as a
     # labelled reference instead of being overwritten or blanking the primary.
+    # NEAR's own total supply from the block header (RPC `block`, header.total_supply, yoctoNEAR).
+    # NET of burn: the protocol mints rewards into it and destroys burnt gas out of it. Added
+    # 2026-09-28 as the issuance derivation's input (issuance = delta + burn), replacing
+    # CoinGecko's total, which barely moved over a window of ~8M NEAR of expected issuance.
+    "total_supply_protocol": {
+        "label": "Total supply — protocol (NEAR block header total_supply; net of burn)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1],
+        "tiers": [2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near",)},
     "treasury_holding_tokens_chain": {
         "label": "Treasury — daoMultisig balance only (reference; PARTIAL against Maple's figure)",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
@@ -2527,6 +2535,8 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        # Issuance = d(block-header total_supply) + burn (2026-09-28): see total_supply_protocol.
+        "issuance_supply_metric": "total_supply_protocol",
         # ===== CHAIN ACTIVITY — NearBlocks API v3, keyed. Wired 2026-09-24. =====
         # Field names READ FROM NEARBLOCKS' OWN SOURCE (its API is open source; the docs site was
         # unreachable from the build environment): the response is {"data": [...]} and the
@@ -2793,6 +2803,15 @@ PROJECTS = [
             # wired on Jake's instruction of 2026-09-23 with that caveat carried here and in the
             # log line. If NEAR Intents' own material names different wallets, these are wrong.
             "extra_reads": [
+                # ===== NEAR'S OWN TOTAL SUPPLY, FROM THE BLOCK HEADER. 2026-09-28. =====
+                # `block` (finality final) returns header.total_supply in yoctoNEAR — docs.near.org
+                # api/rpc/block-chunk (near/docs), and nearcore core/primitives/src/views.rs
+                # BlockHeaderView.total_supply: Balance. The issuance derivation reads it
+                # (issuance_supply_metric) instead of CoinGecko's total.
+                {"kind": "near_block_supply", "metric": "total_supply_protocol",
+                 "path": "result.header.total_supply",
+                 "spec_url": "https://github.com/near/docs/blob/master/api/rpc/block-chunk.mdx",
+                 "spec_date": "2026-09-28"},
                 {
                     "kind": "near_view_account",
                     "metric": "buyback_fund_balance",
@@ -14400,9 +14419,13 @@ VALIDATOR_YIELD = {
 #                  window the series is BLOCKED with block_reason rather than shown from the
 #                  derivation.
 ISSUANCE_PRIMARY = {
+    # observed_source_prefix (2026-09-28): the guard's cross-check is the issuance derived from
+    # the block-header supply (d(total_supply_protocol) + burn); rows derived from CoinGecko's
+    # total, which rose ~0.8M against ~8M expected, are no longer what it tests.
     "Near": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
              "rate_path": ("issuance_rate_declared", "annual_rate_max"),
-             "supply_metric": "total_supply", "max_ratio": 10},
+             "supply_metric": "total_supply", "max_ratio": 10,
+             "observed_source_prefix": "derived:d_total_supply_protocol"},
     "Pendle": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
                "rate_path": ("issuance_rate_declared", "annual_rate"),
                "supply_metric": "total_supply", "max_ratio": 10},

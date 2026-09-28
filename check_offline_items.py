@@ -935,6 +935,37 @@ def geod_solana_burn_account():
     print("  matches, nobody can spend from it, and the balance never falls.")
 
 
+def near_block_supply():
+    """A3 (2026-09-28): NEAR's total supply from the block header, now and ~1 day earlier.
+
+    The issuance derivation reads header.total_supply (yoctoNEAR, net of burn). This shows the
+    value, the one-day change and what it annualises to — expected ~2.5%/yr gross less the burn.
+    The earlier block comes from the archival endpoint (docs.near.org RPC providers: archival-rpc.
+    mainnet.near.org, public, heavily rate-limited)."""
+    head("NEAR — block header total_supply, now and ~24h ago")
+    def blk(url, params):
+        return (rpc(url, "block", params).get("result") or {}).get("header") or {}
+    try:
+        now = blk("https://rpc.mainnet.near.org", {"finality": "final"})
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    h, sup = int(now["height"]), int(now["total_supply"]) / 1e24
+    print(f"  block {h:,}  total_supply {sup:,.4f} NEAR  ({now.get('timestamp_nanosec')})")
+    try:
+        then = blk("https://archival-rpc.mainnet.near.org", {"block_id": h - 86_400})
+    except Exception as e:  # noqa: BLE001
+        print(f"  archival read failed — {e}")
+        return
+    sup0 = int(then["total_supply"]) / 1e24
+    secs = (int(now["timestamp_nanosec"]) - int(then["timestamp_nanosec"])) / 1e9
+    d = sup - sup0
+    print(f"  block {h - 86_400:,}  total_supply {sup0:,.4f}  ({secs / 3600:.1f}h earlier)")
+    print(f"  change {d:+,.4f} NEAR -> {d / secs * 86400 * 365:,.0f}/yr "
+          f"({d / secs * 86400 * 365 / sup0:.3%}/yr) NET of burn")
+    print("  PASTE BACK: expect ~2.5%/yr less the burnt gas; issuance = this change + burn.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2305,7 +2336,7 @@ CHECKS = (
     uniswap_firepit_threshold, beaconchain, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
-    maple_transparency, sky_burn_breakdown, geod_solana_burn_account,
+    maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

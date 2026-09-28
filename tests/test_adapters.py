@@ -2605,13 +2605,14 @@ def test_a_chains_issuance_follows_once_the_burn_exists():
     from fetch import _derive_chain_burn, _derive_issuance
 
     rows = _chain_rows("Near", 1, rev=70_000.0, fees=100_000.0, price=3.50, start="2026-09-14")
-    rows.append({"date": pd.Timestamp("2026-09-14"), "project": "Near", "metric": "total_supply",
-                 "value": 1_240_000_000.0, "source": "coingecko", "tier": 1})
+    # A3 2026-09-28: NEAR's issuance reads the block-header supply, not CoinGecko's total_supply.
+    rows.append({"date": pd.Timestamp("2026-09-14"), "project": "Near", "metric": "total_supply_protocol",
+                 "value": 1_240_000_000.0, "source": "near_rpc:block.header.total_supply", "tier": 1})
     out = _chain_frame(rows)
     p = config.PROJECT_BY_NAME["Near"]
     _derive_chain_burn(out, [p])
-    _derive_issuance(out, [p], {("Near", "total_supply"): 1_239_900_000.0},
-                     {("Near", "total_supply"): "2026-09-13"})
+    _derive_issuance(out, [p], {("Near", "total_supply_protocol"): 1_239_900_000.0},
+                     {("Near", "total_supply_protocol"): "2026-09-13"})
     got = out.frame().query("metric == 'gross_issuance_tokens'")
     assert len(got) == 1, [g["reason"] for g in out.gaps if g["metric"] == "gross_issuance_tokens"]
     # 100,000 of supply change + 20,000 burned = 120,000 minted. Supply is NET of a protocol
@@ -13417,7 +13418,7 @@ def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
     from fetch.near import NearNode
 
     p = dict(config.PROJECT_BY_NAME["Near"])
-    reads = p["node_api"]["extra_reads"]
+    reads = [r for r in p["node_api"]["extra_reads"] if r.get("kind") != "near_block_supply"]
     assert [r["metric"] for r in reads] == ["buyback_fund_balance"]
     read = reads[0]
     assert read["kind"] == "near_view_account" and read["field"] == "amount"
@@ -15567,14 +15568,16 @@ def test_declared_or_first_party_issuance_is_primary_in_every_consumer():
     supply = 1_288_000_000.0
     # (a) NEAR, derived consistent with declared over its covered days -> declared shown
     base = rows("Near", "total_supply", supply, "near_rpc")
-    near_obs = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365, "derived:x",
+    near_obs = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365,
+                    "derived:d_total_supply_protocol+burn",
                     dates=days[-3:])
     out = agg(base + near_obs)
     r = out.loc[("Near", "gross_issuance_tokens")]
     assert r["status"] not in bw.WITHHELD_STATUSES, r["note"]
     assert abs(r["q0"] - supply * 0.025 / 365 * 89) / r["q0"] < 1e-9, "declared, every day of Q0"
     # (b) NEAR derived 30x low over a full window -> BLOCKED with both figures
-    low = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365 / 30, "derived:x")
+    low = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365 / 30,
+               "derived:d_total_supply_protocol+burn")
     r = agg(base + low).loc[("Near", "gross_issuance_tokens")]
     assert r["status"] == "blocked" and "declared 32,200,000 vs observed 1,073,333" in r["note"], r["note"]
     # (c) Ethereum: derived rows only -> BLOCKED waiting for beaconcha.in; first-party -> shown
@@ -17358,3 +17361,36 @@ def test_pendle_hub_amounts_are_scaled_from_wei_and_the_yield_base_is_real_plus_
     build = bw._protocol_yield(R())[1]
     f = build(5, config.PROJECT_BY_NAME["Pendle"])
     assert "(D[locked_tokens_shares]+IF(ISNUMBER(D[locked_tokens_virtual]),D[locked_tokens_virtual],0))" in f, f
+
+
+def test_near_issuance_is_derived_from_the_block_header_supply_and_the_guard_reads_only_that():
+    """A3, 2026-09-28: CoinGecko's NEAR total rose ~0.8M over a window with ~8M of expected
+    issuance, so the >10x guard blocked the declared route. The header's total_supply (yocto) is
+    read daily; issuance = its delta + burn; the guard's cross-check reads only those rows."""
+    import build_workbook as bw
+    from fetch import _derive_issuance
+    from fetch.base import point
+    from fetch.near import NearNode
+
+    near = config.PROJECT_BY_NAME["Near"]
+    api = near["node_api"]
+    read = next(r for r in api["extra_reads"] if r["kind"] == "near_block_supply")
+    nn = NearNode()
+    nn._call = lambda api, body=None: ({"result": {"header": {"height": 1, "total_supply":
+                                         "1307600000000000000000000000000000"}}}, "rpc")
+    out = FetchOutput()
+    nn._block_supply(near, api, read, out, pd.Timestamp("2026-09-28"))
+    v = out.frame()
+    assert v.metric.tolist() == ["total_supply_protocol"] and abs(v.value.iloc[0] - 1_307_600_000) < 1e-3
+
+    out2 = FetchOutput()
+    out2.add(point("Near", "total_supply_protocol", 1_307_600_000.0, "near_rpc:block.header.total_supply",
+                   2, pd.Timestamp("2026-09-28")), "near_rpc", "Near")
+    out2.add(point("Near", "gross_burn_tokens", 5_000.0, "x", 2, pd.Timestamp("2026-09-28")), "x", "Near")
+    _derive_issuance(out2, [near], {("Near", "total_supply_protocol"): 1_307_520_000.0},
+                     {("Near", "total_supply_protocol"): "2026-09-27"})
+    f = out2.frame()
+    iss = f[f.metric == "gross_issuance_tokens"]
+    assert len(iss) == 1 and abs(iss.value.iloc[0] - 85_000.0) < 1e-3, iss
+    assert iss.source.iloc[0].startswith("derived:d_total_supply_protocol+burn")
+    assert config.issuance_primary("Near")["observed_source_prefix"] == "derived:d_total_supply_protocol"

@@ -1178,7 +1178,11 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
     supply = {}
     burn = {}
     gross = {}
+    alt_supply = {}
     if not frame.empty:
+        alt = {p.get("issuance_supply_metric") for p in projects} - {None}
+        for row in frame[frame["metric"].isin(alt)].itertuples(index=False):
+            alt_supply[(row.project, row.metric)] = (row.value, row.date)
         wanted = ("total_supply", "gross_burn_tokens", "total_supply_gross")
         for row in frame[frame["metric"].isin(wanted)].itertuples(index=False):
             bucket = {"total_supply": supply, "gross_burn_tokens": burn,
@@ -1295,12 +1299,16 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                                "burn_mechanism.model in config.py. The derivation follows automatically.")
             continue
 
-        now = supply.get(name)
+        # A PROTOCOL-NATIVE SUPPLY READ WINS WHERE DECLARED (NEAR, 2026-09-28): the block
+        # header's total_supply moves with every mint and burn; CoinGecko's NEAR total rose ~0.8M
+        # over a window with ~8M of expected issuance, which tripped the 10x guard.
+        smetric = p.get("issuance_supply_metric") or "total_supply"
+        now = supply.get(name) if smetric == "total_supply" else alt_supply.get((name, smetric))
         if now is None:
             continue                       # no supply read this run; the metric's own gap covers it
         value, when = now
-        prior = prior_values.get((name, "total_supply"))
-        prior_date = prior_dates.get((name, "total_supply"))
+        prior = prior_values.get((name, smetric))
+        prior_date = prior_dates.get((name, smetric))
         if prior is None or (prior_date and str(prior_date)[:10] >= str(when)[:10]):
             out.gap(name, "gross_issuance_tokens",
                     reason=("cannot be derived yet: it is the CHANGE in total supply, and the store holds "
@@ -1407,6 +1415,9 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
             continue
 
         src = f"derived:{'d_supply+burn' if rule == 'add_burn' else 'd_supply'}"
+        if smetric != "total_supply":
+            # its own measuring point, so the guard can read this series apart from the old one
+            src = f"derived:d_{smetric}{'+burn' if rule == 'add_burn' else ''}"
         if mech.get("status") == "assumed":
             src += ":MECHANISM_ASSUMED"
             out.review_item(name, "gross_issuance_tokens", "derived_on_assumed_mechanism", "stored_flagged",

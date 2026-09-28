@@ -103,7 +103,10 @@ class NearNode:
             # ===== ACCOUNT BALANCES FROM THE SAME NODE. Added 2026-09-23. =====
             # Run before the validators read, so a failed stake call cannot silently skip them.
             for read in (api.get("extra_reads") or []):
-                self._view_accounts(p, api, read, supply, out, when)
+                if read.get("kind") == "near_block_supply":
+                    self._block_supply(p, api, read, out, when)
+                else:
+                    self._view_accounts(p, api, read, supply, out, when)
             payload, detail = self._call(api)
             if payload is None:
                 out.fail(SOURCE, name, f"{metric}: validators call failed — {detail}", TIER)
@@ -186,6 +189,28 @@ class NearNode:
                            f"the one place an exponent too LARGE would show — the structural "
                            f"bound only catches one too small — so check "
                            f"{api.get('exponent_source_url')} before accepting it."))
+
+    def _block_supply(self, p: dict, api: dict, read: dict, out, when) -> None:
+        """NEAR's total supply as the protocol keeps it: `block` header.total_supply. 2026-09-28.
+
+        One call. yoctoNEAR (the same sourced 10^24 exponent as the validators read). The header
+        is NET of burn — rewards are minted into it and burnt gas destroyed out of it — so the
+        issuance derivation adds the burn back (config issuance_supply_metric)."""
+        name, metric = p["name"], read["metric"]
+        body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "block",
+                "params": {"finality": "final"}}
+        payload, detail = self._call(api, body)
+        raw = json_path_get(payload, read["path"]) if payload is not None else None
+        value = parse_number(raw)
+        if value is None:
+            out.fail(SOURCE, name, f"{metric}: block {read['path']} not readable — {detail}", TIER)
+            out.gap(name, metric, reason=f"NEAR `block` did not return {read['path']}: {detail}",
+                    tiers_attempted="2", suggestion=f"Check the endpoints; spec {read.get('spec_url')}")
+            return
+        value = value / 10 ** int(api.get("yocto_exponent", 24))
+        height = json_path_get(payload, "result.header.height")
+        out.add(point(name, metric, value, f"{SOURCE}:block.header.total_supply", TIER, when),
+                SOURCE, name, f"{metric}={value:,.4f} (block {height}, {detail})", TIER)
 
     def _view_accounts(self, p: dict, api: dict, read: dict, supply, out, when) -> None:
         """Sum native NEAR held by a list of accounts, via `query` / request_type view_account.
