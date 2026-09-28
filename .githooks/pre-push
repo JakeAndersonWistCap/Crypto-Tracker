@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Block a push unless the FULL test suite passes on every commit being pushed.
+#
+# Why this exists: three times a piped command (pytest ... | tail) hid pytest's exit code and a
+# commit with failing tests was pushed. This hook makes the gate mechanical.
+#
+# It tests the exact commit being pushed, checked out in a throwaway worktree — not the working
+# tree, which may hold uncommitted edits that make a broken commit look fine (or vice versa).
+# It FAILS CLOSED: if the suite cannot be run at all, the push is blocked.
+#
+# Setup (once per clone):   git config core.hooksPath .githooks
+# Bypass (deliberate only): git push --no-verify
+set -uo pipefail
+
+zero=0000000000000000000000000000000000000000
+repo_root=$(git rev-parse --show-toplevel) || exit 1
+status=0
+tested=""
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue               # deleting a remote branch: nothing to test
+    case " $tested " in *" $local_sha "*) continue ;; esac
+    tested="$tested $local_sha"
+    tmp=$(mktemp -d) || { echo "pre-push: cannot make a temp dir — blocking." >&2; exit 1; }
+    if ! git -C "$repo_root" worktree add --quiet --detach "$tmp/wt" "$local_sha"; then
+        echo "pre-push: could not check out $local_sha — blocking." >&2
+        rm -rf "$tmp"; exit 1
+    fi
+    echo "pre-push: running the full suite on ${local_sha:0:7} ($local_ref) ..." >&2
+    ( cd "$tmp/wt" && python -m pytest -q tests ) >&2
+    rc=$?
+    git -C "$repo_root" worktree remove --force "$tmp/wt" >/dev/null 2>&1
+    rm -rf "$tmp"
+    if [ "$rc" -ne 0 ]; then
+        echo "pre-push: TESTS FAILED on ${local_sha:0:7} (pytest exit $rc) — push BLOCKED." >&2
+        status=1
+    fi
+done
+
+exit $status

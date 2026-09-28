@@ -104,6 +104,14 @@ The store is the durable artefact. The workbook is disposable output, rebuilt fr
 Validate a build: `python recalc.py token_metrics.xlsx` must report `"status": "success"`.
 Never ship on `errors_found`.
 
+**Test gate on push (once per clone):** `git config core.hooksPath .githooks`
+
+`.githooks/pre-push` runs the full suite on every commit being pushed, each checked out in a
+throwaway worktree, and blocks the push on any failure — including the suite failing to run at
+all. When a test result decides whether to commit, never pipe pytest through `tail`/`head`/`grep`
+(the pipe reports the last command's exit code, not pytest's); if you must pipe, run
+`set -o pipefail` first.
+
 ## The workflow this is built around
 
 1. Run it. 2. Open the **Gap Report** tab: every metric no tier could resolve, why, and what
