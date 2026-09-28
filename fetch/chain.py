@@ -38,7 +38,7 @@ import pandas as pd
 
 import config
 
-from .base import LogEntry, derive_flow_from_cumulative, point, today
+from .base import FetchOutput, LogEntry, derive_flow_from_cumulative, point, today
 
 log = logging.getLogger("token_metrics.fetch.chain")
 
@@ -329,6 +329,17 @@ def _check_component_labels(project: dict, metric: str, components: list) -> Non
 BURN_CONFIRMATIONS = 20   # burn events at least this deep are final and cached (fetch/logcache.py)
 
 
+MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"   # source: see prefetch_token_meta
+MULTICALL3_ABI = [{
+    "name": "aggregate3", "type": "function", "stateMutability": "payable",
+    "inputs": [{"name": "calls", "type": "tuple[]", "components": [
+        {"name": "target", "type": "address"}, {"name": "allowFailure", "type": "bool"},
+        {"name": "callData", "type": "bytes"}]}],
+    "outputs": [{"name": "returnData", "type": "tuple[]", "components": [
+        {"name": "success", "type": "bool"}, {"name": "returnData", "type": "bytes"}]}],
+}]
+
+
 class ChainReader:
     """Holds one working web3 connection per chain, trying the fallback list in order."""
 
@@ -404,6 +415,46 @@ class ChainReader:
         if key not in memo:
             memo[key] = read()
         return memo[key]
+
+    # ===== MULTICALL3: symbol() AND decimals() FOR A WHOLE CHAIN IN ONE eth_call. 2026-09-28. =====
+    # Source: mds1/multicall3 README (https://github.com/mds1/multicall3, read 2026-09-28):
+    # "Multicall3 is deployed on over 250 chains at 0xcA11bde05977b3631167028862bE2a173976CA11";
+    # aggregate3(Call3[] {target, allowFailure, callData}) -> Result[] {success, returnData}.
+    # Checked with eth_getCode on each chain before use; absent, or any failure, and every read
+    # simply falls back to its own call. Values are placed in the same per-run memo _once() uses,
+    # so nothing downstream changes: a reverted or undecodable item is left for the direct read.
+    def prefetch_token_meta(self, chain: str, addresses) -> str:
+        from eth_abi import decode
+        addrs = sorted({str(a).lower() for a in addresses if str(a).startswith("0x")})
+        if not addrs:
+            return f"{chain}: nothing to batch"
+        if not self.has_code(chain, MULTICALL3):
+            return f"{chain}: no Multicall3 deployed — individual calls"
+        memo = self.__dict__.setdefault("_read_once", {})
+        mc = self.web3(chain).eth.contract(address=self.checksum(MULTICALL3), abi=MULTICALL3_ABI)
+        filled, batches = 0, 0
+        for i in range(0, len(addrs), 100):
+            chunk = addrs[i:i + 100]
+            calls = []
+            for a in chunk:
+                calls.append((self.checksum(a), True, bytes.fromhex("95d89b41")))   # symbol()
+                calls.append((self.checksum(a), True, bytes.fromhex("313ce567")))   # decimals()
+            res = mc.functions.aggregate3(calls).call()
+            batches += 1
+            for j, a in enumerate(chunk):
+                (ok_s, data_s), (ok_d, data_d) = res[2 * j], res[2 * j + 1]
+                if ok_s and data_s:
+                    try:
+                        sym = decode(["string"], bytes(data_s))[0]
+                    except Exception:  # noqa: BLE001 — bytes32 symbols (MKR-style)
+                        sym = bytes(data_s)[:32].rstrip(b"\x00").decode("utf-8", "replace")
+                    memo[("symbol", chain, a)] = sym
+                    filled += 1
+                if ok_d and len(data_d) >= 32:
+                    memo[("decimals", chain, a)] = int.from_bytes(bytes(data_d)[:32], "big")
+                    filled += 1
+        return (f"{chain}: {filled} symbol/decimals value(s) for {len(addrs)} contract(s) in "
+                f"{batches} Multicall3 call(s)")
 
     def decimals(self, chain: str, address: str) -> int:
         return int(self._once("decimals", chain, address,
@@ -982,8 +1033,32 @@ class Chain:
                         value=None, source=f"{SOURCE}:{spec['address'][:10]}", tier=TIER)
         return True
 
+    def _prefetch(self, projects: list[dict]) -> None:
+        """Batch symbol()/decimals() per chain for every contract the gate would let be read.
+
+        The gate is run on a scratch output first (it makes no network call), so an address the
+        read path would refuse is never prefetched either."""
+        fn = getattr(self.reader, "prefetch_token_meta", None)
+        if fn is None:
+            return
+        by_chain: dict[str, set] = defaultdict(set)
+        scratch = FetchOutput()
+        for p in projects:
+            for key, spec in (p.get("contracts") or {}).items():
+                if spec.get("kind") in REFERENCE_ONLY_KINDS or not spec.get("address"):
+                    continue
+                if self._gate(p, key, spec, scratch):
+                    by_chain[spec["chain"]].add(spec["address"])
+        for chain, addrs in sorted(by_chain.items()):
+            try:
+                log.info("chain prefetch — %s", fn(chain, addrs))
+            except Exception as e:  # noqa: BLE001 — a failed batch just means individual calls
+                log.info("chain prefetch — %s: Multicall3 batch failed (%s); individual calls",
+                         chain, e)
+
     def run(self, projects: list[dict], window_days, out):
         when = today()
+        self._prefetch(projects)
         for p in projects:
             name = p["name"]
             contracts = p.get("contracts") or {}

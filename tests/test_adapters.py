@@ -16483,3 +16483,66 @@ def test_http_stats_say_where_a_sources_time_went(monkeypatch):
     st = h.stats
     assert st["calls"] == 3 and st["retries"] == 1 and st["waited_s"] == 2.0
     assert "3 HTTP call(s)" in h.summary() and "1 retry" in h.summary()
+
+
+def test_symbol_and_decimals_are_batched_per_chain_through_multicall3():
+    """C5, 2026-09-28: one symbol() and one decimals() eth_call per contract per run. They are now
+    one Multicall3 aggregate3 per chain (per 100 contracts), into the same per-run memo; a reverted
+    item is left for the direct read, and a chain without Multicall3 uses individual calls."""
+    import types
+
+    from eth_abi import encode
+
+    from fetch import chain as chainmod
+
+    A = "0x" + "11" * 20
+    B = "0x" + "22" * 20
+    C = "0x" + "33" * 20
+    batches = []
+
+    def fake_w3(has_multicall=True):
+        def get_code(addr):
+            return b"\x60\x80" if has_multicall else b""
+
+        def contract(address=None, abi=None):
+            def aggregate3(calls):
+                def call():
+                    batches.append(len(calls))
+                    out = []
+                    for target, _, data in calls:
+                        t = target.lower()
+                        if t == C:                      # not a token: both revert
+                            out.append((False, b""))
+                        elif data.hex() == "95d89b41":
+                            out.append((True, encode(["string"], ["SKY"]) if t == A
+                                        else b"MKR".ljust(32, b"\x00")))    # bytes32 symbol
+                        else:
+                            out.append((True, encode(["uint8"], [18 if t == A else 6])))
+                    return out
+                return types.SimpleNamespace(call=call)
+            return types.SimpleNamespace(functions=types.SimpleNamespace(aggregate3=aggregate3))
+        return types.SimpleNamespace(eth=types.SimpleNamespace(get_code=get_code, contract=contract))
+
+    class R(chainmod.ChainReader):
+        multicall = True
+
+        def web3(self, chain):
+            return fake_w3(self.multicall)
+
+        @staticmethod
+        def checksum(a):
+            return a
+
+    r = R()
+    msg = r.prefetch_token_meta("ethereum", [A, B, C])
+    assert batches == [6] and "1 Multicall3 call" in msg, (batches, msg)
+    memo = r._read_once
+    assert memo[("symbol", "ethereum", A)] == "SKY" and memo[("decimals", "ethereum", A)] == 18
+    assert memo[("symbol", "ethereum", B)] == "MKR" and memo[("decimals", "ethereum", B)] == 6
+    assert ("symbol", "ethereum", C) not in memo, "a reverted item is left for the direct read"
+    assert r.decimals("ethereum", A) == 18, "the read path uses the batched value"
+
+    r2 = R()
+    r2.multicall = False
+    assert "individual calls" in r2.prefetch_token_meta("base", [A])
+    assert batches == [6], "no batch where Multicall3 is not deployed"
