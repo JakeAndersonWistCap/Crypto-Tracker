@@ -5100,13 +5100,17 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
     # original example and is now DISABLED: maple.finance/robots.txt disallows /transparency, so
     # it is no longer an armed entry and cannot demonstrate what an armed one reports. Chainlink's
     # buyback_fund_balance_dashboard is armed and is the same shape the example was chosen for.
+    # ON PENDLE'S DASHBOARD ENTRY as of 2026-09-28: Chainlink's was PARKED (disabled) that day,
+    # and Pendle's was re-pointed at its documented API and is the armed example now.
     gap = next(g for g in rows
-               if g["project"] == "Chainlink" and g["metric"] == "buyback_fund_balance_dashboard")
+               if g["project"] == "Pendle" and g["metric"] == "locked_tokens_dashboard")
     assert "no sources.yaml entry" not in gap["reason"], \
         f"the entry exists and is armed — saying otherwise sends the reader to write a second one: {gap['reason']}"
-    assert "ARMED" in gap["reason"] and str(registry[("Chainlink", "buyback_fund_balance_dashboard")]["url"]) in gap["reason"], \
+    assert "ARMED" in gap["reason"] and str(registry[("Pendle", "locked_tokens_dashboard")]["url"]) in gap["reason"], \
         f"an armed entry must name its url so the reader can tell the cases apart: {gap['reason']}"
     assert "Run Log" in gap["suggestion"], "and point at where 'did it actually run' is answered"
+    why_link = registry[("Chainlink", "buyback_fund_balance_dashboard")]
+    assert isinstance(why_link, str) and "DELIBERATELY disabled" in why_link, why_link
 
     # AND THE OTHER HALF OF THE SAME DISTINCTION, which is what the Maple entry now demonstrates:
     # a DISABLED entry must not read as an absent one either. "We are not allowed to fetch this"
@@ -6491,8 +6495,11 @@ def test_ultrasound_total_supply_is_a_crosscheck_and_cannot_anchor_on_a_componen
     assert set(entries) == {"total_supply_dashboard", "gross_issuance_tokens",
                             "gross_burn_tokens", "net_mint_monthly"}
 
+    # PARKED 2026-09-28: disabled with the page on file, so it reads as a decision, not a stub.
+    # The two defences below still guard the entry for the day it is re-enabled.
     live = entries["total_supply_dashboard"]
-    assert live["enabled"] is True and entry_ready(live) == (True, "")
+    assert live["enabled"] is False and "DELIBERATELY disabled" in entry_ready(live)[1]
+    assert str(live["note"]).startswith("PARKED 2026-09-28")
     assert live["method"] == "dom"
     assert live["anchor"] == "Total supply", \
         f"anchor must name the TOTAL, not a component; got {live['anchor']!r}"
@@ -15719,3 +15726,42 @@ def test_pendle_buyback_usd_is_holders_revenue_restated_from_the_spendle_overhau
     assert set(got.source) == {"derived:=holders_revenue_usd"}
     label = config.metric_label("Pendle", "actual_buyback_usd")
     assert "THE SAME SERIES AS holders_revenue_usd" in label and "ALLOCATED" in label
+
+
+def test_plume_defillama_fees_is_declared_absent_and_rechecked_weekly(tmp_path):
+    """summary/fees/plume answered 400 on every run. store.known_absent() keys on 404 and on
+    (source, project) — Plume's other DefiLlama reads succeed — so it never parked. Declared in
+    config; skipped while the last attempt failed within 7 days; any success ends it."""
+    from datetime import datetime, timedelta, timezone
+
+    import store as storemod
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    st = storemod.Store(tmp_path / "m.db")
+    plume = config.PROJECT_BY_NAME["Plume"]
+    assert st.declared_absent([plume]) == set(), "no attempt on record: call it"
+
+    def attempt(days_ago, status, msg="plume:dailyFees: HTTP 400 from https://api.llama.fi/x"):
+        ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        st.conn.execute("INSERT INTO run_log(run_id, ts, source, tier, project, rows, status, "
+                        "message) VALUES ('r', ?, 'defillama', 1, 'Plume', 0, ?, ?)",
+                        (ts, status, msg))
+        # an unrelated success on the same (source, project) must not end the skip
+        st.conn.execute("INSERT INTO run_log(run_id, ts, source, tier, project, rows, status, "
+                        "message) VALUES ('r', ?, 'defillama', 1, 'Plume', 5, 'ok', "
+                        "'chain Plume Mainnet tvl')", (ts,))
+
+    attempt(8, "failed")
+    assert st.declared_absent([plume]) == set(), "8 days since the last attempt: re-check"
+    attempt(2, "failed")
+    absent = st.declared_absent([plume])
+    assert absent == {("defillama:fees", "Plume")}
+
+    out = FetchOutput()
+    DefiLlama(known_absent=absent).fees(plume, 30, out)
+    assert [e.status for e in out.log] == ["skipped"] and "KNOWN ABSENT (declared)" in out.log[0].message
+    assert "HTTP 400" in out.log[0].message
+
+    attempt(1, "ok", "plume:dailyFees")
+    assert st.declared_absent([plume]) == set(), "a success ends the skip on its own"

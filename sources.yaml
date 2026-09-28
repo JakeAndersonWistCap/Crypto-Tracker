@@ -199,7 +199,7 @@
 - project: Ethereum
   metric: total_supply_dashboard
   tier: 3
-  enabled: true
+  enabled: false            # PARKED 2026-09-28 (Jake) — see the note's first paragraph.
   url: "https://ultrasound.money/"
   method: dom
   anchor: "Total supply"
@@ -208,6 +208,10 @@
   change_threshold_pct: 5
   added: 2026-09-15
   note: >-
+    PARKED 2026-09-28 (Jake): disabled, no longer attempted each run. robots.txt still
+    disallows the page, and a cross-check that can only ever report "blocked" is noise on the
+    Run Log. The entry stays as the record of the page and its JSON route below.
+
     CONFIRMED BROKEN ON A LIVE RUN, 2026-09-17/18: failed on robots.txt disallowing
     https://ultrasound.money/. Left enabled anyway, same precedent as Pendle's
     locked_tokens_dashboard below — the robots check runs before any page load and costs
@@ -882,17 +886,26 @@
   metric: locked_tokens_dashboard
   tier: 3
   enabled: true
-  url: https://app.pendle.finance/spendle/stake/in
+  # RE-POINTED 2026-09-28 at Pendle's DOCUMENTED data endpoint, as the old note asked. The hub
+  # page (app.pendle.finance/spendle/stake/in) is disallowed by robots.txt and its "Total Staked"
+  # is the >100M figure — sPENDLE + legacy vePENDLE, or the virtual boost balance — not PENDLE
+  # locked in sPENDLE. Source: Pendle's API docs, docs/pendle-dev-docs/Backend/ApiOverview.mdx
+  # (pendle-finance/documentation @ 9b9509e, 2026-09-23): GET /v1/spendle/data under
+  # https://api-v2.pendle.finance/core, 1 CU, cached 5 min, no parameters. Fields:
+  # totalPendleStaked ("Total PENDLE currently staked"), totalStakedInSpendle ("Total staked in
+  # the sPENDLE contract"), virtualSpendleFromVependle. totalStakedInSpendle is the like-for-like
+  # figure for locked_tokens = PENDLE.balanceOf(sPENDLE).
+  # Loaded directly: the xhr method captures every JSON response, the navigation included.
+  url: https://api-v2.pendle.finance/core/v1/spendle/data
   method: xhr
-  url_contains: /api/
-  json_path: totalStaked
-  anchor: "Total Staked"
+  url_contains: /v1/spendle/data
+  json_path: totalStakedInSpendle
   needs_first_run_check: true
   sanity_min: 1000
   sanity_max: 300000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "BLOCKED BY robots.txt on app.pendle.finance as of the first live run. Left enabled so the Gap Report keeps reporting the accurate reason; the check runs before any page load, so it costs nothing. NOT worked around — respecting robots.txt is a design requirement. Low stakes: the tier 2 read of sPENDLE.totalSupply() is verified and working, so this was only ever a cross-check. If Pendle publishes a documented data endpoint distinct from this page, point this entry at that instead."
+  note: "FIRST RUN CHECK: not reachable from the build environment, so unconfirmed live. Expect ~35.4M, the same as locked_tokens (PENDLE.balanceOf(sPENDLE)). ~30.2M instead (35.4M / 1.1731) means the field is sPENDLE SHARES; a figure in the 1e25 range means wei (sanity_max rejects it). totalPendleStaked is the wider figure and is NOT this metric. Cross-check only: the tier 2 read stays primary."
 
 - project: Sky
   metric: locked_tokens_dashboard
@@ -1032,7 +1045,7 @@
 - project: Chainlink
   metric: buyback_fund_balance_dashboard
   tier: 3
-  enabled: true
+  enabled: false            # PARKED 2026-09-28 (Jake) — see note.
   url: https://metrics.chain.link/reserve
   method: xhr
   url_contains: /api/
@@ -1043,4 +1056,4 @@
   sanity_max: 100000000
   change_threshold_pct: 40
   added: 2026-09-11
-  note: "BLOCKED BY robots.txt on metrics.chain.link as of the first live run, and NOT worked around. LOW STAKES: this was only ever a cross-check for the tier 2 read of LINK.balanceOf(reserve), which is verified and working, so nothing is lost but the second opinion. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026)."
+  note: "PARKED 2026-09-28 (Jake): disabled, no longer attempted each run; the reserve inflow is read by log_scans.reserve_inflow and the balance by the tier 2 read. BLOCKED BY robots.txt on metrics.chain.link as of the first live run, and NOT worked around. LOW STAKES: this was only ever a cross-check for the tier 2 read of LINK.balanceOf(reserve), which is verified and working, so nothing is lost but the second opinion. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026)."

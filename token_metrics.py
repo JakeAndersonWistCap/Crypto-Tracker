@@ -205,7 +205,7 @@ def main(argv=None) -> int:
     # automatically once 14 days pass without an attempt. Derived from fetch_status rather than
     # declared in config: a hand-maintained list of absent resources goes stale against reality
     # and nothing reconciles it back.
-    absent = st.known_absent()
+    absent = st.known_absent() | st.declared_absent(projects)
     if absent:
         log.info("%d source/project pair(s) are KNOWN ABSENT and will not be called: %s",
                  len(absent), ", ".join(f"{s}/{p}" for s, p in sorted(absent)))

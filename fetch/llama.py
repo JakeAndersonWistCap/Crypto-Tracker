@@ -261,6 +261,14 @@ class DefiLlama:
             return
         if self._absent(name, f"summary/fees/{slug}", out):
             return
+        if (f"{SOURCE}:fees", name) in self.known_absent:
+            d = next((d for d in project.get("known_absent_calls") or []
+                      if d.get("source") == SOURCE and d.get("key") == "fees"), {})
+            out.skipped(SOURCE, name, f"summary/fees/{slug}: KNOWN ABSENT (declared) — "
+                                      f"{d.get('evidence', 'failed on every run')}. Not called; "
+                                      f"re-checked {d.get('recheck_days', 7)} days after the "
+                                      f"last failed attempt, and any success ends the skip.", TIER)
+            return
 
         # ===== A CONFIRMED, UNRESOLVED RESTRUCTURE ROUTES fees_usd DIFFERENTLY. Added 2026-09-23.
         # Morpho's `morpho` slug kept answering 200 after DefiLlama split it into a parent with

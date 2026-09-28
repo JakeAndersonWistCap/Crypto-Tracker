@@ -419,6 +419,28 @@ class Store:
                   AND last_attempt_at >= ?""", (cutoff,)).fetchall()
         return {(s, p) for s, p in rows}
 
+    def declared_absent(self, projects: list[dict]) -> set[tuple[str, str]]:
+        """(f"{source}:{key}", project) for each config `known_absent_calls` entry not due a
+        recheck: its last ATTEMPT (run_log, message starting log_prefix, ok or failed — a skip
+        is not an attempt) failed less than recheck_days ago. Plume's DefiLlama fees, 2026-09-28:
+        a 400, not a 404, on a project whose other DefiLlama reads succeed, so known_absent()
+        cannot see it. A success, or no attempt on record, means call it."""
+        out = set()
+        now = datetime.now(timezone.utc)
+        for p in projects:
+            for d in p.get("known_absent_calls") or []:
+                row = self.conn.execute(
+                    """SELECT ts, status FROM run_log
+                        WHERE source=? AND project=? AND message LIKE ? AND status IN ('ok','failed')
+                        ORDER BY ts DESC LIMIT 1""",
+                    (d["source"], p["name"], d["log_prefix"] + "%")).fetchone()
+                if not row or row[1] != "failed":
+                    continue
+                last = datetime.strptime(row[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                if now - last < timedelta(days=int(d.get("recheck_days", 7))):
+                    out.add((f"{d['source']}:{d['key']}", p["name"]))
+        return out
+
     def record_review(self, run_id: str, items: list[dict]):
         if not items:
             return 0

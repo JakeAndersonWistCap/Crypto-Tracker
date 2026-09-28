@@ -3175,6 +3175,19 @@ PROJECTS = [
         "manual_quarterly": ["settlement_volume_annual_usd"],
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",
+        # ===== THE FEES CALLS 400 EVERY RUN: KNOWN ABSENT, RE-CHECKED WEEKLY. 2026-09-28. =====
+        # summary/fees/plume (dailyFees, dailyRevenue, dailyHoldersRevenue) answered HTTP 400 on
+        # every run through 20260928T090446Z. store.known_absent() cannot catch it: it keys on 404
+        # and on (source, project), and Plume's other DefiLlama reads succeed. Declared instead:
+        # skipped while the last attempt (run_log, messages starting log_prefix) failed within
+        # recheck_days; attempted again after that, and any success ends the skip on its own.
+        # The slug stays configured — see the Plume fees_usd closure for the unwired route.
+        "known_absent_calls": [
+            {"source": "defillama", "key": "fees", "call": "summary/fees/plume",
+             "log_prefix": "plume:daily", "since": "2026-09-14",
+             "evidence": "HTTP 400 on every run through 20260928T090446Z",
+             "recheck_days": 7},
+        ],
         # ARCHETYPE 1 ONLY. ARCHETYPE 3 REMOVED 2026-09-14.
         # Plume's own staking docs list "earn a share of ecosystem revenue" as a benefit BEING
         # EXPLORED, not a live mechanism. The staking reward that IS live is EMISSIONS-FUNDED, and
