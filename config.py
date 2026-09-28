@@ -14069,15 +14069,27 @@ def buyback_route(project_name: str) -> dict:
 #   stored          a source publishes it — read staking_yield_pct from the store
 #   issuance_share  observed gross issuance x the documented validator share, annualised, over
 #                   staked tokens (locked_tokens) — computed on the A1 tab, not stored
+#   declared_share  DECLARED issuance (rate x total supply) x validator share / stake, with the
+#                   observed issuance as a cross-check: blocked when they differ > max_ratio
 #   pending         the input is being collected; the cell says what is missing
 VALIDATOR_YIELD = {
     "Ethereum": {"method": "stored", "metric": "staking_yield_pct",
                  "note": "ETH.Store `apr` — total staker return (cl + el)"},
-    "Near": {"method": "issuance_share",
+    # ** DECLARED ISSUANCE IS PRIMARY, OBSERVED IS THE CROSS-CHECK. Fixed 2026-09-28. **
+    # Run 20260928T090446Z read 0.179% against ~5.2% expected. The observed issuance is
+    # d(total_supply) + burn per run: a short series of coarse supply deltas, then annualised
+    # x365/90 however few days it held. The protocol parameter — 2.5% a year on total supply —
+    # is the rule the chain applies; the observed figure only checks it. When the two differ by
+    # more than max_ratio the cell BLOCKS and shows both, rather than choosing one.
+    "Near": {"method": "declared_share",
+             "rate_path": ("issuance_rate_declared", "annual_rate_max"),
              "share_path": ("issuance_rate_declared", "treasury_share", "validator_share"),
-             "note": "gross_issuance_tokens x the documented 90% validator share, annualised, over "
-                     "stake from the validators RPC. NOT protocol_reward_rate — that RPC read is "
-                     "structurally inapplicable on mainnet (settled 2026-09-17)."},
+             "supply_metric": "total_supply",
+             "observed_metric": "gross_issuance_tokens",
+             "max_ratio": 10,
+             "note": "declared 2.5% x total supply x the documented 90% validator share, over "
+                     "stake from the validators RPC; observed issuance is the cross-check. NOT "
+                     "protocol_reward_rate — structurally inapplicable on mainnet (2026-09-17)."},
     "Hyperliquid": {"method": "pending",
                     "why": "rewards = the fall in future_emissions_tokens, stored from 2026-09-24; "
                            "a yield needs two observations a window apart"},

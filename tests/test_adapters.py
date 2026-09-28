@@ -15347,3 +15347,53 @@ def test_headlines_annualise_continuous_flows_over_covered_days_and_discrete_one
     assert f"${cov_col}$" in a4[0][1](5, config.PROJECT_BY_NAME["Uniswap"])
     assert f"${cov_col}$" not in a4[0][1](5, config.PROJECT_BY_NAME["Sky"])   # monthly Stage 2 burn
     print("annualise ok: continuous over covered days, discrete by the window")
+
+
+def test_data_tab_writes_day_counts_as_numbers_so_formulas_can_read_them():
+    """The appended day-count columns landed as TEXT ("14.0", "nan"), so ISNUMBER() on them was
+    FALSE and the covered-days annualisation silently fell back to x365/90 on every real sheet —
+    while formula-level tests passed. Found 2026-09-28 by recalculating a built workbook."""
+    import openpyxl
+    import tempfile
+    import build_workbook as bw
+    import store as store_mod
+    asof = pd.Timestamp("2026-09-28")
+    rows = [(d, "Chainlink", "actual_buyback_usd", 100_000.0, "derived:tokens*price", 2)
+            for d in pd.date_range("2026-07-30", "2026-09-27")]
+    with tempfile.TemporaryDirectory() as d:
+        st = store_mod.Store(f"{d}/m.db")
+        st.upsert(pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source", "tier"]))
+        try:
+            path = bw.build_workbook(st, f"{d}/w.xlsx", asof=asof, only=["Chainlink"])
+        finally:
+            bw._SCOPE = list(bw.PROJECTS)
+        ws = openpyxl.load_workbook(path)["Data"]
+        col = bw.DATA_COLS.index("q0_covered_days") + 1
+        row = next(i for i in range(2, ws.max_row + 1)
+                   if ws.cell(row=i, column=1).value == "Chainlink|actual_buyback_usd")
+        c = ws.cell(row=row, column=col)
+        assert c.data_type == "n" and c.value == 60, (c.data_type, c.value)   # 07-30 .. asof 09-28
+        blanks = {ws.cell(row=i, column=col).value for i in range(2, ws.max_row + 1)} - {None, ""}
+        assert all(isinstance(v, int) for v in blanks), blanks                 # never "nan" text
+    print("data ok: day counts are numbers, blanks are blank")
+
+
+def test_near_validator_yield_is_declared_primary_and_blocks_on_a_10x_disagreement():
+    """NEAR read 0.179% against ~5.2%: the observed issuance (d(supply) + burn, a short series)
+    was the input. Now DECLARED issuance (2.5% x total supply) x 90% / stake is primary and the
+    observed figure, annualised over its covered days, is the guard: >10x apart BLOCKS the cell
+    and shows both. Numbers checked end to end by recalculation on 2026-09-28: consistent
+    observed -> 5.2029%; observed 29x low -> blocked."""
+    import build_workbook as bw
+    spec = config.VALIDATOR_YIELD["Near"]
+    assert spec["method"] == "declared_share" and spec["max_ratio"] == 10
+    near = config.PROJECT_BY_NAME["Near"]
+    rate = near["issuance_rate_declared"]["annual_rate_max"]
+    share = near["issuance_rate_declared"]["treasury_share"]["validator_share"]
+    assert (rate, share) == (0.025, 0.9)
+    assert abs(rate * 1_288_000_000 * share / 557_000_000 - 0.052029) < 1e-6
+    R = bw.Refs(100, 10, ["2026-09"])
+    cell = bw._a1_headline(R)[0][1](5, near)
+    assert '"|total_supply"' in cell and '"|locked_tokens"' in cell and "BLOCKED" in cell
+    assert f"${bw.DC['q0_covered_days']}$" in cell                  # observed over covered days
+    print("near ok: declared primary, observed guard at 10x")

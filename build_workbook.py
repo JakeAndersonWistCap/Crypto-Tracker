@@ -114,6 +114,8 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              "Days since then (only where a program cadence is documented)",
              "Program silence flag (PROGRAM_CADENCE)"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
+# Appended day-count columns that formulas READ as numbers (see write_data).
+NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days")
 
 # Config table layout
 CFG_COLS = [
@@ -1566,6 +1568,14 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
             elif col in ("n_points", "tier"):
                 c.value = int(v) if str(v) not in ("", "None") else ""
                 _style(c, "text", FMT_NUM)
+            elif col in NUMERIC_APPENDED:
+                # ** WRITTEN AS NUMBERS, OR NOTHING. Fixed 2026-09-28. ** These were falling to the
+                # literal branch below and landing as TEXT ("14.0", "nan"), so every formula
+                # testing ISNUMBER(q0_covered_days) took its fallback: the covered-days
+                # annualisation never fired on a real sheet while its formula-level tests passed.
+                ok = isinstance(v, (int, float)) and not pd.isna(v)
+                c.value = int(v) if ok else ""
+                _style(c, "text", FMT_NUM)
             else:
                 c.value = "" if v is None else str(v)
                 _literal(c)
@@ -1927,6 +1937,29 @@ def _a1_headline(R: Refs) -> list[tuple]:
             return ""
         if spec["method"] == "stored":
             return pull(R.D(r, spec["metric"], "now"))
+        if spec["method"] == "declared_share":
+            # DECLARED PRIMARY, OBSERVED AS THE GUARD (2026-09-28). The declared issuance is the
+            # protocol rate x live total supply; the observed one is annualised over the days it
+            # actually covers. More than max_ratio apart either way BLOCKS the cell with both
+            # figures on it — one of them is wrong, and the sheet should not pick.
+            def walk(path):
+                v = p
+                for k in path:
+                    v = v[k]
+                return v
+            rate, share = walk(spec["rate_path"]), walk(spec["share_path"])
+            supply = R.D(r, spec["supply_metric"], "now")
+            stake = R.D(r, "locked_tokens", "now")
+            om = spec["observed_metric"]
+            obs = _annualise(R, r, p, om, R.D(r, om, "q0"))
+            decl = f"({rate}*{supply})"
+            k = spec.get("max_ratio", 10)
+            val = f"{decl}*{share}/{stake}"
+            blocked = (f'"BLOCKED — declared "&TEXT({decl},"#,##0")&" vs observed "&TEXT({obs},"#,##0")'
+                       f'&" issuance/yr differ >{k}x"')
+            return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),"
+                        f"IF(ISNUMBER({R.D(r, om, 'q0')}),"
+                        f"IF(OR({obs}<=0,{decl}/{obs}>{k},{obs}/{decl}>{k}),{blocked},{val}),{val}),{NA})")
         if spec["method"] == "issuance_share":
             share = p
             for k in spec["share_path"]:
@@ -1937,7 +1970,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
     return [
         ("VALIDATOR STAKING YIELD (annual) — securing the chain, NOT a protocol revenue share",
          vyield, FMT_PCT, "calc", True,
-         {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "gross_issuance_tokens"}.get(n)}),
+         {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "total_supply"}.get(n)}),
         ("Settlement volume, annualised ($) — The Block adjusted, manual quarterly",
          lambda r, p: pull(R.D(r, "settlement_volume_annual_usd", "now")) if "settlement_volume_annual_usd"
          in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_annual_usd"}),
