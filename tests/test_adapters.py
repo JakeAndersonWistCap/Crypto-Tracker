@@ -15171,7 +15171,10 @@ def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
     with tempfile.TemporaryDirectory() as d:
         st = store_mod.Store(f"{d}/m.db")
         st.upsert(pd.DataFrame(rows)[["date", "project", "metric", "value", "source", "tier"]])
-        path = bw.build_workbook(st, f"{d}/w.xlsx", asof=asof, only=["Ether.fi"])
+        try:
+            path = bw.build_workbook(st, f"{d}/w.xlsx", asof=asof, only=["Ether.fi"])
+        finally:
+            bw._SCOPE = list(bw.PROJECTS)          # build(only=...) narrows module state; restore it
         ws = openpyxl.load_workbook(path)["A3 Revenue Buyback"]
         hr = next(i for i in range(1, 10) if ws.cell(row=i, column=1).value == "Project")
         hdr = {ws.cell(row=hr, column=c).value: c for c in range(1, ws.max_column + 1)}
@@ -15292,3 +15295,55 @@ def test_ether_fi_counts_cow_settlements_only_and_labels_the_other_inflow(monkey
     last = got[got.metric == "buyback_last_inflow_date"]
     assert float(last.value.iloc[0]) == float((pd.Timestamp("2026-06-30") - pd.Timestamp("1899-12-30")).days)
     print("ether.fi ok: CoW only = 17,984,520.10; deployer and Safe labelled, not counted")
+
+
+def test_a_burn_route_buyback_is_a_view_of_the_whole_burn_series():
+    """Hyperliquid, run 20260928T090446Z: burn Q0 379,892.53 vs buyback Q0 147,958.35 for ONE
+    flow. The stored buyback copies began at the first run after the relabel route existed; the
+    burn series is older. Read as a view, the two are identical — and the usd twin covers the same
+    days, so the covered-days annualisation sees the burn's real history."""
+    import build_workbook as bw
+    bw._SCOPE = list(bw.PROJECTS)                  # never depend on another test's build scope
+    asof = pd.Timestamp("2026-09-28")
+    burn = [dict(date=d, project="Hyperliquid", metric="gross_burn_tokens", value=10_000.0,
+                 source="hypercore_info:spotClearinghouseState:delta", tier=1, is_manual=False)
+            for d in pd.date_range("2026-08-30", "2026-09-27")]
+    copies = [dict(r, metric="actual_buyback_tokens", source=r["source"] + ":as-buyback")
+              for r in burn if r["date"] >= pd.Timestamp("2026-09-11")]
+    price = [dict(date=d, project="Hyperliquid", metric="price_usd", value=40.0, source="coingecko",
+                  tier=1, is_manual=False) for d in pd.date_range("2026-08-01", "2026-09-27")]
+    o = bw.aggregate(pd.DataFrame(burn + copies + price), pd.DataFrame(), asof)
+    by = {r["key"]: r for r in o.to_dict("records")}
+    b, t, u = by["Hyperliquid|gross_burn_tokens"], by["Hyperliquid|actual_buyback_tokens"], by["Hyperliquid|actual_buyback_usd"]
+    assert t["q0"] == b["q0"] == 290_000.0, (t["q0"], b["q0"])     # 29 days, not the 17 copied
+    assert u["q0"] == 290_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
+    assert "as-buyback" in str(t["source"])
+    # A Dune-SOURCED buyback (GEODNET) is never replaced by the view.
+    assert config.dune_query_declared("GEODNET", "actual_buyback_tokens")
+    print("view ok: Hyperliquid buyback == burn over the burn's whole history")
+
+
+def test_headlines_annualise_continuous_flows_over_covered_days_and_discrete_ones_by_the_window():
+    """Run 20260928T090446Z: Chainlink's ~60-day and Hyperliquid's ~17-day buyback series were
+    annualised x365/90, reading 0.21% and 0.28%. CONTINUOUS flows now divide by covered days while
+    coverage is short; DISCRETE ones (declared cadence > 1 day) keep x365/90 and their caveat."""
+    import build_workbook as bw
+    R = bw.Refs(100, 10, ["2026-09"])
+    specs = bw._a3_headline(R, {})
+    circ_fn = specs[0][1]
+    cl = circ_fn(5, config.PROJECT_BY_NAME["Chainlink"])
+    ef = circ_fn(5, config.PROJECT_BY_NAME["Ether.fi"])
+    cov_col = bw.DC["q0_covered_days"]
+    assert f"${cov_col}$" in cl and '"|actual_buyback_usd"' in cl and "/" in cl, cl
+    assert f"${cov_col}$" not in ef, ef                                   # weekly/monthly: discrete
+    assert bw._lumpy("Sky") and bw._lumpy("Ether.fi") and not bw._lumpy("Chainlink")
+    assert not bw._lumpy("GEODNET")                                        # daily = continuous
+    # The arithmetic the formula encodes, on the run's own numbers.
+    before = 0.0021
+    assert abs(before * 90 / 60 - 0.00315) < 1e-12                         # Chainlink, ~60 days
+    assert abs(before / 0.0021 * 0.0028 * 90 / 17 - 0.0148) < 1e-4        # Hyperliquid, ~17 days
+    # Every named headline uses it.
+    a4 = bw._a4_headline(R, lambda r, p, w="q0": R.D(r, config.a4_burn_metric(p["name"]), w), {})
+    assert f"${cov_col}$" in a4[0][1](5, config.PROJECT_BY_NAME["Uniswap"])
+    assert f"${cov_col}$" not in a4[0][1](5, config.PROJECT_BY_NAME["Sky"])   # monthly Stage 2 burn
+    print("annualise ok: continuous over covered days, discrete by the window")

@@ -1500,6 +1500,12 @@ PROGRAM_CADENCE = {
                 "cadences": (("daily", 1),),
                 "declared_by": "Jake, 2026-09-28",
                 "source": "LUMPY_FLOWS[('GEODNET', 'gross_burn_tokens')]: daily underlying cadence"},
+    # Sky's Stage 2 buy-and-burn runs through the monthly executive (2026-09-10 spell was the
+    # first). Declared so its burn is annualised as DISCRETE, never over covered days.
+    "Sky": {"metric": "sky_stage2_burn_tokens",
+            "cadences": (("monthly", 30),),
+            "declared_by": "Jake, 2026-09-28",
+            "source": "burn_logs.stage2_split: one Pause Proxy burn per monthly settlement spell"},
     "Pendle": {"metric": "actual_buyback_tokens",
                "cadences": (("biweekly", 14),),
                "declared_by": "on file 2026-09-23",

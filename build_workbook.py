@@ -689,6 +689,52 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
 
 
+def _relabel_views(groups: dict) -> None:
+    """A buyback that IS the burn is read as a VIEW of the burn series, not from stored copies.
+
+    ** HYPERLIQUID'S BUYBACK AND BURN DISAGREED ON ONE FLOW. Fixed 2026-09-28. ** Run
+    20260928T090446Z: gross_burn_tokens Q0 379,892.53, actual_buyback_tokens Q0 147,958.35 — the
+    Assistance Fund buyback and the burn are one event. fetch._derive_buyback re-labels only the
+    burn rows produced IN THAT RUN (and prices the usd twin from those), so the buyback series
+    begins at the first run after the route existed while the burn series also holds every older
+    row (including the rebuilt deltas). Same flow, different start dates.
+    Here the whole origin series stands in for the buyback on every read — marked as-buyback (and
+    PARTIAL on a split route) exactly as the stored copies are — and actual_buyback_usd is that
+    series x the same-day price. Skipped where a Dune query SOURCES the column (GEODNET) or a
+    manual override is present: a measurement is never replaced by a view.
+    """
+    for p in scoped_projects():
+        name = p["name"]
+        origin = config.relabelled_from(name, "actual_buyback_tokens")
+        if not origin or config.dune_query_declared(name, "actual_buyback_tokens"):
+            continue
+        og = groups.get((name, origin))
+        held = groups.get((name, "actual_buyback_tokens"))
+        if og is None or og.empty:
+            continue
+        if held is not None and "is_manual" in held and held["is_manual"].fillna(False).astype(bool).any():
+            continue
+        split = config.buyback_route(name).get("route") == "split"
+        mark = (lambda x: config.mark_source(config.mark_source(x, "as-buyback"), "PARTIAL")) if split \
+            else (lambda x: config.mark_source(x, "as-buyback"))
+        tok = og.copy()
+        tok["metric"] = "actual_buyback_tokens"
+        tok["source"] = tok["source"].astype(str).map(mark)
+        groups[(name, "actual_buyback_tokens")] = tok
+        if config.dune_query_declared(name, "actual_buyback_usd"):
+            continue
+        px = groups.get((name, "price_usd"))
+        if px is None or px.empty:
+            continue
+        price_on = px.drop_duplicates("date", keep="last").set_index("date")["value"]
+        usd = tok[tok["date"].isin(price_on.index)].copy()
+        usd["value"] = usd["value"].astype(float) * usd["date"].map(price_on).astype(float)
+        usd["metric"] = "actual_buyback_usd"
+        usd["source"] = "derived:tokens*price"
+        if not usd.empty:
+            groups[(name, "actual_buyback_usd")] = usd
+
+
 def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp,
               gaps: pd.DataFrame | None = None, review: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every project x every metric in the library — so every INDEX/MATCH key resolves."""
@@ -706,6 +752,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    _relabel_views(groups)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -1638,6 +1685,36 @@ def _widths(specs: list[tuple]) -> dict:
     return out
 
 
+def _lumpy(project_name: str) -> bool:
+    """A flow that arrives in DISCRETE events on a declared cadence longer than a day.
+
+    config.PROGRAM_CADENCE: Sky's monthly Stage 2 burn, Maple monthly, Ether.fi weekly/monthly,
+    Pendle biweekly. GEODNET's daily burn and every undeclared flow are CONTINUOUS.
+    """
+    cad = config.program_cadence(project_name)
+    return bool(cad) and max(d for _, d in cad["cadences"]) > 1
+
+
+def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
+    """A Q0-window sum as a yearly figure — over the days the series has ACTUALLY covered.
+
+    ** x365/90 UNDERSTATES EVERY SERIES YOUNGER THAN THE WINDOW. Fixed 2026-09-28. ** Run
+    20260928T090446Z: Chainlink's reserve inflow had ~60 days stored and Hyperliquid's buyback ~17,
+    so the retirement rates read 0.21% and 0.28% — a 60- and a 17-day sum divided as if it were 90.
+    A CONTINUOUS flow is annualised as sum / covered_days x days_per_year while coverage is short
+    (q0_covered_days, the column built for Sky's caveat), and x days_per_year/period_days once the
+    window is full — the same number then.
+    A DISCRETE flow (a declared cadence longer than a day, or a monthly series) is NOT: one monthly
+    burn in 14 days of coverage annualised over those 14 days would claim ~26 burns a year. Those
+    keep x365/90 and the window caveat that says so.
+    """
+    if _lumpy(p["name"]) or config.series_granularity(p["name"], metric) == "monthly":
+        return f"({total})*{ANN}"
+    cov = R.D(r, metric, "q0_covered_days")
+    return (f"IF(AND(ISNUMBER({cov}),{cov}>0,{cov}<{G('period_days')}),"
+            f"({total})*{G('days_per_year')}/{cov},({total})*{ANN})")
+
+
 def _suffix_fmt(fmt: str, suffix: str) -> str:
     """Append literal text to every section of a number format, so it shows beside any value."""
     lit = '"' + suffix.replace('"', "'") + '"'
@@ -1710,10 +1787,10 @@ def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
     flag = lambda p: _program_flag(p, data_by_key or {})  # noqa: E731
     return [
         ("CIRCULATING RETIREMENT RATE = actual buyback $ (annualised) ÷ market cap",
-         lambda r, p: calc(f"IF({gate(r)},{bb(r)}*{ANN}/{mc(r)},{NA})"), FMT_PCT, "calc", True,
+         lambda r, p: calc(f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{mc(r)},{NA})"), FMT_PCT, "calc", True,
          {"metric": "actual_buyback_usd", "flag_fn": flag}),
         ("FDV RETIREMENT RATE = actual buyback $ (annualised) ÷ FDV — always read with the rate to its left",
-         lambda r, p: calc(f"IF({gate(r)},{bb(r)}*{ANN}/{fdv(r)},{NA})"), FMT_PCT, "calc", True,
+         lambda r, p: calc(f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"), FMT_PCT, "calc", True,
          {"metric": "actual_buyback_usd", "flag_fn": flag}),
     ]
 
@@ -1778,7 +1855,7 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
     circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
     return [
         ("PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)",
-         lambda r, p: calc(f"{burn(r, p)}*{ANN}/{circ(r)}"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
+         lambda r, p: calc(f"{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/{circ(r)}"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
         ("Issuance basis for the crossover",
          lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
@@ -1835,7 +1912,7 @@ def _a2_headline(R: Refs) -> list[tuple]:
          cell(lambda r: f"({ff(r)})*{price(r)}/({arr(r)})"), FMT_X, "calc", True,
          {"metric": "customer_revenue_usd", **partial, "partial_fmt": '0.00"x PARTIAL↑";(0.00"x)" PARTIAL↑"'}),
         ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",
-         cell(lambda r: f"{emi(r)}*{ANN}/({ff(r)})"), FMT_PCT, "calc", True,
+         lambda r, p: _free_float_reason(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r)})"), FMT_PCT, "calc", True,
          {"metric": "emissions_tokens", **partial, "partial_fmt": '0.0%" PARTIAL↓";(0.0%)" PARTIAL↓"'}),
     ]
 
@@ -1875,7 +1952,7 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
         if spec:
             rev, lock = R.D(r, spec["revenue"], "q0"), R.D(r, spec["lock"], "now")
             px = R.D(r, "price_usd", "now")
-            return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({lock}),ISNUMBER({px})),{rev}*{ANN}/({lock}*{px}),{NA})")
+            return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({lock}),ISNUMBER({px})),{_annualise(R, r, p, spec['revenue'], rev)}/({lock}*{px}),{NA})")
         why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
         return f"n/a — {why}" if why else ""
     return ("PROTOCOL STAKING YIELD = holders revenue (annualised) ÷ locked value — revenue share, NOT a validator yield",
@@ -2288,7 +2365,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False,
          {"metric": "actual_buyback_tokens", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
-        ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}*{ann}/{circ(r)}"), FMT_PCT, "calc", True),
+        ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'actual_buyback_tokens', 'q0'))}/{circ(r)}"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
          lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
