@@ -430,6 +430,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"nothing this run",
                 f"Read the beaconchain lines in the Run Log for {name}: a 401/429 is the key or "
                 f"quota, 'has not finished' means the latest day is still open.")
+    bf = next((sp for sp in project.get("balance_flows") or [] if sp.get("metric") == metric), None)
+    if bf:
+        return (f"the {bf['key']} balance flow (inflows minus the change in the wallets' daily "
+                f"balances) is configured but stored nothing this run",
+                f"Read the balance_flow lines in the Run Log for {name}; a refused historical "
+                f"balanceOf means the {bf['chain']} endpoint is not archive — run "
+                f"check_offline_items.py geod_archive_probe.")
     es = project.get("etherscan_supply") or {}
     if metric in (es.get("burn_metric"), es.get("supply_metric")):
         return ("Etherscan stats/ethsupply2 is configured (one call gives BurntFees and the supply "
@@ -834,6 +841,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m |= {f["metric"] for f in project.get("near_account_flows") or []}
     elif source == "beaconchain":
         m = set((project.get("beaconchain") or {}).get("metrics") or {})
+    elif source == "balance_flow":
+        m = {sp["metric"] for sp in project.get("balance_flows") or []}
     elif source == "etherscan_supply":
         es = project.get("etherscan_supply") or {}
         m = {es["burn_metric"], es["supply_metric"], "gross_burn_tokens"} if es else set()

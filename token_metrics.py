@@ -158,46 +158,43 @@ def seed_nearblocks(st, log) -> int:
 
 
 def seed_geodnet(st, log) -> int:
-    """Finish GEODNET's explorer log scans (the mining-wallet outflow) in one sitting. 2026-09-28.
+    """Fill GEODNET's mining-wallet release (balance_flows) in one sitting. 2026-09-28 (B1).
 
-    Run 20260928T165724Z: the explorer tier was 142s of a 148s fetch, all of it GEODNET's first
-    read (48% of the chain cached) resuming at 120s a run. This runs only those scans, with no
-    per-scan budget and the heartbeat on. Ctrl-C loses nothing already cached: progress is saved
-    per stream (fetch/logcache.py). Once seeded, a routine run reads only new blocks.
+    The release is external inflow minus the change in the two wallets' daily balances: one
+    boundary block and one archive balanceOf per wallet per day, for a year, plus the few inflow
+    events. A routine run fills what its 60s allow, newest day first; this runs with no budget
+    and the heartbeat on. Ctrl-C loses nothing: the state is saved after every day
+    (<TOKEN_METRICS_LOGCACHE>/balance-flow-<key>.json).
 
-    Records NO gaps and NO review items, for the same reason as --seed nearblocks. The streams'
-    scanned_to / proven_to are printed before and after: proven_to reaching scanned_to means the
-    whole history reconciled to balanceOf and the series was stored.
+    Records NO gaps and NO review items, for the same reason as --seed nearblocks. Days held
+    before and after are printed.
     """
     from fetch import Heartbeat
-    from fetch.logcache import LogCache, stream_id
-    from fetch.logscan import TRANSFER_TOPIC, LogScan, pad_address
+    from fetch.balance_flow import BalanceFlow
+    from fetch.logcache import LogCache
     from fetch.validate import validate_frame
 
-    geod = [p for p in config.PROJECTS if p["name"] == "GEODNET" and p.get("log_scans")]
+    geod = [p for p in config.PROJECTS if p["name"] == "GEODNET" and p.get("balance_flows")]
 
     def state_line():
-        lines, cache = [], LogCache()
+        lines, root = [], LogCache().root
         for p in geod:
-            for spec in p["log_scans"]:
-                chain_id = config.CHAIN_IDS.get(spec["chain"])
-                for h in spec["holders"]:
-                    for way, topics in (("in", [TRANSFER_TOPIC, None, pad_address(h.lower())]),
-                                        ("out", [TRANSFER_TOPIC, pad_address(h.lower()), None])):
-                        stt = cache.load(stream_id(chain_id, spec["token"], topics))
-                        lines.append(f"{spec['key']} {h[:10]} {way}: " + (
-                            "no cache yet" if stt["scanned_to"] is None else
-                            f"scanned to {stt['scanned_to']:,}, proven to "
-                            f"{stt['proven_to'] if stt['proven_to'] is None else format(stt['proven_to'], ',')}, "
-                            f"{len(stt['events']):,} event(s)"))
-        return "; ".join(lines) or "GEODNET has no log_scans configured"
+            for spec in p["balance_flows"]:
+                try:
+                    stt = json.loads((root / f"balance-flow-{spec['key']}.json").read_text())
+                except (OSError, ValueError):
+                    stt = {}
+                bal = sorted((stt.get("balance") or {}))
+                lines.append(f"{spec['key']}: " + (f"{len(bal)} daily balance(s), {bal[0]}..{bal[-1]}"
+                                                   if bal else "no state yet"))
+        return "; ".join(lines) or "GEODNET has no balance_flows configured"
 
     run_id = fetch.new_run_id()
     log.info("--seed geodnet: BEFORE — %s", state_line())
     out = fetch.FetchOutput()
     t0 = time.monotonic()
     with Heartbeat():
-        LogScan(unbounded=True).run(geod, None if st.is_empty() else REFETCH_WINDOW_DAYS, out)
+        BalanceFlow(unbounded=True).run(geod, None, out)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
     written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)

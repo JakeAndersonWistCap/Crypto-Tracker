@@ -13857,8 +13857,11 @@ def test_the_four_scans_are_declared_as_the_round_asked(monkeypatch):
     assert e["holders"] == ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F"] and e["store"]
     m = specs["Maple"]["treasury_inflow"]
     assert m["holders"] == ["0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"] and m["store"] is False
-    g = specs["GEODNET"]["mining_wallets_outflow"]
-    assert g["direction"] == "out" and g["chain"] == "polygon" and len(g["holders"]) == 2
+    # B1 2026-09-28: the outflow scan is retired to a record; the release is a balance flow
+    assert "mining_wallets_outflow" not in specs["GEODNET"]
+    assert "mining_wallets_outflow" in config.PROJECT_BY_NAME["GEODNET"]["retired_log_scans"]
+    g = config.PROJECT_BY_NAME["GEODNET"]["balance_flows"][0]
+    assert g["key"] == "mining_wallets_release" and g["chain"] == "polygon" and len(g["holders"]) == 2
     assert "Mining allocation ONLY" in config.metric_label("GEODNET", "pool_release_tokens")
     for n in ("Ether.fi", "Maple"):
         assert "actual_buyback_tokens_blocked" not in config.PROJECT_BY_NAME[n], n
@@ -15615,7 +15618,7 @@ def test_declared_or_first_party_issuance_is_primary_in_every_consumer():
            + rows("GEODNET", "circulating_supply", 462_370_402.0, "coingecko"))
     r = agg(geo).loc[("GEODNET", "pool_release_tokens")]
     assert r["status"] == "blocked" and "mining-wallet outflow" in r["note"]
-    meas = rows("GEODNET", "pool_release_tokens", 250_000.0, "explorer:mining_wallets_outflow",
+    meas = rows("GEODNET", "pool_release_tokens", 250_000.0, "balance_flow:mining_wallets_release",
                 dates=days[-10:])
     r = agg(geo[len(days):] + meas).loc[("GEODNET", "pool_release_tokens")]
     assert r["status"] not in bw.WITHHELD_STATUSES and r["q0"] == 2_500_000.0
@@ -16880,34 +16883,25 @@ def test_the_zero_detector_does_not_run_on_a_declared_na_metric():
     assert any("is ZERO" in g["metric"] for g in out.gaps)
 
 
-def test_seed_geodnet_runs_only_geodnets_scans_with_no_budget(monkeypatch, tmp_path, caplog):
-    """--seed geodnet (2026-09-28): the explorer tier was 142s of a 148s fetch, all of it
-    GEODNET's first read at 120s a run. The seed runs only GEODNET's log_scans with the per-scan
-    budget OFF, prints every stream's cache state before and after, and records no gaps."""
+def test_seed_geodnet_runs_only_geodnets_balance_flow_with_no_budget(monkeypatch, tmp_path, caplog):
+    """--seed geodnet (B1, 2026-09-28): runs only GEODNET's balance_flows with the budget OFF,
+    prints the days held before and after, and records no gaps."""
     import logging
 
     import store as store_mod
     import token_metrics
-    from fetch import logscan
-
-    class Explorer:
-        budgets = []
-
-        def start_budget(self, s):
-            Explorer.budgets.append(s)
-
-        def clear_budget(self):
-            pass
+    from fetch import balance_flow
 
     calls = []
-    real_run = logscan.LogScan.run
 
     def fake_run(self, projects, window_days, out):
         calls.append(([p["name"] for p in projects], self.unbounded))
         out.gap("GEODNET", "pool_release_tokens", reason="would be a gap", tiers_attempted="2",
                 suggestion="-")
 
-    monkeypatch.setattr(logscan.LogScan, "run", fake_run)
+    monkeypatch.setattr(balance_flow.BalanceFlow, "__init__",
+                        lambda self, unbounded=False, **k: setattr(self, "unbounded", unbounded))
+    monkeypatch.setattr(balance_flow.BalanceFlow, "run", fake_run)
     monkeypatch.setattr(store_mod, "DB_PATH", tmp_path / "m.db")
     monkeypatch.setattr(token_metrics, "load_dotenv", lambda *a, **k: None)
     caplog.set_level(logging.INFO)
@@ -16915,33 +16909,8 @@ def test_seed_geodnet_runs_only_geodnets_scans_with_no_budget(monkeypatch, tmp_p
     assert calls == [(["GEODNET"], True)], calls
     st = store_mod.Store(str(tmp_path / "m.db"))
     assert st.conn.execute("SELECT COUNT(*) FROM gap_report").fetchone()[0] == 0
-    assert "--seed geodnet: BEFORE" in caplog.text and "mining_wallets_outflow" in caplog.text
-    assert "--seed geodnet: AFTER" in caplog.text and "no cache yet" in caplog.text
-
-    # and the flag really removes the budget: a routine LogScan starts it, a seed does not
-    monkeypatch.setattr(logscan.LogScan, "run", real_run)
-    spec = next(s for s in config.PROJECT_BY_NAME["GEODNET"]["log_scans"]
-                if s["key"] == "mining_wallets_outflow")
-
-    # pin the block, then stop at the first request so only the budget call is observed
-    class Pinned:
-        def web3(self, chain):
-            class W:
-                class eth:
-                    block_number = 1_000
-            return W()
-
-    for unbounded, expect in ((False, [config.EXPLORER_SCAN_BUDGET_S]), (True, [])):
-        Explorer.budgets = []
-        exp = Explorer()
-        exp.configured = lambda cid: True
-
-        def refuse(*a, **k):
-            raise logscan.ExplorerRefused("stop here")
-        exp.get_logs = refuse
-        ls = logscan.LogScan(explorer=exp, reader=Pinned(), cache=None, unbounded=unbounded)
-        ls._scan(config.PROJECT_BY_NAME["GEODNET"], spec, None, FetchOutput())
-        assert Explorer.budgets == expect, (unbounded, Explorer.budgets)
+    assert "--seed geodnet: BEFORE" in caplog.text and "mining_wallets_release" in caplog.text
+    assert "--seed geodnet: AFTER" in caplog.text and "no state yet" in caplog.text
 
 
 def test_geodnet_zero_is_a_quiet_period_judged_by_the_silence_detector_at_two_days():
@@ -17526,3 +17495,104 @@ def test_ethereum_burn_and_issuance_come_from_etherscan_ethsupply2(monkeypatch):
     assert out2.frame().empty
     reasons = " ".join(g["reason"] for g in out2.gaps)
     assert "NOTOK" in reasons and key not in reasons and "***" in reasons
+
+
+def test_geodnet_release_is_inflow_minus_the_change_in_daily_balances_in_wei(tmp_path):
+    """B1, 2026-09-28: release(D) = external inflow(D) - d(combined balance over D) - sends to
+    burn/zero, all integers. A hop between the two wallets cancels; a burn send is not release;
+    a balance that rose by more than every inflow refuses the whole series."""
+    from fetch.balance_flow import BalanceFlow
+    from fetch.base import FetchOutput, today
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.logcache import LogCache
+
+    spec = config.PROJECT_BY_NAME["GEODNET"]["balance_flows"][0]
+    w1, w2 = (h.lower() for h in spec["holders"])
+    dead = spec["exclude_counterparties"][0].lower()
+    ext = "0x" + "ab" * 20
+    e18 = 10 ** 18
+    t0 = today() - pd.Timedelta(days=3)
+    # one block per hour: block n has timestamp t0 + n*3600 (block 0 = t0 - ... is fine)
+    base_ts = int((t0 - pd.Timedelta(days=1)).timestamp())
+    blk = lambda d: int((pd.Timestamp(d).timestamp() - base_ts) // 3600)  # noqa: E731
+    head = blk(today()) + 5
+
+    def bal_at(b, w, bump=0):
+        # w1: 1,000 at start of t0; +500 inflow on t0, -300 paid out on t0; on t0+1 sends
+        # 100 to w2 (hop) and 50 to dead, pays out 200. w2 holds 0 then the 100 hop.
+        # balanceOf at B(D) - 1 is the balance at the START of D
+        d0, d1 = blk(t0), blk(t0 + pd.Timedelta(days=1))
+        if w == w1:
+            return (1_000 if b < d0 else 1_200 if b < d1 else 850 + bump) * e18
+        return (0 if b < d1 else 100) * e18
+
+    class Fn:
+        def __init__(self, v):
+            self.v = v
+
+        def call(self, block_identifier=None):
+            return self.v(block_identifier) if callable(self.v) else self.v
+
+    class Reader:
+        bump = 0
+
+        def web3(self, chain):
+            class E:
+                block_number = head
+
+                @staticmethod
+                def get_block(n):
+                    return {"timestamp": base_ts + n * 3600}
+            return type("W", (), {"eth": E})()
+
+        def erc20(self, chain, token):
+            r = self
+
+            class F:
+                @staticmethod
+                def decimals():
+                    return Fn(18)
+
+                @staticmethod
+                def balanceOf(h):
+                    return Fn(lambda b: bal_at(b, h.lower(), r.bump))
+            return type("C", (), {"functions": F})()
+
+        def checksum(self, a):
+            return a
+
+    def log(b, frm, to, amt, i):
+        return {"blockNumber": b, "logIndex": i, "transactionHash": f"0x{b:x}{i}",
+                "timeStamp": base_ts + b * 3600, "data": hex(amt * e18),
+                "topics": [TRANSFER_TOPIC, pad_address(frm), pad_address(to)]}
+
+    d0 = blk(t0)
+    events = [log(d0 + 2, ext, w1, 500, 0),                  # external inflow on t0
+              log(d0 + 30, w1, w2, 100, 1),                  # hop on t0+1
+              log(d0 + 31, w1, dead, 50, 2)]                 # burn send on t0+1
+
+    class Ex:
+        def get_logs(self, chain_id, token, topics, start, to):
+            want = [t.lower() if t else None for t in topics]
+            got = [e for e in events if start <= e["blockNumber"] <= to
+                   and (want[1] is None or e["topics"][1] == want[1])
+                   and (want[2] is None or e["topics"][2] == want[2])]
+            return got, {"explorer": "fake", "requests": 1, "refused": []}
+
+    p = dict(config.PROJECT_BY_NAME["GEODNET"])
+    p["balance_flows"] = [dict(spec, days=3)]
+    reader = Reader()
+    out = FetchOutput()
+    BalanceFlow(reader=reader, explorer=Ex(), cache=LogCache(tmp_path), unbounded=True).run([p], None, out)
+    got = out.frame().query("metric == 'pool_release_tokens'").set_index("date")["value"]
+    # t0:   in 500, balance 1,000 -> 1,200: out 300
+    # t0+1: in 0 (the hop is internal), 1,200 -> 950 combined: out 250, of which 50 burned -> 200
+    assert got[t0] == 300.0 and got[t0 + pd.Timedelta(days=1)] == 200.0, got
+    assert list(out.frame()["source"].unique()) == ["balance_flow:mining_wallets_release"]
+    assert config.issuance_primary("GEODNET")["source_prefix"] == "balance_flow:mining_wallets_release"
+
+    # a balance that rose with no inflow to explain it: refused, nothing stored
+    reader.bump = 400
+    out2 = FetchOutput()
+    BalanceFlow(reader=reader, explorer=Ex(), cache=LogCache(tmp_path / "b"), unbounded=True).run([p], None, out2)
+    assert out2.frame().empty and "inflow event is missing" in out2.gaps[0]["reason"]

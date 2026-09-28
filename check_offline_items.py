@@ -1071,6 +1071,51 @@ def etherscan_ethsupply2():
           "and BurntFees in the millions.")
 
 
+GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+GEOD_MINING_WALLETS = ("0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F",
+                       "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478")
+
+
+def geod_archive_probe():
+    """B1 (2026-09-28): which Polygon endpoints serve HISTORICAL balanceOf, a year back?
+
+    The GEODNET release is inflows minus the change in the mining wallets' daily balances, so it
+    needs archive state. For each endpoint (POLYGON_RPC_URL first, then the public list) this
+    reads both wallets' GEOD balance at head, ~1 day, ~30 days and ~365 days back (Polygon ~2s
+    blocks, so 43,200 blocks a day — the probe prints the actual block timestamps). An endpoint
+    that answers the 365-day read serves the backfill; one that fails it serves routine runs
+    only. Then run: python token_metrics.py --seed geodnet"""
+    head("GEODNET — Polygon archive: mining-wallet balances a day, a month and a year back")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    for url in _rpcs_for("polygon"):
+        host = _rpc_host(url)
+        try:
+            h = int(rpc(url, "eth_blockNumber")["result"], 16)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {host}: UNREACHABLE — {str(e)[:120]}")
+            continue
+        print(f"  {host}: head {h:,}")
+        for label, back in (("head", 0), ("1d", 43_200), ("30d", 1_296_000), ("365d", 15_768_000)):
+            blk = hex(max(h - back, 1))
+            try:
+                ts = int(rpc(url, "eth_getBlockByNumber", [blk, False])["result"]["timestamp"], 16)
+                vals = []
+                for w in GEOD_MINING_WALLETS:
+                    j = rpc(url, "eth_call", [{"to": GEOD_POLYGON, "data": SEL_BALANCE_OF
+                                               + w.lower()[2:].rjust(64, "0")}, blk])
+                    vals.append("ERR " + str(j.get("error"))[:60] if "error" in j
+                                else f"{int(j['result'], 16) / 1e18:,.0f}")
+                when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts))
+                print(f"    {label:<5} block {int(blk, 16):,} ({when} UTC): {' | '.join(vals)}")
+            except Exception as e:  # noqa: BLE001
+                print(f"    {label:<5} FAILED — {str(e)[:120]}")
+    print("  PASTE BACK: the first endpoint whose 365d line shows two numbers serves the backfill.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2442,7 +2487,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
-    wm_cardano_supply, etherscan_ethsupply2,
+    wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

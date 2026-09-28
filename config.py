@@ -5312,24 +5312,37 @@ PROJECTS = [
         # ** NARROWER THAN THE DERIVED FIGURE, AND THE LABEL SAYS SO. ** The derivation carries
         # every pre-minted pool (ecosystem, team, investors); this is the mining allocation only.
         # If the scan fails or does not reconcile, the derivation runs as before.
-        "log_scans": [
+        # ===== B1 (Jake, 2026-09-28): RELEASE FROM DAILY BALANCES, NOT THE OUTFLOW EVENTS. =====
+        # The outflow stream is 300K+ events and the full-history scan never finished (--seed
+        # geodnet: 447s, 0 rows; routine runs reached 55% of the chain). fetch/balance_flow.py:
+        #   release(D) = external inflow(D) - d(combined balance over D) - sends to burn/zero
+        # in wei, from the few inflow events plus one archive balanceOf per wallet per day.
+        # Same wallets, same exclusions, same attribution as the scan it replaces.
+        "balance_flows": [
             {
-                "key": "mining_wallets_outflow",
+                "key": "mining_wallets_release",
                 "metric": "pool_release_tokens",
                 "chain": "polygon",
                 "token": "0xAC0F66379A6d7801D7726d5a943356A172549Adb",
                 "holders": ["0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F",
                             "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478"],
-                "direction": "out",
-                "store": True,
+                "exclude_counterparties": ["0x000000000000000000000000000000000000dEaD",
+                                           "0x0000000000000000000000000000000000000000"],
+                "days": 365,
                 "attribution": "dedicated_wallet",
                 "attribution_sources": ["contracts.mining_polygon / mining_distribution_polygon "
                                         "(verified 2026-09-17)"],
-                "exclude_counterparties": ["0x000000000000000000000000000000000000dEaD",
-                                           "0x0000000000000000000000000000000000000000"],
-                "wired_on": "2026-09-24",
+                "wired_on": "2026-09-28",
             },
         ],
+        "retired_log_scans": {
+            "mining_wallets_outflow": {
+                "retired_on": "2026-09-28",
+                "why": "300K+ outflow events; the full-history scan never completed within any "
+                       "budget. Replaced by balance_flows.mining_wallets_release, which reads "
+                       "the inflow events (and burn sends) only.",
+            },
+        },
         # (the pool_release_tokens label is in this entry's single metric_labels dict below)
         # ===== buyback_wallet_polygon_historical RETIRED 2026-09-23. =====
         # It was a contract of kind buyback_fund_balance on a project whose buyback BURNS
@@ -5436,9 +5449,10 @@ PROJECTS = [
         },
         "metric_labels": {
             # ===== SAY ON THE SHEET WHAT THESE FIGURES ARE. Added 2026-09-23. =====
-            # MEASURED POOL RELEASE, 2026-09-24 — see log_scans.mining_wallets_outflow.
+            # MEASURED POOL RELEASE, 2026-09-28 — see balance_flows.mining_wallets_release.
             "pool_release_tokens": "Released from the MINING pool — GEOD paid out of the two "
-                                   "Polygon mining wallets (measured, Transfer events). Mining "
+                                   "Polygon mining wallets (measured: external inflow minus the "
+                                   "change in their balances, per day). Mining "
                                    "allocation ONLY: the derived fallback, when it shows, also "
                                    "carries other pools.",
             # All three come out of DefiLlama's burn-derived adapter, so a reader comparing them
@@ -14525,9 +14539,10 @@ ISSUANCE_PRIMARY = {
     # is d(circulating) - d(total) from CoinGecko, whose circulating figure has not moved, so it
     # reads ~0 and burn/release read 108x. The measured mining-wallet outflow is primary.
     "GEODNET": {"kind": "first_party", "metric": "pool_release_tokens",
-                "source_prefix": "explorer:mining_wallets_outflow",
+                "source_prefix": "balance_flow:mining_wallets_release",
                 "block_reason": "waiting for the measured mining-wallet outflow (log_scans."
-                                "mining_wallets_outflow) to seed and reconcile. The derived "
+                                "mining_wallets_release: inflows minus the change in the "
+                                "wallets' daily balances) to fill the window. The derived "
                                 "d(circulating) - d(total) reads ~0 because CoinGecko's "
                                 "circulating figure is not updating; Jake's understanding is that "
                                 "emissions and burn are roughly equal, so a burn/release ratio "
@@ -16209,11 +16224,11 @@ POOL_RELEASE_ROUTES = {
         # says nothing about the provider. A flat method refusal and a range limit look alike in
         # a run log and are different problems: no chunking fixes a refusal, and that fix is a
         # keyed Polygon endpoint (POLYGON_RPC_URL, PREPENDED so the public ones stay as fallback).
-        "measured": "WIRED 2026-09-24 — log_scans.mining_wallets_outflow on the GEODNET "
-                    "entry, via a block-explorer API (Etherscan V2 serves Polygon logs free, "
-                    "per the researched table), reconciled per wallet to balanceOf at a "
-                    "pinned block. PRIMARY WHEN IT PASSES; the derivation runs when it does "
-                    "not. Confirmed live: not yet.",
+        "measured": "WIRED 2026-09-28 — balance_flows.mining_wallets_release on the GEODNET "
+                    "entry (replacing log_scans.mining_wallets_outflow, WIRED 2026-09-24, which "
+                    "never finished its 300K-event history): external inflow minus the change "
+                    "in the two wallets' archive balances, per day, in wei. PRIMARY WHEN IT "
+                    "PASSES; the derivation runs when it does not. Confirmed live: not yet.",
         "derived": "live",
     },
     "Maple": {
