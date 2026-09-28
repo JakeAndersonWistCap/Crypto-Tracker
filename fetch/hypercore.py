@@ -337,6 +337,19 @@ class HyperCoreInfo:
         out.add(point(name, metric, total, f"{SOURCE}:tokenDetails", TIER, when), SOURCE, name,
                 f"{metric}={total:,.4f} from Hyperliquid's own tokenDetails "
                 f"(circulatingSupply={circ:,.4f}, maxSupply={cap:,.4f})", TIER)
+        # B4 (2026-09-28): THE FALL IN totalSupply IS EVERY BURN OUTSIDE THE ASSISTANCE FUND.
+        # Differenced on the negation, as for the reward reserve below; a rise is refused.
+        fall = read.get("supply_fall_metric")
+        if fall:
+            flow = derive_flow_from_cumulative(
+                -total, None if self.prior_delta.get((name, metric)) is None
+                else -float(self.prior_delta[(name, metric)]), name, fall,
+                config.mark_source(f"{SOURCE}:tokenDetails.totalSupply", "delta"), TIER, when,
+                prior_date=self.prior_dates.get((name, metric)),
+                stock_metric=f"-{metric} (totalSupply, negated: its fall is the burn)", out=out)
+            if not flow.empty:
+                out.add(flow, SOURCE, name, f"{fall} = the fall in tokenDetails.totalSupply since "
+                        f"the last dated reading (burns outside the Assistance Fund)", TIER)
         # futureEmissions: the pre-minted staking-reward reserve, INSIDE totalSupply. Its fall is the
         # rewards paid — the input a validator yield needs, and one pool_release_tokens cannot give
         # because d(circulating) - d(total) also counts every unlock. Opt-in per read.
@@ -350,6 +363,23 @@ class HyperCoreInfo:
                 out.add(point(name, fut_metric, fut, f"{SOURCE}:tokenDetails", TIER, when), SOURCE, name,
                         f"{fut_metric}={fut:,.4f} from tokenDetails.futureEmissions (a stock: the "
                         f"reward reserve still inside totalSupply)", TIER)
+                # B4 (2026-09-28): REWARDS PAID = THE FALL IN THE RESERVE since the last dated
+                # reading. The reserve only shrinks as rewards are paid, so the differencing is
+                # run on its NEGATION: the same two-readings, earlier-date and span rules as every
+                # other differenced flow, and a RISE (a top-up, or a bad read) is refused, not
+                # stored as negative emissions.
+                em = read.get("emissions_metric")
+                if em:
+                    flow = derive_flow_from_cumulative(
+                        -fut, None if self.prior_delta.get((name, fut_metric)) is None
+                        else -float(self.prior_delta[(name, fut_metric)]), name, em,
+                        config.mark_source(f"{SOURCE}:tokenDetails.futureEmissions", "delta"), TIER,
+                        when, prior_date=self.prior_dates.get((name, fut_metric)),
+                        stock_metric=f"-{fut_metric} (the reserve, negated: its fall is the flow)",
+                        out=out)
+                    if not flow.empty:
+                        out.add(flow, SOURCE, name, f"{em} = the fall in {fut_metric} since the "
+                                f"last dated reading (staking rewards paid)", TIER)
         provider = self.prior.get((name, "total_supply"))
         if provider is not None:
             # REPORTED, NOT RECONCILED: the difference is logged so a change in it is visible,

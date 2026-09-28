@@ -17641,3 +17641,29 @@ def test_aethir_supplier_emissions_come_from_the_checker_node_bucket_marked_part
     assert abs(em["value"].iloc[-1] - 4_200_000_000 / 1461) < 1e-6
     assert (em["source"].astype(str).str.contains("PARTIAL")).all()
     assert not gi["source"].astype(str).str.contains("PARTIAL").any()
+
+
+def test_hyperliquid_rewards_and_core_burns_are_the_falls_in_its_own_two_stocks():
+    """B4, 2026-09-28: emissions_tokens = the fall in tokenDetails.futureEmissions (rewards paid),
+    core_burn_tokens = the fall in tokenDetails.totalSupply (burns outside the Assistance Fund,
+    whose HYPE stays inside the total). Both differenced against the previous DATED reading; a rise
+    is refused. The validator yield is rewards over staked HYPE, no longer 'pending'."""
+    from fetch.base import FetchOutput, derive_flow_from_cumulative, today
+
+    read = next(r for r in config.PROJECT_BY_NAME["Hyperliquid"]["node_api"]["extra_reads"]
+                if r.get("future_emissions_metric"))
+    assert read["emissions_metric"] == "emissions_tokens" and read["supply_fall_metric"] == "core_burn_tokens"
+    spec = config.VALIDATOR_YIELD["Hyperliquid"]
+    assert spec["method"] == "issuance_share" and spec["issuance_metric"] == "emissions_tokens"
+    assert spec["stake_metric"] == "locked_tokens"
+
+    when, prior_day = today(), str((today() - pd.Timedelta(days=1)).date())
+    out = FetchOutput()
+    f = derive_flow_from_cumulative(-380_000_000.0, -380_120_000.0, "Hyperliquid", "emissions_tokens",
+                                    "hypercore_info:tokenDetails.futureEmissions:delta", 1, when,
+                                    prior_date=prior_day, out=out)
+    assert list(f["value"]) == [120_000.0]
+    rise = derive_flow_from_cumulative(-380_200_000.0, -380_120_000.0, "Hyperliquid", "emissions_tokens",
+                                       "x:delta", 1, when, prior_date=prior_day, out=out)
+    assert rise.empty and "FELL" in out.gaps[-1]["reason"]
+    assert "core_burn_tokens" in config.metrics_for_project(config.PROJECT_BY_NAME["Hyperliquid"])

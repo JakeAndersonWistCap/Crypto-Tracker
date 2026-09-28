@@ -444,6 +444,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
                 f"Etherscan's message (a rate limit, the key, or a plan); or run "
                 f"check_offline_items.py etherscan_ethsupply2.")
+    fall = next((r for r in (node_api.get("extra_reads") or []) if r.get("supply_fall_metric") == metric), None)
+    if fall:
+        return (f"the fall in tokenDetails.totalSupply ({fall.get('metric')}) since the last dated "
+                f"reading; nothing stored this run",
+                "It needs two readings on different days; read the hypercore_info lines in the "
+                "Run Log — a RISE in totalSupply is refused, not stored.")
     fut = next((r for r in (node_api.get("extra_reads") or []) if r.get("future_emissions_metric") == metric), None)
     if fut:
         return (f"read from the same tokenDetails response as {fut.get('metric')} "

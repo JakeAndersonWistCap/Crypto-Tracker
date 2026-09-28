@@ -327,6 +327,13 @@ METRICS = {
         "label": "SKY burned by Sky's Stage 2 buy-and-burn, per day (event-dated, not differenced)",
         "kind": "flow", "unit": "tokens", "archetypes": [4],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
+    # B4 (2026-09-28): Hyperliquid's burns OUTSIDE the Assistance Fund — the fall in its own
+    # tokenDetails.totalSupply (the Fund's HYPE stays inside that total, so this excludes it).
+    "core_burn_tokens": {
+        "label": "HYPE burned outside the Assistance Fund — fall in tokenDetails.totalSupply "
+                 "(HIP-1 deploy gas, Core priority fees, ...); HyperEVM burns unverified",
+        "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4],
+        "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "other_burn_balance": {
         "label": "Cumulative SKY destroyed by an UNRECOGNISED sender — surfaced, not folded in",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
@@ -8845,7 +8852,14 @@ PROJECTS = [
                           "from the total EVM supply), HyperEVM priority fees (sent to the zero "
                           "address's EVM balance), HyperCore order priority fees, HIP-3 slashed "
                           "deployer stake, and HIP-1 spot deployment gas. This figure is the "
-                          "fee-conversion burn alone and is therefore a LOWER BOUND.",
+                          "fee-conversion burn alone and is therefore a LOWER BOUND. "
+                          "FROM 2026-09-28 the HyperCore burns are measured separately as "
+                          "core_burn_tokens (the fall in tokenDetails.totalSupply, which holds "
+                          "the Fund's HYPE and so excludes it): gross_burn_tokens + "
+                          "core_burn_tokens is the whole Core-side burn. No info-API field "
+                          "gives a cumulative burn (spotMeta/tokenDetails checked: only "
+                          "per-token deployGas). Summing the two into this column is a decision "
+                          "for Jake, not made here.",
                 "route": "The HyperEVM priority-fee component IS readable — it accumulates at "
                          "the zero address's EVM balance, so a balance read on HyperEVM "
                          "(rpc.hyperliquid.xyz/evm, where HYPE has 18 decimals) would close it "
@@ -8946,6 +8960,12 @@ PROJECTS = [
                 # decline is rewards paid, the input a validator yield needs. Never folded into
                 # pool_release_tokens, which also counts every pre-mint unlock.
                 "future_emissions_metric": "future_emissions_tokens",
+                # B4 (2026-09-28): its fall, day over day, is emissions_tokens (rewards paid).
+                "emissions_metric": "emissions_tokens",
+                # B4 (2026-09-28): and the fall in totalSupply is every burn that is NOT the
+                # Assistance Fund's (whose HYPE stays inside the total) — stored separately,
+                # never summed into gross_burn_tokens without a decision (burn_partial).
+                "supply_fall_metric": "core_burn_tokens",
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
                 # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
@@ -14507,9 +14527,15 @@ VALIDATOR_YIELD = {
              "note": "declared 2.5% x total supply x the documented 90% validator share, over "
                      "stake from the validators RPC; observed issuance is the cross-check. NOT "
                      "protocol_reward_rate — structurally inapplicable on mainnet (2026-09-17)."},
-    "Hyperliquid": {"method": "pending",
-                    "why": "rewards = the fall in future_emissions_tokens, stored from 2026-09-24; "
-                           "a yield needs two observations a window apart"},
+    # B4 (2026-09-28): rewards = the fall in futureEmissions (hypercore derives it into
+    # emissions_tokens each run from the previous dated reading), annualised over the days it
+    # covers, over staked HYPE (validatorSummaries stake, locked_tokens). It populates from the
+    # first run after this change that has a prior-dated futureEmissions reading — the stock has
+    # been stored since 2026-09-24, so the next daily run; rederive.py can rebuild the days in
+    # between from the stored stock.
+    "Hyperliquid": {"method": "issuance_share", "issuance_metric": "emissions_tokens",
+                    "stake_metric": "locked_tokens", "share": 1.0,
+                    "note": "rewards paid = fall in tokenDetails.futureEmissions, over staked HYPE"},
     # B2 (2026-09-28): LINK paid out of the staking v0.2 reward vault (log_scans.
     # staking_rewards_out), annualised, over staked principal (both pools' getTotalPrincipal).
     # Staking secures the oracle network, not a chain — archetype 1's validator column is the
