@@ -1618,7 +1618,9 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
 
         def work():
             try:
-                build(ctx).run(projects, window_days, sub)
+                adapter = build(ctx)
+                state[name]["adapter"] = adapter
+                adapter.run(projects, window_days, sub)
             except Exception as e:  # noqa: BLE001 — never let one source kill the run
                 sub.fail(name, None, f"adapter crashed: {e}", tier)
 
@@ -1636,7 +1638,9 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
         if st["thread"].is_alive() and time.monotonic() - st["t0"] >= budget:
             return _abandon(name, st, budget)
         if not st["thread"].is_alive():
-            st["result"] = (name, st["tier"], st["sub"], time.monotonic() - st["t0"], False)
+            secs = time.monotonic() - st["t0"]
+            log.info("tier %s done in %.0fs — %s", name, secs, _http_summary(st))
+            st["result"] = (name, st["tier"], st["sub"], secs, False)
             return st["result"]
         return None
 
@@ -1658,6 +1662,13 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
     return [state[n]["result"] for n, _, _ in todo]
 
 
+def _http_summary(st: dict) -> str:
+    """The source's Http stats, if it has an Http client (fetch.base.Http.summary)."""
+    http = getattr(st.get("adapter"), "http", None)
+    fn = getattr(http, "summary", None)
+    return fn() if callable(fn) else "no Http client"
+
+
 def _abandon(name, st, budget) -> tuple:
     """Keep what the source produced before the cut-off; stop reading its output."""
     sub = st["sub"]
@@ -1667,7 +1678,8 @@ def _abandon(name, st, budget) -> tuple:
     kept.fail(name, None,
               f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "
               f"{len(kept.frames)} frame(s) it had produced; everything else it serves is gapped "
-              f"for this run. Still waiting on: {'; '.join(waiting) or 'nothing registered'}.",
+              f"for this run. Still waiting on: {'; '.join(waiting) or 'nothing registered'}. "
+              f"Where the time went: {_http_summary(st)}.",
               st["tier"])
     log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s)", name, budget,
                 "; ".join(waiting) or "nothing registered")

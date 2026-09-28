@@ -16455,3 +16455,31 @@ def test_nearblocks_first_read_resumes_across_runs_instead_of_restarting(monkeyp
     assert h2.calls == ["4"], f"resumes at the saved cursor, one page left: {h2.calls}"
     got = out2.frame().query("metric == 'actual_buyback_tokens'")
     assert sorted(got.value) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+
+def test_http_stats_say_where_a_sources_time_went(monkeypatch):
+    """DefiLlama timed out at 150s having taken 62s the run before, and nothing said whether the
+    calls were slow, retried or many. Every Http client now counts them; the dispatcher prints the
+    summary on each source's timing line and in its TIER TIMED OUT message."""
+    from fetch import base
+
+    monkeypatch.setattr(base.time, "sleep", lambda s: None)
+
+    class R:
+        def __init__(self, code):
+            self.status_code, self.headers = code, {}
+
+        def json(self):
+            return {"ok": 1}
+
+        def raise_for_status(self):
+            pass
+
+    h = base.Http(retries=2)
+    seq = iter([R(503), R(200), R(200)])
+    monkeypatch.setattr(h.s, "get", lambda *a, **k: next(seq))
+    h.get("https://api.llama.fi/summary/fees/aave")
+    h.get("https://api.llama.fi/protocol/aave")
+    st = h.stats
+    assert st["calls"] == 3 and st["retries"] == 1 and st["waited_s"] == 2.0
+    assert "3 HTTP call(s)" in h.summary() and "1 retry" in h.summary()

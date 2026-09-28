@@ -266,6 +266,20 @@ class Http:
         self.retries = int(os.environ.get("TOKEN_METRICS_RETRIES", retries))
         self.timeout = float(timeout)          # the READ timeout; connect is CONNECT_TIMEOUT_S
         self._last = 0.0
+        # WHERE A SOURCE'S TIME WENT (2026-09-28: DefiLlama timed out at 150s having taken 62s
+        # the run before, and nothing said whether calls were slow, retried or simply many).
+        # Read by fetch._dispatch into the source's timing line and its timeout message.
+        self.stats = {"calls": 0, "http_s": 0.0, "retries": 0, "waited_s": 0.0,
+                      "slowest_s": 0.0, "slowest": ""}
+
+    def summary(self) -> str:
+        st = self.stats
+        if not st["calls"]:
+            return "no HTTP calls"
+        return (f"{st['calls']} HTTP call(s), {st['http_s']:.0f}s in requests "
+                f"(mean {st['http_s'] / st['calls']:.2f}s), {st['retries']} retr"
+                f"{'y' if st['retries'] == 1 else 'ies'}, {st['waited_s']:.0f}s in backoff/spacing, "
+                f"slowest {st['slowest_s']:.1f}s ({st['slowest']})")
 
     def post(self, url: str, json_body: dict | None = None, headers: dict | None = None):
         """Same retry/backoff policy as get(). Some node APIs only accept POST."""
@@ -289,6 +303,7 @@ class Http:
         def nap(seconds: float, why) -> None:
             if seconds >= left():
                 raise BudgetExhausted(f"time budget exhausted before retrying ({why})")
+            self.stats["waited_s"] += seconds
             sleep(seconds, f"sleeping {seconds:.0f}s before retrying {host} ({why})")
 
         wait = time.monotonic() - self._last
@@ -301,10 +316,21 @@ class Http:
             read = min(self.timeout, max(1.0, left()))
             timeout = (min(CONNECT_TIMEOUT_S, read), read)
             self._last = time.monotonic()
+            if attempt:
+                self.stats["retries"] += 1
             try:
-                r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)
-                     if verb == "POST" else
-                     self.s.get(url, params=params, headers=headers, timeout=timeout))
+                t0 = time.monotonic()
+                try:
+                    r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)
+                         if verb == "POST" else
+                         self.s.get(url, params=params, headers=headers, timeout=timeout))
+                finally:
+                    took = time.monotonic() - t0
+                    self.stats["calls"] += 1
+                    self.stats["http_s"] += took
+                    if took > self.stats["slowest_s"]:
+                        self.stats["slowest_s"] = took
+                        self.stats["slowest"] = urllib.parse.urlsplit(url).path[:80]
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
                     asked = retry_after(r.headers.get("Retry-After"))
