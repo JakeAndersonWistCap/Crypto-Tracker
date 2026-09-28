@@ -1663,8 +1663,11 @@ def _program_flag(p: dict, data_by_key: dict) -> tuple[str, str] | None:
 
     last = txt(bb.get("last_nonzero_date")) or txt(prow.get("last_nonzero_date"))
     flag = txt(prow.get("silence_flag"))
-    tail = ("\n\nThe figure is what the tracked address received. It stays at 0 if the program "
-            "restarts somewhere else — a new receiving address is a config change, not a read.")
+    scan = next((sc for sc in p.get("log_scans") or [] if sc.get("metric") == "actual_buyback_tokens"), None)
+    where = ", ".join(scan["holders"]) if scan else "the tracked address"
+    tail = (f"\n\nThe figure is what {where} received. When inflows resume the silence flag clears "
+            f"ONLY if they land there. A restart at a different address would leave this flag and "
+            f"the zero in place — a new receiving address is a config change, not a read.")
     if flag:
         days = prow.get("silent_days")
         days = f" {int(days)}d" if isinstance(days, (int, float)) and days == days else ""
@@ -1676,6 +1679,22 @@ def _program_flag(p: dict, data_by_key: dict) -> tuple[str, str] | None:
                 f"No inflow since {last}: the trailing window reads 0 because nothing arrived, "
                 f"not because nothing was read." + tail)
     return None
+
+
+def _protocol_yield_flag(p: dict, data_by_key: dict) -> tuple[str, str] | None:
+    """The program flag, plus the yield's own recipient caveat where config declares one.
+
+    Ether.fi's protocol staking yield assumes bought ETHFI reaches sETHFI holders — true of the
+    old programme, unconfirmed for the new one (config PROTOCOL_YIELD caveat, 2026-09-28).
+    """
+    flag = _program_flag(p, data_by_key)
+    caveat = (config.PROTOCOL_YIELD.get(p["name"]) or {}).get("caveat")
+    if not caveat:
+        return flag
+    suffix = (flag[0] if flag else "") + " · recipients unconfirmed"
+    note = (f"YIELD ASSUMPTION — {caveat}. The yield counts buybacks as paid to stakers; under the "
+            f"new programme that is not established.") + (f"\n\n{flag[1]}" if flag else "")
+    return suffix, note
 
 
 def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
@@ -1866,8 +1885,9 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
                                       if p["name"] in config.PROTOCOL_YIELD else None),
              "partial_direction": "the locked value is incomplete, so the yield READS HIGH.",
              "partial_fmt": '0.0%" PARTIAL↑";(0.0%)" PARTIAL↑"',
-             # Ether.fi's yield reads 0 because its buyback has not moved (2026-09-28).
-             "flag_fn": lambda p: _program_flag(p, data_by_key or {})})
+             # Ether.fi's yield reads 0 because its buyback has not moved, and its recipient
+             # class is unconfirmed under the new programme (2026-09-28).
+             "flag_fn": lambda p: _protocol_yield_flag(p, data_by_key or {})})
 
 
 def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:

@@ -15181,6 +15181,13 @@ def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
             c = ws.cell(row=er, column=next(v for k, v in hdr.items() if k and k.startswith(head)))
             assert "no inflow since 2026-06-30 · SILENT 87d" in c.number_format, (head, c.number_format)
             assert c.comment and "PROGRAM SILENT" in c.comment.text, head
+            # The comment names the tracked address: the flag clears only if inflows land THERE.
+            assert "0x2f5301a3D59388c509C65f8698f521377D41Fd0F" in c.comment.text, head
+            assert "restart at a different address would leave this flag and the zero" in c.comment.text
+            if head == "PROTOCOL STAKING YIELD":
+                assert c.number_format.count("recipients unconfirmed"), c.number_format
+                assert ("new programme (passed 2026-09-03) splits purchases between treasury and "
+                        "user rewards; recipient class unconfirmed") in c.comment.text
     print("silence ok: Ether.fi 87d SILENT on five A3 cells; GEODNET staleness is not silence")
 
 
@@ -15253,3 +15260,35 @@ def test_run_sql_resolves_the_update_target_in_sections_z_and_aj(capsys):
             "SELECT COUNT(*) FROM metrics WHERE metric = 'locked_tokens_shares'").fetchone()[0]
         assert n == 9
     print("run_sql ok: UPDATE targets resolve in Z and AJ; AJ previews cleanly after the hand move")
+
+
+def test_ether_fi_counts_cow_settlements_only_and_labels_the_other_inflow(monkeypatch):
+    """Jake, 2026-09-28: Ether.fi's buyback is CoW Protocol purchases only. The other two
+    senders (ether.fi deployer, unidentified Safe) are recorded as "other inflow, not counted",
+    labelled, never summed. With run 20260925T084404Z's three senders that is 17,984,520.10."""
+    spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "buyback_wallet_inflow")
+    assert spec["attribution"] == "count_from"
+    cow = "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
+    dep, safe = "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f", "0x01e42ad3acd58584ffc1d1982ecbbe758996d601"
+    assert spec["count_from"] == [cow] and set(spec["not_counted_labels"]) == {dep, safe}
+    wallet = spec["holders"][0].lower()
+    t0 = int(pd.Timestamp("2026-06-30").timestamp())
+    E = 10 ** 16                                      # 0.01 ETHFI, so two-decimal figures are exact
+    logs = _flow_logs(wallet, [(100, cow, 1_798_452_010 * E, t0 - 86_400 * 30),
+                               (200, dep, 39_651_067 * E, t0 - 86_400 * 10),
+                               (300, safe, 60_000_000 * E, t0 - 86_400 * 5),
+                               (400, cow, 0 * E + 1, t0)])
+    total = 1_798_452_010 * E + 39_651_067 * E + 60_000_000 * E + 1
+    probe = dict(spec, token="0xtoken")
+    out = _run_scan(monkeypatch, probe, logs, {wallet: total}, name="Ether.fi")
+    got = out.frame()
+    flow = got[got.metric == "actual_buyback_tokens"]
+    assert abs(flow.value.sum() - 17_984_520.10) < 1e-6, flow.value.sum()
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert "Other inflow, not counted:" in line
+    assert f"{safe} 600,000.00 [a Safe, owner unidentified" in line, line
+    assert f"{dep} 396,510.67 [ether.fi deployer EOA" in line, line
+    # The last-inflow date is the last CoW settlement, not the last transfer of any kind.
+    last = got[got.metric == "buyback_last_inflow_date"]
+    assert float(last.value.iloc[0]) == float((pd.Timestamp("2026-06-30") - pd.Timestamp("1899-12-30")).days)
+    print("ether.fi ok: CoW only = 17,984,520.10; deployer and Safe labelled, not counted")

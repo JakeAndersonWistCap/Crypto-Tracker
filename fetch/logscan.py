@@ -209,8 +209,11 @@ class LogScan:
             return
         scale = 10 ** dec
         c_total = sum(_amount(e) for e in counted) / scale
-        u_table = ", ".join(f"{a} {v / scale:,.2f}" for a, v in
-                            sorted(uncounted.items(), key=lambda kv: -kv[1])[:8]) or "none"
+        # LABELLED where config names the sender (2026-09-28): an excluded inflow is recorded as
+        # "other inflow, not counted" with what it is, not left as a bare address.
+        labels = {a.lower(): l for a, l in (spec.get("not_counted_labels") or {}).items()}
+        u_table = ", ".join(f"{a} {v / scale:,.2f}" + (f" [{labels[a]}]" if a in labels else "")
+                            for a, v in sorted(uncounted.items(), key=lambda kv: -kv[1])[:8]) or "none"
         by_party = defaultdict(int)
         for e in counted:
             party = topic_address(e["topics"][1 if direction == "in" else 2])
@@ -227,7 +230,7 @@ class LogScan:
                    f"{to_block:,}; served by {via} in {requests} request(s)"
                    + (f" after refusal(s): {'; '.join(refused)}" if refused else "")
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
-                     f"last on {last_moved} — top counterparties: {c_table}. NOT counted: "
+                     f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "
                      f"{u_table}.")
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)

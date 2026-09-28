@@ -13265,9 +13265,48 @@ PROJECTS = [
         # The wallet is named by THREE sources — DefiLlama's ether-fi-stake adapter (the taker on
         # the buyback swaps), Ether.fi's own test suite (test/TestSetup.sol, buybackWallet) and
         # Ether.fi's gitbook (100% of eETH withdrawal fees fund weekly ETHFI buybacks) — and it
-        # is a DEDICATED wallet, so every ETHFI inflow except a mint is a purchase. The bought
-        # ETHFI is then distributed to sETHFI holders: the INFLOW is the buyback, the outflow is
-        # the distribution, and the balance is neither. See fetch/logscan.py for the gates.
+        # was treated as a DEDICATED wallet, so every ETHFI inflow except a mint counted as a
+        # purchase. ** CORRECTED 2026-09-28: only CoW Protocol settlements count ** (see
+        # attribution below) — 996,510.67 of the first 18,982,711.90 came from an ether.fi
+        # deployer and an unidentified Safe. Under the OLD programme the bought ETHFI was then
+        # distributed to sETHFI holders: the INFLOW is the buyback, the outflow is the
+        # distribution, and the balance is neither. See fetch/logscan.py for the gates.
+        #
+        # ===== TWO PROGRAMMES. Recorded 2026-09-28; NO NEW ADDRESS IS WIRED. =====
+        "buyback_programmes": {
+            "old": {
+                "what": "100% of eETH withdrawal fees buy ETHFI weekly; a Foundation-discretionary "
+                        "share of Stake/Liquid/Cash revenue buys monthly. ALL bought ETHFI goes to "
+                        "sETHFI holders.",
+                "receiving_address": "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+                "status": "SILENT since 2026-06-30 — last counted inflow, 87 days before run "
+                          "20260925T084404Z (reconciled to the wei)",
+                "sources": ["etherfi-protocol/smart-contracts script/deploys/Deployed.s.sol "
+                            "(buyback wallet, PRIMARY)",
+                            "etherfi.gitbook.io/gov/ethfi-buyback-program via aragon "
+                            "ownership-token-framework research (SECONDARY; gitbook blocked)"],
+            },
+            "new": {
+                "name": "Programmatic ETHFI Buybacks & Ecosystem Growth",
+                "vote": "Snapshot, opened 2026-08-30 01:31 UTC, closed 2026-09-03 01:31 UTC, "
+                        "1,141,999 for / 0 against — PASSED",
+                "vote_source": "The Defiant, 2026-09-10 (SECONDARY; Snapshot itself unreachable "
+                               "from the environment that recorded this)",
+                "execution": "weekly automated TWAPs. As of 2026-09-10 no execution date was "
+                             "published and the programme page showed no completed purchases.",
+                "mechanics": "per Alea Research: of each fee ~60% buys ETHFI, split 50% to the "
+                             "Foundation treasury (HELD) and 50% to users as rewards "
+                             "(DISTRIBUTED); up to 20M treasury ETHFI may cover reward "
+                             "shortfalls; the Foundation can change the splits.",
+                "destination": "SPLIT hold/distribute. 'users' is NOT established to mean sETHFI "
+                               "holders.",
+                "receiving_address": None,
+                "why_not_wired": "no source names it. If purchases land at 0x2f5301a3... the "
+                                 "existing CoW-only scan picks them up; anywhere else, nothing "
+                                 "reads them until an address is sourced and wired.",
+                "recorded_on": "2026-09-28",
+            },
+        },
         "log_scans": [
             {
                 "key": "buyback_wallet_inflow",
@@ -13277,13 +13316,37 @@ PROJECTS = [
                 "holders": ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F"],
                 "direction": "in",
                 "store": True,
-                "attribution": "dedicated_wallet",
+                # ===== CoW PURCHASES ONLY — Jake's decision, 2026-09-28. =====
+                # Was "dedicated_wallet" (every non-mint inflow counted). Run 20260925T084404Z
+                # showed 18,982,711.90 counted, of which 996,510.67 came from two non-market
+                # senders. CoW Protocol is the documented execution venue for BOTH the old
+                # programme and the new one (weekly TWAPs), and the new programme's up-to-20M
+                # treasury ETHFI top-ups must never count as purchases if they pass through this
+                # wallet. Expected cumulative on the next run: 17,984,520.10.
+                "attribution": "count_from",
+                "count_from": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41"],
+                "count_from_source": "cowprotocol/contracts networks.json (HEAD c07a93e, "
+                                     "2026-09-01), GPv2Settlement chain 1 = "
+                                     "0x9008D19f58AAbD9eD0D60971565AA8510560ab41 — PRIMARY",
+                # RECORDED SEPARATELY AS "other inflow, not counted" — labelled in the run log,
+                # never summed into the buyback. Amounts as of run 20260925T084404Z.
+                "not_counted_labels": {
+                    "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f":
+                        "ether.fi deployer EOA and an owner of this 1-of-5 buyback Safe — internal "
+                        "transfer (396,510.67 as of 2026-09-25; l2beat, safeprotocollib, vera)",
+                    "0x01e42ad3acd58584ffc1d1982ecbbe758996d601":
+                        "a Safe, owner unidentified (600,000.00 as of 2026-09-25; "
+                        "safe-research/safenet-proxy enabledSafes)",
+                },
                 "attribution_sources": [
+                    "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/script/deploys/Deployed.s.sol "
+                    "— WITHDRAW_REQUEST_NFT_BUYBACK_SAFE = 0x2f5301a3... // buyback wallet (PRIMARY)",
                     "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/ether-fi-stake/index.ts",
                     "Ether.fi test/TestSetup.sol (buybackWallet)",
                     "Ether.fi gitbook — 100% of eETH withdrawal fees fund weekly ETHFI buybacks",
                 ],
                 "wired_on": "2026-09-24",
+                "count_from_since": "2026-09-28",
             },
         ],
         "coingecko_id": "ether-fi",
@@ -14020,7 +14083,12 @@ VALIDATOR_YIELD = {
 PROTOCOL_YIELD = {
     "Sky": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
     "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
-    "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying"},
+    "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying",
+                 # ** THE YIELD ASSUMES BUYBACKS REACH sETHFI HOLDERS. ** True of the old
+                 # programme (100% to sETHFI holders), UNCONFIRMED for the new one — see
+                 # Ether.fi.buyback_programmes. Shown on the A3 cell. Added 2026-09-28.
+                 "caveat": "new programme (passed 2026-09-03) splits purchases between treasury "
+                           "and user rewards; recipient class unconfirmed"},
 }
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "
