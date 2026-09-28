@@ -352,6 +352,36 @@ def classify(stmt: str) -> str:
             "BEGIN": "txn", "COMMIT": "txn"}.get(head, "other")
 
 
+# THE TARGET OF A WRITE, RESOLVED FROM THE STATEMENT ITSELF. Fixed 2026-09-28.
+# The table is ALWAYS the token after `DELETE FROM` or after `UPDATE` (with an optional
+# `OR <conflict-clause>`), and nothing about line breaks or indentation changes that — so it is
+# matched with \s+ between tokens rather than assuming one layout. Sections Z and AJ both put
+# UPDATE on its own line with SET and WHERE indented beneath it; only DELETE was recognised at
+# all, so every UPDATE was refused with "Could not tell which table this DELETE targets".
+_WRITE_TARGET = re.compile(
+    r"^\s*(?:(?P<delete>DELETE)\s+FROM|(?P<update>UPDATE)(?:\s+OR\s+(?:ROLLBACK|ABORT|REPLACE|FAIL|IGNORE))?)"
+    r"\s+(?P<table>[A-Za-z_][A-Za-z0-9_]*)\b", re.I)
+
+
+def write_target(stmt: str) -> tuple[str, str, str] | None:
+    """(verb, table, where) for a DELETE or UPDATE, or None if it is neither.
+
+    WHERE is the FIRST `WHERE` token after the table — the outer one, since a subquery's WHERE
+    can only come later (inside SET's value or inside the outer WHERE). Matched as a word, not
+    as " WHERE " with spaces: a WHERE starting an unindented line has no leading space, and the
+    old test then previewed the WHOLE table while the statement touched part of it.
+    """
+    body = strip_comments(stmt)
+    m = _WRITE_TARGET.match(body)
+    if not m:
+        return None
+    verb = "DELETE" if m.group("delete") else "UPDATE"
+    rest = body[m.end():]
+    w = re.search(r"\bWHERE\b", rest, re.I)
+    where = rest[w.end():].strip().rstrip(";").strip() if w else "1=1"
+    return verb, m.group("table"), where
+
+
 def uncommented_write(section_text: str) -> list[str]:
     """The DELETE *or UPDATE* a section ships commented out, with the leading '-- ' stripped.
 
@@ -373,7 +403,12 @@ def uncommented_write(section_text: str) -> list[str]:
         body = s[2:]
         if body.startswith(" "):
             body = body[1:]
-        head = body.strip().split(None, 1)[0].upper() if body.strip() else ""
+        # A STATEMENT OPENS FLUSH AFTER THE MARKER: "-- UPDATE metrics". Prose is indented
+        # beneath its label ("--     UPDATE has no source filter: ..."), and before 2026-09-28
+        # that line in section Z opened a bogus statement against a table called "has". All 94
+        # openers in orphan_cleanup.sql are flush; the only indented keyword lines are prose.
+        head = (body.split(None, 1)[0].upper()
+                if body.strip() and not body[0].isspace() else "")
         if head in ("DELETE", "UPDATE", "BEGIN;", "BEGIN", "COMMIT;", "COMMIT"):
             collecting = True
             keep.append(body)
@@ -491,13 +526,12 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path,
     total = 0
     post_dating = False
     for d in deletes:
-        where = d[d.upper().index(" WHERE ") + 7:] if " WHERE " in d.upper() else "1=1"
-        m = re.search(r"DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)", d, re.I)
-        if not m:
-            print(f"\n  Could not tell which table this DELETE targets:\n    {d}")
-            print("  Refusing to delete something I cannot show you first.\n")
+        target = write_target(d)
+        if not target:
+            print(f"\n  Could not tell which table this statement targets:\n    {d}")
+            print("  Refusing to change something I cannot show you first.\n")
             return 1
-        table = m.group(1)
+        verb, table, where = target
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
         if not cols:
             print(f"\n  Table {table!r} does not exist in this store.")
@@ -513,7 +547,8 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path,
             print(f"\n  Could not preview the rows: {e}")
             print("  Refusing to delete something I cannot show you first.\n")
             return 1
-        print(f"\n  Rows this would remove from {table} ({len(rows)}):")
+        print(f"\n  Rows this {verb} would {'remove from' if verb == 'DELETE' else 'change in'} "
+              f"{table} ({len(rows)}):")
         print(render(cur, rows[:200]))
         if len(rows) > 200:
             print(f"    ... and {len(rows) - 200} more")
@@ -552,7 +587,7 @@ def run_delete(conn, section_text: str, letter: str, db: pathlib.Path,
     except sqlite3.Error as e:
         print(f"\n  SQL ERROR, rolled back: {e}\n")
         return 1
-    print(f"\n  Deleted {removed} row(s). Re-run `python run_sql.py {letter}` to verify.\n")
+    print(f"\n  {removed} row(s) deleted or updated. Re-run `python run_sql.py {letter}` to verify.\n")
     return 0
 
 

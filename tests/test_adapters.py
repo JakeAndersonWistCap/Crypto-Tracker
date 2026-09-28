@@ -15182,3 +15182,74 @@ def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
             assert "no inflow since 2026-06-30 · SILENT 87d" in c.number_format, (head, c.number_format)
             assert c.comment and "PROGRAM SILENT" in c.comment.text, head
     print("silence ok: Ether.fi 87d SILENT on five A3 cells; GEODNET staleness is not silence")
+
+
+def test_run_sql_resolves_the_update_target_in_sections_z_and_aj(capsys):
+    """--delete AJ refused with "Could not tell which table this DELETE targets: UPDATE metrics
+    SET metric = 'locked_tokens_shares' ..." — the same failure as Z. Only DELETE FROM was ever
+    recognised; UPDATE on its own line with SET and WHERE indented beneath matched nothing. The
+    table is the token after UPDATE whatever the layout. Tested on the EXACT text of both
+    sections, read through run_sql's own parser from orphan_cleanup.sql."""
+    import builtins
+    import pathlib
+    import sqlite3
+    import tempfile
+    import run_sql
+    import store as store_mod
+
+    sql = (pathlib.Path(run_sql.__file__).resolve().parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    sections = run_sql.parse_sections(sql)
+    for letter in ("Z", "AJ"):
+        writes = [st for st in run_sql.split_statements("\n".join(run_sql.uncommented_write(sections[letter]["text"])))
+                  if run_sql.classify(st) == "write"]
+        targets = [run_sql.write_target(w) for w in writes]
+        assert [t[:2] for t in targets] == [("DELETE", "metrics"), ("UPDATE", "metrics")], (letter, targets)
+        upd = targets[1][2]
+        # The OUTER where, not SET's text and not a subquery's.
+        assert upd.startswith("project = 'Pendle' AND metric = 'locked_tokens'"), (letter, upd)
+        assert "SET" not in upd.upper().split("WHERE")[0], upd
+        # The DELETE's where carries its subquery whole.
+        assert "SELECT date FROM metrics" in targets[0][2], targets[0][2]
+
+    # EVERY commented write in the file resolves to a real store table — so neither the missing
+    # UPDATE pattern nor a prose line opening a bogus statement can come back in a new section.
+    with tempfile.TemporaryDirectory() as d:
+        tables = {r[0] for r in store_mod.Store(f"{d}/t.db").conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    for letter, sec in sections.items():
+        for w in run_sql.split_statements("\n".join(run_sql.uncommented_write(sec["text"]))):
+            if run_sql.classify(w) == "write":
+                t = run_sql.write_target(w)
+                assert t and t[1] in tables, (letter, t, run_sql.strip_comments(w)[:90])
+
+    # A WHERE opening an unindented line used to fall back to "1=1" — the WHOLE table.
+    assert run_sql.write_target("DELETE FROM metrics\nWHERE project = 'X'")[2] == "project = 'X'"
+    assert run_sql.write_target("UPDATE OR IGNORE gap_report SET a = 1")[:2] == ("UPDATE", "gap_report")
+    assert run_sql.write_target("SELECT 1") is None
+
+    # END TO END: AJ now PREVIEWS both statements against a store holding Jake's post-move state
+    # (he applied AJ's UPDATE by hand — 9 rows moved), and a non-matching confirmation changes
+    # nothing. Nothing is left to move, so both previews read 0 rows.
+    with tempfile.TemporaryDirectory() as d:
+        st = store_mod.Store(f"{d}/m.db")
+        st.upsert(pd.DataFrame(
+            [(pd.Timestamp("2026-09-%02d" % (11 + i)), "Pendle", "locked_tokens_shares", 31e6 + i,
+              "chain:ethereum:spendle", 2) for i in range(9)]
+            + [(pd.Timestamp("2026-09-24"), "Pendle", "locked_tokens", 35_459_772.88,
+                "chain:ethereum:spendle_underlying", 2)],
+            columns=["date", "project", "metric", "value", "source", "tier"]))
+        real_input = builtins.input
+        builtins.input = lambda *a: "no"
+        try:
+            rc = run_sql.main(["--delete", "AJ", "--db", f"{d}/m.db"])
+        finally:
+            builtins.input = real_input
+        out = capsys.readouterr().out
+        assert "Could not tell which table" not in out, out[-600:]
+        assert "Rows this DELETE would remove from metrics (0)" in out, out[-900:]
+        assert "Rows this UPDATE would change in metrics (0)" in out, out[-900:]
+        assert rc == 1       # nothing matches: "already been run" — the correct answer post-move
+        n = sqlite3.connect(f"{d}/m.db").execute(
+            "SELECT COUNT(*) FROM metrics WHERE metric = 'locked_tokens_shares'").fetchone()[0]
+        assert n == 9
+    print("run_sql ok: UPDATE targets resolve in Z and AJ; AJ previews cleanly after the hand move")
