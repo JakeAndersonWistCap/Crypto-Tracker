@@ -3069,3 +3069,54 @@ SELECT date, metric, value, source, fetched_at
 -- DELETE FROM metrics
 --  WHERE project = 'Ethereum' AND metric IN ('actual_buyback_tokens', 'actual_buyback_usd');
 -- COMMIT;
+
+-- ========================================================================================
+-- AP. GEODNET gross_burn_tokens = 0 — did the balance not move, or did a read fail?  2026-09-28
+--     READ ONLY. Nothing to delete. Run each and compare; report before changing anything.
+-- ========================================================================================
+-- gross_burn_tokens is d(burn_address_balance): the Polygon dead-address balance
+-- (chain:polygon:burn_polygon) plus the Solana burn token account (burn_solana_token_account),
+-- summed. Section AE showed ~35K GEOD burned daily plus Monday top-ups, so a 0 is anomalous.
+--   AP1 all equal on consecutive days  -> the balance genuinely did not move between reads
+--   AP1 missing a day, or AP3 FAILED   -> a component read failed; the 0 is not a measurement
+--   AP1 two rows the same DAY          -> a same-day re-run differenced against itself
+
+-- AP1. THE LAST TEN DEAD-ADDRESS BALANCE READS, with when each was fetched and its source.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'burn_address_balance'
+ ORDER BY date DESC
+ LIMIT 10;
+
+-- AP2. THE LAST TEN DERIVED BURN ROWS, and which contracts each summed.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ ORDER BY date DESC
+ LIMIT 10;
+
+-- AP3. WHAT THE CHAIN READER SAID ABOUT EACH COMPONENT ON THE LAST FOUR RUNS.
+SELECT run_id, substr(ts, 1, 16) AS ts, status, substr(message, 1, 240) AS message
+  FROM run_log
+ WHERE project = 'GEODNET' AND source = 'chain'
+   AND (message LIKE '%burn_polygon%' OR message LIKE '%burn_solana%' OR message LIKE '%gross_burn%')
+ ORDER BY ts DESC
+ LIMIT 12;
+
+-- ========================================================================================
+-- AQ. Hyperliquid gross_issuance_tokens stored rows — the column is n/a  2026-09-28
+--     Declared n/a by Jake: HYPE is pre-minted. The superseded d(total_supply_gross) route stored the expected zeros; they no longer
+--     render. Review first; nothing is deleted by this file.
+-- ========================================================================================
+-- AQ1. EVERY STORED ROW. Expect only source 'derived:d_supply_gross', values 0 (or near it).
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Hyperliquid' AND metric = 'gross_issuance_tokens'
+ ORDER BY date;
+
+-- AQ2. THE PROPOSED DELETE. Only after AQ1 reads as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Hyperliquid' AND metric = 'gross_issuance_tokens'
+--    AND source = 'derived:d_supply_gross';
+-- COMMIT;

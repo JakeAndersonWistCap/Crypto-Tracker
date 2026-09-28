@@ -362,16 +362,17 @@ ROWS = [
              "value; this is the row it cannot reach"),
 
     # ---- classification_pending ------------------------------------------------------
-    # THE LIVE ROW. Sky other_burn_balance, 2026-09-24: real by the supply identity (minted -
-    # burned = totalSupply() to the wei) and dominated by the MKR_SKY over-mint correction and
-    # the old Lockstake Engine's lockSky deposits, so its label is undecided. Blanked with the
-    # reason until the split is chosen (config Sky.classification_pending).
-    dict(transition="classification_pending", date="2026-09-24", project="Sky",
-         metric="other_burn_balance", value=10_565_078_749.77,
-         source="chain:ethereum:burn_logs", tier=2,
+    # WAS Sky other_burn_balance (undecided label, 2026-09-24). The five-way split was DECIDED
+    # and on 2026-09-28 those columns became n/a with the decision (covered by
+    # test_sky_decided_split_reads_answered_not_blocked). The "blocked" branch is still live
+    # for a read-time view that refuses a series: Ethereum's derived issuance while beaconcha.in
+    # has not covered the window (config.ISSUANCE_PRIMARY, kind first_party).
+    dict(transition="classification_pending", date="2026-09-14", project="Ethereum",
+         metric="gross_issuance_tokens", value=8_104.37,
+         source="derived:d_supply_plus_burn:MECHANISM_ASSUMED", tier=2,
          written_under="current config",
-         why="a correct figure whose meaning is not settled — withheld on the label, not the "
-             "arithmetic"),
+         why="a derived series a read-time view blocks until the first-party source lands — "
+             "withheld on the route, not the arithmetic"),
 
     # ---- controls --------------------------------------------------------------------
     # A GUARD THAT BLANKS EVERYTHING PASSES EVERY ASSERTION ABOVE. These must stay ok.

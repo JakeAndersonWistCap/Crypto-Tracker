@@ -3861,32 +3861,85 @@ def test_token_details_is_the_primary_supply_and_nothing_is_reconciled():
                for e in out.log)
 
 
-def test_hyperliquid_issuance_is_the_change_in_its_own_gross_supply():
-    """Declared route (issuance_from_gross_supply): d(total_supply_gross), same guards as
-    everywhere — two dated readings, no same-day pair — and a FALL is a burn, not issuance."""
-    import pandas as pd
-
+def test_hyperliquid_issuance_is_na_by_construction_whatever_is_stored():
+    """2026-09-28 (Jake): HYPE is pre-minted, so gross_issuance_tokens is n/a — not a derived
+    zero. Nothing is derived, no gap is raised, and stored zeros from the superseded
+    d(total_supply_gross) route stop rendering; the cell carries the reason."""
+    import build_workbook as bw
     from fetch import _derive_issuance
     from fetch.base import point
 
-    def derive(now, prior, prior_date="2026-09-23"):
-        out = FetchOutput()
-        out.add(point("Hyperliquid", "total_supply_gross", now, "hypercore_info:tokenDetails", 1,
-                      pd.Timestamp("2026-09-24")), "hypercore_info", "Hyperliquid")
-        _derive_issuance(out, [config.PROJECT_BY_NAME["Hyperliquid"]],
-                         {("Hyperliquid", "total_supply_gross"): prior},
-                         {("Hyperliquid", "total_supply_gross"): prior_date})
-        return out
-
-    out = derive(998_911_203.55, 998_911_203.55)
-    f = out.frame()
-    assert f[f.metric == "gross_issuance_tokens"]["value"].tolist() == [0.0], \
-        "nothing minted is a measured zero here — HYPE is pre-minted"
-    out = derive(998_900_000.0, 998_911_203.55)
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    assert "gross_issuance_tokens" not in config.metrics_for_project(hl)
+    assert "future_emissions_tokens" in config.metrics_for_project(hl), \
+        "the emissions the n/a points at must still be tracked"
+    out = FetchOutput()
+    out.add(point("Hyperliquid", "total_supply_gross", 998_911_203.55, "hypercore_info:tokenDetails",
+                  1, pd.Timestamp("2026-09-24")), "hypercore_info", "Hyperliquid")
+    _derive_issuance(out, [hl], {("Hyperliquid", "total_supply_gross"): 998_911_203.55},
+                     {("Hyperliquid", "total_supply_gross"): "2026-09-23"})
     assert "gross_issuance_tokens" not in set(out.frame().metric)
-    assert any("A burn, not negative issuance" in g["reason"] for g in out.gaps)
-    out = derive(998_911_203.55, 998_911_203.55, prior_date="2026-09-24")
-    assert "gross_issuance_tokens" not in set(out.frame().metric), "a same-day pair is not a delta"
+    assert not [g for g in out.gaps if g["metric"] == "gross_issuance_tokens"]
+
+    long = pd.DataFrame([{"date": pd.Timestamp("2026-09-2%d" % d), "project": "Hyperliquid",
+                          "metric": "gross_issuance_tokens", "value": 0.0,
+                          "source": "derived:d_supply_gross", "tier": 2,
+                          "fetched_at": "2026-09-28T00:00:00", "is_manual": 0, "entered_on": None,
+                          "source_note": None} for d in (4, 5)])
+    data = bw.aggregate(long, pd.DataFrame(), pd.Timestamp("2026-09-28"))
+    row = data[(data.project == "Hyperliquid") & (data.metric == "gross_issuance_tokens")].iloc[0]
+    assert row["status"] == "n/a" and pd.isna(row["now"])
+    assert "PRE-MINTED" in row["note"] and "2 stored row(s) are not shown" in row["note"]
+
+
+def test_sky_decided_split_reads_answered_not_blocked():
+    """The five-way split was decided 2026-09-24; its four withheld columns read n/a with the
+    decision, not "BLOCKED — cleared by", and the Stage 2 metric is not touched."""
+    import build_workbook as bw
+
+    rows = []
+    for m in ("burn_address_balance", "gross_burn_tokens", "other_burn_balance",
+              "other_burn_tokens", "sky_stage2_burn_tokens"):
+        rows.append({"date": pd.Timestamp("2026-09-27"), "project": "Sky", "metric": m,
+                     "value": 5.0, "source": "chain:ethereum:burn_logs", "tier": 2,
+                     "fetched_at": "2026-09-28T00:00:00", "is_manual": 0, "entered_on": None,
+                     "source_note": None})
+    data = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-28"))
+    sky = data[data.project == "Sky"].set_index("metric")
+    for m in ("burn_address_balance", "gross_burn_tokens", "other_burn_balance", "other_burn_tokens"):
+        assert sky.loc[m, "status"] == "n/a", m
+        assert sky.loc[m, "note"].startswith("ANSWERED, NOT OPEN — Five-way split decided"), m
+    assert sky.loc["sky_stage2_burn_tokens", "status"] != "n/a"
+
+
+def test_decided_questions_rank_p5_with_their_decision_and_near_stays_folded():
+    """Maple's treasury cross-check, Pendle's endpoint question and NEAR's circulating > total are
+    answered (2026-09-28): each is a P5 row carrying its decision, none is a P1/P2 item, and
+    NEAR's generic impossible-relation gap row does not come back — while its Review Queue row
+    still fires at zero tolerance, marked as the known provider issue."""
+    from fetch import gaps as gp
+    from fetch.validate import check_impossible_relations
+
+    rows = gp.detect(config.PROJECTS, pd.DataFrame(columns=["project", "metric", "value", "date"]),
+                     set(), {}, [])
+    by = {(r["project"], r["metric"]): r for r in rows}
+    for proj, words in (("Maple", "Maple treasury cross-check"), ("Pendle", "documented data endpoint"),
+                        ("Near", "circulating_supply exceeds total_supply")):
+        hits = [r for (p, m), r in by.items() if p == proj and words in m]
+        assert hits and all(r["metric"].startswith("[answered]") for r in hits), (proj, hits)
+        assert all(r["priority"] == gp.P_SUPPRESSED for r in hits), proj
+        assert not [r for (p, m), r in by.items() if p == proj and m.startswith("[open]") and words in m]
+
+    out = FetchOutput()
+    df = pd.DataFrame([
+        {"project": "Near", "metric": "circulating_supply", "value": 1_306_892_570.0,
+         "date": pd.Timestamp("2026-09-28"), "source": "coingecko"},
+        {"project": "Near", "metric": "total_supply", "value": 1_306_892_560.0,
+         "date": pd.Timestamp("2026-09-28"), "source": "coingecko"}])
+    check_impossible_relations(df, out)
+    assert [r for r in out.review if r["project"] == "Near"], "the zero-tolerance check still fires"
+    assert "KNOWN PROVIDER ISSUE" in [r for r in out.review if r["project"] == "Near"][0]["source"]
+    assert not [g for g in out.gaps if g["project"] == "Near"], "no generic P2 row every run"
 
 
 def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_blanks():
@@ -8928,11 +8981,18 @@ def test_the_marker_must_OPEN_the_topic_so_a_live_question_can_discuss_a_refutat
     """THE CONTROL, and it is not hypothetical: Near's supply question says its own leading
     HYPOTHESIS is refuted while the question stays wide open. A substring match would close it by
     accident — the same class of error, pointing the other way."""
+    # Near's question was answered on 2026-09-28, so the control is now a copy of it left open.
     near = next(q for q in config.OPEN_QUESTIONS
                 if q["project"] == "Near" and "circulating_supply exceeds" in q["topic"])
-    assert "REFUTED" in near["topic"] and (near.get("status") or "open") == "open"
-    assert not config.validate_config(raise_on_error=False), \
-        "a live question that discusses a refutation must not be forced closed"
+    live = dict(near, status="open", topic="circulating_supply exceeds total_supply by 10 NEAR — "
+                                           "the timing hypothesis is REFUTED")
+    config.OPEN_QUESTIONS.append(live)
+    try:
+        assert "REFUTED" in live["topic"]
+        assert not config.validate_config(raise_on_error=False), \
+            "a live question that discusses a refutation must not be forced closed"
+    finally:
+        config.OPEN_QUESTIONS.remove(live)
     print("closure guard ok: matched at the START of the topic, not anywhere in it")
 
 
@@ -14946,10 +15006,11 @@ def test_a_counted_transfer_with_no_timestamp_is_refused_not_zero_filled(monkeyp
     print("logscan ok: undated transfers refused; last counted transfer date logged")
 
 
-def test_sky_burn_address_balance_is_blocked_with_the_two_spell_burns_named():
+def test_sky_burn_address_balance_is_answered_with_the_two_spell_burns_named():
     """Sky's Pause Proxy total is two unrelated spell burns, 426,292,860.23 (2025-06-26,
     emissions offset) + 2,860,943.76 (2026-09-10, Stage 2). It fed A4's headline as one
-    buy-and-burn. Blocked, and the flow differenced from it with it."""
+    buy-and-burn. Withheld, and the flow differenced from it with it — since 2026-09-28 as
+    n/a under the decided five-way split, with both burns still named as the evidence."""
     import build_workbook as bw
     asof = pd.Timestamp("2026-09-24")
 
@@ -14963,11 +15024,12 @@ def test_sky_burn_address_balance_is_blocked_with_the_two_spell_burns_named():
     o = bw.aggregate(hist, pd.DataFrame(), asof)
     for m in ("burn_address_balance", "gross_burn_tokens"):
         r = o[(o.project == "Sky") & (o.metric == m)].iloc[0]
-        assert r["status"] == "blocked" and r["now"] is None, (m, r["status"], r["now"])
+        assert r["status"] == "n/a" and r["now"] is None, (m, r["status"], r["now"])
+        assert r["note"].startswith("ANSWERED, NOT OPEN — Five-way split decided"), r["note"]
         assert ("429.15M is not a single figure — 2,860,943.76 genuine Stage 2 burn + "
                 "426,292,860.23 unrelated 2025 emissions-offset correction from the same spell, "
                 "see config note") in r["note"], r["note"]
-    print("sky ok: the Pause Proxy total and its flow are blocked, both burns named")
+    print("sky ok: the Pause Proxy total and its flow are answered n/a, both burns named")
 
 
 def test_the_stage2_carve_out_takes_only_pause_proxy_burns_from_2026_09_10():

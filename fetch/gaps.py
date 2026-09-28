@@ -726,6 +726,16 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     # deleted question is one that gets asked again. They are skipped HERE, on a structural
     # `status` field, so the record survives and the to-do list does not carry it.
     for q in getattr(config, "OPEN_QUESTIONS", []):
+        # AN ANSWER WITH ITS DECISION ON FILE IS LISTED AT P5, NOT DROPPED. 2026-09-28. The
+        # decision is the reason text, so the row is its own record of what was settled and why.
+        if q.get("status") == "answered" and q.get("decision"):
+            rows.append({
+                "project": q["project"], "metric": f"[answered] {q['topic']}",
+                "tiers_attempted": "-",
+                "reason": f"ANSWERED, NOT OPEN — {q.get('answered_on')}: {q['decision']}",
+                "suggestion": "No action. Reopen only if the decision is revisited.",
+            })
+            continue
         if (q.get("status") or "open") != "open":
             continue
         rows.append({

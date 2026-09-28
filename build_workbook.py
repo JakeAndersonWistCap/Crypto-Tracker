@@ -908,9 +908,23 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "flow_recon_blocked": None,
                    "granularity": "daily", "period_label": "",
                    "covered_days": None, "window_days": None, "hole_note": "", "q0_basis": ""}
+            # A DECLARED n/a, OR A DECIDED SPLIT, READS n/a WHATEVER IS STORED. 2026-09-28.
+            # The store never deletes, so a metric declared not_applicable after rows were written
+            # (Hyperliquid's gross_issuance_tokens: derived zeros from d(total_supply_gross)) kept
+            # rendering them; and Sky's decided five-way split kept rendering "BLOCKED — cleared
+            # by" as though a decision were still owed. Either way the reason is the note, so the
+            # decision is on the sheet rather than behind it. A row a DIFFERENT withheld case
+            # catches (orphaned, withdrawn, ...) keeps that status: it still needs cleaning up.
+            na_reason = config.not_applicable_reason(name, metric)
+            pending = config.classification_pending(name, metric) or {}
+            decided = pending.get("decided")
+            na_note = (f"ANSWERED, NOT OPEN — {decided} Evidence: {pending.get('reason')}."
+                       if decided else na_reason) or ""
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
-                if gap is not None:
+                if na_note:
+                    row["status"], row["note"] = "n/a", na_note
+                elif gap is not None:
                     row["status"], row["note"] = "gap", f"{gap['reason']} | {gap['suggestion']}"
                 elif metric not in applicable.get(name, ()):
                     row["status"], row["note"] = "n/a", "not applicable to this project's archetypes"
@@ -1210,7 +1224,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 rows.append(row)
                 continue
             withheld = withheld_for(name, metric, row)
-            if withheld:
+            if na_note and (not withheld or withheld[0] == "blocked"):
+                row["status"] = "n/a"
+                row["note"] = f"{na_note} {len(g)} stored row(s) are not shown (orphan_cleanup.sql lists them for review)."
+                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                    row[col] = None
+            elif withheld:
                 row["status"], reason = withheld
                 row["note"] = f"NOT REPORTED — {reason}" + (f" | {row['note']}" if row["note"] else "")
                 for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):

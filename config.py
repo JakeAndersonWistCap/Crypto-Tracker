@@ -1096,7 +1096,7 @@ def strip_source_annotations(source: str) -> str:
     return _SOURCE_ANNOTATION.sub("", str(source or ""))
 
 
-def open_question_covers(project_name: str, greater: str, lesser: str) -> bool:
+def open_question_covers(project_name: str, greater: str, lesser: str) -> dict | None:
     """Is this impossible-relation already carried by an OPEN QUESTION for this project?
 
     ** TWO P2 ROWS FOR ONE FACT IS HOW A TO-DO LIST STOPS BEING READ. ** NEAR's circulating vs
@@ -1107,13 +1107,17 @@ def open_question_covers(project_name: str, greater: str, lesser: str) -> bool:
     The detection is untouched — check_impossible_relations still raises its Review Queue row
     every run the figures contradict. What this removes is the duplicate ITEM, and only where a
     question names the exact pair.
+
+    AN ANSWERED QUESTION STILL COVERS ITS PAIR (2026-09-28). NEAR's was answered as a known
+    provider issue; the generic row must not come back in its place. Returns the question, so the
+    check can mark its Review Queue row as the known issue.
     """
     for q in OPEN_QUESTIONS:
-        if q.get("project") != project_name or q.get("status", "open") != "open":
+        if q.get("project") != project_name or q.get("status", "open") not in ("open", "answered"):
             continue
         if tuple(q.get("covers_relation") or ()) == (greater, lesser):
-            return True
-    return False
+            return q
+    return None
 
 
 def metric_restatements(project_name: str) -> dict:
@@ -1924,6 +1928,17 @@ _NO_SPLIT = {
 # =======================================================================================
 # THE UNIVERSE. Primary archetype listed first. Assets appear on every tab they subscribe to.
 # =======================================================================================
+# ===== SKY'S FIVE-WAY BURN SPLIT IS DECIDED. Recorded as answered 2026-09-28 (Jake). =====
+# The four classification_pending metrics below were withheld as "BLOCKED — cleared by ..." while
+# the split was open. It is not open: Jake confirmed both decisions on 2026-09-24. The records stay
+# (they carry the evidence); `decided` turns each cell into n/a with this text, not a to-do.
+_SKY_SPLIT_DECIDED = (
+    "Five-way split decided 2026-09-24 (Jake): the Stage 2 buy-and-burn is the live burn metric "
+    "(sky_stage2_burn_balance / sky_stage2_burn_tokens, the A4 headline); the 2025 emissions "
+    "offset and the SKY<->MKR migration flows (converter over-mint, staking-engine deposits, "
+    "long-tail reverse conversions) are footnotes on the A4 tab, never summed into a burn column.")
+
+
 PROJECTS = [
     # ------------------------------------------------------------------ Archetype 1 (+4)
     {
@@ -8430,6 +8445,15 @@ PROJECTS = [
         # into an address nothing leaves, there is no intermediate fund to have a balance, and the
         # metric that captures the mechanism is the burn one — already wired.
         "not_applicable": {
+            # ===== NOTHING IS MINTED. Declared 2026-09-28 (Jake). =====
+            # Supersedes issuance_from_gross_supply (2026-09-24), which derived d(total_supply_
+            # gross) and stored the expected zeros. A column that is 0 by construction is n/a,
+            # not a measurement; its stored rows stop rendering (build_workbook.aggregate).
+            "gross_issuance_tokens":
+                "PRE-MINTED TOKEN, ZERO ISSUANCE BY CONSTRUCTION. All 1bn HYPE existed at genesis; "
+                "tokenDetails.totalSupply only ever falls (burns). Emissions are RELEASES from the "
+                "future-emissions pool (inside totalSupply), tracked separately as "
+                "future_emissions_tokens / emissions_tokens. Declared 2026-09-28 (Jake).",
             # ===== NO PROTOCOL TREASURY IS IN SCOPE. Declared 2026-09-23. =====
             "treasury_holding_tokens":
                 "NO PROTOCOL TREASURY HOLDS HYPE. The Assistance Fund's HYPE is permanently "
@@ -8698,27 +8722,18 @@ PROJECTS = [
             "tested": "eight identities incl. AF, futureEmissions, max-total; none within millions",
             "status": "UNRESOLVED BY DECISION — not an open question to keep re-testing",
         },
-        # ===== ISSUANCE FROM THE PRIMARY'S CHANGE. 2026-09-24 (Jake). =====
-        # d(total_supply_gross) is newly minted HYPE: the fund's HYPE is inside the total (max -
-        # total ~1.09M against a ~40M fund), so a transfer to it does not move the figure.
-        # ** EXPECT ZERO. ** HYPE is pre-minted (emissions_model: distributed_from_premint) — the
-        # 1bn existed at genesis and futureEmissions is a reserve INSIDE totalSupply. So this
-        # column reads 0 when nothing is minted, which is true, and is NOT "no emissions": those
-        # are releases from the reserve, visible as futureEmissions falling. A NEGATIVE change is a
-        # protocol burn outside the fund (the ~1.09M below max), not negative issuance.
-        "issuance_from_gross_supply": {
-            "declared": "2026-09-24 (Jake)",
-            "negative_means": "tokenDetails.totalSupply FELL — HYPE destroyed outside the "
-                              "Assistance Fund (the ~1.09M already below max). A burn, not negative "
-                              "issuance; nothing is stored for the period.",
-        },
+        # ===== ISSUANCE: n/a, NOT DERIVED. 2026-09-28 (Jake). =====
+        # issuance_from_gross_supply (2026-09-24) derived d(total_supply_gross) and stored the
+        # expected zeros. Superseded: HYPE is pre-minted, so the column is n/a by construction —
+        # see not_applicable.gross_issuance_tokens. Emissions are releases from the future-
+        # emissions pool, tracked as future_emissions_tokens / emissions_tokens.
         "metric_labels": {
             "total_supply_gross": "Total supply — Hyperliquid's own tokenDetails (PRIMARY; includes "
                                   "the Assistance Fund and the future-emissions reserve)",
             "total_supply": "Total supply — CoinGecko (REFERENCE; ~43.6M below Hyperliquid's own "
                             "figure, reason unresolved)",
-            "gross_issuance_tokens": "HYPE MINTED — 0 by design: HYPE is pre-minted, so emissions "
-                                     "are releases from the reserve, not issuance",
+            "gross_issuance_tokens": "HYPE MINTED — n/a: HYPE is pre-minted, so emissions are "
+                                     "releases from the reserve, not issuance",
         },
         "buyback_destination": "burn",          # resolved — no longer disputed
         "destination_effect": "removed_from_supply",
@@ -10313,6 +10328,7 @@ PROJECTS = [
                                "from the same spell, see config note"),
                     "resolves_when": "never as one figure: the Stage 2 leg is "
                                      "sky_stage2_burn_balance, the 2025 burn is a footnote",
+                    "decided": _SKY_SPLIT_DECIDED + " The Stage 2 stock is sky_stage2_burn_balance.",
                 },
                 "gross_burn_tokens": {
                     "reason": ("differenced from burn_address_balance, which is blocked: 429.15M "
@@ -10321,6 +10337,7 @@ PROJECTS = [
                                "the same spell, see config note"),
                     "resolves_when": "never as one figure: the Stage 2 flow is "
                                      "sky_stage2_burn_tokens",
+                    "decided": _SKY_SPLIT_DECIDED + " The Stage 2 flow is sky_stage2_burn_tokens.",
                 },
                 "other_burn_balance": {
                     "reason": ("10.57bn confirmed real by supply identity and RESOLVED by the "
@@ -10331,12 +10348,16 @@ PROJECTS = [
                                "tab, never as a live figure; see config note"),
                     "resolves_when": "not to be shown as a figure: the five-way split moved it to "
                                      "the A4 footnote (burn_footnotes)",
+                    "decided": _SKY_SPLIT_DECIDED + " This balance is the SKY<->MKR migration "
+                               "flows footnote.",
                 },
                 "other_burn_tokens": {
                     "reason": ("differenced from other_burn_balance, which the five-way split "
                                "(2026-09-24) resolved as the SKY<->MKR migration flows — a "
                                "footnote on the A4 tab, not a burn rate; see config note"),
                     "resolves_when": "the same as other_burn_balance",
+                    "decided": _SKY_SPLIT_DECIDED + " This flow is the SKY<->MKR migration flows "
+                               "footnote, not a burn rate.",
                 },
             },
             "since": "2026-09-24",
@@ -16223,9 +16244,15 @@ OPEN_QUESTIONS = [
         # treasury" is the weakest claim consistent with both readings — not because it has been
         # confirmed. It has not. If the second or third explanation is the right one, the label is
         # wrong and the figure may not be a treasury holding at all.
-        "project": "Maple", "topic": "Maple treasury cross-check fired: 23.09M chain vs 77.66M page "
-                                     "— unreconciled",
+        "project": "Maple", "topic": "ANSWERED 2026-09-28 — Maple treasury cross-check fired: 23.09M chain vs "
+                                     "77.66M page; the page is primary, the chain read known partial",
         "severity": 2,
+        # ===== ANSWERED 2026-09-28 (Jake). ===== The investigation below stays as the record.
+        "status": "answered", "answered_on": "2026-09-28",
+        "decision": "The transparency page (treasury_holding_tokens_reported, maple.finance/"
+                    "transparency) is PRIMARY for Maple's treasury; the daoMultisig chain read is "
+                    "known PARTIAL and stays labelled so. The 23.09M vs 77.66M difference is not "
+                    "reconciled and is not pursued further.",
         "reason": "The armed transparency-page cross-check (see the resolved 'repurchased SYRUP is "
                   "held at 0xd6d4...' record above) was expected to CONFIRM the daoMultisig address by "
                   "landing near Maple's own reported ~77.66M SYRUP. On the first live run it instead "
@@ -16815,7 +16842,13 @@ OPEN_QUESTIONS = [
                       "that is a new figure, not a completion of this one.",
     },
     {
-        "project": "Pendle", "topic": "is there a documented data endpoint robots permits",
+        "project": "Pendle", "topic": "ANSWERED 2026-09-28 — is there a documented data endpoint robots permits: "
+                 "closed, low stakes",
+        # ===== ANSWERED 2026-09-28 (Jake): closed, low stakes. =====
+        "status": "answered", "answered_on": "2026-09-28",
+        "decision": "Closed, low stakes: sPENDLE.totalSupply() on chain is the verified figure and "
+                    "the dashboard was only ever a cross-check. (The spendle/data JSON endpoint is "
+                    "read by a plain GET for locked_tokens_virtual; that is a separate item.)",
         "reason": "app.pendle.finance robots.txt disallows the sPENDLE staking page, and that is not worked "
                   "around. LOW STAKES — the tier 2 read of sPENDLE.totalSupply() is verified and working, so "
                   "this was only ever a cross-check.",
@@ -17032,7 +17065,7 @@ OPEN_QUESTIONS = [
     },
     {
         "project": "Near",
-        "topic": "circulating_supply exceeds total_supply by 10 NEAR — the timing hypothesis is REFUTED",
+        "topic": "ANSWERED 2026-09-28 — KNOWN PROVIDER ISSUE: circulating_supply exceeds total_supply by 10 NEAR — the timing hypothesis is REFUTED",
         "severity": 3,
         "reason": "Run 20260921T100546Z: circulating_supply 1,306,892,570 against total_supply "
                   "1,306,892,560. Ten tokens, 7.65e-9 relative — above the check's 1e-9 float "
@@ -17103,6 +17136,17 @@ OPEN_QUESTIONS = [
         # Queue row every run the figures contradict: what is removed is the duplicate to-do
         # item, not the detection.
         "covers_relation": ("circulating_supply", "total_supply"),
+        # ===== ANSWERED 2026-09-28 (Jake): A KNOWN PROVIDER ISSUE, NOT A DECISION. =====
+        # The zero-tolerance check is UNCHANGED and its Review Queue row still fires on any run
+        # the two fields contradict, now marked as this known issue. What stops is the P2 to-do
+        # item on every run: the generic gap row stays folded into this record while it is
+        # answered (config.open_question_covers).
+        "status": "answered", "answered_on": "2026-09-28",
+        "decision": "KNOWN PROVIDER ISSUE: CoinGecko's own circulating_supply and total_supply, "
+                    "from ONE /coins/near response, disagreed by 10 NEAR (7.65e-9 relative) and "
+                    "the sign flipped within the day. An internal inconsistency at the provider, "
+                    "not a fault in this tool. The zero-tolerance check stays; its Review Queue "
+                    "row is the record of each occurrence.",
         "suggestion": "DO NOT WIDEN THE TOLERANCE, and do not add a relation_exempt — including "
                       "now that the figures agree again. The exemption mechanism is for a "
                       "relation that is not an IDENTITY for a project; circulating <= total is an "

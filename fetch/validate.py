@@ -563,10 +563,14 @@ def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) ->
                 continue
             if a[0] <= b[0] * (1 + max(tolerance, epsilon)):
                 continue
+            covered = config.open_question_covers(project, greater, lesser)
+            known = (f" — KNOWN PROVIDER ISSUE, answered {covered.get('answered_on')}: see the "
+                     f"'{covered['topic'][:60]}' record"
+                     if covered and covered.get("status") == "answered" else "")
             out.review_item(project, greater, REASON_IMPOSSIBLE, ACTION_FLAGGED,
                             value=a[0], prior_value=b[0], date=a[1],
                             source=f"{greater} ({a[0]:,.2f} from {a[2]}) EXCEEDS {lesser} "
-                                   f"({b[0]:,.2f} from {b[2]}) — {why}", tier=None)
+                                   f"({b[0]:,.2f} from {b[2]}) — {why}{known}", tier=None)
             # ===== ONE FACT, ONE TO-DO ITEM. Added 2026-09-22. =====
             # ** THE DETECTION IS ABOVE AND IT IS UNCHANGED. ** The Review Queue row fires every
             # run the figures contradict, which is the job. What is skipped here is the generic
@@ -574,7 +578,7 @@ def check_impossible_relations(df: pd.DataFrame, out, tolerance: float = 0.0) ->
             # carried both at P2, one with the whole investigation and an explicit "do not widen
             # the tolerance", and one without. Two rows for one fact is how a to-do list stops
             # being read, and the generic one is the one that adds nothing.
-            if config.open_question_covers(project, greater, lesser):
+            if covered:
                 continue
             out.gap(project, f"[data] {greater} exceeds {lesser}, which is impossible",
                     reason=(f"{greater} reads {a[0]:,.2f} against {lesser} at {b[0]:,.2f}, and {why}. "

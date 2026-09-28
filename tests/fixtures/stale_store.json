@@ -194,14 +194,14 @@
     },
     {
       "transition": "classification_pending",
-      "date": "2026-09-24",
-      "project": "Sky",
-      "metric": "other_burn_balance",
-      "value": 10565078749.77,
-      "source": "chain:ethereum:burn_logs",
+      "date": "2026-09-14",
+      "project": "Ethereum",
+      "metric": "gross_issuance_tokens",
+      "value": 8104.37,
+      "source": "derived:d_supply_plus_burn:MECHANISM_ASSUMED",
       "tier": 2,
       "written_under": "current config",
-      "why": "a correct figure whose meaning is not settled \u2014 withheld on the label, not the arithmetic"
+      "why": "a derived series a read-time view blocks until the first-party source lands \u2014 withheld on the route, not the arithmetic"
     },
     {
       "transition": "control",
@@ -405,10 +405,10 @@
     },
     {
       "transition": "classification_pending",
-      "project": "Sky",
-      "metric": "other_burn_balance",
+      "project": "Ethereum",
+      "metric": "gross_issuance_tokens",
       "written_under": "current config",
-      "why": "a correct figure whose meaning is not settled \u2014 withheld on the label, not the arithmetic",
+      "why": "a derived series a read-time view blocks until the first-party source lands \u2014 withheld on the route, not the arithmetic",
       "expect_status": "blocked",
       "expect_confidence": "RED",
       "expect_blank": true,
