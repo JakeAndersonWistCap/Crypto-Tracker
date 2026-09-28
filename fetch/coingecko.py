@@ -72,8 +72,33 @@ class CoinGecko:
     def _ms_rows(pairs):
         return [(datetime.fromtimestamp(ts / 1000, tz=timezone.utc), v) for ts, v in pairs]
 
+    def _markets(self, projects: list[dict]) -> dict:
+        """Supply, max supply and FDV for EVERY coin in ONE call. Added 2026-09-28.
+
+        /coins/{id} was called once per project only for these four fields — 30 calls, ~60s at the
+        Demo plan's 30/min. /coins/markets carries the same market_data fields for up to 250 ids
+        per call (circulating_supply, total_supply, max_supply, fully_diluted_valuation). Any
+        coin it does not return falls back to /coins/{id} below."""
+        ids = sorted({p["coingecko_id"] for p in projects
+                      if p.get("coingecko_id") and (SOURCE, p["name"]) not in self.known_absent})
+        found = {}
+        for i in range(0, len(ids), 250):
+            try:
+                rows = self.http.get(f"{API}/coins/markets",
+                                     params={"vs_currency": "usd", "ids": ",".join(ids[i:i + 250]),
+                                             "per_page": 250, "page": 1, "sparkline": "false"},
+                                     headers=self.headers)
+            except Exception as e:  # noqa: BLE001 — fall back to per-coin detail calls
+                log.info("coingecko: /coins/markets failed (%s) — falling back to /coins/{id}", e)
+                continue
+            for r in rows if isinstance(rows, list) else []:
+                if isinstance(r, dict) and r.get("id"):
+                    found[r["id"]] = r
+        return found
+
     def run(self, projects: list[dict], window_days, out):
         days = "365" if window_days is None else str(window_days)
+        markets = self._markets(projects)
         for p in projects:
             cid, name = p.get("coingecko_id"), p["name"]
             if not cid:
@@ -110,11 +135,16 @@ class CoinGecko:
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{cid}:market_chart: {e}", TIER)
             try:
-                j = self.http.get(f"{API}/coins/{cid}",
-                                  params={"localization": "false", "tickers": "false", "community_data": "false",
-                                          "developer_data": "false", "sparkline": "false"},
-                                  headers=self.headers)
-                md = j.get("market_data") or {}
+                if cid in markets:
+                    mk = markets[cid]
+                    md = {k: mk.get(k) for k in ("circulating_supply", "total_supply", "max_supply")}
+                    md["fully_diluted_valuation"] = {"usd": mk.get("fully_diluted_valuation")}
+                else:
+                    j = self.http.get(f"{API}/coins/{cid}",
+                                      params={"localization": "false", "tickers": "false", "community_data": "false",
+                                              "developer_data": "false", "sparkline": "false"},
+                                      headers=self.headers)
+                    md = j.get("market_data") or {}
                 when, rows = today(), []
                 for metric, key in (("circulating_supply", "circulating_supply"),
                                     ("total_supply", "total_supply"), ("max_supply", "max_supply")):
@@ -126,6 +156,7 @@ class CoinGecko:
                 if fdv is not None:
                     rows.append({"date": when, "project": name, "metric": "fdv_usd",
                                  "value": float(fdv), "source": SOURCE, "tier": TIER})
-                out.add(pd.DataFrame(rows, columns=LONG_COLUMNS), SOURCE, name, f"{cid}:supply/fdv", TIER)
+                out.add(pd.DataFrame(rows, columns=LONG_COLUMNS), SOURCE, name,
+                        f"{cid}:supply/fdv" + (" (batched /coins/markets)" if cid in markets else ""), TIER)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{cid}:coin detail: {e}", TIER)

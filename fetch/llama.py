@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from .logcache import DailyChecks
 from .base import Http, point, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.llama")
@@ -44,6 +45,9 @@ class DefiLlama:
     def __init__(self, known_absent: set | None = None):
         self.http = Http(min_interval=0.25)
         self._rwa_by_chain: pd.DataFrame | None = None
+        self._memo: dict = {}
+        self.daily = DailyChecks()
+        self._today = str(today().date())
         # (source, project) pairs whose endpoint 404'd and has never worked — see
         # store.known_absent. DERIVED FROM THE STORE, not declared in config: the list is
         # whatever has actually been observed, so it cannot go stale against reality and there
@@ -65,7 +69,12 @@ class DefiLlama:
 
     # ------------------------------------------------------------------ fees & revenue
     def _summary(self, slug: str, data_type: str) -> dict:
-        return self.http.get(f"{API}/summary/fees/{slug}", params={"dataType": data_type})
+        # MEMOISED FOR THE RUN (2026-09-28): check_restructure and the Morpho guard re-read
+        # payloads fees() had just fetched — ~20 duplicate calls a run. A failure is not cached.
+        key = (slug, data_type)
+        if key not in self._memo:
+            self._memo[key] = self.http.get(f"{API}/summary/fees/{slug}", params={"dataType": data_type})
+        return self._memo[key]
 
     @staticmethod
     def _chart(j: dict):
@@ -124,9 +133,13 @@ class DefiLlama:
     # names the children and their totals so the decision is made against numbers.
     def check_restructure(self, project: dict, out) -> None:
         slug, name = project.get("defillama_fees_slug"), project["name"]
-        if not slug or (SOURCE, name) in self.known_absent:
+        if not slug or (SOURCE, name) in self.known_absent or (f"{SOURCE}:fees", name) in self.known_absent:
             # A pair the store has already seen 404 and never succeed is not called again here
             # either — the politeness rule is about the endpoint, not about which check wants it.
+            # Nor one declared absent (Plume's fees 400, 2026-09-28: this check still called it).
+            return
+        # ONCE A DAY (2026-09-28). A listing restructure is not an intraday event.
+        if not self.daily.due(f"defillama:restructure:{slug}", self._today):
             return
         if project.get("defillama_restructure"):
             # ALREADY DIAGNOSED. This generic check exists to catch an UNDECLARED restructure —
@@ -137,6 +150,7 @@ class DefiLlama:
             return
         try:
             parent = self._summary(slug, "dailyFees")
+            self.daily.done(f"defillama:restructure:{slug}", self._today)
         except Exception as e:  # noqa: BLE001 — a failed check must not kill the run
             # ONE CAUSE, ONE ROW. fees() has just called the same endpoint and reported the same
             # failure; a second Run Log entry for it would make one dead slug look like two
@@ -332,6 +346,14 @@ class DefiLlama:
         name = project["name"]
         watch = restructure["watch_child"]
         break_date = pd.Timestamp(restructure["break_date"])
+        # ONCE A DAY (2026-09-28). The pre-break history it stores is fixed, and whether the
+        # watch child has reported again is a daily question.
+        if not self.daily.due(f"defillama:recovery:{slug}", self._today):
+            out.mark_current(SOURCE, name, "fees_usd",
+                             f"fees_usd: restructure recovery check already ran today "
+                             f"({self._today}) — the pre-break history it stores does not change "
+                             f"and {watch} is re-checked tomorrow.", TIER)
+            return
 
         try:
             watch_chart = self._chart(self._summary(watch, "dailyFees"))
@@ -344,6 +366,8 @@ class DefiLlama:
             after = [d for d, v in watch_chart if pd.Timestamp(d.date()) >= break_date]
             if after:
                 recovered_from = min(after).date().isoformat()
+        if watch_chart is not None:
+            self.daily.done(f"defillama:recovery:{slug}", self._today)
         log.info("%s: restructure recovery check on %s — %s", name, watch,
                  f"RECOVERED, reporting again from {recovered_from}" if recovered_from
                  else f"still no data on or after {break_date.date()}")
@@ -696,9 +720,18 @@ class DefiLlama:
                   if p.get("defillama_chain") and 1 in p["archetypes"]}
         if not wanted:
             return
+        # ONCE A DAY (2026-09-28): /protocols plus one full-history /protocol/{slug} per RWA
+        # protocol on any wanted chain — the costliest call set here, for a daily figure.
+        if not self.daily.due("defillama:rwa", self._today):
+            for chain, name in wanted.items():
+                out.mark_current(SOURCE, name, "rwa_defillama_usd",
+                                 f"{chain}: RWA category already rebuilt today ({self._today}); "
+                                 f"a daily TVL series, rebuilt tomorrow.", TIER)
+            return
         try:
             if self._rwa_by_chain is None:
                 self._rwa_by_chain = self._build_rwa_by_chain(set(wanted))
+                self.daily.done("defillama:rwa", self._today)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, None, f"RWA category: {e}", TIER)
             return

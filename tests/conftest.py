@@ -23,3 +23,5 @@ def _isolated_logcache(monkeypatch, tmp_path):
     """fetch/logcache.py persists scanned events between runs. Each test gets its own empty
     cache, so no test reads another's events or writes into the working tree's .cache/."""
     monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logcache"))
+    # once-a-day checks run every time in tests; the test of the gate itself unsets this
+    monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "always")

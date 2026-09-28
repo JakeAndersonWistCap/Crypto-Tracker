@@ -98,3 +98,38 @@ class LogCache:
         self.save(sid, kept, st["proven_to"], st["proven_to"])
         return (f"cut {f} back from block {st['scanned_to']:,} to its proven "
                 f"{st['proven_to']:,}")
+
+
+class DailyChecks:
+    """Checks that need running once a day, not every run. Added 2026-09-28.
+
+    DefiLlama's restructure probes, Morpho's recovery check and the RWA-category rebuild answer
+    questions whose answers change at most daily; they ran on every run. The date each last ran
+    is kept in daily-checks.json beside the log cache — disposable like it: delete the file and
+    everything runs again. A check marked done only after it completes, so a failed or
+    interrupted one runs again on the next run the same day.
+    """
+
+    def __init__(self, root: str | Path | None = None):
+        self.f = LogCache(root).root / "daily-checks.json"
+
+    def _read(self) -> dict:
+        try:
+            return json.loads(self.f.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def due(self, key: str, today: str) -> bool:
+        # TOKEN_METRICS_DAILY_CHECKS=always runs every check on every run (after a config change
+        # that needs one re-checked now; the tests use it so each scenario runs its check).
+        if os.environ.get("TOKEN_METRICS_DAILY_CHECKS", "").strip().lower() == "always":
+            return True
+        return self._read().get(key) != today
+
+    def done(self, key: str, today: str) -> None:
+        state = self._read()
+        state[key] = today
+        self.f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, sort_keys=True))
+        tmp.replace(self.f)

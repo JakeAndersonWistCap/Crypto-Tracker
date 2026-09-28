@@ -92,8 +92,25 @@ def test_coingecko():
             "total_supply", "max_supply", "fdv_usd"} <= set(df["metric"])
     implied = df[df.metric == "circulating_supply_implied"]
     assert abs(implied.value.iloc[0] - 1.5e7) < 1 and implied.source.iloc[0] == "coingecko:mcap/price"
-    assert cg.http.calls[0][1]["days"] == "365"
+    chart = next(c for c in cg.http.calls if "market_chart" in c[0])
+    assert chart[1]["days"] == "365"
     assert any(e.status == "unconfigured" and e.project == "Nope" for e in out.log)
+
+    # BATCHED (2026-09-28): supply, max supply and FDV for every coin in ONE /coins/markets call;
+    # the per-coin /coins/{id} detail call is only the fallback.
+    cg2 = CoinGecko()
+    cg2.http = StubHttp({
+        "/coins/markets": [{"id": "aave", "circulating_supply": 15e6, "total_supply": 16e6,
+                            "max_supply": 16e6, "fully_diluted_valuation": 3.36e9}],
+        "/coins/aave/market_chart": {"prices": [[TS1 * 1000, 200.0]], "market_caps": [[TS1 * 1000, 3e9]],
+                                     "total_volumes": [[TS1 * 1000, 1e8]]},
+    })
+    out2 = FetchOutput()
+    cg2.run([{"name": "Aave", "coingecko_id": "aave"}], 30, out2)
+    urls = [c[0] for c in cg2.http.calls]
+    assert sum("/coins/markets" in u for u in urls) == 1 and not any(u.endswith("/coins/aave") for u in urls)
+    got = out2.frame().set_index("metric")["value"]
+    assert got["circulating_supply"] == 15e6 and got["fdv_usd"] == 3.36e9 and got["max_supply"] == 16e6
     print("tier 1 coingecko ok:", len(set(df["metric"])), "metrics")
 
 
@@ -16123,3 +16140,34 @@ def test_geodnet_locked_tokens_has_a_manual_quarterly_path_and_no_value_is_enter
     live = [r for r in csv.reader(l for l in open("manual_overrides.csv") if not l.startswith("#"))
             if r and r[:3] and r[1:3] == ["GEODNET", "locked_tokens"]]
     assert live == [], "the figure is Jake's to enter"
+
+
+def test_defillama_reuses_the_days_responses_and_runs_its_checks_once_a_day(monkeypatch):
+    """C2, 2026-09-28: check_restructure re-requested every dailyFees payload fees() had just
+    fetched (~20 duplicate calls), and the restructure/recovery checks and the RWA rebuild ran on
+    every run. The Plume check still called its declared-absent 400."""
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    chart = {"totalDataChart": [[TS1, 100.0], [TS2, 150.0]], "childProtocols": []}
+    aave = {"name": "Aave", "defillama_fees_slug": "aave", "defillama_protocol": None,
+            "defillama_chain": None, "archetypes": [3]}
+
+    def run():
+        dl = DefiLlama()
+        dl.http = StubHttp({"/summary/fees/aave": chart})
+        dl.run([aave], 30, FetchOutput())
+        return [c for c in dl.http.calls if "/summary/fees/aave" in c[0]]
+
+    first = run()
+    kinds = [c[1]["dataType"] for c in first]
+    assert sorted(kinds) == ["dailyFees", "dailyHoldersRevenue", "dailyRevenue"], \
+        f"the restructure check reuses fees()'s dailyFees response: {kinds}"
+    assert len(run()) == 3, "same day: fetched as before, the check is simply not re-run"
+
+    plume = config.PROJECT_BY_NAME["Plume"]
+    dl = DefiLlama(known_absent={("defillama:fees", "Plume")})
+    dl.http = StubHttp({})
+    dl.check_restructure(plume, FetchOutput())
+    assert dl.http.calls == [], "a declared-absent listing costs no time in the check either"
