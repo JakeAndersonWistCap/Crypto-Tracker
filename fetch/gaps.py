@@ -278,6 +278,17 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
                 f"Log for the {src} fetch{via}.")
 
+    # ===== THE LAST-INFLOW DATE IS A BY-PRODUCT OF THE BUYBACK SCAN. Added 2026-09-28. =====
+    # It has no source of its own: fetch/logscan.py writes it beside actual_buyback_tokens from
+    # the same reconciled scan, so its gap is that scan's gap.
+    if metric == "buyback_last_inflow_date":
+        scan = next((s for s in project.get("log_scans") or []
+                     if s.get("metric") == "actual_buyback_tokens"), None)
+        where = f"log_scans.{scan['key']}" if scan else "the buyback inflow scan"
+        return (f"written by {where} beside actual_buyback_tokens, from the same reconciled "
+                f"Transfer scan — it produced nothing this run, so see that row's reason",
+                "Resolve actual_buyback_tokens; this date fills from the same scan.")
+
     # ===== THE BUYBACK PAIR ANSWERS FROM ITS ROUTE, NEVER FROM "no contract of kind ...". =====
     # Added 2026-09-23. Seven projects gapped on actual_buyback_* with variants of "no contract
     # of kind 'buyback_fund_balance' declared", and for none of them was that the reason: Maple

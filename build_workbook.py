@@ -83,8 +83,10 @@ FMT_PCT = '0.0%;(0.0%);-'
 STAGING_ROWS_PER_FIELD = 30
 FMT_X = '0.00"x";(0.00"x");-'
 FMT_TEXT = '@'
+FMT_DATE = 'yyyy-mm-dd'
 
-UNIT_FMT = {"usd": FMT_USD, "tokens": FMT_NUM, "count": FMT_NUM, "pct": FMT_PCT, "days": FMT_NUM, "units": FMT_NUM}
+UNIT_FMT = {"usd": FMT_USD, "tokens": FMT_NUM, "count": FMT_NUM, "pct": FMT_PCT, "days": FMT_NUM, "units": FMT_NUM,
+            "date": FMT_DATE}   # "date" values are Excel serials (buyback_last_inflow_date)
 
 CFG = "'Config & Sources'"
 _WINDOWS: dict[str, tuple[str, str]] = {}   # window key -> (start, end) ISO dates, set per build
@@ -98,7 +100,7 @@ CLOSED_TEXT = "none available"
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
              "last_success", "entered_on", "note", "q0_covered_days", "q0_events",
-             "schedule_end", "q0_pre_end_days"]
+             "schedule_end", "q0_pre_end_days", "last_nonzero_date", "silent_days", "silence_flag"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
@@ -107,7 +109,10 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              # APPENDED, so every existing column letter is unchanged. Flows only (not monthly).
              "Q0: days of the 90 the series existed for", "Q0: days with a non-zero value (events)",
              "Schedule end (declared in config; schedule:config rows only)",
-             "Q0: days on or before the schedule end (only once it has passed)"]
+             "Q0: days on or before the schedule end (only once it has passed)",
+             "Last non-zero value (flows; the scan's stored last-inflow date where there is one)",
+             "Days since then (only where a program cadence is documented)",
+             "Program silence flag (PROGRAM_CADENCE)"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 
 # Config table layout
@@ -879,6 +884,42 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 for i, q in enumerate(["q0", "q1", "q2", "q3"]):
                     row[q] = _window_mean(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
                 row["y1"] = _window_mean(s, asof - pd.Timedelta(days=365), asof)
+            # ===== LAST NON-ZERO, AND IS THE PROGRAM SILENT? Added 2026-09-28. =====
+            # A series of zeros is a measured "nothing happened", and it says nothing about WHEN
+            # something last did. For a flow the last non-zero day comes from the stored series
+            # (a monthly row counts to its month's END — it covers the whole month); for the
+            # buyback, the scan's own stored last-inflow date reaches past the stored window.
+            if m["kind"] == "flow":
+                pos = s[s > 0]
+                last_nz = None
+                if len(pos):
+                    last_nz = pos.index.max()
+                    if granularity == "monthly":
+                        last_nz = last_nz + pd.offsets.MonthEnd(0)
+                if metric == "actual_buyback_tokens":
+                    gd = groups.get((name, "buyback_last_inflow_date"))
+                    if gd is not None and not gd.empty:
+                        serial = float(gd.sort_values("date").iloc[-1]["value"])
+                        scanned = pd.Timestamp("1899-12-30") + pd.Timedelta(days=int(serial))
+                        last_nz = scanned if last_nz is None else max(last_nz, scanned)
+                if last_nz is not None:
+                    row["last_nonzero_date"] = last_nz.strftime("%Y-%m-%d")
+                # SILENT = more than 2x the LONGEST documented cadence since the last non-zero
+                # value, AND the series has been observed past that point — so a gap in OUR runs
+                # (staleness, reported elsewhere) is never mistaken for a quiet program.
+                cad = config.program_cadence(name, metric)
+                if cad and last_nz is not None:
+                    limit = 2 * max(d for _, d in cad["cadences"])
+                    observed_quiet = (g["date"].max() - last_nz).days
+                    silent = (asof - last_nz).days
+                    row["silent_days"] = silent
+                    if observed_quiet > limit:
+                        labels = "/".join(l for l, _ in cad["cadences"])
+                        row["silence_flag"] = (f"program silent for {silent} days against a "
+                                               f"documented {labels} cadence (last non-zero "
+                                               f"{last_nz.date()}; flagged past {limit} days)")
+                        row["note"] = (f"PROGRAM SILENT — {row['silence_flag']}"
+                                       + (f" | {row['note']}" if row["note"] else ""))
             base_source = str(latest["source"]).split(":")[0]
             row["last_success"] = last_success.get((base_source, name), "") or ""
             if bool(latest["is_manual"]):
@@ -1597,7 +1638,47 @@ def _widths(specs: list[tuple]) -> dict:
     return out
 
 
-def _a3_headline(R: Refs) -> list[tuple]:
+def _suffix_fmt(fmt: str, suffix: str) -> str:
+    """Append literal text to every section of a number format, so it shows beside any value."""
+    lit = '"' + suffix.replace('"', "'") + '"'
+    return ";".join(sec + lit for sec in (fmt or "General").split(";"))
+
+
+def _program_flag(p: dict, data_by_key: dict) -> tuple[str, str] | None:
+    """(in-cell suffix, comment) for a buyback that has not moved — or None.
+
+    SILENT when the documented program cadence is broken (aggregate's silence_flag, from
+    config.PROGRAM_CADENCE); otherwise "no inflow since <date>" whenever the buyback's Q0 is zero
+    and the last non-zero date is known. The zero is REAL (a reconciled scan says so) and stays
+    on the sheet; the annotation says what kind of zero it is. Added 2026-09-28 for Ether.fi.
+    """
+    name = p["name"]
+    bb = data_by_key.get(f"{name}|actual_buyback_tokens") or {}
+    cad = config.program_cadence(name)
+    prow = data_by_key.get(f"{name}|{cad['metric']}") if cad else None
+    prow = prow or {}
+
+    def txt(v):
+        return v if isinstance(v, str) and v else None
+
+    last = txt(bb.get("last_nonzero_date")) or txt(prow.get("last_nonzero_date"))
+    flag = txt(prow.get("silence_flag"))
+    tail = ("\n\nThe figure is what the tracked address received. It stays at 0 if the program "
+            "restarts somewhere else — a new receiving address is a config change, not a read.")
+    if flag:
+        days = prow.get("silent_days")
+        days = f" {int(days)}d" if isinstance(days, (int, float)) and days == days else ""
+        return (f" · no inflow since {last} · SILENT{days}",
+                f"PROGRAM SILENT — {flag}." + tail)
+    q0 = bb.get("q0")
+    if last and isinstance(q0, (int, float)) and q0 == 0:
+        return (f" · no inflow since {last}",
+                f"No inflow since {last}: the trailing window reads 0 because nothing arrived, "
+                f"not because nothing was read." + tail)
+    return None
+
+
+def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
     """BOTH RETIREMENT RATES, OR NEITHER. The gap between them is the dilution warning; the
     circulating rate alone is the flattering half. One gate serves both cells, so a missing
     market cap, FDV or buyback blanks the pair together."""
@@ -1605,13 +1686,16 @@ def _a3_headline(R: Refs) -> list[tuple]:
     mc = lambda r: R.D(r, "market_cap_usd", "now")  # noqa: E731
     fdv = lambda r: R.D(r, "fdv_usd", "now")  # noqa: E731
     gate = lambda r: f"AND(ISNUMBER({bb(r)}),ISNUMBER({mc(r)}),ISNUMBER({fdv(r)}))"  # noqa: E731
+    # THE RATES READ 0 FOR THE SAME REASON THE BUYBACK DOES, and would keep reading 0 if the
+    # program restarted at another address — so the program flag rides on them too.
+    flag = lambda p: _program_flag(p, data_by_key or {})  # noqa: E731
     return [
         ("CIRCULATING RETIREMENT RATE = actual buyback $ (annualised) ÷ market cap",
          lambda r, p: calc(f"IF({gate(r)},{bb(r)}*{ANN}/{mc(r)},{NA})"), FMT_PCT, "calc", True,
-         {"metric": "actual_buyback_usd"}),
+         {"metric": "actual_buyback_usd", "flag_fn": flag}),
         ("FDV RETIREMENT RATE = actual buyback $ (annualised) ÷ FDV — always read with the rate to its left",
          lambda r, p: calc(f"IF({gate(r)},{bb(r)}*{ANN}/{fdv(r)},{NA})"), FMT_PCT, "calc", True,
-         {"metric": "actual_buyback_usd"}),
+         {"metric": "actual_buyback_usd", "flag_fn": flag}),
     ]
 
 
@@ -1764,7 +1848,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
     ]
 
 
-def _protocol_yield(R: Refs):
+def _protocol_yield(R: Refs, data_by_key: dict | None = None):
     """A3 supporting column: revenue share paid to a protocol's stakers — kept apart from the
     validator yield by name and by tab, so it can never be summed into archetype-1 Total Yield."""
     def build(r, p):
@@ -1781,7 +1865,9 @@ def _protocol_yield(R: Refs):
              "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
                                       if p["name"] in config.PROTOCOL_YIELD else None),
              "partial_direction": "the locked value is incomplete, so the yield READS HIGH.",
-             "partial_fmt": '0.0%" PARTIAL↑";(0.0%)" PARTIAL↑"'})
+             "partial_fmt": '0.0%" PARTIAL↑";(0.0%)" PARTIAL↑"',
+             # Ether.fi's yield reads 0 because its buyback has not moved (2026-09-28).
+             "flag_fn": lambda p: _program_flag(p, data_by_key or {})})
 
 
 def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:
@@ -1957,6 +2043,17 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 c.number_format = meta.get("partial_fmt", c.number_format)
                 c.comment = Comment(f"PARTIAL — {meta.get('partial_direction', '')}\n\n{why}",
                                     "token_metrics")
+            # A PROGRAM ANNOTATION, ON THE CELL ITSELF (2026-09-28): "no inflow since <date>" and,
+            # past twice the documented cadence, SILENT. Composes with PARTIAL rather than
+            # replacing it; the value stays numeric.
+            ff = meta.get("flag_fn")
+            flag = ff(p) if ff else None
+            if flag:
+                suffix, note = flag
+                if c.number_format != FMT_TEXT:
+                    c.number_format = _suffix_fmt(c.number_format, suffix)
+                prior = c.comment.text if c.comment else ""
+                c.comment = Comment((prior + "\n\n" if prior else "") + note, "token_metrics")
         fc = ws.cell(row=r, column=len(specs) + 1, value=_flags(data_by_key, p["name"], flag_metrics))
         fc.font = Font(name=FONT, size=9, color="C00000")
         r += 1
@@ -2141,7 +2238,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
         *_valuation_head(R),
-        *_a3_headline(R),
+        *_a3_headline(R, data_by_key),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
         ("Buyback status", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"status_fill": "fee_split"}),
         ("Programmed? (contract-enforced vs revisable by governance)", lambda r, p: pull(R.C(r, "Programmed (contract-enforced)")), FMT_TEXT, "pull"),
@@ -2167,8 +2264,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
          lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}*{ann}/{circ(r)}", share(r)))),
          FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True}),
-        ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
-        ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "actual_buyback_tokens"}),
+        ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False,
+         {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
+        ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False,
+         {"metric": "actual_buyback_tokens", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
         ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_tokens', 'q0')}*{ann}/{circ(r)}"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
          lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))))),
@@ -2232,7 +2331,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{R.D(r, 'locked_tokens_dashboard', 'now')}-1"),
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
-        _protocol_yield(R),
+        _protocol_yield(R, data_by_key),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====
         # locked_tokens (the column above, via contracts.spendle_underlying) is PENDLE.balanceOf
         # (sPENDLE) — the NEW contract, unchanged by this addition. This column is PENDLE.balanceOf

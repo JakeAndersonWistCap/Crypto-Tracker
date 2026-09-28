@@ -13665,13 +13665,24 @@ def test_a_flow_scan_reconciles_to_the_wei_before_storing_anything(monkeypatch):
     logs = _flow_logs(reserve, [(100, pay, 5 * E, t0), (200, other, 2 * E, t0 + day),
                                 (300, pay, 3 * E, t0 + 3 * day)])
     out = _run_scan(monkeypatch, spec, logs, {reserve: 10 * E})
-    got = out.frame().sort_values("date")
+    allrows = out.frame()
+    # THE LAST COUNTED INFLOW, AS A VALUE (2026-09-28): an Excel date serial for 2026-09-04,
+    # the reserve's last counted inflow, beside the daily series from the same scan.
+    last = allrows[allrows.metric == "buyback_last_inflow_date"]
+    assert len(last) == 1 and float(last.value.iloc[0]) == float(
+        (pd.Timestamp("2026-09-04") - pd.Timestamp("1899-12-30")).days), last
+    got = allrows[allrows.metric != "buyback_last_inflow_date"].sort_values("date")
     assert set(got.metric) == {"actual_buyback_tokens"} and set(got.source) == {"explorer:reserve_inflow"}
     by = {str(d)[:10]: v for d, v in zip(got.date, got.value)}
     assert by["2026-09-01"] == 5.0 and by["2026-09-02"] == 0.0 and by["2026-09-04"] == 3.0, by
     assert by["2026-09-03"] == 0.0, "a covered day with nothing counted is an observed zero"
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert "served by etherscan" in line and other in line, line   # uncounted sender is named
+    # THE STORE LINE SAYS WHICH DATE IS WHICH (2026-09-28): series start = first Transfer in either
+    # direction, the first counted inflow, and the dates this run actually stored.
+    store_line = next(e.message for e in out.log if "this run STORED" in e.message)
+    assert "series starts 2026-09-01 (the holders' first Transfer in either direction" in store_line
+    assert "first counted inflow 2026-09-01" in store_line and "(full history)" in store_line, store_line
 
     # ONE WEI OFF: nothing stored, the gap says by how much
     out2 = _run_scan(monkeypatch, spec, logs, {reserve: 10 * E + 1})
@@ -15114,3 +15125,60 @@ def test_issuance_stream_expiry_caveat_fires_after_the_declared_end_and_clears_9
     assert "STREAM ENDED" not in bw._a4_window_caveat(config.PROJECT_BY_NAME["Uniswap"], by)
     print("expiry ok: fires 2026-11-11 (89 days) to 2027-02-07 (1 day), clears 2027-02-08; "
           "silent without a declared end")
+
+
+def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
+    """Ether.fi, run 20260925T084404Z: last counted inflow 2026-06-30, 87 days before the run;
+    the trailing window is all zeros and that zero is REAL. It stays on the sheet, annotated
+    'no inflow since 2026-06-30', and — past 2x the longest documented cadence (monthly, so 60
+    days) — flagged SILENT on the buyback, protocol-yield and both retirement-rate cells."""
+    import openpyxl
+    import tempfile
+    import build_workbook as bw
+    import store as store_mod
+    asof = pd.Timestamp("2026-09-25")
+    serial = float((pd.Timestamp("2026-06-30") - pd.Timestamp("1899-12-30")).days)
+    rows = [dict(date=d, project="Ether.fi", metric="actual_buyback_tokens", value=0.0,
+                 source="explorer:buyback_wallet_inflow", tier=2, is_manual=False)
+            for d in pd.date_range("2026-08-26", "2026-09-24")]
+    rows.append(dict(date=asof, project="Ether.fi", metric="buyback_last_inflow_date", value=serial,
+                     source="explorer:buyback_wallet_inflow", tier=2, is_manual=False))
+    o = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof)
+    by = {r["key"]: r for r in o.to_dict("records")}
+    bb = by["Ether.fi|actual_buyback_tokens"]
+    assert bb["q0"] == 0.0 and bb["status"] != "n/a"                   # the zero stays
+    assert bb["last_nonzero_date"] == "2026-06-30" and bb["silent_days"] == 87
+    assert bb["silence_flag"].startswith("program silent for 87 days against a documented "
+                                         "weekly/monthly cadence"), bb["silence_flag"]
+    suffix, note = bw._program_flag(config.PROJECT_BY_NAME["Ether.fi"], by)
+    assert suffix == " · no inflow since 2026-06-30 · SILENT 87d" and "PROGRAM SILENT" in note
+
+    # GEODNET (daily): a gap in OUR runs is staleness, not silence — no observation after the
+    # last burn, no flag. A burn 5 days ago with zero rows since is silence.
+    g = [dict(date=pd.Timestamp("2026-09-20"), project="GEODNET", metric="gross_burn_tokens",
+              value=5000.0, source="chain:polygon:burn_polygon:delta", tier=2, is_manual=False)]
+    r = {x["key"]: x for x in bw.aggregate(pd.DataFrame(g), pd.DataFrame(), asof).to_dict("records")}
+    assert not isinstance(r["GEODNET|gross_burn_tokens"]["silence_flag"], str)
+    g += [dict(date=pd.Timestamp(d), project="GEODNET", metric="gross_burn_tokens", value=0.0,
+               source="chain:polygon:burn_polygon:delta", tier=2, is_manual=False)
+          for d in ("2026-09-22", "2026-09-24")]
+    r = {x["key"]: x for x in bw.aggregate(pd.DataFrame(g), pd.DataFrame(), asof).to_dict("records")}
+    assert "against a documented daily cadence" in r["GEODNET|gross_burn_tokens"]["silence_flag"]
+    # No documented cadence, no flag, whatever the gap.
+    assert config.program_cadence("Uniswap") is None
+
+    # AND IT REACHES THE CELLS. Build Ether.fi's workbook and read A3's formats and comments.
+    with tempfile.TemporaryDirectory() as d:
+        st = store_mod.Store(f"{d}/m.db")
+        st.upsert(pd.DataFrame(rows)[["date", "project", "metric", "value", "source", "tier"]])
+        path = bw.build_workbook(st, f"{d}/w.xlsx", asof=asof, only=["Ether.fi"])
+        ws = openpyxl.load_workbook(path)["A3 Revenue Buyback"]
+        hr = next(i for i in range(1, 10) if ws.cell(row=i, column=1).value == "Project")
+        hdr = {ws.cell(row=hr, column=c).value: c for c in range(1, ws.max_column + 1)}
+        er = next(i for i in range(hr + 1, ws.max_row + 1) if ws.cell(row=i, column=1).value == "Ether.fi")
+        for head in ("CIRCULATING RETIREMENT RATE", "FDV RETIREMENT RATE", "Actual buyback Q0 ($)",
+                     "Actual buyback Q0 (tokens)", "PROTOCOL STAKING YIELD"):
+            c = ws.cell(row=er, column=next(v for k, v in hdr.items() if k and k.startswith(head)))
+            assert "no inflow since 2026-06-30 · SILENT 87d" in c.number_format, (head, c.number_format)
+            assert c.comment and "PROGRAM SILENT" in c.comment.text, head
+    print("silence ok: Ether.fi 87d SILENT on five A3 cells; GEODNET staleness is not silence")

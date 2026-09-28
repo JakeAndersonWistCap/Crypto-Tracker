@@ -193,6 +193,14 @@ METRICS = {
     #     dailytx, dailytxnfee, dailyuncleblkcount) — counts, gas and fees, no value transferred,
     #     and every one is marked "PRO endpoint" (paid). Read from the OpenAPI spec at
     #     github.com/purrproof/etherscan-openapi (672112a); docs.etherscan.io was blocked.
+    # THE DATE OF THE LAST COUNTED INFLOW, AS A VALUE. Added 2026-09-28. A buyback scan's
+    # trailing window can be all zeros (Ether.fi: last inflow 2026-06-30, 87 days before the run)
+    # and the store then holds nothing that says WHEN the program last moved — only the run log
+    # did, as prose. Stored as an EXCEL DATE SERIAL (days since 1899-12-30) so the sheet formats it
+    # as a date and a formula can subtract it. Written by fetch/logscan.py for stored buyback
+    # scans only; only_projects lists the projects that have one (add a project here when its
+    # log_scans entry for actual_buyback_tokens starts storing).
+    "buyback_last_inflow_date":   {"label": "Date of the last counted buyback inflow (from the full-history scan)", "kind": "stock", "unit": "date", "archetypes": [3], "tiers": [2], "sanity_min": 40_000, "sanity_max": 80_000, "only_projects": ("Chainlink", "Ether.fi")},
     "settlement_volume_annual_usd": {"label": "On-chain settlement volume, annualised ($, The Block adjusted — manual quarterly)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e14, "only_projects": ("Ethereum", "Plume")},
     # Hyperliquid's staking-reward reserve (tokenDetails.futureEmissions) — pre-minted, INSIDE
     # totalSupply. Its decline over a window is rewards paid; that is the validator-yield input.
@@ -1465,6 +1473,46 @@ def issuance_schedule_end(project_name: str) -> str | None:
     sched = (PROJECT_BY_NAME.get(project_name) or {}).get("issuance_schedule") or {}
     steps = sorted(sched.get("steps") or [], key=lambda s: s["from"])
     return str(steps[-1]["until"])[:10] if steps and steps[-1].get("until") else None
+
+
+# ===== DOCUMENTED PROGRAM CADENCES — THE SILENCE DETECTOR'S INPUT. Added 2026-09-28. =====
+# A buyback or burn PROGRAM that runs on a stated cadence is SILENT when the last non-zero
+# inflow is more than twice that cadence ago. Distinct from LUMPY_FLOWS (which stops a
+# change-threshold firing on a lumpy series) and from staleness (which is about OUR reads): a
+# silent program is read fine and reads zero. Where more than one cadence is documented the
+# threshold is 2x the LONGEST, so the flag means even the slowest stated rhythm was missed.
+PROGRAM_CADENCE = {
+    "Ether.fi": {"metric": "actual_buyback_tokens",
+                 "cadences": (("weekly", 7), ("monthly", 30)),
+                 "declared_by": "Jake, 2026-09-28",
+                 # etherfi.gitbook.io was BLOCKED from the environment that checked (2026-09-28),
+                 # so the gitbook is cited through a third party that quotes it, not read direct.
+                 "source": "aragon/ownership-token-framework research/ethfi-research.md "
+                           "(2026-02-24, citing etherfi.gitbook.io/gov/ethfi-buyback-program): "
+                           "'Weekly: 100% of eETH withdrawal fees' / 'Monthly: Foundation-"
+                           "discretionary portion of broader protocol revenue (Stake, Liquid, "
+                           "Cash products)'. SECONDARY — the gitbook itself was unreachable."},
+    "Maple": {"metric": "actual_buyback_tokens",
+              "cadences": (("monthly", 30),),
+              "declared_by": "Jake, 2026-09-28",
+              "source": "maple.finance/transparency publishes Token Buybacks as monthly rows"},
+    "GEODNET": {"metric": "gross_burn_tokens",
+                "cadences": (("daily", 1),),
+                "declared_by": "Jake, 2026-09-28",
+                "source": "LUMPY_FLOWS[('GEODNET', 'gross_burn_tokens')]: daily underlying cadence"},
+    "Pendle": {"metric": "actual_buyback_tokens",
+               "cadences": (("biweekly", 14),),
+               "declared_by": "on file 2026-09-23",
+               "source": "LUMPY_FLOWS[('Pendle', 'actual_buyback_tokens')]: sPENDLE docs, fee_split.cadence"},
+}
+
+
+def program_cadence(project_name: str, metric: str | None = None) -> dict | None:
+    """The project's documented program cadence, optionally only if it is declared on `metric`."""
+    c = PROGRAM_CADENCE.get(project_name)
+    if c and (metric is None or c["metric"] == metric):
+        return c
+    return None
 
 
 def a4_burn_metric(project_name: str) -> str:

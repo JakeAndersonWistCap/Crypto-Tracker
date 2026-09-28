@@ -278,6 +278,30 @@ class LogScan:
         frame = tidy([(d, by_day.get(d, 0.0)) for d in days], name, metric,
                      f"{SOURCE}:{key}", TIER)
         frame = window(frame, window_days)
+        # ** SAY WHICH DATE IS WHICH. Corrected 2026-09-28. ** "30 daily row(s) from 2025-05-09"
+        # read as thirty rows starting then. It meant: the series STARTS at the holders' first
+        # Transfer in EITHER direction (not necessarily an inflow, and not a counted one), and
+        # the run STORED only its window. Both are now named, with the first counted inflow.
+        first_in = min((e["timeStamp"] for e in counted if int(e.get("timeStamp") or 0) > 0),
+                       default=None)
+        first_in_s = (pd.Timestamp(first_in, unit="s").date().isoformat() if first_in else "none")
+        stored = (f"{frame['date'].min().date()}..{frame['date'].max().date()}"
+                  if not frame.empty else "none")
         out.add(frame, SOURCE, name,
-                f"{metric} = {key}, {len(frame)} daily row(s) from {start.date()} (zeros are "
-                f"observed, the scan covers every block). {summary}", TIER)
+                f"{metric} = {key}: series starts {start.date()} (the holders' first Transfer in "
+                f"either direction" + (", clamped to from_date" if spec.get("from_date") else "")
+                + f"; first counted inflow {first_in_s}), zero-filled daily to {last.date()}; "
+                f"this run STORED {len(frame)} daily row(s) covering {stored}"
+                + (f" (its {window_days}-day window)" if window_days else " (full history)")
+                + f". Zeros are observed — the scan covers every block. {summary}", TIER)
+
+        # THE LAST COUNTED INFLOW, STORED AS A VALUE. Added 2026-09-28. A window of zeros says
+        # nothing about WHEN the program last moved; the run log did, as prose. Excel date serial
+        # (days since 1899-12-30), dated the run day, for buyback scans only.
+        if metric == "actual_buyback_tokens" and dated:
+            last_day = pd.Timestamp(max(dated), unit="s").normalize()
+            serial = float((last_day - pd.Timestamp("1899-12-30")).days)
+            out.add(tidy([(today(), serial)], name, "buyback_last_inflow_date",
+                         f"{SOURCE}:{key}", TIER), SOURCE, name,
+                    f"buyback_last_inflow_date = {last_day.date()} (serial {serial:.0f}) from "
+                    f"{key}", TIER)
