@@ -15519,7 +15519,7 @@ def test_declared_or_first_party_issuance_is_primary_in_every_consumer():
         assert r["status"] == "blocked" and "circulating not updating" in r["note"], r["note"]
 
 
-def test_nearblocks_buyback_runs_first_and_calls_are_paced_to_the_free_plan(monkeypatch,
+def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeypatch,
                                                                              _nearblocks_fake_clock):
     """Live run 20260928T090446Z: two v3 calls at limit=100 (4 credits each) then the buyback
     page, all inside a minute, against a 6-credit/min free plan -> 429 on the buyback. The
@@ -15541,7 +15541,9 @@ def test_nearblocks_buyback_runs_first_and_calls_are_paced_to_the_free_plan(monk
              v3={"/v3/txn-stats": {"data": []}, "/v3/address-stats": {"data": []}})
     nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, FetchOutput())
     kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
-    assert kinds == ["flow", "flow", "v3", "v3"], kinds
+    # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
+    # read, which resumes across runs — see NearBlocks.run.
+    assert kinds == ["v3", "v3", "flow", "flow"], kinds
     # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25. The v3 calls send
     # `limit`, so they cost 1 (they were charged 4 until 2026-09-28).
     cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE), "v3": 1}
@@ -16546,3 +16548,51 @@ def test_symbol_and_decimals_are_batched_per_chain_through_multicall3():
     r2.multicall = False
     assert "individual calls" in r2.prefetch_token_meta("base", [A])
     assert batches == [6], "no batch where Multicall3 is not deployed"
+
+
+def test_seed_nearblocks_finishes_the_first_read_in_one_run_and_records_no_gaps(monkeypatch, tmp_path, caplog):
+    """--seed nearblocks: only NearBlocks, no budget, stores what it reads, prints the state file
+    before and after, and records no gaps (a one-source run must not replace the Gap Report)."""
+    import logging
+
+    import store as store_mod
+    import token_metrics
+    from fetch import nearblocks, scrape
+    from fetch.base import today
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    monkeypatch.setattr(store_mod, "DB_PATH", tmp_path / "m.db")
+    monkeypatch.setattr(token_metrics, "load_dotenv", lambda *a, **k: None)
+    E = 10 ** 24
+
+    def tx(day_ago, h):
+        ts = int((today() - pd.Timedelta(days=day_ago) + pd.Timedelta(hours=1)).value)
+        return {"predecessor_account_id": "u.near", "block_timestamp": str(ts), "transaction_hash": h,
+                "actions": [{"action": "TRANSFER", "deposit": str(E)}]}
+
+    history = [tx(2 + i, f"h{i}") for i in range(7)]
+
+    class FakeHttp:
+        def __init__(self, *a, **k):
+            pass
+
+        def get(self, url, params=None, headers=None):
+            if "/v1/account/" not in url:
+                return {"data": [{"date": str((today() - pd.Timedelta(days=1)).date()),
+                                  "txns": 5, "active_accounts": 3}]}
+            start = int(params.get("cursor") or 0)
+            nxt = start + 2 if start + 2 < len(history) else None
+            return {"cursor": nxt and str(nxt), "txns": history[start:start + 2]}
+
+    monkeypatch.setattr(nearblocks, "Http", FakeHttp)
+    caplog.set_level(logging.INFO)
+    assert token_metrics.main(["--seed", "nearblocks"]) == 0
+    st = store_mod.Store(str(tmp_path / "m.db"))
+    got = st.load_long().query("project == 'Near' and metric == 'actual_buyback_tokens'")
+    assert len(got) == 7, got
+    assert st.conn.execute("SELECT COUNT(*) FROM gap_report").fetchone()[0] == 0
+    text = caplog.text
+    assert "--seed nearblocks: BEFORE" in text and "no state yet" in text
+    assert "--seed nearblocks: AFTER" in text and "complete — 7 day(s) kept" in text
+    assert "page 4 at cursor 6" in text and "7 txn(s) read so far" in text

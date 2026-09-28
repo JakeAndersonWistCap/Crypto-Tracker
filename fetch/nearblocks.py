@@ -211,16 +211,19 @@ class NearBlocks:
         return s.replace(k, "***") if k else s
 
     def run(self, projects: list[dict], window_days, out):
-        # The buyback flow runs FIRST: it is the headline input (A3), the activity stats are
-        # context, and with 6 credits a minute whichever call goes first is the one that is sure
-        # to be answered.
-        for p in projects:
-            for flow in p.get("near_account_flows") or []:
-                self._account_flow(p["name"], flow, window_days, out)
+        # THE DAILY STATS FIRST, THEN THE BUYBACK READ (reversed 2026-09-28). The buyback went
+        # first while the pacer overcharged the stats 4 credits each; now they cost 1, run once a
+        # day, and are done in seconds. With the buyback first, a first read that ran to the
+        # budget left the stats never called, and tx_count / active_addresses fell through to
+        # "no sources.yaml entry" (run 20260928T150426Z). The buyback read resumes across runs,
+        # so going second costs it nothing.
         for p in projects:
             spec = p.get("nearblocks")
             if spec:
                 self._project(p["name"], spec, window_days, out)
+        for p in projects:
+            for flow in p.get("near_account_flows") or []:
+                self._account_flow(p["name"], flow, window_days, out)
 
     def _project(self, name: str, spec: dict, window_days, out):
         key = self._key(spec)
@@ -350,7 +353,7 @@ class NearBlocks:
         new_by_day: dict = {}
         top_ts, top_ids = newest_ts, set(seen_ids)
         cursor, total_rows, excluded_hits, sample, calls = None, 0, 0, None, 0
-        complete = False
+        complete, prev_ids = False, None
         # ===== A READ THAT OUTLASTS ONE RUN RESUMES. 2026-09-28. =====
         # Run 20260928T142424Z: the first newest-first read of the window ran past the 240s budget
         # and, since state was only saved on completion, nothing persisted and every run started
@@ -404,6 +407,22 @@ class NearBlocks:
                             suggestion="Correct the field names in config.py from the keys above.")
                     return
                 sample = {k: str(first[k])[:24] for k in list(first)[:6]}
+            # PROGRESS, EVERY PAGE (2026-09-28): the cursor, the running count and the page's time
+            # span, so a read that advances is visibly different from one that repeats.
+            page_ids = {json.dumps(r, sort_keys=True, default=str) for r in rows}
+            if rows and page_ids == prev_ids:
+                out.fail(SOURCE, name, f"{metric}: page {calls} repeated the previous page at "
+                                       f"cursor {params.get('cursor')} — the cursor is not "
+                                       f"advancing. Partial read kept; NOT stored.", TIER)
+                return
+            prev_ids = page_ids
+            stamps = [int(r["block_timestamp"]) for r in rows
+                      if str(r.get("block_timestamp") or "").isdigit()]
+            span = (f"{pd.Timestamp(max(stamps), unit='ns').date()}..."
+                    f"{pd.Timestamp(min(stamps), unit='ns').date()}" if stamps else "empty")
+            log.info("%s/%s: page %d at cursor %s — %d row(s) %s; %d txn(s) read so far",
+                     name, metric, calls, params.get("cursor") or "(start)", len(rows), span,
+                     total_rows + len(rows))
             reached_seen = False
             for r in rows:
                 try:

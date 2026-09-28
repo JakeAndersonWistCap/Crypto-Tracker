@@ -60,6 +60,7 @@ Useful environment flags (all optional, all in .env):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
@@ -94,7 +95,64 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
+    ap.add_argument("--seed", choices=["nearblocks"],
+                    help="one-off: run only this source with NO time budget, to finish a first "
+                         "read that routine runs (60s) take many runs to complete. Stores what it "
+                         "reads; records no gaps and does not rebuild the workbook.")
     return ap.parse_args(argv)
+
+
+def seed_nearblocks(st, log) -> int:
+    """Finish NearBlocks' first buyback read in one sitting. Added 2026-09-28.
+
+    Routine runs give NearBlocks 60s, and the read resumes across runs (fetch/nearblocks.py
+    `pending`), so it always finishes eventually; this finishes it now. No budget and no other
+    source, with the heartbeat on. Ctrl-C is safe: every page is saved as it is read. The state
+    file is printed before and after, so the cursor visibly advancing is the evidence.
+
+    Deliberately records NO gaps and NO review items: a one-source run would otherwise replace
+    the Gap Report with 'everything else is missing'.
+    """
+    from fetch import Heartbeat
+    from fetch.logcache import LogCache
+    from fetch.nearblocks import NearBlocks
+    from fetch.validate import validate_frame
+
+    near = [p for p in config.PROJECTS if p.get("near_account_flows") or p.get("nearblocks")]
+
+    def state_line():
+        lines = []
+        for p in near:
+            for flow in p.get("near_account_flows") or []:
+                f = LogCache().root / f"nearblocks-{flow['account']}.json"
+                try:
+                    stt = json.loads(f.read_text())
+                except (OSError, ValueError):
+                    lines.append(f"{flow['account']}: no state yet ({f})")
+                    continue
+                pend = stt.get("pending") or {}
+                lines.append(
+                    f"{flow['account']}: " + (
+                        f"PARTIAL read — cursor {pend.get('cursor')}, {pend.get('rows', 0)} txn(s) "
+                        f"read so far" if pend else
+                        f"complete — {len(stt.get('by_day') or {})} day(s) kept, newest txn "
+                        f"{stt.get('newest_ts')}") + f" ({f})")
+        return "; ".join(lines) or "no NEAR account flows configured"
+
+    run_id = fetch.new_run_id()
+    log.info("--seed nearblocks: BEFORE — %s", state_line())
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        NearBlocks(last_dates=st.last_dates()).run(near, None if st.is_empty() else REFETCH_WINDOW_DAYS, out)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+    log.info("--seed nearblocks: AFTER (%.0fs, %d row(s) stored) — %s",
+             time.monotonic() - t0, written, state_line())
+    return 0
 
 
 def resolve_scope(args, log) -> list[dict]:
@@ -151,6 +209,11 @@ def main(argv=None) -> int:
     load_dotenv(ROOT / ".env")
 
     st = store_mod.Store(store_mod.DB_PATH)
+
+    if args.seed == "nearblocks":
+        rc = seed_nearblocks(st, log)
+        st.close()
+        return rc
 
     # ===== BUILD ONLY. =====
     # Every display rule in this project is READ-TIME — the confidence bands, the withheld
