@@ -78,6 +78,7 @@ OVERRIDES_CSV = ROOT / "manual_overrides.csv"
 PORTFOLIO_TXT = ROOT / config.PORTFOLIO_FILE
 WORKBOOK = ROOT / "token_metrics.xlsx"
 REFETCH_WINDOW_DAYS = 30
+SEED_WINDOW_DAYS = 365     # --seed nearblocks reads a year
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -144,7 +145,8 @@ def seed_nearblocks(st, log) -> int:
     out = fetch.FetchOutput()
     t0 = time.monotonic()
     with Heartbeat():
-        NearBlocks(last_dates=st.last_dates()).run(near, None if st.is_empty() else REFETCH_WINDOW_DAYS, out)
+        # A YEAR, NOT THE ROUTINE 30 DAYS (2026-09-28): the first seed kept 28 days. No page cap.
+        NearBlocks(last_dates=st.last_dates(), page_cap=10_000).run(near, SEED_WINDOW_DAYS, out)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
     written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
@@ -325,9 +327,19 @@ def main(argv=None) -> int:
         log.info("%d source/project pair(s) are KNOWN ABSENT and will not be called: %s",
                  len(absent), ", ".join(f"{s}/{p}" for s, p in sorted(absent)))
 
+    # ===== HISTORY SHORTER THAN THE SOURCE'S: RE-READ A YEAR. 2026-09-28. =====
+    backfill = set()
+    if not first_run:
+        from fetch import backfill as bf
+        backfill, why = bf.plan(projects, st.first_dates())
+        if why:
+            log.info("backfill: %d series shorter than %d days are re-read over the full year "
+                     "this run — %s", len(why), fetch.base.BACKFILL_DAYS, "; ".join(why))
+
     started = time.monotonic()
     out = fetch.fetch_all(
         projects, window,
+        backfill=backfill,
         prior_values=prior_values,
         prior_values_for_delta=prior_values_for_delta,
         prior_dates=prior_dates,
@@ -344,6 +356,8 @@ def main(argv=None) -> int:
 
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
+    if backfill:
+        bf.record(backfill, st.first_dates())
 
     for e in out.log:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)

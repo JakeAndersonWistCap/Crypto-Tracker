@@ -1443,7 +1443,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
               last_dates: dict | None = None,
               manual_keys: set | None = None,
               stored_long=None,
-              sources: list[str] | None = None) -> FetchOutput:
+              sources: list[str] | None = None,
+              backfill: set | None = None) -> FetchOutput:
     """Run every tier in order and return one FetchOutput carrying frames, log, review and gaps.
 
     prior_values  (project, metric) -> last stored value. Feeds the change-threshold check and
@@ -1472,6 +1473,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
            "has_history": has_history or set(),
            "known_absent": known_absent or set(),
            "last_dates": last_dates or {}}
+    # backfill: (project, metric) pairs to re-read over BACKFILL_DAYS (see fetch.base.window).
+    from .base import set_backfill
+    set_backfill(backfill)
     out = FetchOutput()
     todo = [(name, tier, build) for name, tier, build in TIER_ORDER
             if not sources or name in sources]

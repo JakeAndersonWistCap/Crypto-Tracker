@@ -385,9 +385,29 @@ def point(project: str, metric: str, value: float, source: str, tier: int, when=
     return tidy([(when or today(), value)], project, metric, source, tier)
 
 
+# ===== SERIES WHOSE STORED HISTORY IS SHORTER THAN THE SOURCE'S. Added 2026-09-28. =====
+# Only the store's FIRST run asked sources for full history; every later run asks for the trailing
+# 30 days. So a series added later — GEODNET and Aethir fees, a derived burn — started short and
+# only ever grew forward (~38 and ~52 days against a 90-day Q0). token_metrics names the
+# (project, metric) pairs whose first stored date is inside the last BACKFILL_DAYS; window()
+# keeps BACKFILL_DAYS of those instead of the routine window. Every adapter that trims with
+# window() backfills without knowing it. Reset per run by fetch_all.
+BACKFILL_DAYS = 365
+BACKFILL: set = set()
+
+
+def set_backfill(pairs) -> None:
+    BACKFILL.clear()
+    BACKFILL.update(pairs or ())
+
+
 def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:
     if window_days is None or df.empty:
         return df
+    if BACKFILL and {"project", "metric"} <= set(df.columns):
+        key = (df["project"].iloc[0], df["metric"].iloc[0])
+        if key in BACKFILL:
+            window_days = max(window_days, BACKFILL_DAYS)
     return df[df["date"] >= today() - pd.Timedelta(days=window_days)]
 
 

@@ -2102,7 +2102,9 @@ def _a2_headline(R: Refs) -> list[tuple]:
     circ = lambda r, p: _circ(R, r, p)  # noqa: E731
     lock = lambda r: R.D(r, "locked_tokens", "now")  # noqa: E731
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
-    arr = lambda r: f"{R.D(r, 'customer_revenue_usd', 'q0')}*{ANN}"  # noqa: E731
+    # OVER COVERED DAYS (2026-09-28): a young customer-revenue series is not divided as if it
+    # were 90 days old — see _annualise.
+    arr = lambda r, p: _annualise(R, r, p, "customer_revenue_usd", R.D(r, "customer_revenue_usd", "q0"))  # noqa: E731
     emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
     ff = lambda r, p: f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r)})),{circ(r, p)}-{lock(r)},{NA})"  # noqa: E731
 
@@ -2121,7 +2123,7 @@ def _a2_headline(R: Refs) -> list[tuple]:
         ("Free float market cap ($, spot)", cell(lambda r, p: f"({ff(r, p)})*{price(r)}"), FMT_USD, "calc", False,
          {"metric": "locked_tokens", **partial, "partial_fmt": '$#,##0" PARTIAL↑";($#,##0)" PARTIAL↑"'}),
         ("FREE FLOAT ÷ ARR (x) = free float market cap ÷ customer revenue annualised — headline",
-         cell(lambda r, p: f"({ff(r, p)})*{price(r)}/({arr(r)})"), FMT_X, "calc", True,
+         cell(lambda r, p: f"({ff(r, p)})*{price(r)}/({arr(r, p)})"), FMT_X, "calc", True,
          {"metric": "customer_revenue_usd", **partial, "partial_fmt": '0.00"x PARTIAL↑";(0.00"x)" PARTIAL↑"'}),
         ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",
          lambda r, p: _free_float_reason(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r, p)})"), FMT_PCT, "calc", True,
@@ -2165,7 +2167,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
             for k in spec["share_path"]:
                 share = share[k]
             iss, stake = R.D(r, "gross_issuance_tokens", "q0"), R.D(r, "locked_tokens", "now")
-            return calc(f"IF(AND(ISNUMBER({iss}),ISNUMBER({stake})),{iss}*{share}*{ANN}/{stake},{NA})")
+            return calc(f"IF(AND(ISNUMBER({iss}),ISNUMBER({stake})),{_annualise(R, r, p, 'gross_issuance_tokens', iss)}*{share}/{stake},{NA})")
         return "pending — " + spec.get("why", "")[:80]
     return [
         ("VALIDATOR STAKING YIELD (annual) — securing the chain, NOT a protocol revenue share",
@@ -2524,12 +2526,12 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
          lambda r, p: calc(f"{R.D(r, 'gross_issuance_tokens', 'q0')}-{R.D(r, 'gross_burn_tokens', 'q0')}"), FMT_NUM, "calc", True),
         ("Net supply change, annualised % of circulating",
-         lambda r, p: calc(f"({R.D(r, 'gross_issuance_tokens', 'q0')}-{R.D(r, 'gross_burn_tokens', 'q0')})*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
+         lambda r, p: calc(f"({_annualise(R, r, p, 'gross_issuance_tokens', R.D(r, 'gross_issuance_tokens', 'q0'))}-{_annualise(R, r, p, 'gross_burn_tokens', R.D(r, 'gross_burn_tokens', 'q0'))})/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
         ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
          lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}/({R.D(r, 'gross_issuance_tokens', 'q0')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
-        ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
+        ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Buyback % of supply (annualised, implied, split as at this window)",
-         lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, WINDOW_SHARE_COL['q0'])}/{R.D(r, 'price_usd', 'q0')}*{ann}/{R.D(r, 'circulating_supply', 'now')}", R.C(r, WINDOW_SHARE_COL["q0"])),
+         lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{_annualise(R, r, p, 'revenue_usd', R.D(r, 'revenue_usd', 'q0'))}*{R.C(r, WINDOW_SHARE_COL['q0'])}/{R.D(r, 'price_usd', 'q0')}/{R.D(r, 'circulating_supply', 'now')}", R.C(r, WINDOW_SHARE_COL["q0"])),
          FMT_PCT, "calc", False, {"gate_window": "q0"}),
         *_trajectory(R, "fees_usd", "Fees"),
         ("Latest data date (core series)", lambda r, p: max([data_by_key.get(f"{p['name']}|{m}", {}).get("latest_date", "") or "" for m in ("price_usd", "fees_usd", "revenue_usd", "tvl_usd")] or [""]), FMT_TEXT, "text"),
@@ -2596,7 +2598,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Net supply change ($ at avg price)",
          lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{price(r)}"), FMT_USD, "calc"),
         ("Burn as share of fees (measured)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}/{R.D(r, 'fees_usd', 'q0')}"), FMT_PCT, "calc"),
-        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{iss(r)}*{ann}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
+        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), f"{burn(r, p)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
@@ -2669,7 +2671,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}*{ann}/({circ(r, p)})", share(r)))),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{_annualise(R, r, p, config.revenue_base_metric(p['name']), rev(r, p))}*{share(r)}/{price(r)}/({circ(r, p)})", share(r)))),
          FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False,
          {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
@@ -2716,7 +2718,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
                       share(r)))), FMT_NUM, "calc", False,
          {"gate": "fee_split", "base": True, "metric": "gross_burn_tokens"}),
         ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r, p)}"), FMT_X, "calc"),
-        ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}*{ann}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
+        ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         # PER PROJECT, not fixed: Aerodrome shows veAERO.supply() and everyone else shows the
         # escrow's token balance. See config.LOCK_DISPLAY_METRIC for why only Aerodrome differs,
         # and note that a blanket flip here would have blanked this column for the other 26
@@ -2823,7 +2825,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Gross issuance Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
-        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{iss(r)}*{ann}/{circ(r)}"), FMT_PCT, "calc"),
+        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{circ(r)}"), FMT_PCT, "calc"),
         # staked_tokens WAS MERGED INTO locked_tokens (2bc2e5d); these three still looked it up and
         # read #N/A on every row until 2026-09-28.
         ("Staked tokens (locked_tokens)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),

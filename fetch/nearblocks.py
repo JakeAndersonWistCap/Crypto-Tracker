@@ -181,7 +181,10 @@ class NearBlocks:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, http: Http | None = None, last_dates: dict | None = None, **_ignored):
+    def __init__(self, http: Http | None = None, last_dates: dict | None = None,
+                 page_cap: int = FLOW_PAGE_CAP, **_ignored):
+        # page_cap: the seed (token_metrics --seed nearblocks) lifts it to read a year at once.
+        self.page_cap = page_cap
         self.http = http or Http(min_interval=1.0, retries=2, rate_limit_wait=RATE_LIMIT_WAIT)
         self.pacer = _Pacer()
         # (project, metric) -> newest stored date, for the once-a-day skip of the v3 stats.
@@ -348,6 +351,17 @@ class NearBlocks:
         # held separately as `pending` (below), so a partial read never passes for a complete one.
         state_f = LogCache().root / f"nearblocks-{account}.json"
         state = _load_state(state_f, after)
+        # ===== A WIDER WINDOW THAN THE KEPT HISTORY RE-READS FROM THE NEWEST. 2026-09-28. =====
+        # The first seed kept 28 days (the routine 30-day window); a read only ever looks back to
+        # the newest transaction already seen, so the kept history could never grow backwards.
+        # When a read asks from further back than the state reaches (the seed asks for 365 days)
+        # and nothing is pending, the state starts over and the whole window is read once.
+        if (not state.get("pending") and state.get("newest_ts") is not None
+                and str(state.get("after") or after) > after):
+            log.info("%s/%s: WINDOW EXTENDED — kept history starts %s, this read asks from %s; "
+                     "re-reading the window from the newest transaction", name, metric,
+                     state.get("after"), after)
+            state = {"newest_ts": None, "newest_ids": [], "by_day": {}, "after": after}
         newest_ts, seen_ids = state["newest_ts"], set(state["newest_ids"])
         by_day: dict = {pd.Timestamp(d): v for d, v in state["by_day"].items()}
         new_by_day: dict = {}
@@ -369,7 +383,7 @@ class NearBlocks:
             total_rows, excluded_hits = int(pend.get("rows", 0)), int(pend.get("excluded", 0))
             log.info("%s/%s: resuming a partial read at cursor %s (%d txn(s) read so far)",
                      name, metric, cursor, total_rows)
-        for _page in range(FLOW_PAGE_CAP):
+        for _page in range(self.page_cap):
             params = {"action": action, "after_date": after, "before_date": before,
                      "per_page": FLOW_PER_PAGE, "order": "desc"}
             if cursor:
@@ -462,7 +476,7 @@ class NearBlocks:
                                 "rows": total_rows, "excluded": excluded_hits}
             _save_raw(state_f, state)
         else:
-            out.skipped(SOURCE, name, f"{metric}: stopped at the {FLOW_PAGE_CAP}-page cap with "
+            out.skipped(SOURCE, name, f"{metric}: stopped at the {self.page_cap}-page cap with "
                                       f"more data available (cursor still set) — saved as a "
                                       f"partial read; the next run resumes at that cursor.", TIER)
         if not complete:

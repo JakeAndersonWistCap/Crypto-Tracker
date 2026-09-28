@@ -17152,3 +17152,96 @@ def test_a_declared_leg_that_has_not_started_yet_does_not_blank_the_series():
     assert why and "OVERLAP" in why, why
     one = {POLY: ts("2026-09-14", "2026-09-27"), "chain:polygon:burn_other": ts("2026-09-28", "2026-09-30")}
     assert "outside it" in bw.handover_refusal("GEODNET", "gross_burn_tokens", tuple(one), one)
+
+
+def test_a_short_series_is_re_read_over_a_year_and_a_source_that_starts_later_is_remembered(monkeypatch):
+    """A1, 2026-09-28: only the store's first run asked for full history, so GEODNET/Aethir fees
+    (~38/~52 days) and Ethereum's derived burn never reached back 90 days. A pair whose oldest row
+    is younger than a year is re-read over 365 days — with the INPUTS of a derived series — and a
+    source found to have nothing older is not re-asked for a month."""
+    import pandas as pd
+    from fetch import backfill as bf
+    from fetch import base
+    from fetch.base import today, tidy, window
+
+    t = today()
+    geod, eth = config.PROJECT_BY_NAME["GEODNET"], config.PROJECT_BY_NAME["Ethereum"]
+    first = {("GEODNET", "fees_usd"): str((t - pd.Timedelta(days=38)).date()),
+             ("Ethereum", "gross_burn_tokens"): str((t - pd.Timedelta(days=20)).date()),
+             ("Ethereum", "revenue_usd"): str((t - pd.Timedelta(days=400)).date()),
+             ("Ethereum", "price_usd"): str((t - pd.Timedelta(days=400)).date())}
+    pairs, why = bf.plan([geod, eth], first)
+    assert ("GEODNET", "fees_usd") in pairs
+    assert {("Ethereum", "gross_burn_tokens"), ("Ethereum", "revenue_usd"), ("Ethereum", "price_usd")} <= pairs, \
+        "a derived burn can only reach back as far as its inputs are read in the run"
+    assert ("GEODNET", "circulating_supply") not in pairs, "stocks are read 'now', not backfilled"
+    assert any(w.startswith("GEODNET/fees_usd: oldest stored") for w in why)
+
+    days = [(t - pd.Timedelta(days=d), 1.0) for d in range(0, 300)]
+    frame = tidy(days, "GEODNET", "fees_usd", "defillama", 1)
+    base.set_backfill(pairs)
+    assert len(window(frame, 30)) == 300, "a backfilled pair keeps the year"
+    assert len(window(tidy(days, "Uniswap", "fees_usd", "defillama", 1), 30)) == 31
+    base.set_backfill(set())
+    assert len(window(frame, 30)) == 31
+
+    # the source had nothing older: remembered, and not re-asked this month
+    bf.record({("GEODNET", "fees_usd")}, first)
+    pairs2, _ = bf.plan([geod], first)
+    assert ("GEODNET", "fees_usd") not in pairs2
+
+
+def test_coingecko_asks_for_a_year_only_for_a_project_with_short_price_history(monkeypatch):
+    from fetch import base
+    from fetch.coingecko import CoinGecko
+
+    asked = {}
+
+    class H:
+        def get(self, url, params=None, headers=None):
+            if "market_chart" in url:
+                asked[url.split("/coins/")[1].split("/")[0]] = params["days"]
+            return {} if "market_chart" not in url else {"prices": [], "market_caps": [], "total_volumes": []}
+
+    cg = CoinGecko()
+    cg.http = H()
+    monkeypatch.setattr(cg, "_markets", lambda projects: {})
+    base.set_backfill({("GEODNET", "price_usd")})
+    try:
+        cg.run([config.PROJECT_BY_NAME["GEODNET"], config.PROJECT_BY_NAME["Uniswap"]], 30, FetchOutput())
+    finally:
+        base.set_backfill(set())
+    ids = {config.PROJECT_BY_NAME[n]["coingecko_id"]: n for n in ("GEODNET", "Uniswap")}
+    got = {ids[k]: v for k, v in asked.items()}
+    assert got == {"GEODNET": "365", "Uniswap": "30"}, got
+
+
+def test_a_nearblocks_read_that_asks_further_back_than_the_kept_history_re_reads_the_window(tmp_path, caplog, monkeypatch):
+    """The first NEAR seed kept 28 days, and a read only looks back to the newest transaction
+    already seen — so the history could never grow backwards. A wider window starts over."""
+    import json
+    import logging
+    from fetch import nearblocks
+    from fetch.logcache import LogCache
+
+    near = config.PROJECT_BY_NAME["Near"]
+    flow = near["near_account_flows"][0]
+    f = LogCache().root / f"nearblocks-{flow['account']}.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"version": 1, "after": "2026-08-31", "newest_ts": 1, "newest_ids": ["x"],
+                             "by_day": {"2026-09-01": 5.0}}))
+
+    class Stop(Exception):
+        pass
+
+    class H:
+        def get(self, url, params=None, headers=None):
+            raise Stop(params.get("after_date"))
+
+    from fetch import scrape
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-test")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    nb = nearblocks.NearBlocks(http=H(), page_cap=5)
+    with caplog.at_level(logging.INFO, logger="token_metrics.fetch.nearblocks"):
+        nb._account_flow("Near", flow, 365, FetchOutput())
+    assert "WINDOW EXTENDED" in caplog.text

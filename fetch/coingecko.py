@@ -97,10 +97,14 @@ class CoinGecko:
         return found
 
     def run(self, projects: list[dict], window_days, out):
-        days = "365" if window_days is None else str(window_days)
+        from .base import BACKFILL, BACKFILL_DAYS
         markets = self._markets(projects)
         for p in projects:
             cid, name = p.get("coingecko_id"), p["name"]
+            # A project whose price/market history is short asks for the full year (2026-09-28).
+            short = any((name, m) in BACKFILL for m in ("price_usd", "market_cap_usd", "volume_usd"))
+            days = ("365" if window_days is None
+                    else str(BACKFILL_DAYS if short else window_days))
             if not cid:
                 out.unconfigured(SOURCE, name, "no coingecko_id", TIER)
                 continue

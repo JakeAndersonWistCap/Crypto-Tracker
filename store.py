@@ -232,6 +232,12 @@ class Store:
         ).fetchall()
         return {(p, k): float(v) for p, k, v in rows if v is not None}
 
+    def first_dates(self) -> dict[tuple[str, str], str]:
+        """All (project, metric) -> OLDEST stored DATE. For the history-depth backfill."""
+        rows = self.conn.execute(
+            "SELECT project, metric, MIN(date) FROM metrics GROUP BY project, metric").fetchall()
+        return {(p, k): d for p, k, d in rows if d}
+
     def last_dates(self) -> dict[tuple[str, str], str]:
         """All (project, metric) -> most recent stored DATE.
 
