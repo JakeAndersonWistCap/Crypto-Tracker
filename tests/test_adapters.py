@@ -16268,3 +16268,32 @@ def test_no_tab_formula_looks_up_a_metric_that_is_not_defined(tmp_path):
                         if m not in config.METRICS:
                             unknown.setdefault(m, f"{ws.title}!{c.coordinate}")
     assert not unknown, f"formulas look up metrics that are not defined: {unknown}"
+
+
+def test_final_block_timestamps_are_cached_and_recent_ones_are_not():
+    """C, 2026-09-28: Sky's Stage 2 dating read one block per burner event on every run. Final
+    blocks (at least BURN_CONFIRMATIONS deep) are kept across runs; newer ones are read live."""
+    import types
+
+    from fetch import chain as chainmod
+
+    calls = []
+
+    class R(chainmod.ChainReader):
+        def web3(self, chain):
+            def get_block(n):
+                calls.append(n)
+                return {"timestamp": 1_700_000_000 + n}
+            return types.SimpleNamespace(eth=types.SimpleNamespace(get_block=get_block))
+
+    r1 = R()
+    r1.log_safe_block = {"ethereum": 1_000}
+    assert r1.block_timestamp("ethereum", 900) == 1_700_000_900
+    assert r1.block_timestamp("ethereum", 1_010) == 1_700_001_010
+    assert r1.block_timestamp("ethereum", 900) == 1_700_000_900 and calls == [900, 1_010], \
+        "memoised within a run"
+    r2 = R()
+    r2.log_safe_block = {"ethereum": 1_000}
+    r2.block_timestamp("ethereum", 900)
+    r2.block_timestamp("ethereum", 1_010)
+    assert calls == [900, 1_010, 1_010], "the final block comes from disk; the recent one is re-read"

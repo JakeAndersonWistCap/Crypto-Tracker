@@ -26,6 +26,7 @@ plausible number is the dangerous failure:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -465,8 +466,38 @@ class ChainReader:
         return lo
 
     def block_timestamp(self, chain: str, block: int) -> int:
-        """Unix timestamp of one block. One call, used to DATE a single discovered event."""
-        return int(self.web3(chain).eth.get_block(int(block))["timestamp"])
+        """Unix timestamp of one block. One call, used to DATE a single discovered event.
+
+        CACHED (2026-09-28). Sky's Stage 2 dating asked for every burner event's block on every
+        run — a cost that grew with history. A block's timestamp never changes once it is final,
+        so blocks at least BURN_CONFIRMATIONS deep (the same line burn_transfer_events caches
+        events to — self.log_safe_block) are kept in block-timestamps.json beside the log cache;
+        anything newer is memoised for this run only and read live next time.
+        """
+        from .logcache import LogCache
+        key, block = f"{chain}:{int(block)}", int(block)
+        memo = self.__dict__.setdefault("_ts_memo", {})
+        if key in memo:
+            return memo[key]
+        if "_ts_file" not in self.__dict__:
+            self._ts_file = LogCache().root / "block-timestamps.json"
+            try:
+                self._ts_disk = json.loads(self._ts_file.read_text())
+            except (OSError, ValueError):
+                self._ts_disk = {}
+        if key in self._ts_disk:
+            memo[key] = int(self._ts_disk[key])
+            return memo[key]
+        ts = int(self.web3(chain).eth.get_block(block)["timestamp"])
+        memo[key] = ts
+        safe = getattr(self, "log_safe_block", {}).get(chain)
+        if safe is not None and block <= safe:
+            self._ts_disk[key] = ts
+            self._ts_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._ts_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._ts_disk, separators=(",", ":")))
+            tmp.replace(self._ts_file)
+        return ts
 
     # An endpoint that REFUSES eth_getLogs, and what it costs to find out at connect time.
     # publicnode answers eth_blockNumber perfectly and returns 403 to eth_getLogs, so
@@ -697,6 +728,7 @@ class ChainReader:
                                "block": int(entry["blockNumber"])})
         self.log_chunk_used[chain] = used
         safe = head - BURN_CONFIRMATIONS
+        self.__dict__.setdefault("log_safe_block", {})[chain] = safe
         if safe >= start:
             final = cached["events"] + [e for e in events if e["block"] <= safe]
             self.log_cache.save(sid, final, safe, safe)
