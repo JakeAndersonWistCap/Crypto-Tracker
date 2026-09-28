@@ -778,21 +778,73 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     return rows
 
 
-def note_timeouts(gaps: list[dict], timed_out: dict) -> None:
-    """Every gap a timed-out source could have filled says so first. Added 2026-09-28.
+COINGECKO_METRICS = ("price_usd", "market_cap_usd", "volume_usd", "circulating_supply",
+                     "circulating_supply_implied", "total_supply", "max_supply", "fdv_usd")
 
-    timed_out is {source: (tier, budget seconds)} from fetch._dispatch. A gap whose metric is
-    served by that tier gets "TIER TIMED OUT ..." ahead of its own reason — "may simply not have
-    been reached", because a tier holds several sources and this does not know which one serves
-    which project."""
+
+def served_by(source: str, project: dict) -> set[str] | None:
+    """The metrics `source` fetches for `project`, from the config that drives it — or None
+    where this cannot be said (the timeout is then left on the Run Log only, never guessed onto
+    a metric). Added 2026-09-28: 'TIER TIMED OUT — nearblocks' was stamped on Chainlink's and
+    GEODNET's gaps because it matched on the tier NUMBER, and NearBlocks serves neither."""
+    name = project["name"]
+    if source == "nearblocks":
+        m = set((project.get("nearblocks") or {}).get("metrics") or {})
+        m |= {f["metric"] for f in project.get("near_account_flows") or []}
+    elif source == "beaconchain":
+        m = set((project.get("beaconchain") or {}).get("metrics") or {})
+    elif source == "growthepie":
+        m = set((project.get("growthepie") or {}).get("metrics") or {})
+    elif source == "maple_page":
+        m = set((project.get("transparency_page") or {}).get("metrics") or {})
+    elif source == "explorer":
+        m = {sc["metric"] for sc in project.get("log_scans") or []}
+        if "actual_buyback_tokens" in m:
+            m.add("buyback_last_inflow_date")
+    elif source == "coingecko":
+        m = set(COINGECKO_METRICS) if project.get("coingecko_id") else set()
+    elif source == "defillama":
+        m = set()
+        if project.get("defillama_fees_slug"):
+            m |= {"fees_usd", "revenue_usd", "holders_revenue_usd"}
+        if project.get("defillama_protocol"):
+            m |= {"protocol_tvl_usd"}
+        if project.get("defillama_chain"):
+            m |= {"tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd"}
+    elif source == "chain":
+        m = {spec.get("metric_override") or config.KIND_METRIC.get(spec.get("kind"))
+             for spec in (project.get("contracts") or {}).values()} - {None}
+    elif source == "dune":
+        m = set(project.get("dune_queries") or {})
+    elif source == "scrape":
+        from .scrape import load_registry
+        m = {e["metric"] for e in load_registry("sources.yaml")
+             if e.get("project") == name and e.get("enabled") is not False}
+    else:
+        return None
+    # what FOLLOWS from a served metric: a buyback's usd twin, a restated column
+    if "actual_buyback_tokens" in m:
+        m.add("actual_buyback_usd")
+    for tgt, spec in config.metric_restatements(name).items():
+        if spec.get("equals") in m:
+            m.add(tgt)
+    return m
+
+
+def note_timeouts(gaps: list[dict], timed_out: dict, projects: list[dict] | None = None) -> None:
+    """Every gap a timed-out source SERVES says so first. Added 2026-09-28; attribution by
+    served_by() the same day — a gap is annotated only for (project, metric) pairs the timed-out
+    source is configured to fetch."""
     if not timed_out:
         return
-    by_tier: dict[int, list[str]] = {}
-    for name, (tier, budget) in timed_out.items():
-        by_tier.setdefault(tier, []).append(f"{name} (tier {tier}) timed out after {budget:.0f}s")
+    by_name = {p["name"]: p for p in projects or config.PROJECTS}
     for g in gaps:
-        tiers = (config.METRICS.get(g.get("metric")) or {}).get("tiers") or []
-        hit = [msg for t in tiers for msg in by_tier.get(t, [])]
-        if hit and not str(g.get("reason", "")).startswith("TIER TIMED OUT"):
-            g["reason"] = (f"TIER TIMED OUT this run — {'; '.join(hit)} and was abandoned, so "
-                           f"this may simply not have been reached. {g.get('reason', '')}")
+        p = by_name.get(g.get("project"))
+        if p is None or str(g.get("reason", "")).startswith("TIER TIMED OUT"):
+            continue
+        hit = [f"{src} (tier {tier}) timed out after {budget:.0f}s"
+               for src, (tier, budget) in timed_out.items()
+               if g.get("metric") in (served_by(src, p) or set())]
+        if hit:
+            g["reason"] = (f"TIER TIMED OUT this run — {'; '.join(hit)} and was abandoned before "
+                           f"this was read. {g.get('reason', '')}")

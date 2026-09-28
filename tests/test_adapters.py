@@ -15960,10 +15960,12 @@ def test_a_source_that_hangs_is_abandoned_at_its_budget_and_the_rest_merge_in_ti
             out.add(point("Ethereum", "tx_count", 7.0, "fast", 2, pd.Timestamp("2026-09-20")),
                     "fast", "Ethereum", "fast", 2)
 
+    # the hung source is named beaconchain so the timeout can be ATTRIBUTED: it serves Ethereum's
+    # gross_issuance_tokens and staking_yield_pct, and nothing else (served_by, 2026-09-28)
     monkeypatch.setattr(fetch, "TIER_ORDER", [("slow", 1, lambda c: Slow()),
-                                              ("hangs", 1, lambda c: Hangs()),
+                                              ("beaconchain", 1, lambda c: Hangs()),
                                               ("fast", 2, lambda c: Fast())])
-    monkeypatch.setitem(fetch.TIER_BUDGET_S, "hangs", 1.5)
+    monkeypatch.setitem(fetch.TIER_BUDGET_S, "beaconchain", 1.5)
     import time as _t
     t0 = _t.monotonic()
     out = fetch.fetch_all([config.PROJECT_BY_NAME["Ethereum"]], 30)
@@ -15974,11 +15976,13 @@ def test_a_source_that_hangs_is_abandoned_at_its_budget_and_the_rest_merge_in_ti
     tx = df[(df.metric == "tx_count")]
     assert list(tx.source) == ["slow"], \
         "tier 1 'slow' finished LAST but was declared first, so it wins the collision"
-    msg = next(e.message for e in out.log if e.source == "hangs" and e.status == "failed")
+    msg = next(e.message for e in out.log if e.source == "beaconchain" and e.status == "failed")
     assert "TIER TIMED OUT after 2s" in msg or "TIER TIMED OUT after 1s" in msg, msg
-    assert out.timed_out["hangs"][0] == 1
-    assert any(g["reason"].startswith("TIER TIMED OUT this run") for g in out.gaps), \
-        "gaps a tier-1 source could have filled say it timed out"
+    assert out.timed_out["beaconchain"][0] == 1
+    timed = {(g["project"], g["metric"]) for g in out.gaps
+             if g["reason"].startswith("TIER TIMED OUT this run")}
+    assert timed and timed <= {("Ethereum", "gross_issuance_tokens"), ("Ethereum", "staking_yield_pct")}, \
+        f"only what the timed-out source SERVES is attributed to it: {timed}"
 
 
 def test_the_heartbeat_names_the_source_and_host_of_a_long_wait(monkeypatch):
@@ -16596,3 +16600,21 @@ def test_seed_nearblocks_finishes_the_first_read_in_one_run_and_records_no_gaps(
     assert "--seed nearblocks: BEFORE" in text and "no state yet" in text
     assert "--seed nearblocks: AFTER" in text and "complete — 7 day(s) kept" in text
     assert "page 4 at cursor 6" in text and "7 txn(s) read so far" in text
+
+
+def test_a_timeout_is_attributed_only_to_metrics_the_source_serves():
+    """Run 20260928T150426Z: Chainlink/Morpho customer_revenue_usd, GEODNET issuance and buyback,
+    and Pendle's buyback all read 'TIER TIMED OUT — nearblocks'. NearBlocks serves none of them."""
+    from fetch.gaps import note_timeouts, served_by
+
+    near, link = config.PROJECT_BY_NAME["Near"], config.PROJECT_BY_NAME["Chainlink"]
+    assert {"tx_count", "active_addresses", "actual_buyback_tokens"} <= served_by("nearblocks", near)
+    assert served_by("nearblocks", link) == set()
+    assert served_by("hypercore_info", near) is None, "unknown -> never guessed onto a metric"
+    gaps = [{"project": p, "metric": m, "reason": "x"} for p, m in
+            [("Chainlink", "customer_revenue_usd"), ("Morpho", "customer_revenue_usd"),
+             ("GEODNET", "gross_issuance_tokens"), ("GEODNET", "actual_buyback_tokens"),
+             ("Pendle", "actual_buyback_tokens"), ("Near", "tx_count")]]
+    note_timeouts(gaps, {"nearblocks": (1, 60)}, config.PROJECTS)
+    hit = [(g["project"], g["metric"]) for g in gaps if g["reason"].startswith("TIER TIMED OUT")]
+    assert hit == [("Near", "tx_count")], hit
