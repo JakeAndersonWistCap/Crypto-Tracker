@@ -6577,9 +6577,13 @@ def test_world_mobile_decimals_are_read_from_the_contract_never_assumed():
 
     src = pathlib.Path(__file__).resolve().parent.parent / "fetch" / "chain.py"
     text = src.read_text()
-    # scaled() must take its divisor from a live decimals() call, not from a literal.
-    assert "dec_source.functions.decimals().call()" in text, \
+    # scaled() must take its divisor from a live decimals() call, not from a literal. Since
+    # 2026-09-28 the read goes through ChainReader.decimals(), memoised on the reader for ONE run
+    # (so it is still read from the contract on every run — only a repeat within a run is saved).
+    assert "functions.decimals().call()" in text and "self.decimals(chain, decimals_from or address)" in text, \
         "scaled() must read decimals() from the contract"
+    assert '"_read_once"' in text and "lives for one\n    # run" in text, \
+        "the memo must live on the per-run reader, never persist across runs"
     offenders = [m for m in re.findall(r"10 ?\*\* ?(\d+)", text) if m != ""]
     assert not offenders, f"hardcoded power-of-ten scaling in fetch/chain.py: 10**{offenders}"
     for bad in ("1e18", "1e6", "DECIMALS = 18"):
@@ -16171,3 +16175,37 @@ def test_defillama_reuses_the_days_responses_and_runs_its_checks_once_a_day(monk
     dl.http = StubHttp({})
     dl.check_restructure(plume, FetchOutput())
     assert dl.http.calls == [], "a declared-absent listing costs no time in the check either"
+
+
+def test_a_scrape_that_returns_nothing_backs_off_to_weekly_and_robots_is_read_before_chromium(monkeypatch):
+    """C4, 2026-09-28: scrape spent 18s for 0 rows — entries that extract nothing were retried
+    every run, and Chromium launched before robots.txt was read."""
+    from fetch import scrape
+    from fetch.base import FetchOutput, today
+
+    entry = {"project": "Pendle", "metric": "locked_tokens_dashboard", "tier": 3,
+             "url": "https://api-v2.pendle.finance/core/v1/spendle/data", "method": "xhr",
+             "url_contains": "/v1/spendle/data", "json_path": "totalStakedInSpendle"}
+    b = scrape._Backoff()
+    assert b.waiting(entry) == ""
+    b.failed(entry)
+    b.failed(entry)            # same day: not a second consecutive failure
+    assert b.waiting(entry) == ""
+    rec = b._read()[scrape.cache_key(entry)]
+    rec["last_try"] = str((today() - pd.Timedelta(days=1)).date())
+    b._write({scrape.cache_key(entry): rec})
+    b.failed(entry)
+    assert "2 consecutive run-days" in b.waiting(entry) and "weekly" in b.waiting(entry)
+    b.succeeded(entry)
+    assert b.waiting(entry) == ""
+
+    launched = []
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (False, "a Disallow rule"))
+    monkeypatch.setattr(scrape.Scrape, "_browser", lambda self: launched.append(1))
+    monkeypatch.setattr(scrape, "load_registry", lambda path: [dict(entry, enabled=True)])
+    monkeypatch.setattr(scrape, "cache_read", lambda e: None)
+    sc = scrape.Scrape()
+    out = FetchOutput()
+    sc.run([config.PROJECT_BY_NAME["Pendle"]], 30, out)
+    assert launched == [], "no browser for a run whose every live entry robots.txt disallows"
+    assert any("robots.txt disallows" in e.message for e in out.log), [e.message for e in out.log]

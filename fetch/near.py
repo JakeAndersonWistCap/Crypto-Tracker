@@ -36,7 +36,10 @@ class NearNode:
     """Sums validator stake from a NEAR node for any project declaring a near_validators block."""
 
     def __init__(self, prior_values: dict | None = None):
-        self.http = Http(min_interval=0.5)
+        # ONE RETRY PER ENDPOINT (2026-09-28): _call already fails over across every configured
+        # endpoint, so 4 retries each (2+4+8+16s of backoff) spent the source's whole budget on
+        # the first dead node before trying the next.
+        self.http = Http(min_interval=0.5, retries=1)
         self.prior = prior_values or {}
 
     def _call(self, api: dict, body: dict | None = None) -> tuple[object, str]:

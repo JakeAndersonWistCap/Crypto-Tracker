@@ -40,6 +40,7 @@ import urllib.robotparser
 import config
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 from .base import (USER_AGENT, derive_flow_from_cumulative, json_path_get, parse_number, point, today,
@@ -237,6 +238,55 @@ def robots_allows(url: str) -> bool:
     return robots_verdict(url)[0]
 
 
+class _Backoff:
+    """An entry that returned nothing on BACKOFF_AFTER consecutive run-DAYS is tried weekly.
+
+    Kept in scrape-backoff.json beside the log cache (disposable: delete a line to re-check at
+    once). A same-day re-run does not count as another failure, and any success clears the entry.
+    """
+    AFTER, EVERY_DAYS = 2, 7
+
+    def __init__(self):
+        from .logcache import LogCache
+        self.f = LogCache().root / "scrape-backoff.json"
+
+    def _read(self) -> dict:
+        try:
+            return json.loads(self.f.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def _write(self, state: dict) -> None:
+        self.f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, sort_keys=True, indent=1))
+        tmp.replace(self.f)
+
+    def waiting(self, entry: dict) -> str:
+        rec = self._read().get(cache_key(entry))
+        if not rec or rec.get("empties", 0) < self.AFTER:
+            return ""
+        nxt = pd.Timestamp(rec["last_try"]) + pd.Timedelta(days=self.EVERY_DAYS)
+        if today() >= nxt:
+            return ""
+        return (f"returned nothing on {rec['empties']} consecutive run-days (last {rec['last_try']}); "
+                f"re-checked weekly, next on {nxt.date()}")
+
+    def failed(self, entry: dict) -> None:
+        state, k, day = self._read(), cache_key(entry), str(today().date())
+        rec = state.get(k) or {"empties": 0, "last_try": ""}
+        if rec.get("last_try") != day:
+            rec["empties"] = int(rec.get("empties", 0)) + 1
+        rec["last_try"] = day
+        state[k] = rec
+        self._write(state)
+
+    def succeeded(self, entry: dict) -> None:
+        state = self._read()
+        if state.pop(cache_key(entry), None) is not None:
+            self._write(state)
+
+
 def cache_key(entry: dict) -> str:
     raw = f"{entry['project']}|{entry['metric']}|{entry.get('url','')}"
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in raw)[:120]
@@ -393,6 +443,31 @@ class Scrape:
         for e in cached:
             self._emit(e, cache_read(e)["value"], f"{SOURCE}:cache", out, cached=True)
 
+        # ===== ROBOTS AND BACK-OFF BEFORE THE BROWSER. Added 2026-09-28. =====
+        # Chromium was launched before robots.txt was read, so a run whose every live entry was
+        # disallowed still paid for a browser; and an entry that extracted nothing was retried on
+        # every run (18s for 0 rows on 20260928T090446Z). Both are decided here, first.
+        backoff = _Backoff()
+        still = []
+        for e in live:
+            allowed, why = robots_verdict(e["url"])
+            if not allowed:
+                out.fail(SOURCE, e["project"], f"{e['metric']}: robots.txt disallows {e['url']} — {why}", TIER)
+                out.gap(e["project"], e["metric"], reason=f"robots.txt disallows fetching {e['url']} — {why}",
+                        tiers_attempted="3",
+                        suggestion="Use a different published source, or enter the figure via manual_overrides.csv")
+                continue
+            wait = backoff.waiting(e)
+            if wait:
+                out.skipped(SOURCE, e["project"], f"{e['metric']}: {wait}", TIER)
+                out.gap(e["project"], e["metric"], reason=f"page scrape BACKED OFF — {wait}",
+                        tiers_attempted="3",
+                        suggestion=f"Fix the entry in {self.registry_path}, then delete its line from "
+                                   f"{backoff.f} to re-check at once.")
+                continue
+            still.append(e)
+        live = still
+        self._backoff = backoff
         if not live:
             return
 
@@ -458,15 +533,18 @@ class Scrape:
             out.gap(proj, metric, reason=f"page load or extraction failed: {e}", tiers_attempted="3",
                     suggestion=f"Check the url and method in {self.registry_path}")
             page.close()
+            getattr(self, "_backoff", _Backoff()).failed(entry)
             return
         page.close()
 
         if value is None:
+            getattr(self, "_backoff", _Backoff()).failed(entry)
             out.fail(SOURCE, proj, f"{metric}: extraction returned nothing — {detail}", TIER)
             out.gap(proj, metric, reason=f"extraction returned nothing: {detail}", tiers_attempted="3",
                     suggestion=f"Re-check anchor/json_path in {self.registry_path}; the page may have been redesigned")
             return
         cache_write(entry, {"value": value, "detail": detail, "url": url})
+        getattr(self, "_backoff", _Backoff()).succeeded(entry)
         self._emit(entry, value, f"{SOURCE}:{urllib.parse.urlparse(url).netloc}", out, detail=detail)
 
     def _emit(self, entry: dict, value: float, source: str, out, detail: str = "", cached: bool = False):

@@ -392,6 +392,22 @@ class ChainReader:
     def erc20(self, chain: str, address: str):
         return self.web3(chain).eth.contract(address=self.checksum(address), abi=ERC20_ABI)
 
+    # ===== ONE READ PER (chain, contract, call) PER RUN. Added 2026-09-28. =====
+    # symbol(), decimals() and eth_getCode were re-read for every holder of the same token: 105
+    # calls a run against 21 distinct contracts. Memoised on this reader, which lives for one
+    # run, so each is still read LIVE every run — the address self-check is not skipped, only
+    # repeated. A failed read is not memoised.
+    def _once(self, kind: str, chain: str, address: str, read):
+        memo = self.__dict__.setdefault("_read_once", {})
+        key = (kind, chain, str(address).lower())
+        if key not in memo:
+            memo[key] = read()
+        return memo[key]
+
+    def decimals(self, chain: str, address: str) -> int:
+        return int(self._once("decimals", chain, address,
+                              lambda: self.erc20(chain, address).functions.decimals().call()))
+
     def has_code(self, chain: str, address: str) -> bool:
         """Is anything deployed at this address ON THIS CHAIN?
 
@@ -400,12 +416,14 @@ class ChainReader:
         them; eth_getCode does. It also catches an address that is right for one chain and absent
         on another.
         """
-        code = self.web3(chain).eth.get_code(self.checksum(address))
+        code = self._once("code", chain, address,
+                          lambda: self.web3(chain).eth.get_code(self.checksum(address)))
         return bool(code) and code not in (b"", b"0x", "0x")
 
     def symbol_matches(self, chain: str, address: str, expected: str) -> tuple[bool, str]:
         """On-chain self-check. Returns (matches, actual_symbol)."""
-        actual = self.erc20(chain, address).functions.symbol().call()
+        actual = self._once("symbol", chain, address,
+                            lambda: self.erc20(chain, address).functions.symbol().call())
         if isinstance(actual, bytes):
             actual = actual.rstrip(b"\x00").decode("utf-8", "replace")
         return str(actual).strip().lower() == str(expected).strip().lower(), str(actual)
@@ -764,8 +782,7 @@ class ChainReader:
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
         raw = getattr(c.functions, call)(*args).call()
-        dec_source = self.erc20(chain, decimals_from) if decimals_from else c
-        decimals = dec_source.functions.decimals().call()
+        decimals = self.decimals(chain, decimals_from or address)
         # The integer and the divisor, kept for the component log line: a figure off by orders
         # of magnitude (Aethir, 2026-09-24) is settled by these two numbers, not by the quotient.
         self.last_scaled = (int(raw), int(decimals))
@@ -1319,7 +1336,8 @@ class Chain:
             max_blocks=cfg.get("max_blocks_per_run"))
         # DECIMALS FROM THE TOKEN ITSELF, read directly rather than through scaled(): these are
         # raw log data words, not a call return, so nothing has scaled them yet.
-        dec = int(self.reader.erc20(chain, token).functions.decimals().call())
+        dec = (self.reader.decimals(chain, token) if hasattr(self.reader, "decimals")
+               else int(self.reader.erc20(chain, token).functions.decimals().call()))
         # THE CHUNK SIZE REPORTED IS THE ONE THAT WORKED, not the one config asked for. A
         # provider that caps the range makes the adapter narrow, and printing the request would
         # misreport what the scan cost — and hide that the configured size is unusable here.
