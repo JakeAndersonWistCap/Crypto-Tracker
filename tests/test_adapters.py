@@ -16408,3 +16408,50 @@ def test_ether_fi_silence_uses_the_scans_cow_only_date_not_older_stored_rows():
     assert str(r["silence_flag"]).startswith("silent since 2026-04-01"), r["silence_flag"]
     old = config.PROJECT_BY_NAME["Ether.fi"]["buyback_programmes"]["old"]
     assert old["last_purchase"] == "2026-04-01" and "SILENT since 2026-04-01" in old["status"]
+
+
+def test_nearblocks_first_read_resumes_across_runs_instead_of_restarting(monkeypatch):
+    """Run 20260928T142424Z: the first newest-first read of the buyback wallet ran past its 240s
+    budget, nothing persisted, and every run restarted. Each page is now saved as `pending`; the
+    next run resumes at the saved cursor, and nothing is stored until the read completes."""
+    import pytest
+
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput, today
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    E = 10 ** 24
+
+    def tx(day_ago, h, near):
+        ts = int((today() - pd.Timedelta(days=day_ago) + pd.Timedelta(hours=1)).value)
+        return {"predecessor_account_id": "u.near", "block_timestamp": str(ts), "transaction_hash": h,
+                "actions": [{"action": "TRANSFER", "deposit": str(near * E)}]}
+
+    history = [tx(2 + i, f"h{i}", i + 1) for i in range(6)]      # 6 txns, newest first, 2 per page
+
+    class H:
+        def __init__(self, die_after=None):
+            self.calls, self.die_after = [], die_after
+
+        def get(self, url, params=None, headers=None):
+            if "/v1/account/" not in url:
+                return {"data": []}
+            if self.die_after is not None and len(self.calls) >= self.die_after:
+                raise RuntimeError("tier budget ran out")          # the run is abandoned here
+            self.calls.append(params.get("cursor"))
+            start = int(params.get("cursor") or 0)
+            nxt = start + 2 if start + 2 < len(history) else None
+            return {"cursor": nxt and str(nxt), "txns": history[start:start + 2]}
+
+    near = config.PROJECT_BY_NAME["Near"]
+    h1 = H(die_after=2)
+    out1 = FetchOutput()
+    nearblocks.NearBlocks(http=h1).run([near], 35, out1)
+    assert out1.frame().query("metric == 'actual_buyback_tokens'").empty, "nothing stored mid-read"
+    h2 = H()
+    out2 = FetchOutput()
+    nearblocks.NearBlocks(http=h2).run([near], 35, out2)
+    assert h2.calls == ["4"], f"resumes at the saved cursor, one page left: {h2.calls}"
+    got = out2.frame().query("metric == 'actual_buyback_tokens'")
+    assert sorted(got.value) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])

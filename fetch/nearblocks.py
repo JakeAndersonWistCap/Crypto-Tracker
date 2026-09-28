@@ -159,6 +159,13 @@ def _load_state(f, after: str) -> dict:
         return empty
 
 
+def _save_raw(f, state: dict) -> None:
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({**state, "version": 1}))
+    tmp.replace(f)
+
+
 def _save_state(f, after: str, newest_ts, newest_ids, by_day: dict) -> None:
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_suffix(".tmp")
@@ -333,9 +340,9 @@ class NearBlocks:
         # at 2 credits, 6 minutes at the free plan's pace. Now: order=desc, and paging stops at
         # the first transaction already seen (the newest one, persisted with the per-day totals
         # in .cache/logscan/). A routine run makes ONE call. The totals are kept so the window
-        # is re-emitted every run without re-fetching it. State is saved only when the read
-        # reached what was already seen or the end of the range — never after an error or the
-        # page cap — so a partial read cannot pass for a complete one.
+        # is re-emitted every run without re-fetching it. The kept totals only change when a
+        # read reaches what was already seen or the end of the range; until then progress is
+        # held separately as `pending` (below), so a partial read never passes for a complete one.
         state_f = LogCache().root / f"nearblocks-{account}.json"
         state = _load_state(state_f, after)
         newest_ts, seen_ids = state["newest_ts"], set(state["newest_ids"])
@@ -344,6 +351,21 @@ class NearBlocks:
         top_ts, top_ids = newest_ts, set(seen_ids)
         cursor, total_rows, excluded_hits, sample, calls = None, 0, 0, None, 0
         complete = False
+        # ===== A READ THAT OUTLASTS ONE RUN RESUMES. 2026-09-28. =====
+        # Run 20260928T142424Z: the first newest-first read of the window ran past the 240s budget
+        # and, since state was only saved on completion, nothing persisted and every run started
+        # over. Now each page's progress is saved as `pending` — the cursor, the newest
+        # transaction this read began from, the partial per-day totals and a running count — and
+        # the next run carries on from that cursor with the same date bounds. Only a COMPLETE read
+        # folds `pending` into the kept totals.
+        pend = state.get("pending") or None
+        if pend:
+            cursor, after, before = pend["cursor"], pend["after"], pend["before"]
+            top_ts, top_ids = pend["top_ts"], set(pend["top_ids"])
+            new_by_day = {pd.Timestamp(d): v for d, v in pend["by_day"].items()}
+            total_rows, excluded_hits = int(pend.get("rows", 0)), int(pend.get("excluded", 0))
+            log.info("%s/%s: resuming a partial read at cursor %s (%d txn(s) read so far)",
+                     name, metric, cursor, total_rows)
         for _page in range(FLOW_PAGE_CAP):
             params = {"action": action, "after_date": after, "before_date": before,
                      "per_page": FLOW_PER_PAGE, "order": "desc"}
@@ -415,16 +437,24 @@ class NearBlocks:
             if reached_seen or not cursor or not rows:
                 complete = True
                 break
+            state["pending"] = {"cursor": cursor, "after": after, "before": before,
+                                "top_ts": top_ts, "top_ids": sorted(top_ids),
+                                "by_day": {str(d.date()): v for d, v in new_by_day.items()},
+                                "rows": total_rows, "excluded": excluded_hits}
+            _save_raw(state_f, state)
         else:
             out.skipped(SOURCE, name, f"{metric}: stopped at the {FLOW_PAGE_CAP}-page cap with "
-                                      f"more data available (cursor still set) — this run's "
-                                      f"figure covers a partial window and is NOT saved as "
-                                      f"read; the next run starts again.", TIER)
+                                      f"more data available (cursor still set) — saved as a "
+                                      f"partial read; the next run resumes at that cursor.", TIER)
+        if not complete:
+            # the partial read is saved as `pending`; nothing is stored until it completes
+            out.skipped(SOURCE, name, f"{metric}: partial read saved ({total_rows} txn(s) so far, "
+                                      f"cursor {cursor}); the next run resumes there", TIER)
+            return
         for d, v in new_by_day.items():
             by_day[d] = by_day.get(d, 0.0) + v
-        if complete:
-            _save_state(state_f, after if not state["by_day"] and state["newest_ts"] is None
-                        else state["after"], top_ts, top_ids, by_day)
+        _save_state(state_f, after if not state["by_day"] and state["newest_ts"] is None
+                    else state["after"], top_ts, top_ids, by_day)
         log.info("%s/%s: %d call(s), %d new txn(s) (%s)", name, metric, calls, total_rows,
                  "incremental — stopped at the newest already seen" if newest_ts is not None
                  else "first read of the window, newest first")
