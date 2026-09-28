@@ -793,6 +793,16 @@ def _restate_metrics(out: FetchOutput, projects: list[dict]) -> None:
                             f"{metric}: it IS {source_metric}, which produced nothing this run. "
                             f"Not a separate gap: see {source_metric}.", tier=2)
                 continue
+            # from_date: the restatement holds only from when the two columns became one
+            # (Pendle: holders revenue became buyback $ with the April 2026 overhaul).
+            since = spec.get("from_date")
+            if since:
+                rows = rows[pd.to_datetime(rows["date"]) >= pd.Timestamp(since)]
+                if rows.empty:
+                    out.skipped(SOURCE_DERIVED, name,
+                                f"{metric}: it IS {source_metric} only from {since}, and this "
+                                f"run's {source_metric} has nothing on or after that.", tier=2)
+                    continue
             copy = rows.copy()
             copy["metric"] = metric
             copy["source"] = f"{SOURCE_DERIVED}:={source_metric}"

@@ -1052,6 +1052,19 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # does not move, so nothing is minted — the derivation is switched off because a
             # derived 0 would read as "no emissions" when emissions are real and are DISTRIBUTION
             # from pre-minted wallets. RED there says "wrong number"; there is no number.
+            # A BUYBACK COLUMN ON A PROJECT THAT BUYS NOTHING READS n/a, WHATEVER IS STORED.
+            # Ethereum, 2026-09-28: 1,389.76 ETH of stored :as-buyback rows (the EIP-1559 burn
+            # re-labelled) kept rendering after the route became "none", because the store never
+            # deletes. orphan_cleanup.sql section AO lists them for review.
+            if metric in config.BUYBACK_METRICS and config.buyback_route(name)["route"] == "none":
+                row["status"] = "n/a"
+                row["note"] = (f"{config.buyback_route(name)['reason']} {len(g)} stored row(s) "
+                               f"predate this and are not shown — orphan_cleanup.sql section AO.")
+                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                    row[col] = None
+                row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
+                rows.append(row)
+                continue
             supp = config.derivation_suppressed(name, metric) or {}
             if supp.get("renders_as") == "n/a":
                 row["status"] = "n/a"

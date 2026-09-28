@@ -11845,6 +11845,34 @@ PROJECTS = [
         #
         # Undeclared rather than guessed, because "we tested and could not tell" and "nobody has
         # looked" must not render identically.
+        # ===== actual_buyback_usd = holders_revenue_usd. Wired 2026-09-28 (Jake). =====
+        # Run 20260928T090446Z: both A3 retirement rates n/a — no buyback wallet is published, so
+        # there is no inflow to scan (see actual_buyback_tokens_blocked above). The sPENDLE docs
+        # (fee_split.source_url) say 80% of V2 yield and swap fees buys PENDLE for active sPENDLE
+        # holders, and DefiLlama's holders revenue for Pendle is that 80%. So the $ spent on the
+        # buyback IS the holders' revenue: a restatement, labelled as one.
+        # ** from_date 2026-05-01. ** Before the April 2026 overhaul the holders' share was paid
+        # to vePENDLE in the fee assets, not spent on PENDLE, so older holders revenue is not a
+        # buyback. The docs name the month, not the day; 2026-05-01 is the first date certainly
+        # after it, and April is left out rather than guessed at.
+        "metric_restatement": {
+            "actual_buyback_usd": {
+                "equals": "holders_revenue_usd",
+                "from_date": "2026-05-01",
+                "why": "the sPENDLE docs: 80% of Pendle V2 yield and swap fees is allocated to "
+                       "PENDLE buybacks for active sPENDLE holders; DefiLlama's holders revenue "
+                       "for Pendle is that allocation. No purchase is observed on-chain (no "
+                       "buyback contract is published), so this is the $ ALLOCATED to the buy.",
+                "label": "Actual buyback $ — THE SAME SERIES AS holders_revenue_usd (DefiLlama): "
+                         "the 80% of V2 yield and swap fees that buys PENDLE for active sPENDLE "
+                         "holders, per the sPENDLE docs. $ ALLOCATED, not purchases observed — "
+                         "buying runs biweekly, so timing and execution price are not measured. "
+                         "From 2026-05-01 only (post April 2026 overhaul).",
+                "source_url": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/"
+                              "Mechanisms/sPENDLE",
+                "recorded_on": "2026-09-28",
+            },
+        },
         # A3: repurchased tokens are DISTRIBUTED, so nothing accumulates to have a balance.
         "not_applicable": {
             "buyback_fund_balance":
@@ -13978,6 +14006,18 @@ BUYBACK_METRICS = ("actual_buyback_tokens", "actual_buyback_usd")
 # as an explicit override rather than edited into buyback_destination, because that field also
 # describes what happens to the FEES and "distribute" is the right word for Aerodrome's fees.
 BUYBACK_ROUTE_OVERRIDE = {
+    # ===== ETHEREUM: THE EIP-1559 BURN IS NOT A BUYBACK. Declared 2026-09-28 (Jake). =====
+    # Run 20260928T090446Z showed actual_buyback_tokens = 1,389.76 ETH from
+    # derived:defillama_burned_fee_revenue/price:as-buyback — the "burn" buyback_destination sent
+    # the base-fee burn through _derive_buyback's burn route, which re-labels a burn as the
+    # purchase that funded it. Nothing funds this one: the protocol destroys the base fee users
+    # pay, and no ETH is bought by anyone. The burn stays on A4 (gross_burn_tokens); the buyback
+    # columns are n/a. NEAR's 70% gas burn is NOT relabelled the same way: NEAR's route is
+    # treasury_inflow (near_account_flows into buybacks.multisignature.near), never "burn".
+    "Ethereum": ("none",
+                 "NOTHING IS BOUGHT. EIP-1559 destroys the base fee users pay, by protocol rule — a "
+                 "burn with no purchase behind it, so it is not a buyback. The burn is on A4 "
+                 "(gross_burn_tokens); actual_buyback_* are n/a."),
     "Aerodrome": ("none",
                   "NO AERO IS BOUGHT AT ALL. 100% of trading fees go to the veAERO voters who "
                   "voted for each pool, paid in the PAIR'S OWN TOKENS and never converted to "

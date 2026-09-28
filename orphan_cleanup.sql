@@ -3035,3 +3035,37 @@ SELECT run_id, substr(ts, 1, 10) AS run_date,
  WHERE project = 'Ether.fi' AND message LIKE '%buyback_wallet_inflow%RECONCILED%'
  ORDER BY ts DESC
  LIMIT 3;
+
+-- ========================================================================================
+-- AO. Ethereum — actual_buyback_* rows re-labelled from the EIP-1559 burn.          2026-09-28
+--     AO1-AO2 LOOK. AO3 is the proposed DELETE, commented out.
+-- ========================================================================================
+-- Run 20260928T090446Z showed actual_buyback_tokens = 1,389.76 ETH, source
+-- derived:defillama_burned_fee_revenue/price:as-buyback: the base-fee burn re-labelled as a
+-- buyback because buyback_destination read "burn". Nothing is bought — the route is now "none"
+-- (config.BUYBACK_ROUTE_OVERRIDE) and the sheet renders n/a whatever is stored. These rows are
+-- the leftovers. gross_burn_tokens is NOT touched: the burn stays on A4.
+-- Expected: token rows all carrying ":as-buyback", usd twins all "derived:tokens*price".
+
+-- AO1. THE SOURCE CENSUS.
+SELECT metric, source, COUNT(*) AS n, MIN(date) AS first_date, MAX(date) AS last_date,
+       SUM(value) AS total
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric IN ('actual_buyback_tokens', 'actual_buyback_usd')
+ GROUP BY metric, source
+ ORDER BY metric, first_date;
+
+-- AO2. THE ROWS AO3 WOULD DELETE.
+SELECT date, metric, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Ethereum'
+   AND metric IN ('actual_buyback_tokens', 'actual_buyback_usd')
+ ORDER BY date, metric;
+
+-- AO3. THE PROPOSED DELETE. Only after AO1-AO2 read as expected (every Ethereum buyback row is
+--      a re-labelled burn or its usd twin; there is no other source for a figure that cannot
+--      exist).
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric IN ('actual_buyback_tokens', 'actual_buyback_usd');
+-- COMMIT;

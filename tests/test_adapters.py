@@ -15658,3 +15658,64 @@ def test_sky_burn_scan_is_incremental_and_caches_only_final_blocks():
     r3 = R()
     r3.burn_transfer_events("ethereum", token, "0x" + "0" * 40, 20_663_000)
     assert r3.asked[0] == 20_663_000
+
+
+def test_ethereum_base_fee_burn_is_not_a_buyback_and_near_gas_burn_is_not_relabelled():
+    """Run 20260928T090446Z: Ethereum actual_buyback_tokens = 1,389.76 via
+    derived:defillama_burned_fee_revenue/price:as-buyback. EIP-1559 buys nothing; the burn stays
+    on A4, the buyback columns are n/a — including over rows already stored."""
+    import build_workbook as bw
+    from fetch import _derive_buyback
+    from fetch.base import FetchOutput, point
+
+    assert config.buyback_route("Ethereum")["route"] == "none"
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    assert "actual_buyback_tokens" not in config.metrics_for_project(eth)
+    assert "gross_burn_tokens" in config.metrics_for_project(eth), "the burn stays on A4"
+    out = FetchOutput()
+    out.add(point("Ethereum", "gross_burn_tokens", 50.0,
+                  "derived:defillama_burned_fee_revenue/price", 1, pd.Timestamp("2026-09-20")),
+            "derived", "Ethereum", "burn", 1)
+    _derive_buyback(out, [eth])
+    assert out.frame().query("metric == 'actual_buyback_tokens'").empty, "no re-label"
+
+    rows = [{"date": d, "project": "Ethereum", "metric": m, "value": v, "source": src, "tier": 2,
+             "is_manual": False, "entered_on": ""}
+            for d in pd.date_range("2026-09-01", "2026-09-27")
+            for m, v, src in [("actual_buyback_tokens", 50.0,
+                               "derived:defillama_burned_fee_revenue/price:as-buyback"),
+                              ("actual_buyback_usd", 2e5, "derived:tokens*price"),
+                              ("gross_burn_tokens", 50.0, "derived:defillama_burned_fee_revenue/price")]]
+    agg = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-28"),
+                       gaps=pd.DataFrame(), review=pd.DataFrame()).query("project == 'Ethereum'")
+    by = agg.set_index("metric")
+    for m in ("actual_buyback_tokens", "actual_buyback_usd"):
+        assert by.loc[m, "status"] == "n/a" and "NOTHING IS BOUGHT" in by.loc[m, "note"], m
+        assert "section AO" in by.loc[m, "note"]
+    assert by.loc["gross_burn_tokens", "status"] == "ok" and by.loc["gross_burn_tokens", "q0"] == 1350.0
+    assert "-- AO3." in open("orphan_cleanup.sql").read()
+
+    # NEAR: the gas burn is not the buyback — the route is the buyback wallet's inflow
+    assert config.buyback_route("Near")["route"] == "treasury_inflow"
+    assert config.relabelled_from("Near", "actual_buyback_tokens") is None
+
+
+def test_pendle_buyback_usd_is_holders_revenue_restated_from_the_spendle_overhaul():
+    """Pendle's retirement rates were n/a: no buyback wallet is published. The sPENDLE docs put
+    80% of V2 yield and swap fees into PENDLE buybacks for active sPENDLE holders — the holders
+    revenue. Restated, labelled as such, and only from 2026-05-01 (post April 2026 overhaul)."""
+    from fetch import _restate_metrics
+    from fetch.base import FetchOutput
+
+    out = FetchOutput()
+    out.frames = [pd.DataFrame([{"date": pd.Timestamp(d), "project": "Pendle",
+                                 "metric": "holders_revenue_usd", "value": v,
+                                 "source": "defillama", "tier": 1}
+                                for d, v in [("2026-04-20", 9.0), ("2026-05-01", 10.0),
+                                             ("2026-09-20", 20_000.0)]])]
+    _restate_metrics(out, [config.PROJECT_BY_NAME["Pendle"]])
+    got = out.frame().query("metric == 'actual_buyback_usd'").sort_values("date")
+    assert list(got.value) == [10.0, 20_000.0], "nothing before the overhaul is a buyback"
+    assert set(got.source) == {"derived:=holders_revenue_usd"}
+    label = config.metric_label("Pendle", "actual_buyback_usd")
+    assert "THE SAME SERIES AS holders_revenue_usd" in label and "ALLOCATED" in label
