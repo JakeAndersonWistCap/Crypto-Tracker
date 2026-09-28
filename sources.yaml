@@ -907,6 +907,24 @@
   added: 2026-09-11
   note: "FIRST RUN CHECK: not reachable from the build environment, so unconfirmed live. Expect ~35.4M, the same as locked_tokens (PENDLE.balanceOf(sPENDLE)). ~30.2M instead (35.4M / 1.1731) means the field is sPENDLE SHARES; a figure in the 1e25 range means wei (sanity_max rejects it). totalPendleStaked is the wider figure and is NOT this metric. Cross-check only: the tier 2 read stays primary."
 
+- project: Pendle
+  metric: locked_tokens_virtual
+  tier: 3
+  enabled: true
+  # Added 2026-09-28 (Jake): the virtual sPENDLE balance legacy vePENDLE holders received, which
+  # shares in distributions and so belongs in the protocol-yield denominator. Same documented
+  # endpoint as locked_tokens_dashboard above (Pendle API docs, ApiOverview.mdx @ 9b9509e).
+  url: https://api-v2.pendle.finance/core/v1/spendle/data
+  method: xhr
+  url_contains: /v1/spendle/data
+  json_path: virtualSpendleFromVependle
+  needs_first_run_check: true
+  sanity_min: 0
+  sanity_max: 1000000000
+  change_threshold_pct: 25
+  added: 2026-09-28
+  note: "FIRST RUN CHECK: unconfirmed live. A figure in the 1e25 range means wei (sanity_max rejects it). Used only as a denominator input to Pendle's protocol yield; never summed into locked_tokens."
+
 - project: Sky
   metric: locked_tokens_dashboard
   tier: 3

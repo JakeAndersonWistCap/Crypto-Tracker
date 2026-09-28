@@ -840,6 +840,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _relabel_views(groups)
+    _restatement_views(groups)
     _VIEW_BLOCKS.clear()
     _issuance_views(groups, asof)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
@@ -2075,6 +2076,46 @@ def _a1_headline(R: Refs) -> list[tuple]:
     ]
 
 
+def _virtual_missing(name: str, data_by_key: dict) -> str | None:
+    """Why the protocol yield reads high: a declared lock_add that has no stored value yet."""
+    add = (config.PROTOCOL_YIELD.get(name) or {}).get("lock_add")
+    if not add:
+        return None
+    now = (data_by_key.get(f"{name}|{add}") or {}).get("now")
+    if isinstance(now, (int, float)) and now == now:
+        return None
+    return (f"{add} is not read yet, so the denominator is real staked alone — rewards are shared "
+            f"over real + virtual balances")
+
+
+def _restatement_views(groups: dict) -> None:
+    """A column that IS another column, rebuilt from it at READ TIME. Added 2026-09-28.
+
+    fetch._restate_metrics writes the copy when a run fetches the source column, so a --no-fetch
+    rebuild — or a run where the copy was added after the source was stored — showed nothing:
+    Pendle's holders_revenue_usd was stored (Q0 $1,373,516) and actual_buyback_usd was blank.
+    Built here from whatever the source column holds, honouring from_date. A column with any row
+    from another source is a measurement and is left alone.
+    """
+    for p in scoped_projects():
+        name = p["name"]
+        for metric, spec in config.metric_restatements(name).items():
+            src = groups.get((name, spec["equals"]))
+            if src is None or src.empty:
+                continue
+            restated = f"derived:={spec['equals']}"
+            held = groups.get((name, metric))
+            if held is not None and not held.empty and (held["source"].astype(str) != restated).any():
+                continue
+            view = src.copy()
+            if spec.get("from_date"):
+                view = view[view["date"] >= pd.Timestamp(spec["from_date"])]
+            if view.empty:
+                continue
+            view["metric"], view["source"] = metric, restated
+            groups[(name, metric)] = view
+
+
 def _protocol_yield(R: Refs, data_by_key: dict | None = None):
     """A3 supporting column: revenue share paid to a protocol's stakers — kept apart from the
     validator yield by name and by tab, so it can never be summed into archetype-1 Total Yield."""
@@ -2083,6 +2124,11 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
         if spec:
             rev, lock = R.D(r, spec["revenue"], "q0"), R.D(r, spec["lock"], "now")
             px = R.D(r, "price_usd", "now")
+            # lock_add (Pendle's virtual sPENDLE, 2026-09-28): joins the denominator when read;
+            # until then the real lock alone is used and the cell is marked READS HIGH.
+            if spec.get("lock_add"):
+                add = R.D(r, spec["lock_add"], "now")
+                lock = f"({lock}+IF(ISNUMBER({add}),{add},0))"
             return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({lock}),ISNUMBER({px})),{_annualise(R, r, p, spec['revenue'], rev)}/({lock}*{px}),{NA})")
         why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
         return f"n/a — {why}" if why else ""
@@ -2090,6 +2136,7 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
             build, FMT_PCT, "calc", False,
             {"metric": "holders_revenue_usd",
              "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
+                                      or _virtual_missing(p["name"], data_by_key or {})
                                       if p["name"] in config.PROTOCOL_YIELD else None),
              "partial_direction": "the locked value is incomplete, so the yield READS HIGH.",
              "partial_fmt": '0.0%" PARTIAL↑";(0.0%)" PARTIAL↑"',

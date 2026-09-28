@@ -211,7 +211,11 @@ class MapleTransparency:
                         tiers_attempted="3", suggestion="Re-check BUYBACK_RE.")
                 continue
             rows = [(month_end(r.month), float(getattr(r, v["field"]))) for r in done.itertuples()]
-            frame = window(tidy(sorted(rows), name, metric, SOURCE, TIER), window_days)
+            # EVERY VISIBLE MONTH, NOT THE RUN'S WINDOW (2026-09-28). A 30-day window over rows
+            # dated to month-end kept only August: the store held one month ($147,098) of the five
+            # the page renders, and Q0 missed June and July. Each row is Maple's own published
+            # figure for a closed month, so re-writing it is an idempotent upsert.
+            frame = tidy(sorted(rows), name, metric, SOURCE, TIER)
             out.add(frame, SOURCE, name,
                     f"{metric} = Token Buybacks `{v['field']}`, monthly, "
                     f"{min(rows)[0].date()}..{max(rows)[0].date()} dated to month-end; {limit}", TIER)

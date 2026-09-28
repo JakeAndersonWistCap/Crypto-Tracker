@@ -16064,3 +16064,62 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
     gaps = detect([near], out2.frame(), out2.current, {}, [])
     assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
         "a daily aggregate skipped because yesterday is stored is not a gap"
+
+
+def test_maple_stores_every_visible_monthly_buyback_on_a_routine_run(monkeypatch, tmp_path):
+    """Jake, 2026-09-28: the store held only Aug 2026 ($147,098) — a 30-day window over rows dated
+    to month-end kept one of the five the page renders. Every visible month is stored now."""
+    from fetch import maple_transparency as mt
+    from fetch import scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setattr(scrape, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    months = [("Aug 2026", 147_098.00, 0.2175), ("Jul 2026", 136_768.00, 0.2400),
+              ("Jun 2026", 375_000.00, 0.2500), ("Nov 2025", 50_000.00, 0.2000),
+              ("Sep 2025", 40_000.00, 0.1600)]
+    cells = "".join(f"<tr><td>{m}</td><td>${u:,.2f}</td><td>{u / p:,.2f}</td><td>${p:.4f}</td></tr>"
+                    for m, u, p in months)
+    html = (f"<div>SYRUP Holdings</div><div>79.21M</div><p>Showing 1-5 of 13</p>"
+            f"<table>{cells}</table>")
+    out = FetchOutput()
+    mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], 30, out)
+    usd = out.frame().query("metric == 'actual_buyback_usd'").sort_values("date")
+    assert [str(d.date()) for d in usd.date] == ["2025-09-30", "2025-11-30", "2026-06-30",
+                                                 "2026-07-31", "2026-08-31"], usd
+    assert usd.value.iloc[-3:].sum() == 658_866.00
+
+
+def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plus_virtual():
+    """Jake's --no-fetch rebuild: holders_revenue_usd stored (Q0 $1,373,516), actual_buyback_usd
+    blank — the restatement only happened at fetch time. Now a read-time view, from 2026-05-01.
+    And the protocol yield's denominator is real + virtual sPENDLE once the virtual is read."""
+    import build_workbook as bw
+
+    asof = pd.Timestamp("2026-09-28")
+    rows = [{"date": d, "project": "Pendle", "metric": "holders_revenue_usd", "value": 10_000.0,
+             "source": "defillama", "tier": 1, "is_manual": False, "entered_on": ""}
+            for d in pd.date_range("2026-04-20", "2026-09-27")]
+    out = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof, gaps=pd.DataFrame(),
+                       review=pd.DataFrame()).set_index(["project", "metric"])
+    r = out.loc[("Pendle", "actual_buyback_usd")]
+    assert r["status"] not in bw.WITHHELD_STATUSES and r["status"] != "missing", r["status"]
+    assert r["q0"] == 10_000.0 * 89 and r["source"] == "derived:=holders_revenue_usd"
+    assert r["y1"] == 10_000.0 * len(pd.date_range("2026-05-01", "2026-09-27")), \
+        "nothing before the April 2026 overhaul is a buyback"
+
+    R = bw.Refs(100, 10, ["2026-09"])
+    label, fn, *_rest = bw._protocol_yield(R, {})
+    cell = fn(5, config.PROJECT_BY_NAME["Pendle"])
+    assert '"|locked_tokens_virtual"' in cell and '"|locked_tokens"' in cell
+    meta = _rest[-1]
+    assert "real staked alone" in meta["partial_fn"](config.PROJECT_BY_NAME["Pendle"])
+    assert config.PROTOCOL_YIELD["Pendle"]["lock_add"] == "locked_tokens_virtual"
+
+
+def test_geodnet_locked_tokens_has_a_manual_quarterly_path_and_no_value_is_entered():
+    assert config.is_manual_quarterly("GEODNET", "locked_tokens")
+    import csv
+    live = [r for r in csv.reader(l for l in open("manual_overrides.csv") if not l.startswith("#"))
+            if r and r[:3] and r[1:3] == ["GEODNET", "locked_tokens"]]
+    assert live == [], "the figure is Jake's to enter"

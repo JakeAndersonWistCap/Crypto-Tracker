@@ -473,6 +473,13 @@ METRICS = {
     # >100M press figures likely combine (see OPEN_QUESTIONS' Pendle entry, answered 2026-09-24:
     # the >100M is the hub's sPENDLE + vePENDLE sum, or the virtual boost balance — neither is
     # PENDLE locked in sPENDLE alone).
+    # ===== THE VIRTUAL sPENDLE BALANCE, A DENOMINATOR INPUT, NEVER A LOCK. 2026-09-28. =====
+    # Pendle's sPENDLE docs: the reward snapshot INCLUDES virtual sPENDLE balances, which legacy
+    # vePENDLE holders received (up to 4x boost, decaying to 1x). Rewards are pro-rata over real +
+    # virtual, so a yield over real staked alone overstates a real staker's return. Read from
+    # GET https://api-v2.pendle.finance/core/v1/spendle/data `virtualSpendleFromVependle`
+    # (Pendle API docs, ApiOverview.mdx @ 9b9509e). Units unconfirmed live — sanity_max rejects wei.
+    "locked_tokens_virtual": {"label": "Virtual sPENDLE from legacy vePENDLE (boost balance) — a reward-share denominator, NOT PENDLE locked", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ["Pendle"]},
     "locked_tokens_legacy_vependle": {"label": "PENDLE remaining in the deprecated, unmigrated vePENDLE contract — NEVER summed into locked_tokens", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ["Pendle"]},
     # DERIVED, not fetched: assets divided by shares. For a compounding stake this is the accrued
     # rate — how much of the underlying one share currently claims — and its DIRECTION is the
@@ -5023,6 +5030,12 @@ PROJECTS = [
                     "outflow history.",
         },
         "name": "GEODNET", "symbol": "GEOD",
+        # ===== locked_tokens BY HAND, QUARTERLY. Added 2026-09-28 (Jake). =====
+        # SuperHex staked GEOD is reported down to ~3M (vs ~462M circulating), and no contract
+        # reads it (see locked_tokens_blocked). A manual_overrides.csv row — dated, with its source
+        # in source_note — unblocks free float, free float/ARR and the trajectory. Nothing is
+        # entered here: the figure is Jake's to enter, and is reviewed quarterly like the others.
+        "manual_quarterly": ["locked_tokens"],
         # ===== locked_tokens — A BOOTSTRAPPING MECHANISM WINDING DOWN, NOT MISSING DATA. =====
         # DECIDED BY JAKE 2026-09-24: left as a gap, and the reason is the mechanism, not the
         # search. SuperHex staking exists to fill COVERAGE GAPS: the Foundation designates a gap
@@ -14207,7 +14220,10 @@ def issuance_primary(project_name: str) -> dict | None:
 # locked_tokens_underlying.
 PROTOCOL_YIELD = {
     "Sky": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
-    "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
+    # lock_add: rewards are pro-rata over REAL + VIRTUAL sPENDLE (see locked_tokens_virtual), so
+    # the virtual balance joins the denominator. Until it is read the cell is marked READS HIGH.
+    "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens",
+               "lock_add": "locked_tokens_virtual"},
     "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying",
                  # ** THE YIELD ASSUMES BUYBACKS REACH sETHFI HOLDERS. ** True of the old
                  # programme (100% to sETHFI holders), UNCONFIRMED for the new one — see
