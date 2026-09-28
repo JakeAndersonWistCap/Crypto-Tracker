@@ -77,7 +77,10 @@ class LogScan:
     """Runs every project's `log_scans`, each against one token and one or more holders."""
 
     def __init__(self, explorer: ExplorerLogs | None = None, reader=None,
-                 cache: LogCache | None = None):
+                 cache: LogCache | None = None, unbounded: bool = False):
+        # unbounded: no per-scan budget — `token_metrics.py --seed geodnet` (2026-09-28) finishes
+        # a first read in one sitting instead of 120s a run.
+        self.unbounded = unbounded
         self.explorer = explorer or ExplorerLogs()
         self.cache = cache or LogCache()
         if reader is None:
@@ -159,7 +162,7 @@ class LogScan:
         streams, fetched_new = [], 0     # (sid, cached state, new events, holder, direction)
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
-        if budget:
+        if budget and not self.unbounded:
             budget(config.EXPLORER_SCAN_BUDGET_S)
         try:
             for h in holders:

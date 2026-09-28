@@ -3120,3 +3120,35 @@ SELECT date, value, source, fetched_at
 --  WHERE project = 'Hyperliquid' AND metric = 'gross_issuance_tokens'
 --    AND source = 'derived:d_supply_gross';
 -- COMMIT;
+
+-- ========================================================================================
+-- AR. Maple treasury_holding_tokens_reported — metric retired  2026-09-28
+--     Its only input was the manual_overrides.csv row (77,660,000, dated 2026-09-14), removed
+--     the same day: robots.txt allows /transparency and the page is scraped live as the primary
+--     treasury_holding_tokens (79,210,000). Review first; nothing is deleted by this file.
+-- ========================================================================================
+-- AR1. FETCHED ROWS under the retired name. Expect none — manual figures live in
+--      manual_overrides (AR2), not here; any row here was written by the old disabled scrape.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Maple' AND metric = 'treasury_holding_tokens_reported'
+ ORDER BY date;
+
+-- AR2. THE LOADED OVERRIDE. The next run reloads manual_overrides from the CSV (the loader
+--      replaces the table), so this should come back empty after one run.
+SELECT date, project, metric, value, entered_on
+  FROM manual_overrides
+ WHERE project = 'Maple' AND metric = 'treasury_holding_tokens_reported';
+
+-- AR3. THE LIVE PRIMARY, for comparison: the page figure under treasury_holding_tokens.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Maple' AND metric = 'treasury_holding_tokens'
+ ORDER BY date DESC
+ LIMIT 5;
+
+-- AR4. THE PROPOSED DELETE, for any rows AR1 found. AR2 clears itself on the next run.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Maple' AND metric = 'treasury_holding_tokens_reported';
+-- COMMIT;

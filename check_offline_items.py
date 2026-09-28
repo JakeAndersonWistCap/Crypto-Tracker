@@ -840,6 +840,101 @@ def solana():
     print("  Solana's BURN is unchanged — getInflationRate answers issuance only.")
 
 
+GEODNET_SOL_BURN_ACCOUNT = "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED"
+GEODNET_SOL_MINT = "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu"
+SOL_INCINERATOR = "1nc1nerator11111111111111111111111111111111"
+SOL_SYSTEM_PROGRAM = "11111111111111111111111111111111"
+
+
+def geod_solana_burn_account():
+    """Is 5SBf...GnED a GEOD BURN SINK, before anything sums it into burn_address_balance?
+
+    Added 2026-09-28. Config lists it (from Dune 8683175) as GEODNET's Solana burn destination,
+    and GIP-7 proposes Solana as GEODNET's primary chain — if burns moved there, the Polygon
+    zeros would look like quiet days. Three questions, all from the public RPC, no key:
+      1. is it a token account for GEOD's Solana mint 7JA5...mKHu?
+      2. who controls it? A sink is owned by the incinerator (or an authority nobody can sign
+         for); an ordinary wallet owner (System Program) can spend it, which is a treasury or a
+         bridge, not a burn.
+      3. does its balance ever FALL? Recent transactions' pre/post balances for this account:
+         a sink only ever rises.
+    """
+    head("GEODNET — the Solana burn token account: mint, controller, and whether it ever spends")
+    url = "https://api.mainnet-beta.solana.com"
+    try:
+        j = rpc(url, "getAccountInfo", [GEODNET_SOL_BURN_ACCOUNT, {"encoding": "jsonParsed"}])
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    val = (j.get("result") or {}).get("value")
+    if not val:
+        print(f"  NO ACCOUNT at {GEODNET_SOL_BURN_ACCOUNT} — closed or never existed. Do not wire it.")
+        return
+    parsed = (val.get("data") or {}).get("parsed") or {}
+    info = parsed.get("info") or {}
+    amt = info.get("tokenAmount") or {}
+    owner = info.get("owner")
+    print(f"  program        {val.get('owner')}  (type {parsed.get('type')})")
+    print(f"  mint           {info.get('mint')}  "
+          f"{'= GEOD Solana mint' if info.get('mint') == GEODNET_SOL_MINT else '** NOT GEOD MINT ' + GEODNET_SOL_MINT + ' **'}")
+    print(f"  balance        {amt.get('uiAmountString')} GEOD (decimals {amt.get('decimals')})")
+    print(f"  state          {info.get('state')}  closeAuthority {info.get('closeAuthority')}  "
+          f"delegate {info.get('delegate')}")
+    print(f"  owner          {owner}")
+    if owner == SOL_INCINERATOR:
+        print("                 = the Solana INCINERATOR: nobody can sign for it — a burn sink.")
+    elif owner:
+        o, failed = None, False
+        try:
+            o = (rpc(url, "getAccountInfo", [owner, {"encoding": "jsonParsed"}]).get("result") or {}).get("value")
+        except Exception as e:  # noqa: BLE001
+            failed = True
+            print(f"                 owner lookup failed — {e}")
+        if failed:
+            pass
+        elif o is None:
+            print("                 owner has no account data (an unfunded key, or a PDA with no state)")
+        else:
+            prog = o.get("owner")
+            print(f"                 owner account program {prog}  executable {o.get('executable')}")
+            if prog == SOL_SYSTEM_PROGRAM:
+                print("                 ** an ORDINARY WALLET owns it: whoever holds that key can spend "
+                      "these tokens. Not a sink unless GEODNET documents the key as destroyed. **")
+    try:
+        sigs = rpc(url, "getSignaturesForAddress", [GEODNET_SOL_BURN_ACCOUNT, {"limit": 15}]).get("result") or []
+    except Exception as e:  # noqa: BLE001
+        print(f"  signatures: UNREACHABLE — {e}")
+        return
+    print(f"\n  last {len(sigs)} transaction(s) touching the account — balance before -> after:")
+    falls = 0
+    for sg in sigs:
+        when = time.strftime("%Y-%m-%d", time.gmtime(sg["blockTime"])) if sg.get("blockTime") else "?"
+        try:
+            tx = rpc(url, "getTransaction", [sg["signature"], {"encoding": "jsonParsed",
+                                                               "maxSupportedTransactionVersion": 0}]).get("result") or {}
+        except Exception as e:  # noqa: BLE001
+            print(f"    {when} {sg['signature'][:12]}...  unreadable — {e}")
+            continue
+        keys = [k.get("pubkey") if isinstance(k, dict) else k
+                for k in ((tx.get("transaction") or {}).get("message") or {}).get("accountKeys") or []]
+        meta = tx.get("meta") or {}
+        def bal(lst):
+            for b in lst or []:
+                if b.get("accountIndex") is not None and b["accountIndex"] < len(keys) \
+                        and keys[b["accountIndex"]] == GEODNET_SOL_BURN_ACCOUNT:
+                    return float((b.get("uiTokenAmount") or {}).get("uiAmount") or 0)
+            return None
+        pre, post = bal(meta.get("preTokenBalances")), bal(meta.get("postTokenBalances"))
+        move = "" if pre is None or post is None else ("  ** FELL **" if post < pre else "")
+        falls += bool(move)
+        print(f"    {when} {sg['signature'][:12]}...  {pre} -> {post}{move}")
+    print(f"\n  VERDICT INPUTS: mint {'OK' if info.get('mint') == GEODNET_SOL_MINT else 'WRONG'}; "
+          f"owner {'incinerator' if owner == SOL_INCINERATOR else owner}; "
+          f"{falls} fall(s) in the transactions shown.")
+    print("  PASTE BACK the whole block. It is summed into burn_address_balance only if the mint")
+    print("  matches, nobody can spend from it, and the balance never falls.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2210,7 +2305,7 @@ CHECKS = (
     uniswap_firepit_threshold, beaconchain, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
-    maple_transparency, sky_burn_breakdown,
+    maple_transparency, sky_burn_breakdown, geod_solana_burn_account,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

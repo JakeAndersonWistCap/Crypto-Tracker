@@ -1199,8 +1199,12 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
         # burn/issuance ratio as a denominator, and carries a confidence band it has not earned.
         supp = p.get("issuance_derivation") or {}
         if supp.get("suppressed"):
+            # ANSWERED where config records the decision (GEODNET, 2026-09-28): the row is kept,
+            # at P5, as the record of why this column will never fill.
+            done = supp.get("answered")
             out.gap(name, "gross_issuance_tokens",
-                    reason=("the supply-delta derivation is SUPPRESSED for this project: "
+                    reason=((f"ANSWERED, NOT OPEN — {done} " if done else "")
+                            + "the supply-delta derivation is SUPPRESSED for this project: "
                             + supp.get("why", "no reason recorded in config.")),
                     tiers_attempted="1, 2",
                     suggestion=supp.get("resolves_when", "see this project's config entry."))

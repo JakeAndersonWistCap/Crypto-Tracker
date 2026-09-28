@@ -95,7 +95,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
-    ap.add_argument("--seed", choices=["nearblocks"],
+    ap.add_argument("--seed", choices=["nearblocks", "geodnet"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook.")
@@ -155,6 +155,58 @@ def seed_nearblocks(st, log) -> int:
     return 0
 
 
+def seed_geodnet(st, log) -> int:
+    """Finish GEODNET's explorer log scans (the mining-wallet outflow) in one sitting. 2026-09-28.
+
+    Run 20260928T165724Z: the explorer tier was 142s of a 148s fetch, all of it GEODNET's first
+    read (48% of the chain cached) resuming at 120s a run. This runs only those scans, with no
+    per-scan budget and the heartbeat on. Ctrl-C loses nothing already cached: progress is saved
+    per stream (fetch/logcache.py). Once seeded, a routine run reads only new blocks.
+
+    Records NO gaps and NO review items, for the same reason as --seed nearblocks. The streams'
+    scanned_to / proven_to are printed before and after: proven_to reaching scanned_to means the
+    whole history reconciled to balanceOf and the series was stored.
+    """
+    from fetch import Heartbeat
+    from fetch.logcache import LogCache, stream_id
+    from fetch.logscan import TRANSFER_TOPIC, LogScan, pad_address
+    from fetch.validate import validate_frame
+
+    geod = [p for p in config.PROJECTS if p["name"] == "GEODNET" and p.get("log_scans")]
+
+    def state_line():
+        lines, cache = [], LogCache()
+        for p in geod:
+            for spec in p["log_scans"]:
+                chain_id = config.CHAIN_IDS.get(spec["chain"])
+                for h in spec["holders"]:
+                    for way, topics in (("in", [TRANSFER_TOPIC, None, pad_address(h.lower())]),
+                                        ("out", [TRANSFER_TOPIC, pad_address(h.lower()), None])):
+                        stt = cache.load(stream_id(chain_id, spec["token"], topics))
+                        lines.append(f"{spec['key']} {h[:10]} {way}: " + (
+                            "no cache yet" if stt["scanned_to"] is None else
+                            f"scanned to {stt['scanned_to']:,}, proven to "
+                            f"{stt['proven_to'] if stt['proven_to'] is None else format(stt['proven_to'], ',')}, "
+                            f"{len(stt['events']):,} event(s)"))
+        return "; ".join(lines) or "GEODNET has no log_scans configured"
+
+    run_id = fetch.new_run_id()
+    log.info("--seed geodnet: BEFORE — %s", state_line())
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        LogScan(unbounded=True).run(geod, None if st.is_empty() else REFETCH_WINDOW_DAYS, out)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed geodnet: %s %s — %s", e.status, e.project, e.message)
+    log.info("--seed geodnet: AFTER (%.0fs, %d row(s) stored) — %s",
+             time.monotonic() - t0, written, state_line())
+    return 0
+
+
 def resolve_scope(args, log) -> list[dict]:
     """Which projects this run fetches. REFUSES on a name it does not recognise.
 
@@ -210,8 +262,8 @@ def main(argv=None) -> int:
 
     st = store_mod.Store(store_mod.DB_PATH)
 
-    if args.seed == "nearblocks":
-        rc = seed_nearblocks(st, log)
+    if args.seed:
+        rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet}[args.seed](st, log)
         st.close()
         return rc
 

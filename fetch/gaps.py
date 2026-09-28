@@ -180,7 +180,8 @@ def _format_blocked(blocked: dict) -> tuple[str, str]:
     """A project's `{metric}_blocked` record as (reason, suggestion). One formatter, two callers."""
     # A human can mark a blocked record ANSWERED: the route is known to be unreachable, not
     # waiting on anything this tool could do. It then ranks P5 and leaves the open count.
-    prefix = "ANSWERED, NOT OPEN — " if blocked.get("answered") else ""
+    done = blocked.get("answered")
+    prefix = ("ANSWERED, NOT OPEN — " + (f"{done} " if isinstance(done, str) else "")) if done else ""
     return (f"{prefix}{blocked.get('status', 'blocked')} — WANTED: {blocked.get('wanted')}. "
             f"{blocked.get('why_not_defillama') or blocked.get('why') or ''} "
             f"(established from {blocked.get('source_url')}, read "
@@ -239,7 +240,11 @@ def _buyback_gap_reason(project: dict, metric: str, scrape_entries: dict) -> tup
         # ** NEVER START A REASON WITH "=". ** It opened with "= gross_burn_tokens" until
         # 2026-09-24, and a spreadsheet stores such text as a formula: the reason rendered
         # empty on GEODNET and Sky, the only two burn/split routes.
-        return (f"SAME EVENT AS {burn_metric} — the bought tokens are the burned tokens, one event under two "
+        # A WHOLE-BURN ROUTE IS ANSWERED HERE (2026-09-28, GEODNET's P3): the open work, if
+        # any, is on the burn row, and listing it twice counts one fact as two to-do items. A
+        # split route stays open — its distributed leg has nothing to read.
+        answered = "ANSWERED, NOT OPEN — " if kind == "burn" else ""
+        return (f"{answered}SAME EVENT AS {burn_metric} — the bought tokens are the burned tokens, one event under two "
                 f"names, so this row fills from that one and never has its own source.{share_note} "
                 f"That row's reason: {inner_reason}",
                 f"Resolve {burn_metric}; this row re-labels from it. ({inner_suggestion})")
@@ -277,6 +282,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"measurement, and {src} produced nothing this run. {restated.get('why', '')}",
                 f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
                 f"Log for the {src} fetch{via}.")
+
+    # ===== A BUYBACK TOKEN COUNT DERIVED FROM THE $ AND THE PRICE. Added 2026-09-28. =====
+    if metric == "actual_buyback_tokens" and config.buyback_tokens_from_usd(name):
+        return ("DERIVED: actual_buyback_usd / same-day price_usd (config.buyback_tokens_from_usd), "
+                "and one of the two produced nothing for a day this run",
+                "Resolve actual_buyback_usd (a restatement of holders_revenue_usd) or price_usd; "
+                "this row fills from them with no source of its own.")
 
     # ===== THE LAST-INFLOW DATE IS A BY-PRODUCT OF THE BUYBACK SCAN. Added 2026-09-28. =====
     # It has no source of its own: fetch/logscan.py writes it beside actual_buyback_tokens from
@@ -646,6 +658,10 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         for tgt, spec in config.metric_restatements(p["name"]).items():
             if (p["name"], spec.get("equals")) in have:
                 have.add((p["name"], tgt))
+        # And a buyback token count derived from that usd and the price (Pendle, 2026-09-28).
+        if (config.buyback_tokens_from_usd(p["name"]) and (p["name"], "actual_buyback_usd") in have
+                and (p["name"], "price_usd") in have):
+            have.add((p["name"], "actual_buyback_tokens"))
     # A gap raised by an earlier tier is superseded when a later tier resolved the same metric.
     # The Gap Report lists what could not be resolved AT ALL, so an unverified contract address
     # for a figure the protocol's own dashboard already supplied does not belong on the to-do list.
@@ -846,6 +862,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
     for tgt, spec in config.metric_restatements(name).items():
         if spec.get("equals") in m:
             m.add(tgt)
+    if config.buyback_tokens_from_usd(name) and "actual_buyback_usd" in m:
+        m.add("actual_buyback_tokens")
     return m
 
 

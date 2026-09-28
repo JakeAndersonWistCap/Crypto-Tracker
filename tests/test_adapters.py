@@ -5013,19 +5013,11 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
     from fetch.base import parse_number
     from fetch.scrape import entry_ready
 
+    # THE ENTRY IS RETIRED (2026-09-28): robots.txt allows the page and fetch/maple_transparency.py
+    # reads it live as the primary. What this test still guards is the parse and the floor.
     entries = yaml.safe_load(open("sources.yaml", encoding="utf-8"))
-    entry = next(e for e in entries
-                 if e["project"] == "Maple" and e["metric"] == "treasury_holding_tokens_reported")
-
-    # DISABLED, and for a reason that is not "unfinished". The url and the anchor are RIGHT; we
-    # are simply not permitted to fetch them. Both are kept so re-enabling is a one-word change
-    # if Maple ever changes robots.txt.
-    assert entry["enabled"] is False, "robots.txt disallows this path — it must not be armed"
-    ready, why = entry_ready(entry)
-    assert not ready and "disabled" in why.lower(), why
-    assert entry["anchor"] == "SYRUP Holdings", f"anchor must be kept, got {entry['anchor']!r}"
-    assert entry["url"] == "https://maple.finance/transparency"
-    assert "robots.txt" in entry["note"], "the note must say WHY it is disabled"
+    assert not [e for e in entries if e["metric"] == "treasury_holding_tokens_reported"]
+    entry = {}
 
     # NO scale FIELD. parse_number already expands the suffix; a scale would multiply again.
     assert "scale" not in entry or entry.get("scale") in (None, 1), \
@@ -5035,7 +5027,7 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
 
     # THE FLOOR, read from where validate_frame actually reads it. The registry's own
     # sanity_min/sanity_max are not consulted by anything, so asserting those would prove nothing.
-    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens_reported")
+    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")
     unscaled = parse_number("77.66")          # what a dropped suffix, or a typo, would yield
     assert unscaled == 77.66
     assert lo is not None and unscaled < lo, \
@@ -5185,16 +5177,14 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
     # AND THE OTHER HALF OF THE SAME DISTINCTION, which is what the Maple entry now demonstrates:
     # a DISABLED entry must not read as an absent one either. "We are not allowed to fetch this"
     # and "nobody has written this yet" send a reader to completely different places.
-    why_maple = registry[("Maple", "treasury_holding_tokens_reported")]
-    assert isinstance(why_maple, str) and "disabled" in why_maple.lower(), why_maple
-    assert "maple.finance/transparency" in why_maple, \
-        f"a deliberately disabled entry must still name the page it is about: {why_maple}"
+    # The disabled Maple entry this used to check was RETIRED 2026-09-28 with its metric (the
+    # page is read live by fetch/maple_transparency.py); Chainlink's parked entry above is the
+    # disabled case now.
+    assert ("Maple", "treasury_holding_tokens_reported") not in registry
 
     # MAPLE-SPECIFIC: the waiting mechanism keys off a DISPUTED destination, and Maple's treasury
-    # contract is verified_by_label, not disputed — so it cannot apply here either way. Asked on
-    # treasury_holding_tokens_reported, the manual figure, because the cross-check metric it used
-    # to be asked on was retired 2026-09-22.
-    assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_reported") is None, \
+    # contract is verified_by_label, not disputed — so it cannot apply here either way.
+    assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens") is None, \
         "nothing is waiting on a disputed primary here — the treasury contract is not disputed"
 
     # (2) status must distinguish armed-and-idle from unbuilt — exercised on Chainlink, whose
@@ -5220,7 +5210,7 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
         other = out[(out.project == "Chainlink") & (out.metric == "locked_tokens_dashboard")].iloc[0]
         assert other["status"] != "waiting", \
             f"only a secondary blocked BY CONFIG waits; everything else is an honest gap: {other['status']}"
-        assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens_reported") is None, \
+        assert config.cross_check_waiting_on_primary("Maple", "treasury_holding_tokens") is None, \
             "Maple's primary is not contract-based, so its secondary is never 'waiting'"
         print("waiting state ok: armed entry named with its url and selector, status 'waiting' not "
               "'gap' on Chainlink, and Maple correctly never waits post-flip")
@@ -7209,28 +7199,24 @@ def test_a_partial_reason_comes_from_the_contract_not_the_projects_supply_note()
     print("partial reason ok: contract's own text wins over the project's")
 
 
-def test_maples_published_figure_is_carried_by_hand_and_not_over_the_chain_read():
-    """Manual entry is where the sourcing priority TERMINATES for a robots-disallowed page, and
-    it is a valid answer. What it must not do is overwrite the automated figure — the two are
-    different quantities by a factor of three, and that gap is the thing worth seeing."""
+def test_maples_hand_entered_treasury_figure_is_retired_for_the_live_page():
+    """2026-09-28 (Jake): the manual 77,660,000 was entered BECAUSE robots.txt was thought to
+    disallow /transparency. It allows it, and the page is scraped live as the primary
+    treasury_holding_tokens. The CSV row and the treasury_holding_tokens_reported metric are gone;
+    the 1,000,000 floor that guarded the hand-typed figure guards the live one."""
     import csv
     rows = [r for r in csv.DictReader(
         l for l in open("manual_overrides.csv") if not l.startswith("#"))]
-    maple = [r for r in rows if r["project"] == "Maple"]
-    assert len(maple) == 1, maple
-    row = maple[0]
-    assert row["metric"] == "treasury_holding_tokens_reported", \
-        "the manual figure must NOT be entered over treasury_holding_tokens"
-    assert float(row["value"]) == 77_660_000.0
-    # Dated to when the page was read, not to the run that noticed the refusal.
-    assert row["date"] == "2026-09-14" and row["entered_on"] == "2026-09-21", row
-
-    # The floor applies to the hand-entered figure too: a dropped suffix lands at 77.66, which is
-    # small, precise and plausible — the exact shape of the 0.51 SYRUP that started all this.
-    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens_reported")[:2]
-    assert lo <= float(row["value"]) <= hi
-    assert not (lo <= 77.66 <= hi), "the floor must still reject a suffix-dropped 77.66"
-    print(f"manual figure ok: {float(row['value']):,.0f} under its own metric, floor {lo:,.0f}")
+    assert not [r for r in rows if r["project"] == "Maple"], "no Maple manual row remains"
+    assert "treasury_holding_tokens_reported" not in config.METRICS
+    maple = config.PROJECT_BY_NAME["Maple"]
+    assert "treasury_holding_tokens_reported" not in (maple.get("manual_quarterly") or [])
+    assert "treasury_holding_tokens_reported" not in (maple.get("sanity") or {})
+    lo, hi = config.sanity_bounds("Maple", "treasury_holding_tokens")[:2]
+    assert lo <= 79_210_000.0 <= hi and not (lo <= 77.66 <= hi)
+    sql = open("orphan_cleanup.sql").read()
+    i = sql.index("-- AR. Maple treasury_holding_tokens_reported")
+    assert "SELECT" in sql[i:] and "\n-- DELETE FROM metrics" in sql[i:], "SELECT first, DELETE commented"
 
 
 def test_no_enabled_scrape_targets_the_robots_disallowed_maple_page():
@@ -13020,11 +13006,13 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
         assert ru.startswith("FOLLOWS actual_buyback_tokens") and addr in ru, ru
     assert "HELD" in reason("Maple", "actual_buyback_tokens")[0]
 
-    # 1c — no readable destination, with THAT reason.
+    # 1c — Pendle's tokens are DERIVED from the $ allocated (2026-09-28), so its reason names
+    # the two inputs; World Mobile's unpublished treasury is an ACCEPTED LIMIT, still with the why.
     r, _ = reason("Pendle", "actual_buyback_tokens")
-    assert "sPENDLE" in r and "no buyback contract" in r and "no contract of kind" not in r, r
+    assert r.startswith("DERIVED: actual_buyback_usd / same-day price_usd") and "no contract of kind" not in r, r
     r, _ = reason("World Mobile", "actual_buyback_tokens")
-    assert "never been published" in r and "explorer label" in r, r
+    assert r.startswith("ANSWERED, NOT OPEN — ACCEPTED LIMIT") and "never been published" in r \
+        and "explorer label" in r, r
     # RESOLVED 2026-09-24: NearBlocks' v1 account-txns endpoint reads the inflow directly, so
     # this no longer gaps as "wallet known, inflow not readable" — the route names the real read.
     r, sug = reason("Near", "actual_buyback_tokens")
@@ -13044,7 +13032,8 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     assert r.startswith("SAME EVENT AS sky_stage2_burn_tokens") and "5% supply-reduction leg ONLY" in r, r
     assert "That row's reason:" in r and "Resolve sky_stage2_burn_tokens" in sug
     r, _ = reason("GEODNET", "actual_buyback_tokens")
-    assert r.startswith("SAME EVENT AS gross_burn_tokens"), r
+    # a WHOLE-burn route is answered (2026-09-28); Sky's split route above stays open
+    assert r.startswith("ANSWERED, NOT OPEN — SAME EVENT AS gross_burn_tokens"), r
     ru, _ = reason("GEODNET", "actual_buyback_usd")
     assert ru.startswith("FOLLOWS actual_buyback_tokens") and "SAME EVENT AS gross_burn_tokens" in ru, ru
     # GEODNET's usd column is ALSO sourced from the same Dune query as tokens, not a separate one.
@@ -15104,16 +15093,22 @@ def test_sky_five_way_split_footnotes_and_closure_states():
     notes = config.burn_footnotes("Sky")
     assert len(notes) == 2 and notes[0].startswith("Emissions offset, 426,292,860.23")
     assert "not netted" in notes[0]
-    # THE RECORDED RESULT (2026-09-24 probe): one residual sender — so NOT "closed 2025", and
-    # its amount is said to be unknown rather than assumed small.
+    # THE RECORDED RESULT (probe read 2026-09-28): one residual sender, a CONTRACT that burned
+    # 0.000000 SKY in three calls — PRACTICALLY closed, never titled "closed 2025".
     assert "closed 2025" not in notes[1], notes[1]
-    assert ("effectively dormant since the 2025-06-26 spell (block 22,817,692, executable from "
-            "2025-06-30); 1 residual sender confirmed active as of 2026-09-24 "
-            "(0xe751bf33164b8786c71d59c48f668d22408e142d, 3 burn(s), amount not yet pulled)") in notes[1], notes[1]
+    assert notes[1].startswith(
+        "SKY<->MKR migration flows — practically closed — no SKY burned outside the Pause Proxy "
+        "since block 22,817,692; one contract made three zero-value burn calls on 2026-01-16. "), notes[1]
     assert "REVERSIBLE" in notes[1] and "4,769,188,384.88" in notes[1]
+    chk = sky["burn_footnotes"][1]["closure_check"]
+    assert chk["detail"]["kind"] == "CONTRACT" and chk["detail"]["blocks"] == [24_246_077, 24_246_146, 24_246_170]
     saved = copy.deepcopy(sky["burn_footnotes"])
     try:
         chk = sky["burn_footnotes"][1]["closure_check"]
+        chk["detail"]["amount_sky"] = None
+        assert ("1 residual sender confirmed active as of 2026-09-28 "
+                "(0xe751bf33164b8786c71d59c48f668d22408e142d, 3 burn(s), amount not yet pulled)"
+                ) in config.burn_footnotes("Sky")[1], "an unread amount is never called practically closed"
         chk["detail"]["amount_sky"] = 1234.5
         assert "3 burn(s), 1,234.50 SKY)" in config.burn_footnotes("Sky")[1]
         chk.update(result=0, checked_on="2026-09-25")
@@ -16740,3 +16735,258 @@ def test_a_restated_column_is_not_a_gap_when_its_source_is_covered():
     gaps = detect([morpho], pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"]),
                   {("Morpho", "fees_usd")}, {}, stub)
     assert not [g for g in gaps if g["metric"] == "customer_revenue_usd"], gaps
+
+
+def test_pendle_buyback_tokens_are_the_allocated_usd_over_the_same_day_price():
+    """2026-09-28 (Jake): Pendle's actual_buyback_tokens = actual_buyback_usd (holders revenue,
+    from 2026-05-01) / price_usd on the SAME date. A day with no same-day price is absent, never
+    valued at another day's price; April is outside the restatement and stays out."""
+    import build_workbook as bw
+    from fetch import gaps as gp
+
+    def row(m, d, v, src):
+        return {"date": pd.Timestamp(d), "project": "Pendle", "metric": m, "value": v,
+                "source": src, "tier": 1, "fetched_at": "2026-09-28T00:00:00", "is_manual": 0,
+                "entered_on": None, "source_note": None}
+    long = pd.DataFrame(
+        [row("holders_revenue_usd", d, v, "defillama:fees") for d, v in
+         (("2026-04-30", 900.0), ("2026-05-01", 1000.0), ("2026-05-02", 2000.0), ("2026-05-03", 3000.0))]
+        + [row("price_usd", d, v, "coingecko") for d, v in
+           (("2026-04-30", 4.0), ("2026-05-01", 4.0), ("2026-05-03", 5.0), ("2026-05-04", 6.0))])
+    groups = {k: g for k, g in long.groupby(["project", "metric"])}
+    bw._restatement_views(groups)
+    bw._buyback_tokens_from_usd_views(groups)
+    tok = groups[("Pendle", "actual_buyback_tokens")].sort_values("date")
+    assert tok["date"].dt.strftime("%Y-%m-%d").tolist() == ["2026-05-01", "2026-05-03"], \
+        "05-02 has no same-day price and stays absent; 04-30 predates the buyback"
+    assert tok["value"].tolist() == [250.0, 600.0]
+    assert set(tok["source"]) == {"derived:usd/price"}
+    assert "DERIVED" in config.metric_label("Pendle", "actual_buyback_tokens")
+
+    frame = long[["project", "metric", "value", "date"]]
+    rows = gp.detect([config.PROJECT_BY_NAME["Pendle"]], frame, set(), {}, [])
+    assert not [r for r in rows if r["metric"] in ("actual_buyback_tokens", "actual_buyback_usd")]
+    rows = gp.detect([config.PROJECT_BY_NAME["Pendle"]], frame[frame.metric != "price_usd"], set(), {}, [])
+    r = next(r for r in rows if r["metric"] == "actual_buyback_tokens")
+    assert r["reason"].startswith("DERIVED: actual_buyback_usd / same-day price_usd"), r["reason"]
+
+
+def test_a_changed_scrape_entry_is_released_from_backoff_and_every_skip_is_named(monkeypatch, caplog):
+    """Run 20260928T165724Z: Pendle's spendle/data entries moved xhr -> json with the SAME url, so
+    they inherited the xhr failures and were skipped for a week, untried and unnamed. A changed
+    method, URL or json_path now resets the record; a record from before signatures resets too;
+    and a skip logs the entry and its next check date."""
+    import logging
+    from fetch import scrape
+    from fetch.base import FetchOutput, today
+
+    xhr = {"project": "Pendle", "metric": "locked_tokens_virtual", "tier": 3,
+           "url": "https://api-v2.pendle.finance/core/v1/spendle/data", "method": "xhr",
+           "url_contains": "/v1/spendle/data", "json_path": "virtualSpendleFromVependle"}
+    b = scrape._Backoff()
+    yesterday = str((today() - pd.Timedelta(days=1)).date())
+    # the state as the xhr failures left it: no signature on file
+    b._write({scrape.cache_key(xhr): {"empties": 2, "last_try": yesterday}})
+    assert b.waiting(xhr) == "", "a record with no signature predates this fix and is released"
+
+    b._write({scrape.cache_key(xhr): {"empties": 2, "last_try": yesterday,
+                                      "sig": b.signature(xhr)}})
+    assert "next on" in b.waiting(xhr), "the SAME entry stays backed off"
+    moved = dict(xhr, method="json")
+    assert b.waiting(moved) == "", "method changed: tried at once"
+    assert b.waiting(dict(xhr, url=xhr["url"] + "?v=2")) == "", "URL changed: tried at once"
+    b.failed(moved)
+    assert b._read()[scrape.cache_key(moved)]["empties"] == 1, "the count starts again"
+
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "allowed"))
+    monkeypatch.setattr(scrape, "load_registry", lambda path: [dict(xhr, enabled=True)])
+    monkeypatch.setattr(scrape, "cache_read", lambda e: None)
+    b._write({scrape.cache_key(xhr): {"empties": 2, "last_try": yesterday, "sig": b.signature(xhr)}})
+    with caplog.at_level(logging.INFO, logger="token_metrics.fetch.scrape"):
+        scrape.Scrape().run([config.PROJECT_BY_NAME["Pendle"]], 30, FetchOutput())
+    line = next(r.getMessage() for r in caplog.records if "SKIPPED by back-off" in r.getMessage())
+    assert "Pendle/locked_tokens_virtual" in line and "next on" in line, line
+
+
+def test_the_zero_detector_does_not_run_on_a_declared_na_metric():
+    """Sky's gross_burn_tokens and other_burn_tokens are answered by the five-way split and read
+    n/a, yet a zero in either raised a P2 "cannot say why ... (no address on file)" every run.
+    General: a declared-n/a flow, or one differenced from a declared-n/a stock, is not flagged."""
+    from fetch.base import FetchOutput
+    for flow, stock in (("gross_burn_tokens", "burn_address_balance"),
+                        ("other_burn_tokens", "other_burn_balance")):
+        assert config.declared_na("Sky", flow), flow
+        out = FetchOutput()
+        Chain()._flag_unattributable_zero(config.PROJECT_BY_NAME["Sky"], flow, stock, "2026-09-28", out)
+        assert not out.gaps and not out.review, (flow, out.gaps)
+    # a not_applicable declaration counts the same way (Hyperliquid's issuance)
+    assert config.declared_na("Hyperliquid", "gross_issuance_tokens").startswith("PRE-MINTED")
+    # and a metric nobody declared n/a still raises its row
+    assert config.declared_na("Sky", "sky_stage2_burn_tokens") is None
+    out = FetchOutput()
+    Chain()._flag_unattributable_zero(config.PROJECT_BY_NAME["Uniswap"], "gross_burn_tokens",
+                                       "burn_address_balance", "2026-09-28", out)
+    assert any("is ZERO" in g["metric"] for g in out.gaps)
+
+
+def test_seed_geodnet_runs_only_geodnets_scans_with_no_budget(monkeypatch, tmp_path, caplog):
+    """--seed geodnet (2026-09-28): the explorer tier was 142s of a 148s fetch, all of it
+    GEODNET's first read at 120s a run. The seed runs only GEODNET's log_scans with the per-scan
+    budget OFF, prints every stream's cache state before and after, and records no gaps."""
+    import logging
+
+    import store as store_mod
+    import token_metrics
+    from fetch import logscan
+
+    class Explorer:
+        budgets = []
+
+        def start_budget(self, s):
+            Explorer.budgets.append(s)
+
+        def clear_budget(self):
+            pass
+
+    calls = []
+    real_run = logscan.LogScan.run
+
+    def fake_run(self, projects, window_days, out):
+        calls.append(([p["name"] for p in projects], self.unbounded))
+        out.gap("GEODNET", "pool_release_tokens", reason="would be a gap", tiers_attempted="2",
+                suggestion="-")
+
+    monkeypatch.setattr(logscan.LogScan, "run", fake_run)
+    monkeypatch.setattr(store_mod, "DB_PATH", tmp_path / "m.db")
+    monkeypatch.setattr(token_metrics, "load_dotenv", lambda *a, **k: None)
+    caplog.set_level(logging.INFO)
+    assert token_metrics.main(["--seed", "geodnet"]) == 0
+    assert calls == [(["GEODNET"], True)], calls
+    st = store_mod.Store(str(tmp_path / "m.db"))
+    assert st.conn.execute("SELECT COUNT(*) FROM gap_report").fetchone()[0] == 0
+    assert "--seed geodnet: BEFORE" in caplog.text and "mining_wallets_outflow" in caplog.text
+    assert "--seed geodnet: AFTER" in caplog.text and "no cache yet" in caplog.text
+
+    # and the flag really removes the budget: a routine LogScan starts it, a seed does not
+    monkeypatch.setattr(logscan.LogScan, "run", real_run)
+    spec = next(s for s in config.PROJECT_BY_NAME["GEODNET"]["log_scans"]
+                if s["key"] == "mining_wallets_outflow")
+
+    # pin the block, then stop at the first request so only the budget call is observed
+    class Pinned:
+        def web3(self, chain):
+            class W:
+                class eth:
+                    block_number = 1_000
+            return W()
+
+    for unbounded, expect in ((False, [config.EXPLORER_SCAN_BUDGET_S]), (True, [])):
+        Explorer.budgets = []
+        exp = Explorer()
+        exp.configured = lambda cid: True
+
+        def refuse(*a, **k):
+            raise logscan.ExplorerRefused("stop here")
+        exp.get_logs = refuse
+        ls = logscan.LogScan(explorer=exp, reader=Pinned(), cache=None, unbounded=unbounded)
+        ls._scan(config.PROJECT_BY_NAME["GEODNET"], spec, None, FetchOutput())
+        assert Explorer.budgets == expect, (unbounded, Explorer.budgets)
+
+
+def test_geodnet_zero_is_a_quiet_period_judged_by_the_silence_detector_at_two_days():
+    """4a, 2026-09-28: section AP showed the Polygon balance genuinely did not move and every read
+    was ok. The per-run "ZERO and a balance read cannot say why" row is closed for any flow with
+    a documented cadence; GEODNET's daily burn flags after 2 days with no burn."""
+    import build_workbook as bw
+    from fetch.base import FetchOutput
+
+    out = FetchOutput()
+    Chain()._flag_unattributable_zero(config.PROJECT_BY_NAME["GEODNET"], "gross_burn_tokens",
+                                       "burn_address_balance", "2026-09-28", out)
+    assert not out.gaps and not out.review
+    assert config.program_cadence("GEODNET", "gross_burn_tokens")["zero_closed"]["on"] == "2026-09-28"
+
+    def build(last_burn_day):
+        rows = [{"date": pd.Timestamp(f"2026-09-{d:02d}"), "project": "GEODNET",
+                 "metric": "gross_burn_tokens", "value": 35_000.0 if d <= last_burn_day else 0.0,
+                 "source": "chain:polygon:burn_polygon:delta", "tier": 2, "is_manual": False,
+                 "entered_on": ""} for d in range(20, 29)]
+        data = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-28"))
+        return data[(data.project == "GEODNET") & (data.metric == "gross_burn_tokens")].iloc[0]
+    assert pd.isna(build(27).get("silence_flag")) or not build(27).get("silence_flag"), \
+        "one burn-less day is not silence"
+    r = build(26)
+    assert str(r["silence_flag"]).startswith("silent since 2026-09-26"), r["silence_flag"]
+    assert "flagged at 2 days" in r["silence_flag"]
+
+
+def test_geodnet_issuance_and_the_whole_burn_buyback_rank_as_answered():
+    """4d, 2026-09-28: GEODNET gross_issuance_tokens (pool release is the route; per-miner issuance
+    is not derivable) and actual_buyback_tokens (same event as the burn) are P5, not open."""
+    from fetch import _derive_issuance
+    from fetch import gaps as gp
+    from fetch.base import FetchOutput
+
+    geod = config.PROJECT_BY_NAME["GEODNET"]
+    out = FetchOutput()
+    _derive_issuance(out, [geod], {}, {})
+    g = next(g for g in out.gaps if g["metric"] == "gross_issuance_tokens")
+    assert g["reason"].startswith("ANSWERED, NOT OPEN — Decided 2026-09-28"), g["reason"][:120]
+    assert gp._priority("GEODNET", g["metric"], g["reason"]) == gp.P_SUPPRESSED
+
+    reason, _ = gp._buyback_gap_reason(geod, "actual_buyback_tokens", {})
+    assert reason.startswith("ANSWERED, NOT OPEN — SAME EVENT AS gross_burn_tokens"), reason[:120]
+    assert gp._priority("GEODNET", "actual_buyback_tokens", reason) == gp.P_SUPPRESSED
+    usd, _ = gp._buyback_gap_reason(geod, "actual_buyback_usd", {})
+    assert gp._priority("GEODNET", "actual_buyback_usd", usd) == gp.P_SUPPRESSED
+
+
+def test_the_geodnet_solana_probe_separates_a_sink_from_a_spendable_account(monkeypatch, capsys):
+    """4b: the Solana burn token account is summed only if its mint is GEOD's, nobody can spend
+    from it, and its balance never falls. The probe prints exactly those three facts."""
+    import check_offline_items as coi
+
+    def fake(owner, balances):
+        def rpc(url, method, params=None):
+            if method == "getAccountInfo" and params[0] == coi.GEODNET_SOL_BURN_ACCOUNT:
+                return {"result": {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                        "data": {"parsed": {"type": "account", "info": {
+                            "mint": coi.GEODNET_SOL_MINT, "owner": owner, "state": "initialized",
+                            "tokenAmount": {"uiAmountString": "123.0", "decimals": 18}}}}}}}
+            if method == "getAccountInfo":
+                return {"result": {"value": {"owner": coi.SOL_SYSTEM_PROGRAM, "executable": False}}}
+            if method == "getSignaturesForAddress":
+                return {"result": [{"signature": f"sig{i}xxxxxxxxxxxx", "blockTime": 1_790_000_000}
+                                   for i in range(len(balances))]}
+            i = int(params[0][3])
+            pre, post = balances[i]
+            return {"result": {"transaction": {"message": {"accountKeys": [
+                        {"pubkey": coi.GEODNET_SOL_BURN_ACCOUNT}]}},
+                    "meta": {"preTokenBalances": [{"accountIndex": 0, "uiTokenAmount": {"uiAmount": pre}}],
+                             "postTokenBalances": [{"accountIndex": 0, "uiTokenAmount": {"uiAmount": post}}]}}}
+        return rpc
+
+    monkeypatch.setattr(coi, "rpc", fake(coi.SOL_INCINERATOR, [(100, 123)]))
+    coi.geod_solana_burn_account()
+    text = capsys.readouterr().out
+    assert "= GEOD Solana mint" in text and "INCINERATOR" in text and "0 fall(s)" in text
+
+    monkeypatch.setattr(coi, "rpc", fake("SomeWallet111", [(123, 50)]))
+    coi.geod_solana_burn_account()
+    text = capsys.readouterr().out
+    assert "ORDINARY WALLET" in text and "** FELL **" in text and "1 fall(s)" in text
+
+
+def test_world_mobile_treasury_routes_are_accepted_limits_and_customer_revenue_stays_open():
+    """5, 2026-09-28 (Jake): the treasury address was never published, so treasury_holding_tokens,
+    actual_buyback_tokens and buyback_fund_balance are ACCEPTED LIMITS (P5, with that reason);
+    customer_revenue_usd stays open for a possible manual entry."""
+    from fetch import gaps as gp
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    for m in ("treasury_holding_tokens", "actual_buyback_tokens", "actual_buyback_usd",
+              "buyback_fund_balance"):
+        r, _ = gp._tier_note(wm, m, {})
+        assert "ACCEPTED LIMIT (Jake, 2026-09-28)" in r, (m, r[:120])
+        assert gp._priority("World Mobile", m, r) == gp.P_SUPPRESSED, m
+    r, _ = gp._tier_note(wm, "customer_revenue_usd", {})
+    assert gp._priority("World Mobile", "customer_revenue_usd", r) != gp.P_SUPPRESSED, r

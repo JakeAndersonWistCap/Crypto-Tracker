@@ -1905,6 +1905,23 @@ class Chain:
         INTO the burn address, which say what moved, when, and from where.
         """
         name = project["name"]
+        # ** EXCEPT ON A METRIC DECLARED n/a. ** (2026-09-28) Sky's gross_burn_tokens and
+        # other_burn_tokens are answered by the five-way split and render n/a, yet a zero in them
+        # raised a P2 "cannot say why" with "(no address on file)" on every run. A declared-n/a
+        # flow, or one differenced from a declared-n/a stock, has no question left to ask.
+        if config.declared_na(name, flow_metric) or config.declared_na(name, stock_metric):
+            log.debug("%s: %s zero not flagged — declared n/a", name, flow_metric)
+            return
+        # ** NOR ON A FLOW WITH A DOCUMENTED CADENCE. ** (2026-09-28) GEODNET's zero was checked
+        # (orphan_cleanup.sql AP: the balance genuinely did not move, every read ok) and the P2
+        # closed as a quiet period. Where a program's cadence is declared, the silence detector
+        # (build_workbook, config.PROGRAM_CADENCE) judges a run of zeros against it; a per-run
+        # "cannot say why" row beside it is the same question asked worse.
+        cad = config.program_cadence(name, flow_metric)
+        if cad:
+            log.info("%s: %s is 0 this run — judged by the silence detector (%s cadence), not "
+                     "flagged per run", name, flow_metric, "/".join(l for l, _ in cad["cadences"]))
+            return
         # ** NO ZERO IS EXEMPT FROM THIS FLAG. ** A suppression for "expected zeros between weekly
         # burns" was added on 2026-09-24 and removed the same day: GEODNET's burn is DAILY
         # (~35,000/day, LUMPY_FLOWS evidence), so the zeros it would have hidden were exactly the

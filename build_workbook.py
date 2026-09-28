@@ -880,6 +880,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _relabel_views(groups)
     _restatement_views(groups)
+    _buyback_tokens_from_usd_views(groups)
     _VIEW_BLOCKS.clear()
     _issuance_views(groups, asof)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
@@ -915,11 +916,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # by" as though a decision were still owed. Either way the reason is the note, so the
             # decision is on the sheet rather than behind it. A row a DIFFERENT withheld case
             # catches (orphaned, withdrawn, ...) keeps that status: it still needs cleaning up.
-            na_reason = config.not_applicable_reason(name, metric)
             pending = config.classification_pending(name, metric) or {}
-            decided = pending.get("decided")
-            na_note = (f"ANSWERED, NOT OPEN — {decided} Evidence: {pending.get('reason')}."
-                       if decided else na_reason) or ""
+            na_note = config.declared_na(name, metric) or ""
+            if pending.get("decided"):
+                na_note += f" Evidence: {pending.get('reason')}."
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
                 if na_note:
@@ -1111,11 +1111,16 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     observed_quiet = (g["date"].max() - last_nz).days
                     silent = (asof - last_nz).days
                     row["silent_days"] = silent
-                    if observed_quiet > limit:
+                    # A declared day count (GEODNET: 2 days with no burn) replaces the generic
+                    # "more than 2x the cadence".
+                    after = cad.get("silent_after_days")
+                    if after:
+                        limit = after
+                    if (observed_quiet >= after) if after else (observed_quiet > limit):
                         labels = "/".join(l for l, _ in cad["cadences"])
                         row["silence_flag"] = (f"silent since {last_nz.date()} — {silent} days "
                                                f"against a documented {labels} cadence (last "
-                                               f"non-zero {last_nz.date()}; flagged past {limit} days)")
+                                               f"non-zero {last_nz.date()}; flagged {'at' if after else 'past'} {limit} days)")
                         row["note"] = (f"PROGRAM SILENT — {row['silence_flag']}"
                                        + (f" | {row['note']}" if row["note"] else ""))
             base_source = str(latest["source"]).split(":")[0]
@@ -2184,6 +2189,37 @@ def _restatement_views(groups: dict) -> None:
                 continue
             view["metric"], view["source"] = metric, restated
             groups[(name, metric)] = _as_stored(view, src.columns)
+
+
+def _buyback_tokens_from_usd_views(groups: dict) -> None:
+    """actual_buyback_tokens := actual_buyback_usd / price_usd on the SAME date. 2026-09-28.
+
+    Pendle (config.buyback_tokens_from_usd): the usd column is itself a read-time restatement of
+    holders_revenue_usd, so this runs after _restatement_views. A day with no same-day price is
+    left out — valuing it at the latest price would invent a token count. A column with any row
+    from another source is a measurement and is left alone.
+    """
+    for p in scoped_projects():
+        name = p["name"]
+        if not config.buyback_tokens_from_usd(name):
+            continue
+        usd, px = groups.get((name, "actual_buyback_usd")), groups.get((name, "price_usd"))
+        if usd is None or usd.empty or px is None or px.empty:
+            continue
+        held = groups.get((name, "actual_buyback_tokens"))
+        if held is not None and not held.empty and (held["source"].astype(str) != DERIVED_USD_OVER_PRICE).any():
+            continue
+        price_on = px.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        price_on = price_on[price_on > 0]
+        tok = usd[usd["date"].isin(price_on.index)].copy()
+        if tok.empty:
+            continue
+        tok["value"] = tok["value"].astype(float) / tok["date"].map(price_on)
+        tok["metric"], tok["source"] = "actual_buyback_tokens", DERIVED_USD_OVER_PRICE
+        groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
+
+
+DERIVED_USD_OVER_PRICE = "derived:usd/price"
 
 
 def _protocol_yield(R: Refs, data_by_key: dict | None = None):

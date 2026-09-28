@@ -262,8 +262,28 @@ class _Backoff:
         tmp.write_text(json.dumps(state, sort_keys=True, indent=1))
         tmp.replace(self.f)
 
+    # ===== A CHANGED ENTRY STARTS AGAIN. Added 2026-09-28. =====
+    # Run 20260928T165724Z: Pendle's two spendle/data entries moved from method xhr to json, but
+    # the state is keyed on project|metric|url and the URL did not change — so they inherited the
+    # xhr failures and were skipped for a week without ever being tried. Each record now carries
+    # the entry's signature; a record written for a different method, URL or json_path (or one
+    # written before signatures existed) is discarded and the entry is tried at once.
+    @staticmethod
+    def signature(entry: dict) -> str:
+        return f"{entry.get('method')}|{entry.get('url')}|{entry.get('json_path')}"
+
+    def _record(self, entry: dict, state: dict | None = None) -> dict | None:
+        state = self._read() if state is None else state
+        rec = state.get(cache_key(entry))
+        if rec and rec.get("sig") != self.signature(entry):
+            log.info("tier 3: %s/%s — back-off record reset: the entry changed (%s -> %s)",
+                     entry["project"], entry["metric"], rec.get("sig") or "unrecorded",
+                     self.signature(entry))
+            return None
+        return rec
+
     def waiting(self, entry: dict) -> str:
-        rec = self._read().get(cache_key(entry))
+        rec = self._record(entry)
         if not rec or rec.get("empties", 0) < self.AFTER:
             return ""
         nxt = pd.Timestamp(rec["last_try"]) + pd.Timedelta(days=self.EVERY_DAYS)
@@ -274,10 +294,11 @@ class _Backoff:
 
     def failed(self, entry: dict) -> None:
         state, k, day = self._read(), cache_key(entry), str(today().date())
-        rec = state.get(k) or {"empties": 0, "last_try": ""}
+        rec = self._record(entry, state) or {"empties": 0, "last_try": ""}
         if rec.get("last_try") != day:
             rec["empties"] = int(rec.get("empties", 0)) + 1
         rec["last_try"] = day
+        rec["sig"] = self.signature(entry)
         state[k] = rec
         self._write(state)
 
@@ -494,6 +515,9 @@ class Scrape:
                 continue
             wait = backoff.waiting(e)
             if wait:
+                # Named on the console, not only in the Run Log: a backed-off entry was invisible.
+                log.info("tier 3: SKIPPED by back-off — %s/%s (%s): %s", e["project"], e["metric"],
+                         e["method"], wait)
                 out.skipped(SOURCE, e["project"], f"{e['metric']}: {wait}", TIER)
                 out.gap(e["project"], e["metric"], reason=f"page scrape BACKED OFF — {wait}",
                         tiers_attempted="3",

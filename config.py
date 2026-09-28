@@ -342,12 +342,12 @@ METRICS = {
     # do not fetch. Retired cleanly instead: config entry, bound, label, gap mapping and stored
     # rows all go together (orphan_cleanup.sql section O). Re-creating it if the page ever
     # becomes fetchable is the same one line it always was.
-    # MAPLE'S OWN PUBLISHED TREASURY FIGURE, entered by hand. Its page is disallowed by
-    # maple.finance/robots.txt, which we respect rather than route around, so manual entry is
-    # where the sourcing priority terminates for it — a valid answer, not a failure. Kept under
-    # its OWN name rather than overwriting the chain read, so the ~3x gap between what Maple
-    # publishes (77.66M) and what the daoMultisig holds (23.09M) stays visible in the sheet
-    # instead of being resolved by whichever source happened to write last.
+    # treasury_holding_tokens_reported RETIRED 2026-09-28 (Jake). It carried Maple's published
+    # figure BY HAND (77,660,000, read 2026-09-14) because maple.finance/robots.txt was thought to
+    # disallow /transparency. Superseded: robots.txt answered HTTP 200 "User-agent: * / Allow: /"
+    # and the page is scraped live as the primary treasury_holding_tokens (79,210,000). Nothing
+    # else read it. Config entry, bound, label, manual_quarterly, the disabled sources.yaml entry
+    # and the manual_overrides.csv row go together; stored rows: orphan_cleanup.sql section AR.
     # THE DAOMULTISIG READ, DEMOTED 2026-09-24 when Maple's transparency page became fetchable
     # (robots.txt: "Allow: /") and took treasury_holding_tokens. Its own name, so the ~3.4x gap
     # between what Maple publishes and what this one address holds stays on the sheet as a
@@ -356,10 +356,6 @@ METRICS = {
         "label": "Treasury — daoMultisig balance only (reference; PARTIAL against Maple's figure)",
         "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
-    "treasury_holding_tokens_reported": {
-        "label": "Treasury holding — as published by Maple (manual snapshots; automated from 2026-09-24)",
-        "kind": "stock", "unit": "tokens", "archetypes": [3, 4],
-        "tiers": [3], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Maple",)},
     "burn_mint_ratio":            {"label": "Burn ÷ mint ratio (as published by the protocol)",
                                    "kind": "stock", "unit": "count", "archetypes": [1, 4],
                                    "tiers": [3, 4], "sanity_min": 0, "sanity_max": 100,
@@ -807,7 +803,19 @@ def metric_label(project_name: str, metric: str) -> str:
         # series as another column arrives at the cell rather than living in config. Declared on
         # the restatement so the two cannot be edited apart.
         override = (metric_restatements(project_name).get(metric) or {}).get("label")
+    if not override and metric == "actual_buyback_tokens":
+        override = (buyback_tokens_from_usd(project_name) or {}).get("label")
     return override or (METRICS.get(metric) or {}).get("label", metric)
+
+
+def buyback_tokens_from_usd(project_name: str) -> dict | None:
+    """The declaration that actual_buyback_tokens is actual_buyback_usd / same-day price_usd.
+
+    Pendle, 2026-09-28: the buyback distributes to sPENDLE holders with no wallet in between, so
+    the only buyback figure is the $ allocated to it (holders_revenue_usd, restated). The token
+    count follows from the price on each day's own date; a day without one stays absent.
+    """
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("buyback_tokens_from_usd")
 
 
 def metric_unit(project_name: str, metric: str) -> str:
@@ -1509,8 +1517,20 @@ PROGRAM_CADENCE = {
               "source": "maple.finance/transparency publishes Token Buybacks as monthly rows"},
     "GEODNET": {"metric": "gross_burn_tokens",
                 "cadences": (("daily", 1),),
+                # FLAG AFTER 2 DAYS WITH NO BURN (Jake, 2026-09-28), not the generic 2x-cadence
+                # rule's "more than 2": a daily burner missing two days is already news.
+                "silent_after_days": 2,
                 "declared_by": "Jake, 2026-09-28",
-                "source": "LUMPY_FLOWS[('GEODNET', 'gross_burn_tokens')]: daily underlying cadence"},
+                "source": "LUMPY_FLOWS[('GEODNET', 'gross_burn_tokens')]: daily underlying cadence",
+                # ===== THE ZERO P2 IS CLOSED: A GENUINE QUIET PERIOD. 2026-09-28 (Jake). =====
+                # orphan_cleanup.sql section AP on Jake's store: burn_polygon read 38,586,932.38
+                # on both 2026-09-25 and 2026-09-28, and was unchanged 2026-09-23 -> 09-24; every
+                # chain read on the last four runs was ok. The balance really did not move. This
+                # detector now owns the question the "ZERO and a balance read cannot say why" row
+                # asked (fetch/chain.py defers to it for any flow with a cadence here).
+                "zero_closed": {"on": "2026-09-28", "evidence": "orphan_cleanup.sql AP: "
+                                "38,586,932.38 on 2026-09-25 and 2026-09-28; unchanged 09-23 -> "
+                                "09-24; all reads ok on the last four runs"}},
     # Sky's Stage 2 buy-and-burn runs through the monthly executive (2026-09-10 spell was the
     # first). Declared so its burn is annualised as DISCRETE, never over covered days.
     "Sky": {"metric": "sky_stage2_burn_tokens",
@@ -1556,7 +1576,10 @@ def burn_footnotes(project_name: str) -> list[str]:
             out.append(f["text"])
             continue
         n = check.get("result")
-        if n == 0:
+        if check.get("practically_closed") and (check.get("detail") or {}).get("amount_sky") == 0:
+            # Senders exist but destroyed nothing: said in so many words, not titled "closed".
+            head = f"{f['title_closed'].split(',')[0]} — {check['practically_closed']}"
+        elif n == 0:
             head = (f"{f['title_closed']} (probe {check.get('checked_on')}: 0 senders after block "
                     f"{check['after_block']:,})")
         elif n is None:
@@ -1937,6 +1960,12 @@ _SKY_SPLIT_DECIDED = (
     "(sky_stage2_burn_balance / sky_stage2_burn_tokens, the A4 headline); the 2025 emissions "
     "offset and the SKY<->MKR migration flows (converter over-mint, staking-engine deposits, "
     "long-tail reverse conversions) are footnotes on the A4 tab, never summed into a burn column.")
+
+
+# ===== WORLD MOBILE'S TREASURY: AN ACCEPTED LIMIT. 2026-09-28 (Jake). =====
+_WM_TREASURY_ACCEPTED = ("ACCEPTED LIMIT (Jake, 2026-09-28): World Mobile has never published its "
+                         "treasury address, so treasury_holding_tokens, actual_buyback_tokens and "
+                         "buyback_fund_balance are not measured. Reopen if the address is published.")
 
 
 PROJECTS = [
@@ -3990,6 +4019,8 @@ PROJECTS = [
             "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf",
             "source_date": "2026-09-23",
             "route_that_would_work": "World Mobile publishing the treasury address, or a governance post naming it. Then the inflow scan, never a balance read.",
+            # ACCEPTED LIMIT (Jake, 2026-09-28): the address was never published.
+            "answered": _WM_TREASURY_ACCEPTED,
         },
         "treasury_holding_tokens_blocked": {
             "status": "GAP KEPT — address never published",
@@ -3998,6 +4029,18 @@ PROJECTS = [
             "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf",
             "source_date": "2026-09-23",
             "route_that_would_work": "World Mobile publishing the address. This is a treasury_holding balance read, which IS the right shape for a holding (unlike the buyback flow above).",
+            # ACCEPTED LIMIT (Jake, 2026-09-28): the address was never published.
+            "answered": _WM_TREASURY_ACCEPTED,
+        },
+        "buyback_fund_balance_blocked": {
+            "status": "ACCEPTED LIMIT — no fund address published",
+            "wanted": "WMTX held by a buyback fund before distribution",
+            "why": "the same unpublished treasury (see treasury_not_published; MiCA whitepaper and blog checked 2026-09-23). No address, so no balance to read, and an explorer label is not used.",
+            "source_url": "https://worldmobiletoken.com/mica_whitepaper_wmtx.pdf",
+            "source_date": "2026-09-23",
+            "route_that_would_work": "World Mobile publishing the address.",
+            # ACCEPTED LIMIT (Jake, 2026-09-28): the address was never published.
+            "answered": _WM_TREASURY_ACCEPTED,
         },
         # ===== locked_tokens — EarthNode staking IS a contract, and it is on CARDANO. Researched
         # 2026-09-23. =====
@@ -5669,6 +5712,10 @@ PROJECTS = [
         # a supply delta at any sampling interval, so no amount of accumulated history fixes it.
         "issuance_derivation": {
             "suppressed": True,
+            # ===== ANSWERED 2026-09-28 (Jake). =====
+            "answered": "Decided 2026-09-28 (Jake): pool_release_tokens (the measured mining-"
+                        "wallet outflow) is GEODNET's supply-side route; per-miner issuance is "
+                        "not derivable from any supply figure, so this column stays n/a.",
             "suppressed_on": "2026-09-15",
             # ===== IT RENDERS n/a, NOT RED. CHANGED 2026-09-22, ON NEW PROOF. =====
             # The suppression is unchanged and correct. What changed is what we can now SAY about
@@ -5789,7 +5836,13 @@ PROJECTS = [
                 GEODNET_BURN_QUERY, verified="2026-09-11",
                 provenance="Dune query 8683175 — the original documented source of this address",
                 purpose="TRANSFER BURN — Solana burn destination. This is a TOKEN-ACCOUNT read, not an "
-                        "incinerator balance, so it needs a Solana RPC adapter rather than the EVM one."),
+                        "incinerator balance, so it needs a Solana RPC adapter rather than the EVM one.",
+                note="NOT SUMMED YET (2026-09-28). GIP-7 proposes Solana as GEODNET's primary chain, "
+                     "so burns may have moved here and the Polygon zeros would read as quiet days. "
+                     "Before this is summed into burn_address_balance, `python check_offline_items.py "
+                     "geod_solana_burn_account` must show: mint = 7JA5...mKHu (GEOD's Solana mint), "
+                     "an owner nobody can sign for (the incinerator), and a balance that never falls. "
+                     "The public Solana RPC is blocked from the build environment, so this is unrun."),
             # buyback_wallet_polygon_historical RETIRED 2026-09-23 — see retired_contracts.
 
             # ============ THREE WALLETS FROM GEODNET'S OWN TOKENOMICS PAGE, ALL POLYGON ============
@@ -6974,7 +7027,7 @@ PROJECTS = [
                 "read, so nothing is missing here — the figure moved to a different metric name, "
                 "it did not disappear. (That promotion was itself reversed 2026-09-21 when "
                 "robots.txt turned out to disallow the page; the scrape is disabled and the "
-                "figure is entered by hand under treasury_holding_tokens_reported. This metric "
+                "figure was entered by hand until the page was automated on 2026-09-24. This metric "
                 "still has no route either way.)",
         },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
@@ -7207,7 +7260,7 @@ PROJECTS = [
                                "reported figure: 23.09M SYRUP on-chain vs 77.66M on "
                                "maple.finance/transparency (read 2026-09-14). This address is at "
                                "most part of what Maple counts as the treasury. The published "
-                               "figure is carried separately as treasury_holding_tokens_reported; "
+                               "figure is treasury_holding_tokens (the page, scraped live); "
                                "the ~3x gap is unexplained and open — see OPEN_QUESTIONS.",
                 destination_status="verified_by_label",
                 destination_note="Etherscan's OWN label identifies this address as 'Maple Finance: DAO', "
@@ -7276,27 +7329,13 @@ PROJECTS = [
             # two real balances — check_cross_checks is what is supposed to do that.
             "treasury_holding_tokens": {"min": 1_000_000, "max": 1_000_000_000,
                                         "change_threshold_pct": 30},
-            # THE MANUAL FIGURE GETS THE SAME FLOOR, deliberately. Manual entry is a valid
-            # terminal answer, not a trusted one: a typo that drops a suffix lands in exactly the
-            # range the floor exists to reject, and a hand-entered 77.66 would otherwise sail
-            # through where a scraped 77.66 would have been caught.
-            "treasury_holding_tokens_reported": {"min": 1_000_000, "max": 1_000_000_000},
         },
-        # MANUAL ENTRY IS WHERE THE SOURCING PRIORITY TERMINATES HERE, and that is an answer, not a
-        # failure. Free API: none publishes Maple's treasury. Contract read: done, and it is the
-        # PARTIAL 23.09M. Rendered public page: Maple publishes 77.66M and robots.txt disallows
-        # fetching it. Paid API: not on our tier. So the page figure is typed in, dated to when it
-        # was read, and carried under its own metric — see manual_overrides.csv.
-        "manual_quarterly": ["treasury_holding_tokens_reported"],
         "metric_labels": {
             "treasury_holding_tokens": "SYRUP held — Maple's own transparency page (SYRUP "
                                        "Holdings), primary from 2026-09-24; published to ±5,000",
             "treasury_holding_tokens_chain": "SYRUP at the daoMultisig address only — a labelled "
                                              "REFERENCE, ~3.4x below Maple's own figure (23.09M vs "
                                              "79.21M) because it is one address, not the treasury",
-            "treasury_holding_tokens_reported": "SYRUP per Maple's page, entered by hand before the "
-                                                "page was automated (2026-09-24); superseded by "
-                                                "treasury_holding_tokens",
             "actual_buyback_tokens": "SYRUP bought per month — Maple's Token Buybacks table "
                                      "(first-party); monthly, dated to month-end",
             "actual_buyback_usd": "USD spent on buybacks per month — Maple's Token Buybacks table",
@@ -7364,8 +7403,8 @@ PROJECTS = [
                  "~3x gap (see OPEN_QUESTIONS). THAT DEMOTION WAS REVERSED 2026-09-21: "
                  "maple.finance/robots.txt disallows the transparency page, which we respect "
                  "rather than route around, so the chain read serves treasury_holding_tokens "
-                 "again as a labelled PARTIAL and the published figure is entered by hand under "
-                 "treasury_holding_tokens_reported. The cross-check metric is retired (2026-09-22) "
+                 "again as a labelled PARTIAL and the published figure was entered by hand (retired "
+                 "2026-09-28: the page is scraped live). The cross-check metric is retired (2026-09-22) "
                  "and the ~3x gap stays visible as two separately named figures. stSYRUP staking rewards ENDED November 2025 (MIP-019) — do not model "
                  "ongoing staking yield.",
     },
@@ -10286,23 +10325,29 @@ PROJECTS = [
                  "after_block": 22_817_692,
                  "dormant_since": "the 2025-06-26 spell (block 22,817,692, executable from "
                                   "2025-06-30)",
-                 # ** NON-ZERO. Recorded 2026-09-25 from Jake's run of the probe on 2026-09-24. **
-                 # One sender has burned SKY since that block. It is NOT in Sky's spell address
-                 # registry (sky-ecosystem/spells-mainnet src/test/addresses_mainnet.sol, as of
-                 # its 2026-09-24 commit) or in the sky, lockstake, dss-flappers or chainlog
-                 # repos, and a web search found no public label. Its amount, dates and
-                 # contract/EOA status were NOT in that probe output; the probe now prints them
-                 # (the LATE SENDER block). Nothing below is filled in until that is read.
+                 # ** NON-ZERO COUNT, ZERO SKY. Recorded 2026-09-28 from Jake's LATE SENDER read. **
+                 # (First recorded 2026-09-25 with amount/dates/kind pending.) The one sender since
+                 # that block is a CONTRACT that made three burn() calls of 0.000000 SKY on
+                 # 2026-01-16. Not in Sky's spell address registry or the sky, lockstake,
+                 # dss-flappers or chainlog repos, and unlabelled publicly. Three zero-value calls
+                 # destroy nothing, so the flow is PRACTICALLY closed — not "closed", because the
+                 # count is not zero and Sky.burn stays permissionless.
                  "result": 1,
-                 "checked_on": "2026-09-24",
+                 "checked_on": "2026-09-28",
                  "detail": {
                      "sender": "0xe751bf33164b8786c71d59c48f668d22408e142d",
                      "burns": 3,
-                     "amount_sky": None,       # PENDING — from the probe's LATE SENDER line
-                     "dates": None,            # PENDING
-                     "kind": None,             # PENDING — CONTRACT or EOA, from eth_getCode
+                     "amount_sky": 0.0,
+                     "dates": ["2026-01-16"],
+                     "blocks": [24_246_077, 24_246_146, 24_246_170],
+                     # prefixes as reported by the probe; the full hashes are in its output
+                     "txs": ["0x84251b30...", "0xac07e2ce...", "0x6b91f578..."],
+                     "kind": "CONTRACT",
                      "identified_as": "unidentified — not a known Sky contract on file",
                  },
+                 "practically_closed": "practically closed — no SKY burned outside the Pause "
+                                       "Proxy since block 22,817,692; one contract made three "
+                                       "zero-value burn calls on 2026-01-16",
              }},
         ],
         # ===== other_burn_balance IS REAL AND NOT YET CLASSIFIED. Recorded 2026-09-24. =====
@@ -11853,14 +11898,20 @@ PROJECTS = [
                     "is not.",
         },
         "name": "Pendle", "symbol": "PENDLE",
-        # ===== actual_buyback_tokens — NO READABLE DESTINATION. Recorded 2026-09-23. =====
-        "actual_buyback_tokens_blocked": {
-            "status": "NO INTERMEDIATE WALLET PUBLISHED — the buyback distributes as sPENDLE to active holders",
-            "wanted": "PENDLE bought each fortnight from protocol revenue, before distribution",
-            "why": "the repurchased PENDLE is credited to sPENDLE holders; no holding wallet sits between the purchase and the distribution in anything Pendle has published, and deployments/1-core.json has no buyback contract (all 74 keys read — see deployment_registry). A balance read of any address would be a staker's, not the protocol's. This is not a missing contract of kind buyback_fund_balance; it is a mechanism with no stock to read.",
-            "source_url": "https://raw.githubusercontent.com/pendle-finance/pendle-core-v2-public/main/deployments/1-core.json",
-            "source_date": "2026-09-23",
-            "route_that_would_work": "a transfer-history source on the distributor's outflow (a Dune query over sPENDLE credits), or Pendle publishing the purchasing contract. Nothing in config can be filled in to make a balance read correct here.",
+        # ===== actual_buyback_tokens — DERIVED FROM THE $ ALLOCATED. 2026-09-28 (Jake). =====
+        # FORMERLY actual_buyback_tokens_blocked (2026-09-23, "NO INTERMEDIATE WALLET PUBLISHED"):
+        # the repurchased PENDLE is credited to sPENDLE holders and no holding wallet sits between
+        # purchase and distribution (deployments/1-core.json, all 74 keys read — see
+        # deployment_registry), so there is no stock to read and no inflow to scan. Renamed to a
+        # comment so fetch/gaps.py no longer reads it as a gap. The tokens are now
+        # actual_buyback_usd (the holders_revenue_usd restatement, from 2026-05-01) / same-day
+        # price_usd — see buyback_tokens_from_usd. No Dune query.
+        "buyback_tokens_from_usd": {
+            "declared": "2026-09-28 (Jake)",
+            "label": "Actual buyback tokens — DERIVED: actual_buyback_usd (holders revenue, the $ "
+                     "ALLOCATED to the buy, from 2026-05-01) / same-day price_usd. Not purchases "
+                     "observed: execution price and timing are not measured. A day with no "
+                     "same-day price is absent, never valued at another day's price.",
         },
         # ===== FROM PENDLE'S OWN DEPLOYMENT FILE. Read 2026-09-23. =====
         # deployments/1-core.json, the same file sPENDLE's address came from. Recorded rather
@@ -14395,6 +14446,20 @@ def not_applicable_reason(project_name: str, metric: str) -> str | None:
     return (p.get("not_applicable") or {}).get(metric)
 
 
+def declared_na(project_name: str, metric: str) -> str | None:
+    """Why this metric reads n/a for this project by DECLARATION, or None. Added 2026-09-28.
+
+    Two declarations say it: not_applicable (the metric cannot exist here) and a decided
+    classification_pending record (Sky's five-way split: the figure exists, its answer is a
+    footnote). build_workbook renders both as n/a; a detector that raises a to-do item about such
+    a metric is asking a question that has been answered, so detectors ask this first.
+    """
+    rec = classification_pending(project_name, metric) or {}
+    if rec.get("decided"):
+        return f"ANSWERED, NOT OPEN — {rec['decided']}"
+    return not_applicable_reason(project_name, metric)
+
+
 def relation_exempt(project_name: str, greater: str, lesser: str) -> str | None:
     """Why this impossible-relation comparison is not an identity for this project, or None.
 
@@ -16249,7 +16314,7 @@ OPEN_QUESTIONS = [
         "severity": 2,
         # ===== ANSWERED 2026-09-28 (Jake). ===== The investigation below stays as the record.
         "status": "answered", "answered_on": "2026-09-28",
-        "decision": "The transparency page (treasury_holding_tokens_reported, maple.finance/"
+        "decision": "The transparency page (treasury_holding_tokens, maple.finance/"
                     "transparency) is PRIMARY for Maple's treasury; the daoMultisig chain read is "
                     "known PARTIAL and stays labelled so. The 23.09M vs 77.66M difference is not "
                     "reconciled and is not pursued further.",
