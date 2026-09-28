@@ -16209,3 +16209,34 @@ def test_a_scrape_that_returns_nothing_backs_off_to_weekly_and_robots_is_read_be
     sc.run([config.PROJECT_BY_NAME["Pendle"]], 30, out)
     assert launched == [], "no browser for a run whose every live entry robots.txt disallows"
     assert any("robots.txt disallows" in e.message for e in out.log), [e.message for e in out.log]
+
+
+def test_a_monthly_series_q0_is_three_complete_calendar_months():
+    """Jake, 2026-09-28: the day window (asof-90, asof] dropped Maple's June buyback, dated 30 June,
+    by one day on 28 September. A declared-monthly series' Q0 is now the three complete months
+    before asof's month, annualised x12/3; daily series keep the day window. Each Q0 names its
+    basis in the Data tab."""
+    import build_workbook as bw
+
+    asof = pd.Timestamp("2026-09-28")
+    months = {"2025-09-30": 40_000.0, "2025-11-30": 50_000.0, "2026-06-30": 375_000.0,
+              "2026-07-31": 136_768.0, "2026-08-31": 147_098.0}
+    rows = [{"date": pd.Timestamp(d), "project": "Maple", "metric": "actual_buyback_usd", "value": v,
+             "source": "maple_page", "tier": 3, "is_manual": False, "entered_on": ""}
+            for d, v in months.items()]
+    rows += [{"date": d, "project": "Chainlink", "metric": "actual_buyback_usd", "value": 1.0,
+              "source": "x", "tier": 2, "is_manual": False, "entered_on": ""}
+             for d in pd.date_range("2026-06-01", "2026-09-27")]
+    out = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof, gaps=pd.DataFrame(),
+                       review=pd.DataFrame()).set_index(["project", "metric"])
+    m = out.loc[("Maple", "actual_buyback_usd")]
+    assert m["q0"] == 658_866.0, m["q0"]
+    assert m["q0_basis"] == "3 complete months Jun 2026–Aug 2026"
+    assert pd.isna(m["q1"]), "Mar-May 2026 hold no row"
+    assert m["y1"] == sum(months.values()), "Y1 = the 12 complete months Sep 2025-Aug 2026"
+    c = out.loc[("Chainlink", "actual_buyback_usd")]
+    assert c["q0"] == 89.0 and c["q0_basis"] == "trailing 90 days to 2026-09-28"
+    R = bw.Refs(100, 10, ["2026-09"])
+    assert bw._annualise(R, 5, config.PROJECT_BY_NAME["Maple"], "actual_buyback_usd", "X") == "(X)*12/3"
+    # Maple at a $240M market cap: 658,866 x 4 / 240M
+    assert abs(658_866.0 * 4 / 240e6 - 0.010981) < 1e-6

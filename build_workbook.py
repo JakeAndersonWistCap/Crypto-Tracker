@@ -100,10 +100,11 @@ CLOSED_TEXT = "none available"
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
              "last_success", "entered_on", "note", "q0_covered_days", "q0_events",
-             "schedule_end", "q0_pre_end_days", "last_nonzero_date", "silent_days", "silence_flag"]
+             "schedule_end", "q0_pre_end_days", "last_nonzero_date", "silent_days", "silence_flag",
+             "q0_basis"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
-             "Q0 (flow: trailing 90d sum · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
+             "Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
              "Y1 (flow: 365d sum · stock: 365d avg)", "Points", "Status", "Confidence", "Why not green",
              "Last successful fetch", "Entered on (manual)", "Note",
              # APPENDED, so every existing column letter is unchanged. Flows only (not monthly).
@@ -112,7 +113,8 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              "Q0: days on or before the schedule end (only once it has passed)",
              "Last non-zero value (flows; the scan's stored last-inflow date where there is one)",
              "Days since then (only where a program cadence is documented)",
-             "Program silence flag (PROGRAM_CADENCE)"]
+             "Program silence flag (PROGRAM_CADENCE)",
+             "Q0 basis (flows): trailing days, or three complete calendar months for a monthly series"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 # Appended day-count columns that formulas READ as numbers (see write_data).
 NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days")
@@ -229,6 +231,26 @@ def _latest_complete_month(s: pd.Series, asof: pd.Timestamp) -> tuple[float | No
         return None, ""
     month = finished.index.to_period("M").max()
     return float(finished[finished.index.to_period("M") == month].sum()), str(month)
+
+
+def _month_block(s: pd.Series, asof: pd.Timestamp, first_back: int, n: int) -> tuple[float | None, str]:
+    """Sum over n COMPLETE calendar months, the newest being `first_back` months before the last
+    complete one. Added 2026-09-28 (Jake).
+
+    A MONTHLY SERIES' Q0 IS THREE COMPLETE MONTHS, NOT 90 DAYS. The day window (asof-90, asof]
+    dropped Maple's June buyback, dated 30 June, by one day on 28 September — an artefact of where
+    the boundary fell, not a property of the data. Calendar months are counted from asof's month
+    (the current month is never complete), and a row counts by the month it is IN, so month-start
+    (Dune) and month-end (Maple) dating give the same answer. None when no row falls in the block.
+    """
+    last = asof.to_period("M") - 1 - first_back
+    months = {last - k for k in range(n)}
+    if s.empty:
+        return None, ""
+    w = s[s.index.to_period("M").isin(months)]
+    first = min(months)
+    label = f"{n} complete months {first.strftime('%b %Y')}–{last.strftime('%b %Y')}"
+    return (float(w.sum()) if len(w) else None), label
 
 
 def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> int:
@@ -868,7 +890,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "flow_span": None, "point_spans": {}, "reconciliation": None,
                    "flow_recon_blocked": None,
                    "granularity": "daily", "period_label": "",
-                   "covered_days": None, "window_days": None, "hole_note": ""}
+                   "covered_days": None, "window_days": None, "hole_note": "", "q0_basis": ""}
             if g is None or g.empty:
                 gap = gap_by_key.get((name, metric))
                 if gap is not None:
@@ -949,10 +971,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     p_rows = s[s.index.to_period("M") == prior]
                     row["m1"] = float(p_rows.sum()) if len(p_rows) else None
                     row["period_label"] = this_month
+                # Q0..Q3 AND Y1 IN COMPLETE CALENDAR MONTHS (2026-09-28) — see _month_block.
                 for i, q in enumerate(["q0", "q1", "q2", "q3"]):
-                    row[q] = _window_sum(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
-                row["y1"] = _window_sum(s, asof - pd.Timedelta(days=365), asof)
+                    row[q], label = _month_block(s, asof, 3 * i, 3)
+                    if q == "q0":
+                        row["q0_basis"] = label
+                row["y1"], _ = _month_block(s, asof, 0, 12)
             elif m["kind"] == "flow":
+                row["q0_basis"] = f"trailing {period} days to {asof.date()}"
                 row["now"] = _window_sum(s, asof - pd.Timedelta(days=short), asof)
                 row["m1"] = _window_sum(s, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short))
                 for i, q in enumerate(["q0", "q1", "q2", "q3"]):
@@ -1819,7 +1845,11 @@ def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
     burn in 14 days of coverage annualised over those 14 days would claim ~26 burns a year. Those
     keep x365/90 and the window caveat that says so.
     """
-    if _lumpy(p["name"]) or config.series_granularity(p["name"], metric) == "monthly":
+    # A MONTHLY SERIES' Q0 IS THREE COMPLETE CALENDAR MONTHS (see _month_block), so a year is
+    # exactly four of them — not days_per_year/period_days, which would overstate by 365/360.
+    if config.series_granularity(p["name"], metric) == "monthly":
+        return f"({total})*12/3"
+    if _lumpy(p["name"]):
         return f"({total})*{ANN}"
     cov = R.D(r, metric, "q0_covered_days")
     return (f"IF(AND(ISNUMBER({cov}),{cov}>0,{cov}<{G('period_days')}),"
