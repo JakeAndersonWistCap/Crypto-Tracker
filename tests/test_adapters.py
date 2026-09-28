@@ -1337,10 +1337,13 @@ def test_sky_burns_are_decomposed_by_sender_and_the_pause_proxy_leg_is_stage_2()
     # ** THE SUM IS NOT EITHER OF THEM, which is still the point. **
     assert got["burn_address_balance"] != sum(e["value"] for e in events) / WAD
 
+    # C1 2026-09-28: a burn at block 22,000,000 predates the migration-flows closure (block
+    # 22,817,692, burn_footnotes), so its sender is ACCOUNTED FOR — still in other_burn_balance,
+    # no longer a review row. A post-closure stranger is still flagged (the test below).
     flagged = [r for r in out.review if r["reason"] == "unrecognised_burn_sender"]
-    assert flagged and CONVERTER.lower() in flagged[0]["basis"].lower(), out.review
-    print("sky decomposition ok: the Pause Proxy's 4.0m IS Stage 2, unrecognised 250k flagged, "
-          "and the phantom governance category is gone")
+    assert not flagged, out.review
+    print("sky decomposition ok: the Pause Proxy's 4.0m IS Stage 2, the pre-closure 250k is "
+          "surfaced and accounted for, and the phantom governance category is gone")
 
 
 def test_the_stage_2_burner_is_named_by_a_primary_source_and_the_discovery_is_retired():
@@ -17667,3 +17670,18 @@ def test_hyperliquid_rewards_and_core_burns_are_the_falls_in_its_own_two_stocks(
                                        "x:delta", 1, when, prior_date=prior_day, out=out)
     assert rise.empty and "FELL" in out.gaps[-1]["reason"]
     assert "core_burn_tokens" in config.metrics_for_project(config.PROJECT_BY_NAME["Hyperliquid"])
+
+
+def test_sky_senders_the_footnotes_account_for_are_not_unrecognised():
+    """C1, 2026-09-28: other_burn_balance still raised unrecognised_burn_sender although the
+    footnotes account for every sender — the migration burners (closed at block 22,817,692) and
+    the late zero-value contract closure_check recorded. Those are now recognised; the series
+    itself is unchanged, and a sender burning after the closure block is still flagged."""
+    after, senders = config.burn_senders_accounted("Sky")
+    assert after == 22_817_692
+    assert senders == {"0xe751bf33164b8786c71d59c48f668d22408e142d"}
+    import inspect
+
+    from fetch import chain
+    src = inspect.getsource(chain)
+    assert "burn_senders_accounted" in src and "last_block.get(a, 0) <= closed_at" in src

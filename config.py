@@ -1616,6 +1616,24 @@ def a4_burn_metric(project_name: str) -> str:
     return (PROJECT_BY_NAME.get(project_name) or {}).get("a4_burn_metric") or "gross_burn_tokens"
 
 
+def burn_senders_accounted(project_name: str) -> tuple[int | None, set[str]]:
+    """What the burn footnotes already account for (C1, 2026-09-28): (closure block, senders).
+
+    A sender whose last burn is at or before a closure_check's after_block belongs to the flow
+    that footnote documents as closed; a sender named in its recorded detail is the late one the
+    probe found. Neither is UNRECOGNISED — both are on file with their evidence. Anything else is.
+    """
+    after, senders = None, set()
+    for f in (PROJECT_BY_NAME.get(project_name) or {}).get("burn_footnotes") or []:
+        check = f.get("closure_check") or {}
+        if check.get("after_block") is not None:
+            after = max(after or 0, int(check["after_block"]))
+        det = check.get("detail") or {}
+        if det.get("sender"):
+            senders.add(det["sender"].lower())
+    return after, senders
+
+
 def burn_footnotes(project_name: str) -> list[str]:
     """The project's burn footnotes as sheet text — real destruction that is not its live burn.
 

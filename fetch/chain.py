@@ -1521,8 +1521,10 @@ class Chain:
                                    if refused_by else " (no endpoint refused it)"), TIER))
 
         by_sender: dict[str, float] = {}
+        last_block: dict[str, int] = {}
         for e in events:
             by_sender[e["from"].lower()] = by_sender.get(e["from"].lower(), 0.0) + e["value"] / (10 ** dec)
+            last_block[e["from"].lower()] = max(last_block.get(e["from"].lower(), 0), int(e["block"]))
 
         # ===== WHO IS THE STAGE 2 BURNER? =====
         stage2 = (cfg.get("stage2_burner") or {}).get("address")
@@ -1606,6 +1608,12 @@ class Chain:
             if m not in totals and m != metric:
                 parts[m].append((f"{chain}:{key}[{m}]", 0.0))
                 source_suffix[m] = suffix
+        # C1 (2026-09-28): SENDERS THE FOOTNOTES ALREADY ACCOUNT FOR ARE NOT UNRECOGNISED. The
+        # series is unchanged — they still land in other_metric — only the review row is.
+        closed_at, recorded = config.burn_senders_accounted(project["name"])
+        unrecognised = {a: v for a, v in unrecognised.items()
+                        if a not in recorded
+                        and not (closed_at is not None and last_block.get(a, 0) <= closed_at)}
         if unrecognised:
             out.review_item(project["name"], other_metric, "unrecognised_burn_sender",
                             "stored_flagged", value=float(sum(unrecognised.values())),
