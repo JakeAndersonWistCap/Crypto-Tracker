@@ -14156,6 +14156,52 @@ VALIDATOR_YIELD = {
                            "a yield needs two observations a window apart"},
 }
 
+# ===== WHICH ISSUANCE IS PRIMARY, FOR EVERY CONSUMER. Added 2026-09-28 (Jake). =====
+# The declared rule fixed NEAR's validator yield (A1), but A4's crossover and A2's trajectory kept
+# reading the DERIVED issuance: NEAR derived Q0 265,367 against a declared ~32.2M/yr, so
+# burn/issuance read 0.090 instead of ~0.003; Ethereum derived Q0 9,106 ETH (d(supply)+burn,
+# MECHANISM_ASSUMED) against ~2,700 ETH/day, reading 0.168 instead of ~0.013. build_workbook's
+# _issuance_views replaces the issuance series at READ TIME with the primary one below, so A1,
+# A2 and A4 all read the same figure, and the derived one becomes the cross-check:
+#   declared_rate  rate x total supply, per day from effective_from, forward-filled over the
+#                  stored supply. Blocked when the derived figure (annualised over the days it
+#                  covers) differs from it by more than max_ratio either way.
+#   first_party    only rows whose source starts with source_prefix count. Until they cover the
+#                  window the series is BLOCKED with block_reason rather than shown from the
+#                  derivation.
+ISSUANCE_PRIMARY = {
+    "Near": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
+             "rate_path": ("issuance_rate_declared", "annual_rate_max"),
+             "supply_metric": "total_supply", "max_ratio": 10},
+    "Pendle": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
+               "rate_path": ("issuance_rate_declared", "annual_rate"),
+               "supply_metric": "total_supply", "max_ratio": 10},
+    "Ethereum": {"kind": "first_party", "metric": "gross_issuance_tokens",
+                 "source_prefix": "beaconchain",
+                 "block_reason": "waiting for beaconcha.in's consensus_rewards_sum (ETH.Store) to "
+                                 "cover the window. The derived d(total_supply) + burn figure is "
+                                 "MECHANISM_ASSUMED and read ~3x high against ~2,700 ETH/day, so "
+                                 "it is not shown in its place"},
+    # GEODNET (fix 2): the issuance basis is pool_release_tokens (pre-minted). The derived route
+    # is d(circulating) - d(total) from CoinGecko, whose circulating figure has not moved, so it
+    # reads ~0 and burn/release read 108x. The measured mining-wallet outflow is primary.
+    "GEODNET": {"kind": "first_party", "metric": "pool_release_tokens",
+                "source_prefix": "explorer:mining_wallets_outflow",
+                "block_reason": "waiting for the measured mining-wallet outflow (log_scans."
+                                "mining_wallets_outflow) to seed and reconcile. The derived "
+                                "d(circulating) - d(total) reads ~0 because CoinGecko's "
+                                "circulating figure is not updating; Jake's understanding is that "
+                                "emissions and burn are roughly equal, so a burn/release ratio "
+                                "from it is meaningless"},
+}
+# The derived pool-release route, and the stock it differences.
+POOL_RELEASE_DERIVED_SOURCE = "derived:d_circulating-d_total"
+
+
+def issuance_primary(project_name: str) -> dict | None:
+    return ISSUANCE_PRIMARY.get(project_name)
+
+
 # PROTOCOL staking yield: holders_revenue_usd (annualised) / (locked value x spot price). `lock`
 # names the ASSETS series — Ether.fi keeps its share count in locked_tokens and its assets in
 # locked_tokens_underlying.

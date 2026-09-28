@@ -529,11 +529,14 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     #     Sky's other_burn_balance, confirmed by the supply identity and dominated by migration
     #     plumbing (config Sky.classification_pending). Blanked like the rest: a reader acts on
     #     the number under the label, and the label is what is not settled.
+    #     ALSO BLOCKED (2026-09-28): a READ-TIME VIEW decided the series cannot be shown —
+    #     declared vs observed issuance more than 10x apart, a first-party series that has not
+    #     landed, a derived release over a flat circulating figure. See _issuance_views.
     pending = config.classification_pending(project, metric)
-    if pending:
-        return "blocked", (
+    if pending or (project, metric) in _VIEW_BLOCKS:
+        return "blocked", (_VIEW_BLOCKS.get((project, metric)) or (
             f"BLOCKED — {pending['reason']}. Cleared by: "
-            f"{pending.get('resolves_when', 'see config')}.")
+            f"{pending.get('resolves_when', 'see config')}."))
 
     # 9. THE STORED STOCK IS OUTSIDE ITS DECLARED BOUND. Added 2026-09-24.
     #    fetch.validate rejects an out-of-bound value at WRITE time, and cannot reach a row
@@ -737,6 +740,88 @@ def _relabel_views(groups: dict) -> None:
             groups[(name, "actual_buyback_usd")] = usd
 
 
+# (project, metric) -> reason, set by the read-time views on each aggregate() call and read by
+# withheld_for (case 8c) and the A1 validator-yield cell. A view that decides a series cannot be
+# shown says why here, once, and every consumer blanks it the same way.
+_VIEW_BLOCKS: dict = {}
+
+
+def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
+    """The PRIMARY issuance series, for every consumer. See config.ISSUANCE_PRIMARY.
+
+    declared_rate  gross_issuance_tokens := rate x total supply / 365 per day, from the declared
+                   effective date (or the first stored supply, whichever is later) to the day
+                   before asof, supply forward-filled. The derived series it replaces is the
+                   cross-check: annualised over the days it covers, more than max_ratio apart
+                   either way BLOCKS the row with both figures.
+    first_party    only rows from source_prefix; until any fall inside the Q0 window the row is
+                   BLOCKED with the declared reason instead of showing the derivation.
+    And for EVERY project: a derived pool release (d(circulating) - d(total)) whose circulating
+    input did not move across the Q0 window is BLOCKED — the route cannot see a release then.
+    """
+    period, ann = GLOBALS["period_days"], GLOBALS["days_per_year"]
+    start = asof - pd.Timedelta(days=period)
+    in_q0 = lambda g: g[(g["date"] > start) & (g["date"] <= asof)]  # noqa: E731
+    for p in scoped_projects():
+        name = p["name"]
+        spec = config.issuance_primary(name)
+        if spec:
+            metric, key = spec["metric"], (name, spec["metric"])
+            observed = groups.get(key)
+            if spec["kind"] == "declared_rate":
+                rate = p
+                for k in spec["rate_path"]:
+                    rate = rate[k]
+                sup = groups.get((name, spec["supply_metric"]))
+                if sup is not None and not sup.empty:
+                    sup = sup.drop_duplicates("date", keep="last").sort_values("date")
+                    eff = str((p.get("issuance_rate_declared") or {}).get("effective_from") or "")
+                    first = max(sup["date"].min(),
+                                pd.Timestamp(eff + ("-01" if len(eff) == 7 else "")) if eff else sup["date"].min())
+                    days = pd.date_range(first, asof - pd.Timedelta(days=1), freq="D")
+                    level = sup.set_index("date")["value"].astype(float).reindex(
+                        days.union(sup["date"])).sort_index().ffill().reindex(days)
+                    level = level.dropna()
+                    view = pd.DataFrame({"date": level.index, "project": name, "metric": metric,
+                                         "value": level.values * float(rate) / ann,
+                                         "source": f"declared:{rate:.2%}/yr x {spec['supply_metric']}",
+                                         "tier": 1})
+                    for col in (observed.columns if observed is not None else []):
+                        if col not in view.columns:
+                            view[col] = False if col == "is_manual" else ""
+                    groups[key] = view
+                    decl = float(rate) * float(sup["value"].iloc[-1])
+                    if observed is not None and not observed.empty:
+                        ob = in_q0(observed)
+                        if not ob.empty:
+                            covered = (ob["date"].max() - ob["date"].min()).days + 1
+                            obs = float(ob["value"].astype(float).sum()) / covered * ann
+                            k = float(spec.get("max_ratio", 10))
+                            if obs <= 0 or decl / obs > k or obs / decl > k:
+                                _VIEW_BLOCKS[key] = (
+                                    f"BLOCKED — declared {decl:,.0f} vs observed {obs:,.0f} "
+                                    f"issuance/yr differ >{k:.0f}x (observed = the derived "
+                                    f"series, annualised over its {covered} covered day(s)); one "
+                                    f"of them is wrong, so neither is shown")
+            elif spec["kind"] == "first_party":
+                mine = (observed[observed["source"].astype(str).str.startswith(spec["source_prefix"])]
+                        if observed is not None and not observed.empty else None)
+                if mine is not None and not in_q0(mine).empty:
+                    groups[key] = mine
+                elif observed is not None and not observed.empty:
+                    _VIEW_BLOCKS[key] = f"BLOCKED — {spec['block_reason']}"
+        # A DERIVED RELEASE OVER A FLAT CIRCULATING FIGURE MEASURES NOTHING.
+        rel, circ = groups.get((name, "pool_release_tokens")), groups.get((name, "circulating_supply"))
+        if (rel is not None and not rel.empty and circ is not None and (name, "pool_release_tokens") not in _VIEW_BLOCKS
+                and in_q0(rel)["source"].astype(str).str.startswith(config.POOL_RELEASE_DERIVED_SOURCE).all()):
+            c = in_q0(circ)
+            if len(c) >= 2 and c["value"].astype(float).nunique() == 1:
+                _VIEW_BLOCKS[(name, "pool_release_tokens")] = (
+                    f"BLOCKED — circulating not updating, so release is unmeasurable by this route: "
+                    f"the derived release is d(circulating) - d(total), and circulating_supply read "
+                    f"{float(c['value'].iloc[-1]):,.0f} on all {len(c)} stored day(s) of the window")
+
+
 def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp,
               gaps: pd.DataFrame | None = None, review: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every project x every metric in the library — so every INDEX/MATCH key resolves."""
@@ -755,6 +840,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _relabel_views(groups)
+    _VIEW_BLOCKS.clear()
+    _issuance_views(groups, asof)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -1963,16 +2050,14 @@ def _a1_headline(R: Refs) -> list[tuple]:
             rate, share = walk(spec["rate_path"]), walk(spec["share_path"])
             supply = R.D(r, spec["supply_metric"], "now")
             stake = R.D(r, "locked_tokens", "now")
-            om = spec["observed_metric"]
-            obs = _annualise(R, r, p, om, R.D(r, om, "q0"))
+            # THE GUARD NOW LIVES IN _issuance_views (2026-09-28), so the yield, the crossover
+            # and the trajectory block together and on the same figures.
+            block = _VIEW_BLOCKS.get((p["name"], spec["observed_metric"]))
+            if block:
+                return block
             decl = f"({rate}*{supply})"
-            k = spec.get("max_ratio", 10)
             val = f"{decl}*{share}/{stake}"
-            blocked = (f'"BLOCKED — declared "&TEXT({decl},"#,##0")&" vs observed "&TEXT({obs},"#,##0")'
-                       f'&" issuance/yr differ >{k}x"')
-            return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),"
-                        f"IF(ISNUMBER({R.D(r, om, 'q0')}),"
-                        f"IF(OR({obs}<=0,{decl}/{obs}>{k},{obs}/{decl}>{k}),{blocked},{val}),{val}),{NA})")
+            return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),{val},{NA})")
         if spec["method"] == "issuance_share":
             share = p
             for k in spec["share_path"]:

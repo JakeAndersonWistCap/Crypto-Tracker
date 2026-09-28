@@ -15417,24 +15417,83 @@ def test_data_tab_writes_day_counts_as_numbers_so_formulas_can_read_them():
 
 
 def test_near_validator_yield_is_declared_primary_and_blocks_on_a_10x_disagreement():
-    """NEAR read 0.179% against ~5.2%: the observed issuance (d(supply) + burn, a short series)
-    was the input. Now DECLARED issuance (2.5% x total supply) x 90% / stake is primary and the
-    observed figure, annualised over its covered days, is the guard: >10x apart BLOCKS the cell
-    and shows both. Numbers checked end to end by recalculation on 2026-09-28: consistent
-    observed -> 5.2029%; observed 29x low -> blocked."""
+    """NEAR read 0.179% against ~5.2%. DECLARED issuance (2.5% x total supply) x 90% / stake is
+    primary. Since 2026-09-28 the >10x guard lives in build_workbook._issuance_views, so the A1
+    yield, the A4 crossover and the A2 trajectory block TOGETHER (see the issuance-view test)."""
     import build_workbook as bw
     spec = config.VALIDATOR_YIELD["Near"]
-    assert spec["method"] == "declared_share" and spec["max_ratio"] == 10
+    assert spec["method"] == "declared_share"
     near = config.PROJECT_BY_NAME["Near"]
     rate = near["issuance_rate_declared"]["annual_rate_max"]
     share = near["issuance_rate_declared"]["treasury_share"]["validator_share"]
     assert (rate, share) == (0.025, 0.9)
     assert abs(rate * 1_288_000_000 * share / 557_000_000 - 0.052029) < 1e-6
     R = bw.Refs(100, 10, ["2026-09"])
+    bw._VIEW_BLOCKS.clear()
     cell = bw._a1_headline(R)[0][1](5, near)
-    assert '"|total_supply"' in cell and '"|locked_tokens"' in cell and "BLOCKED" in cell
-    assert f"${bw.DC['q0_covered_days']}$" in cell                  # observed over covered days
-    print("near ok: declared primary, observed guard at 10x")
+    assert '"|total_supply"' in cell and '"|locked_tokens"' in cell and "*0.9/" in cell
+    bw._VIEW_BLOCKS[("Near", "gross_issuance_tokens")] = "BLOCKED — declared 32,200,000 vs observed 1 differ"
+    try:
+        assert bw._a1_headline(R)[0][1](5, near).startswith("BLOCKED — declared")
+    finally:
+        bw._VIEW_BLOCKS.clear()
+
+
+def test_declared_or_first_party_issuance_is_primary_in_every_consumer():
+    """Jake, 2026-09-28: A4's crossover kept reading DERIVED issuance after A1 moved to declared.
+    NEAR derived Q0 265,367 vs declared 32.2M/yr -> burn/issuance 0.090 instead of ~0.003;
+    Ethereum derived 9,106 ETH vs ~2,700 ETH/day -> 0.168 instead of ~0.013. The issuance series
+    itself is now replaced at read time, so every consumer reads the same primary figure."""
+    import build_workbook as bw
+
+    asof = pd.Timestamp("2026-09-28")
+    days = pd.date_range("2026-07-01", "2026-09-27")
+
+    def rows(project, metric, values, source, dates=days):
+        return [{"date": d, "project": project, "metric": metric, "value": v, "source": source,
+                 "tier": 2, "is_manual": False, "entered_on": ""}
+                for d, v in zip(dates, values if isinstance(values, list) else [values] * len(dates))]
+
+    def agg(data):
+        return bw.aggregate(pd.DataFrame(data), pd.DataFrame(), asof, gaps=pd.DataFrame(),
+                            review=pd.DataFrame()).set_index(["project", "metric"])
+
+    supply = 1_288_000_000.0
+    # (a) NEAR, derived consistent with declared over its covered days -> declared shown
+    base = rows("Near", "total_supply", supply, "near_rpc")
+    near_obs = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365, "derived:x",
+                    dates=days[-3:])
+    out = agg(base + near_obs)
+    r = out.loc[("Near", "gross_issuance_tokens")]
+    assert r["status"] not in bw.WITHHELD_STATUSES, r["note"]
+    assert abs(r["q0"] - supply * 0.025 / 365 * 89) / r["q0"] < 1e-9, "declared, every day of Q0"
+    # (b) NEAR derived 30x low over a full window -> BLOCKED with both figures
+    low = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365 / 30, "derived:x")
+    r = agg(base + low).loc[("Near", "gross_issuance_tokens")]
+    assert r["status"] == "blocked" and "declared 32,200,000 vs observed 1,073,333" in r["note"], r["note"]
+    # (c) Ethereum: derived rows only -> BLOCKED waiting for beaconcha.in; first-party -> shown
+    eth_d = rows("Ethereum", "gross_issuance_tokens", 101.2, "derived:d_supply+burn")
+    r = agg(eth_d).loc[("Ethereum", "gross_issuance_tokens")]
+    assert r["status"] == "blocked" and "beaconcha.in" in r["note"]
+    eth_b = rows("Ethereum", "gross_issuance_tokens", 2_700.0, "beaconchain", dates=days[-5:])
+    r = agg(eth_d[:-5] + eth_b).loc[("Ethereum", "gross_issuance_tokens")]
+    assert r["status"] not in bw.WITHHELD_STATUSES and r["q0"] == 5 * 2_700.0, (r["status"], r["q0"])
+    # (d) GEODNET: derived release over a flat circulating figure -> BLOCKED; measured -> primary
+    geo = (rows("GEODNET", "pool_release_tokens", 1_000.0, config.POOL_RELEASE_DERIVED_SOURCE)
+           + rows("GEODNET", "circulating_supply", 462_370_402.0, "coingecko"))
+    r = agg(geo).loc[("GEODNET", "pool_release_tokens")]
+    assert r["status"] == "blocked" and "mining-wallet outflow" in r["note"]
+    meas = rows("GEODNET", "pool_release_tokens", 250_000.0, "explorer:mining_wallets_outflow",
+                dates=days[-10:])
+    r = agg(geo[len(days):] + meas).loc[("GEODNET", "pool_release_tokens")]
+    assert r["status"] not in bw.WITHHELD_STATUSES and r["q0"] == 2_500_000.0
+    # (e) any project: derived release over flat circulating -> "circulating not updating"
+    wm = (rows("World Mobile", "pool_release_tokens", 5.0, config.POOL_RELEASE_DERIVED_SOURCE)
+          + rows("World Mobile", "circulating_supply", 1e9, "coingecko"))
+    out = agg(wm)
+    if ("World Mobile", "pool_release_tokens") in out.index:
+        r = out.loc[("World Mobile", "pool_release_tokens")]
+        assert r["status"] == "blocked" and "circulating not updating" in r["note"], r["note"]
 
 
 def test_nearblocks_buyback_runs_first_and_calls_are_paced_to_the_free_plan(monkeypatch,
