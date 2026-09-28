@@ -3575,22 +3575,34 @@ PROJECTS = [
         # utilisation_pct is not applicable.
         "archetypes": [1, 2, 3], "archetypes_held": [],
         "manual_quarterly": ["supply_units"],
-        # END-USER SPEND is not established. DefiLlama's chainlink fees are on file as fees_usd,
-        # but nobody has read the adapter to see whether that is what oracle/CCIP consumers PAY
-        # or what the network routes to the Reserve. Restating it would assert the answer.
-        "customer_revenue_usd_blocked": {
-            "status": "NOT ESTABLISHED — the one on-file figure (fees_usd) has not been shown to be end-user spend",
-            "wanted": "what dApps pay for Chainlink services (data feeds, CCIP, VRF, Automation) per period",
-            "why": "fees_usd comes from DefiLlama's chainlink adapter, which has not been read on this "
-                   "project. If it books consumer payments it can be restated as customer revenue, "
-                   "exactly as GEODNET's and Aethir's are; if it books Reserve inflows (the protocol's "
-                   "share, via Payment Abstraction), it is revenue, not spend, and restating it would "
-                   "understate customer payments by the node operators' share.",
-            "source_url": "https://github.com/DefiLlama/dimension-adapters/tree/master/fees",
-            "source_date": "2026-09-24",
-            "route_that_would_work": "read DefiLlama's chainlink fees adapter; if it books consumer "
-                                     "payments, declare metric_restatement customer_revenue_usd = "
-                                     "fees_usd with the adapter's definition on the label.",
+        # ===== customer_revenue_usd = fees_usd, A FLOOR. RESOLVED 2026-09-28. =====
+        # The adapter was read (DefiLlama/dimension-adapters fees/chainlink/index.ts, master,
+        # read 2026-09-28): dailyFees = "All the tokens received by the fee aggregator contract"
+        # (0xd6e39d42AceE7Abcc460E6Ea78a0844A0980E78f), described there as "Fees paid by users for
+        # Chainlink oracle data feed services". Reserve inflows are its dailyRevenue, not its fees.
+        # So fees_usd IS consumer spend — but only what reaches that one contract, on Ethereum
+        # only, since 2025-02-21: no other chain, and no off-chain or enterprise agreements. It is
+        # restated as customer revenue and labelled a FLOOR, never the whole.
+        "metric_restatement": {
+            "customer_revenue_usd": {
+                "equals": "fees_usd",
+                "why": "DefiLlama's chainlink adapter books everything the Ethereum fee aggregator "
+                       "receives as fees — what data-feed users pay — and books Reserve inflows "
+                       "separately as revenue. Consumer spend, but one contract on one chain.",
+                "label": "Customer revenue — A FLOOR: THE SAME SERIES AS fees_usd, i.e. tokens "
+                         "received by Chainlink's Ethereum fee aggregator (DefiLlama chainlink "
+                         "adapter). Ethereum only, since 2025-02-21; excludes other chains and "
+                         "off-chain/enterprise payments, so it UNDERSTATES what customers pay.",
+                "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/chainlink/index.ts",
+                "recorded_on": "2026-09-28",
+            },
+        },
+        # The record it replaces, kept (renamed so fetch/gaps.py no longer reads it as a gap).
+        "customer_revenue_usd_resolved": {
+            "was": "NOT ESTABLISHED — whether DefiLlama's chainlink fees are consumer payments or "
+                   "Reserve inflows (2026-09-24)",
+            "answer": "consumer payments: dailyFees = the fee aggregator's receipts; Reserve "
+                      "inflows are dailyRevenue. Restated as a labelled floor (2026-09-28).",
         },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
         # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither

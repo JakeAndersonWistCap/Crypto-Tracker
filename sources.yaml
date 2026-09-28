@@ -897,7 +897,7 @@
   # figure for locked_tokens = PENDLE.balanceOf(sPENDLE).
   # Loaded directly: the xhr method captures every JSON response, the navigation included.
   url: https://api-v2.pendle.finance/core/v1/spendle/data
-  method: xhr
+  method: json            # plain GET (2026-09-28): the xhr/Chromium route stored nothing and said nothing
   url_contains: /v1/spendle/data
   json_path: totalStakedInSpendle
   needs_first_run_check: true
@@ -915,7 +915,7 @@
   # shares in distributions and so belongs in the protocol-yield denominator. Same documented
   # endpoint as locked_tokens_dashboard above (Pendle API docs, ApiOverview.mdx @ 9b9509e).
   url: https://api-v2.pendle.finance/core/v1/spendle/data
-  method: xhr
+  method: json            # plain GET (2026-09-28): the xhr/Chromium route stored nothing and said nothing
   url_contains: /v1/spendle/data
   json_path: virtualSpendleFromVependle
   needs_first_run_check: true

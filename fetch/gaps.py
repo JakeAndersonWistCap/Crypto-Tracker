@@ -638,6 +638,14 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     if frame is not None and not frame.empty:
         have = set(map(tuple, frame[["project", "metric"]].drop_duplicates().to_numpy()))
     have |= manual_keys
+    # A RESTATED COLUMN IS COVERED WHEN ITS SOURCE IS (2026-09-28). Morpho's customer_revenue_usd
+    # IS fees_usd: on a run where fees_usd was skipped as already current, the fetch-time copy
+    # did not happen, the sheet still showed it (build_workbook._restatement_views), and the Gap
+    # Report said "entry disabled in sources" — a stub's reason for a column that needs none.
+    for p in projects:
+        for tgt, spec in config.metric_restatements(p["name"]).items():
+            if (p["name"], spec.get("equals")) in have:
+                have.add((p["name"], tgt))
     # A gap raised by an earlier tier is superseded when a later tier resolved the same metric.
     # The Gap Report lists what could not be resolved AT ALL, so an unverified contract address
     # for a figure the protocol's own dashboard already supplied does not belong on the to-do list.

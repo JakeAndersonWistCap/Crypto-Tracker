@@ -44,7 +44,7 @@ import pandas as pd
 import yaml
 
 from .base import (USER_AGENT, derive_flow_from_cumulative, json_path_get, parse_number, point, today,
-                   waiting_on)
+                   waiting_on, LogEntry)
 
 log = logging.getLogger("token_metrics.fetch.scrape")
 
@@ -136,10 +136,10 @@ def entry_ready(entry: dict) -> tuple[bool, str]:
     missing = [f for f in REQUIRED_FIELDS if not entry.get(f)]
     if missing:
         return False, f"sources.yaml entry incomplete — missing {', '.join(missing)}"
-    if entry["method"] not in ("xhr", "dom", "adapter"):
-        return False, f"unknown method {entry['method']!r} (expected xhr, dom or adapter)"
-    if entry["method"] == "xhr" and not entry.get("json_path"):
-        return False, "method xhr needs json_path"
+    if entry["method"] not in ("xhr", "dom", "adapter", "json"):
+        return False, f"unknown method {entry['method']!r} (expected xhr, dom, adapter or json)"
+    if entry["method"] in ("xhr", "json") and not entry.get("json_path"):
+        return False, f"method {entry['method']} needs json_path"
     if entry["method"] == "dom" and not entry.get("anchor"):
         return False, "method dom needs anchor (the label text to anchor on)"
     if entry["method"] == "adapter" and not entry.get("adapter"):
@@ -323,8 +323,43 @@ def extract_xhr(page, entry: dict, captured: list) -> tuple[float | None, str]:
             parsed = parse_number(v)
             if parsed is not None:
                 return parsed, f"xhr {url[:120]} -> {path}"
+    shapes = [f"{u[:80]} keys {_keys(p)}" for u, p in captured if not needle or needle in u]
     return None, (f"no intercepted response matched url_contains={needle!r} with json_path={path!r}"
-                  f" ({len(captured)} JSON responses seen)")
+                  f" ({len(captured)} JSON responses seen"
+                  + (f"; matching ones carried: {' | '.join(shapes[:3])}" if shapes else "") + ")")
+
+
+def _keys(payload, depth: int = 0) -> str:
+    """The top-level keys of a JSON payload (one level into a single wrapper), for diagnosis."""
+    if isinstance(payload, dict):
+        keys = sorted(payload)[:20]
+        if depth == 0 and len(keys) == 1 and isinstance(payload[keys[0]], dict):
+            return f"{{{keys[0]}: {_keys(payload[keys[0]], 1)}}}"
+        return str(keys)
+    return type(payload).__name__
+
+
+def fetch_json(entry: dict) -> tuple[float | None, str]:
+    """method: json — a documented JSON API read with a plain GET, no browser. Added 2026-09-28.
+
+    Pendle's /v1/spendle/data entries were loaded in Chromium through the xhr method, were
+    "EXISTS AND IS ARMED", and stored nothing, with nothing in the log to say why. A plain GET
+    reports exactly what came back: the raw value and its type on success, the payload's keys
+    when the path is missing — enough to settle units and field names from one run.
+    """
+    import requests
+    r = requests.get(entry["url"], headers={"User-Agent": USER_AGENT}, timeout=(10, 30))
+    r.raise_for_status()
+    payload = r.json()
+    raw = json_path_get(payload, entry["json_path"])
+    if raw is None:
+        return None, f"GET {entry['url']} -> {entry['json_path']!r} not found; payload keys {_keys(payload)}"
+    parsed = parse_number(raw)
+    detail = (f"GET {entry['url']} -> {entry['json_path']} = {str(raw)[:40]!r} "
+              f"({type(raw).__name__}); payload keys {_keys(payload)}")
+    if parsed is None:
+        return None, f"{detail} — not a number"
+    return parsed, detail
 
 
 def extract_dom(page, entry: dict) -> tuple[float | None, str]:
@@ -468,6 +503,25 @@ class Scrape:
             still.append(e)
         live = still
         self._backoff = backoff
+        # method json: a plain GET, no browser (2026-09-28)
+        for e in [e for e in live if e["method"] == "json"]:
+            try:
+                with waiting_on(f"GET {urllib.parse.urlparse(e['url']).netloc}"):
+                    value, detail = fetch_json(e)
+            except Exception as ex:  # noqa: BLE001
+                value, detail = None, f"GET {e['url']} failed: {ex}"
+            if value is None:
+                backoff.failed(e)
+                out.fail(SOURCE, e["project"], f"{e['metric']}: {detail}", TIER)
+                out.gap(e["project"], e["metric"], reason=f"JSON read returned nothing usable: {detail}",
+                        tiers_attempted="3", suggestion=f"Correct json_path in {self.registry_path} "
+                                                        f"from the keys above.")
+                continue
+            cache_write(e, {"value": value, "detail": detail, "url": e["url"]})
+            backoff.succeeded(e)
+            out.log.append(LogEntry(SOURCE, e["project"], 0, "ok", f"{e['metric']}: {detail}", TIER))
+            self._emit(e, value, f"{SOURCE}:{urllib.parse.urlparse(e['url']).netloc}", out, detail=detail)
+        live = [e for e in live if e["method"] != "json"]
         if not live:
             return
 

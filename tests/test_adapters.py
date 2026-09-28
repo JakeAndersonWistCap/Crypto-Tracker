@@ -14475,7 +14475,11 @@ def test_hyperliquid_future_emissions_is_its_own_series_never_pool_release():
 def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart():
     c = config.PROJECT_BY_NAME["Chainlink"]
     assert c["archetypes"] == [1, 2, 3], "the note's archetype-2 list names Chainlink"
-    assert "supply_units" in c["manual_quarterly"] and "customer_revenue_usd_blocked" in c
+    # customer_revenue_usd RESOLVED 2026-09-28: DefiLlama's adapter books the fee aggregator's
+    # receipts (consumer spend) as fees, so it is restated as a labelled FLOOR
+    assert "supply_units" in c["manual_quarterly"] and "customer_revenue_usd_blocked" not in c
+    assert config.metric_restatements("Chainlink")["customer_revenue_usd"]["equals"] == "fees_usd"
+    assert "FLOOR" in config.metric_label("Chainlink", "customer_revenue_usd")
     assert config.not_applicable_reason("Chainlink", "utilisation_pct")
     assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
     for n in ("Ethereum", "Plume"):
@@ -16618,3 +16622,59 @@ def test_a_timeout_is_attributed_only_to_metrics_the_source_serves():
     note_timeouts(gaps, {"nearblocks": (1, 60)}, config.PROJECTS)
     hit = [(g["project"], g["metric"]) for g in gaps if g["reason"].startswith("TIER TIMED OUT")]
     assert hit == [("Near", "tx_count")], hit
+
+
+def test_pendle_spendle_data_is_read_with_a_plain_json_get_that_explains_itself(monkeypatch):
+    """3b, 2026-09-28: the xhr/Chromium route on /v1/spendle/data was ARMED and stored nothing,
+    with nothing in the log to say why. method json GETs it directly and logs the raw value and
+    type, or the payload's keys when the path is missing."""
+    import requests
+
+    from fetch import scrape
+    from fetch.base import FetchOutput
+
+    payload = {"totalPendleStaked": 101_000_000.5, "totalStakedInSpendle": "35420000.25",
+               "virtualSpendleFromVependle": 64_000_000, "sPendleHistoricalData": {}}
+
+    class Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: Resp())
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    monkeypatch.setattr(scrape, "cache_read", lambda e: None)
+    monkeypatch.setattr(scrape, "cache_write", lambda e, v: None)
+    launched = []
+    monkeypatch.setattr(scrape.Scrape, "_browser", lambda self: launched.append(1))
+    pendle = [e for e in scrape.load_registry("sources.yaml") if e["project"] == "Pendle"]
+    monkeypatch.setattr(scrape, "load_registry", lambda path: pendle)
+    out = FetchOutput()
+    scrape.Scrape().run([config.PROJECT_BY_NAME["Pendle"]], 30, out)
+    got = out.frame().set_index("metric")["value"]
+    assert got["locked_tokens_dashboard"] == 35_420_000.25 and got["locked_tokens_virtual"] == 64_000_000
+    assert launched == [], "no browser for a JSON API"
+    assert any("'35420000.25' (str)" in e.message for e in out.log), [e.message for e in out.log]
+
+    payload.clear()
+    payload.update({"data": {"totalPendle": 1}})
+    value, detail = scrape.fetch_json(pendle[0])
+    assert value is None and "{data: ['totalPendle']}" in detail, detail
+
+
+def test_a_restated_column_is_not_a_gap_when_its_source_is_covered():
+    """3c, 2026-09-28: Morpho customer_revenue_usd read 'entry disabled in sources' on a run where
+    fees_usd was skipped as already current. A restated column is covered whenever its source is."""
+    from fetch.gaps import detect
+
+    morpho = config.PROJECT_BY_NAME["Morpho"]
+    stub = [{"project": "Morpho", "metric": "customer_revenue_usd",
+             "reason": "entry disabled in sources.yaml — EMPTY STUB", "tiers_attempted": "5",
+             "suggestion": ""}]
+    gaps = detect([morpho], pd.DataFrame(columns=["date", "project", "metric", "value", "source", "tier"]),
+                  {("Morpho", "fees_usd")}, {}, stub)
+    assert not [g for g in gaps if g["metric"] == "customer_revenue_usd"], gaps
