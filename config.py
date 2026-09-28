@@ -6419,6 +6419,25 @@ PROJECTS = [
             "note": "released from a pre-minted allocation.",
         },
         "name": "Aethir", "symbol": "ATH",
+        # ===== B7 (2026-09-28): AETHIR'S OWN REVENUE FIGURES, BESIDE DEFILLAMA'S. RECORDED BOTH. =====
+        # DefiLlama's fees (~$4.5M/30d) are DepositServiceFee - WithdrawServiceFee on AethirCore
+        # (Arbitrum) — prepayment net of withdrawals, a different quantity from the revenue Aethir
+        # reports, which is booked compute (enterprise contracts included). Neither is preferred;
+        # the ratio between them is the finding. Reference only: no metric reads it.
+        "reported_revenue_reference": {
+            "arr_2025_04": {"value_usd": 126_024_248, "date": "2025-04-11",
+                            "source": "https://x.com/AethirCloud/status/1910574753720537270"},
+            "q3_2025": {"revenue_usd": 39_800_000, "arr_usd": 166_000_000, "date": "2025-10",
+                        "source": "https://ecosystem.aethir.com/blog-posts/aethirs-record-breaking-q3"},
+            "fy_2025": {"revenue_usd": 127_800_000, "qualifier": "'$127.8M+'", "date": "2026-01-16",
+                        "source": "https://x.com/AethirCloud/status/2012144892370428046"},
+            "latest_2026": "none published as of 2026-09-28 (searched)",
+            "defillama_measures": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/aethir/index.ts "
+                                  "— service-fee deposits minus withdrawals on AethirCore, Arbitrum",
+            "comparison": "FY2025 $127.8M reported vs DefiLlama ~$4.5M/30d (~$55M/yr): the "
+                          "on-chain prepayment route sees well under half of reported revenue.",
+            "recorded_on": "2026-09-28",
+        },
         # ===== locked_tokens — RESEARCHED 2026-09-23, NOT FOUND, SEARCH RECORDED. =====
         # ===== WIRED 2026-09-24 FROM THE STAKING WRAPPER — see wrapper_three_way_match_2026_09_24. =====
         "aethir_staking": {
@@ -7591,6 +7610,26 @@ PROJECTS = [
             # Assets" $4.63M, described as stablecoins and BTC held by the SSF. Not scraped —
             # config.METRICS has no USD-denominated treasury key to hold it, and inventing one is a
             # deliberate choice rather than a side effect of arming the cross-check.
+            # ===== B8 (2026-09-28): THE SSF FELL — AND WHY IS NOT ATTRIBUTABLE, BY CONSTRUCTION. =====
+            # SYRUP Holdings on the page: 77.66M (09-14) -> 79.21M (09-24) -> 78.32M (09-25) ->
+            # 78.26M (09-28). A fall means SYRUP left the fund. Maple's own materials give the
+            # MANDATE (stated_uses above, from MIP-019: working capital, token liquidity, capital
+            # reserves, further buybacks), so an outflow is within it; they give no per-transfer
+            # account, and the page's own statement that the SSF is "part of the Treasury" means
+            # there is no SSF address whose transfers could be read. Searched 2026-09-28: Maple's
+            # transparency page notes, MIP-019, MIP-021 (rules-based buyback, 10/20/30% by revenue
+            # tier, passed 99.97%, first buybacks Aug 2026) — none names an SSF outflow.
+            "ssf_decline_2026_09": {
+                "readings": {"2026-09-14": 77_660_000, "2026-09-24": 79_210_000,
+                             "2026-09-25": 78_320_000, "2026-09-28": 78_260_000},
+                "fall_since_peak": 950_000,
+                "explanation": "within the SSF's stated mandate (working capital, token "
+                               "liquidity) per MIP-019; no per-transfer account published",
+                "why_not_attributed": "the SSF is 'part of the Treasury' on Maple's own page — "
+                                      "no separate address to read transfers from",
+                "status": "ACCEPTED LIMIT — ask Maple (governance forum) if the cause matters",
+                "recorded_on": "2026-09-28",
+            },
             "observed_composition": {
                 "as_of": "2026-09-14",
                 "syrup_holdings": 77_660_000,
