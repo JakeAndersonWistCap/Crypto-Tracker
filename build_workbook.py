@@ -2197,16 +2197,21 @@ def _a1_headline(R: Refs) -> list[tuple]:
             val = f"{decl}*{share}/{stake}"
             return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),{val},{NA})")
         if spec["method"] == "issuance_share":
-            share = p
-            for k in spec["share_path"]:
-                share = share[k]
-            iss, stake = R.D(r, "gross_issuance_tokens", "q0"), R.D(r, "locked_tokens", "now")
-            return calc(f"IF(AND(ISNUMBER({iss}),ISNUMBER({stake})),{_annualise(R, r, p, 'gross_issuance_tokens', iss)}*{share}/{stake},{NA})")
+            share = spec.get("share")
+            if share is None:
+                share = p
+                for k in spec["share_path"]:
+                    share = share[k]
+            # Chainlink (B2): rewards paid from its vault over staked principal.
+            im, sm = spec.get("issuance_metric", "gross_issuance_tokens"), spec.get("stake_metric", "locked_tokens")
+            iss, stake = R.D(r, im, "q0"), R.D(r, sm, "now")
+            return calc(f"IF(AND(ISNUMBER({iss}),ISNUMBER({stake})),{_annualise(R, r, p, im, iss)}*{share}/{stake},{NA})")
         return "pending — " + spec.get("why", "")[:80]
     return [
         ("VALIDATOR STAKING YIELD (annual) — securing the chain, NOT a protocol revenue share",
          vyield, FMT_PCT, "calc", True,
-         {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "total_supply"}.get(n)}),
+         {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "total_supply",
+                                  "Chainlink": "emissions_tokens"}.get(n)}),
         ("Settlement volume, annualised ($) — The Block adjusted, manual quarterly",
          lambda r, p: pull(R.D(r, "settlement_volume_annual_usd", "now")) if "settlement_volume_annual_usd"
          in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_annual_usd"}),

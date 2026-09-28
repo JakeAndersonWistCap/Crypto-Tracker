@@ -4063,6 +4063,27 @@ PROJECTS = [
                                      "Abstraction layer to the Reserve), read 2026-09-24",
                 "wired_on": "2026-09-24",
             },
+            # ===== B2 (Jake, 2026-09-28): STAKING REWARDS PAID, FROM THE REWARD VAULT. =====
+            # LINK Transfer events OUT of the staking v0.2 reward vault (address verified
+            # 2026-09-17 against smartcontractkit/chainlink-staking-v0.2-public-guide). The vault
+            # exists to pay stakers, so every outflow counts (dedicated_wallet). ** PAID, NOT
+            # ACCRUED **: rewards leave the vault when a staker claims, so this lags accrual and
+            # is lumpy. The counterparty table in the run log shows who received it — anything
+            # that is not a staker (a return to Chainlink, a migration) shows up there first.
+            {
+                "key": "staking_rewards_out",
+                "metric": "emissions_tokens",
+                "chain": "ethereum",
+                "token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+                "holders": ["0x996913c8c08472f584ab8834e925b06D0eb1D813"],
+                "direction": "out",
+                "store": True,
+                "attribution": "dedicated_wallet",
+                "attribution_sources": ["https://github.com/smartcontractkit/"
+                                        "chainlink-staking-v0.2-public-guide (reward vault)"],
+                "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
+                "wired_on": "2026-09-28",
+            },
         ],
         "metric_labels": {
             "actual_buyback_tokens": "LINK inflow to Reserve (Payment Abstraction) — EXCLUDES the "
@@ -14477,6 +14498,22 @@ VALIDATOR_YIELD = {
     "Hyperliquid": {"method": "pending",
                     "why": "rewards = the fall in future_emissions_tokens, stored from 2026-09-24; "
                            "a yield needs two observations a window apart"},
+    # B2 (2026-09-28): LINK paid out of the staking v0.2 reward vault (log_scans.
+    # staking_rewards_out), annualised, over staked principal (both pools' getTotalPrincipal).
+    # Staking secures the oracle network, not a chain — archetype 1's validator column is the
+    # nearest fit and the note says so. PAID rewards lag accrual (paid on claim).
+    "Chainlink": {"method": "issuance_share", "issuance_metric": "emissions_tokens",
+                  "stake_metric": "locked_tokens_principal", "share": 1.0,
+                  "note": "staking rewards PAID from the v0.2 reward vault / staked principal — "
+                          "secures the oracle network, not a chain; paid on claim, so it lags",
+                  # THE CROSS-CHECK, from Chainlink's own material (blog.chain.link/
+                  # chainlink-staking-v0-2-overview, Nov 2023; chain.link/economics/staking):
+                  # community base floor 4.5%/yr, 4% of it redirected to operators as delegation
+                  # -> effective 4.32%; operator base floor 4.5% plus delegation. Pools 40.875M
+                  # community / 4.125M operator. Expect ~4.3-4.6% blended when fully claimed.
+                  "published_rates": {"community_effective": 0.0432, "operator_base": 0.045,
+                                      "source_url": "https://blog.chain.link/chainlink-staking-v0-2-overview/",
+                                      "read": "2026-09-28 (via search snippet)"}},
 }
 
 # ===== WHICH ISSUANCE IS PRIMARY, FOR EVERY CONSUMER. Added 2026-09-28 (Jake). =====
@@ -16209,9 +16246,8 @@ POOL_RELEASE_ROUTES = {
         "wallet": "staking_reward_vault 0x996913c8c08472f584ab8834e925b06D0eb1D813",
         "chain": "ethereum", "wallet_known": True, "verified": "2026-09-17",
         # ** BLOCKED BY THE SAME CAP AS EVERY OTHER ETHEREUM LOG SCAN. Stated 2026-09-23. **
-        "measured": "UNBLOCKED 2026-09-24, NOT WIRED — the explorer API removes the RPC range "
-                    "cap that blocked it. Not in this round's list, so not added: it is one "
-                    "log_scans entry (direction out, holder staking_reward_vault) when wanted.",
+        "measured": "WIRED 2026-09-28 as log_scans.staking_rewards_out — into emissions_tokens "
+                    "(staking rewards paid), per Jake's B2, not pool_release_tokens.",
         "derived": "live — the cross-check tier, primary until the scan runs",
     },
     "GEODNET": {

@@ -13105,7 +13105,7 @@ def test_the_pool_release_family_records_what_is_measurable_what_is_blocked_and_
             if "pool_release_tokens" in config.metrics_for_project(p)} == five
     assert "NOT newly minted" in config.METRICS["pool_release_tokens"]["label"]
     R = config.POOL_RELEASE_ROUTES
-    assert "UNBLOCKED 2026-09-24, NOT WIRED" in R["Chainlink"]["measured"]
+    assert "WIRED 2026-09-28" in R["Chainlink"]["measured"] and "staking_rewards_out" in R["Chainlink"]["measured"]
     assert "WIRED 2026-09-24" in R["GEODNET"]["measured"] and "mining_wallets_outflow" in R["GEODNET"]["measured"]
     assert "PERMANENTLY" in R["Hyperliquid"]["measured"] and "permanently" in R["Hyperliquid"]["derived"]
     # 3c — found, sourced, NOT wired (no kind means 'release pool' and the scan is capped anyway).
@@ -17596,3 +17596,29 @@ def test_geodnet_release_is_inflow_minus_the_change_in_daily_balances_in_wei(tmp
     out2 = FetchOutput()
     BalanceFlow(reader=reader, explorer=Ex(), cache=LogCache(tmp_path / "b"), unbounded=True).run([p], None, out2)
     assert out2.frame().empty and "inflow event is missing" in out2.gaps[0]["reason"]
+
+
+def test_chainlink_staking_rewards_are_the_vault_outflow_and_the_yield_is_over_principal():
+    """B2, 2026-09-28: emissions_tokens = LINK out of the v0.2 reward vault (every outflow counts —
+    it exists to pay stakers); the validator-column yield is those rewards, annualised, over both
+    pools' getTotalPrincipal. Chainlink's published rates are recorded as the cross-check."""
+    import build_workbook as bw
+
+    scan = next(s for s in config.PROJECT_BY_NAME["Chainlink"]["log_scans"]
+                if s["key"] == "staking_rewards_out")
+    assert scan["holders"] == ["0x996913c8c08472f584ab8834e925b06D0eb1D813"]
+    assert scan["direction"] == "out" and scan["metric"] == "emissions_tokens" and scan["store"]
+    spec = config.VALIDATOR_YIELD["Chainlink"]
+    assert spec["issuance_metric"] == "emissions_tokens" and spec["stake_metric"] == "locked_tokens_principal"
+    assert spec["published_rates"]["community_effective"] == 0.0432
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}:{w}]"
+
+    label, vyield = bw._a1_headline(R())[0][:2]
+    assert label.startswith("VALIDATOR STAKING YIELD")
+    f = str(vyield(7, config.PROJECT_BY_NAME["Chainlink"]))
+    assert "D[emissions_tokens:q0]" in f and "D[locked_tokens_principal:now]" in f, f
+    assert "gross_issuance_tokens" not in f and "D[locked_tokens:now]" not in f, f
+    assert "*1.0/" in f, f
