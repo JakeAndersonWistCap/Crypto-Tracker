@@ -2716,15 +2716,17 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Stablecoin supply on chain ($)", lambda r, p: pull(R.D(r, "stablecoin_supply_usd", "now")), FMT_USD, "pull", False, {"metric": "stablecoin_supply_usd"}),
         ("TVL — chain ($) [primary demand metric]", lambda r, p: pull(R.D(r, "tvl_usd", "now")), FMT_USD, "pull", True, {"metric": "tvl_usd"}),
         ("RWA on chain — DefiLlama RWA category ($)", lambda r, p: pull(R.D(r, "rwa_defillama_usd", "now")), FMT_USD, "pull", False, {"metric": "rwa_defillama_usd"}),
-        ("RWA on chain — RWA.xyz ($, manual)", lambda r, p: pull(R.D(r, "rwa_xyz_usd", "now")), FMT_USD, "pull", False, {"metric": "rwa_xyz_usd"}),
-        ("RWA divergence = (RWA.xyz − DefiLlama) ÷ DefiLlama", lambda r, p: calc(f"({R.D(r, 'rwa_xyz_usd', 'now')}-{R.D(r, 'rwa_defillama_usd', 'now')})/{R.D(r, 'rwa_defillama_usd', 'now')}"), FMT_PCT, "calc"),
+        # RWA.xyz columns REMOVED 2026-09-28: rwa_xyz_usd was retired as covered by
+        # rwa_defillama_usd and is not in METRICS, so these lookups were #N/A on every row.
         ("Gross issuance Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{iss(r)}*{ann}/{circ(r)}"), FMT_PCT, "calc"),
-        ("Staked tokens", lambda r, p: pull(R.D(r, "staked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "staked_tokens"}),
-        ("Staking rate = staked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'staked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
-        ("Resulting float = circulating − staked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'staked_tokens', 'now')}"), FMT_NUM, "calc"),
+        # staked_tokens WAS MERGED INTO locked_tokens (2bc2e5d); these three still looked it up and
+        # read #N/A on every row until 2026-09-28.
+        ("Staked tokens (locked_tokens)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
+        ("Staking rate = staked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
+        ("Resulting float = circulating − staked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
         ("Gross burn Q0 (tokens, A4 names)", lambda r, p: pull(R.D(r, "gross_burn_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_burn_tokens"}),
         ("Net issuance after burn (tokens) — burn subtracted only where a burn series exists",
          lambda r, p: calc(f"IF(ISNUMBER({R.D(r, 'gross_burn_tokens', 'q0')}),{iss(r)}-{R.D(r, 'gross_burn_tokens', 'q0')},{iss(r)})"), FMT_NUM, "calc"),
@@ -2737,7 +2739,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         *_trajectory(R, "stablecoin_supply_usd", "Stablecoins"),
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
-    end = _write_table(ws, R, projects, specs, data_by_key, ["tx_count", "fees_usd", "tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd", "rwa_xyz_usd", "gross_issuance_tokens", "price_usd", "staked_tokens", "circulating_supply"],
+    end = _write_table(ws, R, projects, specs, data_by_key, ["tx_count", "fees_usd", "tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd", "gross_issuance_tokens", "price_usd", "locked_tokens", "circulating_supply"],
                        key_cols=_key_cols(specs, "VALIDATOR STAKING YIELD", "TVL — chain", "FEES ÷ ISSUANCE"))
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
     _set_widths(ws, _widths(specs))
@@ -2773,7 +2775,7 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Customer share of supplier earnings", lambda r, p: calc(f"{rev(r)}/({rev(r)}+{emi(r)}*{price(r)})"), FMT_PCT, "calc"),
         ("Revenue per supply unit Q0 ($)", lambda r, p: calc(f"{rev(r)}/{R.D(r, 'supply_units', 'now')}"), FMT_USD, "calc"),
         ("Publisher Conviction ($, OriginTrail)", lambda r, p: pull(R.D(r, "publisher_conviction_usd", "now")), FMT_USD, "pull", False, {"metric": "publisher_conviction_usd"}),
-        ("Staked tokens (float metric, not demand)", lambda r, p: pull(R.D(r, "staked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "staked_tokens"}),
+        ("Staked tokens (float metric, not demand)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
         ("Rev ÷ emission at Q1 (−3m, $/token)", lambda r, p: calc(f"{rev(r, 'q1')}/{emi(r, 'q1')}"), FMT_USD4, "calc"),
         ("Rev ÷ emission at Q2 (−6m)", lambda r, p: calc(f"{rev(r, 'q2')}/{emi(r, 'q2')}"), FMT_USD4, "calc"),
         ("Rev ÷ emission at Q3 (−9m)", lambda r, p: calc(f"{rev(r, 'q3')}/{emi(r, 'q3')}"), FMT_USD4, "calc"),

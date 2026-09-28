@@ -16240,3 +16240,31 @@ def test_a_monthly_series_q0_is_three_complete_calendar_months():
     assert bw._annualise(R, 5, config.PROJECT_BY_NAME["Maple"], "actual_buyback_usd", "X") == "(X)*12/3"
     # Maple at a $240M market cap: 658,866 x 4 / 240M
     assert abs(658_866.0 * 4 / 240e6 - 0.010981) < 1e-6
+
+
+def test_no_tab_formula_looks_up_a_metric_that_is_not_defined(tmp_path):
+    """33 #N/A on the fixture recalc (2026-09-28): A1 and A2 still looked up staked_tokens (merged
+    into locked_tokens in 2bc2e5d) and rwa_xyz_usd (retired, covered by rwa_defillama_usd). A
+    retired metric must not be able to leave broken lookups again: every "|metric" key a formula
+    MATCHes on is checked against config.METRICS."""
+    import re
+
+    import openpyxl
+
+    import build_workbook as bw
+    import store as store_mod
+
+    st = store_mod.Store(str(tmp_path / "m.db"))
+    out = bw.build_workbook(st, str(tmp_path / "w.xlsx"))
+    bw._SCOPE = list(bw.PROJECTS)
+    wb = openpyxl.load_workbook(out)
+    key = re.compile(r'"\|([A-Za-z0-9_]+)"')
+    unknown = {}
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                if isinstance(c.value, str) and c.value.startswith("="):
+                    for m in key.findall(c.value):
+                        if m not in config.METRICS:
+                            unknown.setdefault(m, f"{ws.title}!{c.coordinate}")
+    assert not unknown, f"formulas look up metrics that are not defined: {unknown}"
