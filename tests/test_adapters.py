@@ -15460,13 +15460,14 @@ def test_nearblocks_buyback_runs_first_and_calls_are_paced_to_the_free_plan(monk
     nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, FetchOutput())
     kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
     assert kinds == ["flow", "flow", "v3", "v3"], kinds
-    cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE),
-            "v3": nearblocks.credits_for(config.PROJECT_BY_NAME["Near"]["nearblocks"]["limit"])}
-    assert cost == {"flow": 2, "v3": 4}
+    # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25. The v3 calls send
+    # `limit`, so they cost 1 (they were charged 4 until 2026-09-28).
+    cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE), "v3": 1}
+    assert cost == {"flow": 2, "v3": 1}
     for t0, _ in stamps:
         in_window = sum(cost[k] for (t, _), k in zip(stamps, kinds) if t0 <= t < t0 + 60)
         assert in_window <= nearblocks.CREDITS_PER_MINUTE, (t0, in_window, stamps)
-    assert _nearblocks_fake_clock, "the v3 calls had to wait"
+    assert _nearblocks_fake_clock == [], "2+2+1+1 = 6 credits: nothing had to wait"
 
 
 def test_http_429_without_retry_after_waits_the_configured_window(monkeypatch):
@@ -15922,3 +15923,85 @@ def test_the_heartbeat_names_the_source_and_host_of_a_long_wait(monkeypatch):
         done.set()
         t.join()
     assert not [x for x in base.inflight() if x[0] == "beaconchain"], "cleared when it returns"
+
+
+def test_nearblocks_three_two_credit_calls_do_not_wait_and_the_v3_stats_cost_one(_nearblocks_fake_clock):
+    """B2, 2026-09-28: 6 credits per rolling 60s holds three 2-credit calls. The ~59s waits in the
+    log were (a) the 4th and 7th pages of a 7-page read — unavoidable at 6/min, now gone because a
+    routine read is one page — and (b) the v3 stats charged 4 credits each for limit=100 when
+    NearBlocks bills ceil(per_page/25) with per_page defaulting to 25, i.e. 1."""
+    from fetch import nearblocks
+
+    class H:
+        def get(self, url, params=None, headers=None):
+            return {}
+
+    nb = nearblocks.NearBlocks(http=H())
+    for _ in range(3):
+        nb._get("https://api.nearblocks.io/v1/account/x/txns", {"per_page": 50}, "k")
+    assert _nearblocks_fake_clock == [], f"three 2-credit calls must not wait: {_nearblocks_fake_clock}"
+    nb2 = nearblocks.NearBlocks(http=H())
+    for _ in range(6):
+        nb2._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 100}, "k")
+    assert _nearblocks_fake_clock == [], "six v3 calls are six credits, not twenty-four"
+    nb2._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 100}, "k")
+    assert len(_nearblocks_fake_clock) == 1, "the seventh credit in a minute does wait"
+
+
+def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once_a_day(monkeypatch):
+    """B1/B3: the first read pages the window newest-first; the next run makes ONE call and stops
+    at the newest transaction already seen, and still emits the whole window from the kept
+    per-day totals. The v3 stats are skipped once yesterday is stored — and are NOT a gap."""
+    import pytest
+
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput, today
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    E = 10 ** 24
+
+    def tx(day_ago, h, near, sender="u.near"):
+        ts = int((today() - pd.Timedelta(days=day_ago) + pd.Timedelta(hours=1)).value)
+        return {"predecessor_account_id": sender, "block_timestamp": str(ts), "transaction_hash": h,
+                "actions": [{"action": "TRANSFER", "deposit": str(near * E)}]}
+
+    history = [tx(3, "c", 3), tx(5, "b", 2), tx(6, "a", 1)]            # newest first
+
+    class H:
+        def __init__(self, txns):
+            self.txns, self.calls = txns, []
+
+        def get(self, url, params=None, headers=None):
+            self.calls.append(dict(params or {}))
+            if "/v1/account/" not in url:
+                return {"data": []}
+            assert params["order"] == "desc"
+            start = int(params.get("cursor") or 0)
+            page = self.txns[start:start + 2]
+            nxt = start + 2 if start + 2 < len(self.txns) else None
+            return {"cursor": nxt and str(nxt), "txns": page}
+
+    near = config.PROJECT_BY_NAME["Near"]
+    h1 = H(history)
+    out1 = FetchOutput()
+    nearblocks.NearBlocks(http=h1).run([near], 35, out1)
+    flows1 = [c for c in h1.calls if "action" in c]
+    assert len(flows1) == 2, "first read: the whole window, newest first"
+    got1 = out1.frame().query("metric == 'actual_buyback_tokens'")
+    assert sorted(got1.value) == pytest.approx([1.0, 2.0, 3.0])
+
+    h2 = H([tx(1, "d", 7)] + history)
+    yesterday = today() - pd.Timedelta(days=1)
+    out2 = FetchOutput()
+    nearblocks.NearBlocks(http=h2, last_dates={("Near", "tx_count"): yesterday,
+                                                ("Near", "active_addresses"): yesterday}).run([near], 35, out2)
+    assert len(h2.calls) == 1, f"a routine run makes ONE call: {h2.calls}"
+    got2 = out2.frame().query("metric == 'actual_buyback_tokens'")
+    import pytest
+    assert sorted(got2.value) == pytest.approx([1.0, 2.0, 3.0, 7.0]), "the window is re-emitted from kept totals"
+    assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses")}
+    from fetch.gaps import detect
+    gaps = detect([near], out2.frame(), out2.current, {}, [])
+    assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
+        "a daily aggregate skipped because yesterday is stored is not a gap"

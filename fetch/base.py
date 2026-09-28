@@ -63,6 +63,16 @@ class FetchOutput:
     timings: list = field(default_factory=list)
     # {source: (tier, budget seconds)} for every source the dispatcher abandoned this run.
     timed_out: dict = field(default_factory=dict)
+    # (project, metric) pairs a source deliberately did not re-fetch because the store already
+    # holds the latest figure it could give (a daily aggregate stored for yesterday, a check that
+    # runs once a day). Not a gap: detect() treats them as covered. See current().
+    current: set = field(default_factory=set)
+
+    def mark_current(self, source: str, project: str, metric: str, message: str,
+                     tier: int | None = None):
+        """Skipped because the stored figure is already the latest — logged, and NOT a gap."""
+        self.current.add((project, metric))
+        self.log.append(LogEntry(source, project, 0, "skipped", message, tier))
 
     def add(self, df: pd.DataFrame | None, source: str, project: str | None, message: str = "", tier: int | None = None):
         n = 0 if df is None else len(df)

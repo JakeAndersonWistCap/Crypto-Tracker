@@ -57,7 +57,7 @@ TIER_ORDER = [
     # Chain activity — daily active addresses and transaction count, free and unauthenticated.
     ("growthepie", 1, lambda ctx: GrowThePie()),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
-    ("nearblocks", 1, lambda ctx: NearBlocks()),
+    ("nearblocks", 1, lambda ctx: NearBlocks(last_dates=ctx["last_dates"])),
     # Ethereum's own consensus-layer issuance (ETH.Store) — keyed (BEACONCHAIN_API_KEY). Ahead
     # of _derive_issuance in the pipeline, so a measured figure here suppresses that day's
     # derivation and the derivation remains the fallback for any day this source fails.
@@ -1484,6 +1484,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
         out.review.extend(sub.review)
         out.gaps.extend(sub.gaps)
         out.staged.extend(sub.staged)
+        out.current |= sub.current
         out.timings.append({"source": name, "tier": tier, "seconds": seconds,
                             "frames": len(sub.frames), "timed_out": timed_out})
         if timed_out:
@@ -1542,7 +1543,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # entry that had never been written — and Maple's armed cross-check was reported as "no
     # sources.yaml entry for this metric" when there plainly was one. A ready entry that returned
     # nothing is a different problem from a missing entry and has to say so.
-    out.gaps = detect_gaps(projects, out.frame(), manual_keys or set(), registry_reasons(), out.gaps)
+    out.gaps = detect_gaps(projects, out.frame(), (manual_keys or set()) | out.current,
+                           registry_reasons(), out.gaps)
     note_timeouts(out.gaps, out.timed_out)
     return out
 
@@ -1659,7 +1661,7 @@ def _abandon(name, st, budget) -> tuple:
     """Keep what the source produced before the cut-off; stop reading its output."""
     sub = st["sub"]
     kept = FetchOutput(frames=list(sub.frames), log=list(sub.log), review=list(sub.review),
-                       gaps=list(sub.gaps), staged=list(sub.staged))
+                       gaps=list(sub.gaps), staged=list(sub.staged), current=set(sub.current))
     waiting = [what for src, what, _ in inflight() if src == name]
     kept.fail(name, None,
               f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "

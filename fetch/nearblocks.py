@@ -75,6 +75,7 @@ the stronger guarantee LogScan gives on EVM chains.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -83,6 +84,7 @@ from collections import deque
 import pandas as pd
 
 from .base import Http, sleep as base_sleep, tidy, today, window
+from .logcache import LogCache
 
 log = logging.getLogger("token_metrics.fetch.nearblocks")
 
@@ -148,18 +150,42 @@ class _Pacer:
         self.total += credits
 
 
+def _load_state(f, after: str) -> dict:
+    empty = {"newest_ts": None, "newest_ids": [], "by_day": {}, "after": after}
+    try:
+        st = json.loads(f.read_text())
+        return {**empty, **st} if st.get("version") == 1 else empty
+    except (OSError, ValueError):
+        return empty
+
+
+def _save_state(f, after: str, newest_ts, newest_ids, by_day: dict) -> None:
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"version": 1, "after": after, "newest_ts": newest_ts,
+                               "newest_ids": sorted(newest_ids),
+                               "by_day": {str(d.date()): v for d, v in sorted(by_day.items())}}))
+    tmp.replace(f)
+
+
 class NearBlocks:
     """Daily chain activity for any project declaring a `nearblocks` block."""
 
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, http: Http | None = None, **_ignored):
+    def __init__(self, http: Http | None = None, last_dates: dict | None = None, **_ignored):
         self.http = http or Http(min_interval=1.0, retries=2, rate_limit_wait=RATE_LIMIT_WAIT)
         self.pacer = _Pacer()
+        # (project, metric) -> newest stored date, for the once-a-day skip of the v3 stats.
+        self.last_dates = last_dates or {}
 
-    def _get(self, url: str, params: dict, key: str, rows: int):
-        credits = credits_for(rows)
+    def _get(self, url: str, params: dict, key: str):
+        # BILLED AS NEARBLOCKS BILLS IT: ceil(per_page / 25), per_page defaulting to 25
+        # (apps/api/src/middlewares/rateLimiter.ts @ d8cebb2: `req.query.per_page || 25`). The v3
+        # stats calls send `limit`, not per_page, so they cost ONE credit — this charged them 4
+        # (limit=100), which is where the 1s, 2s and last ~59s waits of 2026-09-28 came from.
+        credits = credits_for(int(params.get("per_page") or ROWS_PER_CREDIT))
         waited = self.pacer.wait(credits)
         if waited:
             log.info("nearblocks: paced %.0fs before a %d-credit call to %s (free plan: %d "
@@ -200,8 +226,18 @@ class NearBlocks:
             return
         from .scrape import robots_verdict
 
+        yesterday = today() - pd.Timedelta(days=1)
         for metric, m in spec["metrics"].items():
             url = spec["base_url"].rstrip("/") + m["path"]
+            # ONCE A DAY (2026-09-28). txn-stats and address-stats are DAILY aggregates and today
+            # is never stored, so once yesterday is in the store there is nothing newer to get.
+            last = self.last_dates.get((name, metric))
+            if last is not None and pd.Timestamp(last).normalize() >= yesterday:
+                out.mark_current(SOURCE, name, metric,
+                                 f"{metric}: NOT re-fetched — yesterday ({yesterday.date()}) is "
+                                 f"already stored and {m['path']} is a daily aggregate; the next "
+                                 f"complete day arrives tomorrow.", TIER)
+                continue
             allowed, why = robots_verdict(url)
             if not allowed:
                 out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}", TIER)
@@ -209,7 +245,7 @@ class NearBlocks:
                         tiers_attempted="1", suggestion="Not worked around. Manual entry, or another source.")
                 continue
             try:
-                body = self._get(url, {"limit": int(spec["limit"])}, key, int(spec["limit"]))
+                body = self._get(url, {"limit": int(spec["limit"])}, key)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 msg = self._scrub(spec, e)
                 out.fail(SOURCE, name, f"{metric}: {m['path']}: {msg}", TIER)
@@ -292,15 +328,30 @@ class NearBlocks:
         after = (today() - pd.Timedelta(days=int(window_days or 35))).strftime("%Y-%m-%d")
         before = (today() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")   # today is not complete
 
-        by_day: dict = {}
-        cursor, total_rows, excluded_hits, sample = None, 0, 0, None
+        # ===== INCREMENTAL, NEWEST FIRST. 2026-09-28. =====
+        # Run of 2026-09-28: this paged the wallet's whole window oldest-first every run — 7 calls
+        # at 2 credits, 6 minutes at the free plan's pace. Now: order=desc, and paging stops at
+        # the first transaction already seen (the newest one, persisted with the per-day totals
+        # in .cache/logscan/). A routine run makes ONE call. The totals are kept so the window
+        # is re-emitted every run without re-fetching it. State is saved only when the read
+        # reached what was already seen or the end of the range — never after an error or the
+        # page cap — so a partial read cannot pass for a complete one.
+        state_f = LogCache().root / f"nearblocks-{account}.json"
+        state = _load_state(state_f, after)
+        newest_ts, seen_ids = state["newest_ts"], set(state["newest_ids"])
+        by_day: dict = {pd.Timestamp(d): v for d, v in state["by_day"].items()}
+        new_by_day: dict = {}
+        top_ts, top_ids = newest_ts, set(seen_ids)
+        cursor, total_rows, excluded_hits, sample, calls = None, 0, 0, None, 0
+        complete = False
         for _page in range(FLOW_PAGE_CAP):
             params = {"action": action, "after_date": after, "before_date": before,
-                     "per_page": FLOW_PER_PAGE, "order": "asc"}
+                     "per_page": FLOW_PER_PAGE, "order": "desc"}
             if cursor:
                 params["cursor"] = cursor
             try:
-                body = self._get(url, params, key, FLOW_PER_PAGE)
+                calls += 1
+                body = self._get(url, params, key)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 msg = self._scrub(spec, e)
                 out.fail(SOURCE, name, f"{metric}: {url}: {msg}", TIER)
@@ -331,16 +382,26 @@ class NearBlocks:
                             suggestion="Correct the field names in config.py from the keys above.")
                     return
                 sample = {k: str(first[k])[:24] for k in list(first)[:6]}
+            reached_seen = False
             for r in rows:
+                try:
+                    ts = int(r.get("block_timestamp"))
+                except (TypeError, ValueError):
+                    continue
+                tid = str(r.get("transaction_hash") or r.get("id") or "")
+                if newest_ts is not None and (ts < newest_ts or (ts == newest_ts and tid in seen_ids)):
+                    reached_seen = True
+                    break
+                if top_ts is None or ts > top_ts:
+                    top_ts, top_ids = ts, {tid}
+                elif ts == top_ts:
+                    top_ids.add(tid)
                 total_rows += 1
                 sender = str(r.get("predecessor_account_id") or "").lower()
                 if sender in exclude:
                     excluded_hits += 1
                     continue
-                try:
-                    day = pd.Timestamp(int(r.get("block_timestamp")), unit="ns").normalize()
-                except (TypeError, ValueError):
-                    continue
+                day = pd.Timestamp(ts, unit="ns").normalize()
                 deposit = 0.0
                 for a in r.get("actions") or []:
                     if isinstance(a, dict) and a.get("action") == action:
@@ -349,14 +410,24 @@ class NearBlocks:
                         except (TypeError, ValueError):
                             continue
                 if deposit:
-                    by_day[day] = by_day.get(day, 0.0) + deposit
+                    new_by_day[day] = new_by_day.get(day, 0.0) + deposit
             cursor = body.get("cursor")
-            if not cursor or not rows:
+            if reached_seen or not cursor or not rows:
+                complete = True
                 break
         else:
             out.skipped(SOURCE, name, f"{metric}: stopped at the {FLOW_PAGE_CAP}-page cap with "
                                       f"more data available (cursor still set) — this run's "
-                                      f"figure covers a partial window.", TIER)
+                                      f"figure covers a partial window and is NOT saved as "
+                                      f"read; the next run starts again.", TIER)
+        for d, v in new_by_day.items():
+            by_day[d] = by_day.get(d, 0.0) + v
+        if complete:
+            _save_state(state_f, after if not state["by_day"] and state["newest_ts"] is None
+                        else state["after"], top_ts, top_ids, by_day)
+        log.info("%s/%s: %d call(s), %d new txn(s) (%s)", name, metric, calls, total_rows,
+                 "incremental — stopped at the newest already seen" if newest_ts is not None
+                 else "first read of the window, newest first")
 
         if not by_day:
             out.skipped(SOURCE, name, f"{metric}: {total_rows} {action} txn(s) seen, "
@@ -364,6 +435,8 @@ class NearBlocks:
                                       f"after exclusion — 0 stored for {after}..{before}.", TIER)
             return
         frame = window(tidy(sorted(by_day.items()), name, metric, SOURCE, TIER), window_days)
+        # the stored window can be older than today's window start after a long gap between runs
+        frame = frame[frame["date"] >= pd.Timestamp(after)] if not frame.empty else frame
         out.add(frame, SOURCE, name,
                 f"{metric} = NearBlocks {url} `actions[].deposit` for action={action!r} into "
                 f"{account}, excluding {sorted(exclude) or 'nothing'} as senders; "
