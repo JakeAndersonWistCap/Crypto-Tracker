@@ -136,10 +136,33 @@ class BudgetExhausted(RuntimeError):
     """A caller's total time budget ran out — distinct from a server's answer."""
 
 
+def retry_after(value) -> float | None:
+    """Retry-After in seconds (RFC 9110 §10.2.3: delay-seconds OR an HTTP-date), None if absent
+    or unreadable. The old float() read raised on the HTTP-date form."""
+    if value is None or str(value).strip() == "":
+        return None
+    v = str(value).strip()
+    try:
+        return max(0.0, float(v))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        import datetime as _dt
+        when = parsedate_to_datetime(v)
+        return max(0.0, (when - _dt.datetime.now(_dt.timezone.utc)).total_seconds())
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
 class Http:
     """Retry with exponential backoff on 429/5xx. Never disables TLS verification."""
 
-    def __init__(self, min_interval: float = 0.0, retries: int = 4, timeout: int = 60):
+    def __init__(self, min_interval: float = 0.0, retries: int = 4, timeout: int = 60,
+                 rate_limit_wait: float | None = None):
+        # rate_limit_wait: the wait on a 429 that carries no Retry-After, for a source whose
+        # limiter window is known (NearBlocks: one minute). None keeps the exponential backoff.
+        self.rate_limit_wait = rate_limit_wait
         self.s = requests.Session()
         self.s.headers["User-Agent"] = USER_AGENT
         self.min_interval = float(os.environ.get("TOKEN_METRICS_MIN_INTERVAL", min_interval))
@@ -185,7 +208,10 @@ class Http:
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
                     if attempt < self.retries:
-                        nap(max(float(r.headers.get("Retry-After", backoff)), backoff), last_err)
+                        wait = retry_after(r.headers.get("Retry-After"))
+                        if wait is None and r.status_code == 429 and self.rate_limit_wait:
+                            wait = self.rate_limit_wait
+                        nap(max(wait or 0.0, backoff), last_err)
                         backoff *= 2
                     continue
                 if 400 <= r.status_code < 500:

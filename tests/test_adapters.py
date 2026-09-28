@@ -14228,7 +14228,7 @@ def test_nearblocks_stores_complete_days_and_never_today(monkeypatch):
     assert list(tx["value"]) == [4_400_000, 4_500_000], "today's partial day is never stored"
     assert list(df[df.metric == "active_addresses"]["value"]) == [1_200_000]
     assert set(df["source"]) == {"nearblocks"}
-    url, params, headers = http.calls[0]
+    url, params, headers = next(c for c in http.calls if "/v3/" in c[0])
     assert headers == {"Authorization": "Bearer nb-secret-123"} and params == {"limit": 100}
     assert "nb-secret-123" not in " ".join(e.message for e in out.log)
 
@@ -15419,3 +15419,73 @@ def test_near_validator_yield_is_declared_primary_and_blocks_on_a_10x_disagreeme
     assert '"|total_supply"' in cell and '"|locked_tokens"' in cell and "BLOCKED" in cell
     assert f"${bw.DC['q0_covered_days']}$" in cell                  # observed over covered days
     print("near ok: declared primary, observed guard at 10x")
+
+
+def test_nearblocks_buyback_runs_first_and_calls_are_paced_to_the_free_plan(monkeypatch,
+                                                                             _nearblocks_fake_clock):
+    """Live run 20260928T090446Z: two v3 calls at limit=100 (4 credits each) then the buyback
+    page, all inside a minute, against a 6-credit/min free plan -> 429 on the buyback. The
+    buyback now goes first, and no 60s window ever carries more than 6 credits."""
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    stamps = []
+
+    class H(_NearFlowHttp):
+        def get(self, url, params=None, headers=None):
+            stamps.append((nearblocks._clock(), url))
+            return super().get(url, params, headers)
+
+    rows = [_near_flow_action("some-user.near", 10 ** 24)]
+    http = H({None: {"cursor": "p2", "txns": rows}, "p2": {"cursor": None, "txns": rows}},
+             v3={"/v3/txn-stats": {"data": []}, "/v3/address-stats": {"data": []}})
+    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, FetchOutput())
+    kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
+    assert kinds == ["flow", "flow", "v3", "v3"], kinds
+    cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE),
+            "v3": nearblocks.credits_for(config.PROJECT_BY_NAME["Near"]["nearblocks"]["limit"])}
+    assert cost == {"flow": 2, "v3": 4}
+    for t0, _ in stamps:
+        in_window = sum(cost[k] for (t, _), k in zip(stamps, kinds) if t0 <= t < t0 + 60)
+        assert in_window <= nearblocks.CREDITS_PER_MINUTE, (t0, in_window, stamps)
+    assert _nearblocks_fake_clock, "the v3 calls had to wait"
+
+
+def test_http_429_without_retry_after_waits_the_configured_window(monkeypatch):
+    """NearBlocks' limiter sends no Retry-After; its window is a minute, so Http waits that
+    rather than its 2s exponential start. A Retry-After, when sent, is honoured, both RFC 9110
+    forms (seconds and HTTP-date)."""
+    import email.utils
+    import time as _time
+
+    from fetch import base
+
+    naps = []
+    monkeypatch.setattr(base.time, "sleep", lambda s: naps.append(s))
+
+    class R:
+        def __init__(self, code, headers=None):
+            self.status_code, self.headers = code, headers or {}
+
+        def json(self):
+            return {"ok": 1}
+
+        def raise_for_status(self):
+            pass
+
+    def run(responses, **kw):
+        naps.clear()
+        h = base.Http(retries=2, **kw)
+        seq = iter(responses)
+        monkeypatch.setattr(h.s, "get", lambda *a, **k: next(seq))
+        assert h.get("https://api.example/x") == {"ok": 1}
+        return list(naps)
+
+    assert run([R(429), R(200)], rate_limit_wait=60.0) == [60.0]
+    assert run([R(429), R(200)]) == [2.0], "no configured window: the old backoff"
+    assert run([R(429, {"Retry-After": "7"}), R(200)], rate_limit_wait=60.0) == [7.0]
+    date = email.utils.formatdate(_time.time() + 30, usegmt=True)
+    assert 25 <= run([R(429, {"Retry-After": date}), R(200)])[0] <= 31
+    assert base.retry_after("garbage") is None and base.retry_after(None) is None

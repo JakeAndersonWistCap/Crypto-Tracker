@@ -77,6 +77,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections import deque
 
 import pandas as pd
 
@@ -88,6 +90,62 @@ SOURCE = "nearblocks"
 TIER = 1
 FLOW_PAGE_CAP = 20   # hard stop on pagination — polite, and this wallet's volume is nowhere near it
 
+# ===== FREE-PLAN PACING. Read 2026-09-28 from NearBlocks' own source (the docs site is still =====
+# unreachable from here): apps/api/src/services/rateLimiter.ts at Nearblocks/nearblocks@d8cebb2,
+#   https://github.com/Nearblocks/nearblocks/blob/d8cebb2/apps/api/src/services/rateLimiter.ts
+# FREE_PLAN = limit_per_minute 6, limit_per_day 333, limit_per_month 10000, and each call is
+# charged ceil(rows / 25) credits (stats.ts `limit`, account.ts `per_page`) — so a v3 stats call at
+# limit=100 costs 4 and a flow page at per_page=50 costs 2. Live run 20260928T090446Z made two
+# v3 calls (8 credits) and then the buyback page inside the same minute: 429.
+# The limiter sends NO Retry-After and no X-RateLimit-* headers — a 429 carries only a JSON
+# message — so when Retry-After is absent the wait is one full minute window, not Http's 2s/4s.
+CREDITS_PER_MINUTE = 6
+CREDITS_PER_DAY = 333
+ROWS_PER_CREDIT = 25
+RATE_LIMIT_WAIT = 60.0
+FLOW_PER_PAGE = 50
+
+_clock = time.monotonic   # module-level so tests can swap in a fake clock
+_sleep = time.sleep
+
+
+def credits_for(rows: int) -> int:
+    return max(1, -(-int(rows) // ROWS_PER_CREDIT))
+
+
+class _Pacer:
+    """Sliding 60s window: never more than CREDITS_PER_MINUTE credits in any 60 seconds.
+
+    A sliding window that holds is also within any fixed calendar-minute window, whichever the
+    server uses. Also refuses to spend past CREDITS_PER_DAY in one run — this counts only this
+    process's spending; other users of the same key are invisible to it.
+    """
+
+    def __init__(self):
+        self.spent: deque = deque()   # (monotonic time, credits)
+        self.total = 0
+
+    def wait(self, credits: int) -> float:
+        if self.total + credits > CREDITS_PER_DAY:
+            raise RuntimeError(f"NearBlocks free-plan daily budget: {self.total} credits spent "
+                               f"this run, {credits} more would pass {CREDITS_PER_DAY}/day")
+        waited = 0.0
+        while True:
+            now = _clock()
+            while self.spent and now - self.spent[0][0] >= 60.0:
+                self.spent.popleft()
+            used = sum(c for _, c in self.spent)
+            if used + credits <= CREDITS_PER_MINUTE:
+                return waited
+            pause = 60.0 - (now - self.spent[0][0]) + 0.5
+            _sleep(pause)
+            waited += pause
+
+    def charge(self, credits: int) -> None:
+        # stamped at completion (after any retry inside Http) — the later stamp is the safe one
+        self.spent.append((_clock(), credits))
+        self.total += credits
+
 
 class NearBlocks:
     """Daily chain activity for any project declaring a `nearblocks` block."""
@@ -96,7 +154,19 @@ class NearBlocks:
     TIER = TIER
 
     def __init__(self, http: Http | None = None, **_ignored):
-        self.http = http or Http(min_interval=1.0, retries=2)
+        self.http = http or Http(min_interval=1.0, retries=2, rate_limit_wait=RATE_LIMIT_WAIT)
+        self.pacer = _Pacer()
+
+    def _get(self, url: str, params: dict, key: str, rows: int):
+        credits = credits_for(rows)
+        waited = self.pacer.wait(credits)
+        if waited:
+            log.info("nearblocks: paced %.0fs before a %d-credit call to %s (free plan: %d "
+                     "credits/min)", waited, credits, url.split("?")[0], CREDITS_PER_MINUTE)
+        try:
+            return self.http.get(url, params=params, headers={"Authorization": f"Bearer {key}"})
+        finally:
+            self.pacer.charge(credits)
 
     @staticmethod
     def _key(spec: dict) -> str:
@@ -107,12 +177,16 @@ class NearBlocks:
         return s.replace(k, "***") if k else s
 
     def run(self, projects: list[dict], window_days, out):
+        # The buyback flow runs FIRST: it is the headline input (A3), the activity stats are
+        # context, and with 6 credits a minute whichever call goes first is the one that is sure
+        # to be answered.
+        for p in projects:
+            for flow in p.get("near_account_flows") or []:
+                self._account_flow(p["name"], flow, window_days, out)
         for p in projects:
             spec = p.get("nearblocks")
             if spec:
                 self._project(p["name"], spec, window_days, out)
-            for flow in p.get("near_account_flows") or []:
-                self._account_flow(p["name"], flow, window_days, out)
 
     def _project(self, name: str, spec: dict, window_days, out):
         key = self._key(spec)
@@ -134,8 +208,7 @@ class NearBlocks:
                         tiers_attempted="1", suggestion="Not worked around. Manual entry, or another source.")
                 continue
             try:
-                body = self.http.get(url, params={"limit": int(spec["limit"])},
-                                     headers={"Authorization": f"Bearer {key}"})
+                body = self._get(url, {"limit": int(spec["limit"])}, key, int(spec["limit"]))
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 msg = self._scrub(spec, e)
                 out.fail(SOURCE, name, f"{metric}: {m['path']}: {msg}", TIER)
@@ -222,11 +295,11 @@ class NearBlocks:
         cursor, total_rows, excluded_hits, sample = None, 0, 0, None
         for _page in range(FLOW_PAGE_CAP):
             params = {"action": action, "after_date": after, "before_date": before,
-                     "per_page": 50, "order": "asc"}
+                     "per_page": FLOW_PER_PAGE, "order": "asc"}
             if cursor:
                 params["cursor"] = cursor
             try:
-                body = self.http.get(url, params=params, headers={"Authorization": f"Bearer {key}"})
+                body = self._get(url, params, key, FLOW_PER_PAGE)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 msg = self._scrub(spec, e)
                 out.fail(SOURCE, name, f"{metric}: {url}: {msg}", TIER)
