@@ -6166,26 +6166,13 @@ PROJECTS = [
             # NOT double-counted: gross_burn_tokens and actual_buyback_tokens will report identical
             # figures for GEODNET, which is the correct and honest outcome of a confirmed one-flow
             # mechanism, not a bug.
-            "actual_buyback_tokens": {
-                "query_id": 8683175, "date_col": "month",
-                "value_cols": ["tokens_burned", "sol_tokens_burned"],
-                "granularity": "monthly", "drop_current_period": True,
-                "source_url": GEODNET_BURN_QUERY,
-                "provenance": "REUSES gross_burn_tokens' own query and columns — buy-and-burn is one "
-                              "flow for GEODNET, confirmed 2026-09-18 (see fee_split, OPEN_QUESTIONS). "
-                              "There is no separate purchase step to source independently.",
-                "note": "Will equal gross_burn_tokens for this project. That is correct, not a "
-                        "duplication bug — see the block comment above.",
-            },
-            "actual_buyback_usd": {
-                "query_id": 8683175, "date_col": "month",
-                "value_cols": ["usd_burned", "sol_usd_burned"],
-                "granularity": "monthly", "drop_current_period": True,
-                "source_url": GEODNET_BURN_QUERY,
-                "provenance": "REUSES gross_burn_tokens' own query, usd_burned/sol_usd_burned columns "
-                              "instead of the token columns — same reasoning as actual_buyback_tokens.",
-                "note": "USD value of the same one-flow buy-and-burn.",
-            },
+            # ===== actual_buyback_tokens / _usd: NO LONGER FROM DUNE. 2026-09-28 (Jake). =====
+            # GEODNET's buyback IS its burn (P5, same event). These two entries re-read query
+            # 8683175 monthly and, never having landed in the store, left A3's retirement rates
+            # n/a. Removed so the buyback follows the burn at read time exactly as Hyperliquid's
+            # does (build_workbook._relabel_views): tokens = gross_burn_tokens (the Dune monthly
+            # backfill, then the live Polygon + Solana daily delta), usd = tokens x same-day
+            # price_usd.
             **_dune("emissions_tokens"),
         },
         "materiality": "low",
@@ -7530,6 +7517,11 @@ PROJECTS = [
                     "the emission schedule and does not establish this one.",
         },
         "name": "Morpho", "symbol": "MORPHO",
+        # A2 FREE FLOAT (2026-09-28, Jake): there is no Morpho staking (not_applicable.
+        # locked_tokens), so locked = 0 and free float = circulating supply. Declared here rather
+        # than inferred from the n/a, which says the METRIC does not exist, not that it is zero.
+        "free_float_lock_zero": "no MORPHO staking exists (governance-only token, per Morpho's docs; "
+                                "the 2024-11 staking proposal never shipped) — nothing is locked",
         # ===== ** supply_units WAS REJECTED BY THE LIBRARY SANITY BOUND, NOT LOST IN TRANSIT. **
         # Traced 2026-09-23. =====
         # morpho_api reported "2 rows | 0 failed" and neither rendered. The Run Log was right:
@@ -10403,6 +10395,28 @@ PROJECTS = [
             "note": "staked SKY is represented by a liquid token; nothing is time-locked.",
         },
         "name": "Sky", "symbol": "SKY",
+        # ===== ALL SKY PURCHASED, NOT ONLY THE 5% BURN LEG. 2026-09-28 (Jake). =====
+        # A3 read 0.039% because Sky's actual_buyback_tokens was the Stage 2 burn leg re-labelled.
+        # Sky buys SKY with 27.5% of NPS (22.5% for SKY staking rewards + 5% burned) and every
+        # purchase lands at the Pause Proxy from the Flapper (MCD_FLAP, the Smart Burn Engine's
+        # trader — contracts.flapper, verified 2026-09-14). Pendle's A3 counts buybacks that are
+        # distributed to stakers; for consistency Sky's counts every SKY bought. Measured as SKY
+        # Transfer events INTO the Pause Proxy FROM the Flapper, reconciled to the Pause Proxy's
+        # balanceOf like every scan. A4 keeps the burn-only figure (a4_burn_metric).
+        # SANITY: 27.5% x monthly NPS (~$10M) ~ $2.75M/month, ~1.8% of market cap annualised.
+        "log_scans": [
+            {"key": "flapper_purchases", "metric": "actual_buyback_tokens", "chain": "ethereum",
+             "token": "0x56072C95FAA701256059aa122697B133aDEd9279",
+             "holders": ["0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB"],
+             "direction": "in", "store": True, "attribution": "count_from",
+             "count_from": ["0x374D9c3d5134052Bc558F432Afa1df6575f07407"],
+             "count_from_source": "contracts.flapper (ChainLog MCD_FLAP, verified 2026-09-14) — "
+                                  "the Smart Burn Engine sends every SKY it buys to its receiver, "
+                                  "the Pause Proxy (contracts.pause_proxy)",
+             "expect_monthly_usd": "~27.5% of monthly NPS (Stage 2: 22.5% staking-reward "
+                                   "buybacks + 5% buy-and-burn, from August 2026)",
+             "wired_on": "2026-09-28"},
+        ],
         # A4 headline's burn: the Stage 2 flow, not gross_burn_tokens (blocked — see
         # classification_pending). config.a4_burn_metric reads this.
         "a4_burn_metric": "sky_stage2_burn_tokens",
@@ -12700,10 +12714,15 @@ PROJECTS = [
         },
         "dune_queries": _dune("locked_tokens", "avg_lock_duration_days", "emissions_tokens", "actual_buyback_usd", "actual_buyback_tokens"),
                 "cross_checks": [
-            {"primary": "locked_tokens", "primary_source": "tier 2 contract read",
-             "secondary": "locked_tokens_dashboard", "secondary_source": "https://app.pendle.finance/spendle/stake/in",
+            # ===== SHARES AGAINST SHARES. CHANGED 2026-09-28. =====
+            # The hub's totalStakedInSpendle read 30,341,337.8 once scaled — sPENDLE totalSupply()
+            # (30,340,254.46) to 0.004%, not PENDLE.balanceOf(sPENDLE) (35.42M, the assets). So
+            # the hub figure is SHARES and is checked against locked_tokens_shares.
+            {"primary": "locked_tokens_shares", "primary_source": "tier 2 sPENDLE.totalSupply()",
+             "secondary": "locked_tokens_dashboard",
+             "secondary_source": "https://api-v2.pendle.finance/core/v1/spendle/data (totalStakedInSpendle)",
              "tolerance": 0.03, "prefer": "primary",
-             "note": "The contract read is authoritative; the page cross-checks it. A divergence beyond "
+             "note": "The contract read is authoritative; the hub cross-checks it. A divergence beyond "
                      "tolerance is flagged rather than one figure silently replacing the other."},
         ],
         "materiality": "high",
@@ -14420,7 +14439,14 @@ PROTOCOL_YIELD = {
     "Sky": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
     # lock_add: rewards are pro-rata over REAL + VIRTUAL sPENDLE (see locked_tokens_virtual), so
     # the virtual balance joins the denominator. Until it is read the cell is marked READS HIGH.
-    "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens",
+    # ===== sPENDLE SHARES, NOT PENDLE ASSETS; VIRTUAL ADDED 1:1. CHANGED 2026-09-28. =====
+    # Pendle's own sPENDLE docs (pendle-finance/documentation, Contracts/sPENDLE.md): "Users stake
+    # PENDLE to receive sPENDLE at a 1:1 ratio. sPENDLE does not increase in value over time."
+    # Rewards are pro-rata over sPENDLE balances, real + virtual. So the denominator is sPENDLE
+    # totalSupply (locked_tokens_shares, 30.34M) + virtualSpendleFromVependle, both in sPENDLE.
+    # locked_tokens (PENDLE.balanceOf(sPENDLE), 35.42M) also holds the unstake queue, which earns
+    # nothing — it is the lock-rate figure, not the reward base.
+    "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_shares",
                "lock_add": "locked_tokens_virtual"},
     "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying",
                  # ** THE YIELD ASSUMES BUYBACKS REACH sETHFI HOLDERS. ** True of the old
@@ -15605,6 +15631,10 @@ UNAVAILABLE = [
     # A PERMANENT GAP, ACCEPTED. Five independent sources checked, none publishes the address.
     {
         "project": "Fluid", "metric": "actual_buyback_tokens",
+        # RENDERS 0, NOT "none available" (2026-09-28, Jake): the programme halted, so every
+        # window after the halt is a measured zero by governance — shown like Ether.fi's
+        # "silent since" flag, with the date and the reason on the cell.
+        "renders_as_zero_since": "2026-05-11",
         # ===== CLOSED ON A DIFFERENT, CORRECT STATE. 2026-09-24. =====
         # Was "the Reserve address was never disclosed" — true of the address, and superseded by
         # the programme itself stopping. The history (Oct 2025 - May 2026) is real and was
@@ -15627,6 +15657,10 @@ UNAVAILABLE = [
     },
     {
         "project": "Fluid", "metric": "actual_buyback_usd",
+        # RENDERS 0, NOT "none available" (2026-09-28, Jake): the programme halted, so every
+        # window after the halt is a measured zero by governance — shown like Ether.fi's
+        # "silent since" flag, with the date and the reason on the cell.
+        "renders_as_zero_since": "2026-05-11",
         # ===== CLOSED ON A DIFFERENT, CORRECT STATE. 2026-09-24. =====
         # Was "the Reserve address was never disclosed" — true of the address, and superseded by
         # the programme itself stopping. The history (Oct 2025 - May 2026) is real and was

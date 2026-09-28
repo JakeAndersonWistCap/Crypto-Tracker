@@ -821,12 +821,14 @@
   method: json            # plain GET (2026-09-28): the xhr/Chromium route stored nothing and said nothing
   url_contains: /v1/spendle/data
   json_path: totalStakedInSpendle
+  decimals: 18            # wei — see units_source (2026-09-28)
+  units_source: "Pendle's API docs (ApiOverview.mdx @ 9b9509e) do not state units; the amounts are raw wei (18 = PENDLE/sPENDLE decimals): open-source consumers divide by 1e18 (HarukiShirato/real-time-monitoring-for-perpetual-contracts scripts/staking-collector.js), Shaurya477/spendle-tracker matches totalStakedInSpendle to sPENDLE.totalSupply() exactly, and the live 3.034133782977e25 / 1e18 = 30,341,337.8 matches totalSupply 30,340,254.46 to 0.004%"
   needs_first_run_check: true
   sanity_min: 1000
   sanity_max: 300000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "FIRST RUN CHECK: not reachable from the build environment, so unconfirmed live. Expect ~35.4M, the same as locked_tokens (PENDLE.balanceOf(sPENDLE)). ~30.2M instead (35.4M / 1.1731) means the field is sPENDLE SHARES; a figure in the 1e25 range means wei (sanity_max rejects it). totalPendleStaked is the wider figure and is NOT this metric. Cross-check only: the tier 2 read stays primary."
+  note: "SETTLED 2026-09-28: the field is sPENDLE SHARES in wei — 3.034133782977e25 / 1e18 = 30,341,337.8 against sPENDLE.totalSupply() 30,340,254.46 (0.004%), so it is cross-checked against locked_tokens_shares, not locked_tokens (35.42M, which also holds the unstake queue). totalPendleStaked is the wider figure and is NOT this metric. Cross-check only: the tier 2 read stays primary."
 
 - project: Pendle
   metric: locked_tokens_virtual
@@ -839,12 +841,14 @@
   method: json            # plain GET (2026-09-28): the xhr/Chromium route stored nothing and said nothing
   url_contains: /v1/spendle/data
   json_path: virtualSpendleFromVependle
+  decimals: 18            # wei — see units_source (2026-09-28)
+  units_source: "Pendle's API docs (ApiOverview.mdx @ 9b9509e) do not state units; the amounts are raw wei (18 = PENDLE/sPENDLE decimals): open-source consumers divide by 1e18 (HarukiShirato/real-time-monitoring-for-perpetual-contracts scripts/staking-collector.js), Shaurya477/spendle-tracker matches totalStakedInSpendle to sPENDLE.totalSupply() exactly, and the live 3.034133782977e25 / 1e18 = 30,341,337.8 matches totalSupply 30,340,254.46 to 0.004%"
   needs_first_run_check: true
   sanity_min: 0
   sanity_max: 1000000000
   change_threshold_pct: 25
   added: 2026-09-28
-  note: "FIRST RUN CHECK: unconfirmed live. A figure in the 1e25 range means wei (sanity_max rejects it). Used only as a denominator input to Pendle's protocol yield; never summed into locked_tokens."
+  note: "In wei (decimals 18). Expect ~1.78e26 raw = ~177.8M virtual sPENDLE: spendle-tracker read 177,778,397.73 on-chain vs 177,778,738.43 from this API on 2026-09-11. Used only as a denominator input to Pendle's protocol yield (added 1:1 to sPENDLE shares); never summed into locked_tokens."
 
 - project: Sky
   metric: locked_tokens_dashboard

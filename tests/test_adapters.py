@@ -4245,7 +4245,23 @@ def test_cross_check_metrics_do_not_collide_with_their_primary():
 
 
 # ---------------------------------------------------------------------------- tier 4
-def test_dune_sums_split_columns_and_drops_the_incomplete_current_period():
+import pytest as _pytest
+
+
+@_pytest.fixture
+def geod_dune_buyback(monkeypatch):
+    """GEODNET AS IT WAS UNTIL 2026-09-28: actual_buyback_tokens/_usd re-read Dune 8683175
+    monthly. Removed from config that day (the buyback now follows the summed burn at read time),
+    but it remains the worked example of a monthly Dune series these tests exercise."""
+    dq = dict(config.PROJECT_BY_NAME["GEODNET"]["dune_queries"])
+    common = {"query_id": 8683175, "date_col": "month", "granularity": "monthly",
+              "drop_current_period": True, "source_url": config.GEODNET_BURN_QUERY}
+    dq["actual_buyback_tokens"] = dict(common, value_cols=["tokens_burned", "sol_tokens_burned"])
+    dq["actual_buyback_usd"] = dict(common, value_cols=["usd_burned", "sol_usd_burned"])
+    monkeypatch.setitem(config.PROJECT_BY_NAME["GEODNET"], "dune_queries", dq)
+
+
+def test_dune_sums_split_columns_and_drops_the_incomplete_current_period(geod_dune_buyback):
     """GEODNET reports Polygon and Solana burns in separate columns; the total is their sum.
 
     Taking one column alone would report a fraction of the burn as if it were the whole. The
@@ -4286,7 +4302,7 @@ def test_dune_sums_split_columns_and_drops_the_incomplete_current_period():
     print("dune column summing ok: 1,100,000 + 300,000 = 1,400,000, current month dropped")
 
 
-def test_dune_first_time_metric_ignores_the_trailing_window_even_on_an_incremental_run():
+def test_dune_first_time_metric_ignores_the_trailing_window_even_on_an_incremental_run(geod_dune_buyback):
     """A metric added to config AFTER its query already has history must still get a full backfill.
 
     GEODNET's actual_buyback_tokens/usd reuse the SAME query as gross_burn_tokens, which has been
@@ -7117,7 +7133,7 @@ def test_a_weekly_read_is_dated_to_its_epoch_so_daily_runs_do_not_multiply_it():
     print(f"epoch dating ok: six runs collapse onto {epoch_start:%Y-%m-%d (%A)}")
 
 
-def test_the_granularity_of_every_series_is_resolved_from_what_actually_produces_it():
+def test_the_granularity_of_every_series_is_resolved_from_what_actually_produces_it(geod_dune_buyback):
     """Granularity is read off the contract or the Dune query, never a third hand-kept table.
 
     The GEODNET case is the one worth pinning: its gross_burn_tokens is a MONTHLY Dune backfill
@@ -7251,7 +7267,7 @@ def _aggregate_rows(rows, asof):
     return {(r["project"], r["metric"]): r for r in out.to_dict("records")}
 
 
-def test_a_monthly_series_reports_its_latest_COMPLETE_month_instead_of_a_blank():
+def test_a_monthly_series_reports_its_latest_COMPLETE_month_instead_of_a_blank(geod_dune_buyback):
     """S5. GEODNET's buyback series is monthly (Dune 8683175's date_col is 'month') and the
     incomplete current month is dropped by design. A trailing-30-day sum over it therefore
     reports whatever happens to fall inside 30 days — and on 2026-09-21, with the latest complete
@@ -7275,7 +7291,7 @@ def test_a_monthly_series_reports_its_latest_COMPLETE_month_instead_of_a_blank()
     print(f"S5 ok: now={got['now']:,.0f} ({got['note'][:60]}...)")
 
 
-def test_a_monthly_series_still_goes_stale_when_it_actually_stops():
+def test_a_monthly_series_still_goes_stale_when_it_actually_stops(geod_dune_buyback):
     """THE CONTROL for the widened threshold. 45 days is not 'never' — a genuinely dead monthly
     series must still surface, or the fix for a false stale has bought a missed real one."""
     rows = [("2026-05-01", "GEODNET", "actual_buyback_tokens", 900_000.0, "dune:8683175", 4)]
@@ -13042,9 +13058,9 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
     assert r.startswith("ANSWERED, NOT OPEN — SAME EVENT AS gross_burn_tokens"), r
     ru, _ = reason("GEODNET", "actual_buyback_usd")
     assert ru.startswith("FOLLOWS actual_buyback_tokens") and "SAME EVENT AS gross_burn_tokens" in ru, ru
-    # GEODNET's usd column is ALSO sourced from the same Dune query as tokens, not a separate one.
+    # GEODNET's buyback is no longer Dune-sourced (2026-09-28): it follows the summed burn.
     dq = config.PROJECT_BY_NAME["GEODNET"]["dune_queries"]
-    assert dq["actual_buyback_usd"]["query_id"] == dq["actual_buyback_tokens"]["query_id"] == 8683175
+    assert "actual_buyback_usd" not in dq and "actual_buyback_tokens" not in dq
 
 
 def test_the_five_treasury_cases_are_settled_the_way_the_facts_say():
@@ -15446,8 +15462,8 @@ def test_a_burn_route_buyback_is_a_view_of_the_whole_burn_series():
     assert t["q0"] == b["q0"] == 290_000.0, (t["q0"], b["q0"])     # 29 days, not the 17 copied
     assert u["q0"] == 290_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
     assert "as-buyback" in str(t["source"])
-    # A Dune-SOURCED buyback (GEODNET) is never replaced by the view.
-    assert config.dune_query_declared("GEODNET", "actual_buyback_tokens")
+    # GEODNET's buyback is no longer Dune-sourced (2026-09-28): it is this same view of its burn.
+    assert config.dune_query_declared("GEODNET", "actual_buyback_tokens") is None
     print("view ok: Hyperliquid buyback == burn over the burn's whole history")
 
 
@@ -16207,7 +16223,8 @@ def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plu
     R = bw.Refs(100, 10, ["2026-09"])
     label, fn, *_rest = bw._protocol_yield(R, {})
     cell = fn(5, config.PROJECT_BY_NAME["Pendle"])
-    assert '"|locked_tokens_virtual"' in cell and '"|locked_tokens"' in cell
+    # the reward base is sPENDLE SHARES + virtual (2026-09-28), not PENDLE.balanceOf(sPENDLE)
+    assert '"|locked_tokens_virtual"' in cell and '"|locked_tokens_shares"' in cell
     meta = _rest[-1]
     assert "real staked alone" in meta["partial_fn"](config.PROJECT_BY_NAME["Pendle"])
     assert config.PROTOCOL_YIELD["Pendle"]["lock_add"] == "locked_tokens_virtual"
@@ -16696,8 +16713,9 @@ def test_pendle_spendle_data_is_read_with_a_plain_json_get_that_explains_itself(
     from fetch import scrape
     from fetch.base import FetchOutput
 
-    payload = {"totalPendleStaked": 101_000_000.5, "totalStakedInSpendle": "35420000.25",
-               "virtualSpendleFromVependle": 64_000_000, "sPendleHistoricalData": {}}
+    # WEI, as the live API answers (2026-09-28): the entries declare decimals 18.
+    payload = {"totalPendleStaked": 101_000_000.5, "totalStakedInSpendle": "35420000250000000000000000",
+               "virtualSpendleFromVependle": 64_000_000 * 10 ** 18, "sPendleHistoricalData": {}}
 
     class Resp:
         status_code = 200
@@ -16721,7 +16739,8 @@ def test_pendle_spendle_data_is_read_with_a_plain_json_get_that_explains_itself(
     got = out.frame().set_index("metric")["value"]
     assert got["locked_tokens_dashboard"] == 35_420_000.25 and got["locked_tokens_virtual"] == 64_000_000
     assert launched == [], "no browser for a JSON API"
-    assert any("'35420000.25' (str)" in e.message for e in out.log), [e.message for e in out.log]
+    assert any("'35420000250000000000000000' (str)" in e.message and "/ 10^18" in e.message
+               for e in out.log), [e.message for e in out.log]
 
     payload.clear()
     payload.update({"data": {"totalPendle": 1}})
@@ -17245,3 +17264,97 @@ def test_a_nearblocks_read_that_asks_further_back_than_the_kept_history_re_reads
     with caplog.at_level(logging.INFO, logger="token_metrics.fetch.nearblocks"):
         nb._account_flow("Near", flow, 365, FetchOutput())
     assert "WINDOW EXTENDED" in caplog.text
+
+
+def _grp(rows):
+    df = pd.DataFrame([{"date": pd.Timestamp(d), "project": p, "metric": m, "value": v, "source": s,
+                        "tier": 2, "fetched_at": "", "is_manual": False, "entered_on": "",
+                        "source_note": ""} for d, p, m, v, s in rows])
+    return {k: g for k, g in df.groupby(["project", "metric"])}
+
+
+def test_geodnet_buyback_follows_the_summed_burn_so_a3_rates_compute():
+    """A4, 2026-09-28: GEODNET's buyback is its burn (same event). Its Dune buyback entries never
+    landed and left A3 n/a; they are removed and the buyback is the burn at read time, priced on
+    each day's own price — the Hyperliquid pattern."""
+    import build_workbook as bw
+    assert config.dune_query_declared("GEODNET", "actual_buyback_usd") is None
+    SUM = config.GEODNET_BURN_SUM_POINT + ":delta"
+    g = _grp([("2026-09-26", "GEODNET", "gross_burn_tokens", 100_000.0, SUM),
+              ("2026-09-27", "GEODNET", "gross_burn_tokens", 110_000.0, SUM),
+              ("2026-09-26", "GEODNET", "price_usd", 0.20, "coingecko"),
+              ("2026-09-27", "GEODNET", "price_usd", 0.25, "coingecko"),
+              ("2026-08-31", "GEODNET", "actual_buyback_usd", 999.0, "dune:8683175")])
+    bw._relabel_views(g)
+    usd = g[("GEODNET", "actual_buyback_usd")].sort_values("date")
+    assert usd["value"].tolist() == [20_000.0, 27_500.0], "superseded Dune rows do not block the view"
+
+
+def test_sky_buyback_counts_every_sky_bought_and_the_burn_relabel_never_overwrites_it():
+    """A5: Sky's A3 counted only the 5% burn leg. The buyback is now a Transfer scan of SKY into
+    the Pause Proxy from the Flapper (all purchases); the split route's relabel view must not
+    replace a measured series. A4 keeps the burn-only metric."""
+    import build_workbook as bw
+    scan = config.PROJECT_BY_NAME["Sky"]["log_scans"][0]
+    assert scan["metric"] == "actual_buyback_tokens" and scan["direction"] == "in"
+    assert scan["holders"] == [config.PROJECT_BY_NAME["Sky"]["contracts"]["pause_proxy"]["address"]]
+    assert scan["count_from"] == [config.PROJECT_BY_NAME["Sky"]["contracts"]["flapper"]["address"]]
+    assert config.a4_burn_metric("Sky") == "sky_stage2_burn_tokens"
+    g = _grp([("2026-09-27", "Sky", "actual_buyback_tokens", 5_000_000.0, "explorer:etherscan:flapper_purchases"),
+              ("2026-09-27", "Sky", "sky_stage2_burn_tokens", 400_000.0, "chain:ethereum:burn_logs:delta")])
+    bw._relabel_views(g)
+    assert g[("Sky", "actual_buyback_tokens")]["value"].tolist() == [5_000_000.0]
+
+
+def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt():
+    """A6/A7: no Morpho staking means locked = 0, so free float = circulating; Fluid's halted
+    buyback renders 0 with the halt date rather than 'none available'."""
+    import build_workbook as bw
+    morpho = config.PROJECT_BY_NAME["Morpho"]
+    assert bw._free_float_reason(morpho) is None and morpho["free_float_lock_zero"]
+    closed = config.unavailable_for("Fluid", "actual_buyback_usd")
+    assert closed["renders_as_zero_since"] == "2026-05-11"
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}]"
+    rows = {spec[0]: spec for spec in bw._a2_headline(R())}
+    ff = rows["FREE FLOAT = circulating − locked (tokens)"][1](5, morpho)
+    assert "D[circulating_supply]-0" in ff and "locked_tokens" not in ff, ff
+
+
+def test_pendle_hub_amounts_are_scaled_from_wei_and_the_yield_base_is_real_plus_virtual_spendle(monkeypatch):
+    """A2, 2026-09-28: /v1/spendle/data returns wei (3.034133782977e25 was rejected out_of_bounds
+    as a raw figure). The entry declares decimals 18 and where that was established; the reward
+    base is sPENDLE shares + virtual sPENDLE, 1:1 per Pendle's sPENDLE docs."""
+    import requests
+    import build_workbook as bw
+    from fetch import scrape
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"totalStakedInSpendle": "30341337829770000000000000",
+                    "virtualSpendleFromVependle": 1.7777873843e26, "totalPendleStaked": "1"}
+    monkeypatch.setattr(requests, "get", lambda *a, **k: Resp())
+    entries = {e["json_path"]: e for e in scrape.load_registry("sources.yaml")
+               if e["project"] == "Pendle" and e.get("method") == "json"}
+    v, detail = scrape.fetch_json(entries["totalStakedInSpendle"])
+    assert abs(v - 30_341_337.82977) < 1e-3 and "/ 10^18" in detail, (v, detail)
+    v2, _ = scrape.fetch_json(entries["virtualSpendleFromVependle"])
+    assert abs(v2 - 177_778_738.43) < 1.0
+    lo, hi = config.sanity_bounds("Pendle", "locked_tokens_virtual")
+    assert lo <= v2 <= hi, "the scaled virtual balance must pass its bound"
+
+    cc = next(c for c in config.PROJECT_BY_NAME["Pendle"]["cross_checks"]
+              if c["secondary"] == "locked_tokens_dashboard")
+    assert cc["primary"] == "locked_tokens_shares", "the hub figure is SHARES"
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}]"
+    build = bw._protocol_yield(R())[1]
+    f = build(5, config.PROJECT_BY_NAME["Pendle"])
+    assert "(D[locked_tokens_shares]+IF(ISNUMBER(D[locked_tokens_virtual]),D[locked_tokens_virtual],0))" in f, f

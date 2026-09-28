@@ -747,6 +747,15 @@ def _relabel_views(groups: dict) -> None:
             continue
         if held is not None and "is_manual" in held and held["is_manual"].fillna(False).astype(bool).any():
             continue
+        # NOR A MEASURED SERIES (2026-09-28): Sky's buyback is now a Transfer scan of every SKY
+        # bought; the split route's burn-leg relabel must not overwrite it.
+        # (Rows from a Dune query no longer declared for the column — GEODNET's, removed the same
+        # day — are superseded, not a measurement.)
+        if held is not None and not held.empty:
+            src = held["source"].astype(str)
+            measured = ~src.str.contains("as-buyback", na=False) & ~src.str.startswith("dune:")
+            if measured.any():
+                continue
         split = config.buyback_route(name).get("route") == "split"
         mark = (lambda x: config.mark_source(config.mark_source(x, "as-buyback"), "PARTIAL")) if split \
             else (lambda x: config.mark_source(x, "as-buyback"))
@@ -2087,6 +2096,8 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
 def _free_float_reason(p: dict) -> str | None:
     """Why free float cannot be computed for this project — or None if it can."""
     name = p["name"]
+    if p.get("free_float_lock_zero"):
+        return None          # nothing is locked: free float = circulating (Morpho, 2026-09-28)
     if "locked_tokens" not in config.metrics_for_project(p):
         return "n/a — " + (config.not_applicable_reason(name, "locked_tokens") or "no lock metric")[:90]
     blocked = p.get("locked_tokens_blocked")
@@ -2100,13 +2111,14 @@ def _a2_headline(R: Refs) -> list[tuple]:
     trajectory. Where the lock cannot be read the cells SAY SO — circulating is never passed
     off as free float, which would overstate it by everything staked."""
     circ = lambda r, p: _circ(R, r, p)  # noqa: E731
-    lock = lambda r: R.D(r, "locked_tokens", "now")  # noqa: E731
+    # A DECLARED ZERO LOCK (free_float_lock_zero) is the number 0, not a missing figure.
+    lock = lambda r, p=None: "0" if (p or {}).get("free_float_lock_zero") else R.D(r, "locked_tokens", "now")  # noqa: E731
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     # OVER COVERED DAYS (2026-09-28): a young customer-revenue series is not divided as if it
     # were 90 days old — see _annualise.
     arr = lambda r, p: _annualise(R, r, p, "customer_revenue_usd", R.D(r, "customer_revenue_usd", "q0"))  # noqa: E731
     emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
-    ff = lambda r, p: f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r)})),{circ(r, p)}-{lock(r)},{NA})"  # noqa: E731
+    ff = lambda r, p: f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)})),{circ(r, p)}-{lock(r, p)},{NA})"  # noqa: E731
 
     def cell(expr_fn):
         def build(r, p):
@@ -2346,6 +2358,14 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 meta = dict(meta, metric=meta["metric_fn"](p["name"]))
             dep = meta.get("closed_with") or meta.get("metric")
             closed = config.unavailable_for(p["name"], dep) if dep else None
+            # A HALTED PROGRAMME IS A MEASURED ZERO (Fluid, 2026-09-28): 0 with the halt date,
+            # like the "silent since" flag, not "none available".
+            if closed and closed.get("renders_as_zero_since"):
+                c.value = 0
+                c.comment = Comment(
+                    f"0 — PROGRAMME HALTED, silent since {closed['renders_as_zero_since']}. "
+                    f"{closed['summary']}\n\nReopen if: {closed['reopen_if']}", "token_metrics")
+                continue
             if closed:
                 c.value = CLOSED_TEXT
                 c.font = Font(name=FONT, size=10, color="999999", italic=True)

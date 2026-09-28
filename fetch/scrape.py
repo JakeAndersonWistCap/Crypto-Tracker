@@ -380,6 +380,14 @@ def fetch_json(entry: dict) -> tuple[float | None, str]:
               f"({type(raw).__name__}); payload keys {_keys(payload)}")
     if parsed is None:
         return None, f"{detail} — not a number"
+    # UNITS FROM THE ENTRY'S DECLARED DECIMALS (2026-09-28). Pendle's spendle/data returns token
+    # amounts in wei: 3.034133782977e25 for totalStakedInSpendle was rejected out_of_bounds as a
+    # raw figure. The entry names the token's decimals and where the unit was established, and
+    # the raw value stays in the detail so the scaling is auditable on every run.
+    dec = entry.get("decimals")
+    if dec:
+        parsed = parsed / (10 ** int(dec))
+        detail += f"; / 10^{int(dec)} ({entry.get('units_source') or 'declared decimals'})"
     return parsed, detail
 
 
