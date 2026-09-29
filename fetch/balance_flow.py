@@ -275,10 +275,25 @@ class BalanceFlow:
             return
         frame = tidy(rows, name, metric, f"{SOURCE}:{key}", TIER)
         wk = sum(v for d, v in rows if d > t_today - pd.Timedelta(days=8))
+        # THE RECONCILIATION LINE (2026-09-29): release over 30d / 365d beside the combined
+        # balance fall and the outside inflow over the same days, and the seed reference if any.
+        recon = []
+        for n in (30, 365):
+            since = t_today - pd.Timedelta(days=n)
+            ds = str(since.date())
+            if ds in st["balance"] and str(t_today.date()) in st["balance"]:
+                fall = (sum(int(v) for v in st["balance"][ds].values())
+                        - sum(int(v) for v in st["balance"][str(t_today.date())].values())) / scale
+                rel = sum(v for d, v in rows if d >= since)
+                inflow = sum(v for d, v in ext_in.items() if d >= since) / scale
+                ref = ((spec.get("seed_reference") or {}).get("implied_release_if_no_inflow") or {}).get(f"{n}d")
+                recon.append(f"{n}d release {rel:,.0f} = balance fall {fall:,.0f} + outside inflow "
+                             f"{inflow:,.0f} - burn sends" + (f" (seed reference {ref:,.0f})" if ref else ""))
         msg = (f"{metric} = {key}: external inflow - d(balance) - sends to "
                f"{len(excluded)} excluded address(es), in wei, {len(rows)} day(s) "
                f"{rows[0][0].date()}..{rows[-1][0].date()}; last 7 days {wk:,.0f}; {filled} "
                f"balance(s) read this run, {len(st['balance'])} held"
-               + (f"; STOPPED: {archive_err}" if archive_err else ""))
+               + (f"; STOPPED: {archive_err}" if archive_err else "")
+               + (f". {'; '.join(recon)}" if recon else ""))
         out.add(frame, SOURCE, name, msg, TIER)
         out.log.append(LogEntry(SOURCE, name, 0, "ok", msg, TIER))

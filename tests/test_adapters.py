@@ -17824,3 +17824,18 @@ def test_pendle_a3_shows_the_real_staker_yield_and_the_virtual_share_separately(
         assert "locked_tokens_shares" in y and "locked_tokens_virtual" in y, y
     # the arithmetic the formula encodes: 177.78 / (30.34 + 177.78) = 85.4%
     assert abs(177_780_000 / (30_340_000 + 177_780_000) - 0.854) < 0.001
+
+
+def test_polygon_and_bsc_providers_carry_the_poa_middleware():
+    """Jake's --seed geodnet, 2026-09-29: 'The field extraData is 105 bytes, but should be 32 ...
+    connected to a POA chain'. Every provider the reader builds for Polygon or BSC injects the POA
+    extraData middleware (ExtraDataToPOAMiddleware in web3 v7+); other chains do not."""
+    from fetch.chain import ChainReader
+
+    assert set(config.POA_CHAINS) == {"polygon", "bsc"}
+    from web3.middleware import ExtraDataToPOAMiddleware
+
+    for chain in ("polygon", "bsc"):
+        onion = ChainReader.make_web3(chain, "http://127.0.0.1:1").middleware_onion
+        assert onion.get("poa_extradata") is ExtraDataToPOAMiddleware, chain
+    assert ChainReader.make_web3("ethereum", "http://127.0.0.1:1").middleware_onion.get("poa_extradata") is None

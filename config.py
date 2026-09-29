@@ -1830,6 +1830,10 @@ BURN_ADDRESSES = {
 # run is the confirmation — every scan logs which explorer served it and what any refusal said.
 # A chain where neither serves logs is REPORTED as such; it never falls back to a balance read.
 # =======================================================================================
+# Proof-of-authority chains whose blocks carry >32 bytes of extraData: web3 needs its POA
+# middleware on every provider for them (fetch/chain.py make_web3). Polygon confirmed by Jake's
+# --seed geodnet failure 2026-09-29 (105 bytes); BSC is the same Clique-derived header format.
+POA_CHAINS = ("polygon", "bsc")
 CHAIN_IDS = {"ethereum": 1, "optimism": 10, "bsc": 56, "polygon": 137, "base": 8453,
              "arbitrum": 42161}
 
@@ -5526,6 +5530,18 @@ PROJECTS = [
                 "exclude_counterparties": ["0x000000000000000000000000000000000000dEaD",
                                            "0x0000000000000000000000000000000000000000"],
                 "days": 365,
+                # ===== SEED REFERENCE, Jake's geod_archive_probe run 2026-09-29 (Alchemy archive;
+                # publicnode refuses historical state). Combined mining 0xfa5f + distribution
+                # 0x8FB9 balances: 365d ago 157,978,828 -> 30d ago 100,596,250 -> now 97,557,801.
+                # With no outside inflow, release = the fall: ~3.04M per 30 days (~100K/day, near
+                # the combined burn rate) and ~60.4M over the year (higher before the 2026-07-01
+                # halving). The seeded series is reported against these in the run log; a large
+                # difference is either outside inflow (it is ADDED to release) or a fault.
+                "seed_reference": {
+                    "read_on": "2026-09-29", "by": "Jake (check_offline_items geod_archive_probe)",
+                    "combined_balance": {"365d": 157_978_828, "30d": 100_596_250, "now": 97_557_801},
+                    "implied_release_if_no_inflow": {"30d": 3_038_449, "365d": 60_421_027},
+                },
                 "attribution": "dedicated_wallet",
                 "attribution_sources": ["contracts.mining_polygon / mining_distribution_polygon "
                                         "(verified 2026-09-17)"],

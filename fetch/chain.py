@@ -381,7 +381,7 @@ class ChainReader:
         errors = []
         for url in endpoints:
             try:
-                w3 = Web3(HTTPProvider(url, request_kwargs={"timeout": (10, 30)}))
+                w3 = self.make_web3(chain, url, 30)
                 if w3.is_connected():
                     # HOST ONLY — see rpc_host. A keyed endpoint carries its key in the path.
                     log.info("chain %s connected via %s", chain, rpc_host(url))
@@ -392,6 +392,25 @@ class ChainReader:
                 errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
         self._failed[chain] = f"all RPC endpoints failed for {chain}: {'; '.join(errors)}"
         raise RuntimeError(self._failed[chain])
+
+    @staticmethod
+    def make_web3(chain: str, url: str, read_timeout: float = 30):
+        """A Web3 on `url`, with the POA extraData middleware on a POA chain. 2026-09-29.
+
+        Polygon (and BSC) blocks carry more than 32 bytes of extraData; without the middleware
+        web3 refuses every block read — "The field extraData is 105 bytes, but should be 32 ...
+        connected to a POA chain" — which is what failed Jake's --seed geodnet in the boundary
+        search. Every provider this reader builds goes through here, so none can miss it.
+        """
+        from web3 import HTTPProvider, Web3
+        w3 = Web3(HTTPProvider(url, request_kwargs={"timeout": (10, read_timeout)}))
+        if chain in config.POA_CHAINS:
+            try:
+                from web3.middleware import ExtraDataToPOAMiddleware as poa   # web3 v7+
+            except ImportError:                                            # web3 v5/v6
+                from web3.middleware import geth_poa_middleware as poa
+            w3.middleware_onion.inject(poa, layer=0, name="poa_extradata")
+        return w3
 
     @staticmethod
     def checksum(address: str) -> str:
@@ -707,7 +726,7 @@ class ChainReader:
                         f"public endpoints stay as fallback), not a narrower range.") from e
                 log.info("chain %s: %s refused eth_getLogs (%s) — falling back to %s",
                          chain, tried[-1], redact_urls(e)[:80], rpc_host(nxt))
-                w3 = Web3(HTTPProvider(nxt, request_kwargs={"timeout": (10, 60)}))
+                w3 = self.make_web3(chain, nxt, 60)
                 self._w3[chain] = w3
 
     def burn_transfer_events(self, chain: str, token: str, burn_to: str, from_block: int,
