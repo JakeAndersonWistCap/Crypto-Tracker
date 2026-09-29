@@ -50,8 +50,18 @@ def derived_inputs(project: dict, metric: str) -> set[str]:
     spec = config.metric_restatements(name).get(metric)
     if spec:
         out.add(spec["equals"])
-    if metric == "gross_burn_tokens" and config.chain_burn_from_revenue(name):
-        out |= {"revenue_usd", "price_usd"}
+    chain = config.chain_burn_from_revenue(name)
+    burn_inputs = ({"revenue_usd", "price_usd"}
+                   | ({"fees_usd"} if chain and chain.get("share_of_fees") is not None else set())
+                   ) if chain else set()
+    # THE BURN'S TRIPWIRE NEEDS fees_usd ON EACH DAY (NEAR: revenue = fees x 0.7), so a burn
+    # history can only reach as far back as fees does — it was never re-read (2026-09-29).
+    if metric == "gross_burn_tokens":
+        out |= burn_inputs
+    # ISSUANCE = d(supply) + the burn: its burn's inputs are its inputs (NEAR, Ethereum).
+    if metric == "gross_issuance_tokens" and (config.HISTORY_DERIVED.get((name, metric))
+                                              or project.get("issuance_history")):
+        out |= burn_inputs
     if metric == "actual_buyback_usd":
         out |= {"actual_buyback_tokens", "price_usd"}
     bh = project.get("buyback_history") or {}

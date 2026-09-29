@@ -19438,3 +19438,60 @@ def test_section_az_removes_only_the_pendle_epoch_still_in_progress(tmp_path, mo
     left = sorted(c.execute("SELECT metric, value FROM metrics").fetchall())
     assert left == [("pendle_distributed_tokens", 240_000.0), ("pendle_distributed_tokens", 350_000.0),
                     ("price_usd", 4.0)]
+
+
+def test_near_and_ethereum_issuance_history_from_backfilled_inputs():
+    """Jake, 2026-09-29 (third request for NEAR): issuance = d(supply) + burn over the year.
+    NEAR's burn is revenue / price gated by the 70%-of-fees tripwire, so fees_usd is now a
+    declared input of the burn and the issuance (the backfill re-reads it), and the inputs'
+    coverage is logged whatever is written. ETHEREUM: the burn history stood down once any
+    Etherscan burn existed, though it is the declared history leg — it now fills the days before
+    the measured leg, and issuance between CoinGecko's REAL supply updates is checked against
+    ~2,700 ETH/day."""
+    from fetch import backfill
+    from fetch import _derive_issuance_history
+    from fetch.base import today
+    from fetch.history_derive import derive_from_history
+    near, eth = config.PROJECT_BY_NAME["Near"], config.PROJECT_BY_NAME["Ethereum"]
+    assert {"revenue_usd", "fees_usd", "price_usd"} <= backfill.derived_inputs(near, "gross_issuance_tokens")
+    assert "fees_usd" in backfill.derived_inputs(near, "gross_burn_tokens")
+    assert {"revenue_usd", "price_usd"} <= backfill.derived_inputs(eth, "gross_issuance_tokens")
+
+    base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    days = pd.date_range(today() - pd.Timedelta(days=365), today() - pd.Timedelta(days=1))
+    etherscan_from = today() - pd.Timedelta(days=1)
+    rows, s = [], 120_000_000.0
+    add = lambda m, d, v, src: rows.append(dict(base, project="Ethereum", metric=m, date=d, value=v, source=src))
+    shown = s
+    for i, d in enumerate(days):
+        s += 2_700 - 2_000                           # issued 2,700, burned 2,000 each day
+        if i % 3 == 0:                               # CoinGecko updates its figure every 3 days
+            shown = s
+        add("circulating_supply_implied", d, shown, "coingecko:mcap/price")
+        add("revenue_usd", d, 2_000 * 4_000.0, "defillama:dailyRevenue")
+        add("price_usd", d, 4_000.0, "coingecko")
+        if d >= etherscan_from:
+            add("gross_burn_tokens", d, 2_000.0, "etherscan:ethsupply2.BurntFees:delta")
+            add("gross_issuance_tokens", d, 2_650.0, "derived:d_total_supply_protocol+burn")
+    stored = pd.DataFrame(rows)
+    out = FetchOutput()
+    derive_from_history(out, [eth], stored)
+    burn = out.frame().query("metric == 'gross_burn_tokens'")
+    assert len(burn) == 364 and burn["date"].max() < etherscan_from and (burn["value"] == 2_000.0).all()
+    _derive_issuance_history(out, [eth], stored)
+    iss = out.frame().query("metric == 'gross_issuance_tokens'")
+    assert len(iss) >= 350 and iss["date"].max() < etherscan_from
+    assert abs(iss["value"].mean() - 2_700.0) < 1.0, iss["value"].describe()
+    msg = " ".join(e.message for e in out.log)
+    assert "issuance history CHECK: mean 2,700.0/day" in msg and "WITHIN 2,000..3,500" in msg
+
+    # NEAR: the inputs' coverage is said even when intervals are refused
+    nrows = []
+    for i, d in enumerate(days):
+        nrows.append(dict(base, project="Near", metric="total_supply_protocol", date=d, value=1.3e9 + i * 88_800.0,
+                          source="near_rpc:block.header.total_supply:archive"))
+    o2 = FetchOutput()
+    derive_from_history(o2, [near], pd.DataFrame(nrows))
+    line = next(e.message for e in o2.log if "history INPUTS" in e.message)
+    assert "total_supply_protocol 365 reading(s)" in line and "gross_burn_tokens 0 day(s)" in line
+    assert "fees_usd 0 day(s)" in line and "364 interval(s) refused" in line

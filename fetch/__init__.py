@@ -1619,6 +1619,22 @@ def _derive_issuance_history(out: FetchOutput, projects: list[dict], stored_long
             out.add(rows[["date", "project", "metric", "value", "source", "tier"]], SOURCE_DERIVED,
                     name, f"gross_issuance_tokens history: {len(rows)} day(s) = d({spec['supply_metric']}) "
                           f"+ {spec['burn_metric']}, before {before.date() if before is not None else 'any live leg'}", 2)
+        # CHECKED AGAINST THE EXPECTED RATE (~2,700 ETH/day, 2026-09-29): a mean outside the
+        # band is flagged for review, not silently stored as the history.
+        band = spec.get("expect_daily")
+        if band and stats.get("rows"):
+            lo, hi = band
+            verdict = "WITHIN" if lo <= stats["mean"] <= hi else "OUTSIDE"
+            out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "ok",
+                                    f"issuance history CHECK: mean {stats['mean']:,.1f}/day over "
+                                    f"{stats['rows']} day(s) is {verdict} {lo:,}..{hi:,} "
+                                    f"({spec.get('expect_source', '')})", 2))
+            if verdict == "OUTSIDE":
+                out.review_item(name, "gross_issuance_tokens", "outside_expected_band", "stored_flagged",
+                                value=float(stats["mean"]), prior_value=(lo + hi) / 2.0,
+                                date=str(today().date()), source=spec["source"], tier=2,
+                                basis=f"issuance history mean {stats['mean']:,.1f}/day against "
+                                      f"{lo:,}..{hi:,} ({spec.get('expect_source', '')})")
         out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "ok",
                                 f"issuance history: {spec['supply_metric']} UPDATE CADENCE — "
                                 f"{stats['distinct']} distinct value(s) over {stats['days']} day(s), "

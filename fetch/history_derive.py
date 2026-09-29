@@ -105,9 +105,18 @@ def _chain_burn(out, h, p) -> int:
     if not decl:
         return 0
     burn = _series(h, name, "gross_burn_tokens")
-    if len(burn) and (burn["source"].astype(str) != BURN_SOURCE).any():
-        return 0                   # a measured burn is stored: the derivation stands down
+    measured = burn[burn["source"].astype(str).map(_measuring_point) != BURN_SOURCE]
     rev = _series(h, name, "revenue_usd")
+    if len(measured):
+        # A MEASURED BURN TAKES OVER, BUT ONLY FROM ITS FIRST DAY (Ethereum, 2026-09-29). Where the
+        # project DECLARES this derivation as the history leg of a handover to the measured burn,
+        # the days before the measured leg are still filled — standing down entirely left
+        # Ethereum with no burn before 2026-09-29, and so no issuance history. Undeclared: stand
+        # down, as before.
+        decl = config.declared_handover(name, "gross_burn_tokens") or {}
+        if (decl.get("ordered_points") or (None,))[0] != BURN_SOURCE:
+            return 0
+        rev = rev[rev["date"] < measured["date"].min()]
     px = _series(h, name, "price_usd").set_index("date")["value"].astype(float)
     fees = _series(h, name, "fees_usd").set_index("date")["value"].astype(float)
     share, tol = decl.get("share_of_fees"), float(decl.get("share_tolerance") or 0.001)
@@ -172,6 +181,22 @@ def _issuance(out, h, p) -> int:
     n = _emit(out, name, "gross_issuance_tokens", rows,
               f"{'d(' + smetric + ') + the burns inside each interval' if rule == 'add_burn' else 'd(' + smetric + ')'}"
               f"; {refused} interval(s) refused (point change, missing burn day, or negative)")
+    # SAY WHAT THE INPUTS COVER, WHETHER OR NOT ANYTHING WAS WRITTEN (Jake, 2026-09-29: NEAR's
+    # issuance history was asked for three times and a refusal wrote nothing to the log).
+    burn_days = set(burn.index)
+    no_burn = sorted({d for (d0, _, _), (d1, _, _) in zip(kept, kept[1:])
+                      for d in pd.date_range(d0, d1 - pd.Timedelta(days=1)) if d not in burn_days}) \
+        if rule == "add_burn" else []
+    fees = _series(h, name, "fees_usd")
+    from .base import LogEntry
+    out.log.append(LogEntry(SOURCE, name, n, "ok",
+        f"gross_issuance_tokens history INPUTS — {smetric} {len(kept)} reading(s) "
+        f"{kept[0][0].date()}..{kept[-1][0].date()}; gross_burn_tokens {len(burn)} day(s)"
+        + (f" {min(burn_days).date()}..{max(burn_days).date()}" if burn_days else "")
+        + f"; fees_usd {len(fees)} day(s) (the burn's 70% tripwire needs it on each day); "
+        f"{n} row(s) written, {refused} interval(s) refused"
+        + (f", {len(no_burn)} day(s) with no burn ({no_burn[0].date()}..{no_burn[-1].date()})"
+           if no_burn else ""), 2))
     return n
 
 

@@ -2314,7 +2314,18 @@ PROJECTS = [
                              "burn_metric": "gross_burn_tokens",
                              "source": "derived:d_coingecko_supply+burn",
                              "live_source_prefix": "derived:d_total_supply_protocol",
-                             "matched": "CoinGecko ETH supply = ethsupply2 to the ETH, Jake 2026-09-29"},
+                             "matched": "CoinGecko ETH supply = ethsupply2 to the ETH, Jake 2026-09-29",
+                             # ROUTE (a), NOT (b) (Jake's choice to make, 2026-09-29): d(supply)
+                             # between REAL update days + the burn. (b) 166.32 x sqrt(staked ETH)
+                             # needs staked-ETH history, and staked ETH = deposit contract +
+                             # Eth2Staking - WithdrawnTotal: the deposit balance is archive-readable,
+                             # but Eth2Staking and WithdrawnTotal come only from ethsupply2, which is
+                             # point-in-time — so (b) cannot be built from archive reads. It is also
+                             # the protocol MAXIMUM (every duty met), a ceiling on issuance.
+                             # Checked against ~2,700 ETH/day: a mean outside the band is flagged.
+                             "expect_daily": (2_000, 3_500),
+                             "expect_source": "~2,700 ETH/day (Jake, 2026-09-29); 166.32 x sqrt(~34M "
+                                              "staked) = ~2,660/day at every duty met"},
         "series_handover": {
             "gross_issuance_tokens": {
                 "ordered_points": ("derived:d_coingecko_supply+burn",
@@ -15332,6 +15343,9 @@ POOL_RELEASE_DERIVED_SOURCE = "derived:d_circulating-d_total"
 # (tokens x same-day price) is re-derived for EVERY project whose usd series is derived.
 HISTORY_DERIVED = {
     ("Near", "gross_burn_tokens"): "chain_burn",        # 35 days; revenue and price span the year
+    # Ethereum's burn BEFORE its first Etherscan d(BurntFees) row — the declared history leg, and
+    # the input issuance_history needs (Jake, 2026-09-29).
+    ("Ethereum", "gross_burn_tokens"): "chain_burn",
     ("Near", "gross_issuance_tokens"): "issuance",      # 1 covered day; header supply spans 365
     ("Plume", "gross_issuance_tokens"): "issuance",     # 7 days
     ("Chainlink", "pool_release_tokens"): "pool_release",   # 7 days
