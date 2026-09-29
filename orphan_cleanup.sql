@@ -3426,3 +3426,28 @@ SELECT (SELECT SUM(value) FROM metrics WHERE project = 'Uniswap' AND metric = 'g
 -- AY3. THE REBUILD — not SQL:
 --     python rederive.py Uniswap gross_burn_tokens            (preview; writes nothing)
 --     python rederive.py Uniswap gross_burn_tokens --apply    (after the preview reads right)
+
+-- ========================================================================================
+-- AZ. PENDLE: the epoch STILL IN PROGRESS, stored as though it were whole  2026-09-29
+--     Before 2026-09-29 fetch/pendle_epochs.py stored every epoch the API returned, including
+--     the one still accruing (the staking page showed it at ~82,545 PENDLE against ~170K-350K
+--     for a whole epoch). Counted as a full epoch it pulled the per-epoch mean, and so Pendle's
+--     token-terms yield, down. The fetcher no longer stores an epoch until it ends (start + 14
+--     days); this removes the row already stored, so the yield stops being understated now
+--     rather than when that epoch ends and its key is overwritten. Rows are dated the epoch's
+--     START. REVIEW FIRST.
+-- ========================================================================================
+-- AZ1. EVERY STORED EPOCH, newest first, with whether it has ended by today.
+SELECT date, value, source, fetched_at,
+       CASE WHEN date(date, '+14 days') > date('now') THEN 'IN PROGRESS' ELSE 'complete' END AS state
+  FROM metrics
+ WHERE project = 'Pendle' AND metric = 'pendle_distributed_tokens'
+ ORDER BY date DESC;
+
+-- AZ2. THE PROPOSED DELETE: epochs whose 14 days have not yet run (expect one row). Only after
+--      AZ1 reads as expected. The next run after the epoch ends stores its whole figure.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Pendle' AND metric = 'pendle_distributed_tokens'
+--    AND date(date, '+14 days') > date('now');
+-- COMMIT;

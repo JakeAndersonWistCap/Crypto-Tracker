@@ -15499,13 +15499,17 @@ HISTORY_FORWARD_ONLY = {
         "metrics": ("locked_tokens",),
         "why": "NEAR's archival RPC refuses `validators` for past blocks "
                "(VALIDATOR_INFO_UNAVAILABLE) — no stake history to read",
-        # THE ONLY RECORDED REASON, AND THE ROUTE NOT TAKEN (2026-09-29, Jake asked): the archival
-        # RPC DOES answer contract view calls at a past block, so each staking pool's
+        # THE ONLY RECORDED REASON, AND A ROUTE CONSIDERED AND DECLINED: the archival RPC DOES
+        # answer contract view calls at a past block, so each staking pool's
         # get_total_staked_balance at a day's first block would rebuild the total — ~300 pools x
         # 365 days, ~110,000 calls against an endpoint that already needs pacing (NearArchive).
-        # Not built: a cost decision, not a missing source.
-        "route_not_taken": "sum of staking pools' get_total_staked_balance via archival `query` "
-                           "at each past day's first block (~110k calls for a year)",
+        # DECLINED ON COST (Jake, 2026-09-29): the validator yield needs only CURRENT stake, so
+        # locked_tokens stays forward-only. A cost decision, not a missing source.
+        "route_declined": {
+            "route": "sum of staking pools' get_total_staked_balance via archival `query` at each "
+                     "past day's first block (~110,000 calls for a year)",
+            "decided_by": "Jake", "decided_on": "2026-09-29",
+            "why": "cost; current stake is all the validator yield needs"},
     },
     "Hyperliquid": {
         "metrics": ("burn_address_balance", "gross_burn_tokens", "core_burn_tokens",

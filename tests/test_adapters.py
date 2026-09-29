@@ -19407,3 +19407,34 @@ def test_completeness_counts_mechanism_starts_complete_and_names_every_forward_o
     assert v == "MATURING" and "FORWARD-ONLY" in d
     v, d = cr.classify(config.PROJECT_BY_NAME["Morpho"], "fees_usd", ok, "2026-09-11", asof)
     assert v == "MATURING" and "NOT FORWARD-ONLY" in d
+
+
+def test_section_az_removes_only_the_pendle_epoch_still_in_progress(tmp_path, monkeypatch, capsys):
+    """Jake, 2026-09-29: remove the in-progress epoch row already stored, review-first, so the
+    token-terms yield stops being understated now. Only an epoch whose 14 days have not run goes;
+    complete epochs and other metrics stay."""
+    import sqlite3
+    import run_sql
+    import store as store_mod
+    from datetime import date, timedelta
+    db = tmp_path / "m.db"
+    store_mod.Store(str(db))
+    c = sqlite3.connect(db)
+    today_ = date.today()
+    for back, v in ((5, 82_545.0), (19, 240_000.0), (33, 350_000.0)):
+        c.execute("INSERT INTO metrics (date, project, metric, value, source, tier, fetched_at) VALUES (?,?,?,?,?,?,?)",
+                  (str(today_ - timedelta(days=back)), "Pendle", "pendle_distributed_tokens", v,
+                   "pendle_api:sPendleHistoricalData.buybackAmounts", 3, "x"))
+    c.execute("INSERT INTO metrics (date, project, metric, value, source, tier, fetched_at) VALUES (?,?,?,?,?,?,?)",
+              (str(today_ - timedelta(days=5)), "Pendle", "price_usd", 4.0, "coingecko", 1, "x"))
+    c.commit()
+    c.close()
+    assert run_sql.main(["AZ", "--db", str(db)]) == 0
+    assert "IN PROGRESS" in capsys.readouterr().out
+    monkeypatch.setattr("builtins.input", lambda *a: "DELETE AZ")
+    assert run_sql.main(["--delete", "AZ", "--db", str(db)]) == 0
+    assert "Rows this would remove from metrics (1)" in capsys.readouterr().out
+    c = sqlite3.connect(db)
+    left = sorted(c.execute("SELECT metric, value FROM metrics").fetchall())
+    assert left == [("pendle_distributed_tokens", 240_000.0), ("pendle_distributed_tokens", 350_000.0),
+                    ("price_usd", 4.0)]
