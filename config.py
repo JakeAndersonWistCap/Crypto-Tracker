@@ -15020,13 +15020,16 @@ PROTOCOL_YIELD = {
                # not inferred from the denominator. The boost decays to nothing by the date below,
                # so the share should fall toward 0 as it does — tracked by the cell over time.
                "lock_add_decay": {
-                   "ends_by": "2028-01-20",
+                   # Primary source wins (Jake, 2026-09-29): Pendle's own docs give ~2028-01-29.
+                   # The earlier 2028-01-20 came from a secondary source and is not used.
+                   "ends_by": "2028-01-29",
                    "what": "legacy vePENDLE boosts (virtual sPENDLE) decay to zero",
-                   "source": "Jake, 2026-09-29. Pendle's docs (pendle-finance/documentation "
-                             "@9b9509e, ProtocolMechanics/Mechanisms/sPENDLE.md, read 2026-09-29): "
-                             "virtual sPENDLE was set from each lock at the 2026-01-29 00:00 UTC "
-                             "snapshot, max 4x at 2 years to unlock, decaying to 1x by the unlock "
-                             "date and then EXPIRING — so the last expires no later than ~2028-01-29",
+                   "source": "Pendle's docs (pendle-finance/documentation @9b9509e, "
+                             "ProtocolMechanics/Mechanisms/sPENDLE.md, read 2026-09-29): virtual "
+                             "sPENDLE was set from each lock at the 2026-01-29 00:00 UTC snapshot, "
+                             "max 4x at 2 years to unlock, decaying to 1x by the unlock date and "
+                             "then EXPIRING — so the last expires no later than ~2028-01-29. "
+                             "Primary source chosen over a secondary 2028-01-20 (Jake, 2026-09-29)",
                },
                # ===== TOKEN-DENOMINATED YIELD (Jake, 2026-09-29). =====
                # The USD yield divides buyback spend at buy-time prices by staked value at today's
@@ -17231,7 +17234,8 @@ OPEN_QUESTIONS = [
                   "leaves only on finalizeCooldown(); instantUnstake() burns and pays out at once. "
                   "totalSupply() is the plain OpenZeppelin ERC-20 supply — there is no virtual term "
                   "in it. The loyalty boost (vePENDLE snapshot 2026-01-29, up to 4x, decaying to 0 "
-                  "by ~2028-01-20) is a non-transferable VIRTUAL balance with no PENDLE behind it, "
+                  "by ~2028-01-29 per Pendle's docs; corrected 2026-09-29 from a secondary "
+                  "~2028-01-20) is a non-transferable VIRTUAL balance with no PENDLE behind it, "
                   "accounted outside the ERC-20 (Pendle's docs; the independent Penconomics "
                   "tracker computes it from vePENDLE's slope buckets: ~177.8M virtual sPENDLE). "
                   "THE >100M 'STAKED' FIGURES are Pendle's hub combining sPENDLE supply with "

@@ -17836,7 +17836,7 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
 
 def test_pendle_a3_shows_the_real_staker_yield_and_the_virtual_share_separately():
     """Jake, 2026-09-29: legacy vePENDLE boosts (~177.8M virtual vs ~30.3M real sPENDLE) take ~85%
-    of distributions until they decay (by ~2028-01-20). A3 shows the real-staker yield AND the
+    of distributions until they decay (by ~2028-01-29). A3 shows the real-staker yield AND the
     virtual share as separate cells, with the decay date on the share's cell."""
     import openpyxl
     import tempfile
@@ -17845,7 +17845,7 @@ def test_pendle_a3_shows_the_real_staker_yield_and_the_virtual_share_separately(
     import store as store_mod
 
     spec = config.PROTOCOL_YIELD["Pendle"]
-    assert spec["lock_add_decay"]["ends_by"] == "2028-01-20"
+    assert spec["lock_add_decay"]["ends_by"] == "2028-01-29"
     asof = pd.Timestamp("2026-09-28")
     days = pd.date_range("2026-07-01", "2026-09-27")
     rows = []
@@ -17870,7 +17870,7 @@ def test_pendle_a3_shows_the_real_staker_yield_and_the_virtual_share_separately(
         assert yc != sc
         share = ws.cell(row=pr, column=sc)
         assert "locked_tokens_virtual" in str(share.value) and "locked_tokens_shares" in str(share.value)
-        assert "decays by 2028-01-20" in share.number_format and "2028-01-20" in share.comment.text
+        assert "decays by 2028-01-29" in share.number_format and "2028-01-29" in share.comment.text
         y = str(ws.cell(row=pr, column=yc).value)
         assert "locked_tokens_shares" in y and "locked_tokens_virtual" in y, y
     # the arithmetic the formula encodes: 177.78 / (30.34 + 177.78) = 85.4%
