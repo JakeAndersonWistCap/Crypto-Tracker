@@ -14888,7 +14888,20 @@ PROTOCOL_YIELD = {
     # locked_tokens (PENDLE.balanceOf(sPENDLE), 35.42M) also holds the unstake queue, which earns
     # nothing — it is the lock-rate figure, not the reward base.
     "Pendle": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_shares",
-               "lock_add": "locked_tokens_virtual"},
+               "lock_add": "locked_tokens_virtual",
+               # ===== THE VIRTUAL SHARE, SHOWN ON ITS OWN. 2026-09-29 (Jake). =====
+               # At ~177.8M virtual vs ~30.3M real sPENDLE, legacy vePENDLE boosts take ~85% of
+               # staker distributions, which is why the yield per staked token is ~1.1%. A3 shows
+               # that share beside the yield (build_workbook._virtual_share) so the split is read,
+               # not inferred from the denominator. The boost decays to nothing by the date below,
+               # so the share should fall toward 0 as it does — tracked by the cell over time.
+               "lock_add_decay": {
+                   "ends_by": "2028-01-20",
+                   "what": "legacy vePENDLE boosts (virtual sPENDLE) decay to zero",
+                   "source": "Jake, 2026-09-29 — consistent with vePENDLE's two-year maximum lock "
+                             "running from the sPENDLE migration; not yet confirmed against "
+                             "Pendle's own docs from here",
+               }},
     "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying",
                  # ** THE YIELD ASSUMES BUYBACKS REACH sETHFI HOLDERS. ** True of the old
                  # programme (100% to sETHFI holders), UNCONFIRMED for the new one — see

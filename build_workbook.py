@@ -2261,6 +2261,29 @@ def _a1_headline(R: Refs) -> list[tuple]:
     ]
 
 
+def _virtual_share(R: Refs):
+    """A3, Pendle (2026-09-29): the share of staker distributions going to VIRTUAL balances —
+    lock_add ÷ (lock + lock_add). Beside the yield so the split is read, not buried in the
+    denominator; the boost's decay date rides on the cell. Blank where nothing is shared."""
+    def build(r, p):
+        spec = config.PROTOCOL_YIELD.get(p["name"]) or {}
+        if not spec.get("lock_add"):
+            return ""
+        real, add = R.D(r, spec["lock"], "now"), R.D(r, spec["lock_add"], "now")
+        return calc(f"IF(AND(ISNUMBER({real}),ISNUMBER({add}),({real}+{add})>0),{add}/({real}+{add}),{NA})")
+
+    def decay(p):
+        d = (config.PROTOCOL_YIELD.get(p["name"]) or {}).get("lock_add_decay")
+        if not d:
+            return None
+        return (f" · decays by {d['ends_by']}",
+                f"VIRTUAL SHARE — {d['what']} by {d['ends_by']}; the share should fall toward 0 as "
+                f"they do. Source: {d['source']}.")
+    return ("Share of staker distributions to VIRTUAL balances (legacy boosts) = virtual ÷ (real + virtual)",
+            build, FMT_PCT, "calc", False,
+            {"metric": "locked_tokens_virtual", "flag_fn": decay})
+
+
 def _virtual_missing(name: str, data_by_key: dict) -> str | None:
     """Why the protocol yield reads high: a declared lock_add that has no stored value yet."""
     add = (config.PROTOCOL_YIELD.get(name) or {}).get("lock_add")
@@ -2348,7 +2371,8 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
             return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({lock}),ISNUMBER({px})),{_annualise(R, r, p, spec['revenue'], rev)}/({lock}*{px}),{NA})")
         why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
         return f"n/a — {why}" if why else ""
-    return ("PROTOCOL STAKING YIELD = holders revenue (annualised) ÷ locked value — revenue share, NOT a validator yield",
+    return ("PROTOCOL STAKING YIELD — what a REAL staker earns per staked token = holders revenue (annualised) ÷ "
+            "locked value (real + virtual where rewards are shared with virtual balances) — revenue share, NOT a validator yield",
             build, FMT_PCT, "calc", False,
             {"metric": "holders_revenue_usd",
              "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
@@ -2831,6 +2855,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         _protocol_yield(R, data_by_key),
+        _virtual_share(R),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====
         # locked_tokens (the column above, via contracts.spendle_underlying) is PENDLE.balanceOf
         # (sPENDLE) — the NEW contract, unchanged by this addition. This column is PENDLE.balanceOf

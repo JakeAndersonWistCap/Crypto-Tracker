@@ -17781,3 +17781,46 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
     assert dict(tot) == {pd.Timestamp("2026-09-25"): 13.0, pd.Timestamp("2026-09-26"): 13.0,
                          pd.Timestamp("2026-09-28"): 17.0}, dict(tot)
     assert ("Hyperliquid", "core_burn_tokens") in groups and ("Hyperliquid", "gross_burn_tokens") in groups
+
+
+def test_pendle_a3_shows_the_real_staker_yield_and_the_virtual_share_separately():
+    """Jake, 2026-09-29: legacy vePENDLE boosts (~177.8M virtual vs ~30.3M real sPENDLE) take ~85%
+    of distributions until they decay (by ~2028-01-20). A3 shows the real-staker yield AND the
+    virtual share as separate cells, with the decay date on the share's cell."""
+    import openpyxl
+    import tempfile
+
+    import build_workbook as bw
+    import store as store_mod
+
+    spec = config.PROTOCOL_YIELD["Pendle"]
+    assert spec["lock_add_decay"]["ends_by"] == "2028-01-20"
+    asof = pd.Timestamp("2026-09-28")
+    days = pd.date_range("2026-07-01", "2026-09-27")
+    rows = []
+    for m, v in (("locked_tokens_shares", 30_340_000.0), ("locked_tokens_virtual", 177_780_000.0),
+                 ("holders_revenue_usd", 10_000.0), ("price_usd", 3.0)):
+        rows += [{"date": d, "project": "Pendle", "metric": m, "value": v, "source": "t", "tier": 2}
+                 for d in days]
+    with tempfile.TemporaryDirectory() as d:
+        st = store_mod.Store(f"{d}/m.db")
+        st.upsert(pd.DataFrame(rows))
+        try:
+            path = bw.build_workbook(st, f"{d}/w.xlsx", asof=asof, only=["Pendle"])
+        finally:
+            bw._SCOPE = list(bw.PROJECTS)
+        wb = openpyxl.load_workbook(path)
+        ws = wb["A3 Revenue Buyback"]
+        hr = next(i for i in range(1, 10) if ws.cell(row=i, column=1).value == "Project")
+        hdr = {ws.cell(row=hr, column=c).value: c for c in range(1, ws.max_column + 1)}
+        pr = next(i for i in range(hr + 1, ws.max_row + 1) if ws.cell(row=i, column=1).value == "Pendle")
+        yc = next(v for k, v in hdr.items() if k and k.startswith("PROTOCOL STAKING YIELD"))
+        sc = next(v for k, v in hdr.items() if k and k.startswith("Share of staker distributions to VIRTUAL"))
+        assert yc != sc
+        share = ws.cell(row=pr, column=sc)
+        assert "locked_tokens_virtual" in str(share.value) and "locked_tokens_shares" in str(share.value)
+        assert "decays by 2028-01-20" in share.number_format and "2028-01-20" in share.comment.text
+        y = str(ws.cell(row=pr, column=yc).value)
+        assert "locked_tokens_shares" in y and "locked_tokens_virtual" in y, y
+    # the arithmetic the formula encodes: 177.78 / (30.34 + 177.78) = 85.4%
+    assert abs(177_780_000 / (30_340_000 + 177_780_000) - 0.854) < 0.001
