@@ -330,6 +330,14 @@ METRICS = {
     # 2026-09-29 (Jake): Hyperliquid's TOTAL burn = Assistance Fund + Core burns, summed at READ
     # time (build_workbook._burn_total_views). A4's burn and A3's buyback view read it.
     # Chainlink staking v0.2 (2026-09-29): the RewardVault's active emission rate, and claims.
+    # Ethereum (2026-09-29): ETH held on the beacon chain = deposit-contract balance (ETH sent
+    # there can never leave — deposit_contract.sol has no transfer) + Eth2Staking (cumulative CL
+    # rewards) - WithdrawnTotal (ethsupply2). Counts every validator balance: active, pending,
+    # exited-not-withdrawn — so a little ABOVE active stake. The free denominator for the yield.
+    "beacon_chain_eth": {
+        "label": "ETH on the beacon chain (deposit contract + Eth2Staking - WithdrawnTotal)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1],
+        "tiers": [1], "sanity_min": 1e6, "sanity_max": 1.2e8, "only_projects": ("Ethereum",)},
     "reward_emission_rate_annual": {
         "label": "Staking reward emission rate (LINK/yr) — RewardVault getRewardBuckets(), active buckets",
         "kind": "stock", "unit": "tokens", "archetypes": [1, 3],
@@ -2239,6 +2247,10 @@ PROJECTS = [
         "etherscan_supply": {
             "key_env": "ETHERSCAN_API_KEY", "chainid": 1,
             "burn_metric": "burn_cumulative_tokens", "supply_metric": "total_supply_protocol",
+            # 2026-09-29: + the deposit contract's balance -> beacon_chain_eth (the yield's base).
+            # Address: ethereum/consensus-specs @e321975f configs/mainnet.yaml L163 DEPOSIT_CONTRACT_ADDRESS.
+            "stake_metric": "beacon_chain_eth",
+            "deposit_contract": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
             "doc_url": "https://docs.etherscan.io/api-reference/endpoint/ethsupply2",
             "doc_read": "2026-09-28 (via search; docs host unreachable from the sandbox)",
             "free_tier": "listed among the free stats endpoints; the first live call settles it "
@@ -2312,6 +2324,26 @@ PROJECTS = [
         # entered by hand quarterly into manual_overrides.csv. No free API carries it (checked
         # 2026-09-24: growthepie's metric set, Etherscan's daily stats, DefiLlama chain data).
         "manual_quarterly": ["settlement_volume_annual_usd"],
+        # ===== COIN METRICS' TxTfrValAdjUSD IS NOT ON THE FREE TIER (checked 2026-09-29). =====
+        # Jake asked to wire Coin Metrics' adjusted transfer value (the series behind The Block's
+        # "adjusted on-chain volume") from the free community API. It is NOT in the community
+        # catalog: coinmetrics/data mirrors that catalog exactly (scripts/generate.js reads
+        # community-api.coinmetrics.io/v4/catalog and writes every 1d metric) and none of its
+        # 2,258 CSVs carries TxTfrValAdjUSD (@f1a36afb, 2026-05-24). ETH's community set has
+        # TxTfrCnt (a COUNT), IssTotNtv, SplyCur, FeeTotNtv, CapMrktCurUSD... but no transfer
+        # VALUE. None of the portfolio's other chains has it either (Plume has price only).
+        # AND THE COMMUNITY DATA IS CC BY-NC 4.0 (coinmetrics/data LICENSE; api-client-python
+        # openapi.yaml): non-commercial. So nothing is wired and the manual template stays;
+        # check_offline_items coinmetrics_community re-checks the live catalog.
+        "coinmetrics_community": {
+            "metric": "TxTfrValAdjUSD", "available": False,
+            "evidence": "coinmetrics/data @f1a36afb (2026-05-24): 0 of 2,258 CSVs has the column; "
+                        "the repo is generated from the community catalog (scripts/generate.js)",
+            "licence": "CC BY-NC 4.0 (non-commercial) — Jake to decide before any community "
+                       "metric is used",
+            "also_there": "IssTotNtv (daily ETH issuance) — an independent issuance history, not "
+                          "wired for the licence reason",
+        },
         "coingecko_id": "ethereum",
         # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
         # DefiLlama's chain Revenue for Ethereum is the BURNED ETH, not a share of fees, and that
@@ -14988,8 +15020,27 @@ def buyback_route(project_name: str) -> dict:
 #                   observed issuance as a cross-check: blocked when they differ > max_ratio
 #   pending         the input is being collected; the cell says what is missing
 VALIDATOR_YIELD = {
-    "Ethereum": {"method": "stored", "metric": "staking_yield_pct",
-                 "note": "ETH.Store `apr` — total staker return (cl + el)"},
+    # ===== WITHOUT beaconcha.in (Jake, 2026-09-29). =====
+    # consensus = issuance (annualised over its covered days) / ETH on the beacon chain;
+    # execution = priority fees (DefiLlama fees - burned revenue, both stored) / price / the same.
+    # MEV IS NOT INCLUDED: no free source carries it. ETH.Store's `apr` (cl + el incl. MEV) stays
+    # beside it as the cross-check once beaconcha.in's quota resets (2026-10-01).
+    "Ethereum": {"method": "consensus_plus_execution",
+                 "issuance_metric": "gross_issuance_tokens", "stake_metric": "beacon_chain_eth",
+                 "fees_metric": "fees_usd", "burned_metric": "revenue_usd",
+                 "cross_check_metric": "staking_yield_pct",
+                 "note": "consensus (issuance) + execution (priority fees; MEV not included) over "
+                         "beacon-chain ETH (deposit contract + Eth2Staking - WithdrawnTotal)",
+                 # THE PROTOCOL'S OWN CEILING (consensus-specs @e321975f, 2026-09-28): per epoch
+                 # sum(base rewards) = BASE_REWARD_FACTOR (64) x sqrt(total active gwei) when every
+                 # duty is met (the Altair weights sum to WEIGHT_DENOMINATOR); x 82,181.25 epochs a
+                 # year (12s slots, 32 per epoch, 365.25 days) = 166.32 x sqrt(B ETH) ETH/yr.
+                 # Electra leaves BASE_REWARD_FACTOR and the base reward unchanged.
+                 "issuance_formula": {"coefficient": 166.32, "of": "sqrt(staked ETH)",
+                                      "source": "ethereum/consensus-specs @e321975f: presets/mainnet/"
+                                                "phase0.yaml BASE_REWARD_FACTOR 64; specs/altair/"
+                                                "beacon-chain.md get_base_reward_per_increment, "
+                                                "weights summing to WEIGHT_DENOMINATOR 64"}},
     # ** DECLARED ISSUANCE IS PRIMARY, OBSERVED IS THE CROSS-CHECK. Fixed 2026-09-28. **
     # Run 20260928T090446Z read 0.179% against ~5.2% expected. The observed issuance is
     # d(total_supply) + burn per run: a short series of coarse supply deltas, then annualised

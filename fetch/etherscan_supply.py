@@ -51,10 +51,19 @@ def _scrub(text, key: str) -> str:
 class EtherscanSupply:
     """One ethsupply2 call per project declaring an `etherscan_supply` block (Ethereum only)."""
 
-    def __init__(self, prior_dates: dict | None = None, prior_delta: dict | None = None):
+    def __init__(self, prior_dates: dict | None = None, prior_delta: dict | None = None,
+                 deposit_balance=None):
         self.http = Http(min_interval=0.25)
+        if deposit_balance is not None:
+            self.deposit_balance = deposit_balance
         self.prior_dates = prior_dates or {}
         self.prior_delta = prior_delta or {}
+
+    @staticmethod
+    def deposit_balance(address: str) -> int:
+        from .chain import ChainReader
+        r = ChainReader()
+        return int(r.web3("ethereum").eth.get_balance(r.checksum(address)))
 
     def run(self, projects: list[dict], window_days, out):
         when = today()
@@ -98,6 +107,7 @@ class EtherscanSupply:
                 continue
             try:
                 eth, stake, burnt = (int(res[f]) for f in ("EthSupply", "Eth2Staking", "BurntFees"))
+                withdrawn = int(res["WithdrawnTotal"]) if res.get("WithdrawnTotal") is not None else None
             except (KeyError, TypeError, ValueError) as e:
                 for m in metrics:
                     out.fail(SOURCE, name, f"{m}: ethsupply2 fields did not parse ({e}); keys "
@@ -110,6 +120,19 @@ class EtherscanSupply:
             out.add(point(name, spec["supply_metric"], supply, f"{src}.supply", TIER, when), SOURCE,
                     name, f"{spec['supply_metric']}={supply:,.4f} ETH = EthSupply {eth / WEI:,.0f} "
                           f"+ Eth2Staking {stake / WEI:,.0f} - BurntFees {burn:,.0f}", TIER)
+            # ETH ON THE BEACON CHAIN (2026-09-29): deposit contract balance + Eth2Staking -
+            # WithdrawnTotal. The deposit contract's native balance is one eth_getBalance.
+            if spec.get("stake_metric") and withdrawn is not None:
+                try:
+                    dep = self.deposit_balance(spec["deposit_contract"])
+                    staked = (dep + stake - withdrawn) / WEI
+                    out.add(point(name, spec["stake_metric"], staked, f"{src}+deposit_contract", TIER, when),
+                            SOURCE, name, f"{spec['stake_metric']}={staked:,.2f} ETH = deposit contract "
+                                          f"{dep / WEI:,.0f} + Eth2Staking {stake / WEI:,.0f} - "
+                                          f"WithdrawnTotal {withdrawn / WEI:,.0f}", TIER)
+                except Exception as e:  # noqa: BLE001
+                    out.fail(SOURCE, name, f"{spec['stake_metric']}: deposit contract balance "
+                                           f"unreadable — {e}", TIER)
             flow = derive_flow_from_cumulative(
                 burn, self.prior_delta.get((name, spec["burn_metric"])), name, "gross_burn_tokens",
                 config.mark_source(f"{src}.BurntFees", "delta"), TIER, when,

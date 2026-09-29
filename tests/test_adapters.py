@@ -18410,3 +18410,47 @@ def test_ethereum_issuance_history_is_the_coingecko_supply_delta_plus_burn_befor
     assert (f["value"] < 0).sum() == 1, "the noisy day is kept, not dropped"
     assert any("NOISE" in e.message and "negative" in e.message for e in out.log)
     assert config.declared_handover("Ethereum", "gross_issuance_tokens")["ordered_points"][0] == spec["source"]
+
+
+def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over_beacon_chain_eth():
+    """1c (Jake, 2026-09-29): consensus = issuance / ETH on the beacon chain; execution = (DefiLlama
+    fees - burned revenue) / price / the same; MEV not included. ETH on the beacon chain = deposit
+    contract + Eth2Staking - WithdrawnTotal (ethsupply2). The protocol ceiling 166.32*sqrt(B) and
+    the beaconcha.in apr sit beside it. Coin Metrics' TxTfrValAdjUSD is not on the free tier."""
+    import build_workbook as bw
+    from fetch.base import FetchOutput
+    from fetch.etherscan_supply import EtherscanSupply
+
+    class H:
+        def get(self, url, params=None):
+            return {"status": "1", "result": {"EthSupply": str(120_000_000 * 10**18),
+                                              "Eth2Staking": str(1_160_000 * 10**18),
+                                              "BurntFees": str(4_600_000 * 10**18),
+                                              "WithdrawnTotal": str(40_000_000 * 10**18)}}
+    es = EtherscanSupply(deposit_balance=lambda a: 74_000_000 * 10**18)
+    es.http = H()
+    import os
+    os.environ["ETHERSCAN_API_KEY"] = "k"
+    try:
+        out = FetchOutput()
+        es.run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    finally:
+        os.environ.pop("ETHERSCAN_API_KEY", None)
+    got = out.frame().set_index("metric")["value"]
+    assert got["beacon_chain_eth"] == 74_000_000 + 1_160_000 - 40_000_000
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}:{w}]"
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    spec = config.VALIDATOR_YIELD["Ethereum"]
+    cons, exe, legs = bw._eth_yield_parts(R(), 5, eth, spec)
+    assert "D[gross_issuance_tokens:q0]" in cons and "/D[beacon_chain_eth:now]" in cons
+    assert "(D[fees_usd:q0]-D[revenue_usd:q0])" in exe and "D[price_usd:q0]" in exe
+    cols = {c[0]: c for c in bw._eth_yield_columns(R())}
+    ceil = cols["Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)"][1](5, eth)
+    assert "166.32*SQRT(D[beacon_chain_eth:now])" in ceil
+    assert cols["Consensus part (issuance ÷ ETH on the beacon chain)"][1](5, config.PROJECT_BY_NAME["Near"]) == ""
+    # 64 x sqrt(B gwei) per epoch x 82,181.25 epochs/yr / 1e9 = 166.32 x sqrt(B ETH)
+    assert abs(64 * (1e9) ** 0.5 * 365.25 * 86_400 / (32 * 12) / 1e9 - 166.32) < 0.01
+    assert config.PROJECT_BY_NAME["Ethereum"]["coinmetrics_community"]["available"] is False

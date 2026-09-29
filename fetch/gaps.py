@@ -446,7 +446,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"balanceOf means the {bf['chain']} endpoint is not archive — run "
                 f"check_offline_items.py geod_archive_probe.")
     es = project.get("etherscan_supply") or {}
-    if metric in (es.get("burn_metric"), es.get("supply_metric")):
+    if metric in (es.get("burn_metric"), es.get("supply_metric"), es.get("stake_metric")):
         return ("Etherscan stats/ethsupply2 is configured (one call gives BurntFees and the supply "
                 "components) but stored nothing this run",
                 f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
@@ -876,7 +876,7 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m = {sp["metric"] for sp in project.get("balance_flows") or []}
     elif source == "etherscan_supply":
         es = project.get("etherscan_supply") or {}
-        m = {es["burn_metric"], es["supply_metric"], "gross_burn_tokens"} if es else set()
+        m = ({es["burn_metric"], es["supply_metric"], "gross_burn_tokens"} | ({es["stake_metric"]} if es.get("stake_metric") else set())) if es else set()
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
     elif source == "maple_page":

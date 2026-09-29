@@ -1136,6 +1136,37 @@ def geod_archive_probe():
     print("  PASTE BACK: the first endpoint whose 365d line shows two numbers serves the backfill.")
 
 
+def coinmetrics_community():
+    """1a (2026-09-29): is TxTfrValAdjUSD on Coin Metrics' FREE community API? The GitHub mirror of
+    the community catalog (coinmetrics/data @f1a36afb) says no, for every asset. This asks the
+    live API: robots.txt, then the timeseries for eth (a metric outside the tier answers 403
+    'forbidden'), then which of the portfolio's assets carry it. Licence: CC BY-NC 4.0."""
+    head("COIN METRICS community — adjusted transfer value (TxTfrValAdjUSD)")
+    base = "https://community-api.coinmetrics.io"
+    try:
+        r = requests.get(f"{base}/robots.txt", timeout=TIMEOUT)
+        print(f"  robots.txt: HTTP {r.status_code} {r.text[:200]!r}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  robots.txt: UNREACHABLE — {e}")
+    assets = "eth,near,link,plume,hype,uni,aero,sky,pendle,inst,ethfi,morpho,syrup,geod,wmtx,ath"
+    try:
+        r = requests.get(f"{base}/v4/timeseries/asset-metrics",
+                         params={"assets": "eth", "metrics": "TxTfrValAdjUSD", "frequency": "1d",
+                                 "page_size": 3, "paging_from": "end"}, timeout=TIMEOUT)
+        print(f"  eth TxTfrValAdjUSD: HTTP {r.status_code} {r.text[:300]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  eth TxTfrValAdjUSD: UNREACHABLE — {e}")
+    try:
+        r = requests.get(f"{base}/v4/catalog-v2/asset-metrics",
+                         params={"assets": assets, "metrics": "TxTfrValAdjUSD"}, timeout=TIMEOUT)
+        data = (r.json() or {}).get("data") if r.ok else None
+        print(f"  catalog: HTTP {r.status_code}; assets carrying it: "
+              f"{sorted({d.get('asset') for d in data or []}) or 'none'}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  catalog: UNREACHABLE — {e}")
+    print("  PASTE BACK. A 403/forbidden or an empty catalog confirms: not on the free tier.")
+
+
 def archive_probe():
     """2026-09-29 (Jake): which endpoints serve STATE a year back, for archive_backfill.py.
 
@@ -2672,7 +2703,7 @@ CHECKS = (
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
-    chainlink_reward_rates, pendle_spendle_fees, archive_probe,
+    chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

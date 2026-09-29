@@ -2454,6 +2454,54 @@ def _a2_headline(R: Refs) -> list[tuple]:
     ]
 
 
+def _eth_yield_parts(R: Refs, r: int, p: dict, spec: dict) -> tuple[str, str, list]:
+    """(consensus, execution, coverage legs) for the consensus_plus_execution method (Ethereum,
+    2026-09-29): issuance and priority fees, each annualised over its own covered days, over ETH
+    on the beacon chain. Priority fees = DefiLlama fees - burned revenue, at the Q0 average price."""
+    stake = R.D(r, spec["stake_metric"], "now")
+    im, fm, bm = spec["issuance_metric"], spec["fees_metric"], spec["burned_metric"]
+    cons = f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/{stake}"
+    prio = f"({R.D(r, fm, 'q0')}-{R.D(r, bm, 'q0')})"
+    exe = f"{_annualise(R, r, p, fm, prio)}/{R.D(r, 'price_usd', 'q0')}/{stake}"
+    return cons, exe, [("issuance", im, "q0"), ("fees", fm, "q0"), ("burned fees", bm, "q0")]
+
+
+def _eth_yield_columns(R: Refs) -> list[tuple]:
+    """Beside A1's validator yield, for a consensus_plus_execution project only (Ethereum): the
+    two parts, the beaconcha.in cross-check, and issuance against the protocol's own maximum."""
+    def spec_of(p):
+        s = config.VALIDATOR_YIELD.get(p["name"]) or {}
+        return s if s.get("method") == "consensus_plus_execution" else None
+
+    def part(i):
+        def build(r, p):
+            s = spec_of(p)
+            if not s:
+                return ""
+            parts = _eth_yield_parts(R, r, p, s)
+            return _coverage_guard(R, r, parts[2], parts[i])
+        return build
+
+    def cross(r, p):
+        s = spec_of(p)
+        return pull(R.D(r, s["cross_check_metric"], "now")) if s and s.get("cross_check_metric") else ""
+
+    def ceiling(r, p):
+        s = spec_of(p)
+        f = (s or {}).get("issuance_formula")
+        if not f:
+            return ""
+        im, stake = s["issuance_metric"], R.D(r, s["stake_metric"], "now")
+        return _coverage_guard(R, r, [("issuance", im, "q0")],
+                               f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/({f['coefficient']}*SQRT({stake}))")
+    return [
+        ("Consensus part (issuance ÷ ETH on the beacon chain)", part(0), FMT_PCT, "calc"),
+        ("Execution part (priority fees ÷ the same; MEV NOT included — no free source)", part(1), FMT_PCT, "calc"),
+        ("Cross-check: beaconcha.in ETH.Store apr (cl + el incl. MEV)", cross, FMT_PCT, "pull"),
+        ("Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)", ceiling, FMT_X, "calc"),
+    ]
+
+
 def _a1_headline(R: Refs) -> list[tuple]:
     """The VALIDATOR yield (securing the chain) — never a protocol revenue share — and the manual
     settlement-volume input Network Reserve Ratio needs. Neither ratio built on them (NRR, Total
@@ -2485,6 +2533,9 @@ def _a1_headline(R: Refs) -> list[tuple]:
             decl = f"({rate}*{supply})"
             val = f"{decl}*{share}/{stake}"
             return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),{val},{NA})")
+        if spec["method"] == "consensus_plus_execution":
+            cons, exe, legs = _eth_yield_parts(R, r, p, spec)
+            return _coverage_guard(R, r, legs, f"{cons}+{exe}")
         if spec["method"] == "rate_share":
             # Chainlink (2026-09-29): an emission RATE (tokens/yr) over stake — no annualising.
             rate, stake = R.D(r, spec["rate_metric"], "now"), R.D(r, spec["stake_metric"], "now")
@@ -2503,8 +2554,9 @@ def _a1_headline(R: Refs) -> list[tuple]:
     return [
         ("VALIDATOR STAKING YIELD (annual) — securing the chain, NOT a protocol revenue share",
          vyield, FMT_PCT, "calc", True,
-         {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "total_supply",
+         {"metric_fn": lambda n: {"Ethereum": "beacon_chain_eth", "Near": "total_supply",
                                   "Chainlink": "reward_emission_rate_annual"}.get(n)}),
+        *_eth_yield_columns(R),
         ("Settlement volume, annualised ($) — The Block adjusted, manual quarterly",
          lambda r, p: pull(R.D(r, "settlement_volume_annual_usd", "now")) if "settlement_volume_annual_usd"
          in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_annual_usd"}),
