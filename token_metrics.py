@@ -258,6 +258,9 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("token_metrics")
     load_dotenv(ROOT / ".env")
+    # NO KEY IN ANY LOG LINE OR PRINT (2026-09-29): after .env, so its values are known secrets.
+    from fetch.base import install_redaction
+    install_redaction()
 
     st = store_mod.Store(store_mod.DB_PATH)
 

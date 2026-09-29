@@ -39,7 +39,7 @@ import pandas as pd
 
 import config
 
-from .base import FetchOutput, LONG_COLUMNS, _measuring_point, derive_flow_from_cumulative, today
+from .base import FetchOutput, LONG_COLUMNS, redact, _measuring_point, derive_flow_from_cumulative, today
 
 log = logging.getLogger("token_metrics.fetch.archive")
 
@@ -191,7 +191,9 @@ def resolve_archive(chain: str, days: float = ARCHIVE_DAYS, attempts: list | Non
             ok, why = archive_ok(w3, blk)
             verdict = f"block {blk:,}: {'SERVED' if ok else 'REFUSED — ' + why}"
         except Exception as e:  # noqa: BLE001
-            ok, verdict = False, f"FAILED — {type(e).__name__}: {str(e)[:140]}"
+            # REDACTED: a provider's exception carries the full URL, key and all (Jake's probe
+            # printed an Alchemy key this way, 2026-09-29).
+            ok, verdict = False, f"FAILED — {type(e).__name__}: {redact(e)[:140]}"
         if attempts is not None:
             attempts.append((host, verdict))
         if ok and found[0] is None:
@@ -275,7 +277,7 @@ def archive_ok(w3, block: int) -> tuple[bool, str]:
         w3.eth.get_balance("0x0000000000000000000000000000000000000000", block_identifier=block)
         return True, "state served"
     except Exception as e:  # noqa: BLE001
-        return False, f"{type(e).__name__}: {str(e)[:160]}"
+        return False, f"{type(e).__name__}: {redact(e)[:160]}"
 
 
 # ---------------------------------------------------------------------------------------------

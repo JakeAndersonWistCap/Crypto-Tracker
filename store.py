@@ -193,6 +193,11 @@ def _migrate(conn: sqlite3.Connection):
     conn.commit()
 
 
+
+def _redact(text):
+    from fetch.base import redact
+    return redact(text)
+
 class Store:
     def __init__(self, path: Path | str = DB_PATH):
         self.path = Path(path)
@@ -358,6 +363,9 @@ class Store:
         # than inline at each insert.
         tier = _int_or_none(tier, "run_log.tier", f"{source}/{project}")
         rows = _int_or_none(rows, "run_log.rows / fetch_status.last_rows", f"{source}/{project}")
+        # REDACTED AT THE STORE TOO (2026-09-29): whatever reached here from any path.
+        from fetch.base import redact
+        message = redact(message or "")
         self.conn.execute(
             "INSERT INTO run_log(run_id, ts, source, tier, project, rows, status, message) VALUES (?,?,?,?,?,?,?,?)",
             (run_id, ts, source, tier, project, rows, status, (message or "")[:2000]),
@@ -459,7 +467,7 @@ class Store:
               i["reason"], i["action"], i.get("source"),
               _int_or_none(i.get("tier"), "review_queue.tier",
                            f"{i.get('project')}/{i.get('metric')} via {i.get('reason')}"),
-              i.get("prior_date"), i.get("basis"))
+              i.get("prior_date"), _redact(i.get("basis")) if i.get("basis") else i.get("basis"))
              for i in items],
         )
         self.conn.commit()
@@ -473,8 +481,8 @@ class Store:
             """INSERT INTO gap_report(run_id, ts, project, metric, tiers_attempted, reason, suggestion,
                                      priority, priority_label)
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            [(run_id, ts, i["project"], i["metric"], i.get("tiers_attempted", ""), i["reason"],
-              i.get("suggestion", ""),
+            [(run_id, ts, i["project"], i["metric"], i.get("tiers_attempted", ""), _redact(i["reason"]),
+              _redact(i.get("suggestion", "")),
               _int_or_none(i.get("priority", 5), "gap_report.priority",
                            f"{i.get('project')}/{i.get('metric')}"),
               i.get("priority_label", "P5 uncovered"))

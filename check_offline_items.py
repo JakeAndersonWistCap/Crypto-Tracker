@@ -2744,6 +2744,16 @@ def _resolve_check(name: str):
 
 def main():
     import argparse
+    # NO KEY IN ANY OUTPUT (2026-09-29: this probe printed an Alchemy key inside an HTTPError's
+    # "for url: ..."). .env first so its values are known secrets, then every print and log
+    # line passes through fetch.base.redact.
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    from fetch.base import install_redaction              # noqa: PLC0415
+    install_redaction()
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("check", nargs="?", default=None,

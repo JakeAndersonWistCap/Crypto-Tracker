@@ -3325,3 +3325,42 @@ SELECT date, metric, value, source, fetched_at
 --                   AND b.date IN (metrics.date, date(metrics.date, '-1 day'))
 --                   AND ABS(b.value - metrics.value) < 0.000001);
 -- COMMIT;
+
+-- ========================================================================================
+-- AX. API KEYS ALREADY STORED IN LOG TEXT BY EARLIER RUNS  2026-09-29
+--     From 2026-09-29 every message is redacted before it is stored and again when the workbook
+--     renders it (fetch.base.redact), so the sheet no longer shows them. These are the rows in
+--     metrics.db that still hold a keyed URL or key parameter from before. REVIEW FIRST; the
+--     rows are log text only — no figure depends on them.
+-- ========================================================================================
+-- AX1. RUN LOG AND FETCH STATUS.
+SELECT 'run_log' AS tbl, run_id, ts, source, project, substr(message, 1, 120) AS text
+  FROM run_log
+ WHERE message LIKE '%alchemy.com/v2/%' OR message LIKE '%infura.io/v3/%'
+    OR message LIKE '%quiknode.pro/%' OR message LIKE '%drpc.org/%' OR message LIKE '%ankr.com/%'
+    OR message LIKE '%apikey=%' OR message LIKE '%api_key=%'
+UNION ALL
+SELECT 'fetch_status', '', last_attempt_at, source, project, substr(last_error, 1, 120)
+  FROM fetch_status
+ WHERE last_error LIKE '%alchemy.com/v2/%' OR last_error LIKE '%infura.io/v3/%'
+    OR last_error LIKE '%apikey=%' OR last_error LIKE '%api_key=%';
+
+-- AX2. GAP REPORT.
+SELECT run_id, project, metric, substr(reason, 1, 120)
+  FROM gap_report
+ WHERE reason LIKE '%alchemy.com/v2/%' OR reason LIKE '%infura.io/v3/%'
+    OR reason LIKE '%apikey=%' OR suggestion LIKE '%alchemy.com/v2/%';
+
+-- AX3. THE PROPOSED DELETE of those log rows. Only after AX1/AX2 read as expected.
+-- BEGIN;
+-- DELETE FROM run_log
+--  WHERE message LIKE '%alchemy.com/v2/%' OR message LIKE '%infura.io/v3/%'
+--     OR message LIKE '%quiknode.pro/%' OR message LIKE '%drpc.org/%' OR message LIKE '%ankr.com/%'
+--     OR message LIKE '%apikey=%' OR message LIKE '%api_key=%';
+-- UPDATE fetch_status SET last_error = '(redacted 2026-09-29)'
+--  WHERE last_error LIKE '%alchemy.com/v2/%' OR last_error LIKE '%infura.io/v3/%'
+--     OR last_error LIKE '%apikey=%' OR last_error LIKE '%api_key=%';
+-- DELETE FROM gap_report
+--  WHERE reason LIKE '%alchemy.com/v2/%' OR reason LIKE '%infura.io/v3/%'
+--     OR reason LIKE '%apikey=%' OR suggestion LIKE '%alchemy.com/v2/%';
+-- COMMIT;

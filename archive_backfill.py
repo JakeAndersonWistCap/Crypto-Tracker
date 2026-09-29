@@ -70,6 +70,8 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     import store as store_mod
     ar.load_env()          # the keyed <CHAIN>_RPC_URL entries live in .env
+    from fetch.base import install_redaction
+    install_redaction()    # after .env: no key in any print or log line
     st = store_mod.Store(a.db)
     projects = scoped(a.project)
     sol = {} if a.no_solana else solana_providers(projects)

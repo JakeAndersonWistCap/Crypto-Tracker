@@ -38,6 +38,139 @@ def new_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
 
 
+# ===== SECRETS NEVER REACH A LOG, A PRINT, THE STORE OR THE WORKBOOK. 2026-09-29 (Jake). =====
+# archive_probe printed "403 Client Error: Forbidden for url: https://arb-mainnet.g.alchemy.com/
+# v2/<key>" — the key sits in the URL PATH, and the provider's exception carries the whole URL.
+# redact() is applied at every sink (LogEntry, FetchOutput.fail/gap, the logging filter, the CLI
+# stdout wrapper, the store's run_log/gap rows, the workbook's Run Log), so no call site has to
+# remember. Three layers, each enough on its own for the common case:
+#   1. every URL is cut to scheme://host — the path and query are where keys live;
+#   2. key=value / apikey=value style parameters outside a URL are masked;
+#   3. the VALUES of secret-bearing environment variables (*_KEY, *_TOKEN, *_SECRET, and the
+#      path/query of every *_URL) are masked wherever they appear, URL or not.
+# It never raises: a redactor that throws takes down the read it was describing, and falling
+# back to the raw text is how a redactor leaks.
+import re as _re
+
+_URL_ANY = _re.compile(r"(https?|wss?)://([^/\s'\"<>)\]]+)([^\s'\"<>)\]]*)", _re.I)
+_KEY_PARAM = _re.compile(r"((?:api[_-]?key|apikey|access[_-]?token|token|dkey|key|secret)\s*[=:]\s*)"
+                         r"([A-Za-z0-9_\-\.]{8,})", _re.I)
+_SECRET_ENV = _re.compile(r"(_KEY|_TOKEN|_SECRET|_PASSWORD)$", _re.I)
+# Hosts that carry the key IN THE PATH. Their whole path goes, whatever it looks like.
+_KEYED_HOSTS = ("alchemy.com", "infura.io", "quiknode.pro", "drpc.org", "ankr.com", "blastapi.io",
+                "chainstack.com", "getblock.io", "nodereal.io", "moralis.io", "llamarpc.com",
+                "tenderly.co", "helius-rpc.com", "helius.xyz", "fastnear.com")
+# A path segment shaped like a key: long, mixed letters and digits, not an 0x address/hash and not
+# a 40/64-hex digest (commit and transaction hashes in docs and explorer links stay readable).
+_KEYISH = _re.compile(r"^(?!0x)(?=[A-Za-z0-9_\-]*[A-Za-z])(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,}$")
+_HEX_DIGEST = _re.compile(r"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
+
+
+def _env_secrets() -> list[str]:
+    out = []
+    for name, val in os.environ.items():
+        val = (val or "").strip()
+        if not val:
+            continue
+        if _SECRET_ENV.search(name) and len(val) >= 8 and "://" not in val:
+            out.append(val)
+        if name.upper().endswith("_URL") or name.upper().startswith("RPC_"):
+            for u in val.split(","):
+                parts = urllib.parse.urlsplit(u.strip())
+                out += [p for p in parts.path.split("/") if len(p) >= 12]
+                if len(parts.query) >= 8:
+                    out.append(parts.query)
+    return sorted(set(out), key=len, reverse=True)
+
+
+def _url(m) -> str:
+    scheme, host, rest = m.group(1), m.group(2), m.group(3) or ""
+    bare = host.split("@")[-1].split(":")[0].lower()
+    if "@" in host:                                   # user:pass@host
+        host = "***@" + host.split("@")[-1]
+    if any(bare == h or bare.endswith("." + h) for h in _KEYED_HOSTS):
+        return f"{scheme}://{host}"
+    path, _, query = rest.partition("?")
+    segs = path.split("/")
+    if any(_KEYISH.match(x) and not _HEX_DIGEST.match(x) for x in segs):
+        return f"{scheme}://{host}"
+    if query:
+        query = _KEY_PARAM.sub(lambda q: q.group(1) + "***", query)
+        return f"{scheme}://{host}{path}?{query}"
+    return f"{scheme}://{host}{path}"
+
+
+def redact(text) -> str:
+    """The text with key-bearing URLs cut to their host, key parameters masked, and the values of
+    secret environment variables masked wherever they appear."""
+    try:
+        s = str(text)
+        for secret in _env_secrets():
+            if secret in s:
+                s = s.replace(secret, "***")
+        s = _URL_ANY.sub(_url, s)
+        return _KEY_PARAM.sub(lambda m: m.group(1) + "***", s)
+    except Exception:  # noqa: BLE001 — a redactor must never raise
+        return "<unprintable: redaction failed>"
+
+
+class _RedactFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.msg = redact(record.getMessage())
+            record.args = None
+            if record.exc_info and record.exc_info[1] is not None:
+                record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
+                record.exc_info = None
+        except Exception:  # noqa: BLE001
+            record.msg, record.args = "<unprintable: redaction failed>", None
+        return True
+
+
+class _RedactingStream:
+    """stdout/stderr wrapper for the CLI scripts: whatever is printed is redacted first."""
+
+    def __init__(self, stream):
+        self._s = stream
+
+    def write(self, text):
+        return self._s.write(redact(text))
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+_FACTORY_INSTALLED = False
+
+
+def install_redaction(streams: bool = True) -> None:
+    """Redact every log record — at CREATION, through the record factory, so every logger and
+    every handler added later is covered — and, for a CLI, stdout/stderr."""
+    import sys
+    global _FACTORY_INSTALLED
+    if not _FACTORY_INSTALLED:
+        old = logging.getLogRecordFactory()
+
+        def factory(*a, **kw):
+            rec = old(*a, **kw)
+            _RedactFilter().filter(rec)
+            return rec
+        logging.setLogRecordFactory(factory)
+        _FACTORY_INSTALLED = True
+    f = _RedactFilter()
+    root = logging.getLogger()
+    if not any(isinstance(x, _RedactFilter) for x in root.filters):
+        root.addFilter(f)
+    for h in root.handlers:
+        if not any(isinstance(x, _RedactFilter) for x in h.filters):
+            h.addFilter(f)
+    if streams:
+        for name in ("stdout", "stderr"):
+            cur = getattr(sys, name)
+            if not isinstance(cur, _RedactingStream):
+                setattr(sys, name, _RedactingStream(cur))
+
+
 @dataclass
 class LogEntry:
     source: str
@@ -46,6 +179,10 @@ class LogEntry:
     status: str            # ok | failed | skipped | unconfigured
     message: str = ""
     tier: int | None = None
+
+    def __post_init__(self):
+        # EVERY log line is redacted where it is made, so no adapter can forget (2026-09-29).
+        self.message = redact(self.message)
 
 
 
@@ -81,7 +218,7 @@ class FetchOutput:
         self.log.append(LogEntry(source, project, n, "ok", message, tier))
 
     def fail(self, source: str, project: str | None, err, tier: int | None = None):
-        msg = str(err)
+        msg = redact(err)
         log.warning("FAILED %s / %s: %s", source, project, msg)
         self.log.append(LogEntry(source, project, 0, "failed", msg, tier))
 
@@ -114,8 +251,8 @@ class FetchOutput:
                             "source": source, "tier": tier})
 
     def gap(self, project: str, metric: str, reason: str, tiers_attempted="", suggestion=""):
-        self.gaps.append({"project": project, "metric": metric, "reason": reason,
-                          "tiers_attempted": tiers_attempted, "suggestion": suggestion})
+        self.gaps.append({"project": project, "metric": metric, "reason": redact(reason),
+                          "tiers_attempted": tiers_attempted, "suggestion": redact(suggestion)})
 
     def stage(self, project: str, name: str, value, date=None, source=None, tier=None, note: str = ""):
         """Capture a figure WITHOUT letting it near the metrics table.

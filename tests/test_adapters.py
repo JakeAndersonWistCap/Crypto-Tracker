@@ -18638,3 +18638,71 @@ def test_near_archival_calls_are_paced_back_off_on_429_and_resume(tmp_path):
     import pytest as _pytest
     with _pytest.raises(NearBudgetSpent):
         tight.rpc("block", {"block_id": 1})
+
+
+def test_an_exception_from_a_keyed_url_never_reaches_a_log_print_store_or_sheet_unredacted(tmp_path, monkeypatch, caplog):
+    """Jake's archive_probe (2026-09-29) printed "403 Client Error: Forbidden for url:
+    https://arb-mainnet.g.alchemy.com/v2/<key>". A real HTTPError from a keyed URL is pushed through
+    every sink — FetchOutput.fail / gap / LogEntry, the logging module, a CLI's stdout, the store's
+    run_log and gap_report, the archive resolver's verdicts — and the key must appear in none."""
+    import io
+    import logging
+    import requests
+    import store as store_mod
+    from fetch import archive as ar
+    from fetch import chain as ch
+    from fetch.base import FetchOutput, LogEntry, _RedactingStream, install_redaction, redact
+
+    key = "Zk9Qw3Rt7Yp2Lm5Nb8Vc1Xs4"                              # key-shaped, and in .env
+    url = f"https://arb-mainnet.g.alchemy.com/v2/{key}"
+    monkeypatch.setenv("ARBITRUM_RPC_URL", url)
+    resp = requests.models.Response()
+    resp.status_code, resp.url, resp.reason = 403, url, "Forbidden"
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        err = e
+    assert key in str(err), "the premise: the raw exception carries the key"
+
+    seen = []
+    out = FetchOutput()
+    out.fail("chain", "Aethir", err)
+    out.gap("Aethir", "total_supply", reason=f"read failed: {err}", suggestion=f"check {url}")
+    out.log.append(LogEntry("chain", "Aethir", 0, "failed", f"endpoint {url}: {err}"))
+    seen += [e.message for e in out.log] + [g["reason"] + g["suggestion"] for g in out.gaps]
+
+    install_redaction(streams=False)
+    with caplog.at_level(logging.WARNING):
+        logging.getLogger("token_metrics.test").warning("probe failed: %s", err)
+    seen += [r.getMessage() for r in caplog.records]
+
+    buf = io.StringIO()
+    print(f"    arbitrum: FAILED — {err}", file=_RedactingStream(buf))
+    seen.append(buf.getvalue())
+
+    st = store_mod.Store(tmp_path / "m.db")
+    st.record_fetch("r1", "chain", "Aethir", 0, "failed", f"raw {err}")
+    st.record_gaps("r1", [{"project": "Aethir", "metric": "total_supply", "reason": str(err),
+                           "suggestion": url, "tiers_attempted": "2"}])
+    seen += [m for (m,) in st.conn.execute("SELECT message FROM run_log")]
+    seen += [a + b for a, b in st.conn.execute("SELECT reason, suggestion FROM gap_report")]
+
+    monkeypatch.setattr(ar, "_RESOLVED", {})
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    monkeypatch.setattr(ch, "rpc_endpoints", lambda c: [url])
+
+    def boom(chain, u, t=30):
+        raise err
+    monkeypatch.setattr(ch.ChainReader, "make_web3", staticmethod(boom))
+    tried = []
+    ar.resolve_archive("arbitrum", attempts=tried)
+    seen += [h + v for h, v in tried]
+
+    leaked = [s for s in seen if key in s]
+    assert not leaked, leaked
+    assert any("arb-mainnet.g.alchemy.com" in s for s in seen), "the host still says which provider"
+    # a key-shaped path on an unknown host, and a key query parameter, go too; docs links stay
+    assert redact("https://rpc.example.org/v1/Xk82hd7FJ29sLq01mNbV33") == "https://rpc.example.org"
+    assert "apikey=***" in redact("https://api.etherscan.io/v2/api?module=stats&apikey=ABCDEF1234567890")
+    doc = "https://github.com/pendle-finance/documentation/blob/9b9509e/docs/ApiOverview.mdx"
+    assert redact(doc) == doc

@@ -3869,6 +3869,15 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     gaps = store.gap_report(run_id) if run_id else store.gap_report()
     review = store.review_queue(run_id) if run_id else store.review_queue()
     staged = store.staging(run_id) if run_id else store.staging()
+    # NO KEY ON THE SHEET (2026-09-29): rows stored before the redactor existed are redacted as
+    # they are rendered — Run Log messages, fetch errors, gap reasons, review bases.
+    from fetch.base import redact
+    for frame, cols in ((runlog, ("message",)), (fetch_status, ("last_error",)),
+                        (gaps, ("reason", "suggestion")), (review, ("basis", "source"))):
+        if frame is not None and not getattr(frame, "empty", True):
+            for c in cols:
+                if c in frame.columns:
+                    frame[c] = frame[c].map(lambda v: redact(v) if isinstance(v, str) else v)
 
     # EVERY TAB NARROWS, NOT JUST THE ONES BUILT FROM `data`. A Gap Report listing a project the
     # run never fetched is a to-do list item for work that is out of scope, and it is the tab
