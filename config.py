@@ -15307,6 +15307,36 @@ def moves_daily(project_name: str, metric: str) -> str | None:
     return MOVES_DAILY.get((project_name, metric))
 
 
+# ===== ARCHIVE BACKFILL: WHERE A SERIES STARTS, AND WHAT IS NOT BACKFILLED BY DESIGN. =====
+# (Jake, backfill pass 2, 2026-09-29.) archive_backfill.py also RECORDS starts it finds itself:
+# a contract with no code at a day's first block is "not deployed yet", and that day's successor
+# is where the series begins (cache: archive-series-start.json).
+ARCHIVE_SERIES_START = {
+    # Uniswap's dead-address balance jumps by the 100,000,000 UNI retroactive burn at the
+    # UNIfication activation (fee switch on mainnet 2025-12-28, fee_switch_dates). Before it the
+    # address held only stray transfers — below the 100M floor this series is bounded by — and the
+    # 100M step is a one-off supply event, not a day's burn: differenced, it would read as one.
+    # So the series starts at activation; the 90 days before it are not missing, they are before
+    # the programme existed.
+    ("Uniswap", "burn_address_balance"): {
+        "from": "2025-12-28",
+        "why": "UNIfication activation (100M UNI retroactive burn); before it the dead address "
+               "held only stray transfers, below the series' 100M floor"},
+}
+ARCHIVE_NOT_BY_DESIGN = {
+    # total_supply is CoinGecko's figure (net of burns for transfer-burn tokens; see each
+    # project's total_supply_convention); the chain read of the token is a different measuring
+    # point, so the two are never mixed. No headline needs its history: FDV and every
+    # circulating/supply denominator read "now"; pool_release (Chainlink, Aethir, Maple) is
+    # d(CoinGecko circulating) - d(CoinGecko total) and circulating has no history to pair with;
+    # the derived-issuance fallbacks (Sky, Aerodrome) stand down behind measured issuance.
+    # Where a chain totalSupply history is wanted it is total_supply_gross, already its own metric.
+    "total_supply": "BY DESIGN — CoinGecko's total_supply is the stored series and the chain read "
+                    "is another measuring point; no headline needs its history beyond 'now' "
+                    "(chain history, where wanted, is total_supply_gross)",
+}
+
+
 # ===== SERIES WITH NO HISTORY TO READ: FORWARD-ONLY (Jake, 2026-09-29). =====
 # HyperCore's info API serves CURRENT state only — spotClearinghouseState (the Assistance Fund's
 # HYPE), tokenDetails (totalSupply, futureEmissions), delegator/validator summaries — and there

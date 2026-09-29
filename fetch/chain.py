@@ -366,9 +366,16 @@ class ChainReader:
         # A PINNED BLOCK PER CHAIN (archive_backfill.py, 2026-09-29): every state read — scaled,
         # raw_call, raw — is made AT this block instead of "latest". Empty on a live run.
         self.at_block: dict[str, int] = {}
+        # PACERS PER CHAIN (archive_backfill.py, 2026-09-29): mainnet.base.org answered 429 on
+        # Aerodrome's weekly reads. Set only in archive mode; a live run is unpaced as before.
+        self.pacers: dict = {}
 
     def _bi(self, chain: str):
         return self.at_block.get(chain, "latest")
+
+    def _paced(self, chain: str, fn):
+        p = self.pacers.get(chain)
+        return p.run(fn) if p is not None else fn()
 
     def web3(self, chain: str):
         if chain in self._w3:
@@ -513,7 +520,8 @@ class ChainReader:
         """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
-        return int(getattr(c.functions, call)(*args).call(block_identifier=self._bi(chain)))
+        return int(self._paced(chain, lambda: getattr(c.functions, call)(*args).call(
+            block_identifier=self._bi(chain))))
 
     def deployment_block(self, chain: str, address: str) -> int:
         """The block this contract was deployed in, found by binary search on eth_getCode.
@@ -889,7 +897,8 @@ class ChainReader:
         """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
-        raw = getattr(c.functions, call)(*args).call(block_identifier=self._bi(chain))
+        raw = self._paced(chain, lambda: getattr(c.functions, call)(*args).call(
+            block_identifier=self._bi(chain)))
         decimals = self.decimals(chain, decimals_from or address)
         # The integer and the divisor, kept for the component log line: a figure off by orders
         # of magnitude (Aethir, 2026-09-24) is settled by these two numbers, not by the quotient.
@@ -907,7 +916,8 @@ class ChainReader:
         """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
-        return float(getattr(c.functions, call)(*args).call(block_identifier=self._bi(chain)))
+        return float(self._paced(chain, lambda: getattr(c.functions, call)(*args).call(
+            block_identifier=self._bi(chain))))
 
 
 class Chain:

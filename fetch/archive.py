@@ -39,7 +39,7 @@ import pandas as pd
 
 import config
 
-from .base import FetchOutput, LONG_COLUMNS, redact, _measuring_point, derive_flow_from_cumulative, today
+from .base import AdaptivePacer, FetchOutput, LONG_COLUMNS, RateLimitedTooLong, redact, _measuring_point, derive_flow_from_cumulative, today
 
 log = logging.getLogger("token_metrics.fetch.archive")
 
@@ -215,7 +215,8 @@ def resolve_archive(chain: str, days: float = ARCHIVE_DAYS, attempts: list | Non
 class DayBlocks:
     """First block with timestamp >= each UTC day's start, cached per chain across runs."""
 
-    def __init__(self, w3, chain: str, root: Path | None = None):
+    def __init__(self, w3, chain: str, root: Path | None = None, pacer=None):
+        self.pacer = pacer
         self.w3, self.chain = w3, chain
         self.file = (root or cache_root()) / f"archive-blocks-{chain}.json"
         try:
@@ -226,7 +227,8 @@ class DayBlocks:
 
     def ts(self, n: int) -> int:
         if n not in self._ts:
-            self._ts[n] = int(self.w3.eth.get_block(n)["timestamp"])
+            get = lambda: self.w3.eth.get_block(n)  # noqa: E731
+            self._ts[n] = int((self.pacer.run(get) if self.pacer else get())["timestamp"])
         return self._ts[n]
 
     def save(self) -> None:
@@ -426,6 +428,50 @@ def derive_flows(store, project: str, stock: str) -> int:
     return _write_new(store, pd.concat(frames)) if frames else 0
 
 
+def _state(name: str) -> Path:
+    return cache_root() / name
+
+
+def _read_json(name: str) -> dict:
+    try:
+        return json.loads(_state(name).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_json(name: str, d: dict) -> None:
+    f = _state(name)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(d, sort_keys=True, indent=1))
+
+
+def series_starts() -> dict:
+    """{(project, metric): {"from", "why"}} — declared in config, or recorded by a pass that found
+    the contract not yet deployed. Where both exist the later start wins."""
+    out = {k: dict(v) for k, v in config.ARCHIVE_SERIES_START.items()}
+    for key, v in _read_json("archive-series-start.json").items():
+        name, m = key.split("|", 1)
+        if (name, m) not in out or v["from"] > out[(name, m)]["from"]:
+            out[(name, m)] = v
+    return out
+
+
+def record_series_start(name: str, metric: str, begin: str, why: str) -> None:
+    d = _read_json("archive-series-start.json")
+    d[f"{name}|{metric}"] = {"from": begin, "why": why}
+    _write_json("archive-series-start.json", d)
+
+
+def saved_pace(chain: str) -> float:
+    return float(_read_json("archive-pace.json").get(chain) or 0.0)
+
+
+def save_pace(chain: str, pace: float) -> None:
+    d = _read_json("archive-pace.json")
+    d[chain] = round(pace, 3)
+    _write_json("archive-pace.json", d)
+
+
 class ArchiveBackfill:
     def __init__(self, store, projects: list[dict], budget_s: float = DEFAULT_BUDGET_S,
                  reader=None, solana: dict | None = None, days: int = ARCHIVE_DAYS):
@@ -437,11 +483,38 @@ class ArchiveBackfill:
         self.hosts: dict[str, str] = {}      # chain -> host serving archive state (resolver)
         self.report: list[str] = []
 
+    def _undeployed(self, p: dict, metric: str) -> str | None:
+        """A component contract with NO CODE at the pinned block: "<key> 0x... has no code at block N
+        (deployed at block M)", else None. The deployment block is found once and recorded."""
+        for key, spec in serving_contracts(p, metric):
+            chain = spec["chain"]
+            if chain == "solana" or chain not in getattr(self.reader, "at_block", {}):
+                continue
+            addrs = [spec["address"]] + ([spec["underlying"]] if isinstance(spec.get("underlying"), str) else [])
+            for a in addrs:
+                try:
+                    w3 = self.reader.web3(chain)
+                    blk = self.reader.at_block[chain]
+                    code = w3.eth.get_code(self.reader.checksum(a), block_identifier=blk)
+                except Exception:  # noqa: BLE001 — cannot tell: not "undeployed"
+                    continue
+                if code in (b"", b"0x", "0x") or not code:
+                    dep = ""
+                    try:
+                        dep = f" (deployed at block {int(self.reader.deployment_block(chain, a)):,})"
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return f"{key} {a[:10]}... has no code at block {blk:,}{dep}"
+        return None
+
     def targets(self, archive_chains: set[str]) -> tuple[dict, list[tuple[str, str, str]]]:
         """({project: {metric}}, [(project, metric, why not)])."""
         ok, no = {}, []
         for p in self.projects:
             for m in sorted(state_metrics(p)):
+                if m in config.ARCHIVE_NOT_BY_DESIGN:
+                    no.append((p["name"], m, config.ARCHIVE_NOT_BY_DESIGN[m]))
+                    continue
                 good, why = archivable(p, m, archive_chains, set(self.solana))
                 if good:
                     ok.setdefault(p["name"], set()).add(m)
@@ -459,9 +532,15 @@ class ArchiveBackfill:
         end = today()
         days = [end - pd.Timedelta(days=i) for i in range(1, self.days + 1)]      # newest first
 
+        starts = series_starts()
+
         def missing(name, m, d):
+            s0 = starts.get((name, m))
+            if s0 and d < pd.Timestamp(s0["from"]):
+                return False                      # before the series exists: complete, not missing
             g = stored.get((name, m))
             return g is None or not (g["date"] == d).any()
+        failures: dict = {}
 
         chains = {spec["chain"] for p in self.projects if p["name"] in targets
                   for m in targets[p["name"]] for _, spec in serving_contracts(p, m)
@@ -476,8 +555,10 @@ class ArchiveBackfill:
                     self.reader._w3[c] = w3r
                     self.hosts[c] = host
             w3 = self.reader.web3(c)
+            if hasattr(self.reader, "pacers"):
+                self.reader.pacers[c] = AdaptivePacer(start=saved_pace(c), deadline=deadline)
             heads[c] = int(w3.eth.block_number)
-            clocks[c] = DayBlocks(w3, c)
+            clocks[c] = DayBlocks(w3, c, pacer=getattr(self.reader, "pacers", {}).get(c))
         # Solana histories first: their daily balances are components of the sums.
         sol_daily = {}
         for key, hist in self.solana.items():
@@ -509,8 +590,35 @@ class ArchiveBackfill:
                                  "solana": {k: v.get(d) for k, v in sol_daily.items()}})
             ch.reader = self.reader
             out = FetchOutput()
-            ch.run([config.PROJECT_BY_NAME[n] for n in want], None, out)
+            try:
+                ch.run([config.PROJECT_BY_NAME[n] for n in want], None, out)
+            except RateLimitedTooLong as e:
+                self.report.append(f"rate-limited past the budget at {d.date()} ({e}); re-run to continue")
+                break
             frame = out.frame()
+            # EVERY METRIC-DAY NOT WRITTEN SAYS WHY (Jake, pass 2: Uniswap's stayed 276 -> 276 with
+            # no line). A read failure is checked for "not deployed yet" first: no code at the
+            # pinned block means the series starts after this day, recorded and never retried.
+            got = {(r.project, r.metric) for r in frame.itertuples(index=False)}
+            for name, ms in want.items():
+                p = config.PROJECT_BY_NAME[name]
+                for m in ms:
+                    if (name, m) in got:
+                        continue
+                    msgs = [e.message for e in out.log if e.status == "failed" and e.project == name
+                            and any(e.message.startswith(k) for k, _ in serving_contracts(p, m))]
+                    undeployed = self._undeployed(p, m)
+                    if undeployed:
+                        begin = d + pd.Timedelta(days=1)
+                        record_series_start(name, m, str(begin.date()),
+                                            f"{undeployed} — not deployed before {begin.date()}")
+                        starts[(name, m)] = {"from": str(begin.date())}
+                        self.report.append(f"{name}/{m}: {undeployed}; the series starts "
+                                           f"{begin.date()} — COMPLETE from there, earlier days not retried")
+                        continue
+                    f = failures.setdefault((name, m), {"days": 0, "first": ""})
+                    f["days"] += 1
+                    f["first"] = f["first"] or (msgs[0] if msgs else "no row and no error from the read")
             keep = []
             for r in frame.itertuples(index=False):
                 lo, hi = config.sanity_bounds(r.project, r.metric)
@@ -543,6 +651,15 @@ class ArchiveBackfill:
             n = derive_flows(self.store, name, m)
             if n:
                 flows[(name, config.cumulative_flow_for(name, m))] = n
+        for c, pc in getattr(self.reader, "pacers", {}).items():
+            save_pace(c, pc.pace)
+            self.report.append(f"pace {c}: {pc.pace:.2f}s/call at the end ({pc.stats['calls']} call(s), "
+                               f"{pc.stats['429s']} x 429, {pc.stats['waited_s']:.0f}s waited) — saved")
+        for (name, m), f in sorted(failures.items()):
+            self.report.append(f"NOT WRITTEN {name}/{m}: {f['days']} day(s) — {f['first'][:200]}")
+        for (name, m), s0 in sorted(starts.items()):
+            if name in targets and m in targets[name]:
+                self.report.append(f"COMPLETE FROM {s0['from']}: {name}/{m} — {s0.get('why', '')}".rstrip(" —"))
         return {"written": written, "flows": flows, "refused": refused, "skipped": skipped,
                 "seconds": round(time.monotonic() - start), "report": self.report,
                 "served_by": {k: sorted({self.hosts.get(s["chain"], "solana" if s["chain"] == "solana" else "?")

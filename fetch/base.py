@@ -171,6 +171,65 @@ def install_redaction(streams: bool = True) -> None:
                 setattr(sys, name, _RedactingStream(cur))
 
 
+class RateLimitedTooLong(RuntimeError):
+    """A rate-limited call could not be completed inside the time budget."""
+
+
+class AdaptivePacer:
+    """Spacing for a rate-limited endpoint, learned from its 429s (2026-09-29).
+
+    Starts at `start` seconds between calls (0 for a keyed endpoint that has never limited us).
+    A 429 — an HTTP 429, or an exception whose text says "429" / "Too Many Requests" / "rate
+    limit" — waits (Retry-After if given, else 5 -> 15 -> 30 -> 60 -> 120s), retries the SAME call,
+    and slows the spacing x1.5 (at least 0.25s, at most `ceiling`); 25 clean calls in a row speed
+    it x0.9. The caller persists `pace` so the next pass starts from what worked."""
+
+    BACKOFFS = (5, 15, 30, 60, 120)
+
+    def __init__(self, start: float = 0.0, ceiling: float = 15.0, floor: float = 0.0,
+                 sleep=None, deadline: float | None = None):
+        self.pace, self.ceiling, self.floor = float(start), float(ceiling), float(floor)
+        self.sleep = sleep or time.sleep
+        self.deadline = deadline
+        self._last, self._streak = 0.0, 0
+        self.stats = {"calls": 0, "429s": 0, "waited_s": 0.0}
+
+    @staticmethod
+    def limited(e) -> bool:
+        t = str(e).lower()
+        return "429" in t or "too many requests" in t or "rate limit" in t or "rate-limit" in t
+
+    def _nap(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        if self.deadline is not None and time.monotonic() + seconds > self.deadline:
+            raise RateLimitedTooLong(f"a {seconds:.0f}s wait would overrun the time budget")
+        self.stats["waited_s"] += seconds
+        self.sleep(seconds)
+
+    def run(self, fn):
+        for attempt in range(len(self.BACKOFFS) + 1):
+            self._nap(self._last + self.pace - time.monotonic())
+            self._last = time.monotonic()
+            self.stats["calls"] += 1
+            try:
+                out = fn()
+            except Exception as e:  # noqa: BLE001
+                if not self.limited(e):
+                    raise
+                self.stats["429s"] += 1
+                self._streak = 0
+                self.pace = min(max(self.pace * 1.5, 0.25), self.ceiling)
+                if attempt == len(self.BACKOFFS):
+                    raise
+                self._nap(self.BACKOFFS[attempt])
+                continue
+            self._streak += 1
+            if self._streak >= 25:
+                self.pace, self._streak = max(self.pace * 0.9, self.floor), 0
+            return out
+
+
 @dataclass
 class LogEntry:
     source: str

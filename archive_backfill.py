@@ -82,10 +82,13 @@ def main(argv=None) -> int:
     if not a.run:
         ok, no = bf.targets(chains_all)          # plan assumes every chain has an archive endpoint
         cov = coverage(st, projects, ok)
+        starts = ar.series_starts()
         print(f"PLAN — {sum(len(v) for v in ok.values())} backfillable series (if each chain's "
               f"endpoint serves archive state; --run checks), {len(no)} not:\n")
         for (n, m), days in sorted(cov.items()):
-            print(f"  {n:<13} {m:<32} {days:>4} of {ar.ARCHIVE_DAYS} days stored")
+            st_ = starts.get((n, m))
+            print(f"  {n:<13} {m:<32} {days:>4} of {ar.ARCHIVE_DAYS} days stored"
+                  + (f"  — COMPLETE FROM {st_['from']}: {st_['why']}" if st_ else ""))
         print("\nNOT BACKFILLABLE:")
         for n, m, why in no:
             print(f"  {n:<13} {m:<32} {why}")

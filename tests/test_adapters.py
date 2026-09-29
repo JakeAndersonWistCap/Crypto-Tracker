@@ -18706,3 +18706,113 @@ def test_an_exception_from_a_keyed_url_never_reaches_a_log_print_store_or_sheet_
     assert "apikey=***" in redact("https://api.etherscan.io/v2/api?module=stats&apikey=ABCDEF1234567890")
     doc = "https://github.com/pendle-finance/documentation/blob/9b9509e/docs/ApiOverview.mdx"
     assert redact(doc) == doc
+
+
+def test_archive_records_pre_deployment_starts_paces_429s_and_explains_every_unwritten_day(tmp_path, monkeypatch):
+    """Backfill pass 2 (2026-09-29): (1) sPENDLE failed every day before it existed ("Could not
+    decode ... b''") and was retried each pass — a day whose contract has NO CODE at the pinned
+    block is recorded as the series' start and older days are not retried; (2) a series with a
+    declared start (Uniswap's burn address, from the UNIfication burn) is complete from it; (3) a
+    429 is waited out and slows the chain's pace, saved for the next pass; (4) total_supply is not
+    backfilled, by design, and says so."""
+    import store as store_mod
+    from fetch import archive as ar
+    from fetch.base import AdaptivePacer, today
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    t0 = int((today() - pd.Timedelta(days=400)).tz_localize("UTC").timestamp())
+    deployed_at = 400 * 24 - 3 * 24 + 5          # deployed 3 days ago, 5h into the day
+    rate = {"n": 0}
+
+    class Eth:
+        block_number = 400 * 24 + 10
+
+        def get_block(self, n):
+            return {"timestamp": t0 + n * 3600}
+
+        def get_code(self, a, block_identifier=None):
+            return b"\x60" if (block_identifier is None or block_identifier >= deployed_at) else b""
+
+    class Reader(StubReader):
+        def __init__(self):
+            super().__init__(symbol="sPENDLE")
+            self.at_block, self.pacers = {}, {}
+
+        def web3(self, chain):
+            return type("W", (), {"eth": Eth()})()
+
+        def checksum(self, a):
+            return a
+
+        def deployment_block(self, chain, a):
+            return deployed_at
+
+        def scaled(self, chain, address, call, *args, **kw):
+            def read():
+                rate["n"] += 1
+                if rate["n"] == 2:
+                    raise RuntimeError("429 Client Error: Too Many Requests for url: https://mainnet.example")
+                b = self.at_block[chain]
+                if b < deployed_at:
+                    raise ValueError("Could not decode contract function call to totalSupply with return data: b''")
+                return 30_000_000.0 + b
+            return self._paced(chain, read)
+
+        def _paced(self, chain, fn):
+            p = self.pacers.get(chain)
+            return p.run(fn) if p else fn()
+
+    naps = []
+    monkeypatch.setattr(AdaptivePacer, "__init__", (lambda orig: (lambda self, **kw: orig(self, **dict(kw, sleep=naps.append))))(AdaptivePacer.__init__))
+    p = dict(config.PROJECT_BY_NAME["Pendle"])
+    p["contracts"] = {k: v for k, v in p["contracts"].items() if k in ("spendle",)}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, "Pendle", p)
+    st = store_mod.Store(tmp_path / "m.db")
+    bf = ar.ArchiveBackfill(st, [p], budget_s=60, reader=Reader(), days=6)
+    res = bf.run({"ethereum"})
+    n = st.conn.execute("SELECT COUNT(*) FROM metrics WHERE project='Pendle' AND metric='locked_tokens_shares'").fetchone()[0]
+    assert n == 2, n                                 # the two whole days since deployment
+    starts = ar.series_starts()
+    begin = str((today() - pd.Timedelta(days=2)).date())
+    assert starts[("Pendle", "locked_tokens_shares")]["from"] == begin
+    assert "has no code" in starts[("Pendle", "locked_tokens_shares")]["why"]
+    assert any(line.startswith("COMPLETE FROM " + begin) for line in res["report"]), res["report"]
+    assert 5 in naps and ar.saved_pace("ethereum") >= 0.25, "the 429 waited out and slowed the pace"
+    # a second pass does not retry the pre-deployment days
+    rate["n"] = 10
+    res2 = ar.ArchiveBackfill(st, [p], budget_s=60, reader=Reader(), days=6).run({"ethereum"})
+    assert not res2["written"] and not any(l.startswith("NOT WRITTEN") for l in res2["report"])
+    # declared start: Uniswap's burn address is complete from the UNIfication burn
+    assert ar.series_starts()[("Uniswap", "burn_address_balance")]["from"] == "2025-12-28"
+    _, no = ar.ArchiveBackfill(None, [config.PROJECT_BY_NAME["Chainlink"]]).targets({"ethereum"})
+    assert any(m == "total_supply" and w.startswith("BY DESIGN") for _, m, w in no)
+
+
+def test_history_audit_reads_a_series_that_starts_late_as_complete(tmp_path, monkeypatch):
+    """Jake, 2026-09-29: Uniswap burn_address_balance stayed 276 -> 276 and Pendle's spendle series
+    hold 257 days because they START there (UNIfication's 100M burn; sPENDLE's deployment). The
+    audit reads them COMPLETE with the reason — not BACKFILLING, not SOURCE-LIMITED."""
+    import sqlite3
+    import store as store_mod
+    import history_audit as ha
+    from fetch import archive as ar
+    from fetch.base import today
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    db = str(tmp_path / "m.db")
+    store_mod.Store(db)
+    start = str((today() - pd.Timedelta(days=40)).date())     # short of Q0, so the verdict matters
+    ar.record_series_start("Pendle", "locked_tokens", start, "spendle 0x… has no code at block 1 (deployed at block 2)")
+    conn = sqlite3.connect(db)
+    for name, m, first in (("Uniswap", "burn_address_balance", "2025-12-28"), ("Pendle", "locked_tokens", start),
+                           ("Pendle", "cooldown_days", str((pd.Timestamp(start) + pd.Timedelta(days=3)).date()))):
+        conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)", (first, name, m, 1.0, "chain", 2, "x"))
+        conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)",
+                     (str((today() - pd.Timedelta(days=1)).date()), name, m, 1.0, "chain", 2, "x"))
+    conn.commit()
+    got = {(r[0], r[1]): (r[7], r[8]) for r in ha.rows(db, short_only=False)}
+    if ("Uniswap", "burn_address_balance") in got:
+        v, why = got[("Uniswap", "burn_address_balance")]
+        assert v in ("FULL", "COMPLETE") and (v == "FULL" or "UNIfication" in why)
+    v, why = got[("Pendle", "locked_tokens")]
+    assert v == "COMPLETE" and why.startswith(f"series starts {start}") and "has no code" in why
+    assert got[("Pendle", "cooldown_days")][0] == "BACKFILLING", "stored first AFTER the start: not complete"
+    assert not any(k == ("Pendle", "locked_tokens") for k in ((r[0], r[1]) for r in ha.rows(db, short_only=True)))

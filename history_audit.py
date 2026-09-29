@@ -11,6 +11,9 @@ newest stored date, the days stored, and what the backfill has learned about the
                 found to stop there)
     SOURCE-LIMITED  short because the source itself starts there: the last backfill found nothing
                 older. Its Q0 is annualised over the days it covers (build_workbook._annualise).
+    COMPLETE    short because the SERIES starts there: the contract was not deployed before
+                (recorded by archive_backfill.py) or the series is declared to begin then
+                (config.ARCHIVE_SERIES_START). Nothing earlier exists to fill.
     EMPTY       nothing stored
 
 Usage:  python history_audit.py [--db metrics.db] [--short-only]
@@ -61,6 +64,21 @@ def why_short(p: dict, m: str, first: str | None) -> str:
     return ""
 
 
+def series_start(p: dict, m: str) -> dict | None:
+    """The declared or recorded start of (project, metric), or of the stock it is differenced
+    from — whose flow begins the day after (2026-09-29)."""
+    from fetch import archive as ar
+    starts = ar.series_starts()
+    if (p["name"], m) in starts:
+        return starts[(p["name"], m)]
+    for s in ar.state_metrics(p):
+        if config.cumulative_flow_for(p["name"], s) == m and (p["name"], s) in starts:
+            st = starts[(p["name"], s)]
+            return {"from": str((pd.Timestamp(st["from"]) + pd.Timedelta(days=1)).date()),
+                    "why": f"{st['why']} (differenced from {s})"}
+    return None
+
+
 def rows(db: str, short_only: bool) -> list[tuple]:
     from fetch import archive as ar
     conn = sqlite3.connect(db)
@@ -79,13 +97,18 @@ def rows(db: str, short_only: bool) -> list[tuple]:
             days = (pd.Timestamp(last) - pd.Timestamp(first)).days + 1
             seen = memo.get(f"{p['name']}|{m}") or {}
             need = PRICE_DAYS if m in bf.PRICE_SERIES else Q0_DAYS
+            start = series_start(p, m)
             verdict = ("FULL" if (today() - pd.Timestamp(first)).days >= need - bf.SLACK_DAYS else
+                       "COMPLETE" if start and first <= start["from"] else
                        "SOURCE-LIMITED" if seen.get("first") == first else "BACKFILLING")
-            if short_only and verdict == "FULL":
+            if short_only and verdict in ("FULL", "COMPLETE"):
                 continue
+            why = ("" if verdict == "FULL" else
+                   f"series starts {start['from']}: {start['why']}" if verdict == "COMPLETE" else
+                   why_short(p, m, first))
             out.append((p["name"], m, first, last, n, days,
                         seen.get("first", "") + (f" (checked {seen['checked_on']})" if seen else ""),
-                        verdict, "" if verdict == "FULL" else why_short(p, m, first)))
+                        verdict, why))
     return out
 
 
