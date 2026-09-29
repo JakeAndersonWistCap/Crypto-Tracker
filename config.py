@@ -1127,6 +1127,33 @@ def declared_handover(project_name: str, metric: str) -> dict | None:
     return (p.get("series_handover") or {}).get(origin) if origin else None
 
 
+def handover_monthly_leg(project_name: str, metric: str) -> tuple[str, str] | None:
+    """(monthly lead point, full live point) where a declared handover starts with a MONTHLY leg.
+
+    GEODNET's gross_burn_tokens (2026-09-29, Jake's run): Dune 8683175's monthly rows, then the
+    live daily delta. Two things follow, both in build_workbook.aggregate:
+      - A MONTH THE MONTHLY LEG COVERS IS ITS OWN. Its row is the whole month on BOTH chains; a
+        daily row of a later leg dated inside it is the same burn counted again (from October,
+        Dune's September row lands beside the Polygon-only September days).
+      - UNTIL THE LAST (full-composition) LEG COVERS A WINDOW, THE WINDOW IS COMPLETE MONTHS. A
+        trailing 90 days on 2026-09-29 dropped July's row (dated 07-01, on the boundary) and filled
+        September with the Polygon-only middle leg: Q0 4.03M against ~9M.
+    """
+    # The buyback's USD twin is tokens x price (build_workbook._relabel_views): its windows follow
+    # the tokens series' legs, or tokens and dollars would cover different months.
+    if metric == "actual_buyback_usd" and relabelled_from(project_name, "actual_buyback_tokens"):
+        metric = "actual_buyback_tokens"
+    decl = declared_handover(project_name, metric)
+    pts = tuple((decl or {}).get("ordered_points") or ())
+    if len(pts) < 2 or not pts[0].startswith("dune:"):
+        return None
+    origin = relabelled_from(project_name, metric) or metric
+    q = ((PROJECT_BY_NAME.get(project_name) or {}).get("dune_queries") or {}).get(origin) or {}
+    if q.get("granularity") != "monthly" or f"dune:{q.get('query_id')}" != pts[0]:
+        return None
+    return pts[0], pts[-1]
+
+
 def is_manual_quarterly(project_name: str, metric: str) -> bool:
     p = PROJECT_BY_NAME.get(project_name) or {}
     return metric in (p.get("manual_quarterly") or ())
@@ -6482,6 +6509,15 @@ PROJECTS = [
                                       "(~50-55K GEOD/day by 2026-09-19..27, when burning had "
                                       "moved to Solana); the switch day itself has no flow.",
                 "declared": "2026-09-22", "extended": "2026-09-28",
+                # ===== WINDOWS, 2026-09-29 (Jake's run 08:16). =====
+                # Q0 read 4,029,999.99 against ~9M: the trailing (07-01, 09-29] window dropped
+                # July's Dune row (dated 07-01) and filled September with the Polygon-only leg,
+                # so release/burn read 2.727x. Now (config.handover_monthly_leg): a month Dune
+                # covers keeps only Dune's row, and each window is complete months until the
+                # summed leg is as old as it. Latest source still reading the Polygon delta on
+                # 09-29 is the switch day doing its job: the first summed stock stores no flow,
+                # and the summed delta starts with the next dated reading (orphan_cleanup AU4/AU5).
+                "windows": "complete months from Dune until the summed leg covers the window",
             },
         },
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones

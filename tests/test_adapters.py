@@ -16406,7 +16406,11 @@ def test_a_monthly_series_q0_is_three_complete_calendar_months():
     c = out.loc[("Chainlink", "actual_buyback_usd")]
     assert c["q0"] == 89.0 and c["q0_basis"] == "trailing 90 days to 2026-09-28"
     R = bw.Refs(100, 10, ["2026-09"])
-    assert bw._annualise(R, 5, config.PROJECT_BY_NAME["Maple"], "actual_buyback_usd", "X") == "(X)*12/3"
+    # ...over the days of the months HELD (2026-09-29): 3 complete months here = 92 days; the
+    # x12/3 fallback only where no coverage is recorded.
+    assert m["q0_covered_days"] == 92 and m["q1_covered_days"] == 0
+    ann = bw._annualise(R, 5, config.PROJECT_BY_NAME["Maple"], "actual_buyback_usd", "X")
+    assert ann.startswith("IF(AND(ISNUMBER(") and ann.endswith(",(X)*12/3)"), ann
     # Maple at a $240M market cap: 658,866 x 4 / 240M
     assert abs(658_866.0 * 4 / 240e6 - 0.010981) < 1e-6
 
@@ -18008,10 +18012,15 @@ def test_geodnet_a3_buyback_and_a4_burn_read_the_same_stitched_burn():
         config.declared_handover("GEODNET", "gross_burn_tokens")
     by = {r["key"]: r for r in bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof).to_dict("records")}
     b, t, u = by["GEODNET|gross_burn_tokens"], by["GEODNET|actual_buyback_tokens"], by["GEODNET|actual_buyback_usd"]
-    # Q0 = trailing 90 days to 09-29: the August month row and the live days (July 1 is outside)
-    assert t["status"] == "ok" and t["q0"] == b["q0"] == 1.55e6 + 7 * 52_000.0, (t["status"], t["q0"])
-    # August's row, with no price on the 1st, is valued at August's mean price (0.18)
-    assert abs(u["q0"] - (1.55e6 * 0.18 + 7 * 52_000.0 * 0.15)) < 1e-6, u["q0"]
+    # Q0 = THREE COMPLETE MONTHS (Jun-Aug) while the Polygon+Solana live leg covers under 90 days
+    # (Jake's run 2026-09-29: the trailing window dropped July's row, dated 07-01, on its boundary)
+    assert t["status"] == "ok" and t["q0"] == b["q0"] == 1.6e6 + 1.55e6, (t["status"], t["q0"])
+    # the block is Jun-Aug; only July and August are held, so it covers their 62 days
+    assert b["q0_covered_days"] == 62 and "3 complete months Jun 2026–Aug 2026" in b["q0_basis"]
+    # August's row, with no price on the 1st, is valued at August's mean price (0.18); the dollars
+    # cover the same months as the tokens
+    assert abs(u["q0"] - (1.6e6 * 0.15 + 1.55e6 * 0.18)) < 1e-6, u["q0"]
+    assert u["q0_covered_days"] == 62
 
 
 def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
@@ -18037,3 +18046,85 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
     assert "D[locked_tokens_virtual:now]" in f and "price_usd" not in f, f
     assert build(5, config.PROJECT_BY_NAME["Sky"]) == ""
     assert abs(4_600_000 / (30_340_000 + 177_780_000) - 0.0221) < 0.001
+
+
+def test_geodnet_burn_windows_are_complete_months_until_the_summed_leg_covers_them():
+    """Jake's run 2026-09-29: GEODNET burn Q0 4,029,999.99 against ~9M, release/burn 2.727x. The
+    trailing (07-01, 09-29] window dropped July's Dune row (dated 07-01) and filled September with
+    the Polygon-only leg. Until the Polygon + Solana sum covers a window, that window is complete
+    months (Dune counts both chains); a month Dune covers keeps only Dune's row, so September's
+    Dune row (from October) replaces the Polygon-only days rather than adding to them."""
+    import build_workbook as bw
+    DUNE, POLY = "dune:8683175", "chain:polygon:burn_polygon:delta"
+    SUM = config.GEODNET_BURN_SUM_POINT + ":delta"
+
+    def frame(rows):
+        return pd.DataFrame([dict(date=pd.Timestamp(d), project="GEODNET", metric="gross_burn_tokens",
+                                  value=v, source=src, tier=2, is_manual=False, entered_on="")
+                             for d, v, src in rows])
+    base = [("2026-06-01", 3.0e6, DUNE), ("2026-07-01", 3.1e6, DUNE), ("2026-08-01", 3.0e6, DUNE)]
+    base += [(d, 35_000.0, POLY) for d in pd.date_range("2026-09-14", "2026-09-27")]
+    base += [("2026-09-29", 100_000.0, SUM)]
+    assert config.handover_monthly_leg("GEODNET", "gross_burn_tokens") == (DUNE, config.GEODNET_BURN_SUM_POINT)
+    assert config.handover_monthly_leg("GEODNET", "actual_buyback_usd") == (DUNE, config.GEODNET_BURN_SUM_POINT)
+    assert config.handover_monthly_leg("Uniswap", "gross_burn_tokens") is None
+
+    b = bw.aggregate(frame(base), pd.DataFrame(), pd.Timestamp("2026-09-29")).set_index("key").loc["GEODNET|gross_burn_tokens"]
+    assert b["status"] == "ok" and b["q0"] == 9.1e6 and b["q0_covered_days"] == 92, (b["status"], b["q0"])
+    assert b["q0_basis"].startswith("3 complete months Jun 2026–Aug 2026") and "covers 1 day(s)" in b["q0_basis"]
+    assert b["now"] == 3.0e6 and b["m1"] == 3.1e6 and b["y1"] == 9.1e6
+
+    # October: Dune's September row lands; the Polygon-only September days give way to it
+    oct_ = base + [("2026-09-01", 3.2e6, DUNE)] + [(d, 100_000.0, SUM) for d in pd.date_range("2026-09-30", "2026-10-02")]
+    b = bw.aggregate(frame(oct_), pd.DataFrame(), pd.Timestamp("2026-10-02")).set_index("key").loc["GEODNET|gross_burn_tokens"]
+    assert b["status"] == "ok" and b["q0"] == 3.1e6 + 3.0e6 + 3.2e6, b["q0"]
+
+    # January: the summed leg covers 90+ days, so Q0 is trailing days again (Y1 stays months)
+    jan = oct_ + [(d, 100_000.0, SUM) for d in pd.date_range("2026-10-03", "2027-01-05")]
+    b = bw.aggregate(frame(jan), pd.DataFrame(), pd.Timestamp("2027-01-05")).set_index("key").loc["GEODNET|gross_burn_tokens"]
+    assert b["q0_basis"].startswith("trailing 90 days") and b["q0"] == 90 * 100_000.0, (b["q0_basis"], b["q0"])
+
+
+def test_ratios_of_flows_divide_rates_over_each_sides_own_covered_days_or_block():
+    """Jake's run 2026-09-29: Ethereum A4 BURN ÷ ISSUANCE 15.68x = 3,773.86 ETH of burn over 90
+    days / 240.74 ETH of issuance from one reading. Every flow ratio divides per-covered-day rates,
+    and is BLOCKED — naming each side's coverage — where either side covers under a week; a
+    difference of two window totals is also blocked where the coverages differ materially."""
+    import build_workbook as bw
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}:{w}]"
+
+        def C(self, r, name):
+            return f"C[{name}]"
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    heads = {h[0]: h for h in bw._a4_headline(R(), lambda r, p, w="q0": f"D[{config.a4_burn_metric(p['name'])}:{w}]", {})}
+    f = heads["BURN ÷ ISSUANCE (x) — crossover, on the basis to the left"][1](5, eth)
+    assert f.startswith("=IF(OR(") and "BLOCKED — unequal coverage" in f, f
+    bm, im = config.a4_burn_metric("Ethereum"), config.issuance_basis("Ethereum")
+    for m in (bm, im):
+        assert f"D[{m}:q0_covered_days]<{bw.RATE_MIN_DAYS}" in f and f"D[{m}:q0]" in f
+    assert f"D[{bm}:q0])/IF(ISNUMBER(D[{bm}:q0_covered_days])" in f, "a rate, not a window sum"
+    net = heads["NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left"][1](5, eth)
+    assert "ABS(" in net and "BLOCKED" in net, "a difference of sums blocks on unequal spans"
+    pct = heads["NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)"][1](5, eth)
+    assert "BLOCKED" in pct and f"/D[{im}:q0_covered_days]" in pct and f"/D[{bm}:q0_covered_days]" in pct, \
+        "each side annualised over its own covered days, not the difference x365/90"
+
+    # the trajectory of a FLOW compares rates; of a STOCK, values as before
+    traj = dict((h[0], h[1]) for h in bw._trajectory(R(), "fees_usd", "Fees"))
+    assert "BLOCKED" in traj["Fees Δ3m"](5, eth) and "D[fees_usd:q1_covered_days]" in traj["Fees Δ3m"](5, eth)
+    stock = dict((h[0], h[1]) for h in bw._trajectory(R(), "tvl_usd", "TVL"))
+    assert "BLOCKED" not in stock["TVL Δ3m"](5, eth)
+
+    # coverage per window, in the Data tab: burn 90 backfilled days, issuance one reading
+    rows = [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=41.0,
+                 source="etherscan:ethsupply2.BurntFees:delta", tier=1, is_manual=False, entered_on="")
+            for d in pd.date_range("2026-07-01", "2026-09-29")]
+    rows.append(dict(date=pd.Timestamp("2026-09-29"), project="Ethereum", metric="gross_issuance_tokens",
+                     value=240.74, source="derived:d_supply_gross", tier=2, is_manual=False, entered_on=""))
+    out = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-29")).set_index("key")
+    b, i = out.loc["Ethereum|gross_burn_tokens"], out.loc["Ethereum|gross_issuance_tokens"]
+    assert b["q0_covered_days"] == 90 and b["now_covered_days"] == 30 and b["q1_covered_days"] == 1
+    assert i["q0_covered_days"] == 1 < bw.RATE_MIN_DAYS

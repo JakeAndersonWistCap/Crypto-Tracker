@@ -3210,3 +3210,55 @@ SELECT a.date, a.value AS old_value, b.value AS new_value
 --  WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
 --    AND source LIKE 'explorer:%staking_rewards_out%';
 -- COMMIT;
+
+-- ========================================================================================
+-- AU. LOOK ONLY — which two readings made Ethereum's 240.74 ETH issuance, and GEODNET's burn
+--     legs  2026-09-29 (Jake's run 08:16)
+--     gross_issuance_tokens = d(total_supply_protocol) + d(BurntFees) = d(EthSupply +
+--     Eth2Staking): the change between the LAST reading stored for the prior UTC date and this
+--     run's. The store keeps one row per date, so the interval is the two rows' fetched_at gap —
+--     ~2,700 ETH/day of issuance puts 240.74 ETH at roughly two hours. Nothing to delete.
+-- ========================================================================================
+-- AU1. THE STOCK READINGS AND WHEN EACH WAS TAKEN.
+SELECT date, metric, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Ethereum'
+   AND metric IN ('total_supply_protocol', 'burn_cumulative_tokens')
+ ORDER BY metric, date;
+
+-- AU2. THE DERIVED FLOWS THEY PRODUCED.
+SELECT date, metric, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Ethereum'
+   AND metric IN ('gross_issuance_tokens', 'gross_burn_tokens')
+   AND date >= '2026-09-27'
+ ORDER BY metric, date;
+
+-- AU3. THE INTERVAL, IN HOURS, BETWEEN THE LAST TWO total_supply_protocol READINGS.
+SELECT a.date AS from_date, b.date AS to_date,
+       ROUND((julianday(b.fetched_at) - julianday(a.fetched_at)) * 24, 2) AS hours,
+       b.value - a.value AS supply_change_eth
+  FROM metrics a JOIN metrics b
+    ON a.project = b.project AND a.metric = b.metric AND a.date < b.date
+ WHERE a.project = 'Ethereum' AND a.metric = 'total_supply_protocol'
+   AND NOT EXISTS (SELECT 1 FROM metrics c
+                    WHERE c.project = a.project AND c.metric = a.metric
+                      AND c.date > a.date AND c.date < b.date)
+ ORDER BY b.date DESC
+ LIMIT 3;
+
+-- AU4. GEODNET gross_burn_tokens BY LEG: which days are Dune (both chains), Polygon-only, and
+--      the Polygon + Solana sum. The summed leg starts the day AFTER the first summed stock.
+SELECT CASE WHEN source LIKE 'dune:%' THEN 'dune (both chains)'
+            WHEN source LIKE 'chain:sum(%' THEN 'sum (polygon+solana)'
+            ELSE 'polygon only' END AS leg,
+       MIN(date) AS first, MAX(date) AS last, COUNT(*) AS rows, ROUND(SUM(value)) AS tokens
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens'
+ GROUP BY leg ORDER BY first;
+
+-- AU5. GEODNET burn_address_balance: the switch day (first summed stock) and after.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'burn_address_balance' AND date >= '2026-09-25'
+ ORDER BY date;

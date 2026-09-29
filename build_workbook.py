@@ -101,7 +101,8 @@ DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tie
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
              "last_success", "entered_on", "note", "q0_covered_days", "q0_events",
              "schedule_end", "q0_pre_end_days", "last_nonzero_date", "silent_days", "silence_flag",
-             "q0_basis"]
+             "q0_basis", "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
+             "q3_covered_days"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
@@ -114,10 +115,16 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              "Last non-zero value (flows; the scan's stored last-inflow date where there is one)",
              "Days since then (only where a program cadence is documented)",
              "Program silence flag (PROGRAM_CADENCE)",
-             "Q0 basis (flows): trailing days, or three complete calendar months for a monthly series"]
+             "Q0 basis (flows): trailing days, or three complete calendar months for a monthly series",
+             # PER-WINDOW COVERAGE (2026-09-29): a ratio of two flows divides rates, each over its
+             # OWN covered days (_flow_rate), never a 90-day sum by a 1-day one.
+             "Now: days of the 30 the series covered", "Prior 30d: days covered",
+             "Q1: days of the 90 covered", "Q2: days covered", "Q3: days covered"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 # Appended day-count columns that formulas READ as numbers (see write_data).
-NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days")
+NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days",
+                    "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
+                    "q3_covered_days")
 
 # Config table layout
 CFG_COLS = [
@@ -251,6 +258,64 @@ def _month_block(s: pd.Series, asof: pd.Timestamp, first_back: int, n: int) -> t
     first = min(months)
     label = f"{n} complete months {first.strftime('%b %Y')}–{last.strftime('%b %Y')}"
     return (float(w.sum()) if len(w) else None), label
+
+
+def _month_coverage(row: dict, s: pd.Series, asof: pd.Timestamp, windows=("now", "m1", "q0", "q1", "q2", "q3")) -> None:
+    """Covered days of a COMPLETE-MONTHS window: the days of the months in it that hold a row.
+
+    Sky's net_protocol_surplus_usd holds July and August only, so its Q0 block (Jun-Aug) covers
+    62 days, not 92 — and a ratio against a trailing-90-day buyback divides by those 62.
+    """
+    last = asof.to_period("M") - 1
+    have = set(s.index.to_period("M"))
+    blocks = {"now": [last], "m1": [last - 1]}
+    for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+        blocks[q] = [last - 3 * i - k for k in range(3)]
+    for w in windows:
+        row[f"{w}_covered_days"] = sum(m.days_in_month for m in blocks[w] if m in have)
+
+
+def _months_until_live(row: dict, name: str, metric: str, g: pd.DataFrame, s: pd.Series,
+                       asof: pd.Timestamp, short: int, period: int) -> None:
+    """COMPLETE MONTHS, until the full live leg of a monthly-led handover covers the window.
+
+    GEODNET (Jake's run 2026-09-29): burn Q0 4,029,999.99 against ~9M. The trailing (07-01, 09-29]
+    window dropped July's Dune row (dated 07-01, on the boundary) and filled September with the
+    Polygon-only middle leg, so release/burn read 2.73x. Until the last declared leg (Polygon +
+    Solana) is itself as old as a window, that window is taken in complete calendar months — the
+    Dune rows count both chains — exactly as a monthly series' windows are (_month_block). Each
+    window switches back to trailing days on its own as the live leg reaches its length.
+    q0_covered_days becomes the days in the block, so _annualise divides by them.
+    """
+    legs = config.handover_monthly_leg(name, metric)
+    if not legs or g is None or g.empty:
+        return
+    pts = g["source"].astype(str).map(_measuring_point)
+    live = g.loc[pts == legs[1], "date"]
+    live_days = int((asof - live.min()).days) + 1 if len(live) else 0
+    why = (f"the full live read ({legs[1]}) covers {live_days} day(s), so this window is complete "
+           f"calendar months from {legs[0]} (both chains) until it covers the window")
+
+    switched = [w for w, n in (("now", short), ("m1", short), ("q0", period), ("q1", period),
+                               ("q2", period), ("q3", period)) if live_days < n]
+    _month_coverage(row, s, asof, switched)
+    if live_days < short:
+        row["now"], month = _latest_complete_month(s, asof)
+        if month:
+            prior = pd.Period(month) - 1
+            p_rows = s[s.index.to_period("M") == prior]
+            row["m1"] = float(p_rows.sum()) if len(p_rows) else None
+            row["period_label"] = month
+            row["covered_days"] = row["window_days"] = pd.Period(month).days_in_month
+    if live_days < period:
+        for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+            row[q], label = _month_block(s, asof, 3 * i, 3)
+            if q == "q0":
+                row["q0_basis"] = f"{label} — {why}"
+        last = asof.to_period("M") - 1
+        row["q0_events"] = int((s.index.to_period("M").isin({last - k for k in range(3)}) & (s > 0)).sum())
+    if live_days < 365:
+        row["y1"], _ = _month_block(s, asof, 0, 12)
 
 
 def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> int:
@@ -729,6 +794,25 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
 
 
+def _monthly_leg_views(groups: dict) -> None:
+    """A month a monthly handover leg covers keeps ONLY that leg's row (config.handover_monthly_leg).
+
+    GEODNET (2026-09-29): Dune 8683175's monthly row is the whole month on Polygon AND Solana. A
+    later leg's daily row dated in the same month is the same burn again — and the Polygon-only
+    middle leg is a narrower count of it. Dropped at read time, never deleted. Runs FIRST, so the
+    relabelled buyback copies the corrected series.
+    """
+    for (name, metric), g in list(groups.items()):
+        legs = config.handover_monthly_leg(name, metric)
+        if not legs or g.empty:
+            continue
+        pts = g["source"].astype(str).map(_measuring_point)
+        months = set(g.loc[pts == legs[0], "date"].dt.to_period("M"))
+        keep = (pts == legs[0]) | ~g["date"].dt.to_period("M").isin(months)
+        if not keep.all():
+            groups[(name, metric)] = g[keep]
+
+
 def _burn_total_views(groups: dict) -> None:
     """A burn TOTAL summed from its components, per day, at read time (config.burn_total).
 
@@ -976,6 +1060,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    _monthly_leg_views(groups)
     _burn_total_views(groups)
     _relabel_views(groups)
     _restatement_views(groups)
@@ -1007,7 +1092,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "flow_span": None, "point_spans": {}, "reconciliation": None,
                    "flow_recon_blocked": None,
                    "granularity": "daily", "period_label": "",
-                   "covered_days": None, "window_days": None, "hole_note": "", "q0_basis": ""}
+                   "covered_days": None, "window_days": None, "hole_note": "", "q0_basis": "",
+                   "now_covered_days": None, "m1_covered_days": None, "q1_covered_days": None,
+                   "q2_covered_days": None, "q3_covered_days": None}
             # A DECLARED n/a, OR A DECIDED SPLIT, READS n/a WHATEVER IS STORED. 2026-09-28.
             # The store never deletes, so a metric declared not_applicable after rows were written
             # (Hyperliquid's gross_issuance_tokens: derived zeros from d(total_supply_gross)) kept
@@ -1107,6 +1194,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     if q == "q0":
                         row["q0_basis"] = label
                 row["y1"], _ = _month_block(s, asof, 0, 12)
+                _month_coverage(row, s, asof)
             elif m["kind"] == "flow":
                 row["q0_basis"] = f"trailing {period} days to {asof.date()}"
                 row["now"] = _window_sum(s, asof - pd.Timedelta(days=short), asof)
@@ -1168,6 +1256,18 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                             f"{lost} day(s) in this window ({h0.date()}..{h1.date()}) are "
                             f"ABSENT because the source did not report them, not because the "
                             f"figure was low. {hole.get('do_not', '')}".strip())
+                row["now_covered_days"] = row["covered_days"]
+                row["m1_covered_days"], _ = _window_coverage(s, asof - pd.Timedelta(days=2 * short),
+                                                             asof - pd.Timedelta(days=short))
+                for i, q in enumerate(["q1", "q2", "q3"], start=1):
+                    row[f"{q}_covered_days"], _ = _window_coverage(
+                        s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+                # The USD twin of a relabelled buyback carries "derived:tokens*price"; its legs
+                # are read off the tokens series it was priced from.
+                legs_g = (groups.get((name, "actual_buyback_tokens"))
+                          if metric == "actual_buyback_usd" else None)
+                _months_until_live(row, name, metric, g if legs_g is None else legs_g, s, asof,
+                                   short, period)
             else:
                 row["now"] = float(latest["value"])
                 # Kept apart from `now`, which is blanked when a figure is withheld: case 9 of
@@ -1939,6 +2039,39 @@ def _net_change(R, r: int, p: dict, iss, burn) -> str:
     return f"IF(ISNUMBER({sr}),{sr},{derived})"
 
 
+def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
+    """_net_change as a cell: a SELF-REPORTED figure as published; a derived one BLOCKED where
+    issuance and burn cover materially different days of the window."""
+    name = p["name"]
+    guarded = _guarded_net(R, r, p, config.issuance_basis(name), config.a4_burn_metric(name),
+                           total=f"{iss(r)}-{burn(r, p)}")
+    if not p.get("self_reported_net_mint"):
+        return guarded
+    sr = R.D(r, "net_mint_monthly", "q0")
+    return f"=IF(ISNUMBER({sr}),{sr},{guarded[1:]})"
+
+
+def _price_net(cell: str, price: str) -> str:
+    """A net-change CELL (=...) in dollars; a BLOCKED text passes through unpriced."""
+    x = cell[1:]
+    return f"=IFERROR(IF(ISNUMBER({x}),({x})*{price},{x}),{NA})"
+
+
+def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
+    """Net supply change per year, % of circulating: each side annualised over ITS OWN covered
+    days (was the Q0 difference x365/90, 2026-09-29), BLOCKED where either covers under a week."""
+    name = p["name"]
+    im, bm = config.issuance_basis(name), config.a4_burn_metric(name)
+    derived = (f"({_annualise(R, r, p, im, R.D(r, im, 'q0'))}-"
+               f"{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))})/({circ})")
+    guarded = _coverage_guard(R, r, [("issuance", im, "q0"), ("burn", bm, "q0")], derived)
+    if not p.get("self_reported_net_mint"):
+        return guarded
+    sr = R.D(r, "net_mint_monthly", "q0")
+    return (f"=IF(ISNUMBER({sr}),IFERROR({_annualise(R, r, p, 'net_mint_monthly', sr)}/({circ}),{NA}),"
+            f"{guarded[1:]})")
+
+
 # ---------------------------------------------------------------------------------------
 # Valuation-framework headlines — the "What Do I Own?" note's figures, at the LEFT of each
 # archetype tab: project | symbol | price | market cap | that archetype's ratios | the rest.
@@ -1976,6 +2109,56 @@ def _lumpy(project_name: str) -> bool:
     return bool(cad) and max(d for _, d in cad["cadences"]) > 1
 
 
+# ===== RATIOS OF FLOWS NEED EQUAL WINDOWS. 2026-09-29 (Jake). =====
+# Ethereum's A4 BURN ÷ ISSUANCE read 15.68x: 3,773.86 ETH of burn over 90 backfilled days divided
+# by 240.74 ETH of issuance from ONE reading. Every ratio (and difference) of two flows now divides
+# RATES — each window total over the days that series actually covered in that window
+# (<w>_covered_days) — and is BLOCKED, with each side's coverage named, where either side covers
+# fewer than RATE_MIN_DAYS: under a week is not a rate (Ethereum's one reading spanned hours).
+RATE_MIN_DAYS = 7
+_COV = {"now": "now_covered_days", "m1": "m1_covered_days", "q0": "q0_covered_days",
+        "q1": "q1_covered_days", "q2": "q2_covered_days", "q3": "q3_covered_days"}
+
+
+def _nominal(w: str) -> str:
+    return G("short_days") if w in ("now", "m1") else G("period_days")
+
+
+def _flow_rate(R: Refs, r: int, metric: str, w: str = "q0", total: str | None = None) -> str:
+    """A flow's window total PER COVERED DAY (the window's nominal days where none is recorded)."""
+    cov = R.D(r, metric, _COV[w])
+    return f"(({total or R.D(r, metric, w)})/IF(ISNUMBER({cov}),{cov},{_nominal(w)}))"
+
+
+def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str,
+                    same_span: bool = False, bare: bool = False) -> str:
+    """=IF(a side covers < RATE_MIN_DAYS, "BLOCKED — ... each side's coverage", expr).
+
+    legs: (label, metric, window). same_span: also block where the two sides' covered days differ
+    by more than a tenth of the window — for a DIFFERENCE of two window totals, which cannot be
+    put on a per-day basis without changing what the column states."""
+    conds, parts = [], []
+    for lab, m, w in legs:
+        c, n = R.D(r, m, _COV[w]), _nominal(w)
+        conds.append(f"IFERROR(AND(ISNUMBER({c}),{c}<{RATE_MIN_DAYS}),FALSE)")
+        parts.append(f'"{lab} covers "&IFERROR(IF(ISNUMBER({c}),{c},{n}),"?")&" days of a "&{n}&"-day window"')
+    if same_span and len(legs) == 2:
+        (_, ma, wa), (_, mb, wb) = legs
+        ca, cb, na, nb = R.D(r, ma, _COV[wa]), R.D(r, mb, _COV[wb]), _nominal(wa), _nominal(wb)
+        conds.append(f"IFERROR(ABS(IF(ISNUMBER({ca}),{ca},{na})-IF(ISNUMBER({cb}),{cb},{nb}))>{na}/10,FALSE)")
+    msg = '"BLOCKED — unequal coverage: "&' + '&"; "&'.join(parts)
+    if bare:            # nested inside gated()/circular_gated(), which supply the IFERROR and "="
+        return f"IF(OR({','.join(conds)}),{msg},{expr})"
+    return f"=IF(OR({','.join(conds)}),{msg},IFERROR({expr},{NA}))"
+
+
+def _guarded_net(R: Refs, r: int, p: dict, iss_m: str, burn_m: str, w: str = "q0",
+                 total: str | None = None) -> str:
+    """issuance − burn over window w, BLOCKED where the two series' coverage differs (same_span)."""
+    expr = total or f"{R.D(r, iss_m, w)}-{R.D(r, burn_m, w)}"
+    return _coverage_guard(R, r, [("issuance", iss_m, w), ("burn", burn_m, w)], expr, same_span=True)
+
+
 def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
     """A Q0-window sum as a yearly figure — over the days the series has ACTUALLY covered.
 
@@ -1991,12 +2174,18 @@ def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
     """
     # A MONTHLY SERIES' Q0 IS THREE COMPLETE CALENDAR MONTHS (see _month_block), so a year is
     # exactly four of them — not days_per_year/period_days, which would overstate by 365/360.
+    # ...OVER THE MONTHS ACTUALLY PRESENT (2026-09-29): Sky's NPS holds July and August only, and
+    # x12/3 on two months overstated it by half. q0_covered_days is the days of the months held.
     if config.series_granularity(p["name"], metric) == "monthly":
-        return f"({total})*12/3"
+        cov = R.D(r, metric, "q0_covered_days")
+        return (f"IF(AND(ISNUMBER({cov}),{cov}>0),({total})*{G('days_per_year')}/{cov},"
+                f"({total})*12/3)")
     if _lumpy(p["name"]):
         return f"({total})*{ANN}"
+    # q0_covered_days ABOVE the period is a complete-months Q0 (92 days for Jun-Aug; see
+    # _months_until_live), divided by its own days rather than by 90.
     cov = R.D(r, metric, "q0_covered_days")
-    return (f"IF(AND(ISNUMBER({cov}),{cov}>0,{cov}<{G('period_days')}),"
+    return (f"IF(AND(ISNUMBER({cov}),{cov}>0,{cov}<>{G('period_days')}),"
             f"({total})*{G('days_per_year')}/{cov},({total})*{ANN})")
 
 
@@ -2165,15 +2354,19 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
          lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
         ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
-         lambda r, p: calc(f"{burn(r, p)}/{_basis_iss(R, p)(r)}"), FMT_X, "calc", True),
+         lambda r, p: _coverage_guard(
+             R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"),
+                    ("issuance", config.issuance_basis(p["name"]), "q0")],
+             f"{_flow_rate(R, r, config.a4_burn_metric(p['name']))}/"
+             f"{_flow_rate(R, r, config.issuance_basis(p['name']))}"), FMT_X, "calc", True),
         # RIGHT BESIDE THE TWO FIGURES IT QUALIFIES. Empty where the window is full and the burn
         # is a stream; otherwise it says, with numbers, why the pair is not yet a rate.
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
          lambda r, p: _a4_window_caveat(p, data_by_key or {}), FMT_TEXT, "text", True),
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
-         lambda r, p: calc(_net_change(R, r, p, _basis_iss(R, p), burn)), FMT_NUM, "calc", True),
+         lambda r, p: _net_guarded(R, r, p, _basis_iss(R, p), burn), FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
-         lambda r, p: calc(f"({_net_change(R, r, p, _basis_iss(R, p), burn)})*{ANN}/({circ(r, p)})"), FMT_PCT, "calc", True),
+         lambda r, p: _net_annual_pct(R, r, p, circ(r, p)), FMT_PCT, "calc", True),
     ]
 
 
@@ -2637,11 +2830,22 @@ def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
 
     `metric` may be a function of the project name (A4's burn is per project)."""
     m = metric if callable(metric) else (lambda _n: metric)  # noqa: E731
+
+    def d(a: str, b: str):
+        # A FLOW compares PER-DAY RATES over each window's own covered days, BLOCKED under a week
+        # (2026-09-29): a Q0 the series covered 42 days of against a full Q1 read as a -53% fall.
+        def cell(r, p):
+            mm = m(p["name"])
+            if (config.METRICS.get(mm) or {}).get("kind") != "flow":
+                return delta(R.D(r, mm, a), R.D(r, mm, b))
+            return _coverage_guard(R, r, [(a.upper(), mm, a), (b.upper(), mm, b)],
+                                   f"{_flow_rate(R, r, mm, a)}/{_flow_rate(R, r, mm, b)}-1")
+        return cell
     return [
-        (f"{label} Δ30d", lambda r, p: delta(R.D(r, m(p["name"]), "now"), R.D(r, m(p["name"]), "m1")), fmt, "calc"),
-        (f"{label} Δ3m", lambda r, p: delta(R.D(r, m(p["name"]), "q0"), R.D(r, m(p["name"]), "q1")), fmt, "calc"),
-        (f"{label} Δ6m", lambda r, p: delta(R.D(r, m(p["name"]), "q0"), R.D(r, m(p["name"]), "q2")), fmt, "calc"),
-        (f"{label} Δ9m", lambda r, p: delta(R.D(r, m(p["name"]), "q0"), R.D(r, m(p["name"]), "q3")), fmt, "calc"),
+        (f"{label} Δ30d", d("now", "m1"), fmt, "calc"),
+        (f"{label} Δ3m", d("q0", "q1"), fmt, "calc"),
+        (f"{label} Δ6m", d("q0", "q2"), fmt, "calc"),
+        (f"{label} Δ9m", d("q0", "q3"), fmt, "calc"),
     ]
 
 
@@ -2686,11 +2890,13 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_burn_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_burn_tokens"}),
         ("Gross issuance Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_issuance_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
         ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
-         lambda r, p: calc(f"{R.D(r, 'gross_issuance_tokens', 'q0')}-{R.D(r, 'gross_burn_tokens', 'q0')}"), FMT_NUM, "calc", True),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", "gross_burn_tokens"), FMT_NUM, "calc", True),
         ("Net supply change, annualised % of circulating",
-         lambda r, p: calc(f"({_annualise(R, r, p, 'gross_issuance_tokens', R.D(r, 'gross_issuance_tokens', 'q0'))}-{_annualise(R, r, p, 'gross_burn_tokens', R.D(r, 'gross_burn_tokens', 'q0'))})/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
+         lambda r, p: _coverage_guard(R, r, [("issuance", "gross_issuance_tokens", "q0"), ("burn", "gross_burn_tokens", "q0")],
+                                      f"({_annualise(R, r, p, 'gross_issuance_tokens', R.D(r, 'gross_issuance_tokens', 'q0'))}-{_annualise(R, r, p, 'gross_burn_tokens', R.D(r, 'gross_burn_tokens', 'q0'))})/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
         ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
-         lambda r, p: calc(f"{R.D(r, 'fees_usd', 'q0')}/({R.D(r, 'gross_issuance_tokens', 'q0')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
+         lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
+                                      f"{_flow_rate(R, r, 'fees_usd')}/({_flow_rate(R, r, 'gross_issuance_tokens')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Buyback % of supply (annualised, implied, split as at this window)",
          lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{_annualise(R, r, p, 'revenue_usd', R.D(r, 'revenue_usd', 'q0'))}*{R.C(r, WINDOW_SHARE_COL['q0'])}/{R.D(r, 'price_usd', 'q0')}/{R.D(r, 'circulating_supply', 'now')}", R.C(r, WINDOW_SHARE_COL["q0"])),
@@ -2749,28 +2955,39 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")), FMT_NUM, "pull", True, {"metric": "pool_release_tokens"}),
         ("Release ÷ burn (x) — premint projects, in place of burn ÷ issuance",
-         lambda r, p: calc(f"{R.D(r, 'pool_release_tokens', 'q0')}/{burn(r, p)}"), FMT_X, "calc"),
+         lambda r, p: _coverage_guard(R, r, [("release", "pool_release_tokens", "q0"),
+                                             ("burn", config.a4_burn_metric(p["name"]), "q0")],
+                                      f"{_flow_rate(R, r, 'pool_release_tokens')}/{_flow_rate(R, r, config.a4_burn_metric(p['name']))}"),
+         FMT_X, "calc"),
         ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
-        ("Derived net supply change (issuance − burn), for comparison", lambda r, p: calc(f"{iss(r)}-{burn(r, p)}"), FMT_NUM, "calc"),
+        ("Derived net supply change (issuance − burn), for comparison",
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"])), FMT_NUM, "calc"),
         ("Self-reported − derived (a gap here means one of the two is wrong)",
-         lambda r, p: calc(f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]),
+                                   total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
-         lambda r, p: calc(f"({_net_change(R, r, p, iss, burn)})*{price(r)}"), FMT_USD, "calc"),
-        ("Burn as share of fees (measured)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}/{R.D(r, 'fees_usd', 'q0')}"), FMT_PCT, "calc"),
+         lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc"),
+        ("Burn as share of fees (measured)",
+         lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
+                                      f"{_flow_rate(R, r, config.a4_burn_metric(p['name']))}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
+         FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
-        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), f"{burn(r, p)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), _coverage_guard(
+            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
+            f"{burn(r, p)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
+            R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: calc(f"{iss(r, 'q1')}-{burn(r, p, 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q2 (−6m window)", lambda r, p: calc(f"{iss(r, 'q2')}-{burn(r, p, 'q2')}"), FMT_NUM, "calc"),
-        ("Net supply change Q3 (−9m window)", lambda r, p: calc(f"{iss(r, 'q3')}-{burn(r, p, 'q3')}"), FMT_NUM, "calc"),
+        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]), "q1"), FMT_NUM, "calc"),
+        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]), "q2"), FMT_NUM, "calc"),
+        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]), "q3"), FMT_NUM, "calc"),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, "gross_issuance_tokens", "Issuance"),
         # FOOTNOTES FIRST: burned SKY that is deliberately NOT in any burn column above
@@ -2841,16 +3058,21 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          {"metric": "actual_buyback_tokens", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
         ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'actual_buyback_tokens', 'q0'))}/({circ(r, p)})"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
-         lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", share(r))))),
+         lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), _coverage_guard(
+             R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("buyback", "actual_buyback_usd", "q0")],
+             f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", same_span=True, bare=True), share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
         ("Net absorption Q0 (tokens) = actual buyback − emissions",
-         lambda r, p: calc(net_absorption(p, R.D(r, "actual_buyback_tokens", "q0"),
-                                          R.D(r, "emissions_tokens", "q0"))),
+         lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_tokens", "q0"), ("emissions", "emissions_tokens", "q0")],
+                                      net_absorption(p, R.D(r, "actual_buyback_tokens", "q0"),
+                                                     R.D(r, "emissions_tokens", "q0")), same_span=True),
          FMT_NUM, "calc", True, {"supply_additive": True}),
         ("Net absorption, implied basis (tokens)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), net_absorption(
-             p, f"{rev(r, p)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")), share(r)))),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), _coverage_guard(
+             R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("emissions", "emissions_tokens", "q0")],
+             net_absorption(p, f"{rev(r, p)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")),
+             same_span=True, bare=True), share(r)))),
          FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
@@ -2876,10 +3098,15 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # read; it is not an error in any of them by itself.
         ("Implied burn − ACTUAL burn (tokens) — the 5% leg against the chain",
          lambda r, p: _leg(p, "burn", lambda sh: base_gated(
-             p, gated(st(r), f"{rev(r, p)}*{sh}/{price(r)}-{R.D(r, 'gross_burn_tokens', 'q0')}",
+             p, gated(st(r), _coverage_guard(
+                 R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("burn", "gross_burn_tokens", "q0")],
+                 f"{rev(r, p)}*{sh}/{price(r)}-{R.D(r, 'gross_burn_tokens', 'q0')}", same_span=True, bare=True),
                       share(r)))), FMT_NUM, "calc", False,
          {"gate": "fee_split", "base": True, "metric": "gross_burn_tokens"}),
-        ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)", lambda r, p: calc(f"{R.D(r, 'actual_buyback_usd', 'q0')}/{rev(r, p)}"), FMT_X, "calc"),
+        ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)",
+         lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_usd", "q0"), ("revenue", config.revenue_base_metric(p["name"]), "q0")],
+                                      f"{_flow_rate(R, r, 'actual_buyback_usd')}/{_flow_rate(R, r, config.revenue_base_metric(p['name']), total=rev(r, p))}"),
+         FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         # PER PROJECT, not fixed: Aerodrome shows veAERO.supply() and everyone else shows the
         # escrow's token balance. See config.LOCK_DISPLAY_METRIC for why only Aerodrome differs,
@@ -2979,7 +3206,9 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         *_a1_headline(R),
         ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False, {"metric": "tx_count"}),
         ("Fees Q0 ($)", lambda r, p: pull(fees(r)), FMT_USD, "pull", False, {"metric": "fees_usd"}),
-        ("Fee per transaction ($)", lambda r, p: calc(f"{fees(r)}/{R.D(r, 'tx_count', 'q0')}"), FMT_USD4, "calc"),
+        ("Fee per transaction ($)",
+         lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("transactions", "tx_count", "q0")],
+                                      f"{_flow_rate(R, r, 'fees_usd')}/{_flow_rate(R, r, 'tx_count')}"), FMT_USD4, "calc"),
         ("Active addresses (latest, low weight)", lambda r, p: pull(R.D(r, "active_addresses", "now")), FMT_NUM, "pull", False, {"metric": "active_addresses"}),
         ("Stablecoin supply on chain ($)", lambda r, p: pull(R.D(r, "stablecoin_supply_usd", "now")), FMT_USD, "pull", False, {"metric": "stablecoin_supply_usd"}),
         ("TVL — chain ($) [primary demand metric]", lambda r, p: pull(R.D(r, "tvl_usd", "now")), FMT_USD, "pull", True, {"metric": "tvl_usd"}),
@@ -2997,11 +3226,16 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Resulting float = circulating − staked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
         ("Gross burn Q0 (tokens, A4 names)", lambda r, p: pull(R.D(r, "gross_burn_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_burn_tokens"}),
         ("Net issuance after burn (tokens) — burn subtracted only where a burn series exists",
-         lambda r, p: calc(f"IF(ISNUMBER({R.D(r, 'gross_burn_tokens', 'q0')}),{iss(r)}-{R.D(r, 'gross_burn_tokens', 'q0')},{iss(r)})"), FMT_NUM, "calc"),
-        ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: calc(f"{fees(r)}/({iss(r)}*{price(r)})"), FMT_X, "calc", True),
-        ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: calc(f"{fees(r, 'q1')}/({iss(r, 'q1')}*{price(r, 'q1')})"), FMT_X, "calc"),
-        ("Fees ÷ issuance at Q2 (−6m)", lambda r, p: calc(f"{fees(r, 'q2')}/({iss(r, 'q2')}*{price(r, 'q2')})"), FMT_X, "calc"),
-        ("Fees ÷ issuance at Q3 (−9m)", lambda r, p: calc(f"{fees(r, 'q3')}/({iss(r, 'q3')}*{price(r, 'q3')})"), FMT_X, "calc"),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", "gross_burn_tokens",
+                                   total=f"IF(ISNUMBER({R.D(r, 'gross_burn_tokens', 'q0')}),{iss(r)}-{R.D(r, 'gross_burn_tokens', 'q0')},{iss(r)})"), FMT_NUM, "calc"),
+        ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
+                                      f"{_flow_rate(R, r, 'fees_usd', 'q0')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q0')}*{price(r, 'q0')})"), FMT_X, "calc", True),
+        ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
+                                      f"{_flow_rate(R, r, 'fees_usd', 'q1')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q1')}*{price(r, 'q1')})"), FMT_X, "calc"),
+        ("Fees ÷ issuance at Q2 (−6m)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q2"), ("issuance", "gross_issuance_tokens", "q2")],
+                                      f"{_flow_rate(R, r, 'fees_usd', 'q2')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q2')}*{price(r, 'q2')})"), FMT_X, "calc"),
+        ("Fees ÷ issuance at Q3 (−9m)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q3"), ("issuance", "gross_issuance_tokens", "q3")],
+                                      f"{_flow_rate(R, r, 'fees_usd', 'q3')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q3')}*{price(r, 'q3')})"), FMT_X, "calc"),
         *_trajectory(R, "tvl_usd", "TVL"),
         *_trajectory(R, "fees_usd", "Fees"),
         *_trajectory(R, "stablecoin_supply_usd", "Stablecoins"),
@@ -3036,17 +3270,23 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Emissions to suppliers Q0 (tokens)", lambda r, p: pull(emi(r)), FMT_NUM, "pull", True, {"metric": "emissions_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Emissions Q0 ($ at avg price)", lambda r, p: calc(f"{emi(r)}*{price(r)}"), FMT_USD, "calc"),
-        ("CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio", lambda r, p: calc(f"{rev(r)}/{emi(r)}"), FMT_USD4, "calc", True),
-        ("Customer revenue ÷ emissions value (x)", lambda r, p: calc(f"{rev(r)}/({emi(r)}*{price(r)})"), FMT_X, "calc", True),
+        ("CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
+                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/{_flow_rate(R, r, 'emissions_tokens', 'q0')}"), FMT_USD4, "calc", True),
+        ("Customer revenue ÷ emissions value (x)", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
+                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/({_flow_rate(R, r, 'emissions_tokens', 'q0')}*{price(r)})"), FMT_X, "calc", True),
         ("Supplier earnings from emissions ($)", lambda r, p: calc(f"{emi(r)}*{price(r)}"), FMT_USD, "calc"),
         ("Supplier earnings from customers ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull"),
-        ("Customer share of supplier earnings", lambda r, p: calc(f"{rev(r)}/({rev(r)}+{emi(r)}*{price(r)})"), FMT_PCT, "calc"),
+        ("Customer share of supplier earnings", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
+                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/({_flow_rate(R, r, 'customer_revenue_usd', 'q0')}+{_flow_rate(R, r, 'emissions_tokens', 'q0')}*{price(r)})"), FMT_PCT, "calc"),
         ("Revenue per supply unit Q0 ($)", lambda r, p: calc(f"{rev(r)}/{R.D(r, 'supply_units', 'now')}"), FMT_USD, "calc"),
         ("Publisher Conviction ($, OriginTrail)", lambda r, p: pull(R.D(r, "publisher_conviction_usd", "now")), FMT_USD, "pull", False, {"metric": "publisher_conviction_usd"}),
         ("Staked tokens (float metric, not demand)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
-        ("Rev ÷ emission at Q1 (−3m, $/token)", lambda r, p: calc(f"{rev(r, 'q1')}/{emi(r, 'q1')}"), FMT_USD4, "calc"),
-        ("Rev ÷ emission at Q2 (−6m)", lambda r, p: calc(f"{rev(r, 'q2')}/{emi(r, 'q2')}"), FMT_USD4, "calc"),
-        ("Rev ÷ emission at Q3 (−9m)", lambda r, p: calc(f"{rev(r, 'q3')}/{emi(r, 'q3')}"), FMT_USD4, "calc"),
+        ("Rev ÷ emission at Q1 (−3m, $/token)", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q1"), ("emissions", "emissions_tokens", "q1")],
+                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q1')}/{_flow_rate(R, r, 'emissions_tokens', 'q1')}"), FMT_USD4, "calc"),
+        ("Rev ÷ emission at Q2 (−6m)", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q2"), ("emissions", "emissions_tokens", "q2")],
+                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q2')}/{_flow_rate(R, r, 'emissions_tokens', 'q2')}"), FMT_USD4, "calc"),
+        ("Rev ÷ emission at Q3 (−9m)", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q3"), ("emissions", "emissions_tokens", "q3")],
+                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q3')}/{_flow_rate(R, r, 'emissions_tokens', 'q3')}"), FMT_USD4, "calc"),
         *_trajectory(R, "customer_revenue_usd", "Customer revenue"),
         *_trajectory(R, "supply_units", "Supply units"),
         *_trajectory(R, "emissions_tokens", "Emissions"),
