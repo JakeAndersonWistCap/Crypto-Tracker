@@ -1136,6 +1136,75 @@ def geod_archive_probe():
     print("  PASTE BACK: the first endpoint whose 365d line shows two numbers serves the backfill.")
 
 
+def archive_probe():
+    """2026-09-29 (Jake): which endpoints serve STATE a year back, for archive_backfill.py.
+
+    For each EVM chain the state-based series use (ethereum, polygon, arbitrum, base, bsc): the
+    configured <CHAIN>_RPC_URL first, then the public list — eth_getBalance of the zero address at
+    head and at a block ~365 days back (estimated from the head's block time, timestamp printed).
+    An endpoint that answers the 365d line serves the backfill. Then NEAR's archival RPC (block by
+    height ~365 days back, and validators at it) and Solana's getSignaturesForAddress on GEODNET's
+    burn account (the oldest signature on the first page). Keys are never printed; hosts only."""
+    head("ARCHIVE — which endpoints serve state a year back")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    for chain in ("ethereum", "polygon", "arbitrum", "base", "bsc"):
+        print(f"\n  {chain}:")
+        for url in _rpcs_for(chain):
+            host = _rpc_host(url)
+            try:
+                h = int(rpc(url, "eth_blockNumber")["result"], 16)
+                t_h = int(rpc(url, "eth_getBlockByNumber", [hex(h), False])["result"]["timestamp"], 16)
+                t_p = int(rpc(url, "eth_getBlockByNumber", [hex(h - 10_000), False])["result"]["timestamp"], 16)
+                back = int(365 * 86_400 / max((t_h - t_p) / 10_000, 1e-3))
+                blk = hex(max(h - back, 1))
+                ts = int(rpc(url, "eth_getBlockByNumber", [blk, False])["result"]["timestamp"], 16)
+                j = rpc(url, "eth_getBalance", ["0x" + "0" * 40, blk])
+                ok = "error" not in j
+                print(f"    {host}: head {h:,}; block {int(blk, 16):,} "
+                      f"({time.strftime('%Y-%m-%d', time.gmtime(ts))}) state "
+                      + ("SERVED — archive" if ok else f"REFUSED — {str(j.get('error'))[:100]}"))
+            except Exception as e:  # noqa: BLE001
+                print(f"    {host}: FAILED — {str(e)[:120]}")
+    from fetch.archive import near_archival_endpoints   # noqa: PLC0415
+    print("\n  near (archival):")
+    for url in near_archival_endpoints():
+        try:
+            hdr = rpc(url, "block", {"finality": "final"})["result"]["header"]
+            h = int(hdr["height"]) - 365 * 78_000
+            old = rpc(url, "block", {"block_id": h})
+            if "error" in old:
+                print(f"    {_rpc_host(url)}: head {hdr['height']:,}; height {h:,} REFUSED — {str(old['error'])[:100]}")
+                continue
+            oh = old["result"]["header"]
+            v = rpc(url, "validators", {"block_id": h})
+            print(f"    {_rpc_host(url)}: height {h:,} "
+                  f"({time.strftime('%Y-%m-%d', time.gmtime(int(oh['timestamp']) // 10**9))}) total_supply "
+                  f"{int(oh['total_supply']) / 1e24:,.0f} NEAR; validators "
+                  + ("REFUSED — " + str(v["error"])[:100] if "error" in v else
+                     f"{len(v['result']['current_validators'])} with "
+                     f"{sum(int(x['stake']) for x in v['result']['current_validators']) / 1e24:,.0f} NEAR"))
+        except Exception as e:  # noqa: BLE001
+            print(f"    {_rpc_host(url)}: FAILED — {str(e)[:120]}")
+    print("\n  solana (GEODNET burn account signatures):")
+    try:
+        import config as _c                                 # noqa: PLC0415
+        url = _c.solana_rpc_endpoints()[0]
+        sigs = rpc(url, "getSignaturesForAddress", [GEODNET_SOL_BURN_ACCOUNT, {"limit": 1000}]).get("result") or []
+        if sigs:
+            print(f"    {_rpc_host(url)}: {len(sigs)} signature(s) on the first page, oldest "
+                  f"{time.strftime('%Y-%m-%d', time.gmtime(sigs[-1].get('blockTime') or 0))} — "
+                  f"{'a full page: more pages behind it' if len(sigs) == 1000 else 'the whole history'}")
+        else:
+            print(f"    {_rpc_host(url)}: no signatures")
+    except Exception as e:  # noqa: BLE001
+        print(f"    FAILED — {str(e)[:120]}")
+    print("\n  PASTE BACK the block. Then: python archive_backfill.py (plan), and --run.")
+
+
 def plume_growthepie():
     """C3 (2026-09-28): Plume's last 7 days of daa and txcount as the API serves them, and the
     transactions per active address. Compare the latest day with www.growthepie.com/chains/plume
@@ -2603,7 +2672,7 @@ CHECKS = (
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
-    chainlink_reward_rates, pendle_spendle_fees,
+    chainlink_reward_rates, pendle_spendle_fees, archive_probe,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

@@ -833,8 +833,15 @@ def _monthly_leg_views(groups: dict) -> None:
         if not legs or g.empty:
             continue
         pts = g["source"].astype(str).map(_measuring_point)
-        months = set(g.loc[pts == legs[0], "date"].dt.to_period("M"))
-        keep = (pts == legs[0]) | ~g["date"].dt.to_period("M").isin(months)
+        per = g["date"].dt.to_period("M")
+        # ...UNLESS THE FULL LIVE LEG HOLDS EVERY DAY OF THE MONTH (archive_backfill.py,
+        # 2026-09-29): then the daily rows are the same burn at daily resolution, and they win.
+        full = pts == legs[1]
+        whole = {m for m, n in g.loc[full].groupby(per[full])["date"].nunique().items()
+                 if n >= m.days_in_month}
+        months = set(per[pts == legs[0]]) - whole
+        keep = (((pts == legs[0]) & ~per.isin(whole))
+                | (~(pts == legs[0]) & ~per.isin(months)))
         if not keep.all():
             groups[(name, metric)] = g[keep]
 

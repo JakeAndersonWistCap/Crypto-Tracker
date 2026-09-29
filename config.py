@@ -1190,7 +1190,9 @@ def is_manual_quarterly(project_name: str, metric: str) -> bool:
 # a protocol buys its token and destroys it, the buyback and the burn are one event under two
 # names, and the marker says the actual_buyback_tokens row is the gross_burn_tokens row rather
 # than a second reading of it.
-SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback")
+# "archive" (2026-09-29): a row read at a PAST block by archive_backfill.py — the same measuring
+# point as the live read, so it strips like the others and never splits a series.
+SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback", "archive")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -15210,6 +15212,21 @@ PENDLE_STAKING_PAGE_2026_09_29 = {
     "per_epoch_series": "WIRED 2026-09-29: spendle/data sPendleHistoricalData (timestamps, "
                         "buybackAmounts; last 12 epochs) -> pendle_distributed_tokens, units "
                         "checked against this page's 170K-350K per past epoch (fetch/pendle_epochs.py)",
+}
+# ===== SERIES WITH NO HISTORY TO READ: FORWARD-ONLY (Jake, 2026-09-29). =====
+# HyperCore's info API serves CURRENT state only — spotClearinghouseState (the Assistance Fund's
+# HYPE), tokenDetails (totalSupply, futureEmissions), delegator/validator summaries — and there
+# is no archive node to read it at a past block. These series accumulate from their first read;
+# history_audit.py prints the date each reaches 90 and 365 days from what is stored.
+HISTORY_FORWARD_ONLY = {
+    "Hyperliquid": {
+        "metrics": ("burn_address_balance", "gross_burn_tokens", "core_burn_tokens",
+                    "total_burn_tokens", "total_supply_gross", "emissions_tokens",
+                    "future_emissions_tokens", "locked_tokens", "actual_buyback_tokens",
+                    "actual_buyback_usd"),
+        "why": "HyperCore's info API (api.hyperliquid.xyz/info) serves current state only and "
+               "HyperCore has no archive node; nothing older than the first read exists to fetch",
+    },
 }
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "

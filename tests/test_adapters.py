@@ -18227,3 +18227,156 @@ def test_pendle_epochs_are_read_per_epoch_with_units_checked_against_the_staking
         os.environ.pop("TOKEN_METRICS_IGNORE_ROBOTS", None)
     assert "TREASURY" in config.PENDLE_STAKING_PAGE_2026_09_29["instant_unstake_fee_to"]
     assert config.METRICS["staking_apr_published"]["sanity_max"] == 1.0, "a percent is rejected, not stored x100"
+
+
+def test_archive_backfill_reads_state_at_each_days_first_block_and_never_overwrites(tmp_path, monkeypatch):
+    """Jake, 2026-09-29: state-based series were SOURCE-LIMITED only because their reads started in
+    September. archive_backfill reads the same contracts at the first block of each UTC day (same
+    source string + `archive`), writes only empty keys, refuses a day whose stored neighbour was
+    read from another measuring point, differences the burn stock into flows, and lists what
+    cannot be backfilled with the reason."""
+    import store as store_mod
+    from fetch import archive as ar
+    from fetch.base import today, _measuring_point
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    t0 = int((today() - pd.Timedelta(days=400)).tz_localize("UTC").timestamp())
+
+    class Eth:
+        block_number = 400 * 24 + 10
+
+        def get_block(self, n):
+            return {"timestamp": t0 + n * 3600}              # one block an hour
+
+        def get_balance(self, a, block_identifier=None):
+            return 0
+
+    class Reader(StubReader):
+        def __init__(self):
+            super().__init__(symbol="UNI")
+            self.at_block, self.calls = {}, []
+
+        def web3(self, chain):
+            return type("W", (), {"eth": Eth()})()
+
+        def scaled(self, chain, address, call, *args, **kw):
+            b = self.at_block[chain]
+            self.calls.append(b)
+            return 111_000_000.0 + b if args else 1e9        # burn balance grows with the block
+
+    p = dict(config.PROJECT_BY_NAME["Uniswap"])
+    p["contracts"] = {k: v for k, v in p["contracts"].items() if k in ("token", "burn_dead")}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, "Uniswap", p)
+    st = store_mod.Store(tmp_path / "m.db")
+    y = today() - pd.Timedelta(days=1)
+    live = pd.DataFrame([{"date": y, "project": "Uniswap", "metric": "burn_address_balance",
+                          "value": 111_950_000.0, "source": "chain:ethereum:burn_dead", "tier": 2}])
+    st.upsert(live)
+    bf = ar.ArchiveBackfill(st, [p], budget_s=60, reader=Reader(), days=5)
+    ok, no = bf.targets({"ethereum"})
+    assert ok["Uniswap"] == {"burn_address_balance", "total_supply_gross"} and not no
+    res = bf.run({"ethereum"})
+    rows = st.conn.execute("SELECT date, value, source FROM metrics WHERE project='Uniswap' AND "
+                           "metric='burn_address_balance' ORDER BY date").fetchall()
+    assert len(rows) == 5, rows
+    assert dict((d, v) for d, v, _ in rows)[str(y.date())] == 111_950_000.0, "the live row is never overwritten"
+    arch = [r for r in rows if r[0] != str(y.date())]
+    assert all(s == "chain:ethereum:burn_dead:archive" and _measuring_point(s) == "chain:ethereum:burn_dead"
+               for _, _, s in arch)
+    # each archive read is AT the first block of its day (block n has timestamp t0 + n hours)
+    for d, v, _ in arch:
+        b = int(v - 111_000_000)
+        day0 = int(pd.Timestamp(d).tz_localize("UTC").timestamp())
+        assert t0 + b * 3600 >= day0 > t0 + (b - 1) * 3600
+    assert res["flows"].get(("Uniswap", "gross_burn_tokens")), res
+    # another measuring point beside a missing day refuses it, with the reason
+    st2 = store_mod.Store(tmp_path / "m2.db")
+    st2.upsert(live.assign(source="chain:ethereum:fire_pit"))
+    res2 = ar.ArchiveBackfill(st2, [p], budget_s=60, reader=Reader(), days=5).run({"ethereum"})
+    assert "fire_pit" in res2["refused"][("Uniswap", "burn_address_balance")]
+    # what cannot be backfilled says why
+    _, no = ar.ArchiveBackfill(st, [config.PROJECT_BY_NAME["Sky"], config.PROJECT_BY_NAME["World Mobile"]],
+                               reader=Reader()).targets({"ethereum", "arbitrum", "bsc", "base"})
+    why = {(n, m): w for n, m, w in no}
+    assert "event-log read" in why[("Sky", "burn_address_balance")]
+    assert "spl_mint" in why[("World Mobile", "total_supply_gross")]
+
+
+def test_a_month_the_full_daily_leg_holds_whole_beats_the_monthly_row():
+    """Once archive_backfill has written the Polygon + Solana sum for every day of a month, those
+    daily rows are the same burn at daily resolution: the Dune monthly row gives way to them (and
+    still wins a month the daily leg only part-covers)."""
+    import build_workbook as bw
+    SUM = config.GEODNET_BURN_SUM_POINT + ":archive:delta"
+    rows = [("2026-07-01", 3.1e6, "dune:8683175"), ("2026-08-01", 3.0e6, "dune:8683175")]
+    rows += [(d, 100_000.0, SUM) for d in pd.date_range("2026-08-01", "2026-08-31")]
+    rows += [(d, 100_000.0, SUM) for d in pd.date_range("2026-07-20", "2026-07-31")]
+    g = pd.DataFrame([dict(date=pd.Timestamp(d), project="GEODNET", metric="gross_burn_tokens", value=v,
+                           source=s, tier=2, is_manual=False, entered_on="") for d, v, s in rows])
+    groups = {("GEODNET", "gross_burn_tokens"): g}
+    bw._monthly_leg_views(groups)
+    out = groups[("GEODNET", "gross_burn_tokens")]
+    by = out.groupby(out["date"].dt.to_period("M"))["value"].sum()
+    assert by[pd.Period("2026-08")] == 31 * 100_000.0, "August: the whole daily leg, not Dune"
+    assert by[pd.Period("2026-07")] == 3.1e6, "July: Dune, the daily leg holds only 12 days"
+
+
+def test_solana_account_history_gives_the_balance_at_each_day_start(tmp_path):
+    """2d (Jake, 2026-09-29): GEODNET's Solana burn account history from its own transactions —
+    getSignaturesForAddress back to the window start, each transaction's post-balance for this
+    account (by its index in the account keys). A day's value is the balance after the last
+    transaction before that day starts; a fall refuses the series (a sink never falls)."""
+    from fetch.archive import SolanaAccountHistory
+    acct = "5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED"
+    d0 = int(pd.Timestamp("2026-09-01").tz_localize("UTC").timestamp())
+    txs = {"s3": (d0 + 2 * 86_400 + 60, 150, 200), "s2": (d0 + 86_400 + 60, 100, 150),
+           "s1": (d0 + 60, 0, 100)}
+
+    class RPC:
+        def call(self, method, params):
+            if method == "getSignaturesForAddress":
+                if params[1].get("before"):
+                    return []
+                return [{"signature": s, "blockTime": v[0]} for s, v in txs.items()]
+            t, pre, post = txs[params[0]]
+
+            def bal(a):
+                return [{"accountIndex": 1, "uiTokenAmount": {"amount": str(a * 10**9)}}]
+            return {"blockTime": t, "transaction": {"message": {"accountKeys": [{"pubkey": "x"}, {"pubkey": acct}]}},
+                    "meta": {"preTokenBalances": bal(pre), "postTokenBalances": bal(post)}}
+    h = SolanaAccountHistory(rpc=RPC(), account=acct, decimals=9, root=tmp_path, pace_s=0)
+    done, note = h.fill(d0 - 86_400, deadline=__import__("time").monotonic() + 30)
+    assert done and "3 transaction(s) read" in note
+    days = [pd.Timestamp(f"2026-09-0{i}") for i in (1, 2, 3, 4)]
+    got = h.daily(days)
+    assert [got[d] for d in days] == [0.0, 100.0, 150.0, 200.0]
+    h.state["sigs"]["s4"] = [d0 + 3 * 86_400, 200, 190]
+    with __import__("pytest").raises(ValueError, match="FELL"):
+        h.daily(days)
+
+
+def test_near_archive_reads_header_supply_and_stake_at_the_first_block_of_the_day(tmp_path):
+    """2c: NEAR's archival RPC — the first block at or after the day's start (heights may be
+    skipped), header.total_supply, and validators at that block, sourced like the live reads."""
+    from fetch.archive import NearArchive
+    from fetch.base import _measuring_point
+    t_day = int(pd.Timestamp("2026-06-01").tz_localize("UTC").timestamp()) * 10**9
+    GEN = 9_820_210
+
+    class Http:
+        def post(self, url, json_body):
+            m, prm = json_body["method"], json_body["params"]
+            if m == "block":
+                h = 200_000_000 if prm.get("finality") else prm["block_id"]
+                if h == 150_000_001:
+                    return {"error": {"cause": {"name": "UNKNOWN_BLOCK"}}}
+                ts = t_day + (h - 150_000_000) * 10**9 if h != GEN else 0
+                return {"result": {"header": {"height": h, "timestamp": ts,
+                                              "total_supply": str(1_250_000_000 * 10**24)}}}
+            return {"result": {"current_validators": [{"stake": str(600_000_000 * 10**24)}]}}
+    na = NearArchive(http=Http(), endpoints=["https://archival.example"], root=tmp_path)
+    rows = na.rows(config.PROJECT_BY_NAME["Near"], pd.Timestamp("2026-06-01"))
+    got = {r["metric"]: r for r in rows}
+    assert got["total_supply_protocol"]["value"] == 1_250_000_000
+    assert got["locked_tokens"]["value"] == 600_000_000
+    assert _measuring_point(got["total_supply_protocol"]["source"]) == "near_rpc:block.header.total_supply"
+    assert na.known["2026-06-01"] == 150_000_000

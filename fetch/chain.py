@@ -363,6 +363,12 @@ class ChainReader:
         # INCREMENTAL BURN SCANS (2026-09-28): events already read, see fetch/logcache.py.
         self.log_cache = None
         self.log_incremental: dict[str, str] = {}
+        # A PINNED BLOCK PER CHAIN (archive_backfill.py, 2026-09-29): every state read — scaled,
+        # raw_call, raw — is made AT this block instead of "latest". Empty on a live run.
+        self.at_block: dict[str, int] = {}
+
+    def _bi(self, chain: str):
+        return self.at_block.get(chain, "latest")
 
     def web3(self, chain: str):
         if chain in self._w3:
@@ -507,7 +513,7 @@ class ChainReader:
         """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
-        return int(getattr(c.functions, call)(*args).call())
+        return int(getattr(c.functions, call)(*args).call(block_identifier=self._bi(chain)))
 
     def deployment_block(self, chain: str, address: str) -> int:
         """The block this contract was deployed in, found by binary search on eth_getCode.
@@ -883,7 +889,7 @@ class ChainReader:
         """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
-        raw = getattr(c.functions, call)(*args).call()
+        raw = getattr(c.functions, call)(*args).call(block_identifier=self._bi(chain))
         decimals = self.decimals(chain, decimals_from or address)
         # The integer and the divisor, kept for the component log line: a figure off by orders
         # of magnitude (Aethir, 2026-09-24) is settled by these two numbers, not by the quotient.
@@ -901,15 +907,23 @@ class ChainReader:
         """
         c = self.erc20(chain, address)
         args = tuple(self.checksum(a) if isinstance(a, str) and a.startswith("0x") else a for a in args)
-        return float(getattr(c.functions, call)(*args).call())
+        return float(getattr(c.functions, call)(*args).call(block_identifier=self._bi(chain)))
 
 
 class Chain:
     """Tier 2 adapter. prior_values supplies the last stored figure for cumulative differencing."""
 
     def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
-                 prior_sources: dict | None = None, prior_delta: dict | None = None):
+                 prior_sources: dict | None = None, prior_delta: dict | None = None,
+                 backfill: dict | None = None):
         self.reader = ChainReader()
+        # ===== ARCHIVE MODE (archive_backfill.py, 2026-09-29). =====
+        # {"day": Timestamp, "metrics": {project: set(metrics)}, "solana": {(project, key): value}}.
+        # The reader is pinned (reader.at_block) by the caller; here: date every row `day`, read
+        # only the named metrics, take Solana components from the given daily balances, store
+        # STOCKS ONLY (flows are differenced afterwards from consecutive stored stocks), and drop
+        # a metric-day outright if any component could not be read — never a partial sum.
+        self.backfill = backfill
         from .solana import SolanaRPC
         self.solana = SolanaRPC()
         self.prior = prior_values or {}
@@ -1082,12 +1096,15 @@ class Chain:
                          chain, e)
 
     def run(self, projects: list[dict], window_days, out):
-        when = today()
+        when = self.backfill["day"] if self.backfill else today()
         self._prefetch(projects)
         for p in projects:
             name = p["name"]
             contracts = p.get("contracts") or {}
             if not contracts:
+                continue
+            wanted = (self.backfill or {}).get("metrics", {}).get(name) if self.backfill else None
+            if self.backfill and not wanted:
                 continue
             token = contracts.get("token")
             # SEVERAL CONTRACTS CAN SERVE ONE METRIC, and they must be SUMMED rather than letting the
@@ -1137,7 +1154,7 @@ class Chain:
                 # orphaned; from the date it is not read and not summed. Not a refusal: the sum
                 # without it is the whole, and the change of composition is a declared handover.
                 dep = spec.get("deprecated_from")
-                if dep and str(today().date()) >= str(dep):
+                if dep and str(when.date()) >= str(dep):
                     out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                             f"{key} ({chain}): DEPRECATED from {dep} — not read "
                                             f"or summed. {spec.get('deprecation_note', '')}".strip(), TIER))
@@ -1153,6 +1170,16 @@ class Chain:
                 if metric is None:
                     out.unconfigured(SOURCE, name, f"{key}: unknown contract kind {kind!r}", TIER)
                     continue
+                if self.backfill:
+                    if metric not in wanted:
+                        continue
+                    if kind in ("spl_token_account", "spl_mint"):
+                        v = (self.backfill.get("solana") or {}).get((name, key))
+                        if v is None:
+                            refused[metric].append(f"{key} (solana): no daily balance")
+                            continue
+                        parts[metric].append((f"{chain}:{key}", float(v)))
+                        continue
                 # ===== A SOLANA SPL TOKEN ACCOUNT. 2026-09-28 (GEODNET's burns moved there). =====
                 # One getTokenAccountBalance call; summed with the EVM components like any other.
                 if kind in ("spl_token_account", "spl_mint"):
@@ -1813,6 +1840,14 @@ class Chain:
             # unexplained step change with nothing in the row to explain it.
             if source_suffix.get(metric):
                 src += f"[{source_suffix[metric]}]"
+
+            # ARCHIVE MODE: the stock only, whole or not at all, marked as read at a past block.
+            if self.backfill:
+                if refused.get(metric):
+                    continue
+                out.add(point(name, metric, total, config.mark_source(src, "archive"), TIER, when),
+                        SOURCE, name, f"{detail} [archive, {when.date()}]", TIER)
+                continue
 
             missing = refused.get(metric) or []
             is_partial = (metric in partial_metrics or bool(missing)

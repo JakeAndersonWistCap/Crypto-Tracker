@@ -40,6 +40,22 @@ class SolanaRPC:
         same response shape. Added 2026-09-29 for World Mobile's Solana WMTX leg."""
         return self._amount("getTokenSupply", mint)
 
+    def call(self, method: str, params: list):
+        """Any JSON-RPC method, first endpoint that answers; the result, or RuntimeError."""
+        errors = []
+        for url in self.endpoints:
+            host = urllib.parse.urlsplit(url).netloc
+            try:
+                j = self.http.post(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+            except Exception as e:  # noqa: BLE001 — try the next endpoint
+                errors.append(f"{host}: {e}")
+                continue
+            if not isinstance(j, dict) or "error" in j or "result" not in j:
+                errors.append(f"{host}: {(j or {}).get('error') if isinstance(j, dict) else j}")
+                continue
+            return j["result"]
+        raise RuntimeError(f"no Solana RPC answered {method} — " + "; ".join(errors))
+
     def _amount(self, method: str, address: str) -> tuple[float, int, int, str]:
         errors = []
         for url in self.endpoints:

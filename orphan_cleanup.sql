@@ -3262,3 +3262,31 @@ SELECT date, value, source, fetched_at
   FROM metrics
  WHERE project = 'GEODNET' AND metric = 'burn_address_balance' AND date >= '2026-09-25'
  ORDER BY date;
+
+-- ========================================================================================
+-- AV. GEODNET: the Polygon-only burn rows that stop the summed history being backfilled
+--     2026-09-29
+--     archive_backfill.py writes the Polygon + Solana SUM (chain:sum(...):archive) for every
+--     day of the last year it can read — but refuses a day whose stored neighbour was read from
+--     another measuring point. The Polygon-only leg (chain:polygon:burn_polygon, ~2026-09-14 to
+--     the day before the first summed reading) sits between that history and today's sum, so
+--     the backfill stops at it. These rows understate by the Solana burn (see config
+--     series_handover composition_change). Removing them lets the next backfill write the sum
+--     for those days too; nothing else reads them. REVIEW FIRST.
+-- ========================================================================================
+-- AV1. THE POLYGON-ONLY STOCK AND FLOW ROWS.
+SELECT date, metric, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'GEODNET'
+   AND metric IN ('burn_address_balance', 'gross_burn_tokens', 'actual_buyback_tokens')
+   AND (source = 'chain:polygon:burn_polygon' OR source LIKE 'chain:polygon:burn_polygon:%')
+ ORDER BY metric, date;
+
+-- AV2. THE PROPOSED DELETE. Only after AV1 reads as expected; then run
+--      python archive_backfill.py --run --project GEODNET
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'GEODNET'
+--    AND metric IN ('burn_address_balance', 'gross_burn_tokens', 'actual_buyback_tokens')
+--    AND (source = 'chain:polygon:burn_polygon' OR source LIKE 'chain:polygon:burn_polygon:%');
+-- COMMIT;

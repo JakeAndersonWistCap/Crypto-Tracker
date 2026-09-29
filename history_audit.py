@@ -39,18 +39,42 @@ Q0_DAYS = 90
 PRICE_DAYS = 365          # prices: every row of every USD valuation is priced on its own day
 
 
+def why_short(p: dict, m: str, first: str | None) -> str:
+    """For a short series: what fills it, or the specific reason nothing can (2026-09-29)."""
+    from fetch import archive as ar
+    fwd = config.HISTORY_FORWARD_ONLY.get(p["name"]) or {}
+    if m in fwd.get("metrics", ()):
+        if not first:
+            return f"FORWARD-ONLY: {fwd['why']}"
+        f0 = pd.Timestamp(first)
+        return (f"FORWARD-ONLY — reaches 90 days {(f0 + pd.Timedelta(days=89)).date()}, 365 days "
+                f"{(f0 + pd.Timedelta(days=364)).date()}: {fwd['why']}")
+    if p.get("near_validators") and m in ("total_supply_protocol", (p["near_validators"] or {}).get("metric")):
+        return "archive_backfill.py --run --near fills it (NEAR archival RPC: header total_supply, validators)"
+    chains = {"ethereum", "polygon", "arbitrum", "base", "bsc"}
+    stocks = [s for s in ar.state_metrics(p) if s == m or config.cumulative_flow_for(p["name"], s) == m]
+    for s in stocks:
+        ok, why = ar.archivable(p, s, chains, {(p["name"], k) for k, c in (p.get("contracts") or {}).items()
+                                                if c["kind"] == "spl_token_account"})
+        via = "" if s == m else f" (differenced from {s})"
+        return (f"archive_backfill.py --run fills it{via}" if ok else f"not archivable{via}: {why}")
+    return ""
+
+
 def rows(db: str, short_only: bool) -> list[tuple]:
+    from fetch import archive as ar
     conn = sqlite3.connect(db)
     span = {(p, m): (a, b, n) for p, m, a, b, n in conn.execute(
         "SELECT project, metric, MIN(date), MAX(date), COUNT(*) FROM metrics GROUP BY project, metric")}
     memo, out = bf._read(), []
     for p in config.PROJECTS:
-        for m in HEADLINE:
+        # STATE SERIES TOO (2026-09-29): balances, supplies and locks backfilled from archive.
+        for m in list(HEADLINE) + sorted(ar.state_metrics(p) - set(HEADLINE)):
             if m not in config.metrics_for_project(p):
                 continue
             first, last, n = span.get((p["name"], m), (None, None, 0))
             if first is None:
-                out.append((p["name"], m, "", "", 0, 0, "", "EMPTY"))
+                out.append((p["name"], m, "", "", 0, 0, "", "EMPTY", why_short(p, m, None)))
                 continue
             days = (pd.Timestamp(last) - pd.Timestamp(first)).days + 1
             seen = memo.get(f"{p['name']}|{m}") or {}
@@ -61,7 +85,7 @@ def rows(db: str, short_only: bool) -> list[tuple]:
                 continue
             out.append((p["name"], m, first, last, n, days,
                         seen.get("first", "") + (f" (checked {seen['checked_on']})" if seen else ""),
-                        verdict))
+                        verdict, "" if verdict == "FULL" else why_short(p, m, first)))
     return out
 
 
@@ -87,9 +111,10 @@ def main(argv=None) -> int:
         return 0
     table = rows(a.db, a.short_only)
     print(f"{'project':<13} {'metric':<24} {'oldest':<11} {'newest':<11} {'rows':>5} "
-          f"{'days':>5}  {'source reaches (backfill memo)':<34} verdict")
+          f"{'days':>5}  {'source reaches (backfill memo)':<34} verdict / what fills it")
     for r in table:
-        print(f"{r[0]:<13} {r[1]:<24} {r[2]:<11} {r[3]:<11} {r[4]:>5} {r[5]:>5}  {r[6]:<34} {r[7]}")
+        print(f"{r[0]:<13} {r[1]:<24} {r[2]:<11} {r[3]:<11} {r[4]:>5} {r[5]:>5}  {r[6]:<34} {r[7]}"
+              + (f" — {r[8]}" if r[8] else ""))
     return 0
 
 
