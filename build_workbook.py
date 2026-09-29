@@ -794,6 +794,32 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
 
 
+def _reward_end_views(groups: dict, asof: pd.Timestamp) -> None:
+    """A reward RATE is not carried past its end date (Chainlink, Jake 2026-09-29).
+
+    Every RewardVault bucket ends 2026-11-27. A read after that returns the rate as 0 by itself
+    (fetch/reward_vault.py counts active buckets only); what this stops is the LAST read before
+    the end standing in as "now" on a later build — a failed read, or no run since. BLOCKED, with
+    the date, until a read after the end shows the rate (0, or a top-up, which the reader flags).
+    """
+    for (name, metric), g in groups.items():
+        if metric != "reward_rate_ends_unix" or g.empty:
+            continue
+        g = g.sort_values("date")
+        end = pd.Timestamp(int(float(g["value"].iloc[-1])), unit="s").normalize()
+        rate = groups.get((name, "reward_emission_rate_annual"))
+        if rate is None or rate.empty or asof <= end:
+            continue
+        last = rate["date"].max()
+        if last <= end:
+            _VIEW_BLOCKS[(name, "reward_emission_rate_annual")] = (
+                f"BLOCKED — REWARDS ENDED {end.date()}: every RewardVault bucket's "
+                f"rewardDurationEndsAt had passed by {asof.date()}, and the rate was last read "
+                f"{last.date()}, before the end. It is not carried past its end date. A read after "
+                f"the end shows the rate as it stands — 0, or a top-up, which is flagged "
+                f"(reward_vault_topup).")
+
+
 def _monthly_leg_views(groups: dict) -> None:
     """A month a monthly handover leg covers keeps ONLY that leg's row (config.handover_monthly_leg).
 
@@ -1067,6 +1093,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _buyback_tokens_from_usd_views(groups)
     _VIEW_BLOCKS.clear()
     _issuance_views(groups, asof)
+    _reward_end_views(groups, asof)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -2491,15 +2518,39 @@ def _token_yield(R: Refs):
         if spec.get("lock_add"):
             add = R.D(r, spec["lock_add"], "now")
             base = f"({base}+IF(ISNUMBER({add}),{add},0))"
+        # PER EPOCH (Pendle, 2026-09-29): the mean distribution of the epochs in Q0 x epochs/yr —
+        # a 90-day window holds 6 or 7 fortnightly epochs, and x365/90 would swing by one.
+        if ty.get("epoch_days"):
+            k = R.D(r, ty["tokens"], "q0_events")
+            annual = f"({tok}/{k})*365.25/{ty['epoch_days']}"
+            return calc(f"IF(AND(ISNUMBER({tok}),ISNUMBER({k}),{k}>0,ISNUMBER({base})),{annual}/{base},{NA})")
         return calc(f"IF(AND(ISNUMBER({tok}),ISNUMBER({base})),{_annualise(R, r, p, ty['tokens'], tok)}/{base},{NA})")
 
     def note(p):
         ty = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {})
-        return ((" · tokens", f"TOKEN YIELD — PENDLE bought, annualised, over real + virtual "
-                              f"sPENDLE. Airdrops (in kind) excluded. Cross-check: {ty['cross_check']}.")
+        return ((" · tokens", f"TOKEN YIELD — PENDLE DISTRIBUTED per epoch (Pendle's "
+                              f"sPendleHistoricalData), mean over the Q0 epochs x 365.25/"
+                              f"{ty.get('epoch_days', '?')}, over real + virtual sPENDLE. Airdrops (in "
+                              f"kind) excluded. Before 2026-09-29: {ty.get('was', 'buyback tokens')}. "
+                              f"Cross-check: {ty['cross_check']}.")
                 if ty else None)
     return ("Staking yield in TOKENS = tokens distributed per year ÷ reward-bearing stake (real + virtual)",
-            build, FMT_PCT, "calc", False, {"metric": "actual_buyback_tokens", "flag_fn": note})
+            build, FMT_PCT, "calc", False, {"metric_fn": lambda n: ((config.PROTOCOL_YIELD.get(n) or {})
+                                                                  .get("token_yield") or {}).get("tokens"),
+                                            "flag_fn": note})
+
+
+def _published_apr(R: Refs):
+    """A3, Pendle (2026-09-29): the protocol's OWN APR (lastEpochApr), beside our token yield —
+    a cross-check, never the headline."""
+    def build(r, p):
+        ty = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {})
+        m = ty.get("published_apr_metric")
+        return pull(R.D(r, m, "now")) if m else ""
+    return ("Staking APR as the protocol publishes it (Pendle lastEpochApr) — cross-check",
+            build, FMT_PCT, "pull", False,
+            {"metric_fn": lambda n: ((config.PROTOCOL_YIELD.get(n) or {}).get("token_yield") or {})
+             .get("published_apr_metric")})
 
 
 def _virtual_share(R: Refs):
@@ -3131,6 +3182,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         _protocol_yield(R, data_by_key),
         _token_yield(R),
+        _published_apr(R),
         _virtual_share(R),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====
         # locked_tokens (the column above, via contracts.spendle_underlying) is PENDLE.balanceOf

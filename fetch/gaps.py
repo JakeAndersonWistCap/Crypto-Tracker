@@ -430,7 +430,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"nothing this run",
                 f"Read the beaconchain lines in the Run Log for {name}: a 401/429 is the key or "
                 f"quota, 'has not finished' means the latest day is still open.")
-    if project.get("reward_vault_rates") and metric in ("reward_emission_rate_annual", "emissions_tokens"):
+    se = project.get("spendle_epochs") or {}
+    if se and metric in (se.get("metric"), se.get("apr_metric")):
+        return ("Pendle's spendle/data epoch read is configured but stored nothing this run",
+                f"Read the pendle_api lines in the Run Log for {name}: a units refusal prints the raw values.")
+    if project.get("reward_vault_rates") and metric in ("reward_emission_rate_annual", "emissions_tokens",
+                                                        "reward_rate_ends_unix"):
         return ("the RewardVault's getRewardBuckets() read is configured but stored nothing this run",
                 f"Read the reward_vault lines in the Run Log for {name}.")
     bf = next((sp for sp in project.get("balance_flows") or [] if sp.get("metric") == metric), None)
@@ -861,8 +866,12 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m |= {f["metric"] for f in project.get("near_account_flows") or []}
     elif source == "beaconchain":
         m = set((project.get("beaconchain") or {}).get("metrics") or {})
+    elif source == "pendle_api":
+        se = project.get("spendle_epochs") or {}
+        m = {se["metric"], se["apr_metric"]} if se else set()
     elif source == "reward_vault":
-        m = {"reward_emission_rate_annual", "emissions_tokens"} if project.get("reward_vault_rates") else set()
+        m = ({"reward_emission_rate_annual", "emissions_tokens", "reward_rate_ends_unix"}
+             if project.get("reward_vault_rates") else set())
     elif source == "balance_flow":
         m = {sp["metric"] for sp in project.get("balance_flows") or []}
     elif source == "etherscan_supply":

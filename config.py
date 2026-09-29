@@ -334,6 +334,24 @@ METRICS = {
         "label": "Staking reward emission rate (LINK/yr) — RewardVault getRewardBuckets(), active buckets",
         "kind": "stock", "unit": "tokens", "archetypes": [1, 3],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Chainlink",)},
+    # WHEN THE RATE STOPS (2026-09-29): the earliest rewardDurationEndsAt among the ACTIVE
+    # buckets, unix seconds. Every bucket ends 2026-11-27 per Jake's probe; a later reading than
+    # the last stored one is a TOP-UP (flagged). build_workbook._reward_end_views blocks the rate
+    # once the end has passed with no read since.
+    "reward_rate_ends_unix": {
+        "label": "Staking reward rate ends (unix seconds) — earliest active RewardVault bucket end",
+        "kind": "stock", "unit": "unix seconds", "archetypes": [1, 3],
+        "tiers": [2], "sanity_min": 1.6e9, "sanity_max": 4.1e9, "only_projects": ("Chainlink",)},
+    # Pendle (2026-09-29, Jake): what sPENDLE holders were DISTRIBUTED per epoch, and Pendle's
+    # own APR beside our token yield. fetch/pendle_epochs.py.
+    "pendle_distributed_tokens": {
+        "label": "PENDLE distributed to sPENDLE per epoch (spendle/data sPendleHistoricalData.buybackAmounts)",
+        "kind": "flow", "unit": "tokens", "archetypes": [3],
+        "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
+    "staking_apr_published": {
+        "label": "Staking APR as the protocol publishes it (fraction) — cross-check only",
+        "kind": "stock", "unit": "fraction", "archetypes": [3],
+        "tiers": [3], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Pendle",)},
     "emissions_claimed_tokens": {
         "label": "Staking rewards CLAIMED — LINK out of the reward vault (lumpy; not accrual)",
         "kind": "flow", "unit": "tokens", "archetypes": [1, 3],
@@ -10913,6 +10931,25 @@ PROJECTS = [
                  "amount_word": 1,
                  "source": "https://github.com/sky-ecosystem/dss-flappers/blob/master/src/"
                            "FlapperUniV2SwapOnly.sol — event Exec(uint256 lot, uint256 bought)",
+                 # ===== THE 990,122,323.69 SKY OUTSIDE Exec (Jake's run 2026-09-29). =====
+                 # NOT AN EARLIER FLAPPER. The only earlier flapper on this pair is FlapperUniV2
+                 # 0xc5A9CaeBA70D6974cBDFb28120C3611Dd9910355 (MCD_FLAP from the 2024-09-13 spell
+                 # to the 2024-09-27 spell that installed 0x374D...): ADD-LIQUIDITY — it swaps to
+                 # itself and mints LP to the receiver, so its SKY never leaves the pair for the
+                 # Pause Proxy (dss-flappers src/FlapperUniV2.sol L152-163, 4e7a8f4..5d8215c;
+                 # sky-ecosystem/spells-mainnet archive/2024-09-13 and 2024-09-27 DssSpell.sol @
+                 # 17926e1). No spell swaps, skims or burns LP to the Pause Proxy on this pair;
+                 # the 2025-08-21 spell TRANSFERRED its USDS-SKY LP to the Sky Frontier
+                 # Foundation. So the transfers are identified from the PAIR'S OWN logs in each
+                 # transaction (logscan._classify_outside), with 90- and 365-day totals in the
+                 # scan's log line. Nothing is counted from it.
+                 "classify_outside": {
+                     "pair": "0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c", "decimals": 18,
+                     "known_senders": {
+                         "0x374D9c3d5134052Bc558F432Afa1df6575f07407": "FlapperUniV2SwapOnly — a "
+                             "purchase MISSING its Exec: investigate before counting",
+                         "0xc5A9CaeBA70D6974cBDFb28120C3611Dd9910355": "FlapperUniV2 (add-liquidity), "
+                             "MCD_FLAP 2024-09-13..27"}},
              },
              "sanity_reference": "July 2026: ~19.84M SKY bought for ~1.16M USDS (secondary, MEXC "
                                  "news snippet, found 2026-09-28)",
@@ -12612,6 +12649,20 @@ PROJECTS = [
                                "migration already recorded on contracts.spendle.",
         },
         "coingecko_id": "pendle",
+        # ===== PER-EPOCH DISTRIBUTIONS AND PENDLE'S OWN APR (Jake, 2026-09-29). =====
+        # Documented endpoint (pendle-finance/documentation @ 9b9509e, ApiOverview.mdx L283-300):
+        # sPendleHistoricalData = {timestamps, revenues, aprs, fees, airdrops, buybackAmounts, ...},
+        # last 12 epochs; no units in the docs. Decimals 18 (wei), CHECKED each run against the
+        # staking page Jake read 2026-09-29 (past epochs ~170K-350K PENDLE) — see fetch/pendle_epochs.
+        # lastEpochApr is not in the official docs (Jake reports it in the response).
+        "spendle_epochs": {
+            "url": "https://api-v2.pendle.finance/core/v1/spendle/data",
+            "metric": "pendle_distributed_tokens", "history_key": "sPendleHistoricalData",
+            "time_field": "timestamps", "amount_field": "buybackAmounts", "decimals": 18,
+            "units_check": {"median_between": (100_000, 500_000),
+                            "source": "Pendle staking page, Jake 2026-09-29: past epochs ~170K-350K PENDLE"},
+            "apr_field": "lastEpochApr", "apr_metric": "staking_apr_published",
+        },
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
@@ -14950,7 +15001,16 @@ VALIDATOR_YIELD = {
                     # HYPE (~1.15%); one day is not a rate — watch it converge or not.
                     "published_rate": {"at_staked": 400_000_000, "rate": 0.0237, "scales_as": "1/sqrt(staked)",
                                        "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/staking",
-                                       "read": "2026-09-29 (via search)"}},
+                                       "read": "2026-09-29 (via search)"},
+                    # ===== WATCH (Jake's run 2026-09-29 08:16): 1.25% on two days vs ~2.26%. =====
+                    # Compare again once 7 days are stored (build_workbook.RATE_MIN_DAYS: under a
+                    # week the A1 yield's ratio is not a rate). If it stays at roughly half,
+                    # establish whether the fall in futureEmissions misses part of the rewards
+                    # (e.g. rewards paid from another reserve, or a daily payout the read straddles).
+                    "watch_2026_09_29": {"observed": 0.0125, "days": 2, "published_scaled": 0.0226,
+                                         "recheck_when": "7 days of emissions_tokens stored (~2026-10-04)",
+                                         "if_still_half": "check whether d(futureEmissions) misses "
+                                                          "part of the staking rewards"}},
     # B2 (2026-09-28): LINK paid out of the staking v0.2 reward vault (log_scans.
     # staking_rewards_out), annualised, over staked principal (both pools' getTotalPrincipal).
     # Staking secures the oracle network, not a chain — archetype 1's validator column is the
@@ -14967,7 +15027,33 @@ VALIDATOR_YIELD = {
                   # community / 4.125M operator. Expect ~4.3-4.6% blended when fully claimed.
                   "published_rates": {"community_effective": 0.0432, "operator_base": 0.045,
                                       "source_url": "https://blog.chain.link/chainlink-staking-v0-2-overview/",
-                                      "read": "2026-09-28 (via search snippet)"}},
+                                      "read": "2026-09-28 (via search snippet)"},
+                  # ===== FROM JAKE'S reward_rates PROBE, 2026-09-29. =====
+                  # THE OPERATOR POOL IS UNDERFILLED. The published 4.5% base is the rate on a
+                  # FULL pool; with 1,644,947 LINK staked the same bucket emission pays far more
+                  # per token. The blended 4.766% (all active buckets / all principal) is right.
+                  "operator_pool_2026_09_29": {
+                      "principal_link": 1_644_947,
+                      "cap_link": 4_125_000,
+                      "cap_source": "Chainlink staking v0.2 overview (blog.chain.link/chainlink-"
+                                    "staking-v0-2-overview): pools 40.875M community / 4.125M operator",
+                      "operator_base_link_per_yr": 185_752, "delegated_link_per_yr": 73_625,
+                      "realised_operator_yield": round((185_752 + 73_625) / 1_644_947, 4),
+                      "blended_yield": 0.04766,
+                      "reading": "published 4.5% base assumes a full operator pool; realised "
+                                 "operator yield ~15.8% on the underfilled pool; blended correct",
+                      "by": "Jake, python check_offline_items.py chainlink_reward_rates"},
+                  # ===== A DATED EVENT: EVERY REWARD BUCKET ENDS 2026-11-27. =====
+                  # After it the rate is 0 unless topped up. fetch/reward_vault.py stores the end
+                  # (reward_rate_ends_unix) and flags any later end or higher rate as a top-up
+                  # (review reason reward_vault_topup); build_workbook._reward_end_views blocks a
+                  # rate last read before the end, so it is never carried past it.
+                  "reward_end_2026_11_27": {
+                      "date": "2026-11-27", "what": "rewardDurationEndsAt of all three buckets "
+                                                    "(operatorBase, communityBase, operatorDelegated)",
+                      "by": "Jake, chainlink_reward_rates probe, 2026-09-29",
+                      "after": "yield and emissions 0 (a read after the end), or BLOCKED (no read "
+                               "since); a top-up is flagged when it happens"}},
 }
 
 # ===== WHICH ISSUANCE IS PRIMARY, FOR EVERY CONSUMER. Added 2026-09-28 (Jake). =====
@@ -15088,7 +15174,12 @@ PROTOCOL_YIELD = {
                # PENDLE will be distributed to active sPENDLE holders", and reward snapshots
                # "include virtual sPENDLE balances" — so real + virtual IS the base. Airdrops are
                # distributed in kind and are NOT in this figure.
-               "token_yield": {"tokens": "actual_buyback_tokens",
+               # FROM THE PER-EPOCH DISTRIBUTIONS (Jake, 2026-09-29): PENDLE distributed per
+               # epoch (sPendleHistoricalData), averaged over the Q0 epochs and x365.25/14 —
+               # not USD buyback spend over price. Pendle's own lastEpochApr sits beside it.
+               "token_yield": {"tokens": "pendle_distributed_tokens", "epoch_days": 14,
+                               "published_apr_metric": "staking_apr_published",
+                               "was": "actual_buyback_tokens (holders revenue / same-day price)",
                                "cross_check": "~2.68M PENDLE distributed Feb -> late Sep 2026 "
                                               "(Jake, from Pendle's staking page) ~ 4.6M/yr -> "
                                               "~2.2% on ~208M reward-bearing"}},
@@ -15111,11 +15202,14 @@ PENDLE_STAKING_PAGE_2026_09_29 = {
     # address (pendle-core-v2-public contracts/LiquidityMining/sPendle/StakedPendle.sol, read
     # 2026-09-29). Whether that address feeds stakers is not in the source or the docs —
     # check_offline_items pendle_spendle_fees reads feeReceiver() and the fees taken.
-    "instant_unstake_fee_to": "feeReceiver (owner-settable); destination's role UNCONFIRMED",
-    "per_epoch_series": "NOT WIRED — the rewards are merkle distributions; which distributor "
-                        "(deployments/1-core.json lists merkleDepositor, externalRewardsDistributor, "
-                        "vePendleAirdropDistributor) carries the sPENDLE buyback rewards is not "
-                        "established. The probe prints the spendle/data keys to find the field.",
+    # CLOSED 2026-09-29 (Jake): feeReceiver is 0x8270400d528c34e1596ef367eedec99080a1b592, the
+    # `network.treasury` of pendle-core-v2-public deployments/1-core.json (@87685c8, line 5) and
+    # the "Fee Wallet" of pendle-finance/documentation Fees.md (@9b9509e, L22).
+    "instant_unstake_fee_to": "Pendle's TREASURY 0x8270400d528c34e1596ef367eedec99080a1b592 — "
+                              "instant-unstake fees do NOT reach stakers and are not yield",
+    "per_epoch_series": "WIRED 2026-09-29: spendle/data sPendleHistoricalData (timestamps, "
+                        "buybackAmounts; last 12 epochs) -> pendle_distributed_tokens, units "
+                        "checked against this page's 170K-350K per past epoch (fetch/pendle_epochs.py)",
 }
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "

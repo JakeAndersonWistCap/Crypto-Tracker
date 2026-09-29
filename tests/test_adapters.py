@@ -17728,6 +17728,38 @@ def test_chainlink_reward_vault_buckets_decode_and_ended_buckets_emit_nothing():
     bad = FetchOutput()
     RewardVaultRates(reader=Reader("SomethingElse 2.0.0")).run([config.PROJECT_BY_NAME["Chainlink"]], None, bad)
     assert bad.frame().empty and "not a RewardVault" in bad.gaps[0]["reason"]
+    # THE END DATE: the earliest ACTIVE bucket's end is stored; no prior -> no top-up flag
+    assert got["reward_rate_ends_unix"] == now + 10**6 and not out.review
+    # A TOP-UP: a later end than the last stored reading is flagged, never absorbed silently
+    up = FetchOutput()
+    RewardVaultRates(reader=Reader("RewardVault 1.0.0"),
+                     prior_values={("Chainlink", "reward_rate_ends_unix"): float(now + 10)}
+                     ).run([config.PROJECT_BY_NAME["Chainlink"]], None, up)
+    assert [r["reason"] for r in up.review] == ["reward_vault_topup"]
+    assert any("TOP-UP OBSERVED" in e.message for e in up.log)
+
+
+def test_chainlink_reward_rate_is_not_carried_past_its_end_date():
+    """Jake's probe 2026-09-29: every RewardVault bucket ends 2026-11-27. After that the rate is
+    blocked with the date unless a read after the end shows it (0, or a flagged top-up)."""
+    import build_workbook as bw
+    end = pd.Timestamp("2026-11-27 12:00").timestamp()
+
+    def rows(last_read):
+        return pd.DataFrame([dict(date=pd.Timestamp(last_read), project="Chainlink", metric=m, value=v,
+                                  source="rewardvault:getRewardBuckets", tier=2, is_manual=False, entered_on="")
+                             for m, v in (("reward_emission_rate_annual", 1_900_000.0),
+                                          ("reward_rate_ends_unix", end))])
+    key = "Chainlink|reward_emission_rate_annual"
+    before = bw.aggregate(rows("2026-11-20"), pd.DataFrame(), pd.Timestamp("2026-11-25")).set_index("key").loc[key]
+    assert before["status"] != "blocked" and before["now"] == 1_900_000.0
+    after = bw.aggregate(rows("2026-11-20"), pd.DataFrame(), pd.Timestamp("2026-12-01")).set_index("key").loc[key]
+    assert after["status"] == "blocked" and "REWARDS ENDED 2026-11-27" in after["note"], after["note"]
+    reread = bw.aggregate(rows("2026-11-30"), pd.DataFrame(), pd.Timestamp("2026-12-01")).set_index("key").loc[key]
+    assert reread["status"] != "blocked", "a read after the end shows the rate as it stands"
+    rec = config.VALIDATOR_YIELD["Chainlink"]["reward_end_2026_11_27"]
+    assert rec["date"] == "2026-11-27"
+
 
 def test_aethir_supplier_emissions_come_from_the_checker_node_bucket_marked_partial():
     """B3, 2026-09-28: the configured schedule is the Checker Node BASE reward — a supplier bucket —
@@ -17909,6 +17941,8 @@ def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_p
     pair, proxy = spec["count_from"][0].lower(), spec["holders"][0].lower()
     rq = spec["require_tx_event"]
     e18 = 10 ** 18
+    from eth_utils import keccak
+    BURN = "0x" + keccak(text="Burn(address,uint256,uint256,address)").hex()
 
     def tr(tx, frm, amt, blk):
         return {"transactionHash": tx, "logIndex": 1, "blockNumber": blk, "timeStamp": 1_790_000_000 + blk,
@@ -17932,6 +17966,11 @@ def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_p
             def get_logs(self, cid, address, topics, start, to):
                 if address.lower() == rq["address"].lower():
                     return execs, {"explorer": "fake", "requests": 1, "refused": []}
+                if address.lower() == pair:           # the pair's own Swap / Burn, `to` = proxy
+                    burn = [{"transactionHash": "0xbb", "logIndex": 0, "blockNumber": 11,
+                             "timeStamp": 1_790_000_011, "data": "0x",
+                             "topics": [topics[0], pad_address("0x" + "11" * 20), topics[2]]}]
+                    return (burn if topics[0] == BURN else []), {"explorer": "fake", "requests": 1, "refused": []}
                 if topics[2] and topics[2].lower() == pad_address(proxy):
                     return ins, {"explorer": "fake", "requests": 1, "refused": []}
                 return [], {"explorer": "fake", "requests": 1, "refused": []}
@@ -17966,6 +18005,10 @@ def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_p
     assert got["value"].sum() == 1_000_000.0, got
     msg = " ".join(e.message for e in out.log)
     assert "Exec(uint256,uint256)" in msg and "to the wei" in msg
+    # the transfer OUTSIDE Exec is named from the pair's own logs, with its windows
+    assert "OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — LP burn to the holder (pair.burn): 500.00 (1 tx" in msg, msg
+    assert BURN == "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496"
+    assert "0xc5A9CaeBA70D6974cBDFb28120C3611Dd9910355" in rq["classify_outside"]["known_senders"]
     bad = run([ex("0xaa", 60_000, 999_999, 10)])
     assert bad.frame().query("metric == 'actual_buyback_tokens'").empty
     assert "does not reconcile" in bad.gaps[-1]["reason"]
@@ -18031,7 +18074,7 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
     import build_workbook as bw
 
     ty = config.PROTOCOL_YIELD["Pendle"]["token_yield"]
-    assert ty["tokens"] == "actual_buyback_tokens"
+    assert ty["tokens"] == "pendle_distributed_tokens" and ty["epoch_days"] == 14
     assert config.PENDLE_STAKING_PAGE_2026_09_29["total_pendle_staked_headline"] == 93_877_266
     parts = config.PENDLE_STAKING_PAGE_2026_09_29["decomposes_as"]
     assert abs(sum(parts.values()) - 93_877_266) / 93_877_266 < 0.001
@@ -18042,7 +18085,7 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
 
     label, build = bw._token_yield(R())[:2]
     f = str(build(5, config.PROJECT_BY_NAME["Pendle"]))
-    assert "D[actual_buyback_tokens:q0]" in f and "D[locked_tokens_shares:now]" in f
+    assert "D[pendle_distributed_tokens:q0]" in f and "D[pendle_distributed_tokens:q0_events]" in f and "365.25/14" in f and "D[locked_tokens_shares:now]" in f
     assert "D[locked_tokens_virtual:now]" in f and "price_usd" not in f, f
     assert build(5, config.PROJECT_BY_NAME["Sky"]) == ""
     assert abs(4_600_000 / (30_340_000 + 177_780_000) - 0.0221) < 0.001
@@ -18151,3 +18194,36 @@ def test_a_backfill_the_source_did_not_answer_is_not_remembered_as_source_limite
     assert ha.main(["--forget", "price_usd", "--yes"]) == 0 and "Sky|price_usd" not in bf._read()
     assert ha.PRICE_DAYS == 365 and config.PROJECT_BY_NAME["Sky"]["net_protocol_surplus_reference"] \
         ["financials_page_2026_09_29"]["a3_buyback_cross_check"]["measured_expected"]["ratio_to_implied"] == 1.13
+
+
+def test_pendle_epochs_are_read_per_epoch_with_units_checked_against_the_staking_page():
+    """Jake, 2026-09-29: sPendleHistoricalData is the per-epoch distribution series (PENDLE per
+    epoch) and lastEpochApr is Pendle's own APR, stored as a cross-check. The docs give no units:
+    the median epoch / 1e18 must land in the staking page's range or NOTHING is stored. The
+    instant-unstake fee goes to Pendle's treasury, not to stakers."""
+    import os
+    from fetch.base import FetchOutput
+    from fetch.pendle_epochs import PendleEpochs
+    os.environ["TOKEN_METRICS_IGNORE_ROBOTS"] = "1"
+    try:
+        p = config.PROJECT_BY_NAME["Pendle"]
+        ts = [1_780_000_000 + 14 * 86_400 * i for i in range(4)]
+        good = {"lastEpochApr": 0.0231, "sPendleHistoricalData": {
+            "timestamps": ts, "buybackAmounts": [str(a * 10**18) for a in (170_000, 350_000, 240_000, 82_545)]}}
+        out = FetchOutput()
+        PendleEpochs(get=lambda url: good).run([p], None, out)
+        f = out.frame()
+        ep = f[f.metric == "pendle_distributed_tokens"]
+        assert len(ep) == 4 and ep["value"].max() == 350_000.0
+        assert f[f.metric == "staking_apr_published"]["value"].iloc[0] == 0.0231
+        assert any("UNITS CONFIRMED" in e.message for e in out.log)
+        # already-scaled amounts (or any wrong scale) are refused, not stored 10^18 off
+        bad = dict(good, sPendleHistoricalData={"timestamps": ts, "buybackAmounts": [170_000, 350_000, 240_000, 1]})
+        out2 = FetchOutput()
+        PendleEpochs(get=lambda url: bad).run([p], None, out2)
+        assert out2.frame().query("metric == 'pendle_distributed_tokens'").empty
+        assert "UNITS NOT CONFIRMED" in " ".join(e.message for e in out2.log)
+    finally:
+        os.environ.pop("TOKEN_METRICS_IGNORE_ROBOTS", None)
+    assert "TREASURY" in config.PENDLE_STAKING_PAGE_2026_09_29["instant_unstake_fee_to"]
+    assert config.METRICS["staking_apr_published"]["sanity_max"] == 1.0, "a percent is rejected, not stored x100"

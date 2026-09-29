@@ -19,6 +19,11 @@ Stored:
     reward_emission_rate_annual  (stock, LINK/yr) = sum of ACTIVE buckets' emissionRate x
                                   31,557,600 / 1e18 (a bucket whose rewardDurationEndsAt has
                                   passed emits nothing)
+    reward_rate_ends_unix        (stock) = the earliest ACTIVE bucket's rewardDurationEndsAt (the
+                                  latest bucket end once none is active). Every bucket ends
+                                  2026-11-27 (Jake's probe, 2026-09-29). A LATER end, or a higher
+                                  rate, than the last stored reading is a TOP-UP: flagged to the
+                                  Review Queue (reward_vault_topup) and logged.
     emissions_tokens             (flow, dated the run day) = that annual rate / 365.25
 The claim outflow stays a separate series, emissions_claimed_tokens (log_scans).
 """
@@ -56,6 +61,11 @@ def decode_buckets(hexdata: str) -> dict:
     return {b: tuple(words[3 * i: 3 * i + 3]) for i, b in enumerate(BUCKETS)}
 
 
+def _utc(ts) -> str:
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%Y-%m-%d")
+
+
 def decode_string(hexdata: str) -> str:
     h = hexdata[2:] if hexdata.startswith("0x") else hexdata
     n = int(h[64:128], 16)
@@ -65,11 +75,12 @@ def decode_string(hexdata: str) -> str:
 class RewardVaultRates:
     """Reads getRewardBuckets() for every project declaring a `reward_vault_rates` block."""
 
-    def __init__(self, reader=None):
+    def __init__(self, reader=None, prior_values: dict | None = None):
         if reader is None:
             from .chain import ChainReader
             reader = ChainReader()
         self.reader = reader
+        self.prior_values = prior_values or {}
 
     def run(self, projects: list[dict], window_days, out):
         when = today()
@@ -110,3 +121,21 @@ class RewardVaultRates:
                     SOURCE, name, f"emissions_tokens={annual / 365.25:,.2f} LINK for the day "
                                   f"(annual rate / 365.25) — accrual, not claims", TIER)
             out.log.append(LogEntry(SOURCE, name, 0, "ok", f"RewardVault buckets: {detail}", TIER))
+            ends = min(v[1] for v in active.values()) if active else max(v[1] for v in buckets.values())
+            out.add(point(name, "reward_rate_ends_unix", float(ends), src, TIER, when), SOURCE, name,
+                    f"reward_rate_ends_unix={ends} ({_utc(ends)})"
+                    + ("" if active else " — EVERY BUCKET HAS ENDED; the rate is 0"), TIER)
+            # A TOP-UP extends the end or raises the rate. Flagged, never silently absorbed.
+            p_end = self.prior_values.get((name, "reward_rate_ends_unix"))
+            p_rate = self.prior_values.get((name, "reward_emission_rate_annual"))
+            grew = [w for w, now_, before in (("end", ends, p_end), ("rate", annual, p_rate))
+                    if before is not None and now_ > before * (1 + 1e-9) + (86_400 if w == "end" else 0)]
+            if grew:
+                out.review_item(name, "reward_rate_ends_unix" if "end" in grew else "reward_emission_rate_annual",
+                                "reward_vault_topup", "stored_flagged",
+                                value=float(ends if "end" in grew else annual),
+                                prior_value=float(p_end if "end" in grew else p_rate),
+                                date=when, source=src, tier=TIER)
+                out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                        f"TOP-UP OBSERVED: {', '.join(grew)} grew — end {_utc(p_end) if p_end else '?'} "
+                                        f"-> {_utc(ends)}, rate {p_rate or 0:,.0f} -> {annual:,.0f} LINK/yr", TIER))

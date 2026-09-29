@@ -117,9 +117,9 @@ class LogScan:
             for spec in p.get("log_scans") or []:
                 self._scan(p, spec, window_days, out)
 
-    def _tx_events(self, chain_id: int, rq: dict, to_block: int) -> list:
+    def _tx_events(self, chain_id: int, rq: dict, to_block: int, topics: list | None = None) -> list:
         """Every log of rq's event on rq's address up to to_block, incremental through the cache."""
-        topics = [rq["topic0"]]
+        topics = topics or [rq["topic0"]]
         sid = stream_id(chain_id, rq["address"], topics)
         st = self.cache.load(sid)
         start = 0 if st["scanned_to"] is None else int(st["scanned_to"]) + 1
@@ -130,6 +130,51 @@ class LogScan:
         if start <= to_block:
             self.cache.save(sid, events, to_block, st.get("proven_to"))
         return [e for e in events if int(e["blockNumber"]) <= to_block]
+
+    def _classify_outside(self, chain_id: int, cls: dict, outside: list, holders: list,
+                          to_block: int, spec: dict) -> str:
+        """WHAT the transfers outside the named event are, from the pair's own logs (Sky, 2026-09-29).
+
+        990,122,323.69 SKY reached the Pause Proxy from the USDS/SKY pair outside any flapper Exec.
+        Sky's source rules out the earlier flapper on this pair (0xc5A9..., 2024-09-13..09-27:
+        add-liquidity, so its SKY never reached the Pause Proxy) and finds no spell that swaps or
+        removes liquidity to it. The pair's own events name each transaction: Swap(sender, ..., to)
+        or Burn(sender, amount0, amount1, to) with `to` = the holder, read by topic so only those
+        are fetched. Totals over the whole history, the last 90 and the last 365 days. Nothing is
+        counted from this: it is the identification Jake asked for, in the log.
+        """
+        from eth_utils import keccak
+        pair = cls["pair"]
+        to_topics = [pad_address(h) for h in holders]
+        kinds = {}
+        for label, sig in (("swap", "Swap(address,uint256,uint256,uint256,uint256,address)"),
+                           ("burn", "Burn(address,uint256,uint256,address)")):
+            t0 = "0x" + keccak(text=sig).hex()
+            for tt in to_topics:
+                try:
+                    for e in self._tx_events(chain_id, {"address": pair}, to_block, [t0, None, tt]):
+                        kinds[str(e["transactionHash"]).lower()] = (label, topic_address(e["topics"][1]))
+                except ExplorerRefused as ex:
+                    return f" OUTSIDE {len(outside)} transfer(s): pair {label} logs unreadable ({ex})."
+        flappers = {a.lower(): n for a, n in (cls.get("known_senders") or {}).items()}
+        now = int(pd.Timestamp.now("UTC").timestamp())
+        agg: dict = defaultdict(lambda: [0, 0, 0, 0])      # total, 90d, 365d, n
+        for e in outside:
+            kind, sender = kinds.get(str(e["transactionHash"]).lower(), ("none", ""))
+            what = {"burn": "LP burn to the holder (pair.burn)",
+                    "swap": f"swap paying the holder, sender {sender}"
+                            + (f" [{flappers[sender]}]" if sender in flappers else ""),
+                    "none": "no Swap/Burn to the holder in the tx (skim/sync or direct transfer)"}[kind]
+            a, age = _amount(e), now - int(e.get("timeStamp") or 0)
+            row = agg[what]
+            row[0] += a
+            row[1] += a if age <= 90 * 86_400 else 0
+            row[2] += a if age <= 365 * 86_400 else 0
+            row[3] += 1
+        scale = 10 ** int(cls.get("decimals", 18))
+        parts = [f"{w}: {v[0] / scale:,.2f} ({v[3]} tx; last 90d {v[1] / scale:,.2f}, last 365d "
+                 f"{v[2] / scale:,.2f})" for w, v in sorted(agg.items(), key=lambda kv: -kv[1][0])]
+        return " OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — " + "; ".join(parts) + "."
 
     # ------------------------------------------------------------------ one scan
     def _scan(self, p: dict, spec: dict, window_days, out) -> None:
@@ -331,9 +376,9 @@ class LogScan:
             declared = sum(int(str(e.get("data") or "0x")[2 + 64 * w: 2 + 64 * (w + 1)] or "0", 16)
                            for e in evs)
             kept = [e for e in counted if str(e["transactionHash"]).lower() in txs]
-            for e in counted:
-                if str(e["transactionHash"]).lower() not in txs:
-                    uncounted[topic_address(e["topics"][1])] += _amount(e)
+            outside = [e for e in counted if str(e["transactionHash"]).lower() not in txs]
+            for e in outside:
+                uncounted[topic_address(e["topics"][1])] += _amount(e)
             counted = kept
             got = sum(_amount(e) for e in counted)
             if got != declared:
@@ -350,6 +395,9 @@ class LogScan:
             rq_note = (f" Restricted to transactions emitting {rq['event']} on {rq['address']} "
                        f"({len(evs)} event(s)); counted total equals the events' declared amount "
                        f"to the wei.")
+            if rq.get("classify_outside") and outside:
+                rq_note += self._classify_outside(chain_id, rq["classify_outside"], outside,
+                                                  holders, to_block, spec)
         try:
             dec = int(self.reader.erc20(chain, token).functions.decimals().call())
         except Exception as e:  # noqa: BLE001
