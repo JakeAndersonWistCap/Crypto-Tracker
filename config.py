@@ -10812,10 +10812,25 @@ PROJECTS = [
              "token": "0x56072C95FAA701256059aa122697B133aDEd9279",
              "holders": ["0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB"],
              "direction": "in", "store": True, "attribution": "count_from",
-             "count_from": ["0x374D9c3d5134052Bc558F432Afa1df6575f07407"],
-             "count_from_source": "contracts.flapper (ChainLog MCD_FLAP, verified 2026-09-14) — "
-                                  "the Smart Burn Engine sends every SKY it buys to its receiver, "
-                                  "the Pause Proxy (contracts.pause_proxy)",
+             # CORRECTED 2026-09-29 (Jake's run: A3 read 0). FlapperUniV2SwapOnly.exec() sends
+             # USDS to the pair and calls pair.swap(..., receiver, ...), so the SKY it buys
+             # arrives FROM THE PAIR, never from the flapper (sky-ecosystem/dss-flappers,
+             # src/FlapperUniV2SwapOnly.sol, read 2026-09-29). Counted: pair -> Pause Proxy
+             # transfers inside a transaction where the flapper emitted Exec(lot, bought), and
+             # their total must equal the sum of Exec.bought to the wei.
+             "count_from": ["0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c"],
+             "count_from_source": "flapper.pair() = PAIR_USDS_SKY (splitter_params.pair, confirmed "
+                                  "live); the pair pays the flapper's receiver, the Pause Proxy",
+             "require_tx_event": {
+                 "address": "0x374D9c3d5134052Bc558F432Afa1df6575f07407",
+                 "event": "Exec(uint256,uint256)",
+                 "topic0": "0xffacc3c568d281ed9c440365e37ddd4f3cc5ce8e5ccac4b1c3b178f10c5531f3",
+                 "amount_word": 1,
+                 "source": "https://github.com/sky-ecosystem/dss-flappers/blob/master/src/"
+                           "FlapperUniV2SwapOnly.sol — event Exec(uint256 lot, uint256 bought)",
+             },
+             "sanity_reference": "July 2026: ~19.84M SKY bought for ~1.16M USDS (secondary, MEXC "
+                                 "news snippet, found 2026-09-28)",
              "expect_monthly_usd": "~27.5% of monthly NPS (Stage 2: 22.5% staking-reward "
                                    "buybacks + 5% buy-and-burn, from August 2026)",
              "wired_on": "2026-09-28"},

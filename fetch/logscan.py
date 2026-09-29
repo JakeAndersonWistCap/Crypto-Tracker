@@ -117,6 +117,20 @@ class LogScan:
             for spec in p.get("log_scans") or []:
                 self._scan(p, spec, window_days, out)
 
+    def _tx_events(self, chain_id: int, rq: dict, to_block: int) -> list:
+        """Every log of rq's event on rq's address up to to_block, incremental through the cache."""
+        topics = [rq["topic0"]]
+        sid = stream_id(chain_id, rq["address"], topics)
+        st = self.cache.load(sid)
+        start = 0 if st["scanned_to"] is None else int(st["scanned_to"]) + 1
+        new = []
+        if start <= to_block:
+            new, _ = self.explorer.get_logs(chain_id, rq["address"], topics, start, to_block)
+        events = _merge(st["events"], new)
+        if start <= to_block:
+            self.cache.save(sid, events, to_block, st.get("proven_to"))
+        return [e for e in events if int(e["blockNumber"]) <= to_block]
+
     # ------------------------------------------------------------------ one scan
     def _scan(self, p: dict, spec: dict, window_days, out) -> None:
         name, key, metric = p["name"], spec["key"], spec["metric"]
@@ -294,6 +308,48 @@ class LogScan:
                         uncounted[to] += _amount(e)
                     else:
                         counted.append(e)
+        # 4b. ONLY TRANSFERS IN A TRANSACTION THAT EMITS A NAMED EVENT (Sky, 2026-09-29).
+        # FlapperUniV2SwapOnly swaps on the Uniswap pair, so the SKY it buys reaches the Pause
+        # Proxy FROM THE PAIR — and so does any other pair -> Pause Proxy transfer. A transfer is
+        # the flapper's purchase only inside a transaction where the flapper emitted Exec(lot,
+        # bought); and the counted total must EQUAL the sum of Exec.bought, to the wei, or nothing
+        # is stored (the receiver is immutable, so every Exec's SKY lands here).
+        rq = spec.get("require_tx_event")
+        rq_note = ""
+        if rq and direction == "in":
+            try:
+                evs = self._tx_events(chain_id, rq, to_block)
+            except ExplorerRefused as e:
+                out.fail(SOURCE, name, f"{key}: the {rq['event']} events could not be read — {e}", TIER)
+                out.gap(name, metric, reason=f"the {key} scan counts only transfers inside a "
+                        f"transaction that emits {rq['event']} on {rq['address']}, and those events "
+                        f"could not be read: {e}", tiers_attempted="2",
+                        suggestion="Re-run; the events stream is cached like any other.")
+                return
+            txs = {str(e["transactionHash"]).lower() for e in evs}
+            w = int(rq["amount_word"])
+            declared = sum(int(str(e.get("data") or "0x")[2 + 64 * w: 2 + 64 * (w + 1)] or "0", 16)
+                           for e in evs)
+            kept = [e for e in counted if str(e["transactionHash"]).lower() in txs]
+            for e in counted:
+                if str(e["transactionHash"]).lower() not in txs:
+                    uncounted[topic_address(e["topics"][1])] += _amount(e)
+            counted = kept
+            got = sum(_amount(e) for e in counted)
+            if got != declared:
+                out.fail(SOURCE, name, f"{key}: counted transfers {got} wei != sum of {rq['event']} "
+                                       f"amounts {declared} wei ({len(evs)} event(s)). NOTHING STORED.", TIER)
+                out.gap(name, metric,
+                        reason=(f"the {key} scan does not reconcile to {rq['event']}: transfers "
+                                f"counted {got} wei, the events declare {declared} wei — "
+                                f"{declared - got} wei apart. Not stored."),
+                        tiers_attempted="2",
+                        suggestion="A difference means a purchase routed elsewhere or a missed "
+                                   "page; re-run once, and a second difference is real.")
+                return
+            rq_note = (f" Restricted to transactions emitting {rq['event']} on {rq['address']} "
+                       f"({len(evs)} event(s)); counted total equals the events' declared amount "
+                       f"to the wei.")
         try:
             dec = int(self.reader.erc20(chain, token).functions.decimals().call())
         except Exception as e:  # noqa: BLE001
@@ -323,7 +379,7 @@ class LogScan:
                    + (f" after refusal(s): {'; '.join(refused)}" if refused else "")
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
                      f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "
-                     f"{u_table}.")
+                     f"{u_table}." + rq_note)
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
 

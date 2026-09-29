@@ -17343,7 +17343,9 @@ def test_sky_buyback_counts_every_sky_bought_and_the_burn_relabel_never_overwrit
     scan = config.PROJECT_BY_NAME["Sky"]["log_scans"][0]
     assert scan["metric"] == "actual_buyback_tokens" and scan["direction"] == "in"
     assert scan["holders"] == [config.PROJECT_BY_NAME["Sky"]["contracts"]["pause_proxy"]["address"]]
-    assert scan["count_from"] == [config.PROJECT_BY_NAME["Sky"]["contracts"]["flapper"]["address"]]
+    # 2026-09-29: the bought SKY arrives FROM THE PAIR, inside the flapper's Exec transactions.
+    assert scan["count_from"] == ["0x2621CC0B3F3c079c1Db0E80794AA24976F0b9e3c"]
+    assert scan["require_tx_event"]["address"] == config.PROJECT_BY_NAME["Sky"]["contracts"]["flapper"]["address"]
     assert config.a4_burn_metric("Sky") == "sky_stage2_burn_tokens"
     g = _grp([("2026-09-27", "Sky", "actual_buyback_tokens", 5_000_000.0, "explorer:etherscan:flapper_purchases"),
               ("2026-09-27", "Sky", "sky_stage2_burn_tokens", 400_000.0, "chain:ethereum:burn_logs:delta")])
@@ -17839,3 +17841,78 @@ def test_polygon_and_bsc_providers_carry_the_poa_middleware():
         onion = ChainReader.make_web3(chain, "http://127.0.0.1:1").middleware_onion
         assert onion.get("poa_extradata") is ExtraDataToPOAMiddleware, chain
     assert ChainReader.make_web3("ethereum", "http://127.0.0.1:1").middleware_onion.get("poa_extradata") is None
+
+
+def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_path):
+    """Jake's run 2026-09-29: Sky A3 read 0 — the scan counted transfers FROM THE FLAPPER, but
+    FlapperUniV2SwapOnly's swap pays the receiver FROM THE PAIR. Counted now: pair -> Pause Proxy
+    transfers in a transaction where the flapper emitted Exec(lot, bought); an unrelated pair
+    transfer is not; and the counted total must equal sum(Exec.bought) to the wei."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.logcache import LogCache
+    from fetch.logscan import LogScan
+
+    spec = next(s for s in config.PROJECT_BY_NAME["Sky"]["log_scans"] if s["key"] == "flapper_purchases")
+    pair, proxy = spec["count_from"][0].lower(), spec["holders"][0].lower()
+    rq = spec["require_tx_event"]
+    e18 = 10 ** 18
+
+    def tr(tx, frm, amt, blk):
+        return {"transactionHash": tx, "logIndex": 1, "blockNumber": blk, "timeStamp": 1_790_000_000 + blk,
+                "data": hex(amt * e18), "topics": [TRANSFER_TOPIC, pad_address(frm), pad_address(proxy)]}
+
+    def ex(tx, lot, bought, blk):
+        return {"transactionHash": tx, "logIndex": 0, "blockNumber": blk, "timeStamp": 1_790_000_000 + blk,
+                "data": "0x" + format(lot * e18, "064x") + format(bought * e18, "064x"),
+                "topics": [rq["topic0"]]}
+
+    runs = []
+
+    def run(execs):
+        runs.append(1)
+        ins = [tr("0xaa", pair, 1_000_000, 10), tr("0xbb", pair, 500, 11)]   # 0xbb: no Exec
+
+        class Ex:
+            def configured(self, cid):
+                return True
+
+            def get_logs(self, cid, address, topics, start, to):
+                if address.lower() == rq["address"].lower():
+                    return execs, {"explorer": "fake", "requests": 1, "refused": []}
+                if topics[2] and topics[2].lower() == pad_address(proxy):
+                    return ins, {"explorer": "fake", "requests": 1, "refused": []}
+                return [], {"explorer": "fake", "requests": 1, "refused": []}
+
+        class Fn:
+            def __init__(self, v):
+                self.v = v
+
+            def call(self, block_identifier=None):
+                return self.v
+
+        class R:
+            def web3(self, chain):
+                return type("W", (), {"eth": type("E", (), {"block_number": 1_000})})()
+
+            def erc20(self, chain, token):
+                return type("C", (), {"functions": type("F", (), {
+                    "balanceOf": staticmethod(lambda h: Fn(1_000_500 * e18)),
+                    "decimals": staticmethod(lambda: Fn(18))})})()
+
+            def checksum(self, a):
+                return a
+
+        out = FetchOutput()
+        p = dict(config.PROJECT_BY_NAME["Sky"], log_scans=[spec])
+        LogScan(explorer=Ex(), reader=R(), cache=LogCache(tmp_path / f"run{len(runs)}"),
+                unbounded=True).run([p], None, out)
+        return out
+
+    out = run([ex("0xaa", 60_000, 1_000_000, 10)])
+    got = out.frame().query("metric == 'actual_buyback_tokens'")
+    assert got["value"].sum() == 1_000_000.0, got
+    msg = " ".join(e.message for e in out.log)
+    assert "Exec(uint256,uint256)" in msg and "to the wei" in msg
+    bad = run([ex("0xaa", 60_000, 999_999, 10)])
+    assert bad.frame().query("metric == 'actual_buyback_tokens'").empty
+    assert "does not reconcile" in bad.gaps[-1]["reason"]
