@@ -14829,7 +14829,15 @@ VALIDATOR_YIELD = {
     # between from the stored stock.
     "Hyperliquid": {"method": "issuance_share", "issuance_metric": "emissions_tokens",
                     "stake_metric": "locked_tokens", "share": 1.0,
-                    "note": "rewards paid = fall in tokenDetails.futureEmissions, over staked HYPE"},
+                    "note": "rewards paid = fall in tokenDetails.futureEmissions, over staked HYPE",
+                    # THE CROSS-CHECK (2026-09-29): Hyperliquid's docs — reward rate inversely
+                    # proportional to sqrt(total staked), ~2.37%/yr at 400M staked, accrued every
+                    # minute and paid daily from the future-emissions reserve. At 441.7M staked
+                    # that scales to ~2.26% (~27.3K HYPE/day). The first observed day read 13,964
+                    # HYPE (~1.15%); one day is not a rate — watch it converge or not.
+                    "published_rate": {"at_staked": 400_000_000, "rate": 0.0237, "scales_as": "1/sqrt(staked)",
+                                       "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/staking",
+                                       "read": "2026-09-29 (via search)"}},
     # B2 (2026-09-28): LINK paid out of the staking v0.2 reward vault (log_scans.
     # staking_rewards_out), annualised, over staked principal (both pools' getTotalPrincipal).
     # Staking secures the oracle network, not a chain — archetype 1's validator column is the

@@ -297,7 +297,14 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tu
     covered_from = max(start, s.index.min())
     if covered_from > end:
         return 0, span
-    return min(int((end - covered_from).days), span), span
+    # A FIGURE IN THE WINDOW HAS COVERED AT LEAST ONE DAY (2026-09-29). A differenced flow is
+    # dated the day it was read, so a series whose first row IS the asof date measured 0 days
+    # here — and every covered-days annualisation fell back to x365/90: Hyperliquid's first
+    # 13,964 HYPE of rewards read as a 0.013% validator yield instead of ~1.2%.
+    days = int((end - covered_from).days)
+    if days == 0 and ((s.index > start) & (s.index <= end)).any():
+        days = 1
+    return min(days, span), span
 
 
 # =========================================================================================

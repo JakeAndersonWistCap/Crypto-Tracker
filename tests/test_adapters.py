@@ -17964,3 +17964,18 @@ def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_p
     bad = run([ex("0xaa", 60_000, 999_999, 10)])
     assert bad.frame().query("metric == 'actual_buyback_tokens'").empty
     assert "does not reconcile" in bad.gaps[-1]["reason"]
+
+
+def test_a_first_row_dated_the_asof_day_covers_one_day_not_zero():
+    """Jake's run 2026-09-29: Hyperliquid's first rewards day (13,964.04 HYPE, dated the run day)
+    measured 0 covered days, so the validator yield fell back to x365/90 and read 0.013%. A window
+    holding a figure has covered at least one day; over one day it annualises to ~5.1M/yr."""
+    import build_workbook as bw
+
+    asof = pd.Timestamp("2026-09-29")
+    s = pd.Series([13_964.04], index=[asof])
+    assert bw._window_coverage(s, asof - pd.Timedelta(days=90), asof) == (1, 90)
+    assert bw._window_coverage(pd.Series(dtype=float), asof - pd.Timedelta(days=90), asof) == (0, 90)
+    long = pd.Series([1.0] * 10, index=pd.date_range("2026-09-19", "2026-09-28"))
+    assert bw._window_coverage(long, asof - pd.Timedelta(days=90), asof)[0] == 10, "unchanged otherwise"
+    assert abs(13_964.04 * 365 / 441_700_000 - 0.01154) < 1e-4
