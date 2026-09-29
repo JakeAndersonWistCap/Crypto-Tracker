@@ -11089,7 +11089,12 @@ PROJECTS = [
                          "none": "NOT BUYBACK — no swap in the transaction",
                          "swap_known": "BUYBACK, UNCOUNTED — a known flapper's purchase whose Exec the scan did not see",
                          "swap_unknown": "UNDETERMINED — a swap paying the Pause Proxy from a sender config does not name"},
-                     "show_largest": 5},
+                     "show_largest": 5,
+                     # CLOSED 2026-09-29 (Jake, from the scan's own line on his run): the 990M SKY is
+                     # ONE LP burn to the Pause Proxy on 2025-02-24 — NOT buyback, and 0 of it falls
+                     # in the last 365 days. Nothing to add to actual_buyback_tokens.
+                     "closed": {"on": "2026-09-29", "by": "Jake",
+                                "finding": "single LP burn 2025-02-24; not buyback; 0 in the last 365 days"}},
              },
              "sanity_reference": "July 2026: ~19.84M SKY bought for ~1.16M USDS (secondary, MEXC "
                                  "news snippet, found 2026-09-28)",
@@ -12806,6 +12811,9 @@ PROJECTS = [
             "units_check": {"median_between": (100_000, 500_000),
                             "source": "Pendle staking page, Jake 2026-09-29: past epochs ~170K-350K PENDLE"},
             "apr_field": "lastEpochApr", "apr_metric": "staking_apr_published",
+            # lastEpochApr read 0 on Jake's run of 2026-09-29: a 0 is replaced by the last COMPLETE
+            # epoch's sPendleHistoricalData.aprs entry, or the cross-check reads unavailable.
+            "aprs_field": "aprs", "epoch_days": 14,
         },
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],

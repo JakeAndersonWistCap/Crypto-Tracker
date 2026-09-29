@@ -8,8 +8,12 @@ it is classified from the same aggregation the workbook uses (build_workbook.agg
                         where one exists (named), or "no independent reference exists"
     MATURING            correct, window still filling — with the date it is full
     WAITING ON A DATE   blocked or empty until a named date
-    NEEDS JAKE          the exact input (a manual row, a probe, a Review Queue item)
+    NEEDS JAKE          an input or decision only Jake can supply (the exact one)
+    N/A / ACCEPTED LIMIT  a recorded decision (by design, answered, superseded, closed)
     BUG                 fits none of the above: listed at the end with the row's own reason
+
+SCOPE is portfolio.txt, as the workbook builds (World Mobile parked); the projects outside it are
+one PARKED line — not fetched, so stale by design. A Review Queue flag is informational.
 
     python completeness_report.py                 the table, then the BUG list
     python completeness_report.py --md FILE       also write it as Markdown (for the sign-off page)
@@ -28,13 +32,74 @@ import config
 HEADLINE = ("price_usd", "circulating_supply", "fees_usd", "revenue_usd", "holders_revenue_usd",
             "customer_revenue_usd", "actual_buyback_tokens", "actual_buyback_usd",
             "gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "pool_release_tokens",
-            "locked_tokens", "staking_yield_pct")
+            "locked_tokens", "staking_yield_pct", "settlement_volume_annual_usd",
+            "net_protocol_surplus_usd")
 PARKED = {"World Mobile": "PARKED (Jake, 2026-09-29): no further work until he reopens it"}
 FULL_DAYS = {"price_usd": 365}             # prices value every row of every window, Y1 included
 Q0_DAYS = 90
 _DATE = re.compile(r"\b(20\d\d-\d\d-\d\d)\b")
 WITHHELD = ("orphaned", "withdrawn", "suppressed", "disputed", "blocked", "measuring_point_changed",
             "implausible_delta", "unreconciled_flow", "refuted", "out_of_bounds")
+
+# ===== RECORDED DECISIONS, SO A SETTLED CELL NEVER READS AS A BUG. Jake, 2026-09-29. =====
+# A status that is a recorded decision maps to COMPLETE, N/A or ACCEPTED LIMIT — never BUG. The
+# generic records are read from config (not_applicable, UNAVAILABLE closures, a closure that
+# renders 0); these are the ones settled in review that have no single config field, each with
+# the record it rests on. NEEDS JAKE is ONLY an input or decision Jake alone can supply.
+_SUPERSEDED = "N/A — the derived d(circulating) - d(total) route is SUPERSEDED: "
+DECISIONS = {
+    ("GEODNET", "gross_issuance_tokens"): (
+        "N/A", "by design: emission is per-miner on a halving schedule, so no supply delta recovers "
+               "it (issuance_derivation suppressed); the mining-wallet release is measured as "
+               "pool_release_tokens, the issuance basis"),
+    ("GEODNET", "emissions_tokens"): (
+        "N/A", "answered: not restated from pool_release_tokens (config.EMISSIONS_ALIAS_DECLINED, "
+               "decided 2026-09-24)"),
+    ("Maple", "emissions_tokens"): (
+        "N/A", "answered: not restated from pool_release_tokens (config.EMISSIONS_ALIAS_DECLINED, "
+               "decided 2026-09-24)"),
+    ("Near", "emissions_tokens"): (
+        "N/A", "the issuance route: NEAR's emission is gross_issuance_tokens (declared 5% protocol "
+               "rule, header-supply cross-check)"),
+    ("Pendle", "emissions_tokens"): (
+        "N/A", "the issuance route: Pendle's emission is reported as gross_issuance_tokens"),
+    ("Chainlink", "pool_release_tokens"): (
+        "N/A", _SUPERSEDED + "the RewardVault emission rate (reward_emission_rate_annual) supplies "
+                            "the release; CoinGecko circulating does not update"),
+    ("Hyperliquid", "pool_release_tokens"): (
+        "N/A", _SUPERSEDED + "HyperCore futureEmissions (future_emissions_tokens) supplies it; "
+                            "CoinGecko circulating does not update"),
+    ("Aethir", "pool_release_tokens"): (
+        "N/A", _SUPERSEDED + "the declared emission schedule supplies emissions_tokens; CoinGecko "
+                            "circulating does not update"),
+    ("Maple", "pool_release_tokens"): (
+        "ACCEPTED LIMIT", "no route: CoinGecko circulating does not update, so d(circulating) - "
+                          "d(total) is flat, and no measured release wallet exists"),
+    ("GEODNET", "locked_tokens"): (
+        "NEEDS JAKE", "~3M GEOD locked: the manual row in manual_overrides.csv (value, source, date)"),
+    ("Ethereum", "settlement_volume_annual_usd"): (
+        "NEEDS JAKE", "annualised settlement volume: The Block's adjusted on-chain volume, a manual "
+                      "quarterly row in manual_overrides.csv"),
+    ("Sky", "net_protocol_surplus_usd"): (
+        "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
+                      "publishes it"),
+}
+# WAITING ON A SERIES THAT NEEDS n DAILY READINGS (Ethereum's yield: a week of d(Eth2Staking)).
+WAIT_ON_SERIES = {
+    ("Ethereum", "staking_yield_pct"): {
+        "series": "consensus_rewards_cumulative", "days": 7,
+        "why": "the Eth2Staking consensus series needs a week of daily readings; beaconcha.in is a "
+               "monthly cross-check only"},
+}
+
+
+def portfolio_scope() -> tuple[list[dict], list[str]]:
+    """(in scope, parked names): portfolio.txt's names, as the workbook builds; all if absent."""
+    names, _ = config.read_portfolio(config.PORTFOLIO_FILE)
+    if not names:
+        return list(config.PROJECTS), []
+    return ([config.PROJECT_BY_NAME[n] for n in names],
+            [p["name"] for p in config.PROJECTS if p["name"] not in names])
 
 
 def headline_metrics(p: dict) -> list[str]:
@@ -66,51 +131,69 @@ def reference(p: dict, metric: str, row: dict) -> str:
     return "; ".join(refs)
 
 
-def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timestamp) -> tuple[str, str]:
+def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timestamp,
+             firsts: dict | None = None) -> tuple[str, str]:
     name, status = p["name"], str(row.get("status") or "missing")
     note = str(row.get("note") or "")
     kind = (config.METRICS.get(metric) or {}).get("kind")
     future = sorted(d for d in _DATE.findall(note) if d > str(asof.date()))
+    decided = DECISIONS.get((name, metric))
+    if decided:
+        return decided
+    wait = WAIT_ON_SERIES.get((name, metric))
+    if wait:
+        f0 = (firsts or {}).get((name, wait["series"]))
+        if f0 is None or (asof - pd.Timestamp(f0)).days < wait["days"]:
+            when = (str((pd.Timestamp(f0) + pd.Timedelta(days=wait["days"])).date()) if f0
+                    else f"{wait['days']} days after the first {wait['series']} reading")
+            return "WAITING ON A DATE", f"{when} — {wait['why']}"
     if status == "n/a":
         return "N/A", note.split(" | ")[0] or "not applicable to this project"
+    closed = config.unavailable_for(name, metric)
+    if closed and status != "ok":
+        return "ACCEPTED LIMIT", f"closed {closed.get('closed_on', '')}: {closed.get('summary', '')[:220]}"
     if status == "waiting" or (status in WITHHELD and future):
         return "WAITING ON A DATE", (future[0] + " — " if future else "") + note[:220]
     # BLOCKED ONLY UNTIL ITS READINGS COVER THE WINDOW: correct, still filling (a guard, not a fault)
     if status in WITHHELD and re.search(r"waiting for .{0,120}cover|cover(s)? the window|unequal coverage",
                                         note, re.I):
         return "MATURING", f"blocked until its readings cover the window: {note[:200]}"
-    manual = (config.is_manual_quarterly(name, metric) or "manual_overrides" in note
-              or "check_offline_items" in note)
-    if status in ("missing", "gap") and manual:
-        return "NEEDS JAKE", note[:260] or f"a manual row for {metric} in manual_overrides.csv"
+    if status in ("missing", "gap") and config.is_manual_quarterly(name, metric):
+        return "NEEDS JAKE", f"a manual quarterly row for {metric} in manual_overrides.csv"
+    # A REVIEW QUEUE FLAG IS INFORMATIONAL (a change threshold, a partial-coverage note): the
+    # figure is classified on its own merits and the flag rides along.
+    flag = ""
     if status == "review":
-        return "NEEDS JAKE", f"a Review Queue item holds this figure: {note[:220]}"
+        status, flag = "ok", " | informational: flagged in the Review Queue"
     if status != "ok":
         return "BUG", f"status {status}: {note[:260]}"
     need = FULL_DAYS.get(metric, Q0_DAYS)
-    if kind == "flow" and row.get("q0_basis", "").startswith("3 complete months"):
+    if kind == "flow" and str(row.get("q0_basis") or "").startswith("3 complete months"):
         cov = row.get("q0_covered_days")
         if cov is not None and not pd.isna(cov) and cov < 89:
             last = asof.to_period("M") - 1
-            return "MATURING", f"{int(cov)} of the Q0 months' days held; full with {last + 3} complete"
+            return "MATURING", f"{int(cov)} of the Q0 months' days held; full with {last + 3} complete" + flag
     elif first:
         age = (asof - pd.Timestamp(first)).days + 1
         if age < need:
             full = (pd.Timestamp(first) + pd.Timedelta(days=need - 1)).date()
-            return "MATURING", f"{age} of {need} days since {first}; full on {full}"
+            return "MATURING", f"{age} of {need} days since {first}; full on {full}" + flag
     ref = reference(p, metric, row)
+    if closed:                                  # a closure that renders a measured 0 (Fluid)
+        ref = f"{note[:200]} (config.UNAVAILABLE, closed {closed.get('closed_on', '')})"
     why = str(row.get("why_amber") or "")
-    return "COMPLETE", (ref or "no independent reference exists") + (f" | caveat: {why[:160]}" if
-                                                                     row.get("confidence") == "AMBER" and why else "")
+    caveat = f" | caveat: {why[:160]}" if row.get("confidence") == "AMBER" and why and not closed else ""
+    return "COMPLETE", (ref or "no independent reference exists") + caveat + flag
 
 
-def report(data: pd.DataFrame, long: pd.DataFrame, asof: pd.Timestamp, only: str | None = None) -> list[tuple]:
+def report(data: pd.DataFrame, long: pd.DataFrame, asof: pd.Timestamp, only: str | None = None,
+           scope: tuple | None = None) -> list[tuple]:
     firsts = (long.groupby(["project", "metric"])["date"].min().dt.strftime("%Y-%m-%d").to_dict()
               if not long.empty else {})
     rows = {(r["project"], r["metric"]): r for r in data.to_dict("records")}
+    projects, parked = scope or portfolio_scope()
     out = []
-    from build_workbook import scoped_projects
-    for p in scoped_projects():
+    for p in projects:
         if only and p["name"] != only:
             continue
         if p["name"] in PARKED:
@@ -118,8 +201,11 @@ def report(data: pd.DataFrame, long: pd.DataFrame, asof: pd.Timestamp, only: str
             continue
         for m in headline_metrics(p):
             row = rows.get((p["name"], m)) or {"status": "missing"}
-            verdict, detail = classify(p, m, row, firsts.get((p["name"], m)), asof)
+            verdict, detail = classify(p, m, row, firsts.get((p["name"], m)), asof, firsts)
             out.append((p["name"], m, verdict, detail))
+    if parked and not only:
+        out.append((f"{len(parked)} not in portfolio.txt", "*", "PARKED",
+                    "not fetched, so stale by design: " + ", ".join(parked)))
     return out
 
 
@@ -129,16 +215,18 @@ def main(argv=None) -> int:
     ap.add_argument("--project")
     ap.add_argument("--md", metavar="FILE")
     a = ap.parse_args(argv)
-    from build_workbook import aggregate
+    import build_workbook as bw
     from store import Store
+    scope = portfolio_scope()
+    bw._SCOPE = list(scope[0])                  # the workbook's own portfolio scope, same views
     st = Store(a.db)
     try:
         long = st.load_long()
         asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
-        data = aggregate(long, st.fetch_status(), asof, gaps=st.gap_report(), review=st.review_queue())
+        data = bw.aggregate(long, st.fetch_status(), asof, gaps=st.gap_report(), review=st.review_queue())
     finally:
         st.close()
-    table = report(data, long, asof, a.project)
+    table = report(data, long, asof, a.project, scope)
     counts = pd.Series([v for _, _, v, _ in table]).value_counts().to_dict()
     lines = [f"COMPLETENESS as of {asof.date()} — " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))]
     current = None

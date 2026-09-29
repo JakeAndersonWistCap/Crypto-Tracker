@@ -107,6 +107,43 @@ class PendleEpochs:
     def __init__(self, get=None):
         self.get = get or _get
 
+    @staticmethod
+    def _last_complete_apr(name, spec, payload, apr_key, raw, now, out):
+        """lastEpochApr read 0 (Jake's run, 2026-09-29): a 0 APR is not shown as Pendle's own figure.
+
+        The raw value is logged with whether the latest epoch in sPendleHistoricalData is still
+        in progress (its start + epoch_days is after now). The last COMPLETE epoch's `aprs` entry
+        is stored instead, dated that epoch; where there is none above 0, nothing is stored and
+        the cross-check reads unavailable."""
+        hist = payload.get(spec["history_key"]) or {}
+        ts, aprs = hist.get(spec["time_field"]) or [], hist.get(spec.get("aprs_field", "aprs")) or []
+        days = int(spec.get("epoch_days", 14))
+        epochs = []
+        for t, a in zip(ts, aprs):
+            t = int(float(t))
+            start = pd.Timestamp(t, unit="s" if t < 10**11 else "ms")
+            epochs.append((start, start + pd.Timedelta(days=days), a))
+        partial = bool(epochs) and epochs[-1][1] > pd.Timestamp.now("UTC").tz_localize(None)
+        done = [(s0, e, a) for s0, e, a in epochs if e <= pd.Timestamp.now("UTC").tz_localize(None)]
+        what = (f"{apr_key} reads {raw!r} (raw); the latest epoch "
+                + (f"started {epochs[-1][0].date()} and is IN PROGRESS until {epochs[-1][1].date()}"
+                   if partial else (f"started {epochs[-1][0].date()} and is complete" if epochs
+                                    else "is not in the payload")))
+        try:
+            last = next(((s0, float(a)) for s0, e, a in reversed(done) if float(a) > 0), None)
+        except (TypeError, ValueError):
+            last = None
+        if last is None:
+            out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{spec['apr_metric']}: {what}; no complete "
+                                                           f"epoch with an APR above 0 — the cross-check is "
+                                                           f"UNAVAILABLE this run, not 0", TIER))
+            return
+        s0, a = last
+        out.add(point(name, spec["apr_metric"], a,
+                      f"{SOURCE}:{spec['history_key']}.aprs[last complete epoch]", TIER, s0.normalize()),
+                SOURCE, name, f"{spec['apr_metric']}={a} — {what}; stored the last COMPLETE epoch's APR "
+                              f"(started {s0.date()}) instead of 0", TIER)
+
     def run(self, projects: list[dict], window_days, out):
         from .scrape import robots_verdict
         now = today()
@@ -159,8 +196,11 @@ class PendleEpochs:
                 except (TypeError, ValueError):
                     out.fail(SOURCE, name, f"{spec['apr_metric']}: {apr_key}={apr!r} is not a number", TIER)
                     continue
-                out.add(point(name, spec["apr_metric"], v, f"{SOURCE}:{apr_key}", TIER, now), SOURCE, name,
-                        f"{spec['apr_metric']}={v} ({apr_key}, Pendle's own APR; a cross-check)", TIER)
+                if v > 0:
+                    out.add(point(name, spec["apr_metric"], v, f"{SOURCE}:{apr_key}", TIER, now), SOURCE, name,
+                            f"{spec['apr_metric']}={v} ({apr_key}, Pendle's own APR; a cross-check)", TIER)
+                else:
+                    self._last_complete_apr(name, spec, payload, apr_key, apr, now, out)
             elif apr_key:
                 out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{apr_key} absent; payload keys "
                                                              f"{sorted(payload)[:12]}", TIER))

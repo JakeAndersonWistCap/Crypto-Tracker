@@ -1216,6 +1216,23 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                         f"armed and correctly idle; it starts comparing the moment the primary "
                         f"becomes reportable."
                         + (f" | {prior_note}" if prior_note else ""))
+                # A HALTED PROGRAMME READS 0, NOT "missing" (Fluid, Jake 2026-09-29). A closure
+                # that records renders_as_zero_since (config.UNAVAILABLE) makes every window that
+                # starts on or after that date a measured 0; a window reaching back before it
+                # stays empty, because that history is unmeasured, not zero.
+                closed = config.unavailable_for(name, metric) or {}
+                zero_from = closed.get("renders_as_zero_since")
+                if zero_from and not na_note and m["kind"] == "flow":
+                    z = pd.Timestamp(zero_from)
+                    spans = {"now": (short, 0), "m1": (2 * short, short), "y1": (365, 0),
+                             **{q: (period * (i + 1), period * i) for i, q in enumerate(["q0", "q1", "q2", "q3"])}}
+                    for w, (back, fwd) in spans.items():
+                        row[w] = 0.0 if asof - pd.Timedelta(days=back) >= z else None
+                    row["status"], row["q0_events"] = "ok", 0
+                    row["q0_covered_days"] = period if row["q0"] == 0.0 else None
+                    row["source"] = f"closed:{closed.get('closed_on', '')}"
+                    row["note"] = (f"0 — {closed.get('summary', '')[:200]} Windows starting before "
+                                   f"{zero_from} are unmeasured and left empty.")
                 row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
                 continue

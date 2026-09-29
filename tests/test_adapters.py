@@ -5110,7 +5110,8 @@ def test_the_maple_cross_check_is_ARMED_and_its_floor_catches_an_unscaled_figure
 def test_data_tab_distinguishes_closed_missing_from_an_open_one():
     """'missing' alone does not say whether nobody has looked, or the search was chased and closed.
 
-    Fluid's actual_buyback_tokens/usd are a real example: the Reserve address was never published
+    Plume's fees_usd is the example now (Fluid's closure renders a measured 0 since 2026-09-29 —
+    see below). Originally: Fluid's actual_buyback_tokens/usd: the Reserve address was never published
     anywhere Fluid has written, that search is recorded as CLOSED in config.UNAVAILABLE, and
     fetch/gaps.py deliberately keeps closed items OFF the Gap Report — so the cell's status ends
     up 'missing' (no data, no gap row) rather than 'gap'. The A3 tab already renders this
@@ -5124,7 +5125,11 @@ def test_data_tab_distinguishes_closed_missing_from_an_open_one():
                                   "is_manual", "entered_on"])
     data = bw.aggregate(empty, pd.DataFrame(), pd.Timestamp("2026-09-18"),
                         gaps=pd.DataFrame(), review=pd.DataFrame())
-    row = data[(data.project == "Fluid") & (data.metric == "actual_buyback_tokens")].iloc[0]
+    # FLUID'S PROGRAMME HALTED 2026-05-11 (Jake, 2026-09-29): its closure renders 0 over every
+    # window starting after the halt, and is no longer a 'missing' cell
+    fl = data[(data.project == "Fluid") & (data.metric == "actual_buyback_tokens")].iloc[0]
+    assert fl["status"] == "ok" and fl["q0"] == 0.0 and "PROGRAMME HALTED" in fl["note"]
+    row = data[(data.project == "Plume") & (data.metric == "fees_usd")].iloc[0]
     assert row["status"] == "missing", (
         f"precondition: this must reproduce the reported state, got {row['status']!r}")
 
@@ -5134,15 +5139,14 @@ def test_data_tab_distinguishes_closed_missing_from_an_open_one():
 
     status_col = bw.DATA_COLS.index("status") + 1
     r = next(i for i in range(2, ws.max_row + 1)
-             if ws.cell(row=i, column=bw.DATA_COLS.index("project") + 1).value == "Fluid"
-             and ws.cell(row=i, column=bw.DATA_COLS.index("metric") + 1).value == "actual_buyback_tokens")
+             if ws.cell(row=i, column=bw.DATA_COLS.index("project") + 1).value == "Plume"
+             and ws.cell(row=i, column=bw.DATA_COLS.index("metric") + 1).value == "fees_usd")
     cell = ws.cell(row=r, column=status_col)
     assert cell.value == "missing"
     assert cell.comment is not None, "a closed-and-documented 'missing' must carry a comment saying so"
     assert "CLOSED" in cell.comment.text and "not an open gap" in cell.comment.text
-    # the closure's reason changed on 2026-09-24 (the programme HALTED); the test is that the
-    # Data tab says CLOSED and carries the closure's own words, whatever they are
-    assert "PROGRAMME HALTED" in cell.comment.text
+    # the Data tab says CLOSED and carries the closure's own words
+    assert "DefiLlama carries no fee series for Plume" in cell.comment.text
 
     # AND THE NEGATIVE: an ordinary applicable-but-genuinely-unsourced metric gets no such
     # comment — only a metric matching config.UNAVAILABLE does.
@@ -15048,7 +15052,7 @@ def test_chainlink_withdrawn_is_a_leftover_retired_route_row_not_the_scan_source
         return o[(o.project == "Chainlink") & (o.metric == "actual_buyback_tokens")].iloc[0]
 
     before = cell(hist)
-    assert before["status"] == "withdrawn" and before["now"] is None
+    assert before["status"] == "withdrawn" and pd.isna(before["now"])
     assert before["source"] == "chain:ethereum:reserve:delta"
     # orphan_cleanup.sql AK removes exactly the retired-route rows; then the scan renders.
     after = cell(hist[hist.source != "chain:ethereum:reserve:delta"])
@@ -15106,7 +15110,7 @@ def test_sky_burn_address_balance_is_answered_with_the_two_spell_burns_named():
     o = bw.aggregate(hist, pd.DataFrame(), asof)
     for m in ("burn_address_balance", "gross_burn_tokens"):
         r = o[(o.project == "Sky") & (o.metric == m)].iloc[0]
-        assert r["status"] == "n/a" and r["now"] is None, (m, r["status"], r["now"])
+        assert r["status"] == "n/a" and pd.isna(r["now"]), (m, r["status"], r["now"])
         assert r["note"].startswith("ANSWERED, NOT OPEN — Five-way split decided"), r["note"]
         assert ("429.15M is not a single figure — 2,860,943.76 genuine Stage 2 burn + "
                 "426,292,860.23 unrelated 2025 emissions-offset correction from the same spell, "
@@ -19044,14 +19048,91 @@ def test_completeness_report_gives_every_headline_cell_one_status():
                   source="explorer:flapper_purchases") for d in pd.date_range("2026-06-01", "2026-09-27")]
     long = pd.DataFrame(rows)
     data = bw.aggregate(long, pd.DataFrame(), asof)
-    table = cr.report(data, long, asof)
+    table = cr.report(data, long, asof, scope=(list(config.PROJECTS), []))
     got = {(n, m): (v, d) for n, m, v, d in table}
     assert got[("World Mobile", "*")][0] == "PARKED"
     v, d = got[("Sky", "price_usd")]
     assert v == "MATURING" and "full on 2027-05-31" in d, d                 # prices need 365
     v, d = got[("Sky", "actual_buyback_tokens")]
     assert v == "COMPLETE" and "balanceOf to the wei" in d, d
-    assert all(v in ("COMPLETE", "MATURING", "WAITING ON A DATE", "NEEDS JAKE", "BUG", "N/A", "PARKED")
-               for _, _, v, _ in table)
+    assert all(v in ("COMPLETE", "MATURING", "WAITING ON A DATE", "NEEDS JAKE", "BUG", "N/A", "PARKED",
+                     "ACCEPTED LIMIT") for _, _, v, _ in table)
     assert any(v == "BUG" and "status missing" in d for n, m, v, d in table if n == "Sky"), \
         "an empty headline cell with no manual route is a bug, listed"
+
+
+def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
+    """Jake, 2026-09-29: scope is portfolio.txt (the rest one PARKED line); a recorded decision is
+    COMPLETE, N/A or ACCEPTED LIMIT, never BUG; NEEDS JAKE is only his three inputs; a Review Queue
+    flag is informational; Fluid's halted buyback renders 0 and is COMPLETE; Ethereum's yield
+    waits on a week of Eth2Staking readings."""
+    import build_workbook as bw
+    import completeness_report as cr
+    asof = pd.Timestamp("2026-09-29")
+    names = ["Ethereum", "Near", "Chainlink", "Hyperliquid", "Uniswap", "Aerodrome", "Sky", "Pendle",
+             "Fluid", "Ether.fi", "Morpho", "Maple", "GEODNET", "World Mobile", "Aethir", "Plume"]
+    scope = ([config.PROJECT_BY_NAME[n] for n in names], [p["name"] for p in config.PROJECTS if p["name"] not in names])
+    base = {"tier": 1, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    long = pd.DataFrame([dict(base, project="Ethereum", metric="consensus_rewards_cumulative",
+                              date=pd.Timestamp("2026-09-30") - pd.Timedelta(days=1), value=1.0,
+                              source="etherscan:ethsupply2.Eth2Staking")])
+    data = bw.aggregate(long, pd.DataFrame(), asof)
+    table = cr.report(data, long, asof, scope=scope)
+    got = {(n, m): (v, d) for n, m, v, d in table}
+    parked = [(n, d) for n, m, v, d in table if v == "PARKED" and n != "World Mobile"]
+    assert len(parked) == 1 and parked[0][0] == f"{len(scope[1])} not in portfolio.txt"
+    assert not any(n in scope[1] for n, _, _, _ in table), "a parked project has no rows"
+    for k in (("GEODNET", "gross_issuance_tokens"), ("GEODNET", "emissions_tokens"), ("Maple", "emissions_tokens"),
+              ("Near", "emissions_tokens"), ("Pendle", "emissions_tokens"), ("Chainlink", "pool_release_tokens"),
+              ("Hyperliquid", "pool_release_tokens"), ("Aethir", "pool_release_tokens")):
+        assert got[k][0] == "N/A", (k, got[k])
+    assert "SUPERSEDED" in got[("Chainlink", "pool_release_tokens")][1]
+    assert got[("Maple", "pool_release_tokens")][0] == "ACCEPTED LIMIT"
+    assert got[("Plume", "fees_usd")][0] == "ACCEPTED LIMIT", got[("Plume", "fees_usd")]
+    for m in ("actual_buyback_tokens", "actual_buyback_usd"):
+        v, d = got[("Fluid", m)]
+        assert v == "COMPLETE" and "PROGRAMME HALTED 2026-05-11" in d, (m, v, d)
+    v, d = got[("Ethereum", "staking_yield_pct")]
+    assert v == "WAITING ON A DATE" and d.startswith("2026-10-06"), d
+    # (a manual quarterly row that is actually MISSING stays NEEDS JAKE; this store is empty)
+    jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
+    assert jake <= {("GEODNET", "locked_tokens"), ("Ethereum", "settlement_volume_annual_usd"),
+                    ("Sky", "net_protocol_surplus_usd")}
+    assert got[("GEODNET", "locked_tokens")][0] == "NEEDS JAKE" and "~3M" in got[("GEODNET", "locked_tokens")][1]
+    # a Review Queue flag is informational, never NEEDS JAKE
+    v, d = cr.classify(config.PROJECT_BY_NAME["Uniswap"], "fees_usd", {"status": "review", "note": "x"},
+                       "2025-01-01", asof)
+    assert v == "COMPLETE" and "informational" in d
+    # and the workbook itself renders Fluid's halted buyback as 0 over windows after the halt
+    f = data.set_index(["project", "metric"]).loc[("Fluid", "actual_buyback_tokens")]
+    assert f["q0"] == 0.0 and f["now"] == 0.0 and pd.isna(f["y1"])
+
+
+def test_pendle_published_apr_of_zero_falls_back_to_the_last_complete_epoch():
+    """Jake, 2026-09-29: lastEpochApr read 0. The raw value is logged with whether the latest epoch
+    is still in progress; the last complete epoch's APR is stored instead, or nothing (the
+    cross-check reads unavailable), never 0."""
+    import os
+    from fetch.base import FetchOutput
+    from fetch.pendle_epochs import PendleEpochs
+    os.environ["TOKEN_METRICS_IGNORE_ROBOTS"] = "1"
+    try:
+        p = config.PROJECT_BY_NAME["Pendle"]
+        now = pd.Timestamp.now("UTC").tz_localize(None)
+        ts = [int((now - pd.Timedelta(days=14 * (3 - i) + 2)).timestamp()) for i in range(4)]
+        amounts = [str(a * 10**18) for a in (170_000, 350_000, 240_000, 82_545)]
+        payload = {"lastEpochApr": 0, "sPendleHistoricalData": {
+            "timestamps": ts, "buybackAmounts": amounts, "aprs": [0.021, 0.025, 0.0231, 0.0]}}
+        out = FetchOutput()
+        PendleEpochs(get=lambda url: payload).run([p], None, out)
+        apr = out.frame().query("metric == 'staking_apr_published'")
+        assert len(apr) == 1 and apr["value"].iloc[0] == 0.0231
+        msg = " ".join(e.message for e in out.log)
+        assert "lastEpochApr reads 0 (raw)" in msg and "IN PROGRESS" in msg and "last COMPLETE epoch" in msg
+        none = dict(payload, sPendleHistoricalData=dict(payload["sPendleHistoricalData"], aprs=[0, 0, 0, 0]))
+        out2 = FetchOutput()
+        PendleEpochs(get=lambda url: none).run([p], None, out2)
+        assert out2.frame().query("metric == 'staking_apr_published'").empty
+        assert "UNAVAILABLE this run, not 0" in " ".join(e.message for e in out2.log)
+    finally:
+        os.environ.pop("TOKEN_METRICS_IGNORE_ROBOTS", None)
