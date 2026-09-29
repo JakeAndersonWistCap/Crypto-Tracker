@@ -2239,6 +2239,10 @@ def _a1_headline(R: Refs) -> list[tuple]:
             decl = f"({rate}*{supply})"
             val = f"{decl}*{share}/{stake}"
             return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),{val},{NA})")
+        if spec["method"] == "rate_share":
+            # Chainlink (2026-09-29): an emission RATE (tokens/yr) over stake — no annualising.
+            rate, stake = R.D(r, spec["rate_metric"], "now"), R.D(r, spec["stake_metric"], "now")
+            return calc(f"IF(AND(ISNUMBER({rate}),ISNUMBER({stake})),{rate}*{spec.get('share', 1.0)}/{stake},{NA})")
         if spec["method"] == "issuance_share":
             share = spec.get("share")
             if share is None:
@@ -2254,7 +2258,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
         ("VALIDATOR STAKING YIELD (annual) — securing the chain, NOT a protocol revenue share",
          vyield, FMT_PCT, "calc", True,
          {"metric_fn": lambda n: {"Ethereum": "staking_yield_pct", "Near": "total_supply",
-                                  "Chainlink": "emissions_tokens"}.get(n)}),
+                                  "Chainlink": "reward_emission_rate_annual"}.get(n)}),
         ("Settlement volume, annualised ($) — The Block adjusted, manual quarterly",
          lambda r, p: pull(R.D(r, "settlement_volume_annual_usd", "now")) if "settlement_volume_annual_usd"
          in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_annual_usd"}),

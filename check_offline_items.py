@@ -1159,6 +1159,49 @@ def plume_growthepie():
     print("  PASTE BACK the latest line and the site's figure for the same date.")
 
 
+def chainlink_reward_rates():
+    """2026-09-29: Chainlink staking v0.2 yield from the RewardVault's own emission rates.
+
+    getRewardBuckets() (RewardVault.sol 1.0.0 layout: operatorBase, communityBase,
+    operatorDelegated; each emissionRate Juels/s, rewardDurationEndsAt, vestedRewardPerToken) and
+    each pool's getTotalPrincipal(). Community yield = communityBase / community principal;
+    operator yield = (operatorBase + operatorDelegated) / operator principal. Compare with
+    Chainlink's published 4.32% community effective and 4.5% operator base (+ delegation)."""
+    head("CHAINLINK — staking v0.2 reward rates from the RewardVault")
+    from fetch.reward_vault import SEL_GET_REWARD_BUCKETS, SEL_TYPE_AND_VERSION, decode_buckets, decode_string
+    from eth_utils import keccak                          # noqa: PLC0415
+    sel_principal = "0x" + keccak(text="getTotalPrincipal()").hex()[:8]
+    vault = "0x996913c8c08472f584ab8834e925b06D0eb1D813"
+    pools = {"community": "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e",
+             "operator": "0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5"}
+    word, _ = eth_call(vault, SEL_TYPE_AND_VERSION)
+    if not word:
+        print("  UNREACHABLE")
+        return
+    print(f"  typeAndVersion: {decode_string(word)}")
+    raw, _ = eth_call(vault, SEL_GET_REWARD_BUCKETS)
+    b = decode_buckets(raw)
+    now = int(time.time())
+    yr = 31_557_600 / 1e18
+    for k, (rate, ends, vested) in b.items():
+        print(f"  {k:<18} {rate * yr:>14,.0f} LINK/yr  ends "
+              f"{time.strftime('%Y-%m-%d', time.gmtime(ends))}{'' if ends > now else '  (ENDED)'}")
+    pr = {}
+    for k, a in pools.items():
+        w, _ = eth_call(a, sel_principal)
+        pr[k] = int(w, 16) / 1e18 if w else None
+        print(f"  {k} principal {pr[k]:,.0f} LINK" if pr[k] else f"  {k} principal UNREACHABLE")
+    act = lambda k: b[k][0] * yr if b[k][1] > now else 0.0  # noqa: E731
+    if pr.get("community"):
+        print(f"  community yield {act('communityBase') / pr['community']:.3%}  (published 4.32% effective)")
+    if pr.get("operator"):
+        print(f"  operator yield {(act('operatorBase') + act('operatorDelegated')) / pr['operator']:.3%}"
+              f"  (published 4.5% base + delegation)")
+    if all(pr.values()):
+        tot = sum(act(k) for k in b)
+        print(f"  blended {tot / sum(pr.values()):.3%} on {sum(pr.values()):,.0f} LINK; {tot:,.0f} LINK/yr")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2531,6 +2574,7 @@ CHECKS = (
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
+    chainlink_reward_rates,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

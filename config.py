@@ -329,6 +329,15 @@ METRICS = {
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
     # 2026-09-29 (Jake): Hyperliquid's TOTAL burn = Assistance Fund + Core burns, summed at READ
     # time (build_workbook._burn_total_views). A4's burn and A3's buyback view read it.
+    # Chainlink staking v0.2 (2026-09-29): the RewardVault's active emission rate, and claims.
+    "reward_emission_rate_annual": {
+        "label": "Staking reward emission rate (LINK/yr) — RewardVault getRewardBuckets(), active buckets",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 3],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Chainlink",)},
+    "emissions_claimed_tokens": {
+        "label": "Staking rewards CLAIMED — LINK out of the reward vault (lumpy; not accrual)",
+        "kind": "flow", "unit": "tokens", "archetypes": [1, 3],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Chainlink",)},
     "total_burn_tokens": {
         "label": "HYPE burned in total — Assistance Fund (gross_burn_tokens) + burns outside it "
                  "(core_burn_tokens); both components stay on the sheet",
@@ -4109,6 +4118,16 @@ PROJECTS = [
         "cumulative_flow": {
             "buyback_fund_balance": "",
         },
+        # ===== 2026-09-29 (Jake): STAKING EMISSIONS FROM THE VAULT'S OWN RATE, NOT CLAIMS. =====
+        # Claims read ~3.1%/yr over 30 days and ~5.8% over Q0 against a published ~4.3-4.5%: they
+        # are lumpy by nature. fetch/reward_vault.py reads getRewardBuckets() (layout from
+        # RewardVault.sol 1.0.0, code-423n4/2023-08-chainlink, read 2026-09-29) and stores the
+        # active buckets' emission rate; emissions_tokens is rate x time.
+        "reward_vault_rates": {
+            "chain": "ethereum", "address": "0x996913c8c08472f584ab8834e925b06D0eb1D813",
+            "source": "https://github.com/code-423n4/2023-08-chainlink/blob/main/src/rewards/RewardVault.sol",
+            "read_on": "2026-09-29",
+        },
         "log_scans": [
             {
                 "key": "reserve_inflow",
@@ -4134,7 +4153,9 @@ PROJECTS = [
             # that is not a staker (a return to Chainlink, a migration) shows up there first.
             {
                 "key": "staking_rewards_out",
-                "metric": "emissions_tokens",
+                # 2026-09-29: CLAIMS, not accrual — its own series. emissions_tokens is the
+                # vault's emission rate x time (reward_vault_rates).
+                "metric": "emissions_claimed_tokens",
                 "chain": "ethereum",
                 "token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
                 "holders": ["0x996913c8c08472f584ab8834e925b06D0eb1D813"],
@@ -14813,10 +14834,11 @@ VALIDATOR_YIELD = {
     # staking_rewards_out), annualised, over staked principal (both pools' getTotalPrincipal).
     # Staking secures the oracle network, not a chain — archetype 1's validator column is the
     # nearest fit and the note says so. PAID rewards lag accrual (paid on claim).
-    "Chainlink": {"method": "issuance_share", "issuance_metric": "emissions_tokens",
+    # 2026-09-29: from the vault's EMISSION RATE (accrual), not the lumpy claim outflow.
+    "Chainlink": {"method": "rate_share", "rate_metric": "reward_emission_rate_annual",
                   "stake_metric": "locked_tokens_principal", "share": 1.0,
-                  "note": "staking rewards PAID from the v0.2 reward vault / staked principal — "
-                          "secures the oracle network, not a chain; paid on claim, so it lags",
+                  "note": "RewardVault active emission rate (LINK/yr) / staked principal — "
+                          "secures the oracle network, not a chain",
                   # THE CROSS-CHECK, from Chainlink's own material (blog.chain.link/
                   # chainlink-staking-v0-2-overview, Nov 2023; chain.link/economics/staking):
                   # community base floor 4.5%/yr, 4% of it redirected to operators as delegation

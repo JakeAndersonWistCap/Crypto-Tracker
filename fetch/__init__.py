@@ -43,6 +43,7 @@ from .near import NearNode
 from .tron import TronNode
 from .etherscan_supply import EtherscanSupply
 from .balance_flow import BalanceFlow
+from .reward_vault import RewardVaultRates
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
                        check_level_breaks, check_reference_values, validate_frame)
@@ -80,6 +81,8 @@ TIER_ORDER = [
     ("explorer", 2, lambda ctx: LogScan()),
     # A wallet group's outflow from daily archive balances and its few inflows (GEODNET, B1).
     ("balance_flow", 2, lambda ctx: BalanceFlow()),
+    # Chainlink staking v0.2 emission rates from the RewardVault (2026-09-29).
+    ("reward_vault", 2, lambda ctx: RewardVaultRates()),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],

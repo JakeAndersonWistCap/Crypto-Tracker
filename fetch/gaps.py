@@ -430,6 +430,9 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"nothing this run",
                 f"Read the beaconchain lines in the Run Log for {name}: a 401/429 is the key or "
                 f"quota, 'has not finished' means the latest day is still open.")
+    if project.get("reward_vault_rates") and metric in ("reward_emission_rate_annual", "emissions_tokens"):
+        return ("the RewardVault's getRewardBuckets() read is configured but stored nothing this run",
+                f"Read the reward_vault lines in the Run Log for {name}.")
     bf = next((sp for sp in project.get("balance_flows") or [] if sp.get("metric") == metric), None)
     if bf:
         return (f"the {bf['key']} balance flow (inflows minus the change in the wallets' daily "
@@ -858,6 +861,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m |= {f["metric"] for f in project.get("near_account_flows") or []}
     elif source == "beaconchain":
         m = set((project.get("beaconchain") or {}).get("metrics") or {})
+    elif source == "reward_vault":
+        m = {"reward_emission_rate_annual", "emissions_tokens"} if project.get("reward_vault_rates") else set()
     elif source == "balance_flow":
         m = {sp["metric"] for sp in project.get("balance_flows") or []}
     elif source == "etherscan_supply":

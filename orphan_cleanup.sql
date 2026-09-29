@@ -3180,3 +3180,33 @@ SELECT date, value, source
 --  WHERE project = 'World Mobile' AND metric = 'emissions_tokens'
 --    AND source LIKE 'derived:d_total_supply_gross%';
 -- COMMIT;
+
+-- ========================================================================================
+-- AT. Chainlink reward-vault CLAIMS stored under emissions_tokens  2026-09-29
+--     The staking_rewards_out scan wrote claims into emissions_tokens until 2026-09-29. From
+--     then emissions_tokens is the RewardVault's emission rate x time, and the claims have their
+--     own metric, emissions_claimed_tokens. Two sources in one column blank it, so the old claim
+--     rows are MOVED (not deleted) to the new metric. Review first.
+-- ========================================================================================
+-- AT1. THE ROWS TO MOVE.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
+   AND source LIKE 'explorer:%staking_rewards_out%'
+ ORDER BY date;
+
+-- AT2. ANY ROW ALREADY UNDER THE NEW NAME ON THE SAME DATES (expect none; a clash blocks the move).
+SELECT a.date, a.value AS old_value, b.value AS new_value
+  FROM metrics a JOIN metrics b
+    ON a.date = b.date AND a.project = b.project
+ WHERE a.project = 'Chainlink' AND a.metric = 'emissions_tokens'
+   AND a.source LIKE 'explorer:%staking_rewards_out%'
+   AND b.metric = 'emissions_claimed_tokens';
+
+-- AT3. THE PROPOSED MOVE. Only after AT1/AT2 read as expected.
+-- BEGIN;
+-- UPDATE metrics
+--    SET metric = 'emissions_claimed_tokens'
+--  WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
+--    AND source LIKE 'explorer:%staking_rewards_out%';
+-- COMMIT;

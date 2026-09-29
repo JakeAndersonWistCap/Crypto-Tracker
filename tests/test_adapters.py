@@ -17651,17 +17651,17 @@ def test_geodnet_release_is_inflow_minus_the_change_in_daily_balances_in_wei(tmp
 
 
 def test_chainlink_staking_rewards_are_the_vault_outflow_and_the_yield_is_over_principal():
-    """B2, 2026-09-28: emissions_tokens = LINK out of the v0.2 reward vault (every outflow counts —
-    it exists to pay stakers); the validator-column yield is those rewards, annualised, over both
-    pools' getTotalPrincipal. Chainlink's published rates are recorded as the cross-check."""
+    """B2 as revised 2026-09-29: the vault outflow is CLAIMS (emissions_claimed_tokens); emissions
+    and the validator-column yield come from the RewardVault's emission RATE over principal."""
     import build_workbook as bw
 
     scan = next(s for s in config.PROJECT_BY_NAME["Chainlink"]["log_scans"]
                 if s["key"] == "staking_rewards_out")
     assert scan["holders"] == ["0x996913c8c08472f584ab8834e925b06D0eb1D813"]
-    assert scan["direction"] == "out" and scan["metric"] == "emissions_tokens" and scan["store"]
+    assert scan["direction"] == "out" and scan["metric"] == "emissions_claimed_tokens" and scan["store"]
     spec = config.VALIDATOR_YIELD["Chainlink"]
-    assert spec["issuance_metric"] == "emissions_tokens" and spec["stake_metric"] == "locked_tokens_principal"
+    assert spec["method"] == "rate_share" and spec["rate_metric"] == "reward_emission_rate_annual"
+    assert spec["stake_metric"] == "locked_tokens_principal"
     assert spec["published_rates"]["community_effective"] == 0.0432
 
     class R:
@@ -17669,12 +17669,60 @@ def test_chainlink_staking_rewards_are_the_vault_outflow_and_the_yield_is_over_p
             return f"D[{m}:{w}]"
 
     label, vyield = bw._a1_headline(R())[0][:2]
-    assert label.startswith("VALIDATOR STAKING YIELD")
     f = str(vyield(7, config.PROJECT_BY_NAME["Chainlink"]))
-    assert "D[emissions_tokens:q0]" in f and "D[locked_tokens_principal:now]" in f, f
-    assert "gross_issuance_tokens" not in f and "D[locked_tokens:now]" not in f, f
-    assert "*1.0/" in f, f
+    assert "D[reward_emission_rate_annual:now]" in f and "D[locked_tokens_principal:now]" in f, f
+    assert "q0" not in f, "a rate is not annualised from a window"
 
+
+def test_chainlink_reward_vault_buckets_decode_and_ended_buckets_emit_nothing():
+    """getRewardBuckets() = 3 x (emissionRate Juels/s, rewardDurationEndsAt, vestedRewardPerToken),
+    per RewardVault.sol 1.0.0. Annual = active rates x 31,557,600 / 1e18; a vault whose
+    typeAndVersion is not a RewardVault is refused."""
+    from fetch.base import FetchOutput
+    from fetch.reward_vault import (SEL_GET_REWARD_BUCKETS, SEL_TYPE_AND_VERSION, RewardVaultRates,
+                                    decode_buckets)
+
+    assert SEL_GET_REWARD_BUCKETS == "0xde0b985a" and SEL_TYPE_AND_VERSION == "0x181f5a77"
+    now = 1_790_000_000
+    rate_c = 55_000_000_000_000_000          # 0.055 LINK/s community
+    rate_o = 5_000_000_000_000_000           # 0.005 LINK/s operator base
+    words = [rate_o, now + 10**6, 0, rate_c, now + 10**6, 0, 7, now - 1, 0]   # delegated ENDED
+    data = "0x" + "".join(format(w, "064x") for w in words)
+    assert decode_buckets(data)["communityBase"][0] == rate_c
+
+    def tv(s):
+        b = s.encode()
+        return bytes.fromhex(format(32, "064x") + format(len(b), "064x") + b.hex().ljust(64, "0"))
+
+    class Eth:
+        def __init__(self, name):
+            self.name = name
+
+        def call(self, tx, block=None):
+            return tv(self.name) if tx["data"] == SEL_TYPE_AND_VERSION else bytes.fromhex(data[2:])
+
+        def get_block(self, which):
+            return {"number": 100, "timestamp": now}
+
+    class Reader:
+        def __init__(self, name):
+            self.name = name
+
+        def web3(self, chain):
+            return type("W", (), {"eth": Eth(self.name)})()
+
+        def checksum(self, a):
+            return a
+
+    out = FetchOutput()
+    RewardVaultRates(reader=Reader("RewardVault 1.0.0")).run([config.PROJECT_BY_NAME["Chainlink"]], None, out)
+    got = out.frame().set_index("metric")["value"]
+    annual = (rate_c + rate_o) * 31_557_600 / 10**18
+    assert abs(got["reward_emission_rate_annual"] - annual) < 1e-6
+    assert abs(got["emissions_tokens"] - annual / 365.25) < 1e-9
+    bad = FetchOutput()
+    RewardVaultRates(reader=Reader("SomethingElse 2.0.0")).run([config.PROJECT_BY_NAME["Chainlink"]], None, bad)
+    assert bad.frame().empty and "not a RewardVault" in bad.gaps[0]["reason"]
 
 def test_aethir_supplier_emissions_come_from_the_checker_node_bucket_marked_partial():
     """B3, 2026-09-28: the configured schedule is the Checker Node BASE reward — a supplier bucket —
