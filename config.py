@@ -2044,6 +2044,10 @@ _SKY_SPLIT_DECIDED = (
 # GEODNET's live burn read from 2026-09-28: Polygon dead address + Solana burn token account,
 # summed by fetch/chain.py. The measuring point of that sum, as fetch.base._measuring_point sees it.
 GEODNET_BURN_SUM_POINT = "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)"
+# World Mobile's total_supply_gross before and after 2026-09-25/29 (Ethereum deprecated, Solana
+# added). Component order is config order, as fetch/chain.py builds it.
+WMTX_SUM_POINT_BEFORE = "chain:sum(ethereum:token+arbitrum:token_arbitrum+bsc:token_bsc+base:token_base)"
+WMTX_SUM_POINT_AFTER = "chain:sum(arbitrum:token_arbitrum+bsc:token_bsc+base:token_base+solana:token_solana)"
 
 
 # ===== WORLD MOBILE'S TREASURY: AN ACCEPTED LIMIT. 2026-09-28 (Jake). =====
@@ -4485,6 +4489,9 @@ PROJECTS = [
         # consumer. Its error is no longer one-signed: bridging in from Cardano inflates it.
         "observed_minting": {
             "role": "cross_check",
+            # 2026-09-29: NOT STORED. The review row carries the figure; a stored row under
+            # emissions_tokens could only ever be read as issuance by something.
+            "store": False,
             "metric": "emissions_tokens",
             "supply_metric": "total_supply_gross",
             "why": "the whitepaper's curve cannot be anchored — World Mobile has no single "
@@ -5056,15 +5063,24 @@ PROJECTS = [
             # THIS IS NOT ADDING TOLERANCE TO A FAILING CHECK. The band moved to the figures the
             # source documents state; it did not gain slack around a number that was already
             # disagreeing. A read of 2,000,000,001 still fails.
-            "token": _contract(
+            # ===== DEPRECATED FROM 2026-09-25 — NOT READ, NOT SUMMED. See wmtx_exploit_2026_09. =====
+            # Kept in config (with a date bound, not deleted) so the sums it was part of before the
+            # date are not orphaned. From the date, the sum is the other deployments and the change
+            # of composition is the declared handover in series_handover.total_supply_gross.
+            "token": dict(_contract(
                 "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "ethereum", "erc20_total_supply", "WMTX",
                 "https://etherscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
                 verified="2026-09-14", provenance="deployed source code, inspected directly on Etherscan",
                 token_standard="erc20", supply_is_partial=True,
                 partial_reason=WMTX_CARDANO_PARTIAL,
                 purpose="WMTx on Ethereum. ERC20Capped at 2,000,000,000; summed with the other "
-                        "three EVM deployments under burn-and-mint.",
+                        "EVM deployments under burn-and-mint UNTIL 2026-09-24.",
                 metric_override="total_supply_gross"),
+                deprecated_from="2026-09-25",
+                deprecation_note="World Mobile's 25 Sept 2026 recovery update: Ethereum WMTx is "
+                                 "permanently deprecated; eligible holders (pre-exploit snapshot) "
+                                 "receive WMTx on Base. Its totalSupply still carries the "
+                                 "2026-09-20 unauthorised mint."),
             "token_arbitrum": _contract(
                 "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7", "arbitrum", "erc20_total_supply", "WMTX",
                 "https://arbiscan.io/address/0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7#code",
@@ -5098,8 +5114,33 @@ PROJECTS = [
                         "protocol's own chain list.",
                 note="THE ONLY ONE WITH ITS OWN ADDRESS, which is worth noticing on the first live "
                      "run: three chains sharing 0xDBB5... and one not is the shape that makes a "
-                     "copy-paste error invisible. The symbol check is what catches it.",
+                     "copy-paste error invisible. The symbol check is what catches it. "
+                     "2026-09-29: STILL THE CURRENT BASE TOKEN on the evidence available — Chainlink's "
+                     "CCIP directory lists it for Base with no WMTX change through its 2026-09-25 "
+                     "refresh and HEAD 2026-09-28; World Mobile's own statement of which Base "
+                     "contract receives holders could not be read from here (see "
+                     "wmtx_exploit_2026_09.base_contract_question).",
                 metric_override="total_supply_gross"),
+            # ===== SOLANA, ADDED 2026-09-29. BURN-AND-MINT, SO IT IS SUMMED. =====
+            # The mint is from Chainlink's CCIP token directory (smartcontractkit/documentation,
+            # src/config/data/ccip/v1_2_0/mainnet/tokens.json, WMTX.solana-mainnet: tokenAddress
+            # WMTXyYKU...puRH, decimals 6, poolType burnMint, BurnMintTokenPool 0.1.2), read
+            # 2026-09-29 — Chainlink operates the bridge World Mobile uses for Solana ("a new
+            # bridge, secured by Chainlink CCIP", worldmobile.io/blog/post/world-mobile-token-
+            # expands-to-solana). Same mint on CoinGecko and CoinSwitch. worldmobile.io itself is
+            # unreachable from the sandbox. REQUIRED: a sum without it on one day and with it on
+            # the next would put a change of measuring point into the series.
+            "token_solana": _contract(
+                "WMTXyYKUMTG3VuZA5beXuHVRLpyTwwaoP7h2i8YpuRH", "solana", "spl_mint", "WMTX",
+                "https://raw.githubusercontent.com/smartcontractkit/documentation/main/src/config/"
+                "data/ccip/v1_2_0/mainnet/tokens.json",
+                verified="2026-09-29",
+                provenance="Chainlink CCIP token directory (the bridge operator), WMTX.solana-mainnet; "
+                           "corroborated by CoinGecko and CoinSwitch listings",
+                supply_is_partial=True, partial_reason=WMTX_CARDANO_PARTIAL,
+                purpose="WMTx on Solana — an SPL mint under a CCIP BurnMintTokenPool, so its supply "
+                        "is disjoint from the EVM deployments and is summed with them.",
+                metric_override="total_supply_gross", required_component=True),
         },
         # ===== THE BAND ON THE FOUR-CHAIN SUM, AND WHAT EACH END OF IT MEANS. =====
         # Set on the whitepaper's own curve (aggregate rises ~1.42bn to 2bn over twenty years)
@@ -5114,6 +5155,86 @@ PROJECTS = [
         # NOT a bound on total_supply: that metric holds CoinGecko's 2,000,000,000 cap, which is
         # a correct reading of a different quantity and would fail this band every run.
         #
+        # ===== THE 2026-09-19/20 EXPLOIT AND THE ETHEREUM DEPRECATION. Recorded 2026-09-29. =====
+        # Primary pages (worldmobile.io, x.com/wmchain) are unreachable from the sandbox; what is
+        # recorded is what the reachable sources say, each labelled.
+        "wmtx_exploit_2026_09": {
+            "what": "a compromised SingularityNET bridge key was used to mint WMTx on Ethereum "
+                    "without authorisation",
+            "when": "2026-09-19/20 (mint ~04:00-05:00 UTC 2026-09-20 per the timeline below)",
+            "chain": "ethereum", "contract": "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7",
+            "unauthorised_mint_tokens": 53_838_000,
+            "mint_sources": [
+                "GitHub incident timeline, github.com/Ricosworks1/blockchain-payment-flow-analysis "
+                "(release deep-dive-singularitynet-bridge-hack-16m-key-compromise-sept-2026): "
+                "'53,838,000' WMTx — SECONDARY",
+                "Cryptotimes headline 2026-09-21: 53.8M — SECONDARY",
+                "Jake's brief 2026-09-29: ~53.838M",
+            ],
+            "conflicting_figure": {
+                "value": 500_600_000,
+                "source": "Chainletter / bagster.substack.com 'Bridges, Explained: The Hack That Hit "
+                          "World Mobile', citing SlowMist ('503 separate mints totalling 500.6m') — "
+                          "SECONDARY, search snippet",
+                "why_not_used": "our own EVM sum rose +41.45M from 2026-09-21 to 2026-09-28 "
+                                "(1,714,232,116 -> 1,755,683,663); a 500M mint that stayed "
+                                "in supply would have moved it by ~10x that",
+            },
+            "observed_in_our_sum": {"from": ("2026-09-21", 1_714_232_116),
+                                    "to": ("2026-09-28", 1_755_683_663), "change": 41_451_547},
+            "left_behind_expected": "~95% of the unauthorised mint, per the founder (Jake's brief)",
+            "deprecation": {
+                "from": "2026-09-25",
+                "statement": "Ethereum WMTx is permanently deprecated: holders are told not to "
+                             "trade, transfer or transact with it. Eligible holders, identified "
+                             "through the pre-exploit snapshot and chain analysis, receive WMTx on "
+                             "Base instead.",
+                "source": "World Mobile recovery update 2026-09-25, as quoted by Chainletter "
+                          "(bagster.substack.com) — SECONDARY; Cardano 'never touched and remains "
+                          "fully backed' (same)",
+                "effect_here": "contracts.token.deprecated_from — not read or summed from the date",
+            },
+            "base_contract_question": {
+                "asked": "does the Base contract receiving holders = the existing 0x3e31...98D?",
+                "evidence_for_existing": [
+                    "Chainlink CCIP directory lists 0x3e31966d4f81C72D2a55310A6365A56A4393E98D for "
+                    "Base with no WMTX change in its 2026-09-16..09-28 refreshes",
+                    "Kraken reopened trading 'on the Base contract' (search snippets)",
+                ],
+                "evidence_against": ["one aggregator snippet (CoinMarketCap AI) says 'a new Base "
+                                     "chain contract' — unsourced"],
+                "status": "EXISTING CONTRACT WIRED; NOT CONFIRMED from World Mobile's own channel",
+                "settles_it": "check_offline_items wm_cardano_supply prints Base totalSupply: a "
+                              "re-issue onto 0x3e31 raises it by roughly the pre-exploit Ethereum "
+                              "supply (~1.49bn); a flat figure means a new contract took them",
+            },
+            "never_issuance": "emissions_tokens is the whitepaper curve at read time "
+                              "(ISSUANCE_PRIMARY declared_curve); observed EVM minting is a review "
+                              "cross-check only and is no longer stored (2026-09-29)",
+        },
+        # ===== THE SUM'S COMPOSITION CHANGED ON 2026-09-25/29: A DECLARED HANDOVER. =====
+        # Before: the four EVM deployments. After: Arbitrum, BNB, Base and Solana (Ethereum
+        # deprecated; Solana added). Without this the stock would be blanked as a change of
+        # measuring point; with it, an overlap of the two in the store still blanks it.
+        "series_handover": {
+            "total_supply_gross": {
+                "ordered_points": (WMTX_SUM_POINT_BEFORE, WMTX_SUM_POINT_AFTER),
+                "why": "Ethereum WMTx deprecated 2026-09-25 (removed); Solana WMTx added 2026-09-29.",
+                "composition_change": "The stock steps at the switch: minus the Ethereum supply "
+                                      "(which still holds the unauthorised mint), plus Solana, "
+                                      "plus whatever the Base re-issue has added. The step is "
+                                      "not a flow and nothing differences across it.",
+                "declared_on": "2026-09-29",
+            },
+        },
+        # ===== 2026-09-29: RE-CHECKED WITH ETHEREUM OUT AND SOLANA IN — UNCHANGED, AND WHY. =====
+        # Before the exploit the non-Ethereum legs held ~0.22bn (1,714,232,116 less Ethereum's
+        # ~1.494bn). With Ethereum deprecated, the sum is ~0.22bn + Solana + the Base re-issue.
+        #   Re-issue done (holders on 0x3e31):  ~1.7bn, beside the curve's 1,714,858,779 today.
+        #   Re-issue not done / a NEW Base contract:  far below 1.42bn — REJECTED, correctly: the
+        #   sum would then be missing most of the supply, and the fix is contracts.token_base
+        #   (wm_cardano_supply's BASE CHECK says which), never a lower floor.
+        # The top end is the ERC20Capped 2bn and still cannot be exceeded by a correct sum.
         # ===== A8 (2026-09-28): THE BAND STILL HOLDS ONCE CARDANO IS ADDED, UNCHANGED. =====
         # Under burn-and-mint, Cardano + EVM is the aggregate, and the aggregate lives between
         # the curve's origin (S0 = 1,413,073,572) and the ERC20Capped 2bn — the same two ends.
@@ -5140,9 +5261,10 @@ PROJECTS = [
             # right description for the transfer-burn projects that metric was built for and the
             # wrong one here: WMTx's burn serves bridging, and what separates this figure from
             # CoinGecko's is the cap, not a burn.
-            "total_supply_gross": "Minted supply — four EVM deployments summed (burn-and-mint), "
-                                  "EXCLUDING Cardano-native WMT. The contrast with total_supply "
-                                  "is cap vs minted, not gross vs net of burn",
+            "total_supply_gross": "Minted supply — Arbitrum, BNB, Base and Solana WMTx summed "
+                                  "(CCIP burn-and-mint); Ethereum WMTx DEPRECATED from 2026-09-25 "
+                                  "and excluded; Cardano-native WMTx excluded. The contrast with "
+                                  "total_supply is cap vs minted, not gross vs net of burn",
             "total_supply": "Total supply AS COINGECKO REPORTS IT — the 2,000,000,000 CAP, not "
                             "the minted amount. See total_supply_convention 'reports_cap'",
             "utilisation_pct": "Daily data processed (TB) — a THROUGHPUT, not a utilisation "

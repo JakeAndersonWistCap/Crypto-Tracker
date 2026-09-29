@@ -979,18 +979,24 @@ WMTX_EVM = (("ethereum", "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7"),
             ("base", "0x3e31966d4f81C72D2a55310A6365A56A4393E98D"))
 
 
+WMTX_SOLANA_MINT = "WMTXyYKUMTG3VuZA5beXuHVRLpyTwwaoP7h2i8YpuRH"   # Chainlink CCIP directory
+
+
 def wm_cardano_supply():
-    """A8 (2026-09-28): is World Mobile's Cardano supply disjoint from the EVM sum?
+    """A8 / 2026-09-29: World Mobile's supply leg by leg, against the whitepaper curve.
 
     Koios (api.koios.rest, free, keyless) asset_info gives the Cardano policy's total_supply
-    (minted minus burned, 6 decimals). Beside it: the four EVM totalSupply() reads and the
-    whitepaper curve's aggregate for today (t0 = 2022-04-16, the curve's own implied start).
-      BURN-AND-MINT: Cardano + EVM ~ the curve's aggregate, and the sum is the total.
-      LOCK-AND-MINT: Cardano alone ~ the aggregate (the bridge's lock is inside it), and adding
-                     the EVM sum double counts — the total is Cardano alone.
-    The probe prints both sums against the curve; the closer one names the model. Neither is
-    wired until Jake has seen this."""
-    head("WORLD MOBILE — Cardano native WMTX vs the EVM sum vs the whitepaper curve")
+    (6 decimals). Beside it: every EVM totalSupply() scaled by its OWN decimals() (WMTX is 6 —
+    the 2026-09-28 version of this probe wrongly divided by 1e18), the Solana mint's
+    getTokenSupply, and the curve's aggregate today (t0 2022-04-16, the curve's implied start).
+      SUMMED NOW   Arbitrum + BNB + Base + Solana (Ethereum deprecated 2026-09-25).
+      BASE CHECK   a re-issue of Ethereum holders onto the EXISTING Base contract raises its
+                   totalSupply by roughly the pre-exploit Ethereum supply (~1.49bn); if Base is
+                   still small, holders went to a NEW contract and config must follow it.
+      CARDANO      burn-and-mint: Cardano + the sum ~ the curve; lock-and-mint: Cardano alone
+                   ~ the curve. The closer one names the model; Cardano is not summed until
+                   Jake has seen it."""
+    head("WORLD MOBILE — every WMTX leg vs the whitepaper curve")
     card = {}
     for label, (policy, name) in (("WMTX", WMTX_CARDANO), ("WMT legacy", WMT_LEGACY_CARDANO)):
         try:
@@ -1003,11 +1009,21 @@ def wm_cardano_supply():
                   f"(mint_cnt {row.get('mint_cnt')}, burn_cnt {row.get('burn_cnt')})")
         except Exception as e:  # noqa: BLE001
             print(f"  Cardano {label:<10} UNREACHABLE — {e}")
-    evm = {}
+    legs = {}
     for chain, addr in WMTX_EVM:
-        v = _uint(addr, SEL_TOTAL_SUPPLY, chain)
-        evm[chain] = None if v is None else v / 1e18
-        print(f"  {chain:<9} totalSupply {'UNREACHABLE' if v is None else f'{v / 1e18:,.0f}':>18}")
+        v, d = _uint(addr, SEL_TOTAL_SUPPLY, chain), _uint(addr, SEL_DECIMALS, chain)
+        legs[chain] = None if v is None or d is None else v / 10 ** d
+        shown = "UNREACHABLE" if legs[chain] is None else f"{legs[chain]:,.0f} (decimals {d})"
+        print(f"  {chain:<9} totalSupply {shown}"
+              + ("   <- DEPRECATED 2026-09-25, not summed" if chain == "ethereum" else ""))
+    try:
+        from fetch.solana import SolanaRPC                # noqa: PLC0415
+        v, raw, dec, host = SolanaRPC().token_supply(WMTX_SOLANA_MINT)
+        legs["solana"] = v
+        print(f"  solana    supply {v:,.0f} (raw {raw} / 10^{dec}, via {host})")
+    except Exception as e:  # noqa: BLE001
+        legs["solana"] = None
+        print(f"  solana    UNREACHABLE — {e}")
     try:
         import pandas as pd                               # noqa: PLC0415
         import config                                     # noqa: PLC0415
@@ -1018,18 +1034,22 @@ def wm_cardano_supply():
     except Exception as e:  # noqa: BLE001
         model = None
         print(f"  curve not evaluated — {e}")
-    if "WMTX" in card and None not in evm.values():
-        esum = sum(evm.values())
-        print(f"  EVM sum {esum:,.0f}   Cardano + EVM {card['WMTX'] + esum:,.0f}   Cardano alone "
-              f"{card['WMTX']:,.0f}")
+    summed = [k for k in ("arbitrum", "bsc", "base", "solana")]
+    if all(legs.get(k) is not None for k in summed):
+        total = sum(legs[k] for k in summed)
+        print(f"  SUM NOW (arbitrum+bsc+base+solana) {total:,.0f}   band 1,420,000,000..2,000,000,000"
+              f" -> {'INSIDE' if 1.42e9 <= total <= 2e9 else 'OUTSIDE — see the Base check'}")
         if model:
-            both, alone = abs(card["WMTX"] + esum - model), abs(card["WMTX"] - model)
+            print(f"  sum - curve = {total - model:+,.0f}")
+        if "WMTX" in card and model:
+            both, alone = abs(card["WMTX"] + total - model), abs(card["WMTX"] - model)
             print(f"  -> {'BURN-AND-MINT (sum)' if both < alone else 'LOCK-AND-MINT (Cardano alone)'}"
                   f" fits the curve better ({min(both, alone):,.0f} away).")
-        print("  NOTE: Ethereum WMTx was deprecated 2026-09-25 after the 2026-09-20 exploit mint and "
-              "holders were re-issued on Base; if Base has grown by Ethereum's pre-exploit supply "
-              "while Ethereum has not fallen, the EVM sum now counts those holders twice.")
-    print("  PASTE BACK the lines above; the Cardano leg is wired once the model is agreed.")
+    if legs.get("base") is not None:
+        print(f"  BASE CHECK: Base holds {legs['base']:,.0f}. Hundreds of millions to ~1.5bn means "
+              f"holders were re-issued on 0x3e31...98D (config is right); tens of millions or less "
+              f"means a NEW Base contract — find it on @wmchain and update contracts.token_base.")
+    print("  PASTE BACK the lines above.")
 
 
 def etherscan_ethsupply2():

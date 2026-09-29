@@ -984,7 +984,8 @@ class Chain:
         # 3. CHAIN COVERAGE. The EVM adapter cannot read Solana, Tron or HyperCore.
         chain = spec.get("chain")
         # EXCEPT an SPL token account on Solana, read by fetch/solana.py (2026-09-28).
-        if chain not in config.EVM_CHAINS and not (chain == "solana" and spec["kind"] == "spl_token_account"):
+        # And an SPL MINT's supply (spl_mint, World Mobile's Solana leg, 2026-09-29).
+        if chain not in config.EVM_CHAINS and not (chain == "solana" and spec["kind"] in ("spl_token_account", "spl_mint")):
             out.gap(name, metric,
                     reason=f"contract {key!r} is on {chain!r}, which the EVM adapter does not cover",
                     tiers_attempted="2",
@@ -1112,6 +1113,16 @@ class Chain:
                     out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                             f"{key}: {kind}, reference only — no metric read from it", TIER))
                     continue
+                # ===== DEPRECATED BY THE PROTOCOL FROM A DATE (World Mobile's Ethereum WMTx,
+                # 2026-09-25). ===== Kept in config so the rows it wrote before the date are not
+                # orphaned; from the date it is not read and not summed. Not a refusal: the sum
+                # without it is the whole, and the change of composition is a declared handover.
+                dep = spec.get("deprecated_from")
+                if dep and str(today().date()) >= str(dep):
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                            f"{key} ({chain}): DEPRECATED from {dep} — not read "
+                                            f"or summed. {spec.get('deprecation_note', '')}".strip(), TIER))
+                    continue
                 if not self._gate(p, key, spec, out):
                     continue
                 # metric_override lets ONE contract's read land under a different metric than
@@ -1125,10 +1136,13 @@ class Chain:
                     continue
                 # ===== A SOLANA SPL TOKEN ACCOUNT. 2026-09-28 (GEODNET's burns moved there). =====
                 # One getTokenAccountBalance call; summed with the EVM components like any other.
-                if kind == "spl_token_account":
+                if kind in ("spl_token_account", "spl_mint"):
+                    call = "getTokenSupply" if kind == "spl_mint" else "getTokenAccountBalance"
                     try:
-                        with waiting_on(f"Solana getTokenAccountBalance {key}"):
-                            value, raw, dec, host = self.solana.token_account_balance(spec["address"])
+                        with waiting_on(f"Solana {call} {key}"):
+                            value, raw, dec, host = (self.solana.token_supply(spec["address"])
+                                                     if kind == "spl_mint" else
+                                                     self.solana.token_account_balance(spec["address"]))
                     except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                         out.fail(SOURCE, name, f"{key} ({chain}): {e}", TIER)
                         refused[metric].append(f"{key} ({chain}): read failed")
@@ -1138,7 +1152,7 @@ class Chain:
                     parts[metric].append((f"{chain}:{key}", value))
                     out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                             f"{metric} component {chain}:{key}={value:,.6f} (raw {raw} / "
-                                            f"10^{dec}, getTokenAccountBalance via {host})", TIER))
+                                            f"10^{dec}, {call} via {host})", TIER))
                     continue
                 # A balance read is balanceOf ON THE TOKEN, with this contract as the holder. The
                 # token MUST be the deployment on the SAME CHAIN as the holder: calling an Ethereum

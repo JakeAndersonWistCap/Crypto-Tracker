@@ -3152,3 +3152,31 @@ SELECT date, value, source, fetched_at
 -- DELETE FROM metrics
 --  WHERE project = 'Maple' AND metric = 'treasury_holding_tokens_reported';
 -- COMMIT;
+
+-- ========================================================================================
+-- AS. World Mobile emissions_tokens written by observed EVM minting  2026-09-29
+--     The d(total_supply_gross) cross-check stored rows under emissions_tokens until 2026-09-29,
+--     including the week of the 2026-09-20 Ethereum exploit mint (+41.45M). They are NOT read:
+--     ISSUANCE_PRIMARY's declared_curve view replaces emissions_tokens for every consumer. They
+--     are removed so nothing can ever read them as issuance. Review first.
+-- ========================================================================================
+-- AS1. THE ROWS. Expect daily deltas, one of them ~41M around 2026-09-21..09-28.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'World Mobile' AND metric = 'emissions_tokens'
+   AND source LIKE 'derived:d_total_supply_gross%'
+ ORDER BY date;
+
+-- AS2. THE STOCK THEY WERE DIFFERENCED FROM, for comparison (last 15 readings).
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'World Mobile' AND metric = 'total_supply_gross'
+ ORDER BY date DESC
+ LIMIT 15;
+
+-- AS3. THE PROPOSED DELETE. Only after AS1 reads as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'World Mobile' AND metric = 'emissions_tokens'
+--    AND source LIKE 'derived:d_total_supply_gross%';
+-- COMMIT;

@@ -33,11 +33,19 @@ class SolanaRPC:
 
     def token_account_balance(self, address: str) -> tuple[float, int, int, str]:
         """(value, raw amount, decimals, host that answered) for an SPL token account."""
+        return self._amount("getTokenAccountBalance", address)
+
+    def token_supply(self, mint: str) -> tuple[float, int, int, str]:
+        """(value, raw amount, decimals, host) for an SPL MINT's total supply — getTokenSupply,
+        same response shape. Added 2026-09-29 for World Mobile's Solana WMTX leg."""
+        return self._amount("getTokenSupply", mint)
+
+    def _amount(self, method: str, address: str) -> tuple[float, int, int, str]:
         errors = []
         for url in self.endpoints:
             host = urllib.parse.urlsplit(url).netloc
             try:
-                j = self.http.post(url, {"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountBalance",
+                j = self.http.post(url, {"jsonrpc": "2.0", "id": 1, "method": method,
                                          "params": [address, {"commitment": "finalized"}]})
             except Exception as e:  # noqa: BLE001 — try the next endpoint
                 errors.append(f"{host}: {e}")
@@ -52,4 +60,4 @@ class SolanaRPC:
                 errors.append(f"{host}: unexpected shape {str(v)[:120]}")
                 continue
             return float(Decimal(raw) / (Decimal(10) ** dec)), raw, dec, host
-        raise RuntimeError("no Solana RPC answered getTokenAccountBalance — " + "; ".join(errors))
+        raise RuntimeError(f"no Solana RPC answered {method} — " + "; ".join(errors))

@@ -869,9 +869,12 @@ def _derive_observed_minting(out: FetchOutput, projects: list[dict],
             stock_metric=supply_metric, out=out)
         if flow.empty:
             continue
-        out.add(flow, SOURCE_DERIVED, name,
-                f"{metric} = the change in {supply_metric} — MEASURED, not modelled: "
-                f"{spec['why']}", 2)
+        # store False (World Mobile, 2026-09-29): the delta is bridging and an exploit mint as
+        # much as minting; it goes to the Review Queue only, never into emissions_tokens.
+        if spec.get("store", True):
+            out.add(flow, SOURCE_DERIVED, name,
+                    f"{metric} = the change in {supply_metric} — MEASURED, not modelled: "
+                    f"{spec['why']}", 2)
         if spec.get("role") == "cross_check":
             # STORED FOR COMPARISON ONLY (World Mobile, A8): config.ISSUANCE_PRIMARY replaces the
             # series at read time, so this delta is never the displayed issuance.

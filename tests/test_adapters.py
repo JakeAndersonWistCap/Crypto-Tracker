@@ -2325,11 +2325,14 @@ def test_world_mobiles_emissions_come_from_observed_minting_not_from_the_model()
     assert "no single launch date" in spec["why"]
 
     out = run(1_714_332_116.0, 1_714_232_116.0)
-    got = out.frame().query("metric == 'emissions_tokens'")
-    assert len(got) == 1 and abs(float(got.value.iloc[0]) - 100_000.0) < 1e-6, got
-    src = str(got.source.iloc[0])
-    assert "d_total_supply_gross" in src and src.endswith(":delta"), src
-    assert "PARTIAL" in src, "Cardano is excluded, and the row has to say so"
+    # 2026-09-29: NOT STORED — the delta goes to the Review Queue only, so the exploit week can
+    # never be read as issuance from the store. The value and source travel on the review row.
+    assert spec["store"] is False
+    assert out.frame().query("metric == 'emissions_tokens'").empty
+    rv = next(r for r in out.review if r["reason"] == "observed_minting_cross_check")
+    assert abs(float(rv["value"]) - 100_000.0) < 1e-6, rv
+    src = str(rv["source"])
+    assert "d_total_supply_gross" in src and "PARTIAL" in src, src
     # A8 2026-09-28: the delta is still stored, but only as the cross-check — bridging and the
     # 2026-09-20 exploit mint move it, so it is no longer "a lower bound".
     part = [r for r in out.review if r["reason"] == "observed_minting_cross_check"]
@@ -3424,8 +3427,11 @@ def test_a_component_on_an_uncovered_chain_is_refused_and_makes_the_sum_PARTIAL(
     assert supply.source.iloc[0].endswith(":PARTIAL"), \
         f"the declared partial flag must reach the source string: {supply.source.iloc[0]}"
     reasons = " ".join(str(g.get("reason", "")) for g in out.gaps)
-    assert "'solana'" in reasons and "'iotex'" in reasons, \
-        f"both uncovered chains must be named specifically, not lumped together: {reasons}"
+    # 2026-09-29: an SPL MINT on Solana is now a covered read (World Mobile's Solana leg), so it
+    # fails as a READ here (no Solana RPC in tests) rather than as an uncovered chain — still
+    # named, still refused. IoTeX stays the uncovered-chain case.
+    assert "mint_solana (solana)" in reasons and "'iotex'" in reasons, \
+        f"both failing components must be named specifically, not lumped together: {reasons}"
 
     # ** A FINDING, ASSERTED SO IT CANNOT BE FORGOTTEN: THE GATE DOES NOT MARK THE SUM PARTIAL. **
     # This test's previous version said an unreachable component "makes the resulting supply
@@ -7829,18 +7835,25 @@ def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
     """
     wm = config.PROJECT_BY_NAME["World Mobile"]
     contracts = wm["contracts"]
-    assert set(contracts) == {"token", "token_arbitrum", "token_bsc", "token_base"}
+    # 2026-09-29: Ethereum DEPRECATED from 2026-09-25 (kept, date-bounded); Solana ADDED.
+    assert set(contracts) == {"token", "token_arbitrum", "token_bsc", "token_base", "token_solana"}
+    assert contracts["token"]["deprecated_from"] == "2026-09-25"
+    assert contracts["token_solana"]["address"] == "WMTXyYKUMTG3VuZA5beXuHVRLpyTwwaoP7h2i8YpuRH"
+    assert contracts["token_solana"]["kind"] == "spl_mint" and contracts["token_solana"]["required_component"]
     assert contracts["token"]["address"] == contracts["token_arbitrum"]["address"] \
         == contracts["token_bsc"]["address"] == "0xDBB5Cf12408a3Ac17d668037Ce289f9eA75439D7"
+    evm = {k: v for k, v in contracts.items() if k != "token_solana"}
     assert contracts["token_base"]["address"] == "0x3e31966d4f81C72D2a55310A6365A56A4393E98D", \
         "Base is the one with its own address — the shape that makes a copy-paste error invisible"
     for key, c in contracts.items():
         assert c["metric_override"] == "total_supply_gross", key
         assert "CARDANO-NATIVE WMT IS NOT IN THIS SUM" in c["partial_reason"], key
 
+    # AFTER THE RE-ISSUE: Base holds the migrated holders; Ethereum would still read its
+    # exploit-inflated supply but is deprecated and must not be read at all.
     class FourChainStub:
-        SUPPLY = {"ethereum": 1_493_853_279.0, "arbitrum": 4_100_000.0,
-                  "bsc": 7_250_000.0, "base": 2_900_000.0}
+        SUPPLY = {"ethereum": 1_547_691_279.0, "arbitrum": 4_100_000.0,
+                  "bsc": 7_250_000.0, "base": 1_690_000_000.0}
 
         def has_code(self, chain, address):
             return True
@@ -7851,23 +7864,39 @@ def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
         def scaled(self, chain, address, call, *args):
             return self.SUPPLY[chain]
 
+    class SolanaStub:
+        def token_supply(self, mint):
+            assert mint == "WMTXyYKUMTG3VuZA5beXuHVRLpyTwwaoP7h2i8YpuRH"
+            return 3_000_000.0, 3_000_000_000_000, 6, "stub"
+
     c = Chain()
     c.reader = FourChainStub()
+    c.solana = SolanaStub()
     out = FetchOutput()
     c.run([wm], None, out)
     df = out.frame()
     row = df[df.metric == "total_supply_gross"]
     assert len(row) == 1, row.to_dict()
-    assert float(row.value.iloc[0]) == sum(FourChainStub.SUPPLY.values())
+    live = {k: v for k, v in FourChainStub.SUPPLY.items() if k != "ethereum"}
+    assert float(row.value.iloc[0]) == sum(live.values()) + 3_000_000.0
 
     # ** EVERY COMPONENT IS NAMED, and that is the check asked for. ** A chain contributing zero
     # is a read that failed quietly; a chain contributing more than Ethereum is an address that
     # is not what it says. Neither is visible in the total.
     src = row.source.iloc[0]
-    for key in ("ethereum:token", "arbitrum:token_arbitrum", "bsc:token_bsc", "base:token_base"):
+    for key in ("arbitrum:token_arbitrum", "bsc:token_bsc", "base:token_base", "solana:token_solana"):
         assert key in src, f"{key} missing from {src}"
+    assert "ethereum:token" not in src, src
+    from fetch.base import _measuring_point
+    assert _measuring_point(src) == config.WMTX_SUM_POINT_AFTER, src
     detail = " ".join(e.message for e in out.log if e.status == "ok")
-    assert "4 components" in detail and "1,493,853,279" in detail, detail
+    assert "4 components" in detail and "DEPRECATED from 2026-09-25" in detail, detail
+    # THE COMPOSITION CHANGE IS A DECLARED HANDOVER, so the stock is not blanked.
+    import build_workbook as bw
+    pts = (config.WMTX_SUM_POINT_BEFORE, config.WMTX_SUM_POINT_AFTER)
+    spans = {pts[0]: (pd.Timestamp("2026-07-01"), pd.Timestamp("2026-09-28")),
+             pts[1]: (pd.Timestamp("2026-09-29"), pd.Timestamp("2026-09-30"))}
+    assert bw.handover_refusal("World Mobile", "total_supply_gross", pts, spans) is None
 
     # THE CARDANO EXCLUSION KEEPS THE FIGURE PARTIAL, and it is sized by SUBTRACTION rather than
     # by an estimate written into config — both terms exist, so a number nobody has computed does
@@ -7897,6 +7926,7 @@ def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
     # and CoinGecko's 2,000,000,000 goes to total_supply. The old band was standing in for this
     # check by refusing any figure near the cap, which is why it also refused a real one.
     assert all(c["metric_override"] == "total_supply_gross" for c in contracts.values())
+    assert evm
     # AND THE BAND IS NOT ON total_supply, which legitimately holds that cap every run.
     cap_lo, cap_hi = config.sanity_bounds("World Mobile", "total_supply")
     assert cap_lo <= 2_000_000_000 <= (cap_hi or float("inf"))
