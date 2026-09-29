@@ -76,7 +76,10 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
         for metric in config.metrics_for_project(p):
             # FLOWS AND PRICES ONLY: Q0 sums a flow and averages a price. A stock is read "now";
             # most stock sources (CoinGecko's circulating, a contract balance) have no history.
-            if (config.METRICS.get(metric) or {}).get("kind") != "flow" and metric not in PRICE_SERIES:
+            # ...AND A SUPPLY HISTORY AN ISSUANCE HISTORY IS BUILT FROM (Ethereum, 2026-09-29).
+            hist_input = (metric == (p.get("issuance_history") or {}).get("supply_metric"))
+            if ((config.METRICS.get(metric) or {}).get("kind") != "flow" and metric not in PRICE_SERIES
+                    and not hist_input):
                 continue
             first = first_dates.get((name, metric))
             if first is not None and pd.Timestamp(first) <= cutoff:

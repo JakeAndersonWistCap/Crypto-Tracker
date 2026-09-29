@@ -102,7 +102,8 @@ class CoinGecko:
         for p in projects:
             cid, name = p.get("coingecko_id"), p["name"]
             # A project whose price/market history is short asks for the full year (2026-09-28).
-            short = any((name, m) in BACKFILL for m in ("price_usd", "market_cap_usd", "volume_usd"))
+            short = any((name, m) in BACKFILL for m in ("price_usd", "market_cap_usd", "volume_usd",
+                                                        "circulating_supply_implied"))
             days = ("365" if window_days is None
                     else str(BACKFILL_DAYS if short else window_days))
             if not cid:

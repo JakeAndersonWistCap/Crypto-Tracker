@@ -18380,3 +18380,33 @@ def test_near_archive_reads_header_supply_and_stake_at_the_first_block_of_the_da
     assert got["locked_tokens"]["value"] == 600_000_000
     assert _measuring_point(got["total_supply_protocol"]["source"]) == "near_rpc:block.header.total_supply"
     assert na.known["2026-06-01"] == 150_000_000
+
+
+def test_ethereum_issuance_history_is_the_coingecko_supply_delta_plus_burn_before_etherscan():
+    """1b (Jake, 2026-09-29): ethsupply2 is point-in-time, so the history is CoinGecko's daily
+    supply (mcap / price) + the DefiLlama-derived burn: issuance(d) = s(d+1) - s(d) + burn(d),
+    only before the first Etherscan-leg row, never over a stored row, never using today's live
+    point. Daily values keep their noise (a negative day stays) so window sums telescope."""
+    from fetch import _derive_issuance_history, issuance_history_rows
+    from fetch.base import FetchOutput, today
+    spec = config.PROJECT_BY_NAME["Ethereum"]["issuance_history"]
+    t = today()
+    days = [t - pd.Timedelta(days=i) for i in range(6, -1, -1)]          # 6 days ago .. today
+    sup = [120_000_000 + 2_700 * i for i in range(7)]
+    sup[3] -= 3_000                                                     # a noisy day
+    rows = [dict(date=d, project="Ethereum", metric="circulating_supply_implied", value=v,
+                 source="coingecko:mcap/price", tier=1) for d, v in zip(days, sup)]
+    rows += [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=40.0,
+                  source="derived:defillama_burned_fee_revenue/price", tier=2) for d in days]
+    rows.append(dict(date=days[5], project="Ethereum", metric="gross_issuance_tokens", value=240.74,
+                     source="derived:d_total_supply_protocol+burn", tier=2))
+    stored = pd.DataFrame(rows)
+    out = FetchOutput()
+    _derive_issuance_history(out, [config.PROJECT_BY_NAME["Ethereum"]], stored)
+    f = out.frame().query("metric == 'gross_issuance_tokens'").sort_values("date")
+    assert list(f["date"]) == days[:5], "days before the Etherscan leg only; today's point unused"
+    assert set(f["source"]) == {spec["source"]}
+    assert f["value"].sum() == sup[5] - sup[0] + 5 * 40.0, "the window sum telescopes exactly"
+    assert (f["value"] < 0).sum() == 1, "the noisy day is kept, not dropped"
+    assert any("NOISE" in e.message and "negative" in e.message for e in out.log)
+    assert config.declared_handover("Ethereum", "gross_issuance_tokens")["ordered_points"][0] == spec["source"]

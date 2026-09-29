@@ -2245,7 +2245,25 @@ PROJECTS = [
                          "(check_offline_items etherscan_ethsupply2)",
         },
         "issuance_supply_metric": "total_supply_protocol",
+        # ===== ISSUANCE HISTORY (Jake, 2026-09-29): CoinGecko's daily supply + the burn. =====
+        # ethsupply2 is point-in-time; CoinGecko's ETH supply (market cap / price, 365 days,
+        # circulating_supply_implied) matched it to the ETH on 2026-09-29. issuance(d) =
+        # d(supply) + burn(d) for the days BEFORE the Etherscan leg (fetch._derive_issuance_history).
+        # Daily values carry CoinGecko's supply noise and are only ever summed over windows.
+        "issuance_history": {"supply_metric": "circulating_supply_implied",
+                             "burn_metric": "gross_burn_tokens",
+                             "source": "derived:d_coingecko_supply+burn",
+                             "live_source_prefix": "derived:d_total_supply_protocol",
+                             "matched": "CoinGecko ETH supply = ethsupply2 to the ETH, Jake 2026-09-29"},
         "series_handover": {
+            "gross_issuance_tokens": {
+                "ordered_points": ("derived:d_coingecko_supply+burn",
+                                   "derived:d_total_supply_protocol+burn"),
+                "why": "CoinGecko's daily supply + burn is the history; Etherscan ethsupply2 is "
+                       "primary from its second reading. The history derivation writes only days "
+                       "before the first Etherscan-leg row, so the legs cannot overlap.",
+                "declared_on": "2026-09-29",
+            },
             "gross_burn_tokens": {
                 "ordered_points": ("derived:defillama_burned_fee_revenue/price",
                                    "etherscan:ethsupply2.BurntFees"),

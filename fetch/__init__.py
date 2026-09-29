@@ -1463,6 +1463,79 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
                 f"gross_issuance_tokens={issued:,.4f} from {how}", 2)
 
 
+def issuance_history_rows(name: str, spec: dict, history: pd.DataFrame, before) -> tuple[pd.DataFrame, dict]:
+    """Daily issuance from a supply history: s(d+1) - s(d) + burn(d), for consecutive days d
+    before `before` (the first live-leg date). A supply point dated d is the supply at d 00:00
+    UTC (CoinGecko market_chart's daily points), so s(d+1) - s(d) spans day d, the day the burn
+    row dated d covers. The CURRENT day's point is a live read, not 00:00, and is never used.
+    Returns (rows, noise stats)."""
+    h = history[history["project"] == name]
+    sup = h[h["metric"] == spec["supply_metric"]].set_index("date")["value"].sort_index()
+    burn = h[h["metric"] == spec["burn_metric"]].set_index("date")["value"].sort_index()
+    sup = sup[sup.index < today()]
+    sup = sup[~sup.index.duplicated(keep="last")]
+    burn = burn[~burn.index.duplicated(keep="last")]
+    rows = []
+    for d0, d1 in zip(sup.index, sup.index[1:]):
+        if (d1 - d0).days != 1 or (before is not None and d0 >= before) or d0 not in burn.index:
+            continue
+        rows.append((d0, float(sup[d1] - sup[d0] + burn[d0])))
+    if not rows:
+        return pd.DataFrame(), {}
+    s = pd.Series([v for _, v in rows])
+    stats = {"days": len(s), "mean": float(s.mean()), "stdev": float(s.std(ddof=0)),
+             "min": float(s.min()), "max": float(s.max()), "negative_days": int((s < 0).sum())}
+    df = pd.DataFrame({"date": [d for d, _ in rows], "project": name, "metric": "gross_issuance_tokens",
+                       "value": [v for _, v in rows], "source": spec["source"], "tier": 2})
+    return df, stats
+
+
+def _derive_issuance_history(out: FetchOutput, projects: list[dict], stored_long) -> None:
+    """ISSUANCE HISTORY FROM A SUPPLY HISTORY (Ethereum, Jake 2026-09-29).
+
+    Etherscan's ethsupply2 is point-in-time, so its issuance series starts with its second read.
+    CoinGecko's market_chart gives a daily supply (market cap / price, stored as
+    circulating_supply_implied, 365 days) that matched ethsupply2 to the ETH on 2026-09-29, and
+    the DefiLlama-derived burn is backfilled a year: issuance(d) = d(supply) + burn(d). Written
+    only for days BEFORE the live leg starts (declared series_handover) and never over a stored
+    row. THE DAILY FIGURE CARRIES CoinGecko's SUPPLY NOISE: a day can read negative. The rows are
+    kept whole so every window sum telescopes to s(end) - s(start) + burn exactly; no daily cell
+    shows them, only window sums (Q0, Y1, months). The noise is logged every run."""
+    fresh = out.frame()
+    parts = [f for f in (stored_long, fresh) if f is not None and not getattr(f, "empty", True)]
+    if not parts:
+        return
+    cols = ["date", "project", "metric", "value", "source"]
+    hist = pd.concat([f[cols] for f in parts], ignore_index=True)
+    hist["date"] = pd.to_datetime(hist["date"]).dt.normalize()
+    for p in projects:
+        spec = p.get("issuance_history")
+        if not spec:
+            continue
+        name = p["name"]
+        iss = hist[(hist["project"] == name) & (hist["metric"] == "gross_issuance_tokens")]
+        live = iss[iss["source"].astype(str).str.startswith(spec["live_source_prefix"])]
+        before = live["date"].min() if len(live) else None
+        rows, stats = issuance_history_rows(name, spec, hist, before)
+        if rows.empty:
+            out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "skipped",
+                                    f"issuance history: no consecutive {spec['supply_metric']} days "
+                                    f"with a {spec['burn_metric']} row before the live leg", 2))
+            continue
+        taken = set(iss["date"])
+        rows = rows[~rows["date"].isin(taken)]
+        if not rows.empty:
+            out.add(rows[["date", "project", "metric", "value", "source", "tier"]], SOURCE_DERIVED,
+                    name, f"gross_issuance_tokens history: {len(rows)} day(s) = d({spec['supply_metric']}) "
+                          f"+ {spec['burn_metric']}, before {before.date() if before is not None else 'any live leg'}", 2)
+        out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "ok",
+                                f"issuance history NOISE over {stats['days']} day(s): mean "
+                                f"{stats['mean']:,.1f}/day, stdev {stats['stdev']:,.1f}, range "
+                                f"{stats['min']:,.1f}..{stats['max']:,.1f}, {stats['negative_days']} "
+                                f"negative day(s) — daily values are noise-bearing; only window "
+                                f"sums (which telescope) are used", 2))
+
+
 def registry_reasons() -> dict:
     """(project, metric) -> the sources.yaml entry's state, as the gap detector reads it.
 
@@ -1582,6 +1655,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # see Morpho's break: the shape of the last month is not in a run's frame. The store's rows
     # are concatenated with this run's so today's points are included — a break that happens
     # today is caught today, not tomorrow.
+    _derive_issuance_history(out, projects, stored_long)
     if stored_long is not None and not getattr(stored_long, "empty", True):
         fresh = out.frame()
         cols = [c for c in ("date", "project", "metric", "value", "source", "tier")
