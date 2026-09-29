@@ -376,6 +376,19 @@ class NearBlocks:
         # the next run carries on from that cursor with the same date bounds. Only a COMPLETE read
         # folds `pending` into the kept totals.
         pend = state.get("pending") or None
+        # ===== A NARROWER PARTIAL READ NEVER CAPS A WIDER ONE. 2026-09-29 (Jake: "asked twice"). =====
+        # The seed kept stopping at 2026-08-30: a routine run (after = today - 30) hit its 20-page
+        # cap and saved `pending` with after=2026-08-30; the seed then RESUMED that pending read —
+        # resuming took precedence over the wider window it asked for — finished the 30 days, and
+        # stored them as the whole history. A pending read that starts later than this read asks
+        # is discarded, and the whole requested window is read from the newest transaction.
+        if pend and str(pend.get("after") or "") > after:
+            log.info("%s/%s: DISCARDING a partial read from %s — this read asks from %s; re-reading "
+                     "the whole window from the newest transaction", name, metric, pend.get("after"), after)
+            state = {"newest_ts": None, "newest_ids": [], "by_day": {}, "after": after}
+            newest_ts, seen_ids, by_day = None, set(), {}
+            top_ts, top_ids = None, set()
+            pend = None
         if pend:
             cursor, after, before = pend["cursor"], pend["after"], pend["before"]
             top_ts, top_ids = pend["top_ts"], set(pend["top_ids"])

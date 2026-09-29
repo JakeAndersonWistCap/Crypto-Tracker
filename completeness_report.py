@@ -93,6 +93,34 @@ WAIT_ON_SERIES = {
 }
 
 
+def mechanism_start(p: dict, metric: str, asof: pd.Timestamp) -> dict | None:
+    """{"from", "why"} where the series' mechanism began inside the backfill year (Jake,
+    2026-09-29): declared (config.MECHANISM_START), a declared issuance schedule's first step, or a
+    deployment start the archive backfill recorded (fetch.archive.series_starts)."""
+    name, year_ago = p["name"], str((asof - pd.Timedelta(days=365)).date())
+    got = (getattr(config, "MECHANISM_START", {}) or {}).get((name, metric))
+    if got:
+        return got
+    sched = p.get("issuance_schedule") or {}
+    if sched.get("steps") and (metric == "gross_issuance_tokens"
+                               or (metric == "emissions_tokens" and sched.get("also_emissions"))):
+        first = min(s0["from"] for s0 in sched["steps"])
+        if first > year_ago:
+            return {"from": first, "why": f"the declared schedule begins {first}: "
+                                          f"{str(sched.get('note', ''))[:120]}"}
+    try:
+        import history_audit
+        st = history_audit.series_start(p, metric)
+    except Exception:  # noqa: BLE001
+        st = None
+    return st if st and st["from"] > year_ago else None
+
+
+def forward_only(name: str, metric: str) -> str | None:
+    fwd = config.HISTORY_FORWARD_ONLY.get(name) or {}
+    return fwd.get("why") if metric in fwd.get("metrics", ()) else None
+
+
 def portfolio_scope() -> tuple[list[dict], list[str]]:
     """(in scope, parked names): portfolio.txt's names, as the workbook builds; all if absent."""
     names, _ = config.read_portfolio(config.PORTFOLIO_FILE)
@@ -168,16 +196,30 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
     if status != "ok":
         return "BUG", f"status {status}: {note[:260]}"
     need = FULL_DAYS.get(metric, Q0_DAYS)
+    # COMPLETE FROM MECHANISM START (Jake, 2026-09-29): a series that begins with its mechanism
+    # has no earlier history to fetch. The youth of any rate built on it is said separately.
+    start = mechanism_start(p, metric, asof)
+    if start and first and first <= str((pd.Timestamp(start["from"]) + pd.Timedelta(days=3)).date()):
+        age = (asof - pd.Timestamp(start["from"])).days + 1
+        return "COMPLETE", (f"COMPLETE FROM MECHANISM START {start['from']}: {start['why']} | "
+                            f"young: rates based on it cover {age} day(s)" + flag)
+    # MATURING CARRIES ITS REASON: a recorded forward-only series says why; one without a record
+    # is a history a backfill should fill, and says THAT.
+    fwd = forward_only(name, metric)
+    why_wait = (f" — FORWARD-ONLY: {fwd}" if fwd else
+                " — NOT FORWARD-ONLY: its inputs have history, so a backfill should fill it "
+                "(history_audit.py names the route)")
     if kind == "flow" and str(row.get("q0_basis") or "").startswith("3 complete months"):
         cov = row.get("q0_covered_days")
         if cov is not None and not pd.isna(cov) and cov < 89:
             last = asof.to_period("M") - 1
-            return "MATURING", f"{int(cov)} of the Q0 months' days held; full with {last + 3} complete" + flag
+            return "MATURING", (f"{int(cov)} of the Q0 months' days held; full with {last + 3} "
+                                f"complete" + why_wait + flag)
     elif first:
         age = (asof - pd.Timestamp(first)).days + 1
         if age < need:
             full = (pd.Timestamp(first) + pd.Timedelta(days=need - 1)).date()
-            return "MATURING", f"{age} of {need} days since {first}; full on {full}" + flag
+            return "MATURING", f"{age} of {need} days since {first}; full on {full}" + why_wait + flag
     ref = reference(p, metric, row)
     if closed:                                  # a closure that renders a measured 0 (Fluid)
         ref = f"{note[:200]} (config.UNAVAILABLE, closed {closed.get('closed_on', '')})"
@@ -201,7 +243,10 @@ def report(data: pd.DataFrame, long: pd.DataFrame, asof: pd.Timestamp, only: str
             continue
         for m in headline_metrics(p):
             row = rows.get((p["name"], m)) or {"status": "missing"}
-            verdict, detail = classify(p, m, row, firsts.get((p["name"], m)), asof, firsts)
+            # the first date AS READ (after views: a stitched history counts), else the store's
+            fd = row.get("first_date")
+            first = fd if isinstance(fd, str) and fd else firsts.get((p["name"], m))
+            verdict, detail = classify(p, m, row, first, asof, firsts)
             out.append((p["name"], m, verdict, detail))
     if parked and not only:
         out.append((f"{len(parked)} not in portfolio.txt", "*", "PARKED",

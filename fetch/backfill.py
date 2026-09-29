@@ -54,6 +54,9 @@ def derived_inputs(project: dict, metric: str) -> set[str]:
         out |= {"revenue_usd", "price_usd"}
     if metric == "actual_buyback_usd":
         out |= {"actual_buyback_tokens", "price_usd"}
+    bh = project.get("buyback_history") or {}
+    if bh and metric in ("actual_buyback_tokens", "actual_buyback_usd"):
+        out |= {bh["usd_metric"], "price_usd"}        # the history leg's inputs (Hyperliquid)
     if metric == "actual_buyback_tokens" and config.buyback_tokens_from_usd(name):
         out |= {"actual_buyback_usd", "price_usd"}
     return out

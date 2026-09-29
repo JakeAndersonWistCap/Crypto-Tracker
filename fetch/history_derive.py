@@ -198,7 +198,78 @@ def _pool_release(out, h, p) -> int:
                  "d(circulating) - d(total) between consecutive days holding both")
 
 
-RULES = {"chain_burn": _chain_burn, "issuance": _issuance, "pool_release": _pool_release}
+def _gross_issuance(out, h, p) -> int:
+    """d(total_supply_gross) between consecutive stored readings (Uniswap, 2026-09-29): a transfer
+    burn leaves the contract's totalSupply alone, so its change IS gross issuance — 0 on every
+    one of the 366 archived days for UNI, whose supply is exactly 1,000,000,000."""
+    name = p["name"]
+    sup = _series(h, name, "total_supply_gross")
+    iss = _series(h, name, "gross_issuance_tokens")
+    if len(sup) < 2 or len(iss[~iss["source"].astype(str).str.startswith("derived:")]):
+        return 0
+    held = dict(zip(iss["date"], iss["value"]))
+    rows, refused = [], 0
+    pts = list(sup.itertuples(index=False))
+    for a, b in zip(pts, pts[1:]):
+        if _measuring_point(str(a.source)) != _measuring_point(str(b.source)) or b.value < a.value:
+            refused += 1
+            continue
+        span = (b.date - a.date).days
+        v = float(b.value) - float(a.value)
+        if _differs(held, b.date, v):
+            rows.append((b.date, v, "derived:d_supply_gross" + (f"[span={span}d]" if span > 1 else "")))
+    return _emit(out, name, "gross_issuance_tokens", rows,
+                 f"d(total_supply_gross); {refused} interval(s) refused (point change or a fall)")
+
+
+FLAT_RUN_DAYS = 7
+IMPLIED = "coingecko:mcap/price"
+
+
+def _circ_history(out, h, p) -> int:
+    """circulating_supply before the first live CoinGecko reading = market cap / price for each
+    past day (Jake, 2026-09-29) — the 365-day circulating_supply_implied series, stored under
+    circulating_supply as the declared history leg (config.GLOBAL_SERIES_HANDOVER), strictly before
+    the live leg so the two never overlap.
+
+    FLAT STRETCHES ARE FLAGGED, NOT BELIEVED: CoinGecko updates some coins' circulating figure
+    rarely (seen on GEODNET and ETH), so market cap / price holds still while the real supply
+    moves. A run of FLAT_RUN_DAYS or more unchanged days carries [flat=Nd] on each of its rows."""
+    name = p["name"]
+    circ = _series(h, name, "circulating_supply")
+    pts = set(circ["source"].astype(str).map(_measuring_point))
+    live = circ[circ["source"].astype(str).map(_measuring_point) == "coingecko"]
+    if live.empty or pts - {"coingecko", IMPLIED}:
+        return 0                   # a live leg from another source: not the declared pair
+    first_live = live["date"].min()
+    imp = _series(h, name, "circulating_supply_implied")
+    imp = imp[imp["date"] < first_live].sort_values("date")
+    if imp.empty:
+        return 0
+    vals, dates = imp["value"].astype(float).tolist(), imp["date"].tolist()
+    run = [1] * len(vals)
+    for i in range(1, len(vals)):
+        if abs(vals[i] - vals[i - 1]) <= max(config.FLAT_TOLERANCE_TOKENS, abs(vals[i]) * 1e-7):
+            run[i] = run[i - 1] + 1
+    length = run[:]                               # each row gets its whole run's length
+    for i in range(len(vals) - 2, -1, -1):
+        if run[i + 1] > 1:
+            length[i] = length[i + 1]
+    held = dict(zip(circ["date"], circ["value"]))
+    rows, flat_days = [], 0
+    for d, v, n in zip(dates, vals, length):
+        src = IMPLIED + (f"[flat={n}d]" if n >= FLAT_RUN_DAYS else "")
+        flat_days += n >= FLAT_RUN_DAYS
+        if _differs(held, d, v):
+            rows.append((d, v, src))
+    return _emit(out, name, "circulating_supply", rows,
+                 f"market cap / price before the live read ({first_live.date()}); {flat_days} day(s) "
+                 f"in flat stretches of {FLAT_RUN_DAYS}+ days, flagged [flat=Nd] — CoinGecko's "
+                 f"circulating figure not updating, not a real flat supply")
+
+
+RULES = {"chain_burn": _chain_burn, "issuance": _issuance, "pool_release": _pool_release,
+         "gross_issuance": _gross_issuance}
 
 
 def derive_from_history(out, projects: list[dict], stored_long) -> dict:
@@ -221,4 +292,7 @@ def derive_from_history(out, projects: list[dict], stored_long) -> dict:
         n = _usd(out, h, p)
         if n:
             done[(p["name"], "actual_buyback_usd")] = n
+        n = _circ_history(out, h, p) if p.get("coingecko_id") else 0
+        if n:
+            done[(p["name"], "circulating_supply")] = n
     return done

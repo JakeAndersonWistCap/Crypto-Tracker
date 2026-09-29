@@ -47,8 +47,13 @@ class Schedule:
                 continue
             steps = sorted(sched["steps"], key=lambda s: s["from"])
             start = pd.Timestamp(steps[0]["from"])
+            # THE WHOLE BACKFILL YEAR, WHATEVER THE RUN'S WINDOW (Jake, 2026-09-29): a declared
+            # schedule is deterministic, so clipping it to a routine run's 30 days left Aethir's
+            # emissions with 31 days while every input to a rate against it held a year. The rows
+            # for past days are identical on every run, so re-writing them changes nothing.
             if window_days is not None:
-                start = max(start, now - pd.Timedelta(days=window_days))
+                from .base import BACKFILL_DAYS
+                start = max(start, now - pd.Timedelta(days=max(int(window_days), int(BACKFILL_DAYS))))
             if start > now:
                 continue
             dates = pd.date_range(start, now, freq="D")

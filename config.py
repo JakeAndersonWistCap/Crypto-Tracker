@@ -1169,7 +1169,8 @@ def declared_handover(project_name: str, metric: str) -> dict | None:
     # sum); without this it read as a change of measuring point and was blanked, and A3 fell back
     # to the live days alone while A4 read the whole stitched history.
     origin = relabelled_from(project_name, metric)
-    return (p.get("series_handover") or {}).get(origin) if origin else None
+    inherited = (p.get("series_handover") or {}).get(origin) if origin else None
+    return inherited or GLOBAL_SERIES_HANDOVER.get(metric)
 
 
 def handover_monthly_leg(project_name: str, metric: str) -> tuple[str, str] | None:
@@ -9033,6 +9034,26 @@ PROJECTS = [
             "note": "the future-emissions pool is pre-minted supply being released.",
         },
         "name": "Hyperliquid", "symbol": "HYPE",
+        # ===== THE BUYBACK'S HISTORY, FROM DEFILLAMA. 2026-09-29 (Jake). =====
+        # DefiLlama's Hyperliquid holders revenue is the Assistance Fund's buyback spend (99% of
+        # fees), with full history; HyperCore serves current state only. Days before the live
+        # series begins read usd = holders revenue, tokens = usd / same-day price
+        # (build_workbook._relabel_views); the live Assistance Fund read (the burn total, as
+        # buyback) is primary from its first day. The handover is declared below and checked for
+        # overlap on every build.
+        "buyback_history": {
+            "usd_metric": "holders_revenue_usd", "source": "defillama:holders_revenue_usd/price",
+            "why": "DefiLlama holders revenue = the Assistance Fund's HYPE buyback spend",
+            "declared_by": "Jake, 2026-09-29"},
+        "series_handover": {
+            "actual_buyback_tokens": {
+                "ordered_points": ("defillama:holders_revenue_usd/price",
+                                   "derived:burn_total(gross_burn_tokens+core_burn_tokens)"),
+                "why": "DefiLlama holders revenue / price before the first HyperCore read; the live "
+                       "Assistance Fund read (burn total, as buyback) from its first day.",
+                "declared_on": "2026-09-29",
+            },
+        },
         "coingecko_id": "hyperliquid",
         # ===== TOTAL STAKED HYPE — REFUSED 2026-09-23, WIRED THE SAME DAY ON A BETTER SOURCE. =====
         # The refusal was right about what it checked and wrong about what exists. Both of
@@ -15314,6 +15335,24 @@ HISTORY_DERIVED = {
     ("Near", "gross_issuance_tokens"): "issuance",      # 1 covered day; header supply spans 365
     ("Plume", "gross_issuance_tokens"): "issuance",     # 7 days
     ("Chainlink", "pool_release_tokens"): "pool_release",   # 7 days
+    # 8 days; total_supply_gross is exactly 1,000,000,000 on all 366 archived days (Jake, 2026-09-29)
+    ("Uniswap", "gross_issuance_tokens"): "gross_issuance",
+}
+
+# ===== A HANDOVER DECLARED FOR EVERY PROJECT. 2026-09-29 (Jake). =====
+# circulating_supply before the first live CoinGecko reading is market cap / price for each past
+# day (fetch/history_derive._circ_history), written only on days BEFORE the live leg — so the two
+# never overlap, which handover_refusal still checks on every build. A project's own
+# series_handover for the metric takes precedence.
+GLOBAL_SERIES_HANDOVER = {
+    "circulating_supply": {
+        "ordered_points": ("coingecko:mcap/price", "coingecko"),
+        "why": "CoinGecko market_chart market cap / price is the 365-day history; the live "
+               "/coins/markets circulating figure is primary from its first reading. Flat "
+               "stretches in the history carry [flat=Nd] on the row: CoinGecko's figure not "
+               "updating, not a real flat supply.",
+        "declared_on": "2026-09-29",
+    },
 }
 
 
@@ -15453,14 +15492,6 @@ ARCHIVE_NOT_BY_DESIGN = {
 # is no archive node to read it at a past block. These series accumulate from their first read;
 # history_audit.py prints the date each reaches 90 and 365 days from what is stored.
 HISTORY_FORWARD_ONLY = {
-    "Hyperliquid": {
-        "metrics": ("burn_address_balance", "gross_burn_tokens", "core_burn_tokens",
-                    "total_burn_tokens", "total_supply_gross", "emissions_tokens",
-                    "future_emissions_tokens", "locked_tokens", "actual_buyback_tokens",
-                    "actual_buyback_usd"),
-        "why": "HyperCore's info API (api.hyperliquid.xyz/info) serves current state only and "
-               "HyperCore has no archive node; nothing older than the first read exists to fetch",
-    },
     # NEAR (Jake's archive_probe, 2026-09-30): the archival RPC answers `block` by height (header
     # total_supply is backfilled by archive_backfill.py --near) but refuses `validators` for a
     # past block with VALIDATOR_INFO_UNAVAILABLE. Staked NEAR accumulates from its first read.
@@ -15468,7 +15499,53 @@ HISTORY_FORWARD_ONLY = {
         "metrics": ("locked_tokens",),
         "why": "NEAR's archival RPC refuses `validators` for past blocks "
                "(VALIDATOR_INFO_UNAVAILABLE) — no stake history to read",
+        # THE ONLY RECORDED REASON, AND THE ROUTE NOT TAKEN (2026-09-29, Jake asked): the archival
+        # RPC DOES answer contract view calls at a past block, so each staking pool's
+        # get_total_staked_balance at a day's first block would rebuild the total — ~300 pools x
+        # 365 days, ~110,000 calls against an endpoint that already needs pacing (NearArchive).
+        # Not built: a cost decision, not a missing source.
+        "route_not_taken": "sum of staking pools' get_total_staked_balance via archival `query` "
+                           "at each past day's first block (~110k calls for a year)",
     },
+    "Hyperliquid": {
+        "metrics": ("burn_address_balance", "gross_burn_tokens", "core_burn_tokens",
+                    "total_burn_tokens", "total_supply_gross", "emissions_tokens",
+                    "future_emissions_tokens", "locked_tokens"),
+        "why": "HyperCore's info API (api.hyperliquid.xyz/info) serves current state only and "
+               "HyperCore has no archive node; nothing older than the first read exists to fetch",
+        # CHECKED ONCE (2026-09-29, Jake): the info endpoints in hyperliquid-python-sdk
+        # (hyperliquid/info.py @ master) are current-state or PER-USER history — delegatorHistory,
+        # userNonFundingLedgerUpdates, portfolio, userFillsByTime — with no aggregate burn, stake
+        # or emission history. userFillsByTime for the Assistance Fund could date its buys, capped
+        # at the most recent fills; check_offline_items.py hl_af_fills_depth measures how far back.
+        # The BUYBACK is no longer forward-only: DefiLlama holders revenue is its history leg
+        # (buyback_history on the project).
+        "checked": "hyperliquid-python-sdk info.py endpoint list, 2026-09-29",
+    },
+    # 2026-09-29 (Jake: "if an input has no history, say which"):
+    "Plume": {
+        "metrics": ("gross_issuance_tokens",),
+        "why": "d(CoinGecko total_supply), and CoinGecko serves total_supply as a current value "
+               "only — /coins/{id}/history carries no supply (confirmed on a live call "
+               "2026-09-14); the series is re-derived over every stored day (history_derive)",
+    },
+    "Fluid": {
+        "metrics": ("emissions_tokens",),
+        "why": "a DECLARED zero (the FLUID emission has finished) whose end date is not sourced — "
+               "zeros are not dated backwards past a date nobody has read",
+    },
+}
+# ===== WHERE A MECHANISM BEGINS INSIDE THE WINDOW. 2026-09-29 (Jake). =====
+# A series that starts with its mechanism has no earlier history to fetch: it is COMPLETE from
+# that date (completeness_report), with a separate note that rates based on it are young. Declared
+# here where no schedule or recorded deployment already carries the date; a declared
+# issuance_schedule's first step and archive-recorded deployment starts (fetch.archive.series_starts)
+# count the same way.
+MECHANISM_START = {
+    ("Sky", "sky_stage2_burn_tokens"): {
+        "from": "2026-09-13",
+        "why": "the first Stage 2 buy-and-burn — the 2026-09-10 monthly settlement spell, executed "
+               "2026-09-13 (2,860,943.76 SKY)"},
 }
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "

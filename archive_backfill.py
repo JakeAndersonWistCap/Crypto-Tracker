@@ -112,6 +112,23 @@ def main(argv=None) -> int:
     before = coverage(st, projects, ok)
     t0 = time.monotonic()
     res = bf.run(archive_chains)
+    # CHAINLINK'S REWARD-VAULT RATE, DAY BY DAY (Jake, 2026-09-29): getRewardBuckets() at each
+    # past day's first block through the same Ethereum archive endpoint — emissions_tokens is the
+    # rate x time series the live read writes one day of. Never overwrites a stored day.
+    for p in projects:
+        spec = p.get("reward_vault_rates")
+        if not spec or spec["chain"] not in archive_chains:
+            continue
+        from fetch import reward_vault as rv
+        w3 = bf.reader._w3[spec["chain"]]
+        have = {d for (d,) in st.conn.execute(
+            "SELECT date FROM metrics WHERE project=? AND metric='emissions_tokens'", (p["name"],))}
+        db = ar.DayBlocks(w3, spec["chain"])
+        rows, why = rv.history_rows(p, w3, db, ar.ARCHIVE_DAYS, have, w3.eth.block_number,
+                                    deadline=t0 + a.budget_min * 60)
+        db.save()
+        n = ar._write_new(st, pd.DataFrame(rows)) if rows else 0
+        print(f"  reward vault {p['name']}: {n} row(s) (emissions_tokens and the annual rate) — {why}")
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")
         if near and near in projects:

@@ -64,12 +64,24 @@ def epochs(payload: dict, spec: dict, decimals=None) -> tuple[list[tuple[pd.Time
         raise ValueError(f"{spec['history_key']}: {len(ts)} {spec['time_field']} against {len(raw)} "
                          f"{spec['amount_field']}; keys {sorted(hist)[:12]}")
     scale = 10.0 ** int(spec["decimals"] if decimals is None else decimals)
+    # OLDEST FIRST, WHATEVER ORDER THE API SENDS (Jake, 2026-09-29): the published-APR line said
+    # "the latest epoch started 2026-01-29" — sPENDLE's launch — because the array's LAST element
+    # was taken as the latest. Every consumer here reads [-1] as the newest, so the pairs are
+    # sorted by timestamp once, here, and `raw` is returned in the same order.
+    pairs = sorted(((int(float(t)), a) for t, a in zip(ts, raw)), key=lambda x: x[0])
     out = []
-    for t, a in zip(ts, raw):
-        t = int(float(t))
+    for t, a in pairs:
         when = pd.Timestamp(t, unit="s" if t < 10**11 else "ms").normalize()
         out.append((when, float(a) / scale))
-    return out, list(raw)
+    return out, [a for _, a in pairs]
+
+
+def completed(rows: list, spec: dict, now) -> list:
+    """The epochs that have ENDED (start + epoch_days <= now). The epoch in progress is still
+    accruing — Jake's staking page showed it at 82,545 against ~170K-350K for a whole epoch — and
+    counted as a full epoch it pulls the per-epoch mean, and so the token yield, down."""
+    days = int(spec.get("epoch_days", 14))
+    return [(d, v) for d, v in rows if d + pd.Timedelta(days=days) <= now]
 
 
 def fitting_scale(payload: dict, spec: dict, now) -> tuple:
@@ -80,7 +92,7 @@ def fitting_scale(payload: dict, spec: dict, now) -> tuple:
     tried, fits = [], []
     for k in dict.fromkeys([int(spec["decimals"]), *map(int, spec.get("decimals_candidates", ()))]):
         rows, _ = epochs(payload, spec, k)
-        done = [(d, v) for d, v in rows if d <= now]
+        done = completed(rows, spec, now)
         med = statistics.median(v for _, v in done) if done else None
         tried.append((k, med))
         if med is not None and lo <= med <= hi:
@@ -152,8 +164,7 @@ class PendleEpochs:
         ts, aprs = hist.get(spec["time_field"]) or [], hist.get(spec.get("aprs_field", "aprs")) or []
         days = int(spec.get("epoch_days", 14))
         epochs = []
-        for t, a in zip(ts, aprs):
-            t = int(float(t))
+        for t, a in sorted(((int(float(t)), a) for t, a in zip(ts, aprs)), key=lambda x: x[0]):
             start = pd.Timestamp(t, unit="s" if t < 10**11 else "ms")
             epochs.append((start, start + pd.Timedelta(days=days), a))
         partial = bool(epochs) and epochs[-1][1] > pd.Timestamp.now("UTC").tz_localize(None)
@@ -209,7 +220,7 @@ class PendleEpochs:
             lo, hi = spec["units_check"]["median_between"]
             k, done, med, tried = fitting_scale(payload, spec, now)
             shown = ", ".join(f"/10^{d}: {'none' if m is None else f'{m:,.4f}'}" for d, m in tried)
-            if k is None:
+            if k is None or not done:
                 out.fail(SOURCE, name, f"{metric}: UNITS NOT CONFIRMED — median epoch {shown}; none "
                                        f"(or more than one) of the declared scales lands in {lo:,}..{hi:,} "
                                        f"({spec['units_check']['source']}); raw {raw[:4]} ... latest "
@@ -224,9 +235,18 @@ class PendleEpochs:
                         f" — DECLARED /10^{spec['decimals']} DID NOT FIT; the payload's scale is /10^{k}")
                 frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:{spec['history_key']}."
                                             f"{spec['amount_field']}", TIER, d).iloc[0] for d, v in done])
+                allk, _ = epochs(payload, spec, k)
+                live = [(d, v) for d, v in allk if (d, v) not in set(done)]
+                ts = [int(float(t)) for t in (payload[spec["history_key"]][spec["time_field"]])]
+                order = ("newest-first" if ts == sorted(ts, reverse=True) and len(ts) > 1 else
+                         "oldest-first" if ts == sorted(ts) else "unordered")
                 out.add(frame, SOURCE, name,
-                        f"{metric}: {len(done)} epoch(s) {done[0][0].date()}..{done[-1][0].date()}, "
-                        f"median {med:,.0f} PENDLE — UNITS CONFIRMED against the staking page's "
-                        f"{lo:,}..{hi:,} (raw {raw[0]} / 10^{k}; latest epoch {done[-1][1]:,.0f} PENDLE "
-                        f"from raw {raw[-1]}){note}", TIER)
+                        f"{metric}: payload holds {len(allk)} epoch(s) {allk[0][0].date()}..{allk[-1][0].date()} "
+                        f"(API order {order}; sorted by date here); stored {len(done)} COMPLETED "
+                        f"{done[0][0].date()}..{done[-1][0].date()}, median {med:,.0f} PENDLE — UNITS "
+                        f"CONFIRMED against the staking page's {lo:,}..{hi:,} (/10^{k}; last complete epoch "
+                        f"{done[-1][1]:,.0f} PENDLE)"
+                        + (f"; IN PROGRESS, not stored until it ends: " + ", ".join(
+                            f"{d.date()} at {v:,.0f} PENDLE" for d, v in live) if live else "")
+                        + note, TIER)
             self._published_apr(name, spec, payload, now, out)

@@ -18262,7 +18262,7 @@ def test_pendle_epochs_are_read_per_epoch_with_units_checked_against_the_staking
             msg = " ".join(x.message for x in o.log)
             assert len(e) == 4 and abs(e["value"].max() - 350_000) < 1e-6, k
             assert "DECLARED /10^18 DID NOT FIT" in msg and f"the payload's scale is {k}" in msg
-            assert "latest epoch 82,545 PENDLE" in msg
+            assert "last complete epoch 82,545 PENDLE" in msg
         bad = dict(good, sPendleHistoricalData={"timestamps": ts, "buybackAmounts": [1_200_000, 900_000, 1_500_000, 400_000]})
         out2 = FetchOutput()
         PendleEpochs(get=lambda url: bad).run([p], None, out2)
@@ -19203,3 +19203,207 @@ def test_section_at_deletes_claim_duplicates_then_renames_the_rest(tmp_path, mon
     got = sorted(c.execute("SELECT date, metric, value FROM metrics ORDER BY metric, date").fetchall())
     assert got == [("2026-09-20", "emissions_claimed_tokens", 10.0), ("2026-09-21", "emissions_claimed_tokens", 11.0),
                    ("2026-09-22", "emissions_claimed_tokens", 12.0), ("2026-09-23", "emissions_tokens", 99.0)]
+
+
+def test_pendle_epochs_are_sorted_by_date_and_the_epoch_in_progress_is_not_stored():
+    """Jake, 2026-09-29: the APR line said "the latest epoch started 2026-01-29" (sPENDLE's launch)
+    — the array came newest-first and its LAST element was read as the latest. Epochs are sorted
+    by date whatever the API order; the epoch still in progress (start + 14 days after now) is not
+    stored, because counted as a whole epoch it pulls the per-epoch mean and the yield down."""
+    import os
+    from fetch.base import FetchOutput
+    from fetch.pendle_epochs import PendleEpochs
+    os.environ["TOKEN_METRICS_IGNORE_ROBOTS"] = "1"
+    try:
+        p = config.PROJECT_BY_NAME["Pendle"]
+        now = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+        starts = [now - pd.Timedelta(days=5 + 14 * i) for i in range(6)]            # newest first
+        amounts = [82_545, 240_000, 350_000, 170_000, 260_000, 300_000]
+        payload = {"lastEpochApr": 0, "sPendleHistoricalData": {
+            "timestamps": [int(t.timestamp()) for t in starts],
+            "buybackAmounts": [str(a * 10**18) for a in amounts], "aprs": [0] * 6}}
+        out = FetchOutput()
+        PendleEpochs(get=lambda url: payload).run([p], None, out)
+        ep = out.frame().query("metric == 'pendle_distributed_tokens'").sort_values("date")
+        assert len(ep) == 5 and 82_545.0 not in set(ep["value"]), "the in-progress epoch is held back"
+        assert ep["date"].max() == starts[1] and ep["date"].min() == starts[5]
+        msg = " ".join(e.message for e in out.log)
+        assert "API order newest-first" in msg and "payload holds 6 epoch(s)" in msg
+        assert f"IN PROGRESS, not stored until it ends: {starts[0].date()} at 82,545 PENDLE" in msg
+        apr = next(e.message for e in out.log if e.message.startswith("staking_apr_published: "))
+        assert f"the latest epoch started {starts[0].date()} and is IN PROGRESS" in apr
+    finally:
+        os.environ.pop("TOKEN_METRICS_IGNORE_ROBOTS", None)
+
+
+def test_a_narrow_partial_nearblocks_read_never_caps_the_seeds_wider_window(monkeypatch, caplog):
+    """Jake (asked twice): the NEAR buyback seed kept stopping at 2026-08-30. A routine run hit
+    its page cap and saved `pending` with after = today - 30; the 365-day seed then RESUMED that
+    narrower read instead of reading its own window. A pending read starting later than the one
+    requested is discarded and the whole window is read."""
+    import json
+    import logging
+    from fetch import nearblocks, scrape
+    from fetch.base import today
+    from fetch.logcache import LogCache
+    near = config.PROJECT_BY_NAME["Near"]
+    flow = near["near_account_flows"][0]
+    f = LogCache().root / f"nearblocks-{flow['account']}.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    narrow = str((today() - pd.Timedelta(days=30)).date())
+    f.write_text(json.dumps({"version": 1, "after": narrow, "newest_ts": None, "newest_ids": [],
+                             "by_day": {}, "pending": {"cursor": "c7", "after": narrow,
+                                                       "before": str((today() - pd.Timedelta(days=1)).date()),
+                                                       "top_ts": None, "top_ids": [], "by_day": {},
+                                                       "rows": 900, "excluded": 0}}))
+    asked = []
+
+    class H:
+        def get(self, url, params=None, headers=None):
+            asked.append((params.get("after_date"), params.get("cursor")))
+            old = today() - pd.Timedelta(days=200)
+            return {"cursor": None, "txns": [{
+                "predecessor_account_id": "some-user.near", "receiver_account_id": flow["account"],
+                "transaction_hash": "t1", "block_timestamp": str(int(old.value)),
+                "actions": [{"action": "TRANSFER", "deposit": str(3 * 10**24)}]}]}
+
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-test")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    out = FetchOutput()
+    with caplog.at_level(logging.INFO, logger="token_metrics.fetch.nearblocks"):
+        nearblocks.NearBlocks(http=H(), page_cap=10_000)._account_flow("Near", flow, 365, out)
+    assert "DISCARDING a partial read" in caplog.text
+    assert asked[0] == (str((today() - pd.Timedelta(days=365)).date()), None), "the whole year, from the newest"
+    got = out.frame()
+    assert len(got) == 1 and got["date"].iloc[0] == (today() - pd.Timedelta(days=200)).normalize()
+    assert json.loads(f.read_text())["after"] == str((today() - pd.Timedelta(days=365)).date())
+
+
+def test_maturing_round_history_backfills(tmp_path, monkeypatch):
+    """Jake, 2026-09-29: 31 MATURING, most not needing to wait. (1) circulating_supply history =
+    market cap / price before the live read, flat stretches flagged; (2) Uniswap issuance from
+    d(total_supply_gross) = 0 on every archived day; Aethir's declared schedule over the whole
+    year; Chainlink's vault rate at each past day's first block; (3) Hyperliquid's buyback history
+    from DefiLlama holders revenue, handed over to the live read."""
+    import build_workbook as bw
+    from fetch.base import today
+    from fetch.history_derive import derive_from_history
+    from fetch.schedule import Schedule
+    base = {"tier": 1, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    days = pd.date_range(today() - pd.Timedelta(days=365), today() - pd.Timedelta(days=1))
+    live_from = today() - pd.Timedelta(days=19)
+    rows = []
+    add = lambda n, m, d, v, s: rows.append(dict(base, project=n, metric=m, date=d, value=v, source=s))
+    for i, d in enumerate(days):
+        # GEODNET: CoinGecko's circulating figure stuck for 10 days in the middle of the year
+        v = 400e6 + (0 if 100 <= i < 110 else i * 1000.0) + (100 * 1000.0 if i >= 110 else 0)
+        add("GEODNET", "circulating_supply_implied", d, v, "coingecko:mcap/price")
+        add("Uniswap", "total_supply_gross", d, 1_000_000_000.0, "chain:ethereum:token" + (":archive" if d < live_from else ""))
+        if d >= live_from:
+            add("GEODNET", "circulating_supply", d, v, "coingecko")
+    add("Near", "circulating_supply", days[-1], 1.0, "nearblocks:supply")        # a non-CoinGecko live leg
+    add("Near", "circulating_supply_implied", days[0], 1.0, "coingecko:mcap/price")
+    stored = pd.DataFrame(rows)
+    out = FetchOutput()
+    ps = [config.PROJECT_BY_NAME[n] for n in ("GEODNET", "Uniswap", "Near")]
+    derive_from_history(out, ps, stored)
+    f = out.frame()
+    circ = f[(f.project == "GEODNET") & (f.metric == "circulating_supply")].sort_values("date")
+    assert len(circ) == 365 - 19 and circ["date"].max() < live_from, "strictly before the live leg"
+    flat = circ[circ["source"].str.contains(r"\[flat=")]
+    assert len(flat) == 10 and flat["source"].iloc[0] == "coingecko:mcap/price[flat=10d]"
+    assert f[(f.project == "Near") & (f.metric == "circulating_supply")].empty, "another live source: not stitched"
+    iss = f[(f.project == "Uniswap") & (f.metric == "gross_issuance_tokens")]
+    assert len(iss) == 364 and (iss["value"] == 0.0).all() and set(iss["source"]) == {"derived:d_supply_gross"}
+    # the stitched series builds without a measuring-point block
+    hist = pd.concat([stored, f.assign(**{k: v for k, v in base.items() if k not in f.columns})], ignore_index=True)
+    data = bw.aggregate(hist, pd.DataFrame(), today()).set_index(["project", "metric"])
+    assert data.loc[("GEODNET", "circulating_supply"), "status"] == "ok", data.loc[("GEODNET", "circulating_supply"), "note"]
+    assert data.loc[("GEODNET", "circulating_supply"), "first_date"] == str(days[0].date())
+
+    # Aethir's declared schedule: the whole year on a routine 30-day run
+    o = FetchOutput()
+    Schedule().run([config.PROJECT_BY_NAME["Aethir"]], 30, o)
+    em = o.frame().query("metric == 'emissions_tokens'")
+    assert em["date"].min() <= today() - pd.Timedelta(days=364)
+
+    # Hyperliquid: DefiLlama holders revenue / price before the live read, handed over
+    hl = []
+    live = today() - pd.Timedelta(days=17)
+    for d in days:
+        hl.append(dict(base, project="Hyperliquid", metric="holders_revenue_usd", date=d, value=2_000_000.0, source="defillama:dailyHoldersRevenue"))
+        hl.append(dict(base, project="Hyperliquid", metric="price_usd", date=d, value=40.0, source="coingecko"))
+        if d >= live:
+            for m in ("gross_burn_tokens", "core_burn_tokens"):
+                hl.append(dict(base, project="Hyperliquid", metric=m, date=d, value=25_000.0, source="hypercore_info:x:delta"))
+    data = bw.aggregate(pd.DataFrame(hl), pd.DataFrame(), today()).set_index(["project", "metric"])
+    b = data.loc[("Hyperliquid", "actual_buyback_tokens")]
+    assert b["status"] not in bw.WITHHELD_STATUSES, b["note"]
+    assert b["first_date"] == str(days[0].date()) and abs(b["y1"] - 364 * 50_000.0) < 1e-3
+    u = data.loc[("Hyperliquid", "actual_buyback_usd")]
+    assert abs(u["q0"] - (72 * 2_000_000.0 + 17 * 50_000.0 * 40.0)) < 1e-3          # (asof-90, asof], data to asof-1
+
+
+def test_reward_vault_history_reads_each_past_day_at_its_first_block():
+    """Chainlink emissions_tokens: getRewardBuckets() at each past day's first block (the archive
+    pattern), newest first, never over a stored day, stopping where the vault is not readable."""
+    from fetch import reward_vault as rv
+    from fetch.base import today
+    p = config.PROJECT_BY_NAME["Chainlink"]
+    rate = 1_000 * 10**18 // rv.SECONDS_PER_YEAR * 10**0          # ~1,000 LINK/yr per bucket
+
+    def word(v):
+        return f"{v:064x}"
+
+    class Eth:
+        def call(self, tx, block):
+            if block < 90:
+                raise ValueError("execution reverted")               # before deployment
+            if tx["data"] == rv.SEL_TYPE_AND_VERSION:
+                s = "RewardVault 1.0.0".encode().hex()
+                return bytes.fromhex(word(32) + word(17) + s.ljust(64, "0"))
+            far = 2_000_000_000
+            return bytes.fromhex("".join(word(x) for x in (rate, far, 0) * 3))
+
+        def get_block(self, n):
+            return {"timestamp": 1_700_000_000 + n}
+
+    class W3:
+        eth = Eth()
+
+        def to_checksum_address(self, a):
+            return a
+
+    class DB:
+        def at(self, day, head):
+            return 100 - (today() - day).days
+
+    have = {str((today() - pd.Timedelta(days=2)).date())}
+    rows, why = rv.history_rows(p, W3(), DB(), 30, have, 100)
+    got = pd.DataFrame(rows)
+    em = got[got.metric == "emissions_tokens"]
+    assert len(em) == 9 and str((today() - pd.Timedelta(days=2)).date()) not in set(em["date"].astype(str).str[:10])
+    assert em["source"].iloc[0].endswith(":archive") and "not readable" in why and "execution reverted" in why
+    assert abs(em["value"].iloc[0] - got[got.metric == "reward_emission_rate_annual"]["value"].iloc[0] / 365.25) < 1e-9
+
+
+def test_completeness_counts_mechanism_starts_complete_and_names_every_forward_only_reason():
+    """Jake, 2026-09-29: a series that begins with its mechanism is COMPLETE from that date, with
+    the youth of its rates said apart; MATURING is only for forward-only series, each with its
+    reason — anything else that is short says a backfill should fill it."""
+    import completeness_report as cr
+    asof = pd.Timestamp("2026-09-29")
+    sky = config.PROJECT_BY_NAME["Sky"]
+    ok = {"status": "ok", "q0_basis": "trailing 90 days"}
+    v, d = cr.classify(sky, "gross_issuance_tokens", ok, "2026-08-13", asof)
+    assert v == "COMPLETE" and d.startswith("COMPLETE FROM MECHANISM START 2026-08-13") and "young" in d
+    v, d = cr.classify(sky, "emissions_tokens", ok, "2026-08-13", asof)
+    assert v == "COMPLETE"
+    v, d = cr.classify(sky, "sky_stage2_burn_tokens", ok, "2026-09-14", asof)
+    assert v == "COMPLETE" and "2026-09-13" in d
+    v, d = cr.classify(config.PROJECT_BY_NAME["Near"], "locked_tokens", {"status": "ok"}, "2026-09-11", asof)
+    assert v == "MATURING" and "FORWARD-ONLY: NEAR's archival RPC refuses" in d
+    v, d = cr.classify(config.PROJECT_BY_NAME["Fluid"], "emissions_tokens", {"status": "ok"}, "2026-09-22", asof)
+    assert v == "MATURING" and "FORWARD-ONLY" in d
+    v, d = cr.classify(config.PROJECT_BY_NAME["Morpho"], "fees_usd", ok, "2026-09-11", asof)
+    assert v == "MATURING" and "NOT FORWARD-ONLY" in d

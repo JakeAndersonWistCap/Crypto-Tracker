@@ -1136,6 +1136,45 @@ def geod_archive_probe():
     print("  PASTE BACK: the first endpoint whose 365d line shows two numbers serves the backfill.")
 
 
+def hl_af_fills_depth():
+    """2026-09-29 (Jake): is there a HISTORICAL source for Hyperliquid before the first HyperCore
+    read? userFillsByTime for the Assistance Fund returns its buy fills over a time range; Hyperliquid's
+    API docs cap fills at the most recent 10,000, so this measures how far back that reaches.
+    Pages newest-first by moving endTime back to the oldest fill seen."""
+    head("HYPERLIQUID — Assistance Fund fills: how far back userFillsByTime reaches")
+    import requests
+    af = "0xfefefefefefefefefefefefefefefefefefefefe"
+    url = "https://api.hyperliquid.xyz/info"
+    end = int(time.time() * 1000)
+    start = end - 365 * 86_400_000
+    total, oldest, hype = 0, None, 0.0
+    for _ in range(20):
+        try:
+            r = requests.post(url, json={"type": "userFillsByTime", "user": af, "startTime": start,
+                                         "endTime": end, "aggregateByTime": True}, timeout=TIMEOUT)
+            fills = r.json()
+        except Exception as e:  # noqa: BLE001
+            print(f"  userFillsByTime UNREACHABLE — {e}")
+            return
+        if not isinstance(fills, list) or not fills:
+            break
+        total += len(fills)
+        hype += sum(float(f.get("sz") or 0) for f in fills
+                    if f.get("coin") in ("HYPE", "@107") and f.get("side") == "B")
+        t = min(int(f["time"]) for f in fills)
+        if oldest is not None and t >= oldest:
+            break
+        oldest, end = t, t - 1
+    if oldest is None:
+        print("  no fills returned")
+        return
+    import datetime as _dt
+    print(f"  {total} fill(s) back to {_dt.datetime.utcfromtimestamp(oldest / 1000):%Y-%m-%d}; "
+          f"HYPE bought in them {hype:,.2f}. If that date is well inside the year, the 10,000-fill "
+          f"cap binds and fills cannot give a year of buybacks — DefiLlama holders revenue stays "
+          f"the history leg.")
+
+
 def coinmetrics_community():
     """1a (2026-09-29): is TxTfrValAdjUSD on Coin Metrics' FREE community API? The GitHub mirror of
     the community catalog (coinmetrics/data @f1a36afb) says no, for every asset. This asks the
@@ -2697,6 +2736,7 @@ CHECKS = (
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
+    hl_af_fills_depth,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

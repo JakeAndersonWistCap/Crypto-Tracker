@@ -102,7 +102,7 @@ DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tie
              "last_success", "entered_on", "note", "q0_covered_days", "q0_events",
              "schedule_end", "q0_pre_end_days", "last_nonzero_date", "silent_days", "silence_flag",
              "q0_basis", "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
-             "q3_covered_days"]
+             "q3_covered_days", "first_date"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
@@ -119,7 +119,10 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              # PER-WINDOW COVERAGE (2026-09-29): a ratio of two flows divides rates, each over its
              # OWN covered days (_flow_rate), never a 90-day sum by a 1-day one.
              "Now: days of the 30 the series covered", "Prior 30d: days covered",
-             "Q1: days of the 90 covered", "Q2: days covered", "Q3: days covered"]
+             "Q1: days of the 90 covered", "Q2: days covered", "Q3: days covered",
+             # 2026-09-29: the series' first date AS READ (after the read-time views — a stitched
+             # history counts), which is what the completeness report measures history from.
+             "First date held"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 # Appended day-count columns that formulas READ as numbers (see write_data).
 NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days",
@@ -977,6 +980,20 @@ def _relabel_views(groups: dict) -> None:
         tok["metric"] = "actual_buyback_tokens"
         tok["source"] = tok["source"].astype(str).map(mark)
         tok = _as_stored(tok, og.columns)
+        # THE HISTORY BEFORE THE LIVE READ (Hyperliquid, Jake 2026-09-29): DefiLlama's holders
+        # revenue IS the Assistance Fund's buyback spend, with full history. Days BEFORE the live
+        # series' first day are prepended as usd / same-day price, under their own source — the
+        # declared first leg of the series_handover. The live read stays primary from its first day.
+        bh = (p.get("buyback_history") or {})
+        hu, px_h = groups.get((name, bh.get("usd_metric"))), groups.get((name, "price_usd"))
+        if bh and hu is not None and not hu.empty and px_h is not None and not px_h.empty:
+            pmap = px_h.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+            h = hu[hu["date"] < og["date"].min()].copy()
+            h = h[h["date"].isin(pmap.index[pmap > 0])]
+            if not h.empty:
+                h["value"] = h["value"].astype(float).values / pmap.loc[h["date"]].values
+                h["metric"], h["source"] = "actual_buyback_tokens", bh["source"]
+                tok = pd.concat([_as_stored(h, og.columns), tok], ignore_index=True).sort_values("date")
         groups[(name, "actual_buyback_tokens")] = tok
         if config.dune_query_declared(name, "actual_buyback_usd"):
             continue
@@ -1274,6 +1291,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["reconciliation"] = _reconcile_periods(name, metric, s, recon)
             row["tier"] = "" if pd.isna(latest.get("tier")) else int(latest["tier"])
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
+            row["first_date"] = g["date"].min().strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))
             granularity = config.series_granularity(name, metric)
             row["granularity"] = granularity
