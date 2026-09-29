@@ -94,8 +94,27 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default="metrics.db")
     ap.add_argument("--short-only", action="store_true")
     ap.add_argument("--forget", metavar="METRIC", help="drop the backfill memo for METRIC")
+    ap.add_argument("--cadence", nargs=2, metavar=("PROJECT", "METRIC"),
+                    help="how often a stored daily series actually changes (e.g. Ethereum "
+                         "circulating_supply_implied)")
     ap.add_argument("--yes", action="store_true", help="with --forget: write the change")
     a = ap.parse_args(argv)
+    if a.cadence:
+        from fetch import supply_cadence
+        proj, met = a.cadence
+        conn = sqlite3.connect(a.db)
+        df = pd.read_sql_query("SELECT date, value FROM metrics WHERE project=? AND metric=? ORDER BY date",
+                               conn, params=(proj, met))
+        if df.empty:
+            print(f"{proj}/{met}: nothing stored")
+            return 0
+        s = pd.Series(df["value"].values, index=pd.to_datetime(df["date"]))
+        c = supply_cadence(s)
+        print(f"{proj}/{met}: {c['days']} daily value(s) {s.index.min().date()}..{s.index.max().date()}, "
+              f"{c['distinct']} distinct, {len(c['updates'])} update(s); gap between updates median "
+              f"{c['median_gap']} day(s), max {c['max_gap']}")
+        print("  update days (last 20): " + ", ".join(str(d.date()) for d in c["updates"][-20:]))
+        return 0
     if a.forget:
         memo = bf._read()
         drop = sorted(k for k in memo if k.split("|", 1)[-1] == a.forget)

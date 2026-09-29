@@ -15282,6 +15282,31 @@ PENDLE_STAKING_PAGE_2026_09_29 = {
                         "buybackAmounts; last 12 epochs) -> pendle_distributed_tokens, units "
                         "checked against this page's 170K-350K per past epoch (fetch/pendle_epochs.py)",
 }
+# ===== SUPPLY AND BALANCE SERIES THAT MOVE EVERY DAY (Jake, 2026-09-30). =====
+# A reading EQUAL to the previous day's on one of these is a STALE SOURCE, not a flat day.
+# Ethereum: CoinGecko's ETH total_supply read 122,090,190.712258 on both 2026-09-28 and 09-29 and
+# matched Etherscan ethsupply2 to six decimals — CoinGecko copies Etherscan's figure periodically —
+# while ETH issues ~2,700/day; both stored gross_issuance_tokens rows came out equal to the
+# previous day's burn exactly (d(supply) = 0). GEODNET: CoinGecko's circulating supply showed the
+# same flat stretches while ~100K GEOD/day is released from the mining wallets.
+# Used by: fetch._derive_issuance (refuses d(supply) = 0 with burn > 0), the issuance history
+# (update cadence), and fetch.validate.check_flat_series (flags a flat stretch for review).
+MOVES_DAILY = {
+    ("Ethereum", "total_supply"): "ETH issues ~2,700/day and burns every block",
+    ("Ethereum", "total_supply_protocol"): "ETH issues ~2,700/day and burns every block",
+    ("Ethereum", "circulating_supply"): "ETH issues ~2,700/day and burns every block",
+    ("Ethereum", "circulating_supply_implied"): "ETH issues ~2,700/day and burns every block",
+    ("GEODNET", "circulating_supply"): "~100K GEOD/day released from the mining wallets",
+    ("Near", "total_supply_protocol"): "NEAR mints every epoch (~12h) and burns gas every block",
+}
+# Two readings closer than this are "unchanged" (float noise of market cap / price).
+FLAT_TOLERANCE_TOKENS = 0.01
+
+
+def moves_daily(project_name: str, metric: str) -> str | None:
+    return MOVES_DAILY.get((project_name, metric))
+
+
 # ===== SERIES WITH NO HISTORY TO READ: FORWARD-ONLY (Jake, 2026-09-29). =====
 # HyperCore's info API serves CURRENT state only — spotClearinghouseState (the Assistance Fund's
 # HYPE), tokenDetails (totalSupply, futureEmissions), delegator/validator summaries — and there

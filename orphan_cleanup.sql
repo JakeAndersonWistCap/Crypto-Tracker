@@ -3290,3 +3290,38 @@ SELECT date, metric, value, source, fetched_at
 --    AND metric IN ('burn_address_balance', 'gross_burn_tokens', 'actual_buyback_tokens')
 --    AND (source = 'chain:polygon:burn_polygon' OR source LIKE 'chain:polygon:burn_polygon:%');
 -- COMMIT;
+
+-- ========================================================================================
+-- AW. Ethereum gross_issuance_tokens rows that are ONLY the previous day's burn  2026-09-29
+--     Jake's AU2: 09-28 = 148.187892 and 09-29 = 240.739909, each exactly the previous day's
+--     gross_burn_tokens, because the supply they were differenced from did not move (CoinGecko's
+--     ETH total_supply 122,090,190.712258 on both days, a periodic copy of Etherscan's). From
+--     2026-09-30 such a delta is refused (config.MOVES_DAILY), so these are the only two.
+--     They are not issuance. REVIEW FIRST.
+-- ========================================================================================
+-- AW1. EACH ISSUANCE ROW BESIDE THE BURN OF THE SAME DAY AND THE DAY BEFORE.
+SELECT i.date, i.value AS issuance, i.source, b0.value AS burn_same_day, b1.value AS burn_day_before
+  FROM metrics i
+  LEFT JOIN metrics b0 ON b0.project = i.project AND b0.metric = 'gross_burn_tokens' AND b0.date = i.date
+  LEFT JOIN metrics b1 ON b1.project = i.project AND b1.metric = 'gross_burn_tokens'
+                      AND b1.date = date(i.date, '-1 day')
+ WHERE i.project = 'Ethereum' AND i.metric = 'gross_issuance_tokens'
+ ORDER BY i.date;
+
+-- AW2. THE SUPPLY READINGS THEY CAME FROM (expect the same value on consecutive days).
+SELECT date, metric, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric IN ('total_supply', 'total_supply_protocol')
+   AND date >= '2026-09-26'
+ ORDER BY metric, date;
+
+-- AW3. THE PROPOSED DELETE: issuance rows equal to the same or previous day's burn to 1e-6.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+--    AND source NOT LIKE 'derived:d_coingecko_supply%'
+--    AND EXISTS (SELECT 1 FROM metrics b
+--                 WHERE b.project = 'Ethereum' AND b.metric = 'gross_burn_tokens'
+--                   AND b.date IN (metrics.date, date(metrics.date, '-1 day'))
+--                   AND ABS(b.value - metrics.value) < 0.000001);
+-- COMMIT;

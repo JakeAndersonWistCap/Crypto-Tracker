@@ -632,3 +632,41 @@ def check_cross_checks(df: pd.DataFrame, out) -> None:
 def flagged_keys(review_items: list[dict]) -> set[tuple[str, str]]:
     """(project, metric) pairs the workbook should mark as needing review."""
     return {(i["project"], i["metric"]) for i in review_items}
+
+
+def check_flat_series(long: pd.DataFrame, out) -> list[tuple[str, str, int, str]]:
+    """A supply or balance declared to MOVE DAILY (config.MOVES_DAILY) that read the same value on
+    consecutive days — a stale source, not a quiet day. 2026-09-30 (Jake).
+
+    CoinGecko's ETH supply sat at 122,090,190.712258 across 09-28 and 09-29 while ETH issues
+    ~2,700 a day, and GEODNET's CoinGecko circulating supply had flat stretches while ~100K GEOD a
+    day left the mining wallets. Each such series whose NEWEST reading equals the previous day's is
+    flagged to the Review Queue (flat_supply), with how many consecutive days it has been flat.
+    Returns [(project, metric, flat days, since)]."""
+    import config
+    found = []
+    if long is None or long.empty:
+        return found
+    for (project, metric), why in config.MOVES_DAILY.items():
+        g = long[(long["project"] == project) & (long["metric"] == metric)]
+        if len(g) < 2:
+            continue
+        g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+        g = g.drop_duplicates("date", keep="last")
+        v = g["value"].to_numpy()
+        d = list(g["date"])
+        run = 0
+        for i in range(len(v) - 1, 0, -1):
+            if (d[i] - d[i - 1]).days == 1 and abs(v[i] - v[i - 1]) <= config.FLAT_TOLERANCE_TOKENS:
+                run += 1
+            else:
+                break
+        if run:
+            since = str(d[len(v) - 1 - run].date())
+            out.review_item(project, metric, "flat_supply", "stored_flagged", value=float(v[-1]),
+                            prior_value=float(v[-1 - run]), date=d[-1], source=str(g["source"].iloc[-1]),
+                            tier=None, prior_date=since,
+                            basis=f"unchanged for {run} consecutive day(s) since {since}; it moves "
+                                  f"daily ({why}) — a stale source, not a flat day")
+            found.append((project, metric, run, since))
+    return found

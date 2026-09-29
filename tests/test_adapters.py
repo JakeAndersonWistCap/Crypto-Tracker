@@ -18408,8 +18408,78 @@ def test_ethereum_issuance_history_is_the_coingecko_supply_delta_plus_burn_befor
     assert set(f["source"]) == {spec["source"]}
     assert f["value"].sum() == sup[5] - sup[0] + 5 * 40.0, "the window sum telescopes exactly"
     assert (f["value"] < 0).sum() == 1, "the noisy day is kept, not dropped"
-    assert any("NOISE" in e.message and "negative" in e.message for e in out.log)
+    assert any("UPDATE CADENCE" in e.message and "1 negative" in e.message for e in out.log)
     assert config.declared_handover("Ethereum", "gross_issuance_tokens")["ordered_points"][0] == spec["source"]
+
+
+def test_a_periodically_copied_supply_gives_issuance_between_its_update_days_only():
+    """1b (Jake, 2026-09-30): CoinGecko's ETH supply is Etherscan's figure copied periodically —
+    runs of identical values, then a jump. The cadence is counted; issuance is taken between update
+    days (s(v) - s(u) + the burn of [u, v)), spread evenly over that interval, and nothing after
+    the last update. Updates further apart than a week refuse the history outright."""
+    from fetch import issuance_history_rows, supply_cadence
+    from fetch.base import today
+    spec = config.PROJECT_BY_NAME["Ethereum"]["issuance_history"]
+    t = today()
+    days = [t - pd.Timedelta(days=i) for i in range(10, 0, -1)]         # 10 .. 1 days ago
+    # updates every 3 days: flat, flat, jump
+    base, sup = 120_000_000.0, []
+    for i, _ in enumerate(days):
+        sup.append(base + 8_000.0 * (i // 3))
+    rows = [dict(date=d, project="Ethereum", metric="circulating_supply_implied", value=v)
+            for d, v in zip(days, sup)]
+    rows += [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=40.0) for d in days]
+    hist = pd.DataFrame(rows)
+    cad = supply_cadence(pd.Series(sup, index=days))
+    assert cad["distinct"] == 4 and cad["median_gap"] == 3.0 and len(cad["updates"]) == 3
+    df, stats = issuance_history_rows("Ethereum", spec, hist, None)
+    # three closed intervals of 3 days (days 0-2, 3-5, 6-8); day 9 is after the last update
+    assert len(df) == 9 and stats["updates"] == 3
+    assert all(abs(v - (8_000.0 + 3 * 40.0) / 3) < 1e-9 for v in df["value"])
+    assert df["date"].max() == days[8]
+    # updates a fortnight apart: refused, with the cadence
+    days2 = [t - pd.Timedelta(days=i) for i in range(60, 0, -1)]
+    sup2 = [base + 30_000.0 * (i // 14) for i in range(60)]
+    rows2 = [dict(date=d, project="Ethereum", metric="circulating_supply_implied", value=v) for d, v in zip(days2, sup2)]
+    rows2 += [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=40.0) for d in days2]
+    df2, st2 = issuance_history_rows("Ethereum", spec, pd.DataFrame(rows2), None)
+    assert df2.empty and "median gap" in st2["refused"]
+
+
+def test_a_supply_that_moves_daily_but_did_not_is_refused_and_the_next_move_spans_the_gap():
+    """1a (Jake, 2026-09-30): Ethereum's two stored issuance rows equalled the previous day's burn
+    exactly — CoinGecko's supply was unchanged across the days. A zero change on a supply declared
+    to move daily is refused (stale reading) and gapped; the next reading that has moved derives
+    the whole interval, adding back the burn of the days it spans."""
+    from fetch import _derive_issuance
+    from fetch.base import FetchOutput, today, point
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    assert config.moves_daily("Ethereum", "total_supply_protocol")
+    t = today()
+    d = lambda n: t - pd.Timedelta(days=n)  # noqa: E731
+    v0 = 122_090_190.712258
+    # flat: prior equals today's reading
+    out = FetchOutput()
+    out.add(point("Ethereum", "total_supply_protocol", v0, "etherscan:ethsupply2.supply", 1, t), "x", "Ethereum", "", 1)
+    out.add(point("Ethereum", "gross_burn_tokens", 240.739909, "etherscan:ethsupply2.BurntFees:delta", 1, t), "x", "Ethereum", "", 1)
+    _derive_issuance(out, [eth], {("Ethereum", "total_supply_protocol"): v0},
+                     {("Ethereum", "total_supply_protocol"): str(d(1).date())})
+    assert out.frame().query("metric == 'gross_issuance_tokens'").empty
+    assert [r["reason"] for r in out.review if r["metric"] == "gross_issuance_tokens"] == ["stale_supply"]
+    # moved after two flat days: the delta spans them, so their burns are added back
+    stored = pd.DataFrame([
+        dict(date=d(3), project="Ethereum", metric="total_supply_protocol", value=v0 - 2_660.0),
+        dict(date=d(2), project="Ethereum", metric="total_supply_protocol", value=v0),
+        dict(date=d(1), project="Ethereum", metric="total_supply_protocol", value=v0),
+        dict(date=d(1), project="Ethereum", metric="gross_burn_tokens", value=40.0)])
+    out2 = FetchOutput()
+    out2.add(point("Ethereum", "total_supply_protocol", v0 + 5_320.0, "etherscan:ethsupply2.supply", 1, t), "x", "Ethereum", "", 1)
+    out2.add(point("Ethereum", "gross_burn_tokens", 40.0, "etherscan:ethsupply2.BurntFees:delta", 1, t), "x", "Ethereum", "", 1)
+    _derive_issuance(out2, [eth], {("Ethereum", "total_supply_protocol"): v0},
+                     {("Ethereum", "total_supply_protocol"): str(d(1).date())}, stored)
+    got = out2.frame().query("metric == 'gross_issuance_tokens'")["value"]
+    assert len(got) == 1 and abs(got.iloc[0] - (5_320.0 + 40.0 + 40.0)) < 1e-6, got
+
 
 
 def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over_beacon_chain_eth():
@@ -18454,3 +18524,20 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     # 64 x sqrt(B gwei) per epoch x 82,181.25 epochs/yr / 1e9 = 166.32 x sqrt(B ETH)
     assert abs(64 * (1e9) ** 0.5 * 365.25 * 86_400 / (32 * 12) / 1e9 - 166.32) < 0.01
     assert config.PROJECT_BY_NAME["Ethereum"]["coinmetrics_community"]["available"] is False
+
+
+def test_a_daily_moving_supply_that_stayed_flat_is_flagged_with_its_run_length():
+    """1d (Jake, 2026-09-30): any supply or balance declared to move daily that reads the same on
+    consecutive days is flagged for review (flat_supply) with how long it has been flat — ETH's
+    CoinGecko supply, and GEODNET's CoinGecko circulating supply."""
+    from fetch.base import FetchOutput
+    from fetch.validate import check_flat_series
+    rows = [dict(date=pd.Timestamp(d), project="GEODNET", metric="circulating_supply", value=v, source="coingecko")
+            for d, v in (("2026-09-25", 400e6), ("2026-09-26", 400.1e6), ("2026-09-27", 400.1e6),
+                         ("2026-09-28", 400.1e6))]
+    rows += [dict(date=pd.Timestamp(d), project="Ethereum", metric="total_supply_protocol", value=v,
+                  source="etherscan") for d, v in (("2026-09-28", 1.0), ("2026-09-29", 2.0))]
+    out = FetchOutput()
+    found = check_flat_series(pd.DataFrame(rows), out)
+    assert found == [("GEODNET", "circulating_supply", 2, "2026-09-26")]
+    assert out.review[0]["reason"] == "flat_supply"
