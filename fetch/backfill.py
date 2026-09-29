@@ -95,10 +95,20 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
     return pairs, why
 
 
-def record(pairs: set, first_dates_after: dict) -> None:
-    """After the run: remember how far back each backfilled series now reaches."""
+def record(pairs: set, first_dates_after: dict, answered: set | None = None) -> None:
+    """After the run: remember how far back each backfilled series now reaches.
+
+    ** ONLY A PAIR THE SOURCE ACTUALLY ANSWERED THIS RUN. Fixed 2026-09-29. ** A run in which the
+    source failed, was rate-limited or was skipped stored nothing older — and was recorded as
+    "the source has nothing older", which stopped the year being re-asked for RECHECK_DAYS. Sky's
+    price_usd sat at 29 days (2026-08-31..09-28) though CoinGecko serves SKY's whole history, and
+    actual_buyback_usd valued 29 of 729 buyback rows. `answered`: the (project, metric) pairs
+    with rows in this run's output; None keeps the old behaviour for callers that cannot say.
+    """
     memo = _read()
     for name, metric in pairs:
+        if answered is not None and (name, metric) not in answered:
+            continue
         first = first_dates_after.get((name, metric))
         if first:
             memo[f"{name}|{metric}"] = {"first": first, "checked_on": str(today().date())}

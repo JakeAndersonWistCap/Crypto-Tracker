@@ -18128,3 +18128,26 @@ def test_ratios_of_flows_divide_rates_over_each_sides_own_covered_days_or_block(
     b, i = out.loc["Ethereum|gross_burn_tokens"], out.loc["Ethereum|gross_issuance_tokens"]
     assert b["q0_covered_days"] == 90 and b["now_covered_days"] == 30 and b["q1_covered_days"] == 1
     assert i["q0_covered_days"] == 1 < bw.RATE_MIN_DAYS
+
+
+def test_a_backfill_the_source_did_not_answer_is_not_remembered_as_source_limited(monkeypatch, tmp_path):
+    """Jake's run 2026-09-29: Sky's price_usd held 29 days (2026-08-31..09-28) though CoinGecko has
+    SKY's whole history, so actual_buyback_usd valued 29 of 729 rows. record() remembered every
+    backfilled pair as "nothing older", including a run where the source stored nothing — which
+    stopped the year being re-asked for 30 days. Only pairs answered in the run are remembered;
+    history_audit wants 365 days of price and can drop a stale memo (look first, --yes to write)."""
+    from fetch import backfill as bf
+    import history_audit as ha
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    first = {("Sky", "price_usd"): "2026-08-31", ("Sky", "market_cap_usd"): "2026-08-31"}
+    bf.record({("Sky", "price_usd"), ("Sky", "market_cap_usd")}, first, answered={("Sky", "market_cap_usd")})
+    memo = bf._read()
+    assert "Sky|price_usd" not in memo and "Sky|market_cap_usd" in memo
+    pairs, _ = bf.plan([config.PROJECT_BY_NAME["Sky"]], first)
+    assert ("Sky", "price_usd") in pairs, "not answered -> re-asked next run"
+
+    bf.record({("Sky", "price_usd")}, first)          # an old-style memo, as Jake's cache holds
+    assert ha.main(["--forget", "price_usd"]) == 0 and "Sky|price_usd" in bf._read()
+    assert ha.main(["--forget", "price_usd", "--yes"]) == 0 and "Sky|price_usd" not in bf._read()
+    assert ha.PRICE_DAYS == 365 and config.PROJECT_BY_NAME["Sky"]["net_protocol_surplus_reference"] \
+        ["financials_page_2026_09_29"]["a3_buyback_cross_check"]["measured_expected"]["ratio_to_implied"] == 1.13

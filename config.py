@@ -12189,7 +12189,21 @@ PROJECTS = [
                 # measured A3 buyback over the same window, not a reconciliation.
                 "a3_buyback_cross_check": {"allocation_usd": 8_380_000, "sky_buyback_share": 27.5 / 50,
                                            "implied_sky_buyback_usd": round(8_380_000 * 27.5 / 50),
-                                           "status": "ROUGH — window straddles Stage 2's start"},
+                                           "status": "ROUGH — window straddles Stage 2's start",
+                                           # ===== THE CHECK, 2026-09-29 (Jake's run 08:16). =====
+                                           # Measured buyback valued only 29 of 729 rows: price_usd
+                                           # held 2026-08-31..09-28 (see fetch/backfill.record).
+                                           # With a year of price the measured Q0 should read
+                                           # ~$5.2M; the allocation implies ~$4.6M. Same order.
+                                           "measured_expected": {
+                                               "sky_tokens_q0": 84_119_874, "avg_price_usd": 0.062,
+                                               "usd": round(84_119_874 * 0.062),
+                                               "ratio_to_implied": round(84_119_874 * 0.062 / (8_380_000 * 27.5 / 50), 2),
+                                               "circulating_retirement": "0.57% before the price "
+                                                                         "backfill; ~1.1% expected after",
+                                               "verdict": "SAME ORDER — recorded, not a reconciliation: "
+                                                          "the allocation is 90 days to 2026-09-28 and "
+                                                          "the SKY share is roughly 55% under Stage 2"}},
                 "ytd_net_surplus_unreconciled": {
                     "usd": 84_950_000, "to": "2026-08-31",
                     "reading": "probably the POST-allocation (remitted) figure",

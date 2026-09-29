@@ -354,7 +354,10 @@ def main(argv=None) -> int:
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
     if backfill:
-        bf.record(backfill, st.first_dates())
+        frame = out.frame()
+        answered = (set(map(tuple, frame[["project", "metric"]].drop_duplicates().values))
+                    if not frame.empty else set())
+        bf.record(backfill, st.first_dates(), answered)
 
     for e in out.log:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
