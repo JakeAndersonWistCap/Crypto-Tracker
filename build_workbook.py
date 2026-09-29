@@ -2284,6 +2284,31 @@ def _a1_headline(R: Refs) -> list[tuple]:
     ]
 
 
+def _token_yield(R: Refs):
+    """A3, Pendle (2026-09-29): the staking yield in TOKENS — PENDLE bought (annualised over the
+    days it covers) / reward-bearing sPENDLE (lock + lock_add). Price-free, so a rising PENDLE
+    does not understate it the way USD spend at buy-time over staked value at today's price does."""
+    def build(r, p):
+        spec = config.PROTOCOL_YIELD.get(p["name"]) or {}
+        ty = spec.get("token_yield")
+        if not ty:
+            return ""
+        tok = R.D(r, ty["tokens"], "q0")
+        base = R.D(r, spec["lock"], "now")
+        if spec.get("lock_add"):
+            add = R.D(r, spec["lock_add"], "now")
+            base = f"({base}+IF(ISNUMBER({add}),{add},0))"
+        return calc(f"IF(AND(ISNUMBER({tok}),ISNUMBER({base})),{_annualise(R, r, p, ty['tokens'], tok)}/{base},{NA})")
+
+    def note(p):
+        ty = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {})
+        return ((" · tokens", f"TOKEN YIELD — PENDLE bought, annualised, over real + virtual "
+                              f"sPENDLE. Airdrops (in kind) excluded. Cross-check: {ty['cross_check']}.")
+                if ty else None)
+    return ("Staking yield in TOKENS = tokens distributed per year ÷ reward-bearing stake (real + virtual)",
+            build, FMT_PCT, "calc", False, {"metric": "actual_buyback_tokens", "flag_fn": note})
+
+
 def _virtual_share(R: Refs):
     """A3, Pendle (2026-09-29): the share of staker distributions going to VIRTUAL balances —
     lock_add ÷ (lock + lock_add). Beside the yield so the split is read, not buried in the
@@ -2878,6 +2903,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         _protocol_yield(R, data_by_key),
+        _token_yield(R),
         _virtual_share(R),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====
         # locked_tokens (the column above, via contracts.spendle_underlying) is PENDLE.balanceOf

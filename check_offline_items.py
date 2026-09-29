@@ -1202,6 +1202,35 @@ def chainlink_reward_rates():
         print(f"  blended {tot / sum(pr.values()):.3%} on {sum(pr.values()):,.0f} LINK; {tot:,.0f} LINK/yr")
 
 
+def pendle_spendle_fees():
+    """2026-09-29: where sPENDLE's 5% instant-unstake fee goes, and what spendle/data carries.
+
+    StakedPendle.instantUnstake sends the fee to feeReceiver (owner-settable). This reads
+    feeReceiver() and instantUnstakeFeeRate(), says whether the receiver has code, and prints
+    the keys of api-v2.pendle.finance/core/v1/spendle/data so a per-epoch distribution field,
+    if there is one, can be wired."""
+    head("PENDLE — sPENDLE instant-unstake fee receiver, and the spendle/data fields")
+    from eth_utils import keccak                          # noqa: PLC0415
+    sp = "0x999999999991E178D52Cd95AFd4b00d066664144"
+    sel = lambda sig: "0x" + keccak(text=sig).hex()[:8]  # noqa: E731
+    w, _ = eth_call(sp, sel("feeReceiver()"))
+    recv = as_address(w) if w else None
+    r, _ = eth_call(sp, sel("instantUnstakeFeeRate()"))
+    print(f"  feeReceiver {recv or 'UNREACHABLE'}  ({_code(recv, 'ethereum') if recv else '-'})")
+    print(f"  instantUnstakeFeeRate {int(r, 16) / 1e18:.2%}" if r else "  instantUnstakeFeeRate UNREACHABLE")
+    known = {"0x3dae3d1734ca3c7b3089d4dd03c9876e0a0102b4": "merkleDepositor",
+             "0x33305665f69b4642d1275f4ce81c23651674d21c": "externalRewardsDistributor",
+             "0x3942f7b55094250644cffda7160226caa349a38e": "vePendleAirdropDistributor"}
+    if recv:
+        print(f"  receiver is {known.get(recv.lower(), 'NOT a Pendle distributor in deployments/1-core.json')}")
+    try:
+        d = requests.get("https://api-v2.pendle.finance/core/v1/spendle/data", timeout=TIMEOUT).json()
+        print(f"  spendle/data keys: {sorted(d)[:40] if isinstance(d, dict) else type(d).__name__}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  spendle/data UNREACHABLE — {e}")
+    print("  PASTE BACK: the receiver line (to a distributor = staker yield) and the keys.")
+
+
 def injective():
     head("INJECTIVE — mint module: inflation and annual provisions")
     for host in ("https://sentry.lcd.injective.network", "https://lcd.injective.network"):
@@ -2574,7 +2603,7 @@ CHECKS = (
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
-    chainlink_reward_rates,
+    chainlink_reward_rates, pendle_spendle_fees,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

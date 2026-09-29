@@ -18012,3 +18012,28 @@ def test_geodnet_a3_buyback_and_a4_burn_read_the_same_stitched_burn():
     assert t["status"] == "ok" and t["q0"] == b["q0"] == 1.55e6 + 7 * 52_000.0, (t["status"], t["q0"])
     # August's row, with no price on the 1st, is valued at August's mean price (0.18)
     assert abs(u["q0"] - (1.55e6 * 0.18 + 7 * 52_000.0 * 0.15)) < 1e-6, u["q0"]
+
+
+def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
+    """Jake, 2026-09-29: the USD protocol yield (1.15%) divides buy-time spend by today's staked
+    value and understates on a rising price. The token yield = PENDLE bought (annualised) / (real +
+    virtual) sPENDLE — Pendle's docs: up to 100% of repurchased PENDLE goes to active sPENDLE, and
+    reward snapshots include virtual balances. ~4.6M/yr on ~208M -> ~2.2%."""
+    import build_workbook as bw
+
+    ty = config.PROTOCOL_YIELD["Pendle"]["token_yield"]
+    assert ty["tokens"] == "actual_buyback_tokens"
+    assert config.PENDLE_STAKING_PAGE_2026_09_29["total_pendle_staked_headline"] == 93_877_266
+    parts = config.PENDLE_STAKING_PAGE_2026_09_29["decomposes_as"]
+    assert abs(sum(parts.values()) - 93_877_266) / 93_877_266 < 0.001
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}:{w}]"
+
+    label, build = bw._token_yield(R())[:2]
+    f = str(build(5, config.PROJECT_BY_NAME["Pendle"]))
+    assert "D[actual_buyback_tokens:q0]" in f and "D[locked_tokens_shares:now]" in f
+    assert "D[locked_tokens_virtual:now]" in f and "price_usd" not in f, f
+    assert build(5, config.PROJECT_BY_NAME["Sky"]) == ""
+    assert abs(4_600_000 / (30_340_000 + 177_780_000) - 0.0221) < 0.001

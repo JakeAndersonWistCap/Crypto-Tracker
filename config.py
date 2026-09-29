@@ -15022,16 +15022,47 @@ PROTOCOL_YIELD = {
                "lock_add_decay": {
                    "ends_by": "2028-01-20",
                    "what": "legacy vePENDLE boosts (virtual sPENDLE) decay to zero",
-                   "source": "Jake, 2026-09-29 — consistent with vePENDLE's two-year maximum lock "
-                             "running from the sPENDLE migration; not yet confirmed against "
-                             "Pendle's own docs from here",
-               }},
+                   "source": "Jake, 2026-09-29. Pendle's docs (pendle-finance/documentation "
+                             "@9b9509e, ProtocolMechanics/Mechanisms/sPENDLE.md, read 2026-09-29): "
+                             "virtual sPENDLE was set from each lock at the 2026-01-29 00:00 UTC "
+                             "snapshot, max 4x at 2 years to unlock, decaying to 1x by the unlock "
+                             "date and then EXPIRING — so the last expires no later than ~2028-01-29",
+               },
+               # ===== TOKEN-DENOMINATED YIELD (Jake, 2026-09-29). =====
+               # The USD yield divides buyback spend at buy-time prices by staked value at today's
+               # price, so a rising PENDLE understates it. In tokens: PENDLE bought (annualised) /
+               # reward-bearing sPENDLE (real + virtual). Pendle's docs: "Up to 100% of repurchased
+               # PENDLE will be distributed to active sPENDLE holders", and reward snapshots
+               # "include virtual sPENDLE balances" — so real + virtual IS the base. Airdrops are
+               # distributed in kind and are NOT in this figure.
+               "token_yield": {"tokens": "actual_buyback_tokens",
+                               "cross_check": "~2.68M PENDLE distributed Feb -> late Sep 2026 "
+                                              "(Jake, from Pendle's staking page) ~ 4.6M/yr -> "
+                                              "~2.2% on ~208M reward-bearing"}},
     "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying",
                  # ** THE YIELD ASSUMES BUYBACKS REACH sETHFI HOLDERS. ** True of the old
                  # programme (100% to sETHFI holders), UNCONFIRMED for the new one — see
                  # Ether.fi.buyback_programmes. Shown on the A3 cell. Added 2026-09-28.
                  "caveat": "new programme (passed 2026-09-03) splits purchases between treasury "
                            "and user rewards; recipient class unconfirmed"},
+}
+# ===== PENDLE'S sPENDLE STAKING PAGE, read by Jake 2026-09-29. Reference only. =====
+PENDLE_STAKING_PAGE_2026_09_29 = {
+    "total_pendle_staked_headline": 93_877_266,
+    "decomposes_as": {"real_spendle_shares": 30_340_000, "unmigrated_legacy_vependle": 63_550_000},
+    "match": "~0.01% — the page's headline counts legacy lockers' PENDLE, not reward-bearing sPENDLE",
+    "distributions": "every 2nd Saturday; current partial epoch 82,545 PENDLE; past epochs "
+                     "~170K-350K PENDLE of buyback rewards, plus separate airdrops (in kind)",
+    "unstaking": "14-day cooldown, or instant for a 5% fee (instantUnstakeFeeRate)",
+    # WHERE THE 5% GOES: StakedPendle.instantUnstake sends it to `feeReceiver`, an owner-settable
+    # address (pendle-core-v2-public contracts/LiquidityMining/sPendle/StakedPendle.sol, read
+    # 2026-09-29). Whether that address feeds stakers is not in the source or the docs —
+    # check_offline_items pendle_spendle_fees reads feeReceiver() and the fees taken.
+    "instant_unstake_fee_to": "feeReceiver (owner-settable); destination's role UNCONFIRMED",
+    "per_epoch_series": "NOT WIRED — the rewards are merkle distributions; which distributor "
+                        "(deployments/1-core.json lists merkleDepositor, externalRewardsDistributor, "
+                        "vePendleAirdropDistributor) carries the sPENDLE buyback rewards is not "
+                        "established. The probe prints the spendle/data keys to find the field.",
 }
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "
