@@ -8312,9 +8312,10 @@ def test_nps_stores_months_only_and_reconciles_them_against_the_published_quarte
         line for line in (Path(__file__).resolve().parent.parent / "manual_overrides.csv")
         .read_text(encoding="utf-8").splitlines() if not line.startswith("#"))
         if r["metric"] == "net_protocol_surplus_usd"]
-    assert {r["date"] for r in rows} == {"2026-05-31", "2026-06-30"}, \
+    # July and August added 2026-09-29 from financial.skyeco.com (Jake's reading) — still months.
+    assert {r["date"] for r in rows} == {"2026-05-31", "2026-06-30", "2026-07-31", "2026-08-31"}, \
         f"months only — the quarters and the year are references now: {[r['date'] for r in rows]}"
-    assert {float(r["value"]) for r in rows} == {9_710_000.0, 10_810_000.0}
+    assert {float(r["value"]) for r in rows} == {9_710_000.0, 10_810_000.0, 10_520_000.0, 15_750_000.0}
 
     ref = config.PROJECT_BY_NAME["Sky"]["net_protocol_surplus_reference"]
     assert [q["usd"] for q in ref["quarterly"]] == [46_040_000, 33_290_000]

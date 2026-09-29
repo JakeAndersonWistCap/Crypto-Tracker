@@ -3393,6 +3393,12 @@ PROJECTS = [
             #     high-volume senders (bots, oracles, system accounts), not a misread.
             # The website could not be opened from here: check_offline_items plume_growthepie.
             "current_day_excluded_at_source": "json_creation.download_data: date < date_trunc('day', now())",
+            # CLOSED (Jake, 2026-09-29): growthepie is internally consistent — daa 449-666 on
+            # ~200K tx/day over 2026-09-22..28. Concentrated activity (a few very active senders),
+            # not a data fault.
+            "c3_closed": {"on": "2026-09-29", "by": "Jake",
+                          "finding": "concentrated activity, not a data fault",
+                          "evidence": "daa 449-666 on ~200K tx/day, 2026-09-22..28"},
             "daa_definition": "unique active addresses per day (hll over fact_active_addresses_hll)",
             "checked_on": "2026-09-28",
         },
@@ -5206,6 +5212,20 @@ PROJECTS = [
         # ===== THE 2026-09-19/20 EXPLOIT AND THE ETHEREUM DEPRECATION. Recorded 2026-09-29. =====
         # Primary pages (worldmobile.io, x.com/wmchain) are unreachable from the sandbox; what is
         # recorded is what the reachable sources say, each labelled.
+        # ===== PARKED (Jake, 2026-09-29): no further World Mobile work until he reopens it. =====
+        # His wm_cardano_supply run read the Cardano legs from Koios; the same probe read all four
+        # EVM totalSupply values as 0 while the routine run reads 1,755,683,663 from the same
+        # contracts — so the PROBE's EVM leg is broken (not investigated further, by decision).
+        "cardano_readings_2026_09_29": {
+            "wmtx": {"total_supply": 650_778_353, "mint_cnt": 13_540,
+                     "policy": "e5a42a1a1d3d1da71b0449663c32798725888d2eb0843c4dabeca05a"},
+            "wmt_legacy": {"total_supply": 2_000_000_000, "mint_cnt": 1,
+                           "policy": "1d7f33bd23d85e1a25d87d86fac4f199c3197a2f7afeb662a0f34e1e"},
+            "source": "Koios asset_info via check_offline_items wm_cardano_supply (Jake's run)",
+            "probe_evm_leg": "BROKEN — read all four EVM totalSupply as 0; the routine run reads "
+                             "1,755,683,663. Parked with the rest of World Mobile.",
+            "status": "RECORDED FOR LATER — not wired, not summed",
+        },
         "wmtx_exploit_2026_09": {
             "what": "a compromised SingularityNET bridge key was used to mint WMTx on Ethereum "
                     "without authorisation",
@@ -12108,6 +12128,41 @@ PROJECTS = [
             ],
             "source": "Sky Frontier Foundation's own reporting (insights.skyeco.com)",
             "source_date": "2026-09-18",
+            # ===== financial.skyeco.com/financials/revenue — Jake's reading, 2026-09-29. =====
+            # July ($10.52M) and August ($15.75M) are in manual_overrides.csv as monthly rows; the
+            # page's own 90-day statement shows those lines are NPS, before the Stage 2 allocation.
+            "financials_page_2026_09_29": {
+                "url": "https://financial.skyeco.com/financials/revenue",
+                "read_by": "Jake", "read_on": "2026-09-29",
+                "last_90_days": {"revenue_usd": 99_070_000, "expenses_usd": 61_270_000,
+                                 "expenses_breakdown": {"direct": 44_590_000,
+                                                        "security_and_maintenance": 8_630_000,
+                                                        "integration": 4_990_000,
+                                                        "write_offs": 3_020_000,
+                                                        "operating": 34_900},
+                                 "net_surplus_usd": 37_800_000,
+                                 "revenue_allocation_usd": 8_380_000,
+                                 "remitted_to_sky_reserves_usd": 29_420_000,
+                                 "net_margin": 0.297},
+                "monthly_nps": {"2026-07": 10_520_000, "2026-08": 15_750_000},
+                "reconciliation": "Jul + Aug = $26.27M of the 90-day $37.80M, leaving $11.53M for "
+                                  "2026-09-01..09-28 — consistent with the monthly run-rate.",
+                # Revenue Allocation = the SKY buyback plus the USDS distribution. Under Stage 2 the
+                # SKY-buyback share of the allocation is 27.5/50 — but this 90-day window straddles
+                # Stage 2's start (2026-08-17), so ~$4.6M of SKY bought is a ROUGH check on Sky's
+                # measured A3 buyback over the same window, not a reconciliation.
+                "a3_buyback_cross_check": {"allocation_usd": 8_380_000, "sky_buyback_share": 27.5 / 50,
+                                           "implied_sky_buyback_usd": round(8_380_000 * 27.5 / 50),
+                                           "status": "ROUGH — window straddles Stage 2's start"},
+                "ytd_net_surplus_unreconciled": {
+                    "usd": 84_950_000, "to": "2026-08-31",
+                    "reading": "probably the POST-allocation (remitted) figure",
+                    "why_unreconciled": "Sky's own quarterlies give Q1 $46.04M + Q2 $33.29M = "
+                                        "$79.33M to June, which would leave only $5.62M for July + "
+                                        "August against the page's own $26.27M monthly NPS lines. "
+                                        "Reference only; nothing reads it.",
+                },
+            },
             "status": "REFERENCE ONLY — deliberately NOT a stored flow value. Storing a quarter "
                       "beside its own months double-counts it into every window that spans both.",
             # ** APRIL 2026 IS DERIVED AND IS NOT STORED. ** 33.29 - 9.71 - 10.81 = 12.77, which
