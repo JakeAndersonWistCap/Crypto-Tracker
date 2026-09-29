@@ -1116,7 +1116,15 @@ def declared_handover(project_name: str, metric: str) -> dict | None:
     that could silence the guard by itself would be the guard removed and renamed.
     """
     p = PROJECT_BY_NAME.get(project_name) or {}
-    return (p.get("series_handover") or {}).get(metric)
+    own = (p.get("series_handover") or {}).get(metric)
+    if own:
+        return own
+    # A RE-LABELLED SERIES IS ITS ORIGIN, SO IT INHERITS ITS ORIGIN'S HANDOVER (2026-09-29).
+    # GEODNET's buyback view is gross_burn_tokens row for row (Dune monthly history, then the live
+    # sum); without this it read as a change of measuring point and was blanked, and A3 fell back
+    # to the live days alone while A4 read the whole stitched history.
+    origin = relabelled_from(project_name, metric)
+    return (p.get("series_handover") or {}).get(origin) if origin else None
 
 
 def is_manual_quarterly(project_name: str, metric: str) -> bool:

@@ -818,9 +818,21 @@ def _relabel_views(groups: dict) -> None:
         px = groups.get((name, "price_usd"))
         if px is None or px.empty:
             continue
-        price_on = px.drop_duplicates("date", keep="last").set_index("date")["value"]
-        usd = tok[tok["date"].isin(price_on.index)].copy()
-        usd["value"] = usd["value"].astype(float) * usd["date"].map(price_on).astype(float)
+        price_on = px.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        # A MONTHLY ROW IS PRICED OVER ITS MONTH (2026-09-29). A Dune monthly total dated the 1st
+        # was dropped whenever that one day had no price, which left A3 on the live days while
+        # A4 read the whole history. Such a row is valued at the mean price across the month it
+        # covers — never at today's. A daily row still needs its own day's price.
+        def row_price(r):
+            if r["date"] in price_on.index:
+                return price_on[r["date"]]
+            if str(r["source"]).startswith("dune:"):
+                m = price_on[(price_on.index >= r["date"]) & (price_on.index < r["date"] + pd.offsets.MonthBegin(1))]
+                return float(m.mean()) if not m.empty else None
+            return None
+        prices = tok.apply(row_price, axis=1) if not tok.empty else pd.Series(dtype=float)
+        usd = tok[prices.notna()].copy()
+        usd["value"] = usd["value"].astype(float) * prices[prices.notna()].astype(float)
         usd["metric"] = "actual_buyback_usd"
         usd["source"] = "derived:tokens*price"
         if not usd.empty:

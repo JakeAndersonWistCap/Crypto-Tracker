@@ -17979,3 +17979,35 @@ def test_a_first_row_dated_the_asof_day_covers_one_day_not_zero():
     long = pd.Series([1.0] * 10, index=pd.date_range("2026-09-19", "2026-09-28"))
     assert bw._window_coverage(long, asof - pd.Timedelta(days=90), asof)[0] == 10, "unchanged otherwise"
     assert abs(13_964.04 * 365 / 441_700_000 - 0.01154) < 1e-4
+
+
+def test_geodnet_a3_buyback_and_a4_burn_read_the_same_stitched_burn():
+    """Jake's run 2026-09-29: A3 retirement 2.72% (live days only) vs A4 burn yield 6.65% (Dune
+    monthly history + live). The buyback view is the burn row for row, so it inherits the burn's
+    declared Dune -> live handover (it was blanked as a measuring-point change), and a Dune monthly
+    row whose first-of-month has no price is valued at the month's mean price, not dropped."""
+    import build_workbook as bw
+    bw._SCOPE = list(bw.PROJECTS)
+    asof = pd.Timestamp("2026-09-29")
+    rows = []
+
+    def add(d, m, v, src):
+        rows.append(dict(date=pd.Timestamp(d), project="GEODNET", metric=m, value=v, source=src,
+                         tier=2, is_manual=False, entered_on=""))
+    for mth, v in (("2026-07-01", 1.6e6), ("2026-08-01", 1.55e6)):
+        add(mth, "gross_burn_tokens", v, "dune:8683175")
+    live = "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account):delta"
+    for d in pd.date_range("2026-09-22", "2026-09-28"):
+        add(d, "gross_burn_tokens", 52_000.0, live)
+        add(d, "actual_buyback_tokens", 52_000.0, live + ":as-buyback")
+    for d in pd.date_range("2026-07-01", "2026-09-28"):          # NO price on 2026-08-01
+        if d != pd.Timestamp("2026-08-01"):
+            add(d, "price_usd", 0.18 if d.month == 8 else 0.15, "coingecko")
+    assert config.declared_handover("GEODNET", "actual_buyback_tokens") == \
+        config.declared_handover("GEODNET", "gross_burn_tokens")
+    by = {r["key"]: r for r in bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof).to_dict("records")}
+    b, t, u = by["GEODNET|gross_burn_tokens"], by["GEODNET|actual_buyback_tokens"], by["GEODNET|actual_buyback_usd"]
+    # Q0 = trailing 90 days to 09-29: the August month row and the live days (July 1 is outside)
+    assert t["status"] == "ok" and t["q0"] == b["q0"] == 1.55e6 + 7 * 52_000.0, (t["status"], t["q0"])
+    # August's row, with no price on the 1st, is valued at August's mean price (0.18)
+    assert abs(u["q0"] - (1.55e6 * 0.18 + 7 * 52_000.0 * 0.15)) < 1e-6, u["q0"]
