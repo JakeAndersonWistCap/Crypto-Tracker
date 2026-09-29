@@ -722,6 +722,48 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
 
 
+def _burn_total_views(groups: dict) -> None:
+    """A burn TOTAL summed from its components, per day, at read time (config.burn_total).
+
+    Hyperliquid (Jake, 2026-09-29): total_burn_tokens = gross_burn_tokens (the Assistance Fund)
+    + core_burn_tokens (the fall in tokenDetails.totalSupply). A day is in the total only where
+    EVERY component has a figure — a day with one leg missing would read as a smaller burn, not
+    as a gap. Where no core_burn_tokens row exists for a day, the Core leg is rebuilt from the
+    stored stock (core_from_stock): the fall between consecutive readings, dated the later one,
+    exactly as the fetch-time differencing would have written it; a rise is not a burn and the
+    day is left out. Runs BEFORE _relabel_views, which reads the total as the buyback's origin.
+    """
+    for p in scoped_projects():
+        name = p["name"]
+        spec = config.burn_total(name)
+        if not spec:
+            continue
+        per_leg = {}
+        for m in spec["components"]:
+            g = groups.get((name, m))
+            per_leg[m] = ({} if g is None or g.empty else
+                          g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).to_dict())
+        cfs = spec.get("core_from_stock") or {}
+        stock = groups.get((name, cfs.get("stock")))
+        if cfs and stock is not None and not stock.empty:
+            st = stock.drop_duplicates("date", keep="last").sort_values("date")
+            vals, dates = st["value"].astype(float).tolist(), st["date"].tolist()
+            leg = per_leg.setdefault(cfs["metric"], {})
+            for i in range(1, len(dates)):
+                fall = vals[i - 1] - vals[i]
+                if dates[i] not in leg and fall >= 0:
+                    leg[dates[i]] = fall
+        days = sorted(set.intersection(*(set(v) for v in per_leg.values()))) if per_leg else []
+        if not days:
+            continue
+        view = pd.DataFrame({"date": days, "project": name, "metric": spec["metric"],
+                             "value": [sum(per_leg[m][d] for m in spec["components"]) for d in days],
+                             "source": "derived:burn_total(" + "+".join(spec["components"]) + ")",
+                             "tier": 2})
+        first = groups.get((name, spec["components"][0]))
+        groups[(name, spec["metric"])] = _as_stored(view, first.columns if first is not None else view.columns)
+
+
 def _relabel_views(groups: dict) -> None:
     """A buyback that IS the burn is read as a VIEW of the burn series, not from stored copies.
 
@@ -915,6 +957,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    _burn_total_views(groups)
     _relabel_views(groups)
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)

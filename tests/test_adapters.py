@@ -11249,7 +11249,7 @@ def test_the_buyback_route_is_derived_from_the_destination_already_on_file():
     print("buyback routes ok: 12 projects routed from the destination already declared")
 
 
-def test_a_burn_destination_buyback_is_the_burn_and_its_usd_twin_is_priced_on_the_day():
+def test_a_burn_destination_buyback_is_the_burn_and_its_usd_twin_is_priced_on_the_day(monkeypatch):
     """ONE EVENT, TWO NAMES. Where a protocol buys its token and destroys it, the buyback flow
     IS the burn flow. Reading it twice from two places lets the two disagree, and then the sheet
     shows a protocol that burned more than it bought.
@@ -11260,7 +11260,10 @@ def test_a_burn_destination_buyback_is_the_burn_and_its_usd_twin_is_priced_on_th
     import fetch
     from fetch.base import FetchOutput, point
 
-    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    # The GENERIC burn-route mechanism, exercised on Hyperliquid WITHOUT its 2026-09-29
+    # burn_total (whose buyback equals the read-time total — see the view test).
+    hl = {k: v for k, v in config.PROJECT_BY_NAME["Hyperliquid"].items() if k != "burn_total"}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, "Hyperliquid", hl)
     out = FetchOutput()
     out.add(pd.concat([point("Hyperliquid", "gross_burn_tokens", 1_000.0, "hypercore:x:delta", 2,
                              pd.Timestamp("2026-09-20")),
@@ -11316,14 +11319,17 @@ def test_a_measured_buyback_series_is_never_displaced_by_the_derivation():
     print("sourced wins ok: GEODNET's measured legs are left alone, no derived twin emitted")
 
 
-def test_a_buyback_row_with_no_price_on_its_own_date_is_reported_not_valued_at_todays():
+def test_a_buyback_row_with_no_price_on_its_own_date_is_reported_not_valued_at_todays(monkeypatch):
     """A July burn valued at September's price is not what was spent. Saying which dates could
     not be priced is the honest answer; carrying the latest price backwards is a confident wrong
     number of exactly the kind this project keeps correcting."""
     import fetch
     from fetch.base import FetchOutput, point
 
-    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    # The GENERIC burn-route mechanism, exercised on Hyperliquid WITHOUT its 2026-09-29
+    # burn_total (whose buyback equals the read-time total — see the view test).
+    hl = {k: v for k, v in config.PROJECT_BY_NAME["Hyperliquid"].items() if k != "burn_total"}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, "Hyperliquid", hl)
     out = FetchOutput()
     out.add(pd.concat([point("Hyperliquid", "gross_burn_tokens", 1_000.0, "hypercore:x:delta", 2,
                              pd.Timestamp("2026-07-01")),
@@ -15515,11 +15521,18 @@ def test_a_burn_route_buyback_is_a_view_of_the_whole_burn_series():
               for r in burn if r["date"] >= pd.Timestamp("2026-09-11")]
     price = [dict(date=d, project="Hyperliquid", metric="price_usd", value=40.0, source="coingecko",
                   tier=1, is_manual=False) for d in pd.date_range("2026-08-01", "2026-09-27")]
-    o = bw.aggregate(pd.DataFrame(burn + copies + price), pd.DataFrame(), asof)
+    # 2026-09-29 (Jake): the buyback equals the TOTAL burn — Assistance Fund + Core burns. The
+    # Core leg is rebuilt from the stored totalSupply (falling 2,000/day) where no core row exists.
+    stock = [dict(date=d, project="Hyperliquid", metric="total_supply_gross",
+                  value=999_000_000.0 - 2_000.0 * i, source="hypercore_info:tokenDetails", tier=1,
+                  is_manual=False) for i, d in enumerate(pd.date_range("2026-08-29", "2026-09-27"))]
+    o = bw.aggregate(pd.DataFrame(burn + copies + price + stock), pd.DataFrame(), asof)
     by = {r["key"]: r for r in o.to_dict("records")}
     b, t, u = by["Hyperliquid|gross_burn_tokens"], by["Hyperliquid|actual_buyback_tokens"], by["Hyperliquid|actual_buyback_usd"]
-    assert t["q0"] == b["q0"] == 290_000.0, (t["q0"], b["q0"])     # 29 days, not the 17 copied
-    assert u["q0"] == 290_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
+    tot = by["Hyperliquid|total_burn_tokens"]
+    assert b["q0"] == 290_000.0, b["q0"]                              # the Fund leg, unchanged
+    assert t["q0"] == tot["q0"] == 348_000.0, (t["q0"], tot["q0"])     # 29 days x (10,000 + 2,000)
+    assert u["q0"] == 348_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
     assert "as-buyback" in str(t["source"])
     # GEODNET's buyback is no longer Dune-sourced (2026-09-28): it is this same view of its burn.
     assert config.dune_query_declared("GEODNET", "actual_buyback_tokens") is None
@@ -16476,6 +16489,7 @@ def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path)
         rows("Pendle", "holders_revenue_usd", 10_000.0, "defillama"),     # restatement view
         rows("Pendle", "total_supply", 2.8e8, "coingecko"),               # declared view (Pendle)
         rows("Hyperliquid", "gross_burn_tokens", 5_000.0, "hypercore:x:delta"),   # burn = buyback view
+        rows("Hyperliquid", "core_burn_tokens", 1_000.0, "hypercore_info:tokenDetails.totalSupply:delta"),
         rows("Hyperliquid", "price_usd", 40.0, "coingecko"),
         rows("Ethereum", "gross_issuance_tokens", 101.0, "derived:d_supply+burn"),  # first-party block
         rows("GEODNET", "pool_release_tokens", 1_000.0, config.POOL_RELEASE_DERIVED_SOURCE),
@@ -16492,11 +16506,13 @@ def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path)
     # every view's rows carry every stored column
     long = st.load_long()
     groups = {k: g for k, g in long.groupby(["project", "metric"])}
+    bw._burn_total_views(groups)            # same order as aggregate()
     bw._relabel_views(groups)
     bw._restatement_views(groups)
     bw._VIEW_BLOCKS.clear()
     bw._issuance_views(groups, days[-1] + pd.Timedelta(days=1))
     for key in [("Near", "gross_issuance_tokens"), ("Pendle", "actual_buyback_usd"),
+                ("Hyperliquid", "total_burn_tokens"),
                 ("Hyperliquid", "actual_buyback_tokens"), ("Hyperliquid", "actual_buyback_usd")]:
         missing = set(long.columns) - set(groups[key].columns)
         assert not missing, f"{key} view lacks stored columns {missing}"
@@ -17736,3 +17752,32 @@ def test_uniswap_net_burn_issuance_crosscheck_is_retired_as_read_timing():
     iss = out.frame().query("metric == 'gross_issuance_tokens'")
     assert list(iss["value"]) == [0.0], iss
     assert not [r for r in out.review if r["reason"] == "issuance_route_divergence"]
+
+
+def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
+    """Jake, 2026-09-29: burns outside the Assistance Fund reduce totalSupply; the Fund's HYPE stays
+    inside it — disjoint, so the sum double-counts nothing. total_burn_tokens = gross_burn_tokens +
+    core_burn_tokens per day (a day missing a leg is left out, never read as a smaller burn);
+    A4's burn and A3's buyback view read the total; both components stay visible."""
+    import build_workbook as bw
+
+    assert config.a4_burn_metric("Hyperliquid") == "total_burn_tokens"
+    assert config.buyback_route("Hyperliquid")["metric"] == "total_burn_tokens"
+    assert config.buyback_route("GEODNET")["metric"] == "gross_burn_tokens", "others unchanged"
+    days = pd.date_range("2026-09-24", "2026-09-28")
+
+    def g(metric, vals, dates=days):
+        return pd.DataFrame({"date": dates, "project": "Hyperliquid", "metric": metric, "value": vals,
+                             "source": "x", "tier": 2, "is_manual": False, "entered_on": ""})
+
+    groups = {("Hyperliquid", "gross_burn_tokens"): g("gross_burn_tokens", [10.0] * 5),
+              # a stored Core row on the last day wins over the stock-derived figure
+              ("Hyperliquid", "core_burn_tokens"): g("core_burn_tokens", [7.0], days[-1:]),
+              # stock: falls 3/day, but RISES into 09-27 (a rise is not a burn: day left out)
+              ("Hyperliquid", "total_supply_gross"): g("total_supply_gross",
+                                                       [100.0, 97.0, 94.0, 95.0, 92.0])}
+    bw._burn_total_views(groups)
+    tot = groups[("Hyperliquid", "total_burn_tokens")].set_index("date")["value"]
+    assert dict(tot) == {pd.Timestamp("2026-09-25"): 13.0, pd.Timestamp("2026-09-26"): 13.0,
+                         pd.Timestamp("2026-09-28"): 17.0}, dict(tot)
+    assert ("Hyperliquid", "core_burn_tokens") in groups and ("Hyperliquid", "gross_burn_tokens") in groups

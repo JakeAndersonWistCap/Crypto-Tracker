@@ -621,6 +621,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"{dur['permanent']} is NOT optional: a permanent lock never decays, so without "
                 f"it the figure would report positions with no end date as nearly-full-length "
                 f"locks.")
+    bt = config.burn_total(name)
+    if bt and bt["metric"] == metric:
+        return (f"DERIVED AT READ TIME, not fetched: {metric} = "
+                f"{' + '.join(bt['components'])}, per day, where every component has a figure. "
+                f"There is no source to add.",
+                f"Resolve {bt['components'][0]} first — see its own Gap Report row.")
     if metric == "pool_release_tokens":
         return ("DERIVED, not fetched: d(circulating_supply) - d(total_supply), the tokens "
                 "entering circulation that were NOT newly minted. It needs both stocks in this "
@@ -678,6 +684,11 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         for tgt, spec in config.metric_restatements(p["name"]).items():
             if (p["name"], spec.get("equals")) in have:
                 have.add((p["name"], tgt))
+        # A READ-TIME BURN TOTAL IS COVERED WHEN ITS FIRST COMPONENT IS (Hyperliquid, 2026-09-29):
+        # build_workbook._burn_total_views sums the components; nothing fetches the total itself.
+        bt = config.burn_total(p["name"])
+        if bt and (p["name"], bt["components"][0]) in have:
+            have.add((p["name"], bt["metric"]))
         # And a buyback token count derived from that usd and the price (Pendle, 2026-09-28).
         if (config.buyback_tokens_from_usd(p["name"]) and (p["name"], "actual_buyback_usd") in have
                 and (p["name"], "price_usd") in have):

@@ -327,6 +327,13 @@ METRICS = {
         "label": "SKY burned by Sky's Stage 2 buy-and-burn, per day (event-dated, not differenced)",
         "kind": "flow", "unit": "tokens", "archetypes": [4],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Sky",)},
+    # 2026-09-29 (Jake): Hyperliquid's TOTAL burn = Assistance Fund + Core burns, summed at READ
+    # time (build_workbook._burn_total_views). A4's burn and A3's buyback view read it.
+    "total_burn_tokens": {
+        "label": "HYPE burned in total — Assistance Fund (gross_burn_tokens) + burns outside it "
+                 "(core_burn_tokens); both components stay on the sheet",
+        "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     # B4 (2026-09-28): Hyperliquid's burns OUTSIDE the Assistance Fund — the fall in its own
     # tokenDetails.totalSupply (the Fund's HYPE stays inside that total, so this excludes it).
     "core_burn_tokens": {
@@ -1604,6 +1611,14 @@ def program_cadence(project_name: str, metric: str | None = None) -> dict | None
     if c and (metric is None or c["metric"] == metric):
         return c
     return None
+
+
+def burn_total(project_name: str) -> dict | None:
+    """A burn TOTAL summed from components at read time (Hyperliquid, 2026-09-29), or None.
+
+    {metric, components: [...], core_from_stock: {metric, stock}} — see the project's burn_total.
+    """
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("burn_total")
 
 
 def a4_burn_metric(project_name: str) -> str:
@@ -9051,8 +9066,9 @@ PROJECTS = [
                           "the Fund's HYPE and so excludes it): gross_burn_tokens + "
                           "core_burn_tokens is the whole Core-side burn. No info-API field "
                           "gives a cumulative burn (spotMeta/tokenDetails checked: only "
-                          "per-token deployGas). Summing the two into this column is a decision "
-                          "for Jake, not made here.",
+                          "per-token deployGas). DECIDED 2026-09-29 (Jake): the two are summed "
+                          "into total_burn_tokens at read time (burn_total) for A4 and A3; this "
+                          "column stays the Fund alone.",
                 "route": "The HyperEVM priority-fee component IS readable — it accumulates at "
                          "the zero address's EVM balance, so a balance read on HyperEVM "
                          "(rpc.hyperliquid.xyz/evm, where HYPE has 18 decimals) would close it "
@@ -9214,6 +9230,23 @@ PROJECTS = [
                                      "releases from the reserve, not issuance",
         },
         "buyback_destination": "burn",          # resolved — no longer disputed
+        # ===== TOTAL BURN = ASSISTANCE FUND + CORE BURNS. Decided by Jake, 2026-09-29. =====
+        # Burns outside the Assistance Fund reduce tokenDetails.totalSupply; the Fund's HYPE stays
+        # inside totalSupply. So the two measure disjoint HYPE and summing them cannot count any
+        # token twice. build_workbook._burn_total_views sums them per day at READ time into
+        # total_burn_tokens, which A4's burn yield and A3's buyback-equals-burn view read; both
+        # components stay on the sheet under their own names.
+        # core_from_stock: on days with no stored core_burn_tokens row (it is stored from
+        # 2026-09-29), the Core leg is the fall in the stored total_supply_gross (tokenDetails.
+        # totalSupply, stored since 2026-09-24) between consecutive readings — the same quantity,
+        # rebuilt from the stock it is differenced from. A day the stock ROSE is left out.
+        "burn_total": {
+            "metric": "total_burn_tokens",
+            "components": ["gross_burn_tokens", "core_burn_tokens"],
+            "core_from_stock": {"metric": "core_burn_tokens", "stock": "total_supply_gross"},
+            "decided_by": "Jake, 2026-09-29",
+        },
+        "a4_burn_metric": "total_burn_tokens",
         "destination_effect": "removed_from_supply",
         "destination_confirmed_date": "2025-12-27",
         "destination_split": None, "burn_execution": "protocol",
@@ -14639,7 +14672,8 @@ def buyback_route(project_name: str) -> dict:
         return {"route": "none", "metric": None,
                 "reason": "no buyback mechanism is declared for this project"}
     if dest == "burn":
-        return {"route": "burn", "metric": "gross_burn_tokens",
+        # A declared burn total (Hyperliquid, 2026-09-29) is what the bought tokens equal.
+        return {"route": "burn", "metric": (burn_total(project_name) or {}).get("metric") or "gross_burn_tokens",
                 "reason": "the bought tokens are burned, so the buyback flow and the burn flow "
                           "are one event under two names — taken from gross_burn_tokens rather "
                           "than sourced again, because two reads of one event can disagree"}
