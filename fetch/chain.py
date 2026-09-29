@@ -1315,7 +1315,7 @@ class Chain:
                             # time.time() — genuinely UTC, unlike calling .timestamp() on a
                             # tz-naive pandas Timestamp, which is interpreted in the SYSTEM's
                             # local timezone and would be wrong on any host not set to UTC.
-                            now_ts = int(time.time())
+                            now_ts = self._now_ts()
                             call_args = (((now_ts // _WEEK_SECONDS) - 1) * _WEEK_SECONDS,)
                         value = self.reader.scaled(chain, read_address,
                                                    spec.get("call") or "totalSupply", *call_args,
@@ -1358,7 +1358,7 @@ class Chain:
                 # (date, project, metric) key and overwrite, instead of laying down another row
                 # that a trailing-30-day sum then counts as another week's emissions.
                 if config.series_granularity(name, metric) == "weekly":
-                    metric_when[metric] = self._epoch_start(spec)
+                    metric_when[metric] = self._epoch_start(spec, self._now_ts())
                 if spec.get("supply_is_partial"):
                     partial_metrics.add(metric)
                     # THE CONTRACT'S OWN REASON, not the project's. supply_partial_reason on the
@@ -1401,8 +1401,15 @@ class Chain:
                              source_suffix=source_suffix, metric_when=metric_when,
                              partial_reasons=partial_reasons)
 
+    def _now_ts(self) -> int:
+        """Unix seconds of "now": the pinned day's start in archive mode, else the clock. An epoch
+        read's argument and filing week come from here, so a past epoch is read as itself."""
+        if self.backfill:
+            return int(pd.Timestamp(self.backfill["day"]).tz_localize("UTC").timestamp())
+        return int(time.time())
+
     @staticmethod
-    def _epoch_start(spec: dict):
+    def _epoch_start(spec: dict, now_ts: int | None = None):
         """The start of the epoch this read describes, as a date.
 
         Minter.weekly() / the tail emission describe the CURRENT epoch, so they take the current
@@ -1415,7 +1422,7 @@ class Chain:
         the SYSTEM's local zone and would put the boundary in the wrong week on any host not on
         UTC. Same reasoning as the call_arg computation this mirrors.
         """
-        now_ts = int(time.time())
+        now_ts = int(time.time()) if now_ts is None else int(now_ts)
         weeks_back = 1 if spec.get("call_arg") == "last_complete_week_unix" else 0
         start = ((now_ts // _WEEK_SECONDS) - weeks_back) * _WEEK_SECONDS
         return pd.Timestamp(start, unit="s").normalize()

@@ -8,7 +8,8 @@ reason. --run reads, within a time budget, newest days first, and re-running con
     python archive_backfill.py                     the plan
     python archive_backfill.py --run               read (20 min budget), then report coverage
     python archive_backfill.py --run --budget-min 60 --project Uniswap
-    python archive_backfill.py --run --near        NEAR's header supply and stake too
+    python archive_backfill.py --run --near        NEAR's header supply too (stake is forward-only:
+                                                   past `validators` is VALIDATOR_INFO_UNAVAILABLE)
     python archive_backfill.py --run --no-solana   skip GEODNET's Solana burn-account history
 
 WHAT IT WRITES: only (date, project, metric) keys that hold nothing — never an overwrite — with
@@ -64,7 +65,7 @@ def main(argv=None) -> int:
     ap.add_argument("--project", action="append", default=[])
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--budget-min", type=float, default=ar.DEFAULT_BUDGET_S / 60)
-    ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply and stake")
+    ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply (stake is forward-only)")
     ap.add_argument("--no-solana", action="store_true")
     a = ap.parse_args(argv)
     import store as store_mod

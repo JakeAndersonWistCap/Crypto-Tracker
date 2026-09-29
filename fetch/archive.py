@@ -48,6 +48,32 @@ DEFAULT_BUDGET_S = 20 * 60
 NOT_ARCHIVABLE_KINDS = {"burn_transfer_logs"}
 
 
+WEEK_S = 7 * 86_400
+
+
+def weekly(p: dict, metric: str) -> bool:
+    return any(s.get("granularity") == "weekly" for _, s in serving_contracts(p, metric))
+
+
+def read_day(p: dict, metric: str, d: pd.Timestamp) -> bool:
+    """Is day d a day to read this metric? Daily series: every day. A WEEKLY epoch series: the day
+    AFTER an epoch starts (epochs start on unix-week boundaries, Thursdays 00:00 UTC) — a day in,
+    the epoch's checkpoint (Minter.updatePeriod) has run, and the read files under that epoch."""
+    if not weekly(p, metric):
+        return True
+    return int(pd.Timestamp(d).tz_localize("UTC").timestamp()) % WEEK_S == 86_400
+
+
+def stored_date(p: dict, metric: str, d: pd.Timestamp) -> pd.Timestamp:
+    """The date a read on day d is FILED under: d, or for a weekly series the epoch start
+    (minus a week for the last-complete-week argument) — fetch.chain.Chain._epoch_start's rule."""
+    if not weekly(p, metric):
+        return d
+    from .chain import Chain
+    spec = next(s for _, s in serving_contracts(p, metric) if s.get("granularity") == "weekly")
+    return Chain._epoch_start(spec, int(pd.Timestamp(d).tz_localize("UTC").timestamp()))
+
+
 def cache_root() -> Path:
     import os
     return Path(os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan"))
@@ -84,8 +110,11 @@ def archivable(p: dict, metric: str, archive_chains: set[str], solana_keys: set)
         chain, kind = spec["chain"], spec["kind"]
         if kind in NOT_ARCHIVABLE_KINDS:
             return False, f"{key} is an event-log read ({kind}); its history is the log scan's, not state"
-        if spec.get("call_arg") or spec.get("emission_tail") or spec.get("granularity") == "weekly":
-            return False, f"{key} is a weekly epoch read (argument or branch computed at run time)"
+        # A WEEKLY EPOCH READ IS ARCHIVABLE (Jake, 2026-09-30): its argument is the week's start,
+        # deterministic for any past date, and the tail branch's legs are state reads at the pin.
+        # Any other run-time argument is not.
+        if spec.get("call_arg") and spec["call_arg"] != "last_complete_week_unix":
+            return False, f"{key} takes a run-time argument ({spec['call_arg']}) with no past equivalent"
         if kind in ("spl_token_account", "spl_mint"):
             if (p["name"], key) not in solana_keys:
                 return False, f"{key} is a Solana {kind} with no daily history provider"
@@ -367,7 +396,8 @@ class ArchiveBackfill:
             want = {}
             for name, ms in targets.items():
                 p = config.PROJECT_BY_NAME[name]
-                ms = {m for m in ms if missing(name, m, d) and (name, m) not in refused
+                ms = {m for m in ms if read_day(p, m, d) and missing(name, m, stored_date(p, m, d))
+                      and (name, m) not in refused
                       and all((name, k) in sol_daily for k, s in serving_contracts(p, m)
                               if s["kind"] in ("spl_token_account", "spl_mint"))}
                 if ms:
@@ -390,7 +420,8 @@ class ArchiveBackfill:
                                                       f"declared bound [{lo}, {hi}]")
                     continue
                 g = stored.get((r.project, r.metric))
-                ok, why = (True, "") if g is None else neighbours_agree(g, d, r.source)
+                rd = pd.Timestamp(r.date)
+                ok, why = (True, "") if g is None else neighbours_agree(g, rd, r.source)
                 if not ok:
                     refused[(r.project, r.metric)] = why
                     continue
@@ -400,7 +431,7 @@ class ArchiveBackfill:
                 n = _write_new(self.store, kf)
                 for r in keep:
                     written[(r.project, r.metric)] = written.get((r.project, r.metric), 0) + 1
-                    row = pd.DataFrame([{"date": d, "value": r.value, "source": r.source}])
+                    row = pd.DataFrame([{"date": pd.Timestamp(r.date), "value": r.value, "source": r.source}])
                     g = stored.get((r.project, r.metric))
                     stored[(r.project, r.metric)] = (row if g is None else
                                                      pd.concat([g, row]).sort_values("date"))
@@ -504,20 +535,12 @@ class NearArchive:
         return self.header(hi_h)
 
     def rows(self, p: dict, day: pd.Timestamp) -> list[dict]:
-        """total_supply_protocol and (if the node answers for that epoch) locked_tokens."""
+        """total_supply_protocol from the header. NOT validator stake: the archival RPC refuses
+        `validators` for past blocks (VALIDATOR_INFO_UNAVAILABLE, Jake's archive_probe
+        2026-09-30), so staked NEAR is forward-only (config.HISTORY_FORWARD_ONLY)."""
         api = p.get("near_validators") or {}
         exp = int(api.get("yocto_exponent", 24))
         hdr = self.at(day)
-        out = [{"date": day, "project": p["name"], "metric": "total_supply_protocol",
-                "value": int(hdr["total_supply"]) / 10**exp,
-                "source": config.mark_source("near_rpc:block.header.total_supply", "archive"), "tier": 2}]
-        try:
-            v = self.rpc("validators", {"block_id": int(hdr["height"])})
-            stake = sum(int(x["stake"]) for x in v.get("current_validators") or [])
-            if stake > 0:
-                out.append({"date": day, "project": p["name"], "metric": api.get("metric", "locked_tokens"),
-                            "value": stake / 10**exp,
-                            "source": config.mark_source("near_rpc:validators", "archive"), "tier": 2})
-        except RuntimeError as e:
-            log.info("near validators at %s: %s", day.date(), e)
-        return out
+        return [{"date": day, "project": p["name"], "metric": "total_supply_protocol",
+                 "value": int(hdr["total_supply"]) / 10**exp,
+                 "source": config.mark_source("near_rpc:block.header.total_supply", "archive"), "tier": 2}]

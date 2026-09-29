@@ -15321,6 +15321,14 @@ HISTORY_FORWARD_ONLY = {
         "why": "HyperCore's info API (api.hyperliquid.xyz/info) serves current state only and "
                "HyperCore has no archive node; nothing older than the first read exists to fetch",
     },
+    # NEAR (Jake's archive_probe, 2026-09-30): the archival RPC answers `block` by height (header
+    # total_supply is backfilled by archive_backfill.py --near) but refuses `validators` for a
+    # past block with VALIDATOR_INFO_UNAVAILABLE. Staked NEAR accumulates from its first read.
+    "Near": {
+        "metrics": ("locked_tokens",),
+        "why": "NEAR's archival RPC refuses `validators` for past blocks "
+               "(VALIDATOR_INFO_UNAVAILABLE) — no stake history to read",
+    },
 }
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "

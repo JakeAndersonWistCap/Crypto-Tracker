@@ -18377,7 +18377,8 @@ def test_near_archive_reads_header_supply_and_stake_at_the_first_block_of_the_da
     rows = na.rows(config.PROJECT_BY_NAME["Near"], pd.Timestamp("2026-06-01"))
     got = {r["metric"]: r for r in rows}
     assert got["total_supply_protocol"]["value"] == 1_250_000_000
-    assert got["locked_tokens"]["value"] == 600_000_000
+    assert "locked_tokens" not in got, "validators is refused for past blocks: forward-only"
+    assert "locked_tokens" in config.HISTORY_FORWARD_ONLY["Near"]["metrics"]
     assert _measuring_point(got["total_supply_protocol"]["source"]) == "near_rpc:block.header.total_supply"
     assert na.known["2026-06-01"] == 150_000_000
 
@@ -18541,3 +18542,23 @@ def test_a_daily_moving_supply_that_stayed_flat_is_flagged_with_its_run_length()
     found = check_flat_series(pd.DataFrame(rows), out)
     assert found == [("GEODNET", "circulating_supply", 2, "2026-09-26")]
     assert out.review[0]["reason"] == "flat_supply"
+
+
+def test_aerodromes_weekly_epoch_reads_backfill_one_per_past_epoch():
+    """2 (Jake, 2026-09-30): the epoch argument is the week's start — deterministic for any past
+    date. The archive reads a weekly series on the day AFTER each epoch start, with the argument
+    and filing week computed from that day, not from the clock."""
+    from fetch import archive as ar
+    from fetch.chain import Chain
+    aero = config.PROJECT_BY_NAME["Aerodrome"]
+    ok, no = ar.ArchiveBackfill(None, [aero]).targets({"base"})
+    assert {"gross_issuance_tokens", "emissions_tokens"} <= ok["Aerodrome"], no
+    epoch = pd.Timestamp("2026-09-17")                    # a Thursday: unix-week boundary
+    assert int(epoch.tz_localize("UTC").timestamp()) % ar.WEEK_S == 0
+    day = epoch + pd.Timedelta(days=1)
+    assert ar.read_day(aero, "emissions_tokens", day) and not ar.read_day(aero, "emissions_tokens", epoch)
+    assert ar.read_day(aero, "locked_tokens", epoch), "daily series: every day"
+    assert ar.stored_date(aero, "gross_issuance_tokens", day) == epoch                    # weekly()
+    assert ar.stored_date(aero, "emissions_tokens", day) == epoch - pd.Timedelta(days=7)  # last complete week
+    c = Chain(backfill={"day": day, "metrics": {}})
+    assert c._now_ts() == int(day.tz_localize("UTC").timestamp())

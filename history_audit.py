@@ -50,7 +50,7 @@ def why_short(p: dict, m: str, first: str | None) -> str:
         return (f"FORWARD-ONLY — reaches 90 days {(f0 + pd.Timedelta(days=89)).date()}, 365 days "
                 f"{(f0 + pd.Timedelta(days=364)).date()}: {fwd['why']}")
     if p.get("near_validators") and m in ("total_supply_protocol", (p["near_validators"] or {}).get("metric")):
-        return "archive_backfill.py --run --near fills it (NEAR archival RPC: header total_supply, validators)"
+        return "archive_backfill.py --run --near fills it (NEAR archival RPC: header total_supply)"
     chains = {"ethereum", "polygon", "arbitrum", "base", "bsc"}
     stocks = [s for s in ar.state_metrics(p) if s == m or config.cumulative_flow_for(p["name"], s) == m]
     for s in stocks:
