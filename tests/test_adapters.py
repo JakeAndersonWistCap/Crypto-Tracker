@@ -14628,8 +14628,11 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     assert "FLOOR" in config.metric_label("Chainlink", "customer_revenue_usd")
     assert config.not_applicable_reason("Chainlink", "utilisation_pct")
     assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
-    for n in ("Ethereum", "Plume"):
-        assert "settlement_volume_annual_usd" in config.PROJECT_BY_NAME[n]["manual_quarterly"]
+    assert "settlement_volume_annual_usd" in config.PROJECT_BY_NAME["Ethereum"]["manual_quarterly"]
+    # Plume's was CLOSED 2026-09-29 (Jake): The Block's volume does not cover Plume — an accepted
+    # limit, not a manual input
+    assert "settlement_volume_annual_usd" not in (config.PROJECT_BY_NAME["Plume"].get("manual_quarterly") or [])
+    assert config.unavailable_for("Plume", "settlement_volume_annual_usd")
     # validator and protocol yields never share a project list or a metric
     assert not set(config.VALIDATOR_YIELD) & set(config.PROTOCOL_YIELD)
     assert set(config.PROTOCOL_YIELD) == {"Sky", "Pendle", "Ether.fi"}
@@ -19134,5 +19137,69 @@ def test_pendle_published_apr_of_zero_falls_back_to_the_last_complete_epoch():
         PendleEpochs(get=lambda url: none).run([p], None, out2)
         assert out2.frame().query("metric == 'staking_apr_published'").empty
         assert "UNAVAILABLE this run, not 0" in " ".join(e.message for e in out2.log)
+        # Jake, 2026-09-29: "I couldn't find the staking_apr_published line". EVERY outcome writes
+        # one Run Log row starting with the metric's name (pendle_api / Pendle, status ok), and
+        # the same text at INFO — the field absent, the fetch failing, or a figure stored.
+        import logging
+        caplog = []
+        h = logging.Handler()
+        h.emit = lambda r: caplog.append((r.levelno, r.getMessage()))
+        lg = logging.getLogger("token_metrics.fetch.pendle_epochs")
+        lg.addHandler(h)
+        lg.setLevel(logging.INFO)
+        try:
+            outs = []
+            for get in (lambda url: payload, lambda url: {k: v for k, v in payload.items() if k != "lastEpochApr"}):
+                o = FetchOutput()
+                PendleEpochs(get=get).run([p], None, o)
+                outs.append(o)
+            def boom(url):
+                raise RuntimeError("HTTP 503")
+            o = FetchOutput()
+            PendleEpochs(get=boom).run([p], None, o)
+            outs.append(o)
+        finally:
+            lg.removeHandler(h)
+        for o in outs:
+            lines = [e for e in o.log if e.message.startswith("staking_apr_published: ")]
+            assert len(lines) == 1 and lines[0].status == "ok" and lines[0].source == "pendle_api", \
+                [e.message for e in o.log]
+        assert "ABSENT from the payload" in [e.message for e in outs[1].log if e.message.startswith("staking_apr")][0]
+        assert "did not answer: HTTP 503" in [e.message for e in outs[2].log if e.message.startswith("staking_apr")][0]
+        assert sum(1 for lv, m in caplog if lv == logging.INFO and "staking_apr_published: " in m) == 3
     finally:
         os.environ.pop("TOKEN_METRICS_IGNORE_ROBOTS", None)
+
+
+def test_section_at_deletes_claim_duplicates_then_renames_the_rest(tmp_path, monkeypatch, capsys):
+    """Jake's run 2026-09-29: AT's rename failed "UNIQUE constraint failed" — the scan now writes
+    claims straight to emissions_claimed_tokens, so some dates were already there. AT deletes the
+    emissions_tokens claim rows whose (date, project) already exist under the new metric, then
+    renames the remainder, in one transaction; the SELECTs show both counts first."""
+    import sqlite3
+    import run_sql
+    import store as store_mod
+    db = tmp_path / "m.db"
+    store_mod.Store(str(db))
+    c = sqlite3.connect(db)
+    ins = lambda d, m, v, s: c.execute("INSERT INTO metrics (date, project, metric, value, source, tier, fetched_at) "
+                                       "VALUES (?,?,?,?,?,?,?)", (d, "Chainlink", m, v, s, 2, "2026-09-28T00:00:00"))
+    old = "explorer:staking_rewards_out"
+    for d, v in (("2026-09-20", 10.0), ("2026-09-21", 11.0), ("2026-09-22", 12.0)):
+        ins(d, "emissions_tokens", v, old)
+    for d, v in (("2026-09-21", 11.0), ("2026-09-22", 12.0)):
+        ins(d, "emissions_claimed_tokens", v, old)
+    ins("2026-09-23", "emissions_tokens", 99.0, "reward_vault:rate")          # the rate row stays
+    c.commit()
+    c.close()
+    assert run_sql.main(["AT", "--db", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "to_delete_duplicates" in out and "to_rename" in out
+    monkeypatch.setattr("builtins.input", lambda *a: "DELETE AT")
+    assert run_sql.main(["--delete", "AT", "--db", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "Rows this would remove from metrics (2)" in out and "Rows this UPDATE would change in metrics (1)" in out
+    c = sqlite3.connect(db)
+    got = sorted(c.execute("SELECT date, metric, value FROM metrics ORDER BY metric, date").fetchall())
+    assert got == [("2026-09-20", "emissions_claimed_tokens", 10.0), ("2026-09-21", "emissions_claimed_tokens", 11.0),
+                   ("2026-09-22", "emissions_claimed_tokens", 12.0), ("2026-09-23", "emissions_tokens", 99.0)]

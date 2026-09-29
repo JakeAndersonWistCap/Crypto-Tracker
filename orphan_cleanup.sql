@@ -3185,30 +3185,59 @@ SELECT date, value, source
 -- AT. Chainlink reward-vault CLAIMS stored under emissions_tokens  2026-09-29
 --     The staking_rewards_out scan wrote claims into emissions_tokens until 2026-09-29. From
 --     then emissions_tokens is the RewardVault's emission rate x time, and the claims have their
---     own metric, emissions_claimed_tokens. Two sources in one column blank it, so the old claim
---     rows are MOVED (not deleted) to the new metric. Review first.
+--     own metric, emissions_claimed_tokens. Two sources in one column blank it
+--     (measuring_point_changed), so the old claim rows leave emissions_tokens. Review first.
+--     REWRITTEN 2026-09-29 (Jake's run: "UNIQUE constraint failed" — the scan now writes claims
+--     straight to emissions_claimed_tokens, so some dates already exist there). A claim row whose
+--     (date, project) is ALREADY under emissions_claimed_tokens is a duplicate of that row and is
+--     DELETED; the rest are RENAMED. AT2 shows each duplicate beside the row that stays.
 -- ========================================================================================
--- AT1. THE ROWS TO MOVE.
-SELECT date, value, source, fetched_at
-  FROM metrics
- WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
-   AND source LIKE 'explorer:%staking_rewards_out%'
- ORDER BY date;
+-- AT1. THE COUNTS: duplicates to delete, and the remainder to rename.
+SELECT SUM(EXISTS (SELECT 1 FROM metrics b
+                    WHERE b.date = a.date AND b.project = a.project
+                      AND b.metric = 'emissions_claimed_tokens')) AS to_delete_duplicates,
+       SUM(NOT EXISTS (SELECT 1 FROM metrics b
+                        WHERE b.date = a.date AND b.project = a.project
+                          AND b.metric = 'emissions_claimed_tokens')) AS to_rename
+  FROM metrics a
+ WHERE a.project = 'Chainlink' AND a.metric = 'emissions_tokens'
+   AND a.source LIKE 'explorer:%staking_rewards_out%';
 
--- AT2. ANY ROW ALREADY UNDER THE NEW NAME ON THE SAME DATES (expect none; a clash blocks the move).
-SELECT a.date, a.value AS old_value, b.value AS new_value
+-- AT2. THE DUPLICATES, beside the emissions_claimed_tokens row that stays (values should match).
+SELECT a.date, a.value AS emissions_tokens_value, b.value AS claimed_value,
+       a.value - b.value AS difference, a.source AS old_source, b.source AS kept_source
   FROM metrics a JOIN metrics b
     ON a.date = b.date AND a.project = b.project
  WHERE a.project = 'Chainlink' AND a.metric = 'emissions_tokens'
    AND a.source LIKE 'explorer:%staking_rewards_out%'
-   AND b.metric = 'emissions_claimed_tokens';
+   AND b.metric = 'emissions_claimed_tokens'
+ ORDER BY a.date;
 
--- AT3. THE PROPOSED MOVE. Only after AT1/AT2 read as expected.
+-- AT3. THE ROWS TO RENAME (no emissions_claimed_tokens row on their date).
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
+   AND source LIKE 'explorer:%staking_rewards_out%'
+   AND NOT EXISTS (SELECT 1 FROM metrics b
+                    WHERE b.date = metrics.date AND b.project = metrics.project
+                      AND b.metric = 'emissions_claimed_tokens')
+ ORDER BY date;
+
+-- AT4. THE PROPOSED DELETE, THEN RENAME — one transaction. Only after AT1-AT3 read as expected.
 -- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
+--    AND source LIKE 'explorer:%staking_rewards_out%'
+--    AND EXISTS (SELECT 1 FROM metrics b
+--                 WHERE b.date = metrics.date AND b.project = metrics.project
+--                   AND b.metric = 'emissions_claimed_tokens');
 -- UPDATE metrics
 --    SET metric = 'emissions_claimed_tokens'
 --  WHERE project = 'Chainlink' AND metric = 'emissions_tokens'
---    AND source LIKE 'explorer:%staking_rewards_out%';
+--    AND source LIKE 'explorer:%staking_rewards_out%'
+--    AND NOT EXISTS (SELECT 1 FROM metrics b
+--                     WHERE b.date = metrics.date AND b.project = metrics.project
+--                       AND b.metric = 'emissions_claimed_tokens');
 -- COMMIT;
 
 -- ========================================================================================

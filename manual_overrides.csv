@@ -15,7 +15,6 @@ date,project,metric,value,source_note,entered_on
 # ----  No value is entered here on purpose: none was available from this environment, and a guessed figure is worse than a blank. ----
 # YYYY-MM-DD,World Mobile,locked_tokens,VALUE,"WMTX staked (EarthNode staking), World Mobile's own staking dashboard, as of its own date — the contract is a Cardano Plutus validator this tool cannot read. Feeds A2 free float and Free Float / ARR (the note's 2.27x).",YYYY-MM-DD
 # YYYY-MM-DD,Ethereum,settlement_volume_annual_usd,VALUE,"The Block adjusted on-chain volume, ANNUALISED (a quarter's total x 4, or the trailing-12-month figure) — state which in this note. Feeds Network Reserve Ratio.",YYYY-MM-DD
-# YYYY-MM-DD,Plume,settlement_volume_annual_usd,VALUE,"The Block adjusted on-chain volume for Plume, annualised, ONLY if The Block publishes a comparable figure; otherwise leave this row commented.",YYYY-MM-DD
 # YYYY-MM-DD,Chainlink,supply_units,VALUE,"Chainlink node operators (count), from data.chain.link or Chainlink's own published figure, as of its date.",YYYY-MM-DD
 # GEODNET locked_tokens (SuperHex staked GEOD) is supported, quarterly — e.g.
 # 2026-09-30,GEODNET,locked_tokens,<value>,<where the figure came from>,<entered on>

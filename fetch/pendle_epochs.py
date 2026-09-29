@@ -108,6 +108,39 @@ class PendleEpochs:
         self.get = get or _get
 
     @staticmethod
+    def _apr_line(out, name, spec, text, stored=None, when=None, source=None):
+        """THE ONE LINE FOR THE PUBLISHED APR, whatever happened (Jake, 2026-09-29: he could not
+        find it). Every outcome writes a Run Log row that starts with the metric's name —
+        source pendle_api, project Pendle — and the same text at INFO on the console."""
+        msg = f"{spec['apr_metric']}: {text}"
+        if stored is not None:
+            out.add(point(name, spec["apr_metric"], stored, source, TIER, when), SOURCE, name, msg, TIER)
+        else:
+            out.log.append(LogEntry(SOURCE, name, 0, "ok", msg, TIER))
+        log.info("%s / %s: %s", SOURCE, name, msg)
+
+    def _published_apr(self, name, spec, payload, now, out):
+        apr_key = spec.get("apr_field")
+        if not apr_key:
+            return
+        apr = payload.get(apr_key) if isinstance(payload, dict) else None
+        if apr is None:
+            keys = sorted(payload)[:12] if isinstance(payload, dict) else type(payload).__name__
+            self._apr_line(out, name, spec, f"{apr_key} ABSENT from the payload (keys {keys}) — "
+                                            f"the cross-check is unavailable this run")
+            return
+        try:
+            v = float(apr)
+        except (TypeError, ValueError):
+            self._apr_line(out, name, spec, f"{apr_key}={apr!r} is not a number — unavailable this run")
+            return
+        if v > 0:
+            self._apr_line(out, name, spec, f"{v} ({apr_key} raw {apr!r}, Pendle's own APR; a cross-check)",
+                           stored=v, when=now, source=f"{SOURCE}:{apr_key}")
+        else:
+            self._last_complete_apr(name, spec, payload, apr_key, apr, now, out)
+
+    @staticmethod
     def _last_complete_apr(name, spec, payload, apr_key, raw, now, out):
         """lastEpochApr read 0 (Jake's run, 2026-09-29): a 0 APR is not shown as Pendle's own figure.
 
@@ -134,15 +167,14 @@ class PendleEpochs:
         except (TypeError, ValueError):
             last = None
         if last is None:
-            out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{spec['apr_metric']}: {what}; no complete "
-                                                           f"epoch with an APR above 0 — the cross-check is "
-                                                           f"UNAVAILABLE this run, not 0", TIER))
+            PendleEpochs._apr_line(out, name, spec, f"{what}; no complete epoch with an APR above 0 — "
+                                                    f"the cross-check is UNAVAILABLE this run, not 0")
             return
         s0, a = last
-        out.add(point(name, spec["apr_metric"], a,
-                      f"{SOURCE}:{spec['history_key']}.aprs[last complete epoch]", TIER, s0.normalize()),
-                SOURCE, name, f"{spec['apr_metric']}={a} — {what}; stored the last COMPLETE epoch's APR "
-                              f"(started {s0.date()}) instead of 0", TIER)
+        PendleEpochs._apr_line(out, name, spec, f"{a} — {what}; stored the last COMPLETE epoch's APR "
+                                                f"(started {s0.date()}) instead of 0",
+                               stored=a, when=s0.normalize(),
+                               source=f"{SOURCE}:{spec['history_key']}.aprs[last complete epoch]")
 
     def run(self, projects: list[dict], window_days, out):
         from .scrape import robots_verdict
@@ -155,14 +187,23 @@ class PendleEpochs:
             ok, why = robots_verdict(spec["url"])
             if not ok:
                 out.skipped(SOURCE, name, f"{metric}: robots.txt — {why}", TIER)
+                self._apr_line(out, name, spec, f"not read — robots.txt: {why}")
                 continue
             try:
                 payload = self.get(spec["url"])
-                rows, raw = epochs(payload, spec)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(SOURCE, name, f"{metric}: {spec['url']}: {e}", TIER)
+                out.gap(name, metric, reason=f"Pendle's spendle/data did not answer: {e}",
+                        tiers_attempted="3", suggestion="Run check_offline_items.py pendle_spendle_fees.")
+                self._apr_line(out, name, spec, f"not read — spendle/data did not answer: {e}")
+                continue
+            try:
+                rows, raw = epochs(payload, spec)
+            except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{metric}: {spec['url']}: {e}", TIER)
                 out.gap(name, metric, reason=f"Pendle's spendle/data did not give the epoch series: {e}",
                         tiers_attempted="3", suggestion="Run check_offline_items.py pendle_spendle_fees.")
+                self._published_apr(name, spec, payload, now, out)     # the APR is a separate field
                 continue
             _keep(payload)
             lo, hi = spec["units_check"]["median_between"]
@@ -188,19 +229,4 @@ class PendleEpochs:
                         f"median {med:,.0f} PENDLE — UNITS CONFIRMED against the staking page's "
                         f"{lo:,}..{hi:,} (raw {raw[0]} / 10^{k}; latest epoch {done[-1][1]:,.0f} PENDLE "
                         f"from raw {raw[-1]}){note}", TIER)
-            apr_key = spec.get("apr_field")
-            apr = payload.get(apr_key) if apr_key else None
-            if apr is not None:
-                try:
-                    v = float(apr)
-                except (TypeError, ValueError):
-                    out.fail(SOURCE, name, f"{spec['apr_metric']}: {apr_key}={apr!r} is not a number", TIER)
-                    continue
-                if v > 0:
-                    out.add(point(name, spec["apr_metric"], v, f"{SOURCE}:{apr_key}", TIER, now), SOURCE, name,
-                            f"{spec['apr_metric']}={v} ({apr_key}, Pendle's own APR; a cross-check)", TIER)
-                else:
-                    self._last_complete_apr(name, spec, payload, apr_key, apr, now, out)
-            elif apr_key:
-                out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{apr_key} absent; payload keys "
-                                                             f"{sorted(payload)[:12]}", TIER))
+            self._published_apr(name, spec, payload, now, out)

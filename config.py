@@ -3550,10 +3550,9 @@ PROJECTS = [
             "checked_on": "2026-09-28",
         },
         "name": "Plume", "symbol": "PLUME",
-        # As Ethereum: The Block's adjusted on-chain volume, hand-entered quarterly IF The Block
-        # publishes a comparable Plume figure. If it does not, this stays empty in the Manual block
-        # rather than being filled from a different definition of volume.
-        "manual_quarterly": ["settlement_volume_annual_usd"],
+        # settlement_volume_annual_usd is CLOSED (config.UNAVAILABLE, 2026-09-29, Jake): The Block's
+        # adjusted on-chain volume does not cover Plume. Its manual_quarterly template was removed
+        # so it no longer asks for an input that does not exist.
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",
         # ===== THE FEES CALLS 400 EVERY RUN: KNOWN ABSENT, RE-CHECKED WEEKLY. 2026-09-28. =====
@@ -16959,6 +16958,27 @@ UNAVAILABLE = [
     # EXISTS AND IS DELIBERATELY UNWIRED. ** Plume's own registry gives a fee receiver, recorded
     # on the project entry above. Calling the metric inapplicable would contradict config's own
     # record that a route is there and was declined on cost.
+    {
+        "project": "Plume", "metric": "settlement_volume_annual_usd",
+        "closed_on": "2026-09-29",
+        "summary": "The Block's adjusted on-chain volume doesn't cover Plume; no free commercially "
+                   "licensed alternative found.",
+        "what_was_tried": (
+            "The Block's adjusted on-chain volume — the definition Ethereum's figure uses — has no "
+            "Plume series (Jake, 2026-09-29). The free alternatives were re-checked against the "
+            "sources themselves on 2026-09-25 (see settlement_volume_annual_usd in METRICS): "
+            "growthepie's metric registry carries no value-transferred metric (token_volume is an "
+            "app token's trading volume, tvl a stock), and Etherscan's daily stats are counts, gas "
+            "and fees, all PRO. Coin Metrics' TxTfrValAdjUSD is not on the free tier (2026-09-29) "
+            "and does not list Plume. Nothing new was reachable from this sandbox on 2026-09-29."),
+        "impact": (
+            "Plume's Network Reserve Ratio has no settlement-volume numerator; the cell reads "
+            "closed, not missing. Ethereum's is unaffected."),
+        "reopen_if": (
+            "The Block (or a free, commercially licensed source using the same adjusted-volume "
+            "definition) publishes a Plume series — then it is a manual quarterly row again."),
+    },
+
     {
         "project": "Plume", "metric": "fees_usd",
         "closed_on": "2026-09-23",
