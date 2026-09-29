@@ -144,6 +144,14 @@ class BalanceFlow:
         excluded = [a.lower() for a in spec.get("exclude_counterparties") or []]
         chain_id = config.CHAIN_IDS[chain]
         deadline = None if self.unbounded else time.monotonic() + self.budget_s
+        # HISTORICAL BALANCES NEED AN ARCHIVE ENDPOINT: the shared resolver (fetch.archive),
+        # not the first endpoint that connects. A reader injected by a test keeps its own.
+        if hasattr(self.reader, "_w3") and chain not in self.reader._w3:
+            from .archive import resolve_archive
+            w3r, host = resolve_archive(chain)
+            if w3r is not None:
+                self.reader._w3[chain] = w3r
+                out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{key}: archive reads via {host}", TIER))
         w3 = self.reader.web3(chain)
         head = int(w3.eth.block_number)
         st = self._load(key)

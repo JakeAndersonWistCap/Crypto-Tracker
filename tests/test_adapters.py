@@ -18373,7 +18373,7 @@ def test_near_archive_reads_header_supply_and_stake_at_the_first_block_of_the_da
                 return {"result": {"header": {"height": h, "timestamp": ts,
                                               "total_supply": str(1_250_000_000 * 10**24)}}}
             return {"result": {"current_validators": [{"stake": str(600_000_000 * 10**24)}]}}
-    na = NearArchive(http=Http(), endpoints=["https://archival.example"], root=tmp_path)
+    na = NearArchive(http=Http(), endpoints=["https://archival.example"], root=tmp_path, sleep=lambda s: None)
     rows = na.rows(config.PROJECT_BY_NAME["Near"], pd.Timestamp("2026-06-01"))
     got = {r["metric"]: r for r in rows}
     assert got["total_supply_protocol"]["value"] == 1_250_000_000
@@ -18562,3 +18562,79 @@ def test_aerodromes_weekly_epoch_reads_backfill_one_per_past_epoch():
     assert ar.stored_date(aero, "emissions_tokens", day) == epoch - pd.Timedelta(days=7)  # last complete week
     c = Chain(backfill={"day": day, "metrics": {}})
     assert c._now_ts() == int(day.tz_localize("UTC").timestamp())
+
+
+def test_the_archive_resolver_tries_every_endpoint_at_a_year_old_block_never_block_zero(tmp_path, monkeypatch):
+    """Jake's run 2026-09-29: the backfill tested only the first endpoint that CONNECTED and gave up
+    (publicnode 403 / "historical state not available"; Base refused block 0 as pruned) while
+    archive_probe had found eth.drpc.org, Alchemy Polygon and mainnet.base.org serving old state.
+    One resolver: env URL first, then every endpoint, each tested ~365 days back (never block 0);
+    the host that answers is used for every historical read and remembered for the next run."""
+    from fetch import archive as ar
+    from fetch import chain as ch
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    monkeypatch.setattr(ar, "_RESOLVED", {})
+    monkeypatch.setattr(ch, "rpc_endpoints",
+                        lambda c: ["https://pruned.example/rpc", "https://archive.example/v2/SECRETKEY"])
+    asked = []
+
+    class Eth:
+        def __init__(self, archive):
+            self.archive, self.block_number = archive, 20_000_000
+
+        def get_block(self, n):
+            return {"timestamp": 1_700_000_000 + 2 * n}           # 2s blocks
+
+        def get_balance(self, a, block_identifier=None):
+            asked.append(block_identifier)
+            if not self.archive:
+                raise ValueError("pruned history unavailable")
+            return 0
+
+    monkeypatch.setattr(ch.ChainReader, "make_web3",
+                        staticmethod(lambda chain, url, t=30: type("W", (), {"eth": Eth("archive" in url)})()))
+    tried = []
+    w3, host = ar.resolve_archive("base", attempts=tried)
+    assert host == "archive.example" and w3 is not None
+    assert [h for h, _ in tried] == ["pruned.example", "archive.example"]
+    assert "REFUSED" in tried[0][1] and "SERVED" in tried[1][1]
+    assert all(b and b > 1 for b in asked), "never block 0"
+    assert abs(asked[0] - (20_000_000 - 365 * 86_400 // 2)) < 10, "a block ~365 days back"
+    assert "SECRETKEY" not in (tmp_path / "archive-endpoints.json").read_text()
+    # next run: the remembered host is tried first
+    monkeypatch.setattr(ar, "_RESOLVED", {})
+    tried2 = []
+    ar.resolve_archive("base", attempts=tried2)
+    assert [h for h, _ in tried2] == ["archive.example"]
+
+
+def test_near_archival_calls_are_paced_back_off_on_429_and_resume(tmp_path):
+    """Jake's run 2026-09-29: fastnear and near.org both answered 429 after ~20 calls. Each 429 is
+    waited out on the same endpoint (Retry-After, else 5 -> 15 -> ...s) and slows the pace x1.5;
+    a clean streak speeds it back up; the pace and day boundaries persist for the next pass; a
+    wait that would overrun the budget stops cleanly (NearBudgetSpent)."""
+    import time as _t
+    from fetch.archive import NearArchive, NearBudgetSpent
+    naps, calls = [], []
+    replies = [(429, None, {"Retry-After": "7"}), (429, None, {}), (200, {"result": {"ok": 1}}, {})]
+
+    def post(url, body):
+        calls.append(url)
+        return replies.pop(0) if replies else (200, {"result": {"ok": 1}}, {})
+    na = NearArchive(endpoints=["https://a.example"], root=tmp_path, post=post, sleep=naps.append)
+    assert na.pace == NearArchive.PACE_START
+    assert na.rpc("block", {"block_id": 1}) == {"ok": 1}
+    assert calls == ["https://a.example"] * 3, "the same endpoint is waited out, not abandoned"
+    assert 7 in naps and 15 in naps, naps                  # Retry-After honoured, then the ladder
+    assert na.stats["429s"] == 2 and abs(na.pace - 1.0 * 1.5 * 1.5) < 1e-9
+    for _ in range(25):
+        na.rpc("block", {"block_id": 1})
+    assert na.pace < 2.25, "a clean streak speeds it back up"
+    na.save()
+    again = NearArchive(endpoints=["https://a.example"], root=tmp_path, post=post, sleep=naps.append)
+    assert abs(again.pace - na.pace) < 1e-3, "the pace that worked is where the next pass starts"
+    tight = NearArchive(endpoints=["https://a.example"], root=tmp_path, sleep=naps.append,
+                        post=lambda u, b: (429, None, {}), deadline=_t.monotonic() + 3)
+    import pytest as _pytest
+    with _pytest.raises(NearBudgetSpent):
+        tight.rpc("block", {"block_id": 1})

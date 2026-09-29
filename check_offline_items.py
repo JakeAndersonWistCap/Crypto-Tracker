@@ -1182,24 +1182,17 @@ def archive_probe():
         load_dotenv()
     except Exception:  # noqa: BLE001
         pass
+    # THE SAME RESOLVER THE BACKFILL USES (fetch.archive.resolve_archive): <CHAIN>_RPC_URL from
+    # .env first (ETHEREUM_RPC_URL included), then every configured endpoint, each tested at a
+    # block ~365 days back — so this tests exactly what archive_backfill.py will use.
+    from fetch import archive as _ar                    # noqa: PLC0415
     for chain in ("ethereum", "polygon", "arbitrum", "base", "bsc"):
         print(f"\n  {chain}:")
-        for url in _rpcs_for(chain):
-            host = _rpc_host(url)
-            try:
-                h = int(rpc(url, "eth_blockNumber")["result"], 16)
-                t_h = int(rpc(url, "eth_getBlockByNumber", [hex(h), False])["result"]["timestamp"], 16)
-                t_p = int(rpc(url, "eth_getBlockByNumber", [hex(h - 10_000), False])["result"]["timestamp"], 16)
-                back = int(365 * 86_400 / max((t_h - t_p) / 10_000, 1e-3))
-                blk = hex(max(h - back, 1))
-                ts = int(rpc(url, "eth_getBlockByNumber", [blk, False])["result"]["timestamp"], 16)
-                j = rpc(url, "eth_getBalance", ["0x" + "0" * 40, blk])
-                ok = "error" not in j
-                print(f"    {host}: head {h:,}; block {int(blk, 16):,} "
-                      f"({time.strftime('%Y-%m-%d', time.gmtime(ts))}) state "
-                      + ("SERVED — archive" if ok else f"REFUSED — {str(j.get('error'))[:100]}"))
-            except Exception as e:  # noqa: BLE001
-                print(f"    {host}: FAILED — {str(e)[:120]}")
+        tried: list = []
+        _w3, host = _ar.resolve_archive(chain, attempts=tried, every=True)
+        for h, verdict in tried:
+            print(f"    {h:<40} {verdict}")
+        print(f"    -> the backfill will use: {host or 'NOTHING — no endpoint serves year-old state'}")
     from fetch.archive import near_archival_endpoints   # noqa: PLC0415
     print("\n  near (archival):")
     for url in near_archival_endpoints():

@@ -69,6 +69,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-solana", action="store_true")
     a = ap.parse_args(argv)
     import store as store_mod
+    ar.load_env()          # the keyed <CHAIN>_RPC_URL entries live in .env
     st = store_mod.Store(a.db)
     projects = scoped(a.project)
     sol = {} if a.no_solana else solana_providers(projects)
@@ -89,16 +90,18 @@ def main(argv=None) -> int:
         return 0
 
     # WHICH CHAINS SERVE STATE A YEAR BACK: one eth_getBalance at that day's first block.
-    archive_chains, day = set(), today() - pd.Timedelta(days=ar.ARCHIVE_DAYS)
+    # WHICH ENDPOINT SERVES STATE A YEAR BACK, per chain: env URL first, then every configured
+    # endpoint, each tested at a block ~365 days back (fetch.archive.resolve_archive).
+    archive_chains = set()
     for c in sorted(chains_all):
-        try:
-            w3 = bf.reader.web3(c)
-            blk = ar.DayBlocks(w3, c).at(day, int(w3.eth.block_number))
-            good, why = ar.archive_ok(w3, blk)
-        except Exception as e:  # noqa: BLE001
-            good, why = False, f"{type(e).__name__}: {str(e)[:160]}"
-        print(f"  archive {c:<9} {'YES' if good else 'NO '} — {why}")
-        if good:
+        tried: list = []
+        w3, host = ar.resolve_archive(c, attempts=tried)
+        for h, verdict in tried:
+            print(f"  archive {c:<9} {h:<40} {verdict}")
+        print(f"  archive {c:<9} -> {'USING ' + host if w3 else 'NO ENDPOINT SERVES YEAR-OLD STATE'}")
+        if w3 is not None:
+            bf.reader._w3[c] = w3
+            bf.hosts[c] = host
             archive_chains.add(c)
     ok, _ = bf.targets(archive_chains)
     before = coverage(st, projects, ok)
@@ -107,25 +110,39 @@ def main(argv=None) -> int:
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")
         if near and near in projects:
-            na, rows, since = ar.NearArchive(), [], today() - pd.Timedelta(days=ar.ARCHIVE_DAYS)
-            deadline = t0 + a.budget_min * 60
+            # RESUMABLE AND PACED (2026-09-29): days already stored are skipped, each day's row is
+            # written as it lands, and the reader paces itself to the archival RPC's limit.
+            since = today() - pd.Timedelta(days=ar.ARCHIVE_DAYS)
+            have = {d for (d,) in st.conn.execute(
+                "SELECT date FROM metrics WHERE project='Near' AND metric='total_supply_protocol'")}
+            na = ar.NearArchive(deadline=t0 + a.budget_min * 60)
+            n, why = 0, "every day of the year is stored"
             for i in range(1, ar.ARCHIVE_DAYS + 1):
-                if time.monotonic() > deadline:
-                    print("  near: budget spent; re-run to continue")
-                    break
                 d = today() - pd.Timedelta(days=i)
+                if str(d.date()) in have:
+                    continue
                 try:
-                    rows += na.rows(near, d)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  near {d.date()}: {e}")
+                    n += ar._write_new(st, pd.DataFrame(na.rows(near, d)))
+                except ar.NearBudgetSpent as e:
+                    why = f"{e}; re-run to continue"
                     break
-            n = ar._write_new(st, pd.DataFrame(rows)) if rows else 0
-            print(f"  near: {n} new row(s) since {since.date()}")
+                except Exception as e:  # noqa: BLE001
+                    why = f"stopped at {d.date()}: {e}; re-run to continue"
+                    break
+            else:
+                why = "reached the start of the year"
+            na.save()
+            st_ = na.stats
+            print(f"  near: {n} new row(s) since {since.date()} — {why}")
+            print(f"  near: pace {na.pace:.2f}s/call at the end (saved for the next pass); "
+                  f"{st_['calls']} call(s), {st_['429s']} x 429, {st_['waited_s']:.0f}s waited; "
+                  f"served by {st_['endpoint'] or 'none'}")
     after = coverage(st, projects, ok)
     print(f"\nRAN {res['seconds']}s. Days stored in the last {ar.ARCHIVE_DAYS}, before -> after:")
     for k in sorted(after):
         print(f"  {k[0]:<13} {k[1]:<32} {before.get(k, 0):>4} -> {after[k]:>4}"
-              + (f"  (+{res['written'].get(k, 0)} archive)" if res["written"].get(k) else ""))
+              + (f"  (+{res['written'].get(k, 0)} archive via {', '.join(res['served_by'].get(k, []))})"
+                 if res["written"].get(k) else ""))
     for (n, m), k in sorted(res["flows"].items()):
         print(f"  flow {n}/{m}: {k} new row(s) differenced from the backfilled stock")
     for (n, m), why in sorted(res["refused"].items()):

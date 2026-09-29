@@ -129,6 +129,87 @@ def archivable(p: dict, metric: str, archive_chains: set[str], solana_keys: set)
 # ---------------------------------------------------------------------------------------------
 # First block of each UTC day
 # ---------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------
+# ONE RESOLVER for "which endpoint serves state a year back" — the probe, the backfill and every
+# historical read use it. 2026-09-29 (Jake's run: the backfill tested only the FIRST endpoint that
+# connected, so publicnode's 403 / "historical state not available" ended every EVM chain, while
+# archive_probe had found eth.drpc.org, Alchemy Polygon and mainnet.base.org serving it).
+# ---------------------------------------------------------------------------------------------
+_RESOLVED: dict[str, tuple] = {}
+
+
+def load_env() -> None:
+    """.env, as token_metrics.py loads it — archive_backfill.py never did, so POLYGON_RPC_URL was
+    not in the endpoint list at all."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def block_seconds(w3, head: int, span: int = 10_000) -> float:
+    """Average block time over the last `span` blocks, from the two timestamps."""
+    th = int(w3.eth.get_block(head)["timestamp"])
+    tp = int(w3.eth.get_block(max(head - span, 1))["timestamp"])
+    return max((th - tp) / max(min(span, head - 1), 1), 1e-3)
+
+
+def block_days_back(w3, days: float) -> int:
+    """A block ~`days` back, estimated from the recent block time — NEVER block 0: Base's pruned
+    public node refused "requested 0, earliest available 50500000"."""
+    head = int(w3.eth.block_number)
+    return max(head - int(days * 86_400 / block_seconds(w3, head)), 1)
+
+
+def resolve_archive(chain: str, days: float = ARCHIVE_DAYS, attempts: list | None = None,
+                    every: bool = False):
+    """(w3, host) of the first endpoint serving STATE ~`days` back, or (None, None).
+
+    Order: <CHAIN>_RPC_URL from the environment first, then every configured endpoint in turn
+    (fetch.chain.rpc_endpoints); the host that answered last time is tried first. Each is tested
+    with eth_getBalance of the zero address at a block ~`days` back. `attempts` collects
+    (host, verdict) for every endpoint tried — hosts only, never a URL with a key in it.
+    every=True (the probe) tests every endpoint and still returns the first that served."""
+    from .chain import ChainReader, rpc_endpoints, rpc_host
+    if chain in _RESOLVED and attempts is None:
+        return _RESOLVED[chain]
+    load_env()
+    urls = rpc_endpoints(chain)
+    memo = cache_root() / "archive-endpoints.json"
+    try:
+        pref = json.loads(memo.read_text()).get(chain)
+    except (OSError, ValueError):
+        pref = None
+    urls.sort(key=lambda u: 0 if pref and rpc_host(u) == pref else 1)
+    found = (None, None)
+    for url in urls:
+        host = rpc_host(url)
+        try:
+            w3 = ChainReader.make_web3(chain, url, 30)
+            blk = block_days_back(w3, days)
+            ok, why = archive_ok(w3, blk)
+            verdict = f"block {blk:,}: {'SERVED' if ok else 'REFUSED — ' + why}"
+        except Exception as e:  # noqa: BLE001
+            ok, verdict = False, f"FAILED — {type(e).__name__}: {str(e)[:140]}"
+        if attempts is not None:
+            attempts.append((host, verdict))
+        if ok and found[0] is None:
+            found = (w3, host)
+        if ok and not every:
+            _RESOLVED[chain] = (w3, host)
+            try:
+                d = json.loads(memo.read_text()) if memo.exists() else {}
+            except (OSError, ValueError):
+                d = {}
+            d[chain] = host
+            memo.parent.mkdir(parents=True, exist_ok=True)
+            memo.write_text(json.dumps(d, sort_keys=True))
+            return w3, host
+    _RESOLVED[chain] = found
+    return found
+
+
 class DayBlocks:
     """First block with timestamp >= each UTC day's start, cached per chain across runs."""
 
@@ -157,7 +238,15 @@ class DayBlocks:
         if k in self.known:
             return self.known[k]
         target = int(pd.Timestamp(day).tz_localize("UTC").timestamp())
-        lo, hi = (0, self.ts(0)), (head, self.ts(head))
+        hi = (head, self.ts(head))
+        # A LOWER BOUND FROM THE BLOCK TIME, NEVER BLOCK 0 (a pruned node refuses it): step back
+        # from an estimate until a block is before the target, doubling the step.
+        bt = max((hi[1] - self.ts(max(head - 10_000, 1))) / min(10_000, max(head - 1, 1)), 1e-3)
+        guess = max(head - int((hi[1] - target) / bt * 1.02) - 100, 1)
+        step = max(int(86_400 / bt), 100)
+        while guess > 1 and self.ts(guess) >= target:
+            guess, step = max(guess - step, 1), step * 2
+        lo = (guess, self.ts(guess))
         for d, b in self.known.items():          # known boundaries narrow the search
             t = int(pd.Timestamp(d).tz_localize("UTC").timestamp())
             if t < target and b - 1 > lo[0]:
@@ -343,6 +432,7 @@ class ArchiveBackfill:
         self.reader = reader or ChainReader()
         # {(project, contract key): SolanaAccountHistory}
         self.solana = solana or {}
+        self.hosts: dict[str, str] = {}      # chain -> host serving archive state (resolver)
         self.report: list[str] = []
 
     def targets(self, archive_chains: set[str]) -> tuple[dict, list[tuple[str, str, str]]]:
@@ -376,6 +466,13 @@ class ArchiveBackfill:
                   if spec["chain"] != "solana"}
         clocks, heads = {}, {}
         for c in sorted(chains):
+            # EVERY HISTORICAL READ GOES THROUGH THE ENDPOINT THAT SERVES OLD STATE (the resolver),
+            # not the first one that connects. A reader injected by a test keeps its own.
+            if c not in self.hosts and hasattr(self.reader, "_w3"):
+                w3r, host = resolve_archive(c)
+                if w3r is not None:
+                    self.reader._w3[c] = w3r
+                    self.hosts[c] = host
             w3 = self.reader.web3(c)
             heads[c] = int(w3.eth.block_number)
             clocks[c] = DayBlocks(w3, c)
@@ -445,7 +542,10 @@ class ArchiveBackfill:
             if n:
                 flows[(name, config.cumulative_flow_for(name, m))] = n
         return {"written": written, "flows": flows, "refused": refused, "skipped": skipped,
-                "seconds": round(time.monotonic() - start), "report": self.report}
+                "seconds": round(time.monotonic() - start), "report": self.report,
+                "served_by": {k: sorted({self.hosts.get(s["chain"], "solana" if s["chain"] == "solana" else "?")
+                                         for _, s in serving_contracts(config.PROJECT_BY_NAME[k[0]], k[1])})
+                              for k in written}}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -461,37 +561,111 @@ def near_archival_endpoints() -> list[str]:
     return [u.strip() for u in env.split(",") if u.strip()] or list(NEAR_ARCHIVAL_DEFAULT)
 
 
-class NearArchive:
-    """NEAR's archival RPC (free). `block` by height for header.total_supply and timestamp;
-    `validators` by block for the stake of the epoch that block is in. A height with no block
-    (NEAR skips heights) is stepped over. Source strings match the live near_rpc reads, marked
-    `archive`."""
+class NearBudgetSpent(RuntimeError):
+    """The run's time budget ran out inside a NEAR call; what is written stays, re-run to resume."""
 
-    def __init__(self, http=None, endpoints: list[str] | None = None, root: Path | None = None):
-        from .base import Http
-        self.http = http or Http(min_interval=0.25, retries=1)
+
+def _near_post(url: str, body: dict):
+    import requests
+    from .base import USER_AGENT
+    r = requests.post(url, json=body, headers={"User-Agent": USER_AGENT}, timeout=(10, 30))
+    try:
+        j = r.json()
+    except ValueError:
+        j = None
+    return r.status_code, j, dict(r.headers)
+
+
+class NearArchive:
+    """NEAR's archival RPC (free): `block` by height for header.total_supply and timestamp. A
+    height with no block (NEAR skips heights) is stepped over. Source strings match the live
+    near_rpc reads, marked `archive`.
+
+    PACED TO THE PROVIDERS' LIMITS (Jake's run 2026-09-29: fastnear and near.org both answered 429
+    after ~20 calls at 4/s). Calls are spaced by an ADAPTIVE pace, starting from the pace that last
+    worked (saved with the block cache): every 429 waits (Retry-After, or 5 -> 15 -> 30 -> 60 ->
+    120s) and slows the pace x1.5 (to at most 15s/call); 25 clean calls in a row speed it x0.9
+    (to at least 0.5s). The same endpoint is waited out before moving to the next. Boundaries and
+    pace persist, and the caller skips days already stored, so a pass stopped by the budget or a
+    limit resumes where it stopped. `pace` and `stats` say what worked."""
+
+    PACE_START, PACE_MIN, PACE_MAX = 1.0, 0.5, 15.0
+    BACKOFFS = (5, 15, 30, 60, 120)
+
+    def __init__(self, http=None, endpoints: list[str] | None = None, root: Path | None = None,
+                 post=None, sleep=None, deadline: float | None = None):
+        # `http` (an object with .post(url, json_body)) is kept for callers that pass one.
+        if post is None and http is not None:
+            def post(url, body, _h=http):
+                return 200, _h.post(url, json_body=body), {}
+        self.post = post or _near_post
+        self.sleep = sleep or time.sleep
+        self.deadline = deadline
         self.endpoints = endpoints or near_archival_endpoints()
         self.file = (root or cache_root()) / "archive-blocks-near.json"
         try:
-            self.known = {k: int(v) for k, v in json.loads(self.file.read_text()).items()}
+            raw = json.loads(self.file.read_text())
         except (OSError, ValueError):
-            self.known = {}
+            raw = {}
+        if "known" not in raw:                   # the first format held the boundaries alone
+            raw = {"known": raw}
+        self.known = {k: int(v) for k, v in (raw.get("known") or {}).items()}
+        self.pace = float(raw.get("pace") or self.PACE_START)
         self._hdr: dict[int, dict] = {}
+        self._last = 0.0
+        self._streak = 0
+        self.stats = {"calls": 0, "429s": 0, "waited_s": 0.0, "endpoint": None}
+
+    def save(self) -> None:
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"known": self.known, "pace": round(self.pace, 3)}, sort_keys=True))
+        tmp.replace(self.file)
+
+    def _nap(self, seconds: float) -> None:
+        if self.deadline is not None and time.monotonic() + seconds > self.deadline:
+            self.save()
+            raise NearBudgetSpent(f"time budget spent (a {seconds:.0f}s wait would overrun it)")
+        if seconds > 0:
+            self.stats["waited_s"] += seconds
+            self.sleep(seconds)
 
     def rpc(self, method: str, params):
+        from .chain import rpc_host
+        body = {"jsonrpc": "2.0", "id": "tm", "method": method, "params": params}
         errs = []
         for url in self.endpoints:
-            try:
-                j = self.http.post(url, json_body={"jsonrpc": "2.0", "id": "tm", "method": method,
-                                                   "params": params})
-            except Exception as e:  # noqa: BLE001
-                errs.append(f"{url}: {e}")
-                continue
-            if isinstance(j, dict) and j.get("error"):
-                errs.append(f"{url}: {str(j['error'])[:160]}")
-                continue
-            return j["result"]
-        raise RuntimeError("; ".join(errs))
+            for attempt in range(len(self.BACKOFFS) + 1):
+                self._nap(self._last + self.pace - time.monotonic())
+                self._last = time.monotonic()
+                self.stats["calls"] += 1
+                try:
+                    status, j, headers = self.post(url, body)
+                except Exception as e:  # noqa: BLE001 — a transport error: back off, retry
+                    errs.append(f"{rpc_host(url)}: {type(e).__name__}")
+                    if attempt < len(self.BACKOFFS):
+                        self._nap(self.BACKOFFS[attempt])
+                    continue
+                if status == 429 or (status and status >= 500):
+                    self._streak = 0
+                    if status == 429:
+                        self.stats["429s"] += 1
+                        self.pace = min(self.pace * 1.5, self.PACE_MAX)
+                    errs.append(f"{rpc_host(url)}: HTTP {status}")
+                    if attempt < len(self.BACKOFFS):
+                        from .base import retry_after
+                        asked = retry_after((headers or {}).get("Retry-After"))
+                        self._nap(min(max(asked or 0.0, self.BACKOFFS[attempt]), 300.0))
+                    continue
+                if isinstance(j, dict) and j.get("error"):
+                    raise RuntimeError(f"{rpc_host(url)}: {str(j['error'])[:200]}")
+                self._streak += 1
+                if self._streak >= 25:
+                    self.pace, self._streak = max(self.pace * 0.9, self.PACE_MIN), 0
+                self.stats["endpoint"] = rpc_host(url)
+                return (j or {}).get("result")
+        self.save()
+        raise RuntimeError("no NEAR archival endpoint answered — " + "; ".join(errs[-6:]))
 
     def header(self, height: int) -> dict:
         """The header at `height`, or at the next height that has a block (max 50 steps)."""
@@ -509,15 +683,36 @@ class NearArchive:
         raise RuntimeError(f"no NEAR block in heights {height}..{height + 49}")
 
     def at(self, day: pd.Timestamp) -> dict:
-        """The header of the first block at or after the day's start."""
+        """The header of the first block at or after the day's start. Known day boundaries bracket
+        the search (newest-first passes make neighbouring days tight), and with none below, a
+        lower bound is stepped back from the head at the head's own block rate — never genesis."""
         k = str(day.date())
         if k in self.known:
             return self.header(self.known[k])
         target = int(pd.Timestamp(day).tz_localize("UTC").timestamp()) * 10**9
         head = self.rpc("block", {"finality": "final"})["header"]
-        lo_h, lo_t = 9_820_210, None          # genesis height of NEAR mainnet
-        lo_t = int(self.header(lo_h)["timestamp"])
         hi_h, hi_t = int(head["height"]), int(head["timestamp"])
+        above = [h for d, h in self.known.items()
+                 if int(pd.Timestamp(d).tz_localize("UTC").timestamp()) * 10**9 >= target]
+        below = [h for d, h in self.known.items()
+                 if int(pd.Timestamp(d).tz_localize("UTC").timestamp()) * 10**9 < target]
+        if above and min(above) < hi_h:                  # one header each, not one per known day
+            hi_h = min(above)
+            hi_t = int(self.header(hi_h)["timestamp"])
+        lo = None
+        if below:
+            lo = (max(below), int(self.header(max(below))["timestamp"]))
+        else:
+            ref = self.header(max(hi_h - 100_000, 1))
+            rate = (hi_t - int(ref["timestamp"])) / max(hi_h - int(ref["height"]), 1)   # ns/block
+            guess, step = max(hi_h - int((hi_t - target) / rate * 1.02) - 1_000, 1), 100_000
+            while True:
+                hdr = self.header(guess)
+                if int(hdr["timestamp"]) < target:
+                    lo = (int(hdr["height"]), int(hdr["timestamp"]))
+                    break
+                guess, step = max(guess - step, 1), step * 2
+        lo_h, lo_t = lo
         while hi_h - lo_h > 1:
             guess = lo_h + max(1, min(hi_h - lo_h - 1, int((target - lo_t) * (hi_h - lo_h) / max(hi_t - lo_t, 1))))
             hdr = self.header(guess)
@@ -530,8 +725,7 @@ class NearArchive:
             else:
                 hi_h, hi_t = h, t
         self.known[k] = hi_h
-        self.file.parent.mkdir(parents=True, exist_ok=True)
-        self.file.write_text(json.dumps(self.known, sort_keys=True))
+        self.save()
         return self.header(hi_h)
 
     def rows(self, p: dict, day: pd.Timestamp) -> list[dict]:
