@@ -157,24 +157,35 @@ class LogScan:
                 except ExplorerRefused as ex:
                     return f" OUTSIDE {len(outside)} transfer(s): pair {label} logs unreadable ({ex})."
         flappers = {a.lower(): n for a, n in (cls.get("known_senders") or {}).items()}
+        verdicts = cls.get("verdicts") or {}
         now = int(pd.Timestamp.now("UTC").timestamp())
-        agg: dict = defaultdict(lambda: [0, 0, 0, 0])      # total, 90d, 365d, n
+        agg: dict = defaultdict(lambda: [0, 0, 0, 0, ""])      # total, 90d, 365d, n, verdict
+        txs = []
         for e in outside:
             kind, sender = kinds.get(str(e["transactionHash"]).lower(), ("none", ""))
             what = {"burn": "LP burn to the holder (pair.burn)",
                     "swap": f"swap paying the holder, sender {sender}"
                             + (f" [{flappers[sender]}]" if sender in flappers else ""),
                     "none": "no Swap/Burn to the holder in the tx (skim/sync or direct transfer)"}[kind]
+            vkey = kind if kind != "swap" else ("swap_known" if sender in flappers else "swap_unknown")
             a, age = _amount(e), now - int(e.get("timeStamp") or 0)
             row = agg[what]
             row[0] += a
             row[1] += a if age <= 90 * 86_400 else 0
             row[2] += a if age <= 365 * 86_400 else 0
             row[3] += 1
+            row[4] = verdicts.get(vkey, "")
+            txs.append((a, int(e.get("timeStamp") or 0), str(e["transactionHash"]), kind))
         scale = 10 ** int(cls.get("decimals", 18))
         parts = [f"{w}: {v[0] / scale:,.2f} ({v[3]} tx; last 90d {v[1] / scale:,.2f}, last 365d "
-                 f"{v[2] / scale:,.2f})" for w, v in sorted(agg.items(), key=lambda kv: -kv[1][0])]
-        return " OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — " + "; ".join(parts) + "."
+                 f"{v[2] / scale:,.2f})" + (f" => {v[4]}" if v[4] else "")
+                 for w, v in sorted(agg.items(), key=lambda kv: -kv[1][0])]
+        # THE TRANSACTIONS THEMSELVES (2026-09-29): the largest, so a reader can open each one.
+        top = sorted(txs, reverse=True)[:int(cls.get("show_largest", 0))]
+        largest = ("; largest: " + ", ".join(
+            f"{h} {pd.Timestamp(ts, unit='s').date() if ts else '?'} {k} {a / scale:,.2f}"
+            for a, ts, h, k in top)) if top else ""
+        return " OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — " + "; ".join(parts) + largest + "."
 
     # ------------------------------------------------------------------ one scan
     def _scan(self, p: dict, spec: dict, window_days, out) -> None:

@@ -5757,6 +5757,11 @@ def test_gap_detection_covers_every_applicable_metric():
             if config.is_manual_quarterly(p["name"], m):
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} is manual and must not be a gap"
                 continue
+            # built at read time from another stored series (one_off_burn_tokens): that series'
+            # gaps are its gaps
+            if config.METRICS[m].get("view_only"):
+                assert (p["name"], m) not in keys, f"{p['name']}/{m} is a read-time view"
+                continue
             # ONE GAP, NOT TWO: usd folds into the tokens row wherever tokens is itself a gap.
             if m == "actual_buyback_usd" and (p["name"], "actual_buyback_tokens") in keys:
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} must fold into the tokens row"
@@ -16410,8 +16415,11 @@ def test_a_monthly_series_q0_is_three_complete_calendar_months():
     # x12/3 fallback only where no coverage is recorded.
     assert m["q0_covered_days"] == 92 and m["q1_covered_days"] == 0
     ann = bw._annualise(R, 5, config.PROJECT_BY_NAME["Maple"], "actual_buyback_usd", "X")
-    assert ann.startswith("IF(AND(ISNUMBER(") and ann.endswith(",(X)*12/3)"), ann
-    # Maple at a $240M market cap: 658,866 x 4 / 240M
+    # EVENTS x CADENCE (Jake, 2026-09-29): Maple's monthly buybacks annualise as the mean month
+    # x 12 — the same x4 here, where Q0 holds three monthly events.
+    assert ann.startswith("IF(AND(ISNUMBER(") and "*12," in ann, ann
+    assert m["q0_events"] == 3
+    # Maple at a $240M market cap: 658,866 / 3 x 12 / 240M
     assert abs(658_866.0 * 4 / 240e6 - 0.010981) < 1e-6
 
 
@@ -16555,7 +16563,23 @@ def test_ethstore_is_called_at_most_once_a_day_and_a_failure_is_not_retried(monk
         beaconchain.BeaconChain(http=Refuses()).run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
     assert Refuses.calls == 1, "one attempt a day, even when it fails"
     msg = next(e.message for e in out.log if e.status == "failed")
-    assert "not retried until tomorrow" in msg and "bc-secret-456" not in msg
+    # ONE CALL A MONTH, NEVER DAILY (Jake, 2026-09-29): the quota is monthly and the figure is
+    # now only the MEV-inclusive cross-check.
+    assert "not retried until next month" in msg and "bc-secret-456" not in msg
+    import json
+    f = beaconchain._day_cache_file()
+    st = json.loads(f.read_text())
+    for u in st:                                    # a call earlier this month still counts
+        st[u]["date"] = str(pd.Timestamp(beaconchain.today()).replace(day=1).date())
+    f.write_text(json.dumps(st))
+    out = FetchOutput()
+    beaconchain.BeaconChain(http=Refuses()).run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    assert Refuses.calls == 1 or beaconchain.today().day == 1
+    for u in st:                                    # last month's does not
+        st[u]["date"] = str((pd.Timestamp(beaconchain.today()).replace(day=1) - pd.Timedelta(days=1)).date())
+    f.write_text(json.dumps(st))
+    beaconchain.BeaconChain(http=Refuses()).run([config.PROJECT_BY_NAME["Ethereum"]], None, FetchOutput())
+    assert Refuses.calls == 2
 
 
 def test_ether_fi_silence_uses_the_scans_cow_only_date_not_older_stored_rows():
@@ -18007,6 +18031,8 @@ def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_p
     assert "Exec(uint256,uint256)" in msg and "to the wei" in msg
     # the transfer OUTSIDE Exec is named from the pair's own logs, with its windows
     assert "OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — LP burn to the holder (pair.burn): 500.00 (1 tx" in msg, msg
+    # Jake, 2026-09-29: each kind carries its buyback verdict, and the largest transactions are named
+    assert "=> NOT BUYBACK — liquidity removal" in msg and "; largest: 0x" in msg and " burn 500.00" in msg
     assert BURN == "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496"
     assert "0xc5A9CaeBA70D6974cBDFb28120C3611Dd9910355" in rq["classify_outside"]["known_senders"]
     bad = run([ex("0xaa", 60_000, 999_999, 10)])
@@ -18217,8 +18243,20 @@ def test_pendle_epochs_are_read_per_epoch_with_units_checked_against_the_staking
         assert len(ep) == 4 and ep["value"].max() == 350_000.0
         assert f[f.metric == "staking_apr_published"]["value"].iloc[0] == 0.0231
         assert any("UNITS CONFIRMED" in e.message for e in out.log)
-        # already-scaled amounts (or any wrong scale) are refused, not stored 10^18 off
-        bad = dict(good, sPendleHistoricalData={"timestamps": ts, "buybackAmounts": [170_000, 350_000, 240_000, 1]})
+        # Jake's run 2026-09-29 14:38: not wei. The payload's scale is found among the DECLARED
+        # candidates (plain tokens, 1e-7) and named in the log; a figure fitting none (here USD,
+        # ~$1.2M an epoch) is refused, never fitted to the band by a free power-of-ten search.
+        for amounts, k in (([170_000, 350_000, 240_000, 82_545], "/10^0"),
+                           ([0.017, 0.035, 0.024, 0.0082545], "/10^-7")):
+            plain = dict(good, sPendleHistoricalData={"timestamps": ts, "buybackAmounts": amounts})
+            o = FetchOutput()
+            PendleEpochs(get=lambda url: plain).run([p], None, o)
+            e = o.frame().query("metric == 'pendle_distributed_tokens'")
+            msg = " ".join(x.message for x in o.log)
+            assert len(e) == 4 and abs(e["value"].max() - 350_000) < 1e-6, k
+            assert "DECLARED /10^18 DID NOT FIT" in msg and f"the payload's scale is {k}" in msg
+            assert "latest epoch 82,545 PENDLE" in msg
+        bad = dict(good, sPendleHistoricalData={"timestamps": ts, "buybackAmounts": [1_200_000, 900_000, 1_500_000, 400_000]})
         out2 = FetchOutput()
         PendleEpochs(get=lambda url: bad).run([p], None, out2)
         assert out2.frame().query("metric == 'pendle_distributed_tokens'").empty
@@ -18509,6 +18547,19 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
         os.environ.pop("ETHERSCAN_API_KEY", None)
     got = out.frame().set_index("metric")["value"]
     assert got["beacon_chain_eth"] == 74_000_000 + 1_160_000 - 40_000_000
+    # Jake's decision 2026-09-29: the consensus part is d(Eth2Staking), stored as its own series
+    assert got["consensus_rewards_cumulative"] == 1_160_000
+    es.prior_delta = {("Ethereum", "consensus_rewards_cumulative"): 1_157_300.0}
+    es.prior_dates = {("Ethereum", "consensus_rewards_cumulative"): "2026-01-01"}
+    os.environ["ETHERSCAN_API_KEY"] = "k"
+    try:
+        out2 = FetchOutput()
+        es.run([config.PROJECT_BY_NAME["Ethereum"]], None, out2)
+    finally:
+        os.environ.pop("ETHERSCAN_API_KEY", None)
+    f2 = out2.frame().set_index("metric")
+    assert abs(f2.loc["consensus_rewards_tokens", "value"] - 2_700.0) < 1e-6
+    assert ":delta" in f2.loc["consensus_rewards_tokens", "source"]
 
     class R:
         def D(self, r, m, w):
@@ -18516,12 +18567,15 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     eth = config.PROJECT_BY_NAME["Ethereum"]
     spec = config.VALIDATOR_YIELD["Ethereum"]
     cons, exe, legs = bw._eth_yield_parts(R(), 5, eth, spec)
-    assert "D[gross_issuance_tokens:q0]" in cons and "/D[beacon_chain_eth:now]" in cons
+    assert "D[consensus_rewards_tokens:q0]" in cons and "/D[beacon_chain_eth:now]" in cons
+    assert "gross_issuance_tokens" not in cons, "the consensus part is d(Eth2Staking), not issuance"
+    assert "EXCLUDING MEV" in spec["note"]
     assert "(D[fees_usd:q0]-D[revenue_usd:q0])" in exe and "D[price_usd:q0]" in exe
     cols = {c[0]: c for c in bw._eth_yield_columns(R())}
     ceil = cols["Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)"][1](5, eth)
     assert "166.32*SQRT(D[beacon_chain_eth:now])" in ceil
-    assert cols["Consensus part (issuance ÷ ETH on the beacon chain)"][1](5, config.PROJECT_BY_NAME["Near"]) == ""
+    assert cols["Consensus part (d Eth2Staking ÷ ETH on the beacon chain)"][1](5, config.PROJECT_BY_NAME["Near"]) == ""
+    assert any("EXCLUDING MEV" in k for k in cols) and any("INCLUDING MEV; one call a month" in k for k in cols)
     # 64 x sqrt(B gwei) per epoch x 82,181.25 epochs/yr / 1e9 = 166.32 x sqrt(B ETH)
     assert abs(64 * (1e9) ** 0.5 * 365.25 * 86_400 / (32 * 12) / 1e9 - 166.32) < 0.01
     assert config.PROJECT_BY_NAME["Ethereum"]["coinmetrics_community"]["available"] is False
@@ -18781,8 +18835,9 @@ def test_archive_records_pre_deployment_starts_paces_429s_and_explains_every_unw
     rate["n"] = 10
     res2 = ar.ArchiveBackfill(st, [p], budget_s=60, reader=Reader(), days=6).run({"ethereum"})
     assert not res2["written"] and not any(l.startswith("NOT WRITTEN") for l in res2["report"])
-    # declared start: Uniswap's burn address is complete from the UNIfication burn
-    assert ar.series_starts()[("Uniswap", "burn_address_balance")]["from"] == "2025-12-28"
+    # Uniswap's declared start was REMOVED 2026-09-29: the floor is dated instead, and the year
+    # before the 100M burn is backfilled (the burn itself is a dated one-off, kept out of rates)
+    assert ("Uniswap", "burn_address_balance") not in ar.series_starts()
     _, no = ar.ArchiveBackfill(None, [config.PROJECT_BY_NAME["Chainlink"]]).targets({"ethereum"})
     assert any(m == "total_supply" and w.startswith("BY DESIGN") for _, m, w in no)
 
@@ -18816,3 +18871,187 @@ def test_history_audit_reads_a_series_that_starts_late_as_complete(tmp_path, mon
     assert v == "COMPLETE" and why.startswith(f"series starts {start}") and "has no code" in why
     assert got[("Pendle", "cooldown_days")][0] == "BACKFILLING", "stored first AFTER the start: not complete"
     assert not any(k == ("Pendle", "locked_tokens") for k in ((r[0], r[1]) for r in ha.rows(db, short_only=True)))
+
+
+def test_uniswap_one_off_burn_is_dated_shown_apart_and_kept_out_of_every_rate(tmp_path):
+    """Jake, 2026-09-29 14:38: (a) gross_burn_tokens summed 116,000 UNI over the stock's move —
+    archive days differenced INSIDE a stored multi-day delta; (b) the 100M retroactive burn must
+    never enter a rate; (c) the 100M floor applies only from the burn, so the year before it is
+    backfilled as real history."""
+    import build_workbook as bw
+    import store as store_mod
+    from fetch import archive as ar
+
+    # (c) the floor is dated
+    assert config.sanity_bounds("Uniswap", "burn_address_balance", "2025-12-27")[0] == \
+        config.METRICS["burn_address_balance"]["sanity_min"]
+    assert config.sanity_bounds("Uniswap", "burn_address_balance", "2025-12-28")[0] == 100_000_000
+    assert config.sanity_bounds("Uniswap", "burn_address_balance")[0] == 100_000_000, "undated: strict"
+    assert ("Uniswap", "burn_address_balance") not in config.ARCHIVE_SERIES_START
+
+    # (b) a year of dead-address readings with the 100M burn landing on 2025-12-27 UTC
+    days = pd.date_range("2025-10-01", "2026-09-27")
+    bal, v = [], 1_000_000.0
+    for d in days:
+        if d > days[0]:
+            v += 45_000.0 if d >= pd.Timestamp("2025-12-28") else 10.0
+            if d == pd.Timestamp("2025-12-28"):
+                v += 100_000_000.0
+        bal.append(v)
+    base = {"project": "Uniswap", "tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    rows = [dict(base, date=d, metric="burn_address_balance", value=x, source="chain:ethereum:burn_dead")
+            for d, x in zip(days, bal)]
+    rows += [dict(base, date=d, metric="gross_burn_tokens", value=x1 - x0, source="chain:ethereum:burn_dead:delta")
+             for d, x0, x1 in zip(days[1:], bal, bal[1:])]
+    asof = pd.Timestamp("2026-09-28")
+    data = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), asof).set_index("metric")
+    uni = data[data.project == "Uniswap"]
+    burn = uni.loc["gross_burn_tokens"]
+    assert burn["status"] not in bw.WITHHELD_STATUSES, burn["note"]
+    assert abs(burn["q0"] - 89 * 45_000.0) < 1e-6                 # (06-30, 09-28], last reading 09-27
+    ongoing = (bal[-1] - bal[0]) - 100_000_000                     # the stray days, then the programme
+    assert abs(burn["y1"] - ongoing) < 1e-3, "the 100M is in no window"
+    assert abs(uni.loc["one_off_burn_tokens", "y1"] - 100_000_000) < 1e-6, "shown on its own row"
+    assert uni.loc["one_off_burn_tokens", "latest_date"] == "2025-12-28"
+    assert abs(uni.loc["actual_buyback_tokens", "y1"] - ongoing) < 1e-3, "the buyback copy excludes it too"
+    assert burn["status"] != "unreconciled_flow", "the reconciliation adds the one-off back"
+
+    # (a) the archive never differences a day inside a stored multi-day delta
+    st = store_mod.Store(str(tmp_path / "m.db"))
+    w = lambda d, m, x, s: st.conn.execute("INSERT INTO metrics (date, project, metric, value, source, tier, fetched_at) "
+                                           "VALUES (?,?,?,?,?,?,?)", (d, "Uniswap", m, x, s, 2, "x"))
+    w("2026-09-01", "burn_address_balance", 200_000_000.0, "chain:ethereum:burn_dead")
+    w("2026-09-04", "burn_address_balance", 200_116_000.0, "chain:ethereum:burn_dead")
+    w("2026-09-04", "gross_burn_tokens", 116_000.0, "chain:ethereum:burn_dead:delta[span=3d]")
+    for d, x in (("2026-09-02", 200_100_000.0), ("2026-09-03", 200_116_000.0)):     # archive fills
+        w(d, "burn_address_balance", x, "chain:ethereum:burn_dead:archive")
+    st.conn.commit()
+    straddled = []
+    assert ar.derive_flows(st, "Uniswap", "burn_address_balance", straddled) == 0
+    assert len(straddled) == 2 and "2026-09-04" in straddled[0]
+    total = st.conn.execute("SELECT SUM(value) FROM metrics WHERE project='Uniswap' AND metric='gross_burn_tokens'").fetchone()[0]
+    assert total == 116_000.0, "the flows still sum to the stock's move"
+
+
+def test_derived_series_use_the_full_span_of_their_stored_inputs():
+    """Jake, 2026-09-29 14:38: NEAR's validator yield was blocked on ONE covered day of observed
+    issuance (~706 NEAR against ~89,500/day expected) while the archival header supply held 365;
+    Near burn held 35 days, Plume issuance 7, Chainlink pool release 7; Sky's actual_buyback_usd
+    valued 29 of 729 rows though price_usd now spans the year. Every write-time derivation read
+    one run's frame. fetch.history_derive re-derives each over the stored inputs."""
+    from fetch.history_derive import derive_from_history
+
+    base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    days = pd.date_range("2025-09-29", "2026-09-28")
+    rows = []
+    add = lambda n, m, d, v, s: rows.append(dict(base, project=n, metric=m, date=d, value=v, source=s))
+    sup = 1_300_000_000.0
+    for i, d in enumerate(days):
+        if i:
+            sup += 89_500.0 - 700.0                  # minted less the day before's burn
+        add("Near", "total_supply_protocol", d, sup, "near_rpc:block.header.total_supply" + (":archive" if i < 330 else ""))
+        add("Near", "fees_usd", d, 1_000.0, "defillama:fees")
+        add("Near", "revenue_usd", d, 700.0, "defillama:revenue")
+        add("Near", "price_usd", d, 1.0, "coingecko:market_chart")
+        add("Sky", "price_usd", d, 0.062, "coingecko:market_chart")
+        add("Sky", "actual_buyback_tokens", d, 934_665.27, "chain:ethereum:flapper_purchases")
+    for d in days[-5:]:
+        add("Near", "gross_burn_tokens", d, 700.0, "derived:defillama_burned_fee_revenue/price")
+    add("Near", "gross_issuance_tokens", days[-1], 706.0, "derived:d_total_supply_protocol+burn")   # the one-day row
+    for d in days[-29:]:
+        add("Sky", "actual_buyback_usd", d, 934_665.27 * 0.05, "derived:tokens*price")          # stale valuations
+    for i, d in enumerate(days[-8:]):
+        add("Plume", "total_supply", d, 10_000_000_000.0 + 1_000.0 * i, "coingecko:coins")
+        add("Chainlink", "circulating_supply", d, 678_000_000.0 + 50_000.0 * i, "coingecko:coins")
+        add("Chainlink", "total_supply", d, 1_000_000_000.0, "coingecko:coins")
+    stored = pd.DataFrame(rows)
+
+    out = FetchOutput()
+    ps = [config.PROJECT_BY_NAME[n] for n in ("Near", "Sky", "Plume", "Chainlink")]
+    done = derive_from_history(out, ps, stored)
+    f = out.frame()
+    burn = f[(f.project == "Near") & (f.metric == "gross_burn_tokens")]
+    assert len(burn) == len(days) - 5 and (burn["value"] == 700.0).all(), "the year of revenue / price"
+    iss = f[(f.project == "Near") & (f.metric == "gross_issuance_tokens")]
+    assert len(iss) == len(days) - 1, "every interval of the header supply"
+    assert abs(iss["value"].median() - 89_500.0) < 1e-6, "d(supply) + the burn inside the interval"
+    assert iss.set_index("date").loc[days[-1], "value"] == 89_500.0, "the one-day 706 row is replaced"
+    usd = f[(f.project == "Sky") & (f.metric == "actual_buyback_usd")].set_index("date")
+    assert len(usd) == len(days) and abs(usd.loc[days[-1], "value"] - 934_665.27 * 0.062) < 1e-6
+    q0 = usd[usd.index > days[-1] - pd.Timedelta(days=90)]["value"].sum()
+    assert abs(q0 - 90 * 934_665.27 * 0.062) < 1e-3                                        # ~$5.2M
+    assert f[(f.project == "Plume") & (f.metric == "gross_issuance_tokens")]["value"].tolist() == [1_000.0] * 7
+    rel = f[(f.project == "Chainlink") & (f.metric == "pool_release_tokens")]
+    assert rel["value"].tolist() == [50_000.0] * 7
+    assert done[("Near", "gross_issuance_tokens")] == len(days) - 1
+
+    # idempotent: with its own rows stored, a second pass writes nothing
+    again = pd.concat([stored, f.assign(**{k: v for k, v in base.items() if k not in f.columns})], ignore_index=True)
+    out2 = FetchOutput()
+    assert derive_from_history(out2, ps, again) == {}
+
+    # a burn day missing refuses that interval, never adds a partial burn
+    gap = stored[~((stored.project == "Near") & (stored.metric == "revenue_usd") & (stored.date == days[100]))]
+    out3 = FetchOutput()
+    derive_from_history(out3, [config.PROJECT_BY_NAME["Near"]], gap)
+    i3 = out3.frame().query("metric == 'gross_issuance_tokens'")
+    assert days[101] not in set(i3["date"]) and len(i3) == len(days) - 2
+
+
+def test_a_declared_discrete_series_is_annualised_by_events_times_cadence():
+    """Jake, 2026-09-29: Sky's burn/issuance moved 0.059 -> 0.137 under the equal-coverage rule —
+    one monthly burn divided by its 16 covered days. Sky's monthly burn and Maple's monthly
+    buybacks are annualised as (total / events) x 12, and their per-day rate in a ratio is that
+    over days_per_year. One ~2.86M SKY burn a month against ~393M SKY/yr: ~0.087."""
+    import build_workbook as bw
+    R = bw.Refs(10, 10, ["2026-08"])
+    sky, maple, pendle = (config.PROJECT_BY_NAME[n] for n in ("Sky", "Maple", "Pendle"))
+    ev_col = bw.DC["q0_events"]
+    rate = bw._flow_rate(R, 5, "sky_stage2_burn_tokens", p=sky)
+    assert f"Data!${ev_col}$" in rate and "*12/" in rate
+    assert f"Data!${ev_col}$" not in bw._flow_rate(R, 5, "sky_stage2_burn_tokens"), "no project, no cadence"
+    ann = bw._annualise(R, 5, maple, "actual_buyback_usd", "X")
+    assert f"Data!${ev_col}$" in ann and "*12," in ann
+    assert f"Data!${ev_col}$" not in bw._annualise(R, 5, pendle, "actual_buyback_usd", "X"), \
+        "Pendle's biweekly cadence is its epochs; its buyback rows are daily"
+    assert config.events_per_year("Sky", "sky_stage2_burn_tokens") == 12
+    assert config.events_per_year("Sky", "gross_issuance_tokens") is None
+    # the arithmetic Jake gave: one 2.86M burn in Q0, issuance 393M/yr
+    burn_rate, iss_rate = (2_860_000 / 1) * 12 / 365, 393_000_000 / 365
+    assert abs(burn_rate / iss_rate - 0.0873) < 0.001
+
+    # a monthly series' Q0 events are the months in its block with a non-zero total
+    rows = [{"date": pd.Timestamp(d), "project": "Maple", "metric": "actual_buyback_tokens", "value": v,
+             "source": "maple_page:transparency", "tier": 3, "fetched_at": "x", "is_manual": 0,
+             "entered_on": None, "source_note": None}
+            for d, v in (("2026-06-01", 5.0), ("2026-07-01", 0.0), ("2026-08-01", 7.0))]
+    data = bw.aggregate(pd.DataFrame(rows), pd.DataFrame(), pd.Timestamp("2026-09-28"))
+    row = data[(data.project == "Maple") & (data.metric == "actual_buyback_tokens")].iloc[0]
+    assert row["q0_events"] == 2
+
+
+def test_completeness_report_gives_every_headline_cell_one_status():
+    """Jake, 2026-09-29 (definition of done): each headline cell of the 16 is COMPLETE (with its
+    independent reference named), MATURING (with the date it is full), WAITING ON A DATE, or
+    NEEDS JAKE (the exact input); World Mobile is PARKED; anything else is a BUG, listed."""
+    import build_workbook as bw
+    import completeness_report as cr
+    asof = pd.Timestamp("2026-09-28")
+    base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    rows = [dict(base, project="Sky", metric="price_usd", date=d, value=0.062, source="coingecko:market_chart")
+            for d in pd.date_range("2026-06-01", "2026-09-27")]
+    rows += [dict(base, project="Sky", metric="actual_buyback_tokens", date=d, value=900_000.0,
+                  source="explorer:flapper_purchases") for d in pd.date_range("2026-06-01", "2026-09-27")]
+    long = pd.DataFrame(rows)
+    data = bw.aggregate(long, pd.DataFrame(), asof)
+    table = cr.report(data, long, asof)
+    got = {(n, m): (v, d) for n, m, v, d in table}
+    assert got[("World Mobile", "*")][0] == "PARKED"
+    v, d = got[("Sky", "price_usd")]
+    assert v == "MATURING" and "full on 2027-05-31" in d, d                 # prices need 365
+    v, d = got[("Sky", "actual_buyback_tokens")]
+    assert v == "COMPLETE" and "balanceOf to the wei" in d, d
+    assert all(v in ("COMPLETE", "MATURING", "WAITING ON A DATE", "NEEDS JAKE", "BUG", "N/A", "PARKED")
+               for _, _, v, _ in table)
+    assert any(v == "BUG" and "status missing" in d for n, m, v, d in table if n == "Sky"), \
+        "an empty headline cell with no manual route is a bug, listed"

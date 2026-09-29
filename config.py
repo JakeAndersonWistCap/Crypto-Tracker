@@ -352,6 +352,13 @@ METRICS = {
         "tiers": [2], "sanity_min": 1.6e9, "sanity_max": 4.1e9, "only_projects": ("Chainlink",)},
     # Pendle (2026-09-29, Jake): what sPENDLE holders were DISTRIBUTED per epoch, and Pendle's
     # own APR beside our token yield. fetch/pendle_epochs.py.
+    # ===== A DATED ONE-OFF, KEPT OUT OF EVERY RATE. 2026-09-29 (Jake). =====
+    # Read-time only (build_workbook._one_off_views): the differenced row that carries a declared
+    # one-off (a project's `one_off_flows`) has the one-off moved here, so burn yield, crossover,
+    # A3 and A4 annualisation never see it. Shown on its own row, dated where the data puts it.
+    "one_off_burn_tokens": {"label": "One-off burn (dated; EXCLUDED from every rate)", "kind": "flow", "unit": "tokens",
+                            "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
+                            "requires_flag": "one_off_flows", "view_only": True},
     "pendle_distributed_tokens": {
         "label": "PENDLE distributed to sPENDLE per epoch (spendle/data sPendleHistoricalData.buybackAmounts)",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
@@ -416,6 +423,18 @@ METRICS = {
         "tiers": [1, 2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near", "Ethereum")},
     # Ethereum's cumulative EIP-1559 burn (Etherscan ethsupply2 BurntFees). A STOCK whose daily
     # change is gross_burn_tokens. Bounded by what could possibly have been burned: 0 .. supply.
+    # ===== ETHEREUM'S CONSENSUS REWARDS, FROM ethsupply2's Eth2Staking. 2026-09-29 (Jake). =====
+    # Eth2Staking is the cumulative ETH minted as consensus-layer rewards; its daily change is the
+    # consensus part of the staking yield (over ETH on the beacon chain). beaconcha.in is demoted
+    # to one call a month, the cross-check of the all-in (MEV-inclusive) figure.
+    "consensus_rewards_cumulative": {
+        "label": "Consensus rewards minted, cumulative (ethsupply2 Eth2Staking)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1],
+        "tiers": [1], "sanity_min": 0, "sanity_max": 1.4e8, "only_projects": ("Ethereum",)},
+    "consensus_rewards_tokens": {
+        "label": "Consensus rewards minted (d Eth2Staking)",
+        "kind": "flow", "unit": "tokens", "archetypes": [1],
+        "tiers": [1], "sanity_min": 0, "sanity_max": 1e6, "only_projects": ("Ethereum",)},
     "burn_cumulative_tokens": {
         "label": "Cumulative burn (protocol counter; Ethereum: EIP-1559 BurntFees)",
         "kind": "stock", "unit": "tokens", "archetypes": [1],
@@ -1200,7 +1219,7 @@ def is_manual_quarterly(project_name: str, metric: str) -> bool:
 # than a second reading of it.
 # "archive" (2026-09-29): a row read at a PAST block by archive_backfill.py — the same measuring
 # point as the live read, so it strips like the others and never splits a series.
-SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback", "archive")
+SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback", "archive", "one-off-removed")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -1640,7 +1659,9 @@ PROGRAM_CADENCE = {
     "Maple": {"metric": "actual_buyback_tokens",
               "cadences": (("monthly", 30),),
               "declared_by": "Jake, 2026-09-28",
-              "source": "maple.finance/transparency publishes Token Buybacks as monthly rows"},
+              "source": "maple.finance/transparency publishes Token Buybacks as monthly rows",
+              # EVENTS x CADENCE (Jake, 2026-09-29): see Sky below.
+              "annualise_by_events": True},
     "GEODNET": {"metric": "gross_burn_tokens",
                 "cadences": (("daily", 1),),
                 # FLAG AFTER 2 DAYS WITH NO BURN (Jake, 2026-09-28), not the generic 2x-cadence
@@ -1669,12 +1690,36 @@ PROGRAM_CADENCE = {
     "Sky": {"metric": "sky_stage2_burn_tokens",
             "cadences": (("monthly", 30),),
             "declared_by": "Jake, 2026-09-28",
-            "source": "burn_logs.stage2_split: one Pause Proxy burn per monthly settlement spell"},
+            "source": "burn_logs.stage2_split: one Pause Proxy burn per monthly settlement spell",
+            # ===== EVENTS x CADENCE, NOT COVERED DAYS. 2026-09-29 (Jake). =====
+            # Sky's burn/issuance moved 0.059 -> 0.137 under the equal-coverage rule: one monthly
+            # burn divided by its 16 covered days is a rate ~2x the programme's. A series declared
+            # here is annualised as (window total / events) x events a year (monthly: 12), and its
+            # per-day rate in a ratio is that over days_per_year. One ~2.86M SKY burn a
+            # month against ~393M SKY/yr of issuance: ~0.087. ONLY where declared: Pendle's
+            # biweekly cadence describes epochs, while its buyback rows are daily.
+            "annualise_by_events": True},
     "Pendle": {"metric": "actual_buyback_tokens",
                "cadences": (("biweekly", 14),),
                "declared_by": "on file 2026-09-23",
                "source": "LUMPY_FLOWS[('Pendle', 'actual_buyback_tokens')]: sPENDLE docs, fee_split.cadence"},
 }
+
+
+def events_per_year(project_name: str, metric: str) -> float | None:
+    """How many events a year a declared discrete series holds, where it is annualised by EVENTS
+    x CADENCE (PROGRAM_CADENCE[...]["annualise_by_events"]) — for its metric and that metric's
+    usd twin; None otherwise. Monthly is 12 (not 365/30): a monthly spell is a calendar event."""
+    c = PROGRAM_CADENCE.get(project_name) or {}
+    if not c.get("annualise_by_events") or len(c["cadences"]) != 1:
+        return None
+    m = c["metric"]
+    if metric not in (m, m.replace("_tokens", "_usd")):
+        return None
+    label, days = c["cadences"][0]
+    if int(days) <= 1:
+        return None
+    return {"monthly": 12.0, "weekly": 52.0}.get(label, GLOBALS["days_per_year"] / float(days))
 
 
 def program_cadence(project_name: str, metric: str | None = None) -> dict | None:
@@ -2250,6 +2295,8 @@ PROJECTS = [
             # 2026-09-29: + the deposit contract's balance -> beacon_chain_eth (the yield's base).
             # Address: ethereum/consensus-specs @e321975f configs/mainnet.yaml L163 DEPOSIT_CONTRACT_ADDRESS.
             "stake_metric": "beacon_chain_eth",
+            # 2026-09-29 (Jake): Eth2Staking itself, and its daily change — the yield's consensus part.
+            "consensus_metric": "consensus_rewards_cumulative", "consensus_flow": "consensus_rewards_tokens",
             "deposit_contract": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
             "doc_url": "https://docs.etherscan.io/api-reference/endpoint/ethsupply2",
             "doc_read": "2026-09-28 (via search; docs host unreachable from the sandbox)",
@@ -2320,6 +2367,9 @@ PROJECTS = [
             "live_confirmed": None,      # set from the first run's log line, which prints the row
         },
         "name": "Ethereum", "symbol": "ETH",
+        # beaconcha.in is ONE CALL A MONTH (Jake, 2026-09-29): its apr is a monthly reading, not a
+        # stale daily one.
+        "manual_granularity": {"staking_yield_pct": "monthly"},
         # Settlement volume for Network Reserve Ratio: The Block's adjusted on-chain volume,
         # entered by hand quarterly into manual_overrides.csv. No free API carries it (checked
         # 2026-09-24: growthepie's metric set, Etherscan's daily stats, DefiLlama chain data).
@@ -9658,9 +9708,31 @@ PROJECTS = [
         # 100k+ UNI on ordinary days. So a cumulative under 100m means the read is pointing at the
         # wrong thing AGAIN, and the figure is REJECTED to the Review Queue rather than stored —
         # which is exactly what the old fire_pit read would have produced.
+        #
+        # ** THE FLOOR IS DATED (2026-09-29, Jake). ** It holds from 2025-12-28 — the first day
+        # whose first-block reading already includes the 100M burn: the archive pass refused every
+        # day 2025-09-29..12-27 under the floor and stored 12-28 above it, so the burn landed on
+        # 2025-12-27 UTC. Before then the dead address held only stray transfers, and those
+        # readings are real history, not a mis-pointed read.
         "sanity": {
-            "burn_address_balance": {"min": 100_000_000, "max": 1_000_000_000},
+            "burn_address_balance": {"min": 100_000_000, "max": 1_000_000_000, "min_from": "2025-12-28"},
         },
+        # ===== THE 100M RETROACTIVE BURN IS A DATED ONE-OFF. 2026-09-29 (Jake). =====
+        # non_comparable below already called it "not comparable"; this makes that effective in
+        # the arithmetic. At read time the ONE differenced gross_burn_tokens row in `window` that is
+        # at least `tokens` has `tokens` moved to one_off_burn_tokens (its own row, dated where the
+        # data puts it), so burn yield, crossover and A3/A4 annualisation see only the ongoing
+        # programme. The flow-vs-stock reconciliation adds it back. Two such rows in the window
+        # block the series (a second event this size is a finding, not a one-off).
+        # DATED BY THE DATA: the archive refused every first-block reading 2025-09-29..12-27 under
+        # the old 100M floor and stored 2025-12-28 above it, so the burn landed on 2025-12-27 UTC
+        # (fee_switch_dates: mainnet 2025-12-28). The window is wide because the burn_split note
+        # says "Jan 2026" — the data, not the note, picks the row.
+        "one_off_flows": [
+            {"metric": "gross_burn_tokens", "tokens": 100_000_000, "window": ("2025-12-01", "2026-01-31"),
+             "what": "UNIfication retroactive treasury burn (100,000,000 UNI)",
+             "source_url": "https://vote.uniswapfoundation.org/proposals/93", "source_date": "2026-09-14"},
+        ],
         "burn_read_method": "transfer",
         # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
         # constant: the Uniswap Governance Timelock holds thresholdSetter and can appoint a different
@@ -11001,7 +11073,23 @@ PROJECTS = [
                          "0x374D9c3d5134052Bc558F432Afa1df6575f07407": "FlapperUniV2SwapOnly — a "
                              "purchase MISSING its Exec: investigate before counting",
                          "0xc5A9CaeBA70D6974cBDFb28120C3611Dd9910355": "FlapperUniV2 (add-liquidity), "
-                             "MCD_FLAP 2024-09-13..27"}},
+                             "MCD_FLAP 2024-09-13..27"},
+                     # ===== IS ANY OF IT BUYBACK? DECIDED PER KIND. 2026-09-29 (Jake asked). =====
+                     # The scan prints each kind with this verdict, its 90d/365d amounts and its
+                     # largest transactions. Only a SWAP is a purchase: SKY bought for USDS in that
+                     # transaction. An LP burn returns SKY the protocol already owned in the pool
+                     # (put there by the 2024 add-liquidity flapper — bought THEN, not now), and a
+                     # transfer with no Swap/Burn to the Pause Proxy buys nothing. A swap from an
+                     # unknown sender is a purchase by someone the config does not name: it is
+                     # held for a human, not counted. Nothing here changes what the scan COUNTS
+                     # (Exec.bought, to the wei); a BUYBACK kind with amounts in the window is a
+                     # finding to add, raised in the log with the figure it would add.
+                     "verdicts": {
+                         "burn": "NOT BUYBACK — liquidity removal: SKY the protocol already held in the pool",
+                         "none": "NOT BUYBACK — no swap in the transaction",
+                         "swap_known": "BUYBACK, UNCOUNTED — a known flapper's purchase whose Exec the scan did not see",
+                         "swap_unknown": "UNDETERMINED — a swap paying the Pause Proxy from a sender config does not name"},
+                     "show_largest": 5},
              },
              "sanity_reference": "July 2026: ~19.84M SKY bought for ~1.16M USDS (secondary, MEXC "
                                  "news snippet, found 2026-09-28)",
@@ -12711,6 +12799,10 @@ PROJECTS = [
             "url": "https://api-v2.pendle.finance/core/v1/spendle/data",
             "metric": "pendle_distributed_tokens", "history_key": "sPendleHistoricalData",
             "time_field": "timestamps", "amount_field": "buybackAmounts", "decimals": 18,
+            # Jake's run 2026-09-29 14:38: /10^18 gave a median of 0.0000 — not wei. Tried next,
+            # in order: plain tokens, and the 1e-7 scale other Pendle API fields came back on
+            # (Jake, 2026-09-29). Declared, never searched; see fetch/pendle_epochs.py.
+            "decimals_candidates": (0, -7),
             "units_check": {"median_between": (100_000, 500_000),
                             "source": "Pendle staking page, Jake 2026-09-29: past epochs ~170K-350K PENDLE"},
             "apr_field": "lastEpochApr", "apr_metric": "staking_apr_published",
@@ -15025,12 +15117,18 @@ VALIDATOR_YIELD = {
     # execution = priority fees (DefiLlama fees - burned revenue, both stored) / price / the same.
     # MEV IS NOT INCLUDED: no free source carries it. ETH.Store's `apr` (cl + el incl. MEV) stays
     # beside it as the cross-check once beaconcha.in's quota resets (2026-10-01).
+    # ===== JAKE'S DECISION, 2026-09-29: NO beaconcha.in IN THE HEADLINE. =====
+    # consensus = d(Eth2Staking) from ethsupply2 (consensus_rewards_tokens) / ETH staked;
+    # execution = priority fees (DefiLlama fees - burned revenue) / ETH staked. Labelled
+    # "excluding MEV". beaconcha.in's apr (MEV-inclusive) is one call a month, a cross-check.
     "Ethereum": {"method": "consensus_plus_execution",
+                 "consensus_metric": "consensus_rewards_tokens",
                  "issuance_metric": "gross_issuance_tokens", "stake_metric": "beacon_chain_eth",
                  "fees_metric": "fees_usd", "burned_metric": "revenue_usd",
                  "cross_check_metric": "staking_yield_pct",
-                 "note": "consensus (issuance) + execution (priority fees; MEV not included) over "
-                         "beacon-chain ETH (deposit contract + Eth2Staking - WithdrawnTotal)",
+                 "note": "EXCLUDING MEV: consensus (d Eth2Staking) + execution (priority fees) over "
+                         "beacon-chain ETH (deposit contract + Eth2Staking - WithdrawnTotal); "
+                         "beaconcha.in's MEV-inclusive apr (one call a month) is the cross-check",
                  # THE PROTOCOL'S OWN CEILING (consensus-specs @e321975f, 2026-09-28): per epoch
                  # sum(base rewards) = BASE_REWARD_FACTOR (64) x sqrt(total active gwei) when every
                  # duty is met (the Altair weights sum to WEIGHT_DENOMINATOR); x 82,181.25 epochs a
@@ -15199,6 +15297,18 @@ ISSUANCE_PRIMARY = {
 # The derived pool-release route, and the stock it differences.
 POOL_RELEASE_DERIVED_SOURCE = "derived:d_circulating-d_total"
 
+# ===== DERIVED SERIES OVER THE FULL SPAN OF THEIR STORED INPUTS. 2026-09-29 (Jake). =====
+# fetch/history_derive.py: the write-time derivations read one run's frame, so these series held
+# only the days they were computed on while their inputs held a year. Each is re-derived between
+# consecutive stored inputs (rows written only where absent or different). actual_buyback_usd
+# (tokens x same-day price) is re-derived for EVERY project whose usd series is derived.
+HISTORY_DERIVED = {
+    ("Near", "gross_burn_tokens"): "chain_burn",        # 35 days; revenue and price span the year
+    ("Near", "gross_issuance_tokens"): "issuance",      # 1 covered day; header supply spans 365
+    ("Plume", "gross_issuance_tokens"): "issuance",     # 7 days
+    ("Chainlink", "pool_release_tokens"): "pool_release",   # 7 days
+}
+
 
 def issuance_primary(project_name: str) -> dict | None:
     return ISSUANCE_PRIMARY.get(project_name)
@@ -15312,16 +15422,9 @@ def moves_daily(project_name: str, metric: str) -> str | None:
 # a contract with no code at a day's first block is "not deployed yet", and that day's successor
 # is where the series begins (cache: archive-series-start.json).
 ARCHIVE_SERIES_START = {
-    # Uniswap's dead-address balance jumps by the 100,000,000 UNI retroactive burn at the
-    # UNIfication activation (fee switch on mainnet 2025-12-28, fee_switch_dates). Before it the
-    # address held only stray transfers — below the 100M floor this series is bounded by — and the
-    # 100M step is a one-off supply event, not a day's burn: differenced, it would read as one.
-    # So the series starts at activation; the 90 days before it are not missing, they are before
-    # the programme existed.
-    ("Uniswap", "burn_address_balance"): {
-        "from": "2025-12-28",
-        "why": "UNIfication activation (100M UNI retroactive burn); before it the dead address "
-               "held only stray transfers, below the series' 100M floor"},
+    # Uniswap burn_address_balance's 2025-12-28 start was REMOVED 2026-09-29 (Jake): the 100M floor
+    # is now dated (sanity.min_from), the year before the burn is real history and is backfilled,
+    # and the 100M step is a DATED ONE-OFF kept out of every rate (one_off_flows).
 }
 ARCHIVE_NOT_BY_DESIGN = {
     # total_supply is CoinGecko's figure (net of burns for transfer-burn tokens; see each
@@ -16387,14 +16490,20 @@ def _check_not_applicable() -> list[str]:
     return errs
 
 
-def sanity_bounds(project_name: str, metric: str) -> tuple[float | None, float | None]:
-    """Per-project override, else the metric-library default."""
+def sanity_bounds(project_name: str, metric: str, date=None) -> tuple[float | None, float | None]:
+    """Per-project override, else the metric-library default.
+
+    DATE-AWARE FLOOR (2026-09-29, Jake): an override's `min_from` makes its `min` apply only to
+    readings dated on or after that day; earlier readings keep the library's floor. For a
+    reading with no date the override floor applies — the strict reading."""
     m = METRICS.get(metric, {})
     lo, hi = m.get("sanity_min"), m.get("sanity_max")
     p = PROJECT_BY_NAME.get(project_name) or {}
     override = (p.get("sanity") or {}).get(metric)
     if override:
-        lo = override.get("min", lo)
+        since = override.get("min_from")
+        if not (since and date is not None and str(date)[:10] < since):
+            lo = override.get("min", lo)
         hi = override.get("max", hi)
     return lo, hi
 

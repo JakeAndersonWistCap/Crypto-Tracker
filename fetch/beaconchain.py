@@ -91,17 +91,23 @@ def _day_cache_file():
 
 
 def _day_cache_read(url: str):
-    """(state, body) stored today for url, else None. Failures are kept too: a refused call
-    is not retried the same day."""
+    """(state, body) stored THIS CALENDAR MONTH for url, else None. Failures are kept too: a
+    refused call is not retried until the next month.
+
+    ONE CALL A MONTH, NEVER DAILY (Jake, 2026-09-29): beaconcha.in's free quota is MONTHLY, and
+    it is now only the cross-check of the all-in yield (consensus + execution INCLUDING MEV) —
+    the headline's consensus part is d(Eth2Staking) from ethsupply2. The stored point is dated
+    by its own beaconchain-day, so re-using the month's answer re-writes the same key."""
     try:
         st = json.loads(_day_cache_file().read_text())
     except (OSError, ValueError):
         return None
     rec = st.get(url)
-    if rec and rec.get("date") == str(today().date()):
+    if rec and str(rec.get("date", ""))[:7] == str(today().date())[:7]:
         state, body = rec["state"], rec["body"]
         if state != "ok":
-            body = f"{body} (the day's one attempt, cached — not retried until tomorrow UTC)"
+            body = (f"{body} (the month's one attempt, {rec['date']}, cached — not retried until "
+                    f"next month: the free quota is monthly)")
         return state, body
     return None
 
@@ -159,10 +165,10 @@ class BeaconChain:
         for metric, m in spec["metrics"].items():
             url = spec["base_url"].rstrip("/") + m["path"]
             if url not in bodies:
-                # AT MOST ONE CALL A DAY (2026-09-28). Run 20260928T142424Z: the MONTHLY quota was
-                # exhausted (ratelimit-window: month, remaining 0, reset 207,324s — the October
-                # rollover). ETH.Store publishes one figure a day, so the day's answer — or the
-                # day's failure — is kept and re-used; nothing calls it twice in one UTC day.
+                # AT MOST ONE CALL A MONTH (2026-09-29; was a day). Run 20260928T142424Z: the
+                # MONTHLY quota was exhausted (ratelimit-window: month, remaining 0, reset
+                # 207,324s — the October rollover). The month's answer — or its failure — is
+                # kept and re-used; see _day_cache_read.
                 cached = _day_cache_read(url)
                 if cached is not None:
                     bodies[url] = tuple(cached)

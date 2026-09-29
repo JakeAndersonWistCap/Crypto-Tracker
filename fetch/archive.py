@@ -406,19 +406,36 @@ def neighbours_agree(stored: pd.DataFrame, day: pd.Timestamp, source: str) -> tu
     return True, ""
 
 
-def derive_flows(store, project: str, stock: str) -> int:
+def derive_flows(store, project: str, stock: str, straddled: list | None = None) -> int:
     """A cumulative stock's flow for every consecutive pair of stored readings whose later date
-    has no flow row yet — the live path's guard, so a change of point or a fall is refused."""
+    has no flow row yet — the live path's guard, so a change of point or a fall is refused.
+
+    ** NEVER INSIDE A STORED DELTA'S SPAN (2026-09-29, Jake). ** Uniswap's gross_burn_tokens came
+    out 116,000 UNI above the stock's move: a live delta dated D with [span=3d] already covered
+    D-2 and D-1, the archive then filled those days' readings, and a per-day delta for each was
+    written beside it — the same burns twice. A pair whose interval overlaps a stored flow row's
+    interval is not written; it is listed in `straddled`, and rederive.py rebuilds the whole flow
+    from the stock (preview first, --apply to replace)."""
     flow = config.cumulative_flow_for(project, stock)
     if not flow:
         return 0
+    from .validate import _span_days
     rows = store.conn.execute("SELECT date, value, source FROM metrics WHERE project=? AND metric=? "
                               "ORDER BY date", (project, stock)).fetchall()
-    have = {d for (d,) in store.conn.execute("SELECT date FROM metrics WHERE project=? AND metric=?",
-                                             (project, flow))}
+    held = store.conn.execute("SELECT date, source FROM metrics WHERE project=? AND metric=?",
+                              (project, flow)).fetchall()
+    have = {d for d, _ in held}
+    spans = [(pd.Timestamp(d) - pd.Timedelta(days=_span_days(s)), pd.Timestamp(d)) for d, s in held]
     out, frames = FetchOutput(), []
     for (d0, v0, s0), (d1, v1, s1) in zip(rows, rows[1:]):
         if d1 in have:
+            continue
+        a, b = pd.Timestamp(d0), pd.Timestamp(d1)
+        hit = next((f"{e.date()} (spans {s.date()}..{e.date()})" for s, e in spans if s < b and a < e), None)
+        if hit:
+            if straddled is not None:
+                straddled.append(f"{project}/{flow} {str(d0)[:10]}..{str(d1)[:10]} lies inside the stored "
+                                 f"delta dated {hit}")
             continue
         f = derive_flow_from_cumulative(v1, v0, project, flow, config.mark_source(s1, "delta"), 2,
                                         pd.Timestamp(d1), prior_date=d0, stock_metric=stock, out=out,
@@ -621,7 +638,7 @@ class ArchiveBackfill:
                     f["first"] = f["first"] or (msgs[0] if msgs else "no row and no error from the read")
             keep = []
             for r in frame.itertuples(index=False):
-                lo, hi = config.sanity_bounds(r.project, r.metric)
+                lo, hi = config.sanity_bounds(r.project, r.metric, r.date)
                 if (lo is not None and r.value < lo) or (hi is not None and r.value > hi):
                     refused[(r.project, r.metric)] = (f"{r.value:,.4f} on {d.date()} is outside the "
                                                       f"declared bound [{lo}, {hi}]")
@@ -646,11 +663,19 @@ class ArchiveBackfill:
         self.reader.at_block.clear()
         for c in clocks.values():
             c.save()
-        flows = {}
+        flows, straddled = {}, []
         for (name, m) in written:
-            n = derive_flows(self.store, name, m)
+            k = len(straddled)
+            n = derive_flows(self.store, name, m, straddled)
             if n:
                 flows[(name, config.cumulative_flow_for(name, m))] = n
+            if len(straddled) > k:
+                self.report.append(
+                    f"STRADDLED {name}/{config.cumulative_flow_for(name, m)}: {len(straddled) - k} "
+                    f"backfilled day(s) lie inside a stored multi-day delta and were NOT differenced "
+                    f"(the burns are already in that delta), e.g. {straddled[k]}. For per-day rows: "
+                    f"python rederive.py {name} {config.cumulative_flow_for(name, m)} (preview), "
+                    f"then --apply")
         for c, pc in getattr(self.reader, "pacers", {}).items():
             save_pace(c, pc.pace)
             self.report.append(f"pace {c}: {pc.pace:.2f}s/call at the end ({pc.stats['calls']} call(s), "

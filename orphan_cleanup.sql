@@ -3364,3 +3364,36 @@ SELECT run_id, project, metric, substr(reason, 1, 120)
 --  WHERE reason LIKE '%alchemy.com/v2/%' OR reason LIKE '%infura.io/v3/%'
 --     OR reason LIKE '%apikey=%' OR suggestion LIKE '%alchemy.com/v2/%';
 -- COMMIT;
+
+-- ========================================================================================
+-- AY. UNISWAP gross_burn_tokens: 116,000 UNI COUNTED TWICE  2026-09-29
+--     Jake's 14:38 workbook: flows since 2025-12-28 sum 12,452,004.46 against 12,336,004.46 of
+--     movement in burn_address_balance. Cause: a live delta spanning several days ([span=Nd])
+--     already covered days the archive later filled, and the archive differenced those days
+--     again. fetch/archive.derive_flows no longer does (it reports STRADDLED instead). The fix
+--     is a rebuild from the stock, not a hand delete: rederive.py previews the plan (read-only),
+--     and only `--apply` (typed REPLACE) replaces the :delta rows. REVIEW FIRST.
+-- ========================================================================================
+-- AY1. THE MULTI-DAY DELTAS and the per-day deltas dated inside their spans.
+SELECT f.date, f.value, f.source, s.date AS inside_date, s.value AS inside_value, s.source AS inside_source
+  FROM metrics f
+  JOIN metrics s ON s.project = f.project AND s.metric = f.metric
+       AND s.date < f.date
+       AND s.date > date(f.date, '-' || CAST(substr(f.source, instr(f.source, '[span=') + 6,
+                                                   instr(substr(f.source, instr(f.source, '[span=') + 6), 'd]') - 1)
+                                            AS INTEGER) || ' days')
+ WHERE f.project = 'Uniswap' AND f.metric = 'gross_burn_tokens' AND f.source LIKE '%[span=%'
+ ORDER BY f.date, s.date;
+
+-- AY2. The flow total against the stock's move since 2025-12-28 (expect 116,000.00 over before
+--      the rebuild, 0.00 after).
+SELECT (SELECT SUM(value) FROM metrics WHERE project = 'Uniswap' AND metric = 'gross_burn_tokens'
+          AND date > '2025-12-28')
+     - ((SELECT value FROM metrics WHERE project = 'Uniswap' AND metric = 'burn_address_balance'
+          ORDER BY date DESC LIMIT 1)
+      - (SELECT value FROM metrics WHERE project = 'Uniswap' AND metric = 'burn_address_balance'
+          AND date = '2025-12-28')) AS flows_minus_stock_move;
+
+-- AY3. THE REBUILD — not SQL:
+--     python rederive.py Uniswap gross_burn_tokens            (preview; writes nothing)
+--     python rederive.py Uniswap gross_burn_tokens --apply    (after the preview reads right)

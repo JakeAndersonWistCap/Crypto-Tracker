@@ -646,7 +646,7 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     #    only: a flow's `now` is a window sum and the bounds are per observation.
     latest = row.get("latest_value")
     if latest is not None and (config.METRICS.get(metric) or {}).get("kind") == "stock":
-        lo, hi = config.sanity_bounds(project, metric)
+        lo, hi = config.sanity_bounds(project, metric, row.get("latest_date") or None)
         if (lo is not None and latest < lo) or (hi is not None and latest > hi):
             why = ((config.PROJECT_BY_NAME.get(project) or {}).get("sanity") or {}).get(metric, {}).get("why", "")
             return "out_of_bounds", (
@@ -888,6 +888,54 @@ def _burn_total_views(groups: dict) -> None:
         groups[(name, spec["metric"])] = _as_stored(view, first.columns if first is not None else view.columns)
 
 
+# (project, flow metric) -> tokens moved out by _one_off_views, which the flow-vs-stock
+# reconciliation adds back; and the blocks it raises, re-applied after _VIEW_BLOCKS is cleared.
+_ONE_OFF_REMOVED: dict = {}
+_ONE_OFF_BLOCKS: dict = {}
+
+
+def _one_off_views(groups: dict) -> None:
+    """A declared one-off never enters a rate (Uniswap's 100M retroactive burn, Jake 2026-09-29).
+
+    For each `one_off_flows` entry: the ONE differenced row of the flow inside `window` whose value
+    is at least `tokens` has `tokens` moved to one_off_burn_tokens, dated as that row. What remains
+    on the row is that interval's ongoing burn. No such row: the one-off predates the differenced
+    series, nothing moves. Two or more: BLOCKED — a second event that size is a finding.
+    """
+    _ONE_OFF_REMOVED.clear()
+    _ONE_OFF_BLOCKS.clear()
+    for p in scoped_projects():
+        name = p["name"]
+        for spec in p.get("one_off_flows") or ():
+            key = (name, spec["metric"])
+            g = groups.get(key)
+            if g is None or g.empty:
+                continue
+            lo, hi = (pd.Timestamp(x) for x in spec["window"])
+            delta = g["source"].astype(str).str.contains(":delta", na=False)
+            hit = g[delta & (g["date"] >= lo) & (g["date"] <= hi) & (g["value"].astype(float) >= spec["tokens"])]
+            if hit.empty:
+                continue
+            if len(hit) > 1:
+                _ONE_OFF_BLOCKS[key] = (
+                    f"BLOCKED — {len(hit)} differenced rows in {lo.date()}..{hi.date()} are each at "
+                    f"least the declared one-off ({spec['tokens']:,.0f}: {spec['what']}), on "
+                    f"{', '.join(str(d.date()) for d in hit['date'])}. One is the one-off; a second "
+                    f"event that size is a finding, not a rate.")
+                continue
+            i = hit.index[0]
+            g = g.copy()
+            g.loc[i, "value"] = float(g.loc[i, "value"]) - float(spec["tokens"])
+            g.loc[i, "source"] = config.mark_source(str(g.loc[i, "source"]), "one-off-removed")
+            groups[key] = g
+            one = g.loc[[i]].copy()
+            one["metric"] = "one_off_burn_tokens"
+            one["value"] = float(spec["tokens"])
+            one["source"] = f"one_off:{spec['what']} ({spec['source_url']})"
+            groups[(name, "one_off_burn_tokens")] = _as_stored(one, g.columns)
+            _ONE_OFF_REMOVED[key] = _ONE_OFF_REMOVED.get(key, 0.0) + float(spec["tokens"])
+
+
 def _relabel_views(groups: dict) -> None:
     """A buyback that IS the burn is read as a VIEW of the burn series, not from stored copies.
 
@@ -1095,10 +1143,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _monthly_leg_views(groups)
     _burn_total_views(groups)
+    _one_off_views(groups)        # BEFORE the relabel, so a burn-route buyback copies the ongoing flow
     _relabel_views(groups)
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
     _VIEW_BLOCKS.clear()
+    _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
     _issuance_views(groups, asof)
     _reward_end_views(groups, asof)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
@@ -1229,6 +1279,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                         row["q0_basis"] = label
                 row["y1"], _ = _month_block(s, asof, 0, 12)
                 _month_coverage(row, s, asof)
+                # EVENTS in the Q0 block: months with a non-zero total (events x cadence, 2026-09-29)
+                last_m = asof.to_period("M") - 1
+                q0_months = s[s.index.to_period("M").isin({last_m - k for k in range(3)})]
+                row["q0_events"] = int((q0_months.groupby(q0_months.index.to_period("M")).sum() > 0).sum())
             elif m["kind"] == "flow":
                 row["q0_basis"] = f"trailing {period} days to {asof.date()}"
                 row["now"] = _window_sum(s, asof - pd.Timedelta(days=short), asof)
@@ -1643,7 +1697,8 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             f"no {parent} reading at or before the last {metric} row "
             f"({pd.Timestamp(last):%Y-%m-%d}) — the stock series ends before the flow series does.")}
     moved = float(ends.iloc[-1]["value"]) - float(starts.iloc[-1]["value"])
-    accounted = float(deltas["value"].sum())
+    # A DATED ONE-OFF moved out of the flow (_one_off_views) is still part of the stock's move.
+    accounted = float(deltas["value"].sum()) + _ONE_OFF_REMOVED.get((project, metric), 0.0)
     return {"flow_stock_move": moved, "flow_accounted": accounted,
             "flow_residual": moved - accounted,
             "flow_span": (starts.iloc[-1]["date"].strftime("%Y-%m-%d"),
@@ -2158,10 +2213,21 @@ def _nominal(w: str) -> str:
     return G("short_days") if w in ("now", "m1") else G("period_days")
 
 
-def _flow_rate(R: Refs, r: int, metric: str, w: str = "q0", total: str | None = None) -> str:
-    """A flow's window total PER COVERED DAY (the window's nominal days where none is recorded)."""
+def _flow_rate(R: Refs, r: int, metric: str, w: str = "q0", total: str | None = None,
+               p: dict | None = None) -> str:
+    """A flow's window total PER COVERED DAY (the window's nominal days where none is recorded).
+
+    A DISCRETE series declared to annualise by events (config.event_cadence_days — Sky's monthly
+    burn, Maple's monthly buybacks) is (total / events) x events a year / days a year over Q0: one
+    monthly burn in 16 covered days is not a daily rate of burn/16 (Jake, 2026-09-29)."""
     cov = R.D(r, metric, _COV[w])
-    return f"(({total or R.D(r, metric, w)})/IF(ISNUMBER({cov}),{cov},{_nominal(w)}))"
+    t = total or R.D(r, metric, w)
+    per_year = config.events_per_year(p["name"], metric) if p else None
+    if per_year and w == "q0":
+        ev = R.D(r, metric, "q0_events")
+        return (f"IF(AND(ISNUMBER({ev}),{ev}>0),({t})/{ev}*{per_year:g}/{G('days_per_year')},"
+                f"(({t})/IF(ISNUMBER({cov}),{cov},{_nominal(w)})))")
+    return f"(({t})/IF(ISNUMBER({cov}),{cov},{_nominal(w)}))"
 
 
 def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str,
@@ -2210,6 +2276,12 @@ def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
     # exactly four of them — not days_per_year/period_days, which would overstate by 365/360.
     # ...OVER THE MONTHS ACTUALLY PRESENT (2026-09-29): Sky's NPS holds July and August only, and
     # x12/3 on two months overstated it by half. q0_covered_days is the days of the months held.
+    # EVENTS x CADENCE where declared (Sky's monthly burn, Maple's monthly buybacks; 2026-09-29):
+    # the mean event times the events a year holds — not the days the window happened to cover.
+    per_year = config.events_per_year(p["name"], metric)
+    if per_year:
+        ev = R.D(r, metric, "q0_events")
+        return f"IF(AND(ISNUMBER({ev}),{ev}>0),({total})/{ev}*{per_year:g},({total})*{ANN})"
     if config.series_granularity(p["name"], metric) == "monthly":
         cov = R.D(r, metric, "q0_covered_days")
         return (f"IF(AND(ISNUMBER({cov}),{cov}>0),({total})*{G('days_per_year')}/{cov},"
@@ -2391,8 +2463,8 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
          lambda r, p: _coverage_guard(
              R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"),
                     ("issuance", config.issuance_basis(p["name"]), "q0")],
-             f"{_flow_rate(R, r, config.a4_burn_metric(p['name']))}/"
-             f"{_flow_rate(R, r, config.issuance_basis(p['name']))}"), FMT_X, "calc", True),
+             f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}/"
+             f"{_flow_rate(R, r, config.issuance_basis(p['name']), p=p)}"), FMT_X, "calc", True),
         # RIGHT BESIDE THE TWO FIGURES IT QUALIFIES. Empty where the window is full and the burn
         # is a stream; otherwise it says, with numbers, why the pair is not yet a rate.
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
@@ -2456,14 +2528,17 @@ def _a2_headline(R: Refs) -> list[tuple]:
 
 def _eth_yield_parts(R: Refs, r: int, p: dict, spec: dict) -> tuple[str, str, list]:
     """(consensus, execution, coverage legs) for the consensus_plus_execution method (Ethereum,
-    2026-09-29): issuance and priority fees, each annualised over its own covered days, over ETH
-    on the beacon chain. Priority fees = DefiLlama fees - burned revenue, at the Q0 average price."""
+    2026-09-29): consensus rewards (d Eth2Staking, Jake's decision — issuance where no
+    consensus_metric is declared) and priority fees, each annualised over its own covered days,
+    over ETH on the beacon chain. Priority fees = DefiLlama fees - burned revenue, at the Q0
+    average price. EXCLUDING MEV."""
     stake = R.D(r, spec["stake_metric"], "now")
-    im, fm, bm = spec["issuance_metric"], spec["fees_metric"], spec["burned_metric"]
-    cons = f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/{stake}"
+    cm = spec.get("consensus_metric") or spec["issuance_metric"]
+    fm, bm = spec["fees_metric"], spec["burned_metric"]
+    cons = f"{_annualise(R, r, p, cm, R.D(r, cm, 'q0'))}/{stake}"
     prio = f"({R.D(r, fm, 'q0')}-{R.D(r, bm, 'q0')})"
     exe = f"{_annualise(R, r, p, fm, prio)}/{R.D(r, 'price_usd', 'q0')}/{stake}"
-    return cons, exe, [("issuance", im, "q0"), ("fees", fm, "q0"), ("burned fees", bm, "q0")]
+    return cons, exe, [("consensus rewards", cm, "q0"), ("fees", fm, "q0"), ("burned fees", bm, "q0")]
 
 
 def _eth_yield_columns(R: Refs) -> list[tuple]:
@@ -2495,9 +2570,9 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
         return _coverage_guard(R, r, [("issuance", im, "q0")],
                                f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/({f['coefficient']}*SQRT({stake}))")
     return [
-        ("Consensus part (issuance ÷ ETH on the beacon chain)", part(0), FMT_PCT, "calc"),
-        ("Execution part (priority fees ÷ the same; MEV NOT included — no free source)", part(1), FMT_PCT, "calc"),
-        ("Cross-check: beaconcha.in ETH.Store apr (cl + el incl. MEV)", cross, FMT_PCT, "pull"),
+        ("Consensus part (d Eth2Staking ÷ ETH on the beacon chain)", part(0), FMT_PCT, "calc"),
+        ("Execution part (priority fees ÷ the same; EXCLUDING MEV — no free source)", part(1), FMT_PCT, "calc"),
+        ("Cross-check: beaconcha.in ETH.Store apr (cl + el INCLUDING MEV; one call a month)", cross, FMT_PCT, "pull"),
         ("Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)", ceiling, FMT_X, "calc"),
     ]
 
@@ -3067,7 +3142,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Release ÷ burn (x) — premint projects, in place of burn ÷ issuance",
          lambda r, p: _coverage_guard(R, r, [("release", "pool_release_tokens", "q0"),
                                              ("burn", config.a4_burn_metric(p["name"]), "q0")],
-                                      f"{_flow_rate(R, r, 'pool_release_tokens')}/{_flow_rate(R, r, config.a4_burn_metric(p['name']))}"),
+                                      f"{_flow_rate(R, r, 'pool_release_tokens')}/{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}"),
          FMT_X, "calc"),
         ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
@@ -3082,7 +3157,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc"),
         ("Burn as share of fees (measured)",
          lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
-                                      f"{_flow_rate(R, r, config.a4_burn_metric(p['name']))}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
+                                      f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
          FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
@@ -3215,7 +3290,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          {"gate": "fee_split", "base": True, "metric": "gross_burn_tokens"}),
         ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)",
          lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_usd", "q0"), ("revenue", config.revenue_base_metric(p["name"]), "q0")],
-                                      f"{_flow_rate(R, r, 'actual_buyback_usd')}/{_flow_rate(R, r, config.revenue_base_metric(p['name']), total=rev(r, p))}"),
+                                      f"{_flow_rate(R, r, 'actual_buyback_usd', p=p)}/{_flow_rate(R, r, config.revenue_base_metric(p['name']), total=rev(r, p))}"),
          FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         # PER PROJECT, not fixed: Aerodrome shows veAERO.supply() and everyone else shows the

@@ -10,8 +10,12 @@ scans already use):
     EthSupply      Ether before staking rewards are added and EIP-1559 burns subtracted
     Eth2Staking    ETH minted as consensus-layer staking rewards
     BurntFees      cumulative ETH burned by EIP-1559
-    WithdrawnTotal ETH withdrawn from the beacon chain (not used)
+    WithdrawnTotal ETH withdrawn from the beacon chain (beacon_chain_eth only)
 All four in wei. Stored:
+
+    consensus_rewards_cumulative = Eth2Staking / 1e18                       (stock, 2026-09-29)
+    consensus_rewards_tokens     = d(consensus_rewards_cumulative)          (flow: the yield's
+                                   consensus part — Jake's decision, beaconcha.in demoted)
 
     burn_cumulative_tokens = BurntFees / 1e18                               (stock)
     total_supply_protocol  = (EthSupply + Eth2Staking - BurntFees) / 1e18   (stock)
@@ -133,6 +137,19 @@ class EtherscanSupply:
                 except Exception as e:  # noqa: BLE001
                     out.fail(SOURCE, name, f"{spec['stake_metric']}: deposit contract balance "
                                            f"unreadable — {e}", TIER)
+            # CONSENSUS REWARDS (Jake, 2026-09-29): Eth2Staking, and its change since the last
+            # earlier-dated reading — the staking yield's consensus part, without beaconcha.in.
+            cm, cf = spec.get("consensus_metric"), spec.get("consensus_flow")
+            if cm and cf:
+                out.add(point(name, cm, stake / WEI, f"{src}.Eth2Staking", TIER, when), SOURCE, name,
+                        f"{cm}={stake / WEI:,.4f} ETH (Eth2Staking, cumulative consensus rewards)", TIER)
+                cflow = derive_flow_from_cumulative(
+                    stake / WEI, self.prior_delta.get((name, cm)), name, cf,
+                    config.mark_source(f"{src}.Eth2Staking", "delta"), TIER, when,
+                    prior_date=self.prior_dates.get((name, cm)), stock_metric=cm, out=out)
+                if not cflow.empty:
+                    out.add(cflow, SOURCE, name, f"{cf} = d(Eth2Staking) — the consensus part of "
+                                                 f"the staking yield", TIER)
             flow = derive_flow_from_cumulative(
                 burn, self.prior_delta.get((name, spec["burn_metric"])), name, "gross_burn_tokens",
                 config.mark_source(f"{src}.BurntFees", "delta"), TIER, when,

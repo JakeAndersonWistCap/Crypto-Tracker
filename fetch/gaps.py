@@ -452,6 +452,11 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
                 f"Etherscan's message (a rate limit, the key, or a plan); or run "
                 f"check_offline_items.py etherscan_ethsupply2.")
+    if metric in (es.get("consensus_metric"), es.get("consensus_flow")):
+        return ("Etherscan stats/ethsupply2 Eth2Staking (cumulative consensus rewards) is configured "
+                "but stored nothing this run; the flow needs an earlier-dated reading as well",
+                f"Read the etherscan_supply lines in the Run Log for {name}. The flow fills from the "
+                f"second day of readings.")
     fall = next((r for r in (node_api.get("extra_reads") or []) if r.get("supply_fall_metric") == metric), None)
     if fall:
         return (f"the fall in tokenDetails.totalSupply ({fall.get('metric')}) since the last dated "
@@ -750,6 +755,9 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         for metric in config.metrics_for_project(p):
             if (name, metric) in have or (name, metric) in already or (name, metric) in closed:
                 continue
+            if config.METRICS[metric].get("view_only"):
+                continue       # built at read time from another stored series; its gaps are that series'
+
             if (name, metric) in already_expired:
                 rows.append({
                     "project": name, "metric": metric, "tiers_attempted": "1",
@@ -876,7 +884,9 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m = {sp["metric"] for sp in project.get("balance_flows") or []}
     elif source == "etherscan_supply":
         es = project.get("etherscan_supply") or {}
-        m = ({es["burn_metric"], es["supply_metric"], "gross_burn_tokens"} | ({es["stake_metric"]} if es.get("stake_metric") else set())) if es else set()
+        m = ({es["burn_metric"], es["supply_metric"], "gross_burn_tokens"}
+             | ({es["stake_metric"]} if es.get("stake_metric") else set())
+             | {es[k] for k in ("consensus_metric", "consensus_flow") if es.get(k)}) if es else set()
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
     elif source == "maple_page":

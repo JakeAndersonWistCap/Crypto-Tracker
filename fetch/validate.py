@@ -92,7 +92,7 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
 
     keep = []
     for row in df.itertuples(index=False):
-        lo, hi = config.sanity_bounds(row.project, row.metric)
+        lo, hi = config.sanity_bounds(row.project, row.metric, row.date)
         v = row.value
         if (lo is not None and v < lo) or (hi is not None and v > hi):
             out.review_item(row.project, row.metric, REASON_BOUNDS, ACTION_REJECTED, value=float(v),

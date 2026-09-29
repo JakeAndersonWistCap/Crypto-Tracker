@@ -1726,11 +1726,15 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # gaps them for want of a figure that is one division away.
     _derive_chain_burn(out, projects)
     _derive_curve_issuance(out, projects)
-    _derive_observed_minting(out, projects, ctx["prior_values"], ctx["prior_dates"])
+    # PRIOR VALUE AND PRIOR DATE FROM THE SAME QUERY (2026-09-29): prior_values is the newest
+    # row of ANY date, today's included, while prior_dates is the last EARLIER day — so a second
+    # run the same day differenced against this morning's reading under yesterday's date, and the
+    # upsert replaced the day's issuance with a few hours of it. Both now come from values_before.
+    _derive_observed_minting(out, projects, ctx["prior_delta"], ctx["prior_dates"])
     # AFTER the derivations, so a restatement copies the settled series rather than one that is
     # about to be superseded, and BEFORE the checks, so the restated column is validated too.
     _restate_metrics(out, projects)
-    _derive_issuance(out, projects, ctx["prior_values"], ctx["prior_dates"], ctx.get("stored_long"))
+    _derive_issuance(out, projects, ctx["prior_delta"], ctx["prior_dates"], ctx.get("stored_long"))
     # AFTER issuance, so both lock figures are certainly in the frame by now.
     _derive_lock_ratio(out, projects, ctx["prior_values"], ctx.get("prior_delta") or {},
                        ctx.get("prior_dates") or {})
@@ -1740,6 +1744,11 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
     # rather than a figure that is about to be superseded.
     _derive_buyback(out, projects)
+    # AFTER every write-time derivation: the same formulas over the FULL span of the stored
+    # inputs, so a backfilled input (a year of prices, of header supply) reaches the series
+    # derived from it. See fetch/history_derive.py.
+    from .history_derive import derive_from_history
+    derive_from_history(out, projects, ctx.get("stored_long"))
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)

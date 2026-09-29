@@ -24,6 +24,15 @@ UNITS ARE CHECKED, NOT ASSUMED. The docs do not state them. Jake read Pendle's s
 must fall inside the configured band, or nothing is stored and the log prints the raw values —
 a wrong scale is off by 10^18, never by a factor a band could miss. Airdrops (in kind) are a
 separate array and are not in this figure.
+
+THE PAYLOAD DECIDES THE SCALE (Jake's run 2026-09-29 14:38: "median epoch 0.0000 after /10^18" —
+not wei). The declared decimals are tried first, then each of `decimals_candidates` — a short
+DECLARED list (wei, plain tokens, the 1e-7 scale other Pendle API fields came back on), never a
+free search over powers of ten, which could fit a USD figure to the band. The band spans less
+than 10x, so at most one candidate can fit; if one does, it is stored with the scale named in
+the log line beside the raw values and the latest (partial) epoch, for a reader to hold against
+the staking page. If none or several fit, nothing is stored. The last payload is kept at
+<log cache>/pendle-spendle-data.json either way.
 """
 from __future__ import annotations
 
@@ -47,20 +56,49 @@ def _get(url: str):
     return r.json()
 
 
-def epochs(payload: dict, spec: dict) -> tuple[list[tuple[pd.Timestamp, float]], list]:
+def epochs(payload: dict, spec: dict, decimals=None) -> tuple[list[tuple[pd.Timestamp, float]], list]:
     """[(date, tokens)] from sPendleHistoricalData, and the raw amounts (for the log)."""
     hist = payload.get(spec["history_key"]) or {}
     ts, raw = hist.get(spec["time_field"]) or [], hist.get(spec["amount_field"]) or []
     if not ts or len(ts) != len(raw):
         raise ValueError(f"{spec['history_key']}: {len(ts)} {spec['time_field']} against {len(raw)} "
                          f"{spec['amount_field']}; keys {sorted(hist)[:12]}")
-    scale = 10 ** int(spec["decimals"])
+    scale = 10.0 ** int(spec["decimals"] if decimals is None else decimals)
     out = []
     for t, a in zip(ts, raw):
         t = int(float(t))
         when = pd.Timestamp(t, unit="s" if t < 10**11 else "ms").normalize()
         out.append((when, float(a) / scale))
     return out, list(raw)
+
+
+def fitting_scale(payload: dict, spec: dict, now) -> tuple:
+    """(decimals, rows, median, tried) for the one declared scale whose median epoch lands in the
+    band — the declared decimals first, then `decimals_candidates`. (None, [], None, tried) when
+    none fits, or when more than one does."""
+    lo, hi = spec["units_check"]["median_between"]
+    tried, fits = [], []
+    for k in dict.fromkeys([int(spec["decimals"]), *map(int, spec.get("decimals_candidates", ()))]):
+        rows, _ = epochs(payload, spec, k)
+        done = [(d, v) for d, v in rows if d <= now]
+        med = statistics.median(v for _, v in done) if done else None
+        tried.append((k, med))
+        if med is not None and lo <= med <= hi:
+            fits.append((k, done, med))
+    if len(fits) == 1:
+        return (*fits[0], tried)
+    return None, [], None, tried
+
+
+def _keep(payload) -> None:
+    import json
+    from .archive import cache_root
+    try:
+        f = cache_root() / "pendle-spendle-data.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(payload, indent=1, default=str))
+    except Exception:  # noqa: BLE001 — a copy for reading; never fails the fetch
+        pass
 
 
 class PendleEpochs:
@@ -89,26 +127,30 @@ class PendleEpochs:
                 out.gap(name, metric, reason=f"Pendle's spendle/data did not give the epoch series: {e}",
                         tiers_attempted="3", suggestion="Run check_offline_items.py pendle_spendle_fees.")
                 continue
-            done = [(d, v) for d, v in rows if d <= now]
+            _keep(payload)
             lo, hi = spec["units_check"]["median_between"]
-            med = statistics.median(v for _, v in done) if done else None
-            if med is None or not lo <= med <= hi:
-                out.fail(SOURCE, name, f"{metric}: UNITS NOT CONFIRMED — median epoch "
-                                       f"{med if med is None else f'{med:,.4f}'} after /10^{spec['decimals']} "
-                                       f"is outside {lo:,}..{hi:,} ({spec['units_check']['source']}); raw "
-                                       f"{raw[:4]}. NOTHING STORED.", TIER)
-                out.gap(name, metric, reason=f"the epoch amounts do not scale to the staking page's "
-                                             f"epoch sizes with decimals {spec['decimals']}: median "
-                                             f"{med}; raw {raw[:4]}",
-                        tiers_attempted="3", suggestion="Read the raw values in the Run Log and set "
-                                                        "spendle_epochs.decimals to what they show.")
+            k, done, med, tried = fitting_scale(payload, spec, now)
+            shown = ", ".join(f"/10^{d}: {'none' if m is None else f'{m:,.4f}'}" for d, m in tried)
+            if k is None:
+                out.fail(SOURCE, name, f"{metric}: UNITS NOT CONFIRMED — median epoch {shown}; none "
+                                       f"(or more than one) of the declared scales lands in {lo:,}..{hi:,} "
+                                       f"({spec['units_check']['source']}); raw {raw[:4]} ... latest "
+                                       f"{raw[-1:]}. NOTHING STORED.", TIER)
+                out.gap(name, metric, reason=f"the epoch amounts fit none of the declared scales "
+                                             f"({shown}); raw {raw[:4]}",
+                        tiers_attempted="3", suggestion="Read the raw values in the Run Log (or "
+                                                        "pendle-spendle-data.json in the log cache) "
+                                                        "against the staking page's epochs.")
             else:
+                note = ("" if k == int(spec["decimals"]) else
+                        f" — DECLARED /10^{spec['decimals']} DID NOT FIT; the payload's scale is /10^{k}")
                 frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:{spec['history_key']}."
                                             f"{spec['amount_field']}", TIER, d).iloc[0] for d, v in done])
                 out.add(frame, SOURCE, name,
                         f"{metric}: {len(done)} epoch(s) {done[0][0].date()}..{done[-1][0].date()}, "
                         f"median {med:,.0f} PENDLE — UNITS CONFIRMED against the staking page's "
-                        f"{lo:,}..{hi:,} (raw {raw[0]} / 10^{spec['decimals']})", TIER)
+                        f"{lo:,}..{hi:,} (raw {raw[0]} / 10^{k}; latest epoch {done[-1][1]:,.0f} PENDLE "
+                        f"from raw {raw[-1]}){note}", TIER)
             apr_key = spec.get("apr_field")
             apr = payload.get(apr_key) if apr_key else None
             if apr is not None:
