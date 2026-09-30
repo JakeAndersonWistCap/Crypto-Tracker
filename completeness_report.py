@@ -32,7 +32,7 @@ import config
 HEADLINE = ("price_usd", "circulating_supply", "fees_usd", "revenue_usd", "holders_revenue_usd",
             "customer_revenue_usd", "actual_buyback_tokens", "actual_buyback_usd",
             "gross_burn_tokens", "gross_issuance_tokens", "emissions_tokens", "pool_release_tokens",
-            "locked_tokens", "staking_yield_pct", "settlement_volume_annual_usd",
+            "locked_tokens", "staking_yield_pct", "settlement_volume_usd", "network_reserve_ratio",
             "net_protocol_surplus_usd")
 PARKED = {"World Mobile": "PARKED (Jake, 2026-09-29): no further work until he reopens it"}
 FULL_DAYS = {"price_usd": 365}             # prices value every row of every window, Y1 included
@@ -72,14 +72,8 @@ DECISIONS = {
     ("Aethir", "pool_release_tokens"): (
         "N/A", _SUPERSEDED + "the declared emission schedule supplies emissions_tokens; CoinGecko "
                             "circulating does not update"),
-    # REOPENED 2026-09-30 (H): the ACCEPTED LIMIT had no native-source evidence. The route is
-    # Maple's own transparency page — the SSF chart's SYRUP balance series, less the monthly
-    # buyback inflows the same page lists. The SSF address is in no Maple repository (maple-
-    # labs/address-registry @3df2052c, maple-docs @07d8ff8e), so the series comes from the page.
-    ("Maple", "pool_release_tokens"): (
-        "NEEDS JAKE", "run `python check_offline_items.py maple_ssf_history` and paste it back: "
-                      "the SSF chart's series on maple.finance's transparency page is the route; "
-                      "release = balance decline net of the monthly buyback inflows it lists"),
+    # Maple pool_release_tokens: WIRED 2026-09-30 from Jake's probe 5 — the SSF chart's island
+    # props on maple.finance/transparency (fetch/maple_transparency.ssf_series); no decision left.
     ("GEODNET", "locked_tokens"): (
         "NEEDS JAKE", "~3M GEOD locked, the manual row (value, source, date) — no staking contract "
                       "is established: both behavioural candidates are ruled out (0x8f10b468… is "
@@ -87,16 +81,14 @@ DECISIONS = {
                       "GEODNET staking adapter. GEODNET's console or docs naming the contract "
                       "unblocks the 365-day archive read; Blockworks stays a cross-check once its "
                       "terms are read (probe blockworks_geodnet)"),
-    # B (2026-09-30): The Block's page is gone. ONE definition must cover Ethereum, NEAR, Plume
-    # and Hyperliquid for the Network Reserve Ratio to be comparable across A1 — Jake's pick.
-    ("Ethereum", "settlement_volume_annual_usd"): (
-        "NEEDS JAKE", "choose ONE settlement-volume source for all four chains (options in the "
-                      "second-pass report: Artemis 'settlement volume' — keyed, definition and "
-                      "chain coverage not public; Visa Onchain Analytics — adjusted stablecoin "
-                      "volume, no public API; Coin Metrics — CC BY-NC); none is wired until then"),
-    ("Plume", "settlement_volume_annual_usd"): (
-        "NEEDS JAKE", "the same choice as Ethereum's (B): one settlement-volume definition for "
-                      "Ethereum, NEAR, Plume and Hyperliquid"),
+    # SETTLEMENT VOLUME (Jake, 2026-09-30): Artemis's daily series, one definition for every chain,
+    # from CSV exports in data/artemis/ (config.ARTEMIS_SETTLEMENT). Ethereum's is imported; the
+    # other three wait on Jake's export. A chain Artemis does not list becomes ACCEPTED LIMIT with
+    # that as its evidence — never another source's definition.
+    **{(n, m): ("NEEDS JAKE", f"export Artemis's {n} Settlement Volume chart as CSV to "
+                              f"data/artemis/{n}_-_Settlement_Volume.csv (same format as Ethereum's); "
+                              f"if Artemis does not list {n}, say so and it becomes ACCEPTED LIMIT")
+       for n in ("Near", "Hyperliquid", "Plume") for m in ("settlement_volume_usd", "network_reserve_ratio")},
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
                       "publishes it"),

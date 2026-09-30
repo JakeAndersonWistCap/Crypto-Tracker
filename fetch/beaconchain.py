@@ -90,14 +90,24 @@ def _day_cache_file():
     return LogCache().root / "beaconchain-day.json"
 
 
+def _now() -> pd.Timestamp:
+    """UTC wall clock, naive. One place so a test can move it."""
+    return pd.Timestamp.now(tz="UTC").tz_localize(None)
+
+
 def _day_cache_read(url: str):
     """(state, body) stored THIS CALENDAR MONTH for url, else None. Failures are kept too: a
-    refused call is not retried until the next month.
+    refused call is not retried until the next month — OR, when the refusal named its own wait
+    (a 429's Retry-After, kept as `retry_at`), until that wait is over, whichever comes first.
 
     ONE CALL A MONTH, NEVER DAILY (Jake, 2026-09-29): beaconcha.in's free quota is MONTHLY, and
     it is now only the cross-check of the all-in yield (consensus + execution INCLUDING MEV) —
     the headline's consensus part is d(Eth2Staking) from ethsupply2. The stored point is dated
-    by its own beaconchain-day, so re-using the month's answer re-writes the same key."""
+    by its own beaconchain-day, so re-using the month's answer re-writes the same key.
+
+    EACH ENDPOINT KEEPS ITS OWN WAIT (Jake's run, 2026-09-30): /ethstore/latest asked 150,198s
+    (~41.7h) while the history call /ethstore/{day} asked 36,338s (~10.1h, the monthly reset).
+    This cache is /ethstore/latest's; the history backfill keeps its own in beaconchain-history.json."""
     try:
         st = json.loads(_day_cache_file().read_text())
     except (OSError, ValueError):
@@ -105,6 +115,11 @@ def _day_cache_read(url: str):
     rec = st.get(url)
     if rec and str(rec.get("date", ""))[:7] == str(today().date())[:7]:
         state, body = rec["state"], rec["body"]
+        if state != "ok" and rec.get("retry_at"):
+            if _now() >= pd.Timestamp(rec["retry_at"]):
+                return None                      # the wait this endpoint asked for is over
+            return state, (f"{body} (cached {rec['date']}; this endpoint asked to wait until "
+                           f"{rec['retry_at']} UTC — not retried before then)")
         if state != "ok":
             body = (f"{body} (the month's one attempt, {rec['date']}, cached — not retried until "
                     f"next month: the free quota is monthly)")
@@ -112,13 +127,15 @@ def _day_cache_read(url: str):
     return None
 
 
-def _day_cache_write(url: str, result) -> None:
+def _day_cache_write(url: str, result, retry_after: float | None = None) -> None:
     f = _day_cache_file()
     try:
         st = json.loads(f.read_text())
     except (OSError, ValueError):
         st = {}
     st[url] = {"date": str(today().date()), "state": result[0], "body": result[1]}
+    if retry_after is not None:
+        st[url]["retry_at"] = str((_now() + pd.Timedelta(seconds=float(retry_after))).floor("s"))
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(st))
@@ -150,23 +167,42 @@ class BeaconChain:
                 if spec.get("history") and self._key(spec):
                     self._history(p["name"], spec, out)
 
-    # ===== ETH.STORE PER DAY, BACKFILLED UNDER A BUDGET (A2, Jake 2026-09-30). =====
+    # ===== ETH.STORE PER DAY, BACKFILLED UNDER THE SERVER'S OWN LIMIT (A2, Jake 2026-09-30). =====
     # /api/v1/ethstore/{day} for each beaconchain-day of the last `days` (day N starts at genesis
     # 2020-12-01T12:00:23Z + N days — gobitfly/eth.store README; the row carries day_start, which
     # is what dates it). ONE CALL PER DAY, cached for good in beaconchain-history.json: a past
-    # day's aggregate does not change, so nothing is ever read twice. At most calls_per_run per
-    # run and monthly_budget per calendar month (beaconcha.in's free quota is MONTHLY and was
-    # exhausted on 2026-09-28 — the probe `beaconchain_quota` reads the real limit from the
-    # response headers), paced min_interval_s apart, stopping at the first refusal. Every cached
-    # day is stored on every run, so the series is whole whatever the store held.
+    # day's aggregate does not change, so nothing is ever read twice.
+    # THE CAP IS beaconcha.in's OWN COUNTER, not a guess. Every response carries x-ratelimit-*
+    # headers; the backfill stops when the MONTHLY remaining falls to `reserve` (kept for the
+    # monthly cross-check call) and paces to the per-minute limit it reports. Jake's probe of
+    # 2026-09-30 read every counter 0 with Retry-After 36,644s — the month's window, resetting
+    # 2026-10-01 00:00 UTC. The documented free plan is 30,000 calls/month, so 365 fits in one
+    # run of `python ethstore_backfill.py`; inside the daily run it is capped at calls_per_run
+    # to stay inside the source's time budget.
+    # WHAT EACH DAY GIVES: `apr` -> staking_yield_pct, and consensus_rewards_sum_wei -> ETH minted
+    # as consensus rewards that day (consensus_rewards_tokens) — the ISSUANCE HISTORY before the
+    # Etherscan leg (declared handover), replacing ultrasound.money's series, which is frozen at
+    # 2024-06-22 (Jake's probe, 2026-09-30).
     GENESIS_DAY0 = pd.Timestamp("2020-12-01")
+    RATE_KEYS = ("x-ratelimit-remaining-month", "x-ratelimit-limit-month",
+                 "x-ratelimit-remaining-minute", "x-ratelimit-limit-minute")
 
     @staticmethod
     def _hist_file():
         from .logcache import LogCache
         return LogCache().root / "beaconchain-history.json"
 
-    def _history(self, name: str, spec: dict, out) -> None:
+    @staticmethod
+    def _header_int(headers: dict, key: str):
+        for k, v in (headers or {}).items():
+            if k.lower() == key:
+                try:
+                    return int(float(v))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def _history(self, name: str, spec: dict, out, max_calls: int | None = None, http=None) -> dict:
         h = spec["history"]
         f = self._hist_file()
         try:
@@ -174,14 +210,22 @@ class BeaconChain:
         except (OSError, ValueError):
             st = {}
         days = st.setdefault("days", {})
-        month = str(today().date())[:7]
-        used = st.setdefault("used", {}).get(month, 0)
         want = [today() - pd.Timedelta(days=i) for i in range(2, int(h.get("days", 365)) + 2)]
         missing = [d for d in want if str((d - self.GENESIS_DAY0).days) not in days]
-        budget = min(int(h.get("calls_per_run", 30)), max(0, int(h.get("monthly_budget", 300)) - used))
-        key, calls, refused = self._key(spec), 0, None
-        http = Http(min_interval=float(h.get("min_interval_s", 6.0)), retries=0)
-        for d in missing[:budget]:
+        cap = int(h.get("calls_per_run", 30)) if max_calls is None else int(max_calls)
+        reserve = int(h.get("reserve", 5))
+        key, calls, refused, limits = self._key(spec), 0, None, {}
+        http = http or Http(min_interval=float(h.get("min_interval_s", 3.1)), retries=0)
+        # THIS ENDPOINT'S OWN WAIT, separate from /ethstore/latest's (_day_cache_read): the last
+        # 429 on /ethstore/{day} named its Retry-After; no call is made before it has passed.
+        todo = missing[:cap]
+        wait_until = st.get("retry_at")
+        if wait_until and _now() < pd.Timestamp(wait_until):
+            refused = (f"/ethstore/{{day}} asked on {st.get('retry_asked_on')} to wait "
+                       f"{float(st.get('retry_after_s', 0)):,.0f}s, until {wait_until} UTC — "
+                       f"no call before then")
+            todo = []
+        for d in todo:
             n = (d - self.GENESIS_DAY0).days
             url = spec["base_url"].rstrip("/") + f"/api/v1/ethstore/{n}"
             try:
@@ -190,6 +234,14 @@ class BeaconChain:
             except Exception as e:  # noqa: BLE001 — stop at the first refusal, keep what was read
                 refused = self._scrub(spec, e)
                 calls += 1
+                wait = getattr(e, "retry_after", None)
+                if wait is not None:
+                    st["retry_at"] = str((_now() + pd.Timedelta(seconds=float(wait))).floor("s"))
+                    st["retry_after_s"] = float(wait)
+                    st["retry_asked_on"] = str(_now().floor("s"))
+                    lim = getattr(e, "headers", None)
+                    if lim:
+                        st["retry_headers"] = lim
                 break
             rows = body.get("data") if isinstance(body, dict) and body.get("status") == "OK" else None
             rec = rows[0] if isinstance(rows, list) and rows else rows if isinstance(rows, dict) else None
@@ -198,33 +250,59 @@ class BeaconChain:
                 out.fail(SOURCE, name, f"{h['metric']} history: /ethstore/{n} carried {keys}, not "
                                        f"('day_start', {h['field']!r}). NOTHING STORED; backfill stopped.", TIER)
                 break
-            days[str(n)] = {"day_start": str(rec["day_start"]), "value": rec[h["field"]]}
-        st["used"][month] = used + calls
-        if calls:
+            st.pop("retry_at", None)             # an answer means the wait is over
+            days[str(n)] = {"day_start": str(rec["day_start"]), "value": rec[h["field"]],
+                            "consensus_wei": rec.get("consensus_rewards_sum_wei")}
+            hdr = getattr(http, "last_headers", None) or {}
+            limits = {k: self._header_int(hdr, k) for k in self.RATE_KEYS}
+            rem = limits.get("x-ratelimit-remaining-month")
+            if rem is not None and rem <= reserve:
+                refused = (f"the monthly quota is down to {rem} (limit "
+                           f"{limits.get('x-ratelimit-limit-month')}); {reserve} kept in reserve")
+                break
+            per_min = limits.get("x-ratelimit-limit-minute")
+            if per_min:
+                http.min_interval = max(http.min_interval, 60.0 / per_min + 0.1)
+        if calls or "retry_at" in st:
             f.parent.mkdir(parents=True, exist_ok=True)
             tmp = f.with_suffix(".tmp")
             tmp.write_text(json.dumps(st))
             tmp.replace(f)
-        pts = []
+        from .base import tidy
+        apr, cons = [], []
         for n, r in days.items():
             try:
-                pts.append((pd.Timestamp(r["day_start"]).tz_convert("UTC").tz_localize(None).normalize()
-                            if pd.Timestamp(r["day_start"]).tzinfo else pd.Timestamp(r["day_start"]).normalize(),
-                            float(r["value"]) / float(h.get("scale", 1))))
+                d = pd.Timestamp(r["day_start"])
+                d = (d.tz_convert("UTC").tz_localize(None) if d.tzinfo else d).normalize()
             except (TypeError, ValueError):
                 continue
-        pts = [(d, v) for d, v in pts if d < today()]
-        if pts:
-            from .base import tidy
-            frame = tidy(sorted(pts), name, h["metric"], SOURCE, TIER)
-            out.add(frame, SOURCE, name,
-                    f"{h['metric']} history = ETH.Store `{h['field']}` per beaconchain-day: "
-                    f"{len(frame)} day(s) held, {calls} call(s) this run, {used + calls} this "
-                    f"month of a {h.get('monthly_budget', 300)} budget; "
-                    f"{max(0, len(missing) - calls)} day(s) still to read", TIER)
+            if d >= today():
+                continue
+            try:
+                apr.append((d, float(r["value"]) / float(h.get("scale", 1))))
+            except (TypeError, ValueError):
+                pass
+            if r.get("consensus_wei") is not None and h.get("consensus_metric"):
+                try:
+                    cons.append((d, float(r["consensus_wei"]) / 1e18))
+                except (TypeError, ValueError):
+                    pass
+        still = max(0, len(missing) - calls)
+        quota = (f"; beaconcha.in reports {limits.get('x-ratelimit-remaining-month')} of "
+                 f"{limits.get('x-ratelimit-limit-month')} calls left this month" if limits else "")
+        if apr:
+            out.add(tidy(sorted(apr), name, h["metric"], SOURCE, TIER), SOURCE, name,
+                    f"{h['metric']} history = ETH.Store `{h['field']}` per beaconchain-day: {len(apr)} "
+                    f"day(s) held, {calls} call(s) this run, {still} day(s) still to read{quota}", TIER)
+        if cons:
+            out.add(tidy(sorted(cons), name, h["consensus_metric"], f"{SOURCE}:ethstore.consensus_rewards_sum_wei",
+                         TIER), SOURCE, name,
+                    f"{h['consensus_metric']} history = ETH.Store consensus_rewards_sum_wei / 1e18 per "
+                    f"beaconchain-day: {len(cons)} day(s)", TIER)
         if refused:
-            out.fail(SOURCE, name, f"{h['metric']} history: stopped at a refusal after {calls} "
-                                   f"call(s) — {refused}. What was read is kept; resumes next run.", TIER)
+            out.fail(SOURCE, name, f"{h['metric']} history: stopped after {calls} call(s) — {refused}. "
+                                   f"What was read is kept; resumes next run.", TIER)
+        return {"calls": calls, "still": still, "limits": limits, "retry_at": st.get("retry_at")}
 
     def _project(self, name: str, spec: dict, out):
         key = self._key(spec)
@@ -255,11 +333,13 @@ class BeaconChain:
                     if not allowed:
                         bodies[url] = ("robots", why)
                     else:
+                        wait = None
                         try:
                             bodies[url] = ("ok", self.http.get(url, headers={"apikey": key}))
                         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                             bodies[url] = ("error", self._scrub(spec, e))
-                        _day_cache_write(url, bodies[url])
+                            wait = getattr(e, "retry_after", None)
+                        _day_cache_write(url, bodies[url], retry_after=wait)
             state, body = bodies[url]
             if state == "robots":
                 out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {body}", TIER)

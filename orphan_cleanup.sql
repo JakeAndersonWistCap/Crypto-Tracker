@@ -3530,3 +3530,98 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 --  WHERE project = 'Fluid' AND metric = 'emissions_tokens'
 --    AND source = 'schedule:config:declared';
 -- COMMIT;
+
+-- ========================================================================================
+-- BD. ETHEREUM gross_issuance_tokens: ONE ROUTE ONLY  2026-09-30
+--     Jake's run 2026-09-30 14:54: measuring_point_changed — the stored series mixes issuance
+--     routes. Every route but Etherscan's is retired: route (a) (CoinGecko mcap/price + burn),
+--     the older d(CoinGecko total_supply) + burn, beaconcha.in rows from before it was demoted,
+--     and ultrasound.money (frozen at 2024-06-22). What stays: 'derived:d_total_supply_protocol
+--     +burn' (d(ethsupply2 supply) + d(BurntFees)) from 2026-09-29, the sole route until the
+--     ETH.Store per-day history lands (a read-time leg, never stored under this metric).
+--     REVIEW FIRST.
+-- ========================================================================================
+-- BD1. EVERY STORED ROUTE, with its span.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(AVG(value), 1) AS mean_per_day
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BD2. WHAT STAYS (expect the Etherscan leg only, from 2026-09-29).
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+   AND source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-29'
+ ORDER BY date;
+
+-- BD3. THE PROPOSED DELETE: everything else. Only after BD1 and BD2 read as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+--    AND NOT (source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-29');
+-- COMMIT;
+
+-- ========================================================================================
+-- BE. PLUME tx_count / active_addresses / fees_usd: growthepie ROWS OUT OF THE PRIMARIES  2026-09-30
+--     Jake's probe 4c: Plume's own explorer stats service (Blockscout, explorer.plume.org/
+--     stats-service) is now PRIMARY for all three, with full history and one definition each.
+--     growthepie writes to its own cross-check metrics from now on (tx_count_growthepie,
+--     active_addresses_growthepie, fees_usd_growthepie). Its rows already stored under the
+--     primary names would mix two measuring points in one series (and daa ≠ distinct senders).
+--     Option A (preferred) KEEPS them, renamed to the cross-check metrics; option B deletes.
+--     REVIEW FIRST.
+-- ========================================================================================
+-- BE1. WHAT IS THERE.
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
+ GROUP BY metric, source
+ ORDER BY metric, first_date;
+
+-- BE2. A RENAMED ROW WOULD COLLIDE WITH ONE ALREADY UNDER THE CROSS-CHECK NAME ON THE SAME DAY?
+--      (expect 0 rows; if any, run option B for those days instead)
+SELECT m.metric, m.date
+  FROM metrics m
+  JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = m.metric || '_growthepie'
+ WHERE m.project = 'Plume' AND m.metric IN ('tx_count', 'active_addresses', 'fees_usd')
+   AND m.source LIKE 'growthepie%';
+
+-- BE3. OPTION A — RENAME to the cross-check metrics (keeps the data). Only after BE1/BE2.
+-- BEGIN;
+-- UPDATE metrics SET metric = metric || '_growthepie'
+--  WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
+--    AND source LIKE 'growthepie%';
+-- COMMIT;
+
+-- BE4. OPTION B — DELETE instead of renaming.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
+--    AND source LIKE 'growthepie%';
+-- COMMIT;
+
+-- ========================================================================================
+-- BF. MAPLE pool_release_tokens: THE SSF RELEASE IS THE ONLY ROUTE  2026-09-30
+--     Jake's probe 5: the SSF chart's daily series is in the transparency page's island props, so
+--     the release is MEASURED, monthly: H(month start) - H(next month start) + SYRUP bought.
+--     Source 'maple_page:ssf_release'. The daily derivation d(circulating) - d(total) no longer
+--     runs for Maple (fetch/__init__._derive_pool_release); its stored rows would be a second
+--     measuring point in the same series. REVIEW FIRST.
+-- ========================================================================================
+-- BF1. EVERY STORED ROUTE, with its span.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(SUM(value), 0) AS total_tokens
+  FROM metrics
+ WHERE project = 'Maple' AND metric = 'pool_release_tokens'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BF2. THE PROPOSED DELETE: every row not from the SSF release. Run only after BF1, and only once
+--      a run has stored 'maple_page:ssf_release' rows (BF1 shows them).
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Maple' AND metric = 'pool_release_tokens'
+--    AND source NOT LIKE 'maple_page:ssf_release%';
+-- COMMIT;

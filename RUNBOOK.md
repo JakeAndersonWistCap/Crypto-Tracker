@@ -440,6 +440,33 @@ would produce plausible-looking wrong numbers.
 
 ---
 
+## 11j. Monthly: refresh the Artemis settlement-volume export (manual step)
+
+Settlement volume, and the Network Reserve Ratio built on it, come from Artemis CSV exports that
+you save by hand. The Artemis API answered HTTP 410 without a key, so nothing reads it
+automatically. Once a month:
+
+1. Open Artemis → the asset (e.g. Ethereum) → Metrics → Market Data → **Settlement Volume**
+   (`classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME`).
+   Set the range to the full history, then export as CSV.
+2. Save it, overwriting the old file, as `data/artemis/<Chain>_-_Settlement_Volume.csv`. The chain names are
+   `Ethereum`, `Near`, `Hyperliquid` and `Plume`, as listed in `config.ARTEMIS_SETTLEMENT["chains"]`.
+   The file must have exactly two columns: `DateTime` and `<Chain> - Settlement Volume`. A file with any
+   other column is refused, so a second definition can never be mixed in.
+3. Set `exported_on` for that chain in `config.ARTEMIS_SETTLEMENT` to the export date. It goes into
+   the source string. If you leave it unset, the file's own date is used and the source says so.
+4. Run `python token_metrics.py`. The Run Log line `artemis_csv` gives the day count, the date range
+   and how old the last day is.
+
+The NRR divides market cap on the export's **last date** by the 365 days ending on that date, so both
+inputs share the same end date. A1 shows that date next to the ratio. Once it is more than 45 days
+old, the cell turns stale (AMBER). If a chain is not on Artemis, record that in
+`completeness_report.DECISIONS` as an ACCEPTED LIMIT, with the page you checked. Do not substitute
+another source's volume.
+
+If an `ARTEMIS_API_KEY` ever appears, run `python check_offline_items.py settlement_sources` and paste
+back what it prints. The API is wired only after a keyed response has been seen.
+
 ## 11c. Checking numbers without Excel
 
 Every derived column in the workbook is a formula with no cached result — Excel computes on open,

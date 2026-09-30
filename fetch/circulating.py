@@ -96,7 +96,9 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
 
 def report_lines() -> list[str]:
     """Per project: status, the excluded addresses with each one's source, or why none."""
-    lines = []
+    conv = config.CIRCULATING_CONVENTION
+    lines = [f"CONVENTION ({conv['status']}): circulating includes {conv['counts_as_circulating']}; "
+             f"excluded: {conv['excluded']}. {conv['standard_case']}."]
     for name, spec in config.CIRCULATING_ONCHAIN.items():
         st = spec["status"]
         head = f"{name}: {st.upper()}"
@@ -113,6 +115,15 @@ def report_lines() -> list[str]:
                 lines.append(f"    MISSING: {spec['missing']}")
         else:
             lines.append(f"{head} — {spec.get('why', '')}")
+        lines.append("    convention: staked/locked count as circulating; treasury, team, vesting "
+                     "and burned are excluded")
+        cand = config.NONCIRCULATING_CANDIDATES.get(name)
+        if cand:
+            lines.append(f"    documented candidates (NOT subtracted until a balance read is wired): "
+                         f"{cand['note']}")
+            for a in cand["addresses"]:
+                lines.append(f"      - {a['role']}: {a['chain']} {a['address']} — {a['source']}")
+            lines.append(f"      not established: {cand['not_established']}")
     return lines
 
 

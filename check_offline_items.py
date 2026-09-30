@@ -2790,19 +2790,32 @@ def ultrasound_history():
 
 
 def beaconchain_quota():
-    """A2: the key's REAL limits (x-ratelimit-* headers) — one call to /ethstore/latest — plus one
-    historical /epoch/{n} and the withdrawals chart series (website route, JSON)."""
-    head("ETHEREUM — beaconcha.in quota, historical epoch, withdrawals chart")
+    """A2 / addendum 12: the key's REAL limits for EACH endpoint separately — /ethstore/latest and
+    one /ethstore/{day} (the history route) — each call's x-ratelimit-* headers and Retry-After
+    printed under its own name (Jake's run 2026-09-30: latest asked 150,198s, history 36,338s).
+    Plus one historical /epoch/{n} and the withdrawals chart series (website route, JSON)."""
+    import pandas as pd                                    # noqa: PLC0415
+    head("ETHEREUM — beaconcha.in quota per endpoint, historical epoch, withdrawals chart")
     key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
-    try:
-        r = requests.get("https://beaconcha.in/api/v1/ethstore/latest",
-                         headers={**_ua(), **({"apikey": key} if key else {})}, timeout=TIMEOUT)
-        print(f"  /ethstore/latest: HTTP {r.status_code}")
-        for h, v in r.headers.items():
-            if h.lower().startswith("x-ratelimit") or h.lower() == "retry-after":
-                print(f"    {h}: {v}")
-    except Exception as e:  # noqa: BLE001
-        print(f"  /ethstore/latest UNREACHABLE — {e}")
+    day_n = (pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=2)
+             - pd.Timestamp("2020-12-01")).days
+    for label, path in (("/ethstore/latest", "latest"), (f"/ethstore/{day_n} (history)", str(day_n))):
+        try:
+            r = requests.get(f"https://beaconcha.in/api/v1/ethstore/{path}",
+                             headers={**_ua(), **({"apikey": key} if key else {})}, timeout=TIMEOUT)
+            print(f"  {label}: HTTP {r.status_code}")
+            for h, v in r.headers.items():
+                if h.lower().startswith("x-ratelimit") or h.lower() in ("retry-after", "ratelimit-reset",
+                                                                        "ratelimit-window"):
+                    print(f"    {h}: {v}")
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    print(f"    -> this endpoint asks {float(ra):,.0f}s (~{float(ra) / 3600:.1f}h)")
+                except ValueError:
+                    pass
+        except Exception as e:  # noqa: BLE001
+            print(f"  {label} UNREACHABLE — {e}")
     try:
         ep = 225 * 1700
         r = requests.get(f"https://beaconcha.in/api/v1/epoch/{ep}",
@@ -2820,7 +2833,8 @@ def beaconchain_quota():
             print(f"  withdrawals chart series {s_.get('name')!r}: {len(pts)} points, last {pts[-3:]}")
     except Exception as e:  # noqa: BLE001
         print(f"  withdrawals chart UNREACHABLE — {e}")
-    print("  PASTE BACK the x-ratelimit lines (the monthly limit decides free vs one paid month).")
+    print("  PASTE BACK both endpoints' x-ratelimit lines and Retry-After (the monthly limit decides free vs\n"
+          "  one paid month; the two waits are kept separately).")
 
 
 def hyperliquid_history_routes():
@@ -2856,7 +2870,55 @@ def hyperliquid_history_routes():
             print(f"  hyperscan{path}: keys {sorted(j)[:12] if isinstance(j, dict) else type(j).__name__}")
         except Exception as e:  # noqa: BLE001
             print(f"  hyperscan{path} UNREACHABLE — {e}")
-    print("  PASTE BACK all lines: the stats feed's last date says whether it is still updated.")
+    # (b) DefiLlama's /protocol staking series — the field name decides the wiring
+    # (config Hyperliquid.defillama_staking_history). Prints keys and shapes, not values en masse.
+    try:
+        j = requests.get("https://api.llama.fi/protocol/hyperliquid", headers=_ua(), timeout=TIMEOUT).json()
+        ct = j.get("chainTvls") or {}
+        print(f"  llama /protocol/hyperliquid: top keys {sorted(j)[:25]}")
+        print(f"    chainTvls keys: {sorted(ct)}")
+        for k in sorted(ct):
+            if "staking" in k.lower():
+                toks = ct[k].get("tokens") or []
+                tvl = ct[k].get("tvl") or []
+                print(f"    {k}: tvl {len(tvl)} pts {tvl[:1]}..{tvl[-1:]}; tokens {len(toks)} pts, "
+                      f"last {toks[-1:] if toks else None}")
+        for k in ("currentChainTvls", "otherProtocols", "parentProtocol"):
+            if k in j:
+                print(f"    {k}: {str(j[k])[:200]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  llama /protocol/hyperliquid UNREACHABLE — {e}")
+    print("  PASTE BACK all lines: the stats feed's last date says whether it is still updated;\n"
+          "  the chainTvls keys say whether DefiLlama carries a HYPE staking series.")
+
+
+def hyperevm_etherscan():
+    """3c (2026-09-30): does the existing ETHERSCAN_API_KEY serve HyperEVM (chainid 999) through
+    Etherscan V2 — a plain call, then the daily-stats calls a tx/address series needs? Whatever
+    answers measures HyperEVM ONLY (not HyperCore, where the trading is). Key never printed."""
+    head("HYPEREVM — Etherscan V2 chainid 999 with the existing key")
+    key = os.environ.get("ETHERSCAN_API_KEY", "").strip()
+    if not key:
+        print("  ETHERSCAN_API_KEY is not set — nothing to test")
+        return
+    base = "https://api.etherscan.io/v2/api"
+    day = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 3 * 86400))
+    calls = (("eth_blockNumber", {"module": "proxy", "action": "eth_blockNumber"}),
+             ("dailytx", {"module": "stats", "action": "dailytx", "startdate": day, "enddate": day, "sort": "asc"}),
+             ("dailynewaddress", {"module": "stats", "action": "dailynewaddress", "startdate": day,
+                                  "enddate": day, "sort": "asc"}),
+             ("dailyavgblocktime", {"module": "stats", "action": "dailyavgblocktime", "startdate": day,
+                                    "enddate": day, "sort": "asc"}))
+    for label, params in calls:
+        try:
+            r = requests.get(base, params={"chainid": 999, **params, "apikey": key}, headers=_ua(), timeout=TIMEOUT)
+            j = r.json()
+            res = j.get("result")
+            print(f"  {label}: HTTP {r.status_code} status={j.get('status')!r} message={j.get('message')!r} "
+                  f"result={str(res)[:160]!r}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  {label} UNREACHABLE — {e}")
+    print("  PASTE BACK all lines. 'NOTOK'/'API Pro endpoint' on dailytx = the free key does not serve it.")
 
 
 def plume_sources():
@@ -2877,6 +2939,20 @@ def plume_sources():
             print(f"  {label}: {v}{extra}")
         except Exception as e:  # noqa: BLE001
             print(f"  {label} UNREACHABLE — {e}")
+    # 4a (2026-09-30): the per-validator list — the total staked is its sum, not totalAmountStaked.
+    try:
+        from web3 import Web3                              # noqa: PLC0415
+        from fetch.plume_staking import ABI                # noqa: PLC0415
+        w3 = Web3(Web3.HTTPProvider("https://rpc.plume.org", request_kwargs={"timeout": 25}))
+        vl = w3.eth.contract(address=Web3.to_checksum_address(diamond), abi=ABI).functions.getValidatorsList().call()
+        tot = sum(int(v[1]) for v in vl)
+        wc = sum(int(v[1]) * int(v[2]) for v in vl) / tot / 1e18 if tot else None
+        print(f"  getValidatorsList(): {len(vl)} validators, sum totalStaked {tot / 1e18:,.2f} PLUME, "
+              f"stake-weighted commission {wc if wc is None else f'{wc:.2%}'}")
+        for v in sorted(vl, key=lambda x: -int(x[1]))[:10]:
+            print(f"    id {v[0]}: {int(v[1]) / 1e18:,.2f} PLUME, commission {int(v[2]) / 1e18:.2%}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  getValidatorsList UNREACHABLE — {e}")
     try:
         env = requests.get("https://explorer.plume.org/assets/envs.js", headers=_ua(), timeout=TIMEOUT).text
         for k in ("NEXT_PUBLIC_STATS_API_HOST", "NEXT_PUBLIC_STATS_API_BASE_PATH", "NEXT_PUBLIC_API_HOST"):
@@ -2894,7 +2970,7 @@ def plume_sources():
     print("  PASTE BACK all lines. APR should sit in Jake's 5-8%.")
 
 
-def _xhr_capture(url: str, wanted: tuple = ()):
+def _xhr_capture(url: str, wanted: tuple = (), deep: bool = False, dump_keys: tuple = ()):
     """Load a page in Chromium (robots-checked first) and list every JSON response: URL, top-level
     keys, and any number in it matching `wanted`. Finds a dashboard's API; stores nothing."""
     from fetch.scrape import robots_verdict                # noqa: PLC0415
@@ -2907,7 +2983,20 @@ def _xhr_capture(url: str, wanted: tuple = ()):
     except Exception as e:  # noqa: BLE001
         print(f"  playwright unavailable — {e}")
         return
-    seen = []
+    import re                                              # noqa: PLC0415
+    seen, requests_seen, frames, dumped = [], [], [], []
+    content = ""
+
+    def _dump(body):
+        # deep=True callers name keys whose VALUES matter (a query, a contract): print them, and
+        # every 0x address anywhere in the body.
+        txt = json.dumps(body)
+        for k in dump_keys:
+            for m in re.finditer(r'"' + re.escape(k) + r'"\s*:\s*("(?:[^"\\]|\\.){0,600}"|\{[^{}]{0,600}\}|-?\d+)', txt):
+                dumped.append(f"{k} = {m.group(1)[:600]}")
+        for a in sorted(set(re.findall(r"0x[0-9a-fA-F]{40}", txt)))[:30]:
+            dumped.append(f"address {a}")
+
     with sync_playwright() as pw:
         b = pw.chromium.launch()
         pg = b.new_page(user_agent=_ua()["User-Agent"])
@@ -2922,20 +3011,52 @@ def _xhr_capture(url: str, wanted: tuple = ()):
                 hits = [w for w in wanted if w in txt]
                 keys = sorted(body)[:15] if isinstance(body, dict) else f"list[{len(body)}]"
                 seen.append((resp.url.split("?")[0], keys, hits))
+                if deep and (hits or dump_keys):
+                    _dump(body)
+
+        def req(r):
+            # EVERY request, not only JSON answers: a GraphQL POST, an RPC call, a websocket upgrade.
+            if deep and r.resource_type in ("xhr", "fetch", "websocket", "eventsource", "other"):
+                requests_seen.append((r.method, r.url.split("?")[0], (r.post_data or "")[:300]))
+
+        def ws(sock):
+            sock.on("framereceived", lambda f: frames.append((sock.url, str(f)[:300]))
+                    if any(w in str(f) for w in wanted) or len(frames) < 5 else None)
         pg.on("response", grab)
+        if deep:
+            pg.on("request", req)
+            pg.on("websocket", ws)
         pg.goto(url, wait_until="networkidle", timeout=60000)
+        if deep:
+            pg.wait_for_timeout(5000)
+            content = pg.content()
         b.close()
     for u, k, h in seen:
         print(f"  JSON {u}\n       keys {k}{'  MATCHES ' + ', '.join(h) if h else ''}")
     print(f"  {len(seen)} JSON response(s). PASTE BACK the ones that MATCH.")
+    if deep:
+        for m_, u, body in requests_seen:
+            print(f"  REQ {m_} {u}" + (f"  body {body!r}" if body else ""))
+        for u, f in frames[:20]:
+            print(f"  WS {u}: {f!r}")
+        for w in wanted:
+            for m in list(re.finditer(re.escape(w), content))[:3]:
+                print(f"  HTML {w!r}: ...{content[max(0, m.start() - 150):m.end() + 150]!r}...")
+        for d in dumped[:60]:
+            print(f"  VALUE {d}")
+        print(f"  {len(requests_seen)} request(s), {len(frames)} websocket frame(s), HTML {len(content):,} chars.")
 
 
 def aethir_dashboard_xhr():
     """E: the supply-metric page's own API — GPUs/containers (433704), countries (94), TFLOPs
     (38509114), and any utilisation / rented / revenue / ARR field."""
     head("AETHIR — dashboard.aethir.com/protocol/supply-metric: find the underlying endpoint")
+    # 2026-09-30: the first capture saw 0 JSON responses — so every request (GraphQL POSTs
+    # included), websocket frames and the rendered HTML are searched too.
     _xhr_capture("https://dashboard.aethir.com/protocol/supply-metric",
-                 ("433704", "38509114", "utiliz", "utilis", "rented", "revenue", "arr", "ARR"))
+                 ("433704", "433,704", "38509114", "38,509,114", "utiliz", "utilis", "rented",
+                  "revenue", "arr", "ARR"), deep=True)
+    print("  If nothing matches: supply_units stays a MONTHLY MANUAL row from Jake (manual_overrides.csv).")
 
 
 def maple_ssf_history():
@@ -2943,6 +3064,7 @@ def maple_ssf_history():
     SSF's SYRUP balance by date, and the monthly buyback list on the same page."""
     head("MAPLE — transparency page: the SSF SYRUP balance series")
     import re                                              # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
     import config                                          # noqa: PLC0415
     from fetch.scrape import robots_verdict                # noqa: PLC0415
     url = (config.PROJECT_BY_NAME["Maple"].get("maple_transparency") or {}).get("url") \
@@ -2958,6 +3080,25 @@ def maple_ssf_history():
             dates = re.findall(r"20\d\d-\d\d-\d\d", blob)
             print(f"  island props {len(blob):,} chars, {len(dates)} dates ({dates[:1]}..{dates[-1:]}); "
                   f"head: {blob[:300]}")
+    # 2026-09-30: the unwrapped series the adapter stores (fetch/maple_transparency.ssf_series).
+    from fetch import maple_transparency as mt              # noqa: PLC0415
+    for props in mt.islands(html):
+        ds = props.get("datasets")
+        if isinstance(ds, dict):
+            for k, rows in ds.items():
+                n = len(rows) if isinstance(rows, list) else 0
+                print(f"  dataset {k}: {n} points; first {rows[:1] if n else None}; last {rows[-1:] if n else None}")
+    got = mt.ssf_series(html)
+    if isinstance(got, str):
+        print(f"  ssf_series: {got}")
+    else:
+        pts, key = got
+        print(f"  ssf_series -> dataset {key}: {len(pts)} day(s) {pts[0][0].date()}..{pts[-1][0].date()}")
+        rel, skipped = mt.ssf_release(pts, mt.parse(html)["buybacks"], pd.Timestamp.now().normalize())
+        for d, v in rel:
+            print(f"    release {d.date()}: {v:,.2f} SYRUP")
+        for w in skipped:
+            print(f"    skipped {w}")
     print("  PASTE BACK each island line that names the SSF.")
 
 
@@ -2965,8 +3106,15 @@ def blockworks_geodnet():
     """D1 (cross-check only): Blockworks' GEODNET staking-flow chart endpoint, robots-checked. Not
     wired: its terms are unread (licensing register)."""
     head("GEODNET — Blockworks staking-flow chart (cross-check only)")
+    # 2026-09-30 (Jake: dashboard 326, visualizations 2669, 2573, 2575 matched stake/unstake):
+    # print the visualizations' metadata — a query text, a contract address — so a contract can
+    # be verified ON-CHAIN (~3.0M now, ~12M Nov 2025) and read directly; Blockworks is only the
+    # pointer.
     _xhr_capture("https://app.blockworks.com/projects/geodnet/analytics/geodnet",
-                 ("stake", "Stake", "unstake"))
+                 ("stake", "Stake", "unstake", "2669", "2573", "2575"), deep=True,
+                 dump_keys=("query", "sql", "queryText", "query_sql", "contract", "contractAddress",
+                            "address", "source", "dataSource", "table", "description", "title"))
+    print("  PASTE BACK the VALUE lines: a contract address there is checked on-chain before any wiring.")
 
 
 def morpho_incentives():
@@ -2999,6 +3147,12 @@ def settlement_sources():
         r = requests.get("https://api.artemisxyz.com/asset", params={"APIKey": key} if key else {},
                          headers=_ua(), timeout=TIMEOUT)
         print(f"  Artemis /asset: HTTP {r.status_code} ({'keyed' if key else 'no ARTEMIS_API_KEY'})")
+        if key and r.ok:
+            try:
+                j = r.json()
+                print(f"    keyed body: {type(j).__name__}, keys {sorted(j)[:20] if isinstance(j, dict) else len(j)}")
+            except ValueError:
+                print(f"    keyed body is not JSON: {r.text[:200]!r}")
     except Exception as e:  # noqa: BLE001
         print(f"  Artemis UNREACHABLE — {e}")
     _xhr_capture("https://visaonchainanalytics.com/", ("adjusted", "Adjusted", "volume"))
@@ -3018,7 +3172,7 @@ CHECKS = (
     hl_af_fills_depth,
     robots_and_terms, ultrasound_history, beaconchain_quota, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
-    morpho_incentives, settlement_sources,
+    morpho_incentives, settlement_sources, hyperevm_etherscan,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

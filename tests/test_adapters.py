@@ -15,6 +15,7 @@ import os
 import sys
 from pathlib import Path
 
+import json
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -375,7 +376,8 @@ def test_growthepie_reports_the_field_names_instead_of_guessing_them():
     a.run([eth, config.PROJECT_BY_NAME["Plume"]], None, out0)
     got0 = out0.frame()
     e = got0[(got0.project == "Ethereum") & (got0.metric == "active_addresses")]
-    p_ = got0[(got0.project == "Plume") & (got0.metric == "tx_count")]
+    # Plume's growthepie rows are the CROSS-CHECK from 2026-09-30 (the explorer stats service is primary)
+    p_ = got0[(got0.project == "Plume") & (got0.metric == "tx_count_growthepie")]
     assert float(e.value.iloc[0]) == 563332.0 and float(p_.value.iloc[0]) == 206496.0
     assert all(isinstance(v, float) for v in got0.value), \
         "a numeric STRING in the value column would sort and sum as text"
@@ -397,10 +399,14 @@ def test_growthepie_reports_the_field_names_instead_of_guessing_them():
     # 150 since 2026-09-30: Plume also maps fees_paid_usd -> fees_usd (G); Ethereum does not.
     assert len(df) == 150, f"2 x 2 metrics x 30 days + Plume fees x 30 = 150, got {len(df)}"
     assert sorted(set(df.project)) == ["Ethereum", "Plume"], sorted(set(df.project))
-    assert sorted(set(df.metric)) == ["active_addresses", "fees_usd", "tx_count"], sorted(set(df.metric))
+    # Plume's three land under their CROSS-CHECK names from 2026-09-30 (the explorer stats service
+    # is primary for tx_count / active_addresses / fees); Ethereum's stay primary.
+    assert sorted(set(df.metric)) == ["active_addresses", "active_addresses_growthepie",
+                                      "fees_usd_growthepie", "tx_count", "tx_count_growthepie"], sorted(set(df.metric))
     assert {(p_, m_): len(g) for (p_, m_), g in df.groupby(["project", "metric"])} == {
         ("Ethereum", "active_addresses"): 30, ("Ethereum", "tx_count"): 30,
-        ("Plume", "active_addresses"): 30, ("Plume", "tx_count"): 30, ("Plume", "fees_usd"): 30}
+        ("Plume", "active_addresses_growthepie"): 30, ("Plume", "tx_count_growthepie"): 30,
+        ("Plume", "fees_usd_growthepie"): 30}
     assert not [e for e in wide.log if e.status == "failed"], wide.log
     # THREE OTHER CHAINS AND TWO OTHER METRICS WERE IN THE DOCUMENT AND NONE LEAKED — that is
     # what the origin_key AND metric_key filter together buys, and filtering on either alone
@@ -5130,7 +5136,7 @@ def test_data_tab_distinguishes_closed_missing_from_an_open_one():
     # window starting after the halt, and is no longer a 'missing' cell
     fl = data[(data.project == "Fluid") & (data.metric == "actual_buyback_tokens")].iloc[0]
     assert fl["status"] == "ok" and fl["q0"] == 0.0 and "PROGRAMME HALTED" in fl["note"]
-    row = data[(data.project == "Plume") & (data.metric == "settlement_volume_annual_usd")].iloc[0]
+    row = data[(data.project == "Hyperliquid") & (data.metric == "active_addresses")].iloc[0]
     assert row["status"] == "missing", (
         f"precondition: this must reproduce the reported state, got {row['status']!r}")
 
@@ -5140,15 +5146,16 @@ def test_data_tab_distinguishes_closed_missing_from_an_open_one():
 
     status_col = bw.DATA_COLS.index("status") + 1
     r = next(i for i in range(2, ws.max_row + 1)
-             if ws.cell(row=i, column=bw.DATA_COLS.index("project") + 1).value == "Plume"
-             and ws.cell(row=i, column=bw.DATA_COLS.index("metric") + 1).value == "settlement_volume_annual_usd")
+             if ws.cell(row=i, column=bw.DATA_COLS.index("project") + 1).value == "Hyperliquid"
+             and ws.cell(row=i, column=bw.DATA_COLS.index("metric") + 1).value == "active_addresses")
     cell = ws.cell(row=r, column=status_col)
     assert cell.value == "missing"
     assert cell.comment is not None, "a closed-and-documented 'missing' must carry a comment saying so"
     assert "CLOSED" in cell.comment.text and "not an open gap" in cell.comment.text
     # the Data tab says CLOSED and carries the closure's own words
-    # (Plume fees_usd, the earlier example, was reopened 2026-09-30: growthepie's fees_paid_usd)
-    assert "The Block's adjusted on-chain volume doesn't cover Plume" in cell.comment.text
+    # (Plume fees_usd was reopened 2026-09-30, and Plume's settlement-volume closure retired with
+    # The Block the same day: Hyperliquid's active_addresses is the example now)
+    assert "no chain-activity aggregate" in cell.comment.text
 
     # AND THE NEGATIVE: an ordinary applicable-but-genuinely-unsourced metric gets no such
     # comment — only a metric matching config.UNAVAILABLE does.
@@ -12557,7 +12564,11 @@ def test_the_four_cleanup_closures_use_the_mechanism_that_matches_their_facts():
     # (2) CLOSURES, NOT n/a — the figure exists and the reopen condition is written down.
     # (Plume fees_usd was reopened 2026-09-30 on its own reopen_if: growthepie's fees_paid_usd)
     assert config.unavailable_for("Plume", "fees_usd") is None
-    assert config.PROJECT_BY_NAME["Plume"]["growthepie"]["metrics"]["fees_usd"] == "fees_paid_usd"
+    # 2026-09-30 (probe 4c): fees are the explorer's txnsFee (PLUME) x same-day price; growthepie's
+    # fees_paid_usd is the cross-check under its own name
+    assert config.PROJECT_BY_NAME["Plume"]["growthepie"]["metrics"]["fees_usd_growthepie"] == "fees_paid_usd"
+    assert config.PROJECT_BY_NAME["Plume"]["blockscout_stats"]["lines"]["fees_native_tokens"] == "txnsFee"
+    assert config.PROJECT_BY_NAME["Plume"]["fees_usd_from_native"]["native_metric"] == "fees_native_tokens"
     for name, metric in (("Ethereum", "total_supply_dashboard"),):
         u = config.unavailable_for(name, metric)
         assert u, f"{name}/{metric} must be closed, not left an open gap"
@@ -14650,15 +14661,20 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     # the Reserve inflow stays A3's narrower buyback base (revenue_usd)
     assert "customer_revenue_usd" not in config.metric_restatements("Chainlink")
     spec = c["defillama_sum_slugs"][0]
-    assert spec["metric"] == "customer_revenue_usd" and len(spec["slugs"]) == 5
+    # ADDENDUM 10 (2026-09-30): five SERVICES resolved from the parent's childProtocols each run
+    # (Keepers was renamed Automation), with fallback slugs — not five hard-coded slugs
+    assert spec["metric"] == "customer_revenue_usd" and len(spec["services"]) == 5
+    assert spec["parent"] == "chainlink"
+    auto = next(sv for sv in spec["services"] if sv["service"] == "automation")
+    assert "chainlink-automation" in auto["fallback_slugs"] and "keepers" in auto["match"]
     assert "EVERY SERVICE, ALL CHAINS" in config.metric_label("Chainlink", "customer_revenue_usd")
     assert config.not_applicable_reason("Chainlink", "utilisation_pct")
     assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
-    assert "settlement_volume_annual_usd" in config.PROJECT_BY_NAME["Ethereum"]["manual_quarterly"]
-    # Plume's was CLOSED 2026-09-29 (Jake): The Block's volume does not cover Plume — an accepted
-    # limit, not a manual input
-    assert "settlement_volume_annual_usd" not in (config.PROJECT_BY_NAME["Plume"].get("manual_quarterly") or [])
-    assert config.unavailable_for("Plume", "settlement_volume_annual_usd")
+    # SETTLEMENT VOLUME (2026-09-30): Artemis's daily series from CSV exports replaces The Block's
+    # manual quarterly figure — no manual template, and Plume's old closure went with The Block
+    assert "settlement_volume_annual_usd" not in config.METRICS
+    assert "settlement_volume_annual_usd" not in (config.PROJECT_BY_NAME["Ethereum"].get("manual_quarterly") or [])
+    assert set(config.ARTEMIS_SETTLEMENT["chains"]) == {"Ethereum", "Near", "Hyperliquid", "Plume"}
     # validator and protocol yields never share a project list or a metric
     assert not set(config.VALIDATOR_YIELD) & set(config.PROTOCOL_YIELD)
     # Aerodrome joined 2026-09-30 (L1): voter rewards (fees + bribes) over veAERO locked
@@ -18483,16 +18499,25 @@ def test_ethereum_issuance_route_a_is_removed_and_its_rejection_recorded():
     assert rej["source"] == "derived:d_coingecko_supply+burn" and rej["rejected_on"] == "2026-09-30"
     assert "174 negative days" in rej["evidence"] and "-626,651.7..+1,331,145.2" in rej["evidence"]
     assert "gross_burn_tokens" in eth["series_handover"], "the burn's history leg is kept"
-    # A1 (later the same day): the history is ultrasound.money's MEASURED daily supply + burn —
-    # not route (a)'s source, and no longer forward-only
+    # Jake's probe (2026-09-30): ultrasound.money's daily supply is FROZEN at 2024-06-22, so the
+    # history leg is ETH.Store's per-day consensus rewards (beaconcha.in), and until that backfill
+    # runs after the monthly quota reset the series is FORWARD-ONLY from 2026-09-29, with the reason
     hand = config.declared_handover("Ethereum", "gross_issuance_tokens")["ordered_points"]
-    assert hand == ("derived:d_total_supply_ultrasound+burn", "derived:d_total_supply_protocol+burn")
+    assert hand == ("beaconchain:ethstore.consensus_rewards_sum_wei", "derived:d_total_supply_protocol+burn")
     assert "derived:d_coingecko_supply+burn" not in hand
-    assert config.HISTORY_FORWARD_ONLY.get("Ethereum") is None
-    assert {"revenue_usd", "price_usd"} <= backfill.derived_inputs(eth, "gross_issuance_tokens"), \
-        "the history's burn inputs are re-read"
+    assert "derived:d_total_supply_ultrasound+burn" not in hand
+    fo = config.HISTORY_FORWARD_ONLY["Ethereum"]
+    assert "gross_issuance_tokens" in fo["metrics"] and "2026-09-29" in fo["why"] and "frozen" in fo["why"]
+    assert eth["ultrasound_history"]["frozen_since"] == "2024-06-22"
+    # nothing is DERIVED for the history at fetch time any more: it is a read-time leg of the
+    # ETH.Store consensus rewards (history_legs), so there are no derived inputs to re-read
+    assert backfill.derived_inputs(eth, "gross_issuance_tokens") == set()
+    assert eth["history_legs"]["gross_issuance_tokens"]["from_metric"] == "consensus_rewards_ethstore_tokens"
     sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
     assert "-- BA. ETHEREUM: issuance ROUTE (a) rows" in sql and "-- DELETE FROM metrics" in sql
+    # ADDENDUM 11: whatever the retired routes wrote, SELECT first; only Etherscan's leg from 09-29 stays
+    assert "-- BD. ETHEREUM gross_issuance_tokens: ONE ROUTE ONLY" in sql
+    assert ("NOT (source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-29')" in sql)
 
 
 def test_sql_ba_removes_only_route_a_rows(tmp_path, capsys, monkeypatch):
@@ -18639,8 +18664,10 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     assert "(D[fees_usd:q0]-D[revenue_usd:q0])" in exe and "D[price_usd:q0]" in exe
     cols = {c[0]: c for c in bw._eth_yield_columns(R())}
     ceil = cols["Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)"][1](5, eth)
-    # A3 (2026-09-30): the stake over the SAME window — ultrasound.money's daily staked ETH, Q0 average
-    assert "166.32*SQRT(D[beacon_validators_eth:q0])" in ceil
+    # ultrasound.money's staked-ETH series is frozen at 2024-06-22 (Jake's probe, 2026-09-30): the
+    # ceiling's stake is back to ETH on the beacon chain now (formula_stake_metric removed)
+    assert "166.32*SQRT(D[beacon_chain_eth:now])" in ceil
+    assert "beacon_validators_eth" not in ceil
     assert cols["Consensus part (d Eth2Staking ÷ ETH on the beacon chain)"][1](5, config.PROJECT_BY_NAME["Near"]) == ""
     assert any("EXCLUDING MEV" in k for k in cols) and any("INCLUDING MEV; one call a month" in k for k in cols)
     # 64 x sqrt(B gwei) per epoch x 82,181.25 epochs/yr / 1e9 = 166.32 x sqrt(B ETH)
@@ -19152,8 +19179,11 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     assert "SUPERSEDED" in got[("Chainlink", "pool_release_tokens")][1]
     # SECOND PASS (2026-09-30): both ACCEPTED LIMITs reopened — Maple's SSF chart is the route
     # (NEEDS JAKE: run the probe), Plume's fees come from growthepie (no longer closed)
-    assert got[("Maple", "pool_release_tokens")][0] == "NEEDS JAKE"
-    assert "maple_ssf_history" in got[("Maple", "pool_release_tokens")][1]
+    # Jake's probe 5 (2026-09-30): the SSF chart is in the page's island props, so the release is
+    # WIRED (no decision left; this empty store simply holds none of it yet)
+    assert ("Maple", "pool_release_tokens") not in cr.DECISIONS
+    assert config.PROJECT_BY_NAME["Maple"]["transparency_page"]["metrics"]["pool_release_tokens"]["field"] == "ssf_release"
+    assert got[("Maple", "pool_release_tokens")][0] != "ACCEPTED LIMIT"
     assert got[("Plume", "fees_usd")][0] != "ACCEPTED LIMIT", got[("Plume", "fees_usd")]
     assert all("native sources checked:" in d for k, (v, d) in got.items() if v == "ACCEPTED LIMIT"), \
         "no ACCEPTED LIMIT survives without native-source evidence"
@@ -19165,9 +19195,10 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     assert v != "WAITING ON A DATE", (v, d)
     # (a manual quarterly row that is actually MISSING stays NEEDS JAKE; this store is empty)
     jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
-    assert jake <= {("GEODNET", "locked_tokens"), ("Ethereum", "settlement_volume_annual_usd"),
-                    ("Sky", "net_protocol_surplus_usd"), ("Maple", "pool_release_tokens"),
-                    ("Plume", "settlement_volume_annual_usd")}
+    # settlement volume (2026-09-30): Ethereum's Artemis export is in; the other three wait on Jake's
+    assert jake <= {("GEODNET", "locked_tokens"), ("Sky", "net_protocol_surplus_usd"),
+                    *((n, m) for n in ("Near", "Hyperliquid", "Plume")
+                      for m in ("settlement_volume_usd", "network_reserve_ratio"))}
     assert got[("GEODNET", "locked_tokens")][0] == "NEEDS JAKE" and "~3M" in got[("GEODNET", "locked_tokens")][1]
     # a Review Queue flag is informational, never NEEDS JAKE
     v, d = cr.classify(config.PROJECT_BY_NAME["Uniswap"], "fees_usd", {"status": "review", "note": "x"},
@@ -19687,117 +19718,205 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
     assert not calls and any("robots.txt disallows" in e.message for e in out3.log)
 
 
-def test_ethereum_issuance_history_is_the_ultrasound_supply_plus_burn_before_the_etherscan_leg():
-    """A1: d(ultrasound daily supply) + burn, written only for days BEFORE the Etherscan leg's
-    first row (declared handover); the first-party view shows both legs."""
+def test_ethereum_issuance_history_is_the_ethstore_consensus_leg_before_the_etherscan_leg():
+    """Jake's probe 2026-09-30: ultrasound.money's supplyByDay is frozen at 2024-06-22, so nothing
+    derives the issuance history from it any more. The history is ETH.Store's per-day consensus
+    rewards (consensus_rewards_ethstore_tokens), prepended at READ time to both
+    gross_issuance_tokens and consensus_rewards_tokens for the days before their first live row —
+    a declared handover, never overlapping, never stored under either metric."""
     import build_workbook as bw
     from fetch.base import today
     from fetch.history_derive import derive_from_history
     eth = config.PROJECT_BY_NAME["Ethereum"]
     base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
     days = pd.date_range(today() - pd.Timedelta(days=100), today() - pd.Timedelta(days=1))
-    rows, s = [], 120_000_000.0
     etherscan_from = days[-3]
+    rows = []
     for d in days:
-        rows.append(dict(base, project="Ethereum", metric="total_supply_ultrasound", date=d, value=s,
+        rows.append(dict(base, project="Ethereum", metric="total_supply_ultrasound", date=d, value=1.2e8,
                          source="ultrasound:supplyByDay"))
-        s += 2_700.0 - 2_000.0
-        src = ("etherscan:ethsupply2.BurntFees:delta" if d >= etherscan_from
-               else "derived:defillama_burned_fee_revenue/price")
-        rows.append(dict(base, project="Ethereum", metric="gross_burn_tokens", date=d, value=2_000.0, source=src))
+        rows.append(dict(base, project="Ethereum", metric="consensus_rewards_ethstore_tokens", date=d,
+                         value=2_700.0, source="beaconchain:ethstore.consensus_rewards_sum_wei", tier=1))
         if d >= etherscan_from:
             rows.append(dict(base, project="Ethereum", metric="gross_issuance_tokens", date=d, value=2_650.0,
                              source="derived:d_total_supply_protocol+burn"))
+            rows.append(dict(base, project="Ethereum", metric="consensus_rewards_tokens", date=d, value=2_690.0,
+                             source="etherscan:ethsupply2.Eth2Staking:delta"))
     stored = pd.DataFrame(rows)
     out = FetchOutput()
     derive_from_history(out, [eth], stored)
-    iss = out.frame().query("metric == 'gross_issuance_tokens'")
-    assert len(iss) and iss["date"].max() < etherscan_from, "never over the Etherscan leg"
-    assert set(iss["source"]) == {"derived:d_total_supply_ultrasound+burn"}
-    assert (iss["value"] - 2_700.0).abs().max() < 1e-6
-    # the first-party view keeps both legs
-    both = pd.concat([stored[stored.metric == "gross_issuance_tokens"], iss.assign(**{k: base[k] for k in base})],
-                     ignore_index=True)
-    groups = {("Ethereum", "gross_issuance_tokens"): both}
+    assert out.frame().query("metric == 'gross_issuance_tokens'").empty, \
+        "the frozen ultrasound series derives nothing"
+    groups = {k: g for k, g in stored.groupby(["project", "metric"])}
     bw._VIEW_BLOCKS.clear()
-    bw._issuance_views(groups, today())
-    view = groups[("Ethereum", "gross_issuance_tokens")]
-    assert {"derived:d_total_supply_ultrasound+burn", "derived:d_total_supply_protocol+burn"} <= set(view["source"])
-    assert ("Ethereum", "gross_issuance_tokens") not in bw._VIEW_BLOCKS
-    # consensus rewards: the history leg is prepended before the first d(Eth2Staking) row
-    cons = pd.DataFrame([dict(base, project="Ethereum", metric="consensus_rewards_tokens", date=d, value=2_700.0,
-                              source="etherscan:ethsupply2.Eth2Staking:delta") for d in days[-2:]])
-    groups[("Ethereum", "consensus_rewards_tokens")] = cons
     bw._history_leg_views(groups)
-    c = groups[("Ethereum", "consensus_rewards_tokens")]
-    assert c["date"].min() < days[-2] and c["date"].is_monotonic_increasing
-    assert config.declared_handover("Ethereum", "consensus_rewards_tokens")["ordered_points"][1] == \
-        "etherscan:ethsupply2.Eth2Staking"
+    bw._issuance_views(groups, today())
+    for metric, live in (("gross_issuance_tokens", "derived:d_total_supply_protocol+burn"),
+                         ("consensus_rewards_tokens", "etherscan:ethsupply2.Eth2Staking:delta")):
+        v = groups[("Ethereum", metric)]
+        hist = v[v["source"].astype(str).str.startswith("beaconchain:ethstore")]
+        assert len(hist) and hist["date"].max() < etherscan_from, (metric, "never over the live leg")
+        assert set(v[v["date"] >= etherscan_from]["source"]) == {live}
+        assert v["date"].is_monotonic_increasing and not v["date"].duplicated().any()
+        assert (hist["value"] - 2_700.0).abs().max() < 1e-6
+    assert ("Ethereum", "gross_issuance_tokens") not in bw._VIEW_BLOCKS
+    assert config.declared_handover("Ethereum", "consensus_rewards_tokens")["ordered_points"] == \
+        ("beaconchain:ethstore.consensus_rewards_sum_wei", "etherscan:ethsupply2.Eth2Staking")
+    assert config.ISSUANCE_PRIMARY["Ethereum"]["history_prefix"] == "beaconchain:ethstore"
 
 
-def test_ethstore_history_backfills_under_a_budget_and_keeps_what_it_read(monkeypatch, tmp_path):
-    """A2: /ethstore/{day} per beaconchain-day, cached for good, at most calls_per_run a run and
-    monthly_budget a month, stopping at the first refusal; every cached day is stored each run."""
+def test_ethstore_history_backfills_under_the_servers_own_counter_and_keeps_what_it_read(monkeypatch, tmp_path):
+    """A2 / Jake's probe 1b (2026-09-30): /ethstore/{day} per beaconchain-day, cached for good. The
+    cap is beaconcha.in's OWN x-ratelimit-remaining-month (stop with `reserve` left), paced to its
+    per-minute limit; every cached day is stored each run, with the consensus rewards beside it."""
     import fetch.beaconchain as bc
     monkeypatch.setenv("BEACONCHAIN_API_KEY", "k" * 8)
     monkeypatch.setattr(bc.BeaconChain, "_hist_file", staticmethod(lambda: tmp_path / "h.json"))
     monkeypatch.setattr(bc.BeaconChain, "_project", lambda self, name, spec, out: None)
-    calls = []
+    calls, left = [], {"n": 9}
 
     class H:
-        def __init__(self, *a, **k):
-            pass
+        def __init__(self, *a, min_interval=0.0, **k):
+            self.min_interval, self.last_headers = min_interval, {}
 
         def get(self, url, headers=None):
             n = int(url.rsplit("/", 1)[1])
             calls.append(n)
-            if len(calls) == 4:
-                raise RuntimeError("429 Too Many Requests")
+            left["n"] -= 1
+            self.last_headers = {"x-ratelimit-remaining-month": str(left["n"]),
+                                 "x-ratelimit-limit-month": "30000", "x-ratelimit-limit-minute": "20"}
             start = (bc.BeaconChain.GENESIS_DAY0 + pd.Timedelta(days=n)).strftime("%Y-%m-%dT12:00:23Z")
-            return {"status": "OK", "data": {"day": n, "day_start": start, "apr": 0.03}}
+            return {"status": "OK", "data": {"day": n, "day_start": start, "apr": 0.03,
+                                             "consensus_rewards_sum_wei": str(2_700 * 10**18)}}
     monkeypatch.setattr(bc, "Http", H)
     eth = dict(config.PROJECT_BY_NAME["Ethereum"])
-    eth["beaconchain"] = dict(eth["beaconchain"], history=dict(eth["beaconchain"]["history"], calls_per_run=10))
+    eth["beaconchain"] = dict(eth["beaconchain"], history=dict(eth["beaconchain"]["history"], calls_per_run=365))
     out = FetchOutput()
     bc.BeaconChain(http=H()).run([eth], None, out)
     y = out.frame()
-    assert len(calls) == 4 and len(y) == 3 and set(y["value"]) == {0.03}, "three read, stopped at the 429"
-    assert any("stopped at a refusal" in e.message for e in out.log)
+    # 9 left, reserve 5: four calls, and the fourth answer says 5 left -> stop
+    assert len(calls) == 4, calls
+    yld = y[y.metric == "staking_yield_pct"]
+    cons = y[y.metric == "consensus_rewards_ethstore_tokens"]
+    assert len(yld) == 4 and set(yld["value"]) == {0.03}
+    assert len(cons) == 4 and (cons["value"] - 2_700.0).abs().max() < 1e-9
+    assert set(cons["source"]) == {"beaconchain:ethstore.consensus_rewards_sum_wei"}
+    assert any("monthly quota is down to 5" in e.message for e in out.log)
+    assert any("5 of 30000 calls left this month" in e.message for e in out.log)
     # the next run re-reads nothing it has, and still stores all it holds
     calls.clear()
+    left["n"] = 100
     out2 = FetchOutput()
     bc.BeaconChain(http=H()).run([eth], None, out2)
-    assert len(out2.frame()) >= 3 and not set(calls) & {c for c in range(0)}
+    assert len(out2.frame()[out2.frame().metric == "staking_yield_pct"]) >= 4
+    assert not set(calls) & {int(k) for k in json.loads((tmp_path / "h.json").read_text())["days"]} - set(calls)
 
 
-def test_chainlink_customer_revenue_sums_the_five_service_adapters_on_common_days():
-    """F: A2 customer revenue = every service, all chains; a day missing one service is not
-    stored; the A3 base stays the Reserve inflow (revenue_usd)."""
+def test_beaconchain_endpoints_keep_their_own_waits(monkeypatch, tmp_path):
+    """Addendum 12 (2026-09-30): /ethstore/latest asked 150,198s; /ethstore/{day} 36,338s. Each
+    endpoint records ITS OWN Retry-After and is not called again before it has passed — the other
+    endpoint's wait never blocks it."""
+    import fetch.beaconchain as bc
+    from fetch.base import RateLimited
+    now = {"t": pd.Timestamp("2026-09-30 14:54:00")}
+    monkeypatch.setattr(bc, "_now", lambda: now["t"])
+    monkeypatch.setattr(bc, "today", lambda: pd.Timestamp("2026-09-30"))
+    monkeypatch.setattr(bc, "_day_cache_file", lambda: tmp_path / "day.json")
+    monkeypatch.setattr(bc.BeaconChain, "_hist_file", staticmethod(lambda: tmp_path / "h.json"))
+    monkeypatch.setenv("BEACONCHAIN_API_KEY", "k" * 8)
+    # /ethstore/latest: its 150,198s wait is kept against its URL
+    url = "https://beaconcha.in/api/v1/ethstore/latest"
+    bc._day_cache_write(url, ("error", "HTTP 429 ..."), retry_after=150_198)
+    st, body = bc._day_cache_read(url)
+    assert st == "error" and "2026-10-02 08:37:18" in body, body
+    now["t"] = pd.Timestamp("2026-10-02 08:40:00")
+    assert bc._day_cache_read(url) is None, "its wait is over: retried"
+    # the history endpoint: a 429 with its own 36,338s wait, recorded in the history cache
+    now["t"] = pd.Timestamp("2026-09-30 14:54:00")
+    calls = []
+
+    class H:
+        def __init__(self, *a, **k):
+            self.min_interval, self.last_headers = 3.1, {}
+
+        def get(self, url, headers=None):
+            calls.append(url)
+            raise RateLimited("HTTP 429 from beaconcha.in: the server asks for a 36,338s wait",
+                              retry_after=36_338, headers={"x-ratelimit-remaining-month": "0"})
+    spec = config.PROJECT_BY_NAME["Ethereum"]["beaconchain"]
+    b = bc.BeaconChain()
+    r1 = b._history("Ethereum", spec, FetchOutput(), max_calls=5, http=H())
+    assert len(calls) == 1 and r1["retry_at"] == "2026-10-01 00:59:38"
+    h = json.loads((tmp_path / "h.json").read_text())
+    assert h["retry_after_s"] == 36_338 and h["retry_headers"] == {"x-ratelimit-remaining-month": "0"}
+    out = FetchOutput()
+    b._history("Ethereum", spec, out, max_calls=5, http=H())
+    assert len(calls) == 1, "no call before its own wait is over"
+    assert any("until 2026-10-01 00:59:38 UTC" in e.message for e in out.log)
+    # the latest endpoint's longer wait does not hold the history back once ITS wait is over
+    now["t"] = pd.Timestamp("2026-10-01 01:05:00")
+    b._history("Ethereum", spec, FetchOutput(), max_calls=1, http=H())
+    assert len(calls) == 2
+
+
+def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_active_service():
+    """Addendum 10 (Jake's run 2026-09-30 14:54: "Fees for chainlink-keepers not found" emptied the
+    whole sum). Services are resolved from the PARENT's childProtocols (Keepers -> Automation) with
+    fallback slugs; whatever reports is summed; a service silent for longer than
+    retired_after_days before the newest day is RETIRED (0 after its last day, logged); a day an
+    ACTIVE service misses is stored and flagged, never dropped. A3's base stays revenue_usd."""
     from fetch.llama import DefiLlama
     spec = config.PROJECT_BY_NAME["Chainlink"]["defillama_sum_slugs"][0]
-    d = lambda n: pd.Timestamp("2026-09-01") + pd.Timedelta(days=n)  # noqa: E731
-    charts = {k: [(d(i), 100.0 * (j + 1)) for i in range(5)] for j, k in enumerate(spec["slugs"])}
-    charts["chainlink-ccip"] = charts["chainlink-ccip"][1:]          # CCIP missing day 0
+    d = lambda n: pd.Timestamp("2026-08-01") + pd.Timedelta(days=n)  # noqa: E731
+    charts = {"chainlink-requests": [(d(i), 100.0) for i in range(50)],
+              "chainlink-automation": [(d(i), 200.0) for i in range(50)],
+              "chainlink-vrf-v1": [(d(i), 300.0) for i in range(6)],          # retired after day 5
+              "chainlink-vrf-v2": [(d(i), 400.0) for i in range(50)],
+              "chainlink-ccip": [(d(i), 500.0) for i in range(50) if i != 20]}  # active, misses day 20
+    tried = []
+
+    def chart(slug, dt):
+        tried.append(slug)
+        if slug not in charts:
+            raise RuntimeError(f"HTTP 400 — Fees for {slug} not found")
+        return charts[slug]
     ll = DefiLlama.__new__(DefiLlama)
-    ll._summary_chart = lambda slug, dt: charts[slug]
+    ll._summary = lambda slug, dt: {"childProtocols": [
+        {"name": "Chainlink Requests"}, {"name": "Chainlink Automation"}, {"name": "Chainlink VRF V1"},
+        {"name": "Chainlink VRF V2"}, {"name": "Chainlink CCIP"}]}
+    ll._summary_chart = chart
     out = FetchOutput()
     ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out)
-    f = out.frame()
-    assert len(f) == 4 and f["date"].min() == d(1), "day 0 lacks CCIP: not stored"
-    assert set(f["value"]) == {100.0 + 200 + 300 + 400 + 500}
-    assert f["source"].iloc[0].startswith("defillama:sum(chainlink-requests+")
+    f = out.frame().set_index("date")
+    assert "chainlink-keepers" not in tried, "the renamed service resolves through the parent's list"
+    assert len(f) == 50, "every day any service reported is stored"
+    assert f.loc[d(0), "value"] == 1500.0 and f.loc[d(10), "value"] == 1200.0, "VRF v1 is 0 after retiring"
+    assert f.loc[d(20), "value"] == 700.0 and "[missing: ccip]" in f.loc[d(20), "source"]
+    assert not any("[missing" in s_ for s_ in f.drop(index=d(20))["source"])
+    msg = next(e.message for e in out.log if e.status == "ok")
+    assert "RETIRED (0 after): vrf-v1 last reported 2026-08-06" in msg and "automation=chainlink-automation" in msg
+    assert "1 of 50 day(s) flagged" in msg
+    # a service nobody answers for is flagged on every day, and the rest still sum
+    del charts["chainlink-ccip"]
+    ll._summary = lambda slug, dt: {"childProtocols": []}
+    out2 = FetchOutput()
+    ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out2)
+    f2 = out2.frame()
+    assert len(f2) == 50 and all("ccip" in s_ for s_ in f2["source"])
     assert config.revenue_base_metric("Chainlink") == "revenue_usd"
 
 
 def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_stores_nothing():
-    """G: gross APR = rewardRates[PLUME_NATIVE] x 31,536,000 / 1e18; stake = totalAmountStaked();
-    a rate above the contract's own cap (3171e9) is not the quantity read from source."""
+    """G + Jake's probe 4a/4b (2026-09-30): gross APR = rewardRates[PLUME_NATIVE] x 31,536,000 /
+    1e18, stored labelled GROSS; total staked = the SUM of getValidatorsList()'s totalStaked —
+    totalAmountStaked() read 95 PLUME on mainnet and is never stored; commission is stake-weighted
+    from the same list and the net APR is its own metric. A rate above the cap stores nothing."""
     from fetch.plume_staking import PlumeStaking
     spec = config.PROJECT_BY_NAME["Plume"]["plume_staking"]
     assert spec["address"] == "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d"
     assert config.VALIDATOR_YIELD["Plume"]["metric"] == "staking_yield_pct"
 
-    def factory(rate, staked):
+    def factory(rate, aggregate, validators):
         class F:
             def __init__(self):
                 self.functions = self
@@ -19807,17 +19926,29 @@ def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_sto
                 return type("C", (), {"call": lambda s: rate})()
 
             def totalAmountStaked(self):
-                return type("C", (), {"call": lambda s: staked})()
+                return type("C", (), {"call": lambda s: aggregate})()
+
+            def getValidatorsList(self):
+                return type("C", (), {"call": lambda s: validators})()
         return lambda sp: F()
-    rate = 2_000_000_000                                       # ~6.3%/yr
+    rate = 1_584_404_391                                       # Jake's probe: 4.9966%
+    vals = [(1, 2 * 10**27, 5 * 10**16), (2, 1 * 10**27, 2 * 10**16)]   # 2bn at 5%, 1bn at 2%
     out = FetchOutput()
-    PlumeStaking(contract_factory=factory(rate, 3 * 10**27)).run([config.PROJECT_BY_NAME["Plume"]], None, out)
+    agg = 94_868_945_541_646_499_332                            # "95 PLUME", Jake's probe
+    PlumeStaking(contract_factory=factory(rate, agg, vals)).run([config.PROJECT_BY_NAME["Plume"]], None, out)
     f = out.frame().set_index("metric")
-    assert abs(f.loc["staking_yield_pct", "value"] - rate * 31_536_000 / 1e18) < 1e-12
-    assert 0.05 < f.loc["staking_yield_pct", "value"] < 0.08, "Jake's 5-8%"
-    assert f.loc["locked_tokens", "value"] == 3e9
+    assert abs(f.loc["staking_yield_pct", "value"] - 0.049966) < 1e-6
+    assert "[GROSS]" in f.loc["staking_yield_pct", "source"]
+    assert f.loc["locked_tokens", "value"] == 3e9, "the per-validator sum, never 95"
+    assert abs(f.loc["staking_commission_pct", "value"] - 0.04) < 1e-12      # (2x5% + 1x2%) / 3
+    assert abs(f.loc["staking_yield_net_pct", "value"] - 0.049966 * 0.96) < 1e-6
+    assert any("totalAmountStaked() = 94.87, not used" in e.message for e in out.log)
+    # a per-validator sum BELOW the aggregate is inconsistent: nothing stored for the stake
+    out3 = FetchOutput()
+    PlumeStaking(contract_factory=factory(rate, 10**30, vals)).run([config.PROJECT_BY_NAME["Plume"]], None, out3)
+    assert "locked_tokens" not in set(out3.frame()["metric"])
     out2 = FetchOutput()
-    PlumeStaking(contract_factory=factory(4000 * 10**9, 1)).run([config.PROJECT_BY_NAME["Plume"]], None, out2)
+    PlumeStaking(contract_factory=factory(4000 * 10**9, 1, vals)).run([config.PROJECT_BY_NAME["Plume"]], None, out2)
     assert out2.frame().empty and any("above the contract's own cap" in e.message for e in out2.log)
 
 
@@ -19953,3 +20084,201 @@ def test_licensing_register_and_second_pass_probes_cover_every_new_source():
     # forward-only records carry the native sources checked
     assert len(config.HISTORY_FORWARD_ONLY["Hyperliquid"]["native_checked"]) >= 5
     assert len(config.HISTORY_FORWARD_ONLY["Near"]["native_checked"]) >= 3
+
+
+# ===================================================================================
+# FOLLOW-UPS TO d69864d (Jake, 2026-09-30)
+# ===================================================================================
+def test_artemis_settlement_csv_imports_one_definition_and_nrr_matches_jakes_check(tmp_path):
+    """Settlement volume: Jake's Artemis export is read as a daily series under ONE definition
+    (a file with another column is refused); NRR = market cap on the export's LAST date / the 365
+    days ending that date — Jake's check, $329.4bn / $6,945.0bn = 4.74%; stale (monthly) after 45 days."""
+    import build_workbook as bw
+    from fetch.artemis import ArtemisCSV, parse
+    d = tmp_path / "data" / "artemis"
+    d.mkdir(parents=True)
+    days = pd.date_range("2023-09-30", "2026-08-25")
+    assert len(days) == 1_061
+    per_day = 6.945e12 / 365
+    body = "DateTime,Ethereum - Settlement Volume\n" + "\n".join(
+        f"{x:%Y-%m-%d}T00:00:00.000Z,{per_day:.2f}" for x in days)
+    (d / "Ethereum_-_Settlement_Volume.csv").write_text(body)
+    (d / "Near_-_Settlement_Volume.csv").write_text("DateTime,Near - DEX Volume\n2026-08-01,1\n")
+    out = FetchOutput()
+    ArtemisCSV(root=tmp_path).run([config.PROJECT_BY_NAME[n] for n in ("Ethereum", "Near", "Plume")], None, out)
+    f = out.frame()
+    assert set(f["project"]) == {"Ethereum"} and len(f) == 1_061
+    assert set(f["source"]) == {"artemis:settlement_volume (CSV export, Jake, 2026-09-30)"}
+    assert any("never mixed" in e.message and e.status == "failed" for e in out.log), "Near's other metric refused"
+    assert any(e.status == "skipped" and "Plume_-_Settlement_Volume.csv" in e.message for e in out.log)
+    assert isinstance(parse(d / "Near_-_Settlement_Volume.csv", "Near"), str)
+    mc = pd.DataFrame({"date": [pd.Timestamp("2026-08-25")], "project": "Ethereum", "metric": "market_cap_usd",
+                       "value": [3.294e11], "source": "coingecko", "tier": 1})
+    groups = {("Ethereum", "settlement_volume_usd"): f, ("Ethereum", "market_cap_usd"): mc}
+    bw._VIEW_BLOCKS.clear()
+    bw._settlement_views(groups)
+    tot = groups[("Ethereum", "settlement_volume_365d_usd")].iloc[0]
+    nrr = groups[("Ethereum", "network_reserve_ratio")].iloc[0]
+    assert abs(tot["value"] - 6.945e12) < 1e3 and tot["date"] == pd.Timestamp("2026-08-25")
+    assert abs(nrr["value"] - 0.0474) < 5e-5 and "market_cap(2026-08-25)" in nrr["source"]
+    assert config.series_granularity("Ethereum", "network_reserve_ratio") == "monthly"
+    assert config.stale_after_days("Ethereum", "network_reserve_ratio", 7) == 45
+    # a short export builds nothing and says why
+    groups = {("Ethereum", "settlement_volume_usd"): f.tail(100), ("Ethereum", "market_cap_usd"): mc}
+    bw._VIEW_BLOCKS.clear()
+    bw._settlement_views(groups)
+    assert ("Ethereum", "network_reserve_ratio") not in groups
+    assert "100 of the 365 days" in bw._VIEW_BLOCKS[("Ethereum", "network_reserve_ratio")]
+    # the register records Artemis's unread terms and the internal-vs-republishing question
+    reg = config.SOURCE_REGISTER["artemis.xyz"]
+    assert "404" in reg["terms"]["status"] and "REPUBLISHING" in reg["licence"]
+    runbook = (Path(__file__).resolve().parent.parent / "RUNBOOK.md").read_text(encoding="utf-8")
+    assert "11j. Monthly: refresh the Artemis settlement-volume export" in runbook
+
+
+def test_hyperliquid_burn_history_is_the_buyback_and_the_two_modelled_legs_need_agreement():
+    """1a: before the live Assistance Fund read, gross_burn_tokens = DefiLlama holders revenue /
+    same-day price (the buyback IS the burn). 1b: DefiLlama's staking series joins locked_tokens
+    only within 2% of validatorSummaries on a shared day. 1c: the inverse-sqrt reward formula
+    joins emissions_tokens only within 20% over >= 7 shared days (it read ~0.51 on 2026-09-29)."""
+    import build_workbook as bw
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    assert hl["burn_history"]["metric"] == "gross_burn_tokens"
+    assert config.declared_handover("Hyperliquid", "gross_burn_tokens")["ordered_points"] == \
+        ("defillama:holders_revenue_usd/price", "hypercore_info:spotClearinghouseState")
+    days = pd.date_range("2026-09-01", "2026-09-29")
+    mk = lambda m, vals, src, ds=days: pd.DataFrame({"date": ds, "project": "Hyperliquid", "metric": m,  # noqa: E731
+                                                     "value": vals, "source": src, "tier": 1})
+    live_from = days[-5]
+    groups = {("Hyperliquid", "holders_revenue_usd"): mk("holders_revenue_usd", 1_000_000.0, "defillama"),
+              ("Hyperliquid", "price_usd"): mk("price_usd", 40.0, "coingecko"),
+              ("Hyperliquid", "gross_burn_tokens"): mk("gross_burn_tokens", 30_000.0,
+                                                       "hypercore_info:spotClearinghouseState:delta:PARTIAL",
+                                                       days[days >= live_from])}
+    bw._usd_history_views(groups)
+    g = groups[("Hyperliquid", "gross_burn_tokens")]
+    hist = g[g["source"] == "defillama:holders_revenue_usd/price"]
+    assert len(hist) == len(days[days < live_from]) and set(hist["value"]) == {25_000.0}
+    assert hist["date"].max() < live_from and not g["date"].duplicated().any()
+    # 1b: a 5% disagreement keeps the history out and says so on the candidate's own row
+    bw._VIEW_BLOCKS.clear()
+    groups = {("Hyperliquid", "locked_tokens_defillama"): mk("locked_tokens_defillama", 4.2e8, "defillama:staking[staking]"),
+              ("Hyperliquid", "locked_tokens"): mk("locked_tokens", 4.4e8, "hypercore_info:validatorSummaries",
+                                                   days[days >= live_from])}
+    bw._history_leg_views(groups)
+    assert groups[("Hyperliquid", "locked_tokens")]["date"].min() == live_from
+    assert "beyond ±2%" in bw._VIEW_BLOCKS[("Hyperliquid", "locked_tokens:history_leg")]
+    assert "NOT locked_tokens's history" in groups[("Hyperliquid", "locked_tokens_defillama")]["source"].iloc[0]
+    groups[("Hyperliquid", "locked_tokens_defillama")] = mk("locked_tokens_defillama", 4.39e8, "defillama:staking[staking]")
+    bw._VIEW_BLOCKS.clear()
+    bw._history_leg_views(groups)
+    assert groups[("Hyperliquid", "locked_tokens")]["date"].min() == days[0]
+    # 1c: the formula — 2.37% x sqrt(400M x S) / 365 per day
+    stake = groups[("Hyperliquid", "locked_tokens")]
+    model_day = 0.0237 * (4e8 * 4.39e8) ** 0.5 / 365
+    for observed, joins in ((model_day * 0.51, False), (model_day * 1.05, True)):
+        gr = {("Hyperliquid", "locked_tokens"): stake,
+              ("Hyperliquid", "emissions_tokens"): mk("emissions_tokens", observed,
+                                                      "hypercore_info:tokenDetails.futureEmissions:delta",
+                                                      days[-8:])}
+        bw._VIEW_BLOCKS.clear()
+        bw._emissions_model_views(gr)
+        m = gr[("Hyperliquid", "emissions_modelled_tokens")]
+        last = 0.0237 * (4e8 * 4.4e8) ** 0.5 / 365               # the live stake on the last day
+        assert abs(m["value"].iloc[-1] - last) < 1e-6 and "observed/model=" in m["source"].iloc[-1]
+        e = gr[("Hyperliquid", "emissions_tokens")]
+        assert (e["date"].min() == days[0]) is joins, (observed, joins)
+    s3 = [x for x in config.HISTORY_FORWARD_ONLY["Hyperliquid"]["native_checked"] if "S3" in x["source"]]
+    assert s3 and "CONSIDERED AND NOT NEEDED" in s3[0]["finding"]
+    assert "gross_burn_tokens" not in config.HISTORY_FORWARD_ONLY["Hyperliquid"]["metrics"]
+
+
+def test_maple_ssf_series_unwraps_astro_islands_and_release_nets_the_buyback():
+    """Jake's probe 5: the SSF chart's datasets are in the page's island props as Astro [type,
+    value] pairs; the dataset reaching furthest back is taken, one reading a day; the monthly
+    release = H(month start) - H(next month start) + SYRUP bought, only where the buyback row is
+    visible. The daily derivation never runs beside it."""
+    import html as _html
+    from fetch import maple_transparency as mt
+
+    def enc(v):
+        if isinstance(v, dict):
+            return [0, {k: enc(x) for k, x in v.items()}]
+        if isinstance(v, list):
+            return [1, [enc(x) for x in v]]
+        return [0, v]
+    ms = lambda d: int(pd.Timestamp(d).timestamp() * 1000)  # noqa: E731
+    days = pd.date_range("2026-06-01", "2026-09-29")
+    allrows = [{"ts": ms(d), "syrupHoldings": 80e6 - i * 1000, "liquidAssetsUsd": 4e6} for i, d in enumerate(days)]
+    week = [{"ts": ms("2026-09-24"), "syrupHoldings": 79_206_476.97, "liquidAssetsUsd": 1}]
+    top = {"datasets": enc({"LAST_1W": week, "1Y": allrows})}
+    markup = f'<astro-island uid="a" props="{_html.escape(json.dumps(top))}"></astro-island>'
+    pts, key = mt.ssf_series(markup)
+    assert key == "1Y" and len(pts) == len(days) and pts[0] == (days[0], 80e6)
+    text = "Jul 2026 $136,768.00 852,668.33 $0.1604 Aug 2026 $147,098.00 676,293.73 $0.2175"
+    bb = mt.parse(text)["buybacks"]
+    assert list(bb["usd"]) == [136_768.00, 147_098.00], "the table's USD, never the island's price"
+    rel, skipped = mt.ssf_release(pts, bb, pd.Timestamp("2026-09-30"))
+    assert rel == [(pd.Timestamp("2026-07-31"), 31_000 + 852_668.33), (pd.Timestamp("2026-08-31"), 31_000 + 676_293.73)]
+    assert any("2026-06" in w and "not assumed 0" in w for w in skipped)
+    tp = config.PROJECT_BY_NAME["Maple"]["transparency_page"]["metrics"]
+    assert tp["pool_release_tokens"] == {"field": "ssf_release", "granularity": "monthly"}
+    assert config.series_granularity("Maple", "pool_release_tokens") == "monthly"
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    assert "-- BF. MAPLE pool_release_tokens" in sql and "-- DELETE FROM metrics" in sql
+
+
+def test_plume_blockscout_stats_is_primary_and_fees_are_valued_at_the_same_day_price():
+    """Probe 4c: Plume's explorer stats service (/api/v1/lines/{chart}) is primary for tx_count,
+    active_addresses and fees (txnsFee in PLUME x same-day price); growthepie is the cross-check
+    under its own names; an approximate (running) day is left out; the old growthepie rows under
+    the primary names are SQL section BE (rename preferred, SELECT first)."""
+    import build_workbook as bw
+    from fetch.blockscout_stats import BlockscoutStats
+    body = {"chart": [{"date": "2026-09-27", "date_to": "2026-09-27", "value": "189000", "is_approximate": False},
+                      {"date": "2026-09-28", "date_to": "2026-09-28", "value": "190500.0", "is_approximate": False},
+                      {"date": "2026-09-29", "date_to": "2026-09-29", "value": "20", "is_approximate": True}]}
+    pts = BlockscoutStats.parse(body)
+    assert pts == [(pd.Timestamp("2026-09-27"), 189_000.0), (pd.Timestamp("2026-09-28"), 190_500.0)]
+    assert isinstance(BlockscoutStats.parse({"chart": [{"date": "2026-09-27", "value": "n/a"}]}), str)
+    assert isinstance(BlockscoutStats.parse({"nope": 1}), str)
+    p = config.PROJECT_BY_NAME["Plume"]
+    assert p["blockscout_stats"]["base"] == "https://explorer.plume.org/stats-service"
+    assert set(p["growthepie"]["metrics"]) == {"active_addresses_growthepie", "tx_count_growthepie", "fees_usd_growthepie"}
+    d = pd.date_range("2026-09-26", "2026-09-28")
+    nat = pd.DataFrame({"date": d, "project": "Plume", "metric": "fees_native_tokens", "value": [900.0, 1000.0, 1100.0],
+                        "source": "blockscout_stats:txnsFee", "tier": 1})
+    px = pd.DataFrame({"date": d[1:], "project": "Plume", "metric": "price_usd", "value": [0.09, 0.08],
+                       "source": "coingecko", "tier": 1})
+    old = pd.DataFrame({"date": d, "project": "Plume", "metric": "fees_usd", "value": 90.0,
+                        "source": "growthepie", "tier": 1})
+    groups = {("Plume", "fees_native_tokens"): nat, ("Plume", "price_usd"): px, ("Plume", "fees_usd"): old}
+    bw._native_fee_usd_views(groups)
+    fu = groups[("Plume", "fees_usd")].set_index("date")
+    assert list(fu.index) == list(d[1:]), "no same-day price, no row"
+    assert abs(fu.loc[d[1], "value"] - 90.0) < 1e-9 and abs(fu.loc[d[2], "value"] - 88.0) < 1e-9
+    assert set(fu["source"]) == {"derived:blockscout_stats:txnsFee*price"}
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    assert "-- BE. PLUME tx_count / active_addresses / fees_usd" in sql
+    assert "-- UPDATE metrics SET metric = metric || '_growthepie'" in sql
+
+
+def test_circulating_convention_is_printed_on_every_exclusion_list_with_documented_candidates():
+    """Item 2: staked and locked count as circulating; treasury, team, vesting and burned are
+    excluded; Ethereum's empty set is the reference — printed on every project's list. Item 3: the
+    five projects' own-source addresses are LISTED, not subtracted (status stays not_established)."""
+    from fetch import circulating as C
+    lines = C.report_lines()
+    assert lines[0].startswith("CONVENTION (DEFAULT — Jake to confirm")
+    n_projects = len(config.CIRCULATING_ONCHAIN)
+    assert sum("convention: staked/locked count as circulating" in ln for ln in lines) == n_projects
+    for name in ("Morpho", "Aerodrome", "Aethir", "Plume", "Near"):
+        assert config.circulating_onchain(name)["status"] == "not_established"
+        cand = config.NONCIRCULATING_CANDIDATES[name]
+        assert cand["addresses"] and all(a["source"] and a["address"] for a in cand["addresses"])
+    assert any(a["address"] == "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa"
+               for a in config.NONCIRCULATING_CANDIDATES["Morpho"]["addresses"])
+    hl = config.CIRCULATING_ONCHAIN["Hyperliquid"]
+    assert "NOT ESTABLISHED" in hl["noncirculating_seen"]["0x43e9abea1910387c4292bca4b94de81462f8a251"]["identity"]
+    assert abs(hl["headline_change"]["coingecko_circulating"] / hl["headline_change"]["first_party_circulating"]
+               - hl["headline_change"]["factor"]) < 0.001

@@ -24,11 +24,10 @@ ONE CALL gives both series, each a list of {"t": unix seconds, "v": ETH as a flo
                                                      total, not delta-summed
 The shape is still verified on every call and NOTHING is stored if it does not hold.
 
-WHAT IT FEEDS:
-  total_supply_ultrasound  -> history_derive: gross_issuance_tokens = d(supply) + burn for the
-                              days BEFORE the Etherscan leg (declared handover), which gives the
-                              crossover and net supply change a full window
-  beacon_validators_eth    -> the 166.32 x sqrt(staked) issuance cross-check, Q0 average
+WHAT IT FEEDS: a CROSS-CHECK BEFORE 2024-06-22 ONLY. Jake's probe (2026-09-30) found both
+series frozen at 2024-06-22 (t=1719014400), so they cannot give the last year; the issuance and
+staked history route is ETH.Store's per-day consensus rewards (fetch/beaconchain.py). A frozen
+series is stored whole and its log line says FROZEN.
 
 ROBOTS ARE CHECKED AGAINST THE API PATH ITSELF (RFC 9309), not the page: the live run of
 2026-09-17/18 refused the page root (https://ultrasound.money/), which says nothing about
@@ -112,7 +111,8 @@ class UltrasoundHistory:
         """Store each declared series; refuse any whose shape differs from the source-read one."""
         done = {}
         keys = sorted(body)[:20] if isinstance(body, dict) else type(body).__name__
-        horizon = today() - pd.Timedelta(days=int(spec.get("keep_days", 400)))
+        kd = spec.get("keep_days", 400)
+        horizon = today() - pd.Timedelta(days=int(kd)) if kd else pd.Timestamp.min
         for field, metric in spec["series"].items():
             pts = self._points(body.get(field)) if isinstance(body, dict) else None
             if pts is None:
@@ -128,8 +128,12 @@ class UltrasoundHistory:
                                        f"{spec.get('keep_days', 400)} days", TIER)
                 continue
             frame = tidy(pts, name, metric, f"{SOURCE}:{field}", TIER)
+            last = frame["date"].max()
+            # FROZEN SERIES SAY SO (Jake's probe, 2026-09-30: both end 2024-06-22).
+            frozen = (f" — FROZEN: the series ends {last.date()}, {(today() - last).days} days ago; "
+                      f"{spec.get('role', 'cross-check only')}") if (today() - last).days > 30 else ""
             out.add(frame, SOURCE, name, f"{metric} = ultrasound.money {field}: {len(frame)} day(s) "
-                                         f"{frame['date'].min().date()}..{frame['date'].max().date()} "
-                                         f"(ETH) — {spec.get('note', '')}", TIER)
+                                         f"{frame['date'].min().date()}..{last.date()} "
+                                         f"(ETH) — {spec.get('note', '')}{frozen}", TIER)
             done[metric] = len(frame)
         return done

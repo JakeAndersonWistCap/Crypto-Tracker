@@ -294,9 +294,29 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     us = project.get("ultrasound_history") or {}
     if metric in (us.get("series") or {}).values():
         dedicated.append((f"ultrasound.money's daily history ({us.get('url')})", "ultrasound_history"))
+    if metric in (ps.get("commission_metric"), ps.get("net_apr_metric")):
+        dedicated.append(("Plume's staking diamond getValidatorsList() (fetch/plume_staking.py, "
+                          f"{ps.get('address')} on {ps.get('rpc')})", "plume_sources"))
     if metric == "circulating_supply_first_party":
         dedicated.append(("Hyperliquid's own tokenDetails.circulatingSupply (fetch/hypercore.py)",
                           "hyperliquid_history_routes"))
+    # 2026-09-30: the explorer stats service, growthepie's cross-checks, DefiLlama's staking series.
+    bs = project.get("blockscout_stats") or {}
+    if metric in (bs.get("lines") or {}):
+        dedicated.append((f"the explorer stats service {bs.get('base')} chart {bs['lines'][metric]!r} "
+                          f"(fetch/blockscout_stats.py)", "plume_sources"))
+    gp = project.get("growthepie") or {}
+    if metric in (gp.get("metrics") or {}):
+        dedicated.append((f"growthepie fundamentals.json ({gp.get('origin_key')!r}, "
+                          f"{gp['metrics'][metric]!r}; fetch/growthepie.py)", "plume_growthepie"))
+    ds = project.get("defillama_staking_history") or {}
+    if metric == ds.get("metric"):
+        dedicated.append((f"DefiLlama /protocol/{ds.get('protocol')} chainTvls {list(ds.get('keys', ()))} "
+                          f"— key UNCONFIRMED ({ds.get('status')})", "hyperliquid_history_routes"))
+    if metric == config.ARTEMIS_SETTLEMENT["metric"] and name in config.ARTEMIS_SETTLEMENT["chains"]:
+        c = config.ARTEMIS_SETTLEMENT["chains"][name]
+        dedicated.append((f"Jake's Artemis CSV export {config.ARTEMIS_SETTLEMENT['dir']}/{c['file']} "
+                          f"(fetch/artemis.py; RUNBOOK 11j)", "settlement_sources"))
     if dedicated:
         what, probe = dedicated[0]
         return (f"the route is {what}, and it produced nothing this run",
@@ -918,6 +938,14 @@ def served_by(source: str, project: dict) -> set[str] | None:
              | {es[k] for k in ("consensus_metric", "consensus_flow") if es.get(k)}) if es else set()
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
+    elif source == "blockscout_stats":
+        m = set((project.get("blockscout_stats") or {}).get("lines") or {})
+    elif source == "artemis_csv":
+        m = ({config.ARTEMIS_SETTLEMENT["metric"]}
+             if name in config.ARTEMIS_SETTLEMENT["chains"] else set())
+    elif source == "plume_staking":
+        ps = project.get("plume_staking") or {}
+        m = {ps[k] for k in ("apr_metric", "stake_metric", "commission_metric", "net_apr_metric") if ps.get(k)}
     elif source == "maple_page":
         m = set((project.get("transparency_page") or {}).get("metrics") or {})
     elif source == "explorer":

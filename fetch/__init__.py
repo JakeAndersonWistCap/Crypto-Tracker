@@ -33,6 +33,7 @@ from .dune import Dune
 from .gaps import detect as detect_gaps, note_timeouts
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
+from .blockscout_stats import BlockscoutStats
 from .nearblocks import NearBlocks
 from .beaconchain import BeaconChain
 from .maple_transparency import MapleTransparency
@@ -46,6 +47,7 @@ from .balance_flow import BalanceFlow
 from .reward_vault import RewardVaultRates
 from .pendle_epochs import PendleEpochs
 from .ultrasound import UltrasoundHistory
+from .artemis import ArtemisCSV
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
@@ -62,6 +64,8 @@ TIER_ORDER = [
     ("morpho_api", 1, lambda ctx: MorphoBlueApi()),
     # Chain activity — daily active addresses and transaction count, free and unauthenticated.
     ("growthepie", 1, lambda ctx: GrowThePie()),
+    # Plume's own explorer stats service (Blockscout), full daily history (2026-09-30).
+    ("blockscout_stats", 1, lambda ctx: BlockscoutStats(last_dates=ctx["last_dates"])),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
     ("nearblocks", 1, lambda ctx: NearBlocks(last_dates=ctx["last_dates"])),
     # Ethereum's own consensus-layer issuance (ETH.Store) — keyed (BEACONCHAIN_API_KEY). Ahead
@@ -94,6 +98,8 @@ TIER_ORDER = [
     ("pendle_api", 3, lambda ctx: PendleEpochs()),
     # Ethereum's daily supply and staked-ETH history, one call (ultrasound.money API, 2026-09-30).
     ("ultrasound", 3, lambda ctx: UltrasoundHistory()),
+    # Artemis settlement volume, from Jake's CSV exports in data/artemis/ (local files, 2026-09-30).
+    ("artemis_csv", 5, lambda ctx: ArtemisCSV()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),
@@ -471,6 +477,14 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
     for p in projects:
         name = p["name"]
         if "pool_release_tokens" not in config.metrics_for_project(p):
+            continue
+        # A PAGE-MEASURED RELEASE IS THE ONLY ROUTE (Maple's SSF, 2026-09-30): declared on the page
+        # block, so the derivation never writes beside it — not even on a day the page fails.
+        tp = ((p.get("transparency_page") or {}).get("metrics") or {}).get("pool_release_tokens")
+        if tp:
+            out.skipped(SOURCE_DERIVED, name,
+                        f"pool_release_tokens: NOT derived — measured from the transparency page "
+                        f"({tp['field']}, {tp.get('granularity', 'daily')}) and the only route.", tier=2)
             continue
         # ** A MEASURED RELEASE WINS, AND THE DERIVATION STANDS DOWN RATHER THAN COMPETING. **
         # POOL_RELEASE_ROUTES: where a Transfer-event scan of the pool wallet exists and passed
@@ -1718,7 +1732,7 @@ TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 60, "beaconchain": 60, "coingecko": 240, "hypercore_info": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
-    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 60,
+    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 60, "blockscout_stats": 90,
 }
 DEFAULT_BUDGET_S = 120
 HEARTBEAT_AFTER_S = 30.0

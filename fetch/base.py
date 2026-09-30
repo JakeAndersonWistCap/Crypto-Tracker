@@ -387,7 +387,15 @@ _RATE_HEADERS = ("retry-after", "ratelimit-reset", "ratelimit-window", "x-rateli
 
 
 class RateLimited(RuntimeError):
-    """A 429 whose Retry-After is longer than MAX_RETRY_WAIT_S. Not waited; the message says why."""
+    """A 429 whose Retry-After is longer than MAX_RETRY_WAIT_S. Not waited; the message says why.
+    `retry_after` (seconds) and `headers` (the rate-limit headers only, never keys) let a caller
+    that holds several endpoints of one host record each endpoint's own wait (2026-09-30:
+    beaconcha.in asked 150,198s on /ethstore/latest and 36,338s on /ethstore/{day})."""
+
+    def __init__(self, msg: str, retry_after: float | None = None, headers: dict | None = None):
+        super().__init__(msg)
+        self.retry_after = retry_after
+        self.headers = headers or {}
 
 
 # ===== WHAT THE RUN IS WAITING ON, FOR THE HEARTBEAT. =====
@@ -536,7 +544,7 @@ class Http:
                             f"HTTP 429 from {host}: the server asks for a {asked:,.0f}s wait "
                             f"(~{asked / 3600:.1f}h) — longer than the {self.max_retry_wait:.0f}s "
                             f"this tool waits, so NOT waited; retried on the next run. Its "
-                            f"rate-limit headers: {seen or 'none'}")
+                            f"rate-limit headers: {seen or 'none'}", retry_after=asked, headers=seen)
                     if attempt < self.retries:
                         wait = asked
                         if wait is None and r.status_code == 429 and self.rate_limit_wait:
@@ -553,6 +561,9 @@ class Http:
                         detail = (r.text or "")[:300]
                     raise HttpError(r.status_code, url, detail)
                 r.raise_for_status()
+                # THE LAST RESPONSE'S HEADERS (2026-09-30): a caller budgeting against the
+                # server's own rate-limit counters (beaconcha.in's x-ratelimit-*) reads them here.
+                self.last_headers = dict(r.headers)
                 return r.json()
             except HttpError:
                 raise          # a 4xx is a definite answer from the server, not worth retrying

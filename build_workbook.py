@@ -849,6 +849,36 @@ def _monthly_leg_views(groups: dict) -> None:
             groups[(name, metric)] = g[keep]
 
 
+def _usd_history_views(groups: dict) -> None:
+    """A token flow's history BEFORE its live read = a USD series / same-day price (config
+    `burn_history`). Hyperliquid, Jake 2026-09-30: the Assistance Fund's buyback IS its burn, so
+    gross_burn_tokens before the first live AF delta = DefiLlama holders revenue / HYPE price that
+    day. Prepended under its own source — the declared first leg of the series_handover — and
+    never overlapping the live read; a day with no same-day price is left out."""
+    for p in scoped_projects():
+        name = p["name"]
+        spec = p.get("burn_history") or {}
+        if not spec:
+            continue
+        usd, px = groups.get((name, spec["usd_metric"])), groups.get((name, "price_usd"))
+        if usd is None or usd.empty or px is None or px.empty:
+            continue
+        live = groups.get((name, spec["metric"]))
+        pmap = px.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        pmap = pmap[pmap > 0]
+        h = usd.drop_duplicates("date", keep="last")
+        if live is not None and not live.empty:
+            h = h[h["date"] < live["date"].min()]
+        h = h[h["date"].isin(pmap.index)].copy()
+        if h.empty:
+            continue
+        h["value"] = h["value"].astype(float).values / pmap.loc[h["date"]].values
+        h["metric"], h["source"] = spec["metric"], spec["source"]
+        cols = live.columns if live is not None and not live.empty else usd.columns
+        parts = [_as_stored(h, cols)] + ([live] if live is not None and not live.empty else [])
+        groups[(name, spec["metric"])] = pd.concat(parts, ignore_index=True).sort_values("date")
+
+
 def _burn_total_views(groups: dict) -> None:
     """A burn TOTAL summed from its components, per day, at read time (config.burn_total).
 
@@ -1046,6 +1076,24 @@ def _as_stored(view: pd.DataFrame, columns) -> pd.DataFrame:
 _VIEW_BLOCKS: dict = {}
 
 
+def _leg_disagrees(src: pd.DataFrame, held: pd.DataFrame | None, tol: float) -> str | None:
+    """None when the history leg and the live series agree within `tol` on the latest day both
+    hold; else why it is not prepended (no shared day, or the two differ by more)."""
+    if held is None or held.empty:
+        return "no live reading to check the history leg against yet"
+    a = src.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+    b = held.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+    common = a.index.intersection(b.index)
+    if common.empty:
+        return (f"the history leg ({a.index.min().date()}..{a.index.max().date()}) shares no day with "
+                f"the live read (from {b.index.min().date()}) — nothing to check agreement on")
+    d = common.max()
+    if b[d] == 0 or abs(a[d] / b[d] - 1) > tol:
+        return (f"history leg {a[d]:,.0f} vs live {b[d]:,.0f} on {d.date()} "
+                f"({(a[d] / b[d] - 1) if b[d] else float('inf'):+.1%}) — beyond ±{tol:.0%}; not prepended")
+    return None
+
+
 def _history_leg_views(groups: dict) -> None:
     """A flow's DECLARED history leg, prepended at read time (config `history_legs`).
 
@@ -1061,6 +1109,19 @@ def _history_leg_views(groups: dict) -> None:
                 continue
             src = src[src["source"].astype(str).str.startswith(leg["source_prefix"])]
             held = groups.get((name, metric))
+            # AGREEMENT FIRST, where the leg asks for it (Hyperliquid's DefiLlama staking series,
+            # 2026-09-30): the two measuring points must agree within `agree_within` on the latest
+            # day both hold, or the history is not prepended and the reason is recorded.
+            tol = leg.get("agree_within")
+            if tol is not None:
+                why = _leg_disagrees(src, held, float(tol))
+                if why:
+                    _VIEW_BLOCKS[(name, f"{metric}:history_leg")] = why
+                    # said where it is seen: on the candidate series' own Data row
+                    cand = groups[(name, leg["from_metric"])].copy()
+                    cand["source"] = cand["source"].astype(str) + f"[NOT {metric}'s history: {why}]"
+                    groups[(name, leg["from_metric"])] = cand
+                    continue
             if held is not None and not held.empty:
                 src = src[src["date"] < held["date"].min()]
             if src.empty:
@@ -1070,6 +1131,54 @@ def _history_leg_views(groups: dict) -> None:
             cols = held.columns if held is not None and not held.empty else src.columns
             parts = [_as_stored(view, cols)] + ([held] if held is not None and not held.empty else [])
             groups[(name, metric)] = pd.concat(parts, ignore_index=True).sort_values("date")
+
+
+MODEL_INVERSE_SQRT = "model:inverse_sqrt(locked_tokens)"
+
+
+def _emissions_model_views(groups: dict) -> None:
+    """Hyperliquid (Jake, 2026-09-30): staking rewards per day from the published formula,
+    rate_at x sqrt(at_staked / S) x S / 365, over the stake history (config `reward_formula`).
+
+    Always shown as its own row. It is prepended to the observed series (the fall in
+    futureEmissions) as history ONLY when the two agree within `agree_within` over at least
+    `min_shared_days` shared days; the row's source carries the ratio either way."""
+    for p in scoped_projects():
+        name = p["name"]
+        spec = p.get("reward_formula") or {}
+        stake = groups.get((name, spec.get("stake_metric")))
+        if not spec or stake is None or stake.empty:
+            continue
+        s = stake.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        s = s[s > 0]
+        if s.empty:
+            continue
+        model = spec["rate_at"] * (spec["at_staked"] * s) ** 0.5 / 365.0
+        obs = groups.get((name, spec["observed_metric"]))
+        o = pd.Series(dtype=float) if obs is None or obs.empty else \
+            obs.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        common = model.index.intersection(o.index)
+        ratio = float(o[common].sum() / model[common].sum()) if len(common) and model[common].sum() else None
+        agrees = (ratio is not None and len(common) >= int(spec["min_shared_days"])
+                  and abs(ratio - 1) <= float(spec["agree_within"]))
+        tag = (f"{MODEL_INVERSE_SQRT}[observed/model={ratio:.2f} over {len(common)}d]" if ratio is not None
+               else f"{MODEL_INVERSE_SQRT}[no shared day with {spec['observed_metric']}]")
+        view = pd.DataFrame({"date": model.index, "project": name, "metric": spec["metric"],
+                             "value": model.values, "source": tag, "tier": 1})
+        groups[(name, spec["metric"])] = _as_stored(view, stake.columns)
+        if not agrees:
+            _VIEW_BLOCKS[(name, f"{spec['observed_metric']}:history_leg")] = (
+                f"modelled rewards not used as history: observed/model = "
+                f"{'n/a' if ratio is None else f'{ratio:.2f}'} over {len(common)} shared day(s); needs "
+                f"±{spec['agree_within']:.0%} over >= {spec['min_shared_days']} days")
+            continue
+        first = o.index.min()
+        hist = view[view["date"] < first].copy()
+        if hist.empty:
+            continue
+        hist["metric"], hist["source"] = spec["observed_metric"], MODEL_INVERSE_SQRT
+        groups[(name, spec["observed_metric"])] = pd.concat([_as_stored(hist, obs.columns), obs],
+                                                            ignore_index=True).sort_values("date")
 
 
 def _circulating_views(groups: dict) -> None:
@@ -1239,17 +1348,23 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _monthly_leg_views(groups)
+    _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
     _burn_total_views(groups)
     _one_off_views(groups)        # BEFORE the relabel, so a burn-route buyback copies the ongoing flow
     _relabel_views(groups)
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
+    _native_fee_usd_views(groups)
     _VIEW_BLOCKS.clear()
     _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
-    _issuance_views(groups, asof)
+    # THE HISTORY LEGS FIRST (2026-09-30): Ethereum's first-party issuance view keeps its
+    # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
+    _emissions_model_views(groups)
+    _issuance_views(groups, asof)
     _reward_end_views(groups, asof)
     _circulating_views(groups)
+    _settlement_views(groups)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -2759,9 +2874,9 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
 
 
 def _a1_headline(R: Refs) -> list[tuple]:
-    """The VALIDATOR yield (securing the chain) — never a protocol revenue share — and the manual
-    settlement-volume input Network Reserve Ratio needs. Neither ratio built on them (NRR, Total
-    Yield) is on the sheet: their formulas are the note's and are not yet in config."""
+    """The VALIDATOR yield (securing the chain) — never a protocol revenue share — and the Network
+    Reserve Ratio with its settlement-volume input (Artemis, 2026-09-30). Total Yield is not on
+    the sheet: its formula is the note's and is not yet in config."""
     def vyield(r, p):
         spec = config.VALIDATOR_YIELD.get(p["name"])
         if not spec:
@@ -2813,9 +2928,19 @@ def _a1_headline(R: Refs) -> list[tuple]:
          {"metric_fn": lambda n: {"Ethereum": "beacon_chain_eth", "Near": "total_supply",
                                   "Chainlink": "reward_emission_rate_annual"}.get(n)}),
         *_eth_yield_columns(R),
-        ("Settlement volume, annualised ($) — The Block adjusted, manual quarterly",
-         lambda r, p: pull(R.D(r, "settlement_volume_annual_usd", "now")) if "settlement_volume_annual_usd"
-         in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_annual_usd"}),
+        # SETTLEMENT VOLUME AND NRR (Jake, 2026-09-30): Artemis's daily settlement volume (DEX +
+        # NFT trading + P2P transfers), summed over the 365 days ending on the export's LAST date,
+        # and market cap on that same date over it. The date column is the flag: stale — AMBER —
+        # after 45 days (config.ARTEMIS_SETTLEMENT).
+        ("Settlement volume, trailing 365d ($) — Artemis: DEX + NFT + P2P transfers",
+         lambda r, p: pull(R.D(r, "settlement_volume_365d_usd", "now")) if "settlement_volume_365d_usd"
+         in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_365d_usd"}),
+        ("Settlement volume: last date of the Artemis export (both NRR inputs end here)",
+         lambda r, p: pull(R.D(r, "network_reserve_ratio", "latest_date")) if "network_reserve_ratio"
+         in config.metrics_for_project(p) else "", FMT_TEXT, "pull", False, {"metric": "network_reserve_ratio"}),
+        ("NETWORK RESERVE RATIO — market cap ÷ trailing-365d settlement volume, same end date",
+         lambda r, p: pull(R.D(r, "network_reserve_ratio", "now")) if "network_reserve_ratio"
+         in config.metrics_for_project(p) else "", FMT_PCT, "pull", True, {"metric": "network_reserve_ratio"}),
     ]
 
 
@@ -2980,7 +3105,87 @@ def _buyback_tokens_from_usd_views(groups: dict) -> None:
         groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
 
 
+def _native_fee_usd_views(groups: dict) -> None:
+    """fees_usd := fees in the native coin x price_usd on the SAME date (config
+    `fees_usd_from_native`). Plume, Jake's probe 4c 2026-09-30: the explorer's txnsFee is in PLUME.
+
+    growthepie's rows under fees_usd are retired from the metric (now fees_usd_growthepie; SQL
+    section BE) and are not shown in it; a row from any other source is a measurement and leaves
+    the column alone. A day with no same-day price is left out."""
+    for p in scoped_projects():
+        name = p["name"]
+        spec = p.get("fees_usd_from_native") or {}
+        nat, px = groups.get((name, spec.get("native_metric"))), groups.get((name, "price_usd"))
+        if not spec or nat is None or nat.empty or px is None or px.empty:
+            continue
+        held = groups.get((name, "fees_usd"))
+        if held is not None and not held.empty:
+            src = held["source"].astype(str)
+            if (~src.str.startswith("growthepie") & (src != spec["source"])).any():
+                continue
+        price_on = px.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        price_on = price_on[price_on > 0]
+        usd = nat[nat["date"].isin(price_on.index)].drop_duplicates("date", keep="last").copy()
+        if usd.empty:
+            continue
+        usd["value"] = usd["value"].astype(float) * usd["date"].map(price_on)
+        usd["metric"], usd["source"] = "fees_usd", spec["source"]
+        groups[(name, "fees_usd")] = _as_stored(usd, nat.columns)
+
+
 DERIVED_USD_OVER_PRICE = "derived:usd/price"
+
+
+def _settlement_views(groups: dict) -> None:
+    """Network Reserve Ratio = market cap / trailing-365-day settlement volume. Jake, 2026-09-30.
+
+    The window ENDS ON THE ARTEMIS EXPORT'S LAST DATE, and market cap is read on that same date,
+    so both sides measure the same day; both views are dated to it, which is what the cell's
+    staleness (45 days, config.ARTEMIS_SETTLEMENT) and its Latest date read. A market cap from an
+    earlier day is used only within 7 days, and the source string states the lag. Fewer than 365
+    days in the window (a blank Artemis day, a short export) builds nothing and says why: a short
+    sum would understate the volume and overstate the ratio.
+    """
+    spec = config.ARTEMIS_SETTLEMENT
+    n = int(spec["window_days"])
+    for p in scoped_projects():
+        name = p["name"]
+        sv = groups.get((name, spec["metric"]))
+        if sv is None or sv.empty:
+            continue
+        daily = sv.assign(date=pd.to_datetime(sv["date"]).dt.normalize()) \
+                  .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+        last = daily.index.max()
+        window = daily[daily.index > last - pd.Timedelta(days=n)]
+        if len(window) < n:
+            for m in config.ARTEMIS_DERIVED:
+                _VIEW_BLOCKS[(name, m)] = (f"the Artemis export holds {len(window)} of the {n} days ending "
+                                           f"{last.date()} — a short window would understate settlement "
+                                           f"volume and overstate the ratio; re-export the full history")
+            continue
+        total = float(window.sum())
+        src = str(sv.sort_values("date").iloc[-1]["source"])
+        tot = pd.DataFrame({"date": [last], "project": name, "metric": "settlement_volume_365d_usd",
+                            "value": [total],
+                            "source": f"derived:sum365({src}) {window.index.min().date()}..{last.date()}"})
+        groups[(name, "settlement_volume_365d_usd")] = _as_stored(tot, sv.columns)
+        mc = groups.get((name, "market_cap_usd"))
+        if mc is None or mc.empty or total <= 0:
+            continue
+        mcd = mc.assign(date=pd.to_datetime(mc["date"]).dt.normalize()) \
+                .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+        mcd = mcd[(mcd.index <= last) & (mcd.index >= last - pd.Timedelta(days=7))]
+        if mcd.empty:
+            _VIEW_BLOCKS[(name, "network_reserve_ratio")] = (
+                f"no market cap within 7 days before the Artemis export's last date {last.date()} — "
+                f"the ratio is not built on a later market cap than the volume it divides")
+            continue
+        on, cap = mcd.index.max(), float(mcd.iloc[-1])
+        lag = "" if on == last else f"; market cap {(last - on).days} day(s) EARLIER, on {on.date()}"
+        nrr = pd.DataFrame({"date": [last], "project": name, "metric": "network_reserve_ratio",
+                            "value": [cap / total],
+                            "source": f"derived:market_cap({on.date()})/settlement_365d(to {last.date()}){lag}"})
+        groups[(name, "network_reserve_ratio")] = _as_stored(nrr, sv.columns)
 
 
 def _protocol_yield(R: Refs, data_by_key: dict | None = None):

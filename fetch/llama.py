@@ -316,42 +316,77 @@ class DefiLlama:
             self._sum_slugs(project, spec, window_days, out)
 
     def _sum_slugs(self, project: dict, spec: dict, window_days, out) -> None:
-        """One metric = the SUM of several DefiLlama slugs' daily charts (Chainlink's customer
-        revenue, Jake 2026-09-30: every service's payments, all chains). A day is stored only
-        where EVERY slug reports it — a day missing one service would read low by that service,
-        silently. A repeated date within one slug is reported and the first kept, never added."""
+        """One metric = the SUM of a parent's service adapters (Chainlink's customer revenue,
+        Jake 2026-09-30: every service's payments, all chains).
+
+        SLUGS ARE RESOLVED, NOT HARD-CODED (Jake's run 2026-09-30 14:54: "Fees for
+        chainlink-keepers not found" — Keepers was renamed Chainlink Automation and the whole sum
+        went empty). Each service is matched by its keywords against the PARENT's own
+        childProtocols (the listing names DefiLlama serves today), then its fallback slugs.
+        WHATEVER REPORTS IS SUMMED: a service with no data for `retired_after_days` before the
+        newest day is RETIRED — counted as 0 after its last reported day, which is logged — and a
+        day on which an ACTIVE service has no point is stored and flagged in its source
+        ("[missing: …]"), never dropped and never silently low."""
         name, metric, dt = project["name"], spec["metric"], spec.get("data_type", "dailyFees")
-        per: dict = {}
-        repeated = []
-        for kid in spec["slugs"]:
+        kids = []
+        try:
+            parent = self._summary(spec["parent"], dt)
+            kids = [k for k in (parent.get("childProtocols") or []) if self._child_slug(k)]
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"{metric}: parent {spec['parent']}:{dt} unreadable ({e}); "
+                                   f"services resolved from fallback slugs only", TIER)
+        per, unresolved, resolved = {}, [], {}
+        for svc in spec["services"]:
+            label = svc["service"]
+            cands = []
+            for k in kids:
+                nm = str(k.get("name") if isinstance(k, dict) else k).lower()
+                if any(w in nm for w in svc["match"]) and not any(w in nm for w in svc.get("exclude", ())):
+                    cands.append(self._child_slug(k))
+            cands += [c for c in svc.get("fallback_slugs", ()) if c not in cands]
+            got, tried = None, []
+            for slug in cands:
+                try:
+                    chart = self._summary_chart(slug, dt)
+                    got = slug
+                    break
+                except Exception as e:  # noqa: BLE001
+                    tried.append(f"{slug}: {e}")
+            if got is None:
+                unresolved.append(f"{label} (tried {'; '.join(tried) or 'no candidate'})")
+                continue
+            resolved[label] = got
             seen: dict = {}
-            dupes = 0
-            try:
-                for d, v in self._summary_chart(kid, dt):
-                    day = pd.Timestamp(d.date())
-                    if day in seen:
-                        dupes += 1
-                        continue
+            for d, v in chart:
+                day = pd.Timestamp(d.date())
+                if day not in seen:          # a repeated date: the first kept, never added
                     seen[day] = float(v)
-            except Exception as e:  # noqa: BLE001
-                out.fail(SOURCE, name, f"{metric}: {kid}:{dt}: {e} — the sum is not stored "
-                                       f"without every service", TIER)
-                return
-            if dupes:
-                repeated.append(f"{kid} repeated {dupes} date(s), first kept")
-            per[kid] = seen
-        common = set.intersection(*(set(v) for v in per.values())) if per else set()
-        rows = sorted((d, sum(per[k][d] for k in per)) for d in common)
-        if not rows:
-            out.fail(SOURCE, name, f"{metric}: no day on which all of {', '.join(spec['slugs'])} "
-                                   f"report", TIER)
+            per[label] = seen
+        if not per:
+            out.fail(SOURCE, name, f"{metric}: no service adapter answered — " + "; ".join(unresolved), TIER)
             return
-        src = f"{SOURCE}:sum({'+'.join(spec['slugs'])})"
-        frame = tidy(rows, name, metric, src, TIER)
+        newest = max(max(v) for v in per.values() if v)
+        retire_after = pd.Timedelta(days=int(spec.get("retired_after_days", 30)))
+        span = {k: (min(v), max(v)) for k, v in per.items() if v}
+        retired = {k: e for k, (_, e) in span.items() if newest - e > retire_after}
+        days = sorted(set().union(*(set(v) for v in per.values())))
+        rows, flagged = [], 0
+        for d in days:
+            total = sum(v.get(d, 0.0) for v in per.values())
+            missing = [k for k, (b0, e0) in span.items() if b0 <= d <= e0 and d not in per[k]]
+            missing += [u.split(" (")[0] for u in unresolved]
+            src = f"{SOURCE}:sum({spec['parent']} services)" + (f"[missing: {', '.join(missing)}]" if missing else "")
+            flagged += bool(missing)
+            rows.append((d, total, src))
+        frame = pd.concat([tidy([(d, v)], name, metric, src, TIER) for d, v, src in rows], ignore_index=True)
         out.add(window(frame, window_days), SOURCE, name,
-                f"{metric} = sum of {dt} over {', '.join(spec['slugs'])} ({len(rows)} common day(s) "
-                f"from {rows[0][0].date()}) — {spec.get('why', '')}"
-                + (f" [{'; '.join(repeated)}]" if repeated else ""), TIER)
+                f"{metric} = sum of {dt} over {len(per)} service(s): "
+                + ", ".join(f"{k}={v}" for k, v in resolved.items())
+                + (f"; RETIRED (0 after): " + ", ".join(f"{k} last reported {e.date()}" for k, e in retired.items())
+                   if retired else "")
+                + (f"; UNRESOLVED (flagged on every day): " + "; ".join(unresolved) if unresolved else "")
+                + f"; {flagged} of {len(rows)} day(s) flagged with a missing active service — "
+                + spec.get("why", ""), TIER)
 
     def _fees_with_restructure_guard(self, project: dict, slug: str, restructure: dict,
                                      window_days, out) -> None:
@@ -606,6 +641,57 @@ class DefiLlama:
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{slug}:protocol tvl: {e}", TIER)
 
+    # ===== STAKED TOKENS' HISTORY FROM /protocol/{slug} (Hyperliquid, Jake 2026-09-30). =====
+    # DefiLlama's server files a protocol's `staking` export under chainTvls["staking"] and
+    # chainTvls["<Chain>-staking"] (defillama-server normalizeChain.ts extraSections; read via a
+    # fork, 2025-10-13), each {tvl: [{date, totalLiquidityUSD}], tokens: [{date, tokens: {..}}]}.
+    # NO HYPE-staking adapter was found in DefiLlama-Adapters @0703eb6 (2026-09-30), so the key may
+    # well be absent: the run then names the keys that ARE there and stores nothing. Stored under
+    # its own metric; it becomes locked_tokens' history only through the declared history leg,
+    # which checks it against the live validatorSummaries read on a shared day first.
+    def staking_history(self, project: dict, out):
+        spec, name = project.get("defillama_staking_history") or {}, project["name"]
+        if not spec:
+            return
+        slug = spec["protocol"]
+        if not self.daily.due(f"defillama:staking:{slug}", self._today):
+            out.mark_current(SOURCE, name, spec["metric"], f"{spec['metric']}: /protocol/{slug} "
+                                                           f"staking already read today", TIER)
+            return
+        try:
+            j = self.http.get(f"{API}/protocol/{slug}")
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{spec['metric']}: /protocol/{slug}: {e}", TIER)
+            return
+        self.daily.done(f"defillama:staking:{slug}", self._today)
+        ct = j.get("chainTvls") or {}
+        key = next((k for k in spec["keys"] if isinstance(ct.get(k), dict)), None)
+        if key is None:
+            out.fail(SOURCE, name, f"{spec['metric']}: /protocol/{slug} carries none of "
+                                   f"{list(spec['keys'])} — chainTvls keys present: "
+                                   f"{sorted(ct)[:20] or 'none'}. NOTHING STORED.", TIER)
+            return
+        rows = []
+        for r in ct[key].get("tokens") or []:
+            toks = r.get("tokens") if isinstance(r, dict) else None
+            if not isinstance(toks, dict):
+                continue
+            hit = [v for k, v in toks.items() if str(k).lower() in spec["token_keys"]]
+            if len(hit) == 1 and isinstance(hit[0], (int, float)):
+                rows.append((datetime.fromtimestamp(r["date"], tz=timezone.utc), float(hit[0])))
+        if not rows:
+            sample = next((sorted(r["tokens"])[:8] for r in ct[key].get("tokens") or []
+                           if isinstance(r, dict) and isinstance(r.get("tokens"), dict)), [])
+            out.fail(SOURCE, name, f"{spec['metric']}: chainTvls[{key!r}].tokens holds no "
+                                   f"{list(spec['token_keys'])} amount; token keys seen {sample}. "
+                                   f"NOTHING STORED.", TIER)
+            return
+        frame = tidy(rows, name, spec["metric"], f"{SOURCE}:staking[{key}]", TIER)
+        frame = frame[frame["date"] < today()]
+        out.add(frame, SOURCE, name, f"{spec['metric']} = /protocol/{slug} chainTvls[{key!r}].tokens: "
+                                     f"{len(frame)} day(s) {frame['date'].min().date()}.."
+                                     f"{frame['date'].max().date()}", TIER)
+
     # ===== A LENDING PROTOCOL'S SUPPLY SIDE, AND THE CAVEAT THAT TRAVELS WITH IT. =====
     #
     # supply_units and utilisation_pct are archetype 2's two capacity columns, and for a lending
@@ -793,6 +879,7 @@ class DefiLlama:
             self.check_restructure(p, out)
             self.protocol_tvl(p, window_days, out)
             self.lending_supply(p, window_days, out)
+            self.staking_history(p, out)
             self.chain_tvl(p, window_days, out)
             self.stablecoins(p, window_days, out)
         self.rwa(projects, window_days, out)
