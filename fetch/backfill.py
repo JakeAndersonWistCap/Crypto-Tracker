@@ -59,8 +59,7 @@ def derived_inputs(project: dict, metric: str) -> set[str]:
     if metric == "gross_burn_tokens":
         out |= burn_inputs
     # ISSUANCE = d(supply) + the burn: its burn's inputs are its inputs (NEAR, Ethereum).
-    if metric == "gross_issuance_tokens" and (config.HISTORY_DERIVED.get((name, metric))
-                                              or project.get("issuance_history")):
+    if metric == "gross_issuance_tokens" and config.HISTORY_DERIVED.get((name, metric)):
         out |= burn_inputs
     if metric == "actual_buyback_usd":
         out |= {"actual_buyback_tokens", "price_usd"}
@@ -89,10 +88,7 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
         for metric in config.metrics_for_project(p):
             # FLOWS AND PRICES ONLY: Q0 sums a flow and averages a price. A stock is read "now";
             # most stock sources (CoinGecko's circulating, a contract balance) have no history.
-            # ...AND A SUPPLY HISTORY AN ISSUANCE HISTORY IS BUILT FROM (Ethereum, 2026-09-29).
-            hist_input = (metric == (p.get("issuance_history") or {}).get("supply_metric"))
-            if ((config.METRICS.get(metric) or {}).get("kind") != "flow" and metric not in PRICE_SERIES
-                    and not hist_input):
+            if ((config.METRICS.get(metric) or {}).get("kind") != "flow" and metric not in PRICE_SERIES):
                 continue
             first = first_dates.get((name, metric))
             if first is not None and pd.Timestamp(first) <= cutoff:

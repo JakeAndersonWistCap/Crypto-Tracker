@@ -1049,9 +1049,11 @@ _VIEW_BLOCKS: dict = {}
 def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
     """The PRIMARY issuance series, for every consumer. See config.ISSUANCE_PRIMARY.
 
-    declared_rate  gross_issuance_tokens := rate x total supply / 365 per day, from the declared
-                   effective date (or the first stored supply, whichever is later) to the day
-                   before asof, supply forward-filled. The derived series it replaces is the
+    declared_rate  gross_issuance_tokens := rate x total supply / 365 per day, to the day before
+                   asof, supply forward-filled; from the first stored supply, the declared
+                   history_supply_metric filling the days before the primary supply starts and
+                   the superseded rate applying before effective_from (with no superseded rate,
+                   nothing before effective_from is shown). The derived series it replaces is the
                    cross-check: annualised over the days it covers, more than max_ratio apart
                    either way BLOCKS the row with both figures.
     first_party    only rows from source_prefix; until any fall inside the Q0 window the row is
@@ -1080,17 +1082,44 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                 sup = groups.get((name, spec["supply_metric"]))
                 if sup is not None and not sup.empty:
                     sup = sup.drop_duplicates("date", keep="last").sort_values("date")
-                    eff = str((p.get("issuance_rate_declared") or {}).get("effective_from") or "")
-                    first = max(sup["date"].min(),
-                                pd.Timestamp(eff + ("-01" if len(eff) == 7 else "")) if eff else sup["date"].min())
+                    declared = p.get("issuance_rate_declared") or {}
+                    eff = str(declared.get("effective_from") or "")
+                    eff_ts = pd.Timestamp(eff + ("-01" if len(eff) == 7 else "")) if eff else None
+                    # THE DECLARED ROUTE OVER THE WHOLE STORED SUPPLY (NEAR, Jake 2026-09-30).
+                    # CoinGecko's total_supply starts 2026-09-11; the archival block-header
+                    # total_supply covers the year, so it supplies the level for the days before
+                    # the primary supply's first row. Before effective_from the SUPERSEDED rate
+                    # applies (NEAR: 5% until the 2025-10-30 halving); with no superseded rate
+                    # declared, nothing before effective_from is shown.
+                    old_rate = (declared.get("supersedes") or {}).get(spec["rate_path"][-1])
+                    hist = groups.get((name, spec.get("history_supply_metric")))
+                    hist = (hist.drop_duplicates("date", keep="last").sort_values("date")
+                            if hist is not None and not hist.empty else None)
+                    first = min(sup["date"].min(), hist["date"].min() if hist is not None else sup["date"].min())
+                    if eff_ts is not None and old_rate is None:
+                        first = max(first, eff_ts)
                     days = pd.date_range(first, asof - pd.Timedelta(days=1), freq="D")
-                    level = sup.set_index("date")["value"].astype(float).reindex(
-                        days.union(sup["date"])).sort_index().ffill().reindex(days)
+                    ffill = lambda s: s.set_index("date")["value"].astype(float).reindex(  # noqa: E731
+                        days.union(s["date"])).sort_index().ffill().reindex(days)
+                    level = ffill(sup)
+                    used = pd.Series(spec["supply_metric"], index=days)
+                    if hist is not None:
+                        early = level.isna()
+                        level = level.fillna(ffill(hist))
+                        used[early] = spec["history_supply_metric"]
                     level = level.dropna()
+                    used = used[level.index]
+                    rates = pd.Series(float(rate), index=level.index)
+                    if eff_ts is not None and old_rate is not None:
+                        rates[rates.index < eff_ts] = float(old_rate)
+                    # ONE MEASURING POINT: every row's source is the current declared route, and a
+                    # row computed otherwise says how in brackets (which _measuring_point strips).
+                    label = f"declared:{rate:.2%}/yr x {spec['supply_metric']}"
+                    srcs = [label if (r == float(rate) and u == spec["supply_metric"])
+                            else f"{label}[{r:.2%}/yr x {u}]" for r, u in zip(rates, used)]
                     view = pd.DataFrame({"date": level.index, "project": name, "metric": metric,
-                                         "value": level.values * float(rate) / ann,
-                                         "source": f"declared:{rate:.2%}/yr x {spec['supply_metric']}",
-                                         "tier": 1})
+                                         "value": level.values * rates.values / ann,
+                                         "source": srcs, "tier": 1})
                     groups[key] = _as_stored(view, sup.columns)
                     decl = float(rate) * float(sup["value"].iloc[-1])
                     if observed is not None and not observed.empty:

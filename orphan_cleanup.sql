@@ -3451,3 +3451,37 @@ SELECT date, value, source, fetched_at,
 --  WHERE project = 'Pendle' AND metric = 'pendle_distributed_tokens'
 --    AND date(date, '+14 days') > date('now');
 -- COMMIT;
+
+-- ========================================================================================
+-- BA. ETHEREUM: issuance ROUTE (a) rows, rejected as noise  2026-09-30
+--     Route (a) wrote gross_issuance_tokens = d(CoinGecko market cap / price) between update
+--     days + the burn, source 'derived:d_coingecko_supply+burn' (sometimes with a [..] note).
+--     Jake's run 2026-09-30T09:23:34Z: mean 3,063.1/day over 382 days but a daily range of
+--     -626,651.7..+1,331,145.2 with 174 negative days; each window's endpoints carry hundreds of
+--     thousands of ETH of error against ~245K ETH of quarterly issuance. The route is removed from
+--     the code (config: Ethereum issuance_history_rejected); these are the rows it left. The
+--     Etherscan leg ('derived:d_total_supply_protocol+burn', from 2026-09-29) is NOT touched.
+--     REVIEW FIRST.
+-- ========================================================================================
+-- BA1. WHAT ROUTE (a) WROTE, by source, with the span and the sign of the days.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(AVG(value), 1) AS mean_per_day, ROUND(MIN(value), 1) AS min_day,
+       ROUND(MAX(value), 1) AS max_day, SUM(value < 0) AS negative_days
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+   AND source LIKE 'derived:d_coingecko_supply+burn%'
+ GROUP BY source;
+
+-- BA2. WHAT STAYS: every other Ethereum issuance row (expect the Etherscan leg from 2026-09-29).
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+   AND source NOT LIKE 'derived:d_coingecko_supply+burn%'
+ GROUP BY source;
+
+-- BA3. THE PROPOSED DELETE: route (a)'s rows only. Only after BA1 and BA2 read as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
+--    AND source LIKE 'derived:d_coingecko_supply+burn%';
+-- COMMIT;

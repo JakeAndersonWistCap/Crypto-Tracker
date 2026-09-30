@@ -1528,123 +1528,6 @@ def supply_cadence(sup: pd.Series, tol: float | None = None) -> dict:
             "max_gap": int(max(gaps)) if gaps else None}
 
 
-MAX_UPDATE_GAP_DAYS = 7
-
-
-def issuance_history_rows(name: str, spec: dict, history: pd.DataFrame, before) -> tuple[pd.DataFrame, dict]:
-    """Issuance from a supply history, BETWEEN THE DAYS THE SUPPLY ACTUALLY UPDATED (2026-09-30).
-
-    A supply point dated d is the supply at d 00:00 UTC (CoinGecko market_chart's daily points).
-    Between consecutive update days u and v the supply change is real; every day in between is a
-    stale copy. So issuance over [u, v) = s(v) - s(u) + the burn of the days in [u, v), and it is
-    spread evenly over those days — the ETH schedule is near-uniform, and any window whose ends
-    fall on update days sums to the exact figure. With a daily cadence this is the plain daily
-    delta. Nothing after the last update is written (its interval is not closed); nothing is
-    written at all when updates are further apart than MAX_UPDATE_GAP_DAYS (median) — too coarse.
-    The current day's point is a live read, not 00:00, and is never used. (rows, stats)."""
-    h = history[history["project"] == name]
-    sup = h[h["metric"] == spec["supply_metric"]].set_index("date")["value"].sort_index()
-    burn = h[h["metric"] == spec["burn_metric"]].set_index("date")["value"].sort_index()
-    sup = sup[sup.index < today()]
-    sup = sup[~sup.index.duplicated(keep="last")]
-    burn = burn[~burn.index.duplicated(keep="last")]
-    if before is not None:
-        sup = sup[sup.index <= before]
-    if len(sup) < 2:
-        return pd.DataFrame(), {}
-    cad = supply_cadence(sup)
-    stats = {k: cad[k] for k in ("days", "distinct", "median_gap", "max_gap")}
-    stats["updates"] = len(cad["updates"])
-    if cad["median_gap"] is not None and cad["median_gap"] > MAX_UPDATE_GAP_DAYS:
-        stats["refused"] = f"median gap between updates {cad['median_gap']:.0f} days > {MAX_UPDATE_GAP_DAYS}"
-        return pd.DataFrame(), stats
-    # An update day is a day whose value differs from the day before; the first day anchors.
-    anchors = [sup.index[0]] + [d for d in cad["updates"]]
-    rows = []
-    for u, v in zip(anchors, anchors[1:]):
-        days = pd.date_range(u, v - pd.Timedelta(days=1))
-        if any(d not in burn.index for d in days) or any(d not in sup.index for d in (u, v)):
-            continue
-        if (v - u).days != len(sup[(sup.index >= u) & (sup.index < v)]):
-            continue                               # a hole in the supply readings: not closed
-        total = float(sup[v] - sup[u] + burn[days].sum())
-        rows += [(d, total / len(days)) for d in days if before is None or d < before]
-    if not rows:
-        return pd.DataFrame(), stats
-    vals = pd.Series([v for _, v in rows])
-    stats.update({"rows": len(rows), "mean": float(vals.mean()), "min": float(vals.min()),
-                  "max": float(vals.max()), "negative_days": int((vals < 0).sum())})
-    df = pd.DataFrame({"date": [d for d, _ in rows], "project": name, "metric": "gross_issuance_tokens",
-                       "value": [v for _, v in rows], "source": spec["source"], "tier": 2})
-    return df, stats
-
-
-def _derive_issuance_history(out: FetchOutput, projects: list[dict], stored_long) -> None:
-    """ISSUANCE HISTORY FROM A SUPPLY HISTORY (Ethereum, Jake 2026-09-29).
-
-    Etherscan's ethsupply2 is point-in-time, so its issuance series starts with its second read.
-    CoinGecko's market_chart gives a daily supply (market cap / price, stored as
-    circulating_supply_implied, 365 days) that matched ethsupply2 to the ETH on 2026-09-29, and
-    the DefiLlama-derived burn is backfilled a year: issuance(d) = d(supply) + burn(d). Written
-    only for days BEFORE the live leg starts (declared series_handover) and never over a stored
-    row. THE DAILY FIGURE CARRIES CoinGecko's SUPPLY NOISE: a day can read negative. The rows are
-    kept whole so every window sum telescopes to s(end) - s(start) + burn exactly; no daily cell
-    shows them, only window sums (Q0, Y1, months). The noise is logged every run."""
-    fresh = out.frame()
-    parts = [f for f in (stored_long, fresh) if f is not None and not getattr(f, "empty", True)]
-    if not parts:
-        return
-    cols = ["date", "project", "metric", "value", "source"]
-    hist = pd.concat([f[cols] for f in parts], ignore_index=True)
-    hist["date"] = pd.to_datetime(hist["date"]).dt.normalize()
-    for p in projects:
-        spec = p.get("issuance_history")
-        if not spec:
-            continue
-        name = p["name"]
-        iss = hist[(hist["project"] == name) & (hist["metric"] == "gross_issuance_tokens")]
-        live = iss[iss["source"].astype(str).str.startswith(spec["live_source_prefix"])]
-        before = live["date"].min() if len(live) else None
-        rows, stats = issuance_history_rows(name, spec, hist, before)
-        if rows.empty:
-            out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "skipped",
-                                    f"issuance history NOT WRITTEN: "
-                                    + (stats.get("refused") or f"no closed update interval of "
-                                       f"{spec['supply_metric']} with {spec['burn_metric']} rows "
-                                       f"before the live leg") + f" (cadence {stats})", 2))
-            continue
-        taken = set(iss["date"])
-        rows = rows[~rows["date"].isin(taken)]
-        if not rows.empty:
-            out.add(rows[["date", "project", "metric", "value", "source", "tier"]], SOURCE_DERIVED,
-                    name, f"gross_issuance_tokens history: {len(rows)} day(s) = d({spec['supply_metric']}) "
-                          f"+ {spec['burn_metric']}, before {before.date() if before is not None else 'any live leg'}", 2)
-        # CHECKED AGAINST THE EXPECTED RATE (~2,700 ETH/day, 2026-09-29): a mean outside the
-        # band is flagged for review, not silently stored as the history.
-        band = spec.get("expect_daily")
-        if band and stats.get("rows"):
-            lo, hi = band
-            verdict = "WITHIN" if lo <= stats["mean"] <= hi else "OUTSIDE"
-            out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "ok",
-                                    f"issuance history CHECK: mean {stats['mean']:,.1f}/day over "
-                                    f"{stats['rows']} day(s) is {verdict} {lo:,}..{hi:,} "
-                                    f"({spec.get('expect_source', '')})", 2))
-            if verdict == "OUTSIDE":
-                out.review_item(name, "gross_issuance_tokens", "outside_expected_band", "stored_flagged",
-                                value=float(stats["mean"]), prior_value=(lo + hi) / 2.0,
-                                date=str(today().date()), source=spec["source"], tier=2,
-                                basis=f"issuance history mean {stats['mean']:,.1f}/day against "
-                                      f"{lo:,}..{hi:,} ({spec.get('expect_source', '')})")
-        out.log.append(LogEntry(SOURCE_DERIVED, name, 0, "ok",
-                                f"issuance history: {spec['supply_metric']} UPDATE CADENCE — "
-                                f"{stats['distinct']} distinct value(s) over {stats['days']} day(s), "
-                                f"{stats['updates']} update(s), gap median {stats['median_gap']} / max "
-                                f"{stats['max_gap']} day(s); {stats.get('rows', 0)} day(s) written, "
-                                f"spread evenly within each update interval (mean "
-                                f"{stats.get('mean', 0):,.1f}/day, range {stats.get('min', 0):,.1f}.."
-                                f"{stats.get('max', 0):,.1f}, {stats.get('negative_days', 0)} negative)", 2))
-
-
 def registry_reasons() -> dict:
     """(project, metric) -> the sources.yaml entry's state, as the gap detector reads it.
 
@@ -1774,7 +1657,6 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # see Morpho's break: the shape of the last month is not in a run's frame. The store's rows
     # are concatenated with this run's so today's points are included — a break that happens
     # today is caught today, not tomorrow.
-    _derive_issuance_history(out, projects, stored_long)
     if stored_long is not None and not getattr(stored_long, "empty", True):
         fresh = out.frame()
         cols = [c for c in ("date", "project", "metric", "value", "source", "tier")

@@ -146,6 +146,11 @@ def reference(p: dict, metric: str, row: dict) -> str:
         if r.get("metric") == metric:
             refs.append(f"published {r.get('period')} figure")
             break
+    # A DECLARED PRIMARY IS CHECKED AGAINST THE DERIVED ROUTE (NEAR, 2026-09-30): more than
+    # max_ratio apart either way blocks the row (build_workbook._issuance_views).
+    prim = config.issuance_primary(name) or {}
+    if prim.get("kind") == "declared_rate" and prim.get("metric") == metric and prim.get("observed_source_prefix"):
+        refs.append(f"cross-check {prim['observed_source_prefix']} (>{prim.get('max_ratio', 10)}x apart blocks)")
     vy = config.VALIDATOR_YIELD.get(name) or {}
     if metric == "staking_yield_pct" and vy.get("cross_check_metric"):
         refs.append(f"cross-check {vy['cross_check_metric']}")
@@ -178,14 +183,23 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
     if status == "n/a":
         return "N/A", note.split(" | ")[0] or "not applicable to this project"
     closed = config.unavailable_for(name, metric)
-    if closed and status != "ok":
+    # A CLOSURE CLOSES A ROUTE, NOT A METRIC ANOTHER ROUTE IS FILLING (Jake, 2026-09-30):
+    # Ethereum's 2026-09-22 closure is about ultrasound.money having no issuance endpoint; it
+    # marked gross_issuance_tokens ACCEPTED LIMIT while Etherscan's readings were arriving. A
+    # route is live when the store holds a reading inside the Q0 window.
+    latest = row.get("latest_date")
+    live = (latest is not None and not pd.isna(latest) and str(latest) != ""
+            and (asof - pd.Timestamp(latest)).days < Q0_DAYS)
+    if closed and status != "ok" and not live:
         return "ACCEPTED LIMIT", f"closed {closed.get('closed_on', '')}: {closed.get('summary', '')[:220]}"
+    fwd = forward_only(name, metric)
     if status == "waiting" or (status in WITHHELD and future):
         return "WAITING ON A DATE", (future[0] + " — " if future else "") + note[:220]
     # BLOCKED ONLY UNTIL ITS READINGS COVER THE WINDOW: correct, still filling (a guard, not a fault)
     if status in WITHHELD and re.search(r"waiting for .{0,120}cover|cover(s)? the window|unequal coverage",
                                         note, re.I):
-        return "MATURING", f"blocked until its readings cover the window: {note[:200]}"
+        return "MATURING", (f"blocked until its readings cover the window: {note[:200]}"
+                            + (f" — FORWARD-ONLY: {fwd}" if fwd else ""))
     if status in ("missing", "gap") and config.is_manual_quarterly(name, metric):
         return "NEEDS JAKE", f"a manual quarterly row for {metric} in manual_overrides.csv"
     # A REVIEW QUEUE FLAG IS INFORMATIONAL (a change threshold, a partial-coverage note): the
@@ -205,7 +219,6 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
                             f"young: rates based on it cover {age} day(s)" + flag)
     # MATURING CARRIES ITS REASON: a recorded forward-only series says why; one without a record
     # is a history a backfill should fill, and says THAT.
-    fwd = forward_only(name, metric)
     why_wait = (f" — FORWARD-ONLY: {fwd}" if fwd else
                 " — NOT FORWARD-ONLY: its inputs have history, so a backfill should fill it "
                 "(history_audit.py names the route)")

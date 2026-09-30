@@ -135,15 +135,30 @@ def _chain_burn(out, h, p) -> int:
                  f"revenue_usd / price_usd, DefiLlama burned-fee revenue ({decl.get('components', '')})")
 
 
+def _say(out, name, n, message) -> None:
+    """One line on the Run Log AND the console (Jake, 2026-09-30: NEAR's issuance-history step
+    wrote nothing on a run where Ethereum's did, and no line said why)."""
+    from .base import LogEntry
+    out.log.append(LogEntry(SOURCE, name, n, "ok", message, 2))
+    log.info("%s: %s", name, message)
+
+
 def _issuance(out, h, p) -> int:
     name = p["name"]
     smetric = p.get("issuance_supply_metric") or "total_supply"
     mech = config.burn_mechanism(p)
     rule = config.issuance_supply_rule(p, mech.get("model"))
+    # EVERY EXIT SAYS WHY. Before 2026-09-30 these three returned silently, so a run that wrote
+    # nothing for NEAR could not be told apart from a run that never reached it.
     if rule is None or mech.get("status") in ("refuted", "assumed"):
-        return 0                   # the write-time derivation says why; no formula is guessed here
+        _say(out, name, 0, f"gross_issuance_tokens history NOT RUN — no supply rule for burn "
+                           f"mechanism {mech.get('model')!r} (status {mech.get('status')!r}); the "
+                           f"write-time derivation says why")
+        return 0
     sup = _series(h, name, smetric)
     if len(sup) < 2:
+        _say(out, name, 0, f"gross_issuance_tokens history NOT RUN — {smetric} holds {len(sup)} "
+                           f"reading(s) in the store and this run; 2 are needed")
         return 0
     stale = config.moves_daily(name, smetric)
     kept = []
@@ -154,8 +169,13 @@ def _issuance(out, h, p) -> int:
     burn = _series(h, name, "gross_burn_tokens").set_index("date")["value"].astype(float)
     iss = _series(h, name, "gross_issuance_tokens")
     measured = iss[~iss["source"].astype(str).str.startswith("derived:")]
-    if len(measured):
-        return 0                   # a measured issuance is never overwritten
+    if len(measured):              # a measured issuance is never overwritten
+        srcs = measured["source"].astype(str).value_counts()
+        _say(out, name, 0, f"gross_issuance_tokens history NOT RUN — {len(measured)} stored "
+                           f"row(s) are not derived, and a measured issuance is never "
+                           f"overwritten: " + ", ".join(f"{s} x{c}" for s, c in srcs.items())
+                           + f" ({measured['date'].min().date()}..{measured['date'].max().date()})")
+        return 0
     held = dict(zip(iss["date"], iss["value"]))
     tag = f"derived:d_{smetric}" if smetric != "total_supply" else "derived:d_supply"
     tag += "+burn" if rule == "add_burn" else ""
@@ -188,15 +208,14 @@ def _issuance(out, h, p) -> int:
                       for d in pd.date_range(d0, d1 - pd.Timedelta(days=1)) if d not in burn_days}) \
         if rule == "add_burn" else []
     fees = _series(h, name, "fees_usd")
-    from .base import LogEntry
-    out.log.append(LogEntry(SOURCE, name, n, "ok",
+    _say(out, name, n,
         f"gross_issuance_tokens history INPUTS — {smetric} {len(kept)} reading(s) "
         f"{kept[0][0].date()}..{kept[-1][0].date()}; gross_burn_tokens {len(burn)} day(s)"
         + (f" {min(burn_days).date()}..{max(burn_days).date()}" if burn_days else "")
         + f"; fees_usd {len(fees)} day(s) (the burn's 70% tripwire needs it on each day); "
         f"{n} row(s) written, {refused} interval(s) refused"
         + (f", {len(no_burn)} day(s) with no burn ({no_burn[0].date()}..{no_burn[-1].date()})"
-           if no_burn else ""), 2))
+           if no_burn else ""))
     return n
 
 
@@ -301,12 +320,14 @@ def derive_from_history(out, projects: list[dict], stored_long) -> dict:
     """Run every declared history derivation; {(project, metric): rows written}."""
     done = {}
     if stored_long is None or getattr(stored_long, "empty", True):
+        log.info("history derivations NOT RUN — no stored rows were passed in")
         return done
     names = {p["name"] for p in projects}
     # ORDER MATTERS: the burn first, so issuance adds the burns it just re-derived.
     for (name, metric), rule in sorted(config.HISTORY_DERIVED.items(),
                                        key=lambda kv: list(RULES).index(kv[1])):
         if name not in names:
+            log.info("%s %s history NOT RUN — %s is not in this run's projects", name, metric, name)
             continue
         h = _history(stored_long, out.frame())
         n = RULES[rule](out, h, config.PROJECT_BY_NAME[name])

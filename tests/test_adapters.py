@@ -18428,68 +18428,74 @@ def test_near_archive_reads_header_supply_and_stake_at_the_first_block_of_the_da
     assert na.known["2026-06-01"] == 150_000_000
 
 
-def test_ethereum_issuance_history_is_the_coingecko_supply_delta_plus_burn_before_etherscan():
-    """1b (Jake, 2026-09-29): ethsupply2 is point-in-time, so the history is CoinGecko's daily
-    supply (mcap / price) + the DefiLlama-derived burn: issuance(d) = s(d+1) - s(d) + burn(d),
-    only before the first Etherscan-leg row, never over a stored row, never using today's live
-    point. Daily values keep their noise (a negative day stays) so window sums telescope."""
-    from fetch import _derive_issuance_history, issuance_history_rows
-    from fetch.base import FetchOutput, today
-    spec = config.PROJECT_BY_NAME["Ethereum"]["issuance_history"]
-    t = today()
-    days = [t - pd.Timedelta(days=i) for i in range(6, -1, -1)]          # 6 days ago .. today
-    sup = [120_000_000 + 2_700 * i for i in range(7)]
-    sup[3] -= 3_000                                                     # a noisy day
-    rows = [dict(date=d, project="Ethereum", metric="circulating_supply_implied", value=v,
-                 source="coingecko:mcap/price", tier=1) for d, v in zip(days, sup)]
-    rows += [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=40.0,
-                  source="derived:defillama_burned_fee_revenue/price", tier=2) for d in days]
-    rows.append(dict(date=days[5], project="Ethereum", metric="gross_issuance_tokens", value=240.74,
-                     source="derived:d_total_supply_protocol+burn", tier=2))
-    stored = pd.DataFrame(rows)
-    out = FetchOutput()
-    _derive_issuance_history(out, [config.PROJECT_BY_NAME["Ethereum"]], stored)
-    f = out.frame().query("metric == 'gross_issuance_tokens'").sort_values("date")
-    assert list(f["date"]) == days[:5], "days before the Etherscan leg only; today's point unused"
-    assert set(f["source"]) == {spec["source"]}
-    assert f["value"].sum() == sup[5] - sup[0] + 5 * 40.0, "the window sum telescopes exactly"
-    assert (f["value"] < 0).sum() == 1, "the noisy day is kept, not dropped"
-    assert any("UPDATE CADENCE" in e.message and "1 negative" in e.message for e in out.log)
-    assert config.declared_handover("Ethereum", "gross_issuance_tokens")["ordered_points"][0] == spec["source"]
+def test_ethereum_issuance_route_a_is_removed_and_its_rejection_recorded():
+    """Jake, 2026-09-30: route (a) — d(CoinGecko market cap / price) + burn — is swamped by noise
+    (daily -626,651.7..+1,331,145.2, 174 negative days; each window's endpoints carry hundreds of
+    thousands of ETH against ~245K/quarter). It is removed, the rejection is recorded, and
+    Ethereum's issuance is Etherscan-only and FORWARD-ONLY from 2026-09-29."""
+    import fetch
+    from fetch import backfill
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    assert "issuance_history" not in eth
+    for gone in ("_derive_issuance_history", "issuance_history_rows", "MAX_UPDATE_GAP_DAYS"):
+        assert not hasattr(fetch, gone), gone
+    rej = eth["issuance_history_rejected"]
+    assert rej["source"] == "derived:d_coingecko_supply+burn" and rej["rejected_on"] == "2026-09-30"
+    assert "174 negative days" in rej["evidence"] and "-626,651.7..+1,331,145.2" in rej["evidence"]
+    assert "gross_issuance_tokens" not in (eth.get("series_handover") or {})
+    assert config.declared_handover("Ethereum", "gross_issuance_tokens") is None
+    assert "gross_burn_tokens" in eth["series_handover"], "the burn's history leg is kept"
+    fwd = config.HISTORY_FORWARD_ONLY["Ethereum"]
+    assert fwd["metrics"] == ("gross_issuance_tokens",) and "2026-09-29" in fwd["why"]
+    assert not backfill.derived_inputs(eth, "gross_issuance_tokens"), \
+        "nothing is re-read for a history that is no longer built"
+    sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
+    assert "-- BA. ETHEREUM: issuance ROUTE (a) rows" in sql and "-- DELETE FROM metrics" in sql
 
 
-def test_a_periodically_copied_supply_gives_issuance_between_its_update_days_only():
-    """1b (Jake, 2026-09-30): CoinGecko's ETH supply is Etherscan's figure copied periodically —
-    runs of identical values, then a jump. The cadence is counted; issuance is taken between update
-    days (s(v) - s(u) + the burn of [u, v)), spread evenly over that interval, and nothing after
-    the last update. Updates further apart than a week refuse the history outright."""
-    from fetch import issuance_history_rows, supply_cadence
-    from fetch.base import today
-    spec = config.PROJECT_BY_NAME["Ethereum"]["issuance_history"]
-    t = today()
-    days = [t - pd.Timedelta(days=i) for i in range(10, 0, -1)]         # 10 .. 1 days ago
-    # updates every 3 days: flat, flat, jump
-    base, sup = 120_000_000.0, []
-    for i, _ in enumerate(days):
-        sup.append(base + 8_000.0 * (i // 3))
-    rows = [dict(date=d, project="Ethereum", metric="circulating_supply_implied", value=v)
-            for d, v in zip(days, sup)]
-    rows += [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=40.0) for d in days]
-    hist = pd.DataFrame(rows)
-    cad = supply_cadence(pd.Series(sup, index=days))
-    assert cad["distinct"] == 4 and cad["median_gap"] == 3.0 and len(cad["updates"]) == 3
-    df, stats = issuance_history_rows("Ethereum", spec, hist, None)
-    # three closed intervals of 3 days (days 0-2, 3-5, 6-8); day 9 is after the last update
-    assert len(df) == 9 and stats["updates"] == 3
-    assert all(abs(v - (8_000.0 + 3 * 40.0) / 3) < 1e-9 for v in df["value"])
-    assert df["date"].max() == days[8]
-    # updates a fortnight apart: refused, with the cadence
-    days2 = [t - pd.Timedelta(days=i) for i in range(60, 0, -1)]
-    sup2 = [base + 30_000.0 * (i // 14) for i in range(60)]
-    rows2 = [dict(date=d, project="Ethereum", metric="circulating_supply_implied", value=v) for d, v in zip(days2, sup2)]
-    rows2 += [dict(date=d, project="Ethereum", metric="gross_burn_tokens", value=40.0) for d in days2]
-    df2, st2 = issuance_history_rows("Ethereum", spec, pd.DataFrame(rows2), None)
-    assert df2.empty and "median gap" in st2["refused"]
+def test_sql_ba_removes_only_route_a_rows(tmp_path, capsys, monkeypatch):
+    """The DELETE is review-first and touches route (a)'s source only: the Etherscan leg and the
+    burn stay."""
+    import sqlite3
+    import run_sql
+    db = tmp_path / "m.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL, source TEXT, "
+              "tier INTEGER, fetched_at TEXT, PRIMARY KEY (date, project, metric))")
+    rows = [("2026-06-01", "Ethereum", "gross_issuance_tokens", -626_651.7, "derived:d_coingecko_supply+burn"),
+            ("2026-06-02", "Ethereum", "gross_issuance_tokens", 1_331_145.2, "derived:d_coingecko_supply+burn[span=3d]"),
+            ("2026-09-29", "Ethereum", "gross_issuance_tokens", 2_650.0, "derived:d_total_supply_protocol+burn"),
+            ("2026-06-01", "Ethereum", "gross_burn_tokens", 40.0, "derived:defillama_burned_fee_revenue/price")]
+    c.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,2,'x')", rows)
+    c.commit()
+    c.close()
+    assert run_sql.main(["BA", "--db", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "derived:d_total_supply_protocol+burn" in out
+    monkeypatch.setattr("builtins.input", lambda *_: "DELETE BA")
+    assert run_sql.main(["--delete", "BA", "--db", str(db)]) == 0
+    assert "Rows this would remove from metrics (2)" in capsys.readouterr().out
+    left = sorted(sqlite3.connect(db).execute("SELECT metric, source FROM metrics").fetchall())
+    assert left == [("gross_burn_tokens", "derived:defillama_burned_fee_revenue/price"),
+                    ("gross_issuance_tokens", "derived:d_total_supply_protocol+burn")]
+
+
+def test_a_route_closure_does_not_close_a_metric_another_route_is_filling():
+    """Jake, 2026-09-30: Ethereum's 2026-09-22 closure is about ultrasound.money's issuance
+    endpoint. With Etherscan's readings arriving, the metric is MATURING (forward-only, with the
+    reason), not ACCEPTED LIMIT. With nothing held, the closure still stands."""
+    import completeness_report as cr
+    asof = pd.Timestamp("2026-09-30")
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    assert config.unavailable_for("Ethereum", "gross_issuance_tokens")
+    note = ("BLOCKED — waiting for Etherscan ethsupply2 readings (d(total_supply_protocol) + "
+            "d(BurntFees)) to cover the window")
+    live = {"status": "blocked", "note": note, "latest_date": pd.Timestamp("2026-09-29")}
+    v, d = cr.classify(eth, "gross_issuance_tokens", live, "2026-09-29", asof)
+    assert v == "MATURING" and "FORWARD-ONLY: Etherscan ethsupply2 only, from 2026-09-29" in d, (v, d)
+    none = {"status": "missing", "note": "", "latest_date": None}
+    v, d = cr.classify(eth, "gross_issuance_tokens", none, None, asof)
+    assert v == "ACCEPTED LIMIT" and d.startswith("closed 2026-09-22"), (v, d)
 
 
 def test_a_supply_that_moves_daily_but_did_not_is_refused_and_the_next_move_spans_the_gap():
@@ -19446,44 +19452,31 @@ def test_near_and_ethereum_issuance_history_from_backfilled_inputs():
     declared input of the burn and the issuance (the backfill re-reads it), and the inputs'
     coverage is logged whatever is written. ETHEREUM: the burn history stood down once any
     Etherscan burn existed, though it is the declared history leg — it now fills the days before
-    the measured leg, and issuance between CoinGecko's REAL supply updates is checked against
-    ~2,700 ETH/day."""
+    the measured leg. (Its issuance history, route (a), was rejected on 2026-09-30.)"""
     from fetch import backfill
-    from fetch import _derive_issuance_history
     from fetch.base import today
     from fetch.history_derive import derive_from_history
     near, eth = config.PROJECT_BY_NAME["Near"], config.PROJECT_BY_NAME["Ethereum"]
     assert {"revenue_usd", "fees_usd", "price_usd"} <= backfill.derived_inputs(near, "gross_issuance_tokens")
     assert "fees_usd" in backfill.derived_inputs(near, "gross_burn_tokens")
-    assert {"revenue_usd", "price_usd"} <= backfill.derived_inputs(eth, "gross_issuance_tokens")
+    assert {"revenue_usd", "price_usd"} <= backfill.derived_inputs(eth, "gross_burn_tokens")
 
     base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
     days = pd.date_range(today() - pd.Timedelta(days=365), today() - pd.Timedelta(days=1))
     etherscan_from = today() - pd.Timedelta(days=1)
-    rows, s = [], 120_000_000.0
+    rows = []
     add = lambda m, d, v, src: rows.append(dict(base, project="Ethereum", metric=m, date=d, value=v, source=src))
-    shown = s
-    for i, d in enumerate(days):
-        s += 2_700 - 2_000                           # issued 2,700, burned 2,000 each day
-        if i % 3 == 0:                               # CoinGecko updates its figure every 3 days
-            shown = s
-        add("circulating_supply_implied", d, shown, "coingecko:mcap/price")
+    for d in days:
         add("revenue_usd", d, 2_000 * 4_000.0, "defillama:dailyRevenue")
         add("price_usd", d, 4_000.0, "coingecko")
         if d >= etherscan_from:
             add("gross_burn_tokens", d, 2_000.0, "etherscan:ethsupply2.BurntFees:delta")
-            add("gross_issuance_tokens", d, 2_650.0, "derived:d_total_supply_protocol+burn")
     stored = pd.DataFrame(rows)
     out = FetchOutput()
     derive_from_history(out, [eth], stored)
     burn = out.frame().query("metric == 'gross_burn_tokens'")
     assert len(burn) == 364 and burn["date"].max() < etherscan_from and (burn["value"] == 2_000.0).all()
-    _derive_issuance_history(out, [eth], stored)
-    iss = out.frame().query("metric == 'gross_issuance_tokens'")
-    assert len(iss) >= 350 and iss["date"].max() < etherscan_from
-    assert abs(iss["value"].mean() - 2_700.0) < 1.0, iss["value"].describe()
-    msg = " ".join(e.message for e in out.log)
-    assert "issuance history CHECK: mean 2,700.0/day" in msg and "WITHIN 2,000..3,500" in msg
+    assert out.frame().query("metric == 'gross_issuance_tokens'").empty
 
     # NEAR: the inputs' coverage is said even when intervals are refused
     nrows = []
@@ -19495,3 +19488,80 @@ def test_near_and_ethereum_issuance_history_from_backfilled_inputs():
     line = next(e.message for e in o2.log if "history INPUTS" in e.message)
     assert "total_supply_protocol 365 reading(s)" in line and "gross_burn_tokens 0 day(s)" in line
     assert "fees_usd 0 day(s)" in line and "364 interval(s) refused" in line
+
+
+def test_near_declared_issuance_covers_the_archival_header_year():
+    """Jake, 2026-09-30: NEAR's primary issuance is declared 2.5%/yr x total_supply, shown for 19
+    days because CoinGecko's total_supply starts 2026-09-11. The archival header total_supply
+    covers the year, so each earlier day reads that level — at the superseded 5% before the
+    2025-10-30 halving — under ONE measuring point. The derived series stays the cross-check."""
+    import build_workbook as bw
+    from fetch.base import _measuring_point
+    spec = config.issuance_primary("Near")
+    assert spec["history_supply_metric"] == "total_supply_protocol"
+    asof = pd.Timestamp("2026-09-30")
+    base = {"tier": 1, "fetched_at": "x", "is_manual": False, "entered_on": "", "source_note": ""}
+    hdr = [dict(base, date=d, project="Near", metric="total_supply_protocol", value=1.20e9 + i * 100_000.0,
+                source="near_rpc:block.header.total_supply:archive")
+           for i, d in enumerate(pd.date_range(asof - pd.Timedelta(days=365), asof - pd.Timedelta(days=1)))]
+    cg = [dict(base, date=d, project="Near", metric="total_supply", value=1.25e9, source="coingecko")
+          for d in pd.date_range("2026-09-11", asof - pd.Timedelta(days=1))]
+    obs = [dict(base, date=d, project="Near", metric="gross_issuance_tokens", value=85_000.0,
+                source="derived:d_total_supply_protocol+burn", tier=2)
+           for d in pd.date_range(asof - pd.Timedelta(days=60), asof - pd.Timedelta(days=1))]
+    groups = {("Near", "total_supply_protocol"): pd.DataFrame(hdr), ("Near", "total_supply"): pd.DataFrame(cg),
+              ("Near", "gross_issuance_tokens"): pd.DataFrame(obs)}
+    bw._VIEW_BLOCKS.clear()
+    bw._issuance_views(groups, asof)
+    view = groups[("Near", "gross_issuance_tokens")].set_index("date")
+    assert len(view) == 365 and view.index.min() == asof - pd.Timedelta(days=365)
+    assert ("Near", "gross_issuance_tokens") not in bw._VIEW_BLOCKS
+    ann = bw.GLOBALS["days_per_year"]
+    d0 = pd.Timestamp("2025-10-29")
+    assert abs(view.loc[d0, "value"] - 0.05 * hdr[(d0 - hdr[0]["date"]).days]["value"] / ann) < 1e-6
+    assert view.loc[d0, "source"] == "declared:2.50%/yr x total_supply[5.00%/yr x total_supply_protocol]"
+    d1 = pd.Timestamp("2026-09-10")
+    assert abs(view.loc[d1, "value"] - 0.025 * hdr[(d1 - hdr[0]["date"]).days]["value"] / ann) < 1e-6
+    assert view.loc[d1, "source"] == "declared:2.50%/yr x total_supply[2.50%/yr x total_supply_protocol]"
+    d2 = pd.Timestamp("2026-09-11")
+    assert abs(view.loc[d2, "value"] - 0.025 * 1.25e9 / ann) < 1e-6
+    assert view.loc[d2, "source"] == "declared:2.50%/yr x total_supply", "the live label is unchanged"
+    assert {_measuring_point(s) for s in view["source"]} == {"declared:2.50%/yr x total_supply"}
+    import completeness_report as cr
+    ref = cr.reference(config.PROJECT_BY_NAME["Near"], "gross_issuance_tokens", {})
+    assert "cross-check derived:d_total_supply_protocol (>10x apart blocks)" in ref
+
+
+def test_every_exit_of_the_issuance_history_step_says_why(caplog):
+    """Jake, 2026-09-30: NEAR's 'issuance history INPUTS' line never appeared, on the console or
+    the Run Log. Every early return now writes a NOT RUN line naming its cause, and the INPUTS
+    line reaches the console too."""
+    import logging
+    from fetch.history_derive import derive_from_history
+    near = config.PROJECT_BY_NAME["Near"]
+    base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    days = pd.date_range("2026-09-01", "2026-09-10")
+    sup = [dict(base, project="Near", metric="total_supply_protocol", date=d, value=1.3e9 + i * 88_800.0,
+                source="near_rpc:block.header.total_supply:archive") for i, d in enumerate(days)]
+    msgs = lambda o: [e.message for e in o.log if e.source == "derive_history" and e.project == "Near"]  # noqa: E731
+
+    with caplog.at_level(logging.INFO, logger="token_metrics.fetch.history_derive"):
+        o = FetchOutput()
+        derive_from_history(o, [near], pd.DataFrame(sup))
+    assert any("history INPUTS" in m for m in msgs(o))
+    assert any("history INPUTS" in r.getMessage() for r in caplog.records), "on the console too"
+
+    o = FetchOutput()
+    derive_from_history(o, [near], pd.DataFrame(sup[:1]))
+    assert any("NOT RUN — total_supply_protocol holds 1 reading(s)" in m for m in msgs(o)), msgs(o)
+
+    manual = dict(base, project="Near", metric="gross_issuance_tokens", date=days[3], value=1.0, source="manual")
+    o = FetchOutput()
+    derive_from_history(o, [near], pd.DataFrame(sup + [manual]))
+    assert any("NOT RUN — 1 stored row(s) are not derived" in m and "manual x1" in m for m in msgs(o)), msgs(o)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="token_metrics.fetch.history_derive"):
+        derive_from_history(FetchOutput(), [config.PROJECT_BY_NAME["Ethereum"]], pd.DataFrame(sup))
+    assert any("Near gross_issuance_tokens history NOT RUN — Near is not in this run's projects"
+               in r.getMessage() for r in caplog.records)

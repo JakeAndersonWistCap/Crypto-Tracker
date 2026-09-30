@@ -2305,36 +2305,24 @@ PROJECTS = [
                          "(check_offline_items etherscan_ethsupply2)",
         },
         "issuance_supply_metric": "total_supply_protocol",
-        # ===== ISSUANCE HISTORY (Jake, 2026-09-29): CoinGecko's daily supply + the burn. =====
-        # ethsupply2 is point-in-time; CoinGecko's ETH supply (market cap / price, 365 days,
-        # circulating_supply_implied) matched it to the ETH on 2026-09-29. issuance(d) =
-        # d(supply) + burn(d) for the days BEFORE the Etherscan leg (fetch._derive_issuance_history).
-        # Daily values carry CoinGecko's supply noise and are only ever summed over windows.
-        "issuance_history": {"supply_metric": "circulating_supply_implied",
-                             "burn_metric": "gross_burn_tokens",
-                             "source": "derived:d_coingecko_supply+burn",
-                             "live_source_prefix": "derived:d_total_supply_protocol",
-                             "matched": "CoinGecko ETH supply = ethsupply2 to the ETH, Jake 2026-09-29",
-                             # ROUTE (a), NOT (b) (Jake's choice to make, 2026-09-29): d(supply)
-                             # between REAL update days + the burn. (b) 166.32 x sqrt(staked ETH)
-                             # needs staked-ETH history, and staked ETH = deposit contract +
-                             # Eth2Staking - WithdrawnTotal: the deposit balance is archive-readable,
-                             # but Eth2Staking and WithdrawnTotal come only from ethsupply2, which is
-                             # point-in-time — so (b) cannot be built from archive reads. It is also
-                             # the protocol MAXIMUM (every duty met), a ceiling on issuance.
-                             # Checked against ~2,700 ETH/day: a mean outside the band is flagged.
-                             "expect_daily": (2_000, 3_500),
-                             "expect_source": "~2,700 ETH/day (Jake, 2026-09-29); 166.32 x sqrt(~34M "
-                                              "staked) = ~2,660/day at every duty met"},
+        # ===== ROUTE (a) REJECTED AND REMOVED. 2026-09-30 (Jake). =====
+        # Issuance history as d(CoinGecko supply = market cap / price) between update days + the
+        # burn. Jake's run 2026-09-30T09:23:34Z: mean 3,063.1/day over 382 days, but a daily range
+        # of -626,651.7..+1,331,145.2 with 174 negative days. market cap / price is swamped by
+        # noise, and even a window sum carries each ENDPOINT's error (hundreds of thousands of ETH)
+        # against ~245K ETH of quarterly issuance — neither the days nor Q0 are usable, and a mean
+        # near 2,700 is not confirmation. Route (b), 166.32 x sqrt(staked), cannot be built from
+        # archive reads (Eth2Staking and WithdrawnTotal are point-in-time) and is a ceiling.
+        # So gross_issuance_tokens is ETHERSCAN-ONLY from 2026-09-29, forward-only
+        # (HISTORY_FORWARD_ONLY). Rows route (a) wrote: orphan_cleanup.sql section BA.
+        "issuance_history_rejected": {
+            "route": "d(CoinGecko market cap / price) between update days + burn",
+            "source": "derived:d_coingecko_supply+burn",
+            "rejected_on": "2026-09-30", "rejected_by": "Jake",
+            "evidence": "run 2026-09-30T09:23:34Z: mean 3,063.1/day over 382 days; daily range "
+                        "-626,651.7..+1,331,145.2; 174 negative days; endpoint error of hundreds of "
+                        "thousands of ETH against ~245K ETH/quarter of issuance"},
         "series_handover": {
-            "gross_issuance_tokens": {
-                "ordered_points": ("derived:d_coingecko_supply+burn",
-                                   "derived:d_total_supply_protocol+burn"),
-                "why": "CoinGecko's daily supply + burn is the history; Etherscan ethsupply2 is "
-                       "primary from its second reading. The history derivation writes only days "
-                       "before the first Etherscan-leg row, so the legs cannot overlap.",
-                "declared_on": "2026-09-29",
-            },
             "gross_burn_tokens": {
                 "ordered_points": ("derived:defillama_burned_fee_revenue/price",
                                    "etherscan:ethsupply2.BurntFees"),
@@ -15288,7 +15276,11 @@ ISSUANCE_PRIMARY = {
     "Near": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
              "rate_path": ("issuance_rate_declared", "annual_rate_max"),
              "supply_metric": "total_supply", "max_ratio": 10,
-             "observed_source_prefix": "derived:d_total_supply_protocol"},
+             "observed_source_prefix": "derived:d_total_supply_protocol",
+             # THE DECLARED ROUTE'S HISTORY (Jake, 2026-09-30): CoinGecko's total_supply is held
+             # from 2026-09-11 only; the archival block-header total_supply covers the year, so
+             # the days before it read that level (at the superseded 5% before 2025-10-30).
+             "history_supply_metric": "total_supply_protocol"},
     "Pendle": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
                "rate_path": ("issuance_rate_declared", "annual_rate"),
                "supply_metric": "total_supply", "max_ratio": 10},
@@ -15343,8 +15335,9 @@ POOL_RELEASE_DERIVED_SOURCE = "derived:d_circulating-d_total"
 # (tokens x same-day price) is re-derived for EVERY project whose usd series is derived.
 HISTORY_DERIVED = {
     ("Near", "gross_burn_tokens"): "chain_burn",        # 35 days; revenue and price span the year
-    # Ethereum's burn BEFORE its first Etherscan d(BurntFees) row — the declared history leg, and
-    # the input issuance_history needs (Jake, 2026-09-29).
+    # Ethereum's burn BEFORE its first Etherscan d(BurntFees) row — the declared history leg of
+    # gross_burn_tokens (DefiLlama burned-fee revenue / price; kept when route (a) was removed:
+    # it reads a daily flow, not the difference of two noisy stocks).
     ("Ethereum", "gross_burn_tokens"): "chain_burn",
     ("Near", "gross_issuance_tokens"): "issuance",      # 1 covered day; header supply spans 365
     ("Plume", "gross_issuance_tokens"): "issuance",     # 7 days
@@ -15539,6 +15532,14 @@ HISTORY_FORWARD_ONLY = {
         # The BUYBACK is no longer forward-only: DefiLlama holders revenue is its history leg
         # (buyback_history on the project).
         "checked": "hyperliquid-python-sdk info.py endpoint list, 2026-09-29",
+    },
+    # 2026-09-30 (Jake): route (a) rejected — see Ethereum's issuance_history_rejected.
+    "Ethereum": {
+        "metrics": ("gross_issuance_tokens",),
+        "why": "Etherscan ethsupply2 only, from 2026-09-29: it is point-in-time, and the history "
+               "routes were rejected — CoinGecko market cap / price is swamped by noise (daily "
+               "-626,652..+1,331,145 ETH, 174 negative days) and 166.32 x sqrt(staked) needs a "
+               "staked-ETH history no archive read gives",
     },
     # 2026-09-29 (Jake: "if an input has no history, say which"):
     "Plume": {
