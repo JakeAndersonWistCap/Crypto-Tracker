@@ -2981,9 +2981,21 @@ def _a1_headline(R: Refs) -> list[tuple]:
         ("Settlement volume: last date of the Artemis export (both NRR inputs end here)",
          lambda r, p: pull(R.D(r, "network_reserve_ratio", "latest_date")) if "network_reserve_ratio"
          in config.metrics_for_project(p) else "", FMT_TEXT, "pull", False, {"metric": "network_reserve_ratio"}),
-        ("NETWORK RESERVE RATIO — market cap ÷ trailing-365d settlement volume, same end date",
+        ("NRR ON SETTLEMENT VOLUME — market cap ÷ trailing-365d settlement volume (Artemis definition: "
+         "DEX + NFT + P2P), same end date",
          lambda r, p: pull(R.D(r, "network_reserve_ratio", "now")) if "network_reserve_ratio"
          in config.metrics_for_project(p) else "", FMT_PCT, "pull", True, {"metric": "network_reserve_ratio"}),
+        # TRADING THROUGHPUT (Jake, 2026-09-30): DefiLlama DEX + perps by chain, one source for all
+        # four chains. A DIFFERENT DEFINITION, so its own columns — never mixed with the above.
+        ("Trading throughput, trailing 365d ($) — DefiLlama DEX + perps; NOT settlement volume",
+         lambda r, p: pull(R.D(r, "trading_throughput_365d_usd", "now")) if "trading_throughput_365d_usd"
+         in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "trading_throughput_365d_usd"}),
+        ("NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama)",
+         lambda r, p: pull(R.D(r, "network_reserve_ratio_throughput", "now")) if "network_reserve_ratio_throughput"
+         in config.metrics_for_project(p) else "", FMT_PCT, "pull", True, {"metric": "network_reserve_ratio_throughput"}),
+        ("Which NRR is meaningful here",
+         lambda r, p: config.TRADING_THROUGHPUT["meaningful"].get(p["name"], "")
+         if p["name"] in config.TRADING_THROUGHPUT["chains"] else "", FMT_TEXT, "text"),
     ]
 
 
@@ -3192,49 +3204,89 @@ def _settlement_views(groups: dict) -> None:
     config.ARTEMIS_SETTLEMENT) and its Latest date read.
     """
     spec = config.ARTEMIS_SETTLEMENT
-    n = int(spec["window_days"])
     for p in scoped_projects():
-        name = p["name"]
-        sv = groups.get((name, spec["metric"]))
-        if sv is None or sv.empty:
-            continue
-        daily = sv.assign(date=pd.to_datetime(sv["date"]).dt.normalize()) \
-                  .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
-        last = daily.index.max()
-        full = daily.reindex(pd.date_range(daily.index.min(), last, freq="D"))
-        sums = full.rolling(n, min_periods=n).sum().dropna()
-        if sums.empty:
-            window = daily[daily.index > last - pd.Timedelta(days=n)]
-            for m in config.ARTEMIS_DERIVED:
-                _VIEW_BLOCKS[(name, m)] = (f"the Artemis export holds {len(window)} of the {n} days ending "
-                                           f"{last.date()} — a short window would understate settlement "
-                                           f"volume and overstate the ratio; re-export the full history")
-            continue
-        src = str(sv.sort_values("date").iloc[-1]["source"])
-        tot = pd.DataFrame({"date": sums.index, "project": name, "metric": "settlement_volume_365d_usd",
-                            "value": sums.values,
-                            "source": f"derived:sum365({src})"})
-        groups[(name, "settlement_volume_365d_usd")] = _as_stored(tot, sv.columns)
-        mc = groups.get((name, "market_cap_usd"))
-        if mc is None or mc.empty:
-            continue
-        mcd = mc.assign(date=pd.to_datetime(mc["date"]).dt.normalize()) \
-                .drop_duplicates("date", keep="last")[["date", "value"]].astype({"value": float}).sort_values("date")
-        both = pd.merge_asof(pd.DataFrame({"date": sums.index, "vol": sums.values}),
-                             mcd.rename(columns={"value": "cap"}).assign(on=mcd["date"]),
-                             on="date", direction="backward", tolerance=pd.Timedelta(days=7)).dropna()
-        both = both[both["vol"] > 0]
-        if both.empty:
-            _VIEW_BLOCKS[(name, "network_reserve_ratio")] = (
-                f"no day with both a full 365-day settlement window (to {last.date()}) and a market cap "
-                f"on that day or within 7 days before it")
-            continue
-        lag = (both["date"] - both["on"]).dt.days
-        nrr = pd.DataFrame({"date": both["date"].values, "project": name, "metric": "network_reserve_ratio",
-                            "value": (both["cap"] / both["vol"]).values,
-                            "source": ["derived:market_cap/settlement_365d" + (f"[market cap {d} day(s) earlier]"
-                                                                              if d else "") for d in lag]})
-        groups[(name, "network_reserve_ratio")] = _as_stored(nrr, sv.columns)
+        _nrr_views(groups, p["name"], spec["metric"], "settlement_volume_365d_usd", "network_reserve_ratio",
+                   int(spec["window_days"]), config.ARTEMIS_DERIVED,
+                   "the Artemis export holds {have} of the {n} days ending {last} — a short window would "
+                   "understate settlement volume and overstate the ratio; re-export the full history")
+    # TRADING THROUGHPUT (Jake, 2026-09-30): the same ratio on DefiLlama's DEX + perps volume, for
+    # every chain from one source. A DIFFERENT DEFINITION — its own metrics, never mixed with the above.
+    tt = config.TRADING_THROUGHPUT
+    for p in scoped_projects():
+        _throughput_view(groups, p["name"])
+        _nrr_views(groups, p["name"], tt["metric"], tt["sum_metric"], tt["nrr_metric"], int(tt["window_days"]),
+                   (tt["sum_metric"], tt["nrr_metric"]),
+                   "DefiLlama's DEX + perps series holds {have} of the {n} days ending {last} — a short "
+                   "window would understate throughput and overstate the ratio")
+
+
+def _throughput_view(groups: dict, name: str) -> None:
+    """trading_throughput_usd = dex_volume_usd + perps_volume_usd per day, at read time. A day is
+    in the sum only where every leg the chain is COVERED for has a value; a leg DefiLlama carries
+    no adapter for on that chain (config.TRADING_THROUGHPUT coverage) is absent, not zero, and the
+    row's source says so."""
+    tt = config.TRADING_THROUGHPUT
+    cov = (tt["chains"].get(name) or {}).get("covered") or ()
+    if not cov:
+        return
+    legs = []
+    for m in cov:
+        g = groups.get((name, m))
+        if g is None or g.empty:
+            return
+        legs.append(g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+                    .set_index("date")["value"].astype(float).rename(m))
+    both = pd.concat(legs, axis=1).dropna()
+    if both.empty:
+        return
+    missing = [m for m in tt["legs"] if m not in cov]
+    src = "derived:" + "+".join(cov) + (f"[no DefiLlama {'/'.join(missing)} adapter on this chain]" if missing else "")
+    view = pd.DataFrame({"date": both.index, "project": name, "metric": tt["metric"],
+                         "value": both.sum(axis=1).values, "source": src, "tier": 1})
+    groups[(name, tt["metric"])] = _as_stored(view, groups[(name, cov[0])].columns)
+
+
+def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_metric: str, n: int,
+               blocked: tuple, short_why: str) -> None:
+    """market cap / trailing-n-day volume, for EVERY day with all n days of volume behind it and a
+    market cap on that day (or within 7 days before, the lag stated on the row)."""
+    sv = groups.get((name, vol_metric))
+    if sv is None or sv.empty:
+        return
+    daily = sv.assign(date=pd.to_datetime(sv["date"]).dt.normalize()) \
+              .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+    last = daily.index.max()
+    full = daily.reindex(pd.date_range(daily.index.min(), last, freq="D"))
+    sums = full.rolling(n, min_periods=n).sum().dropna()
+    if sums.empty:
+        have = len(daily[daily.index > last - pd.Timedelta(days=n)])
+        for m in blocked:
+            _VIEW_BLOCKS[(name, m)] = short_why.format(have=have, n=n, last=last.date())
+        return
+    src = str(sv.sort_values("date").iloc[-1]["source"])
+    tot = pd.DataFrame({"date": sums.index, "project": name, "metric": sum_metric, "value": sums.values,
+                        "source": f"derived:sum{n}({src})"})
+    groups[(name, sum_metric)] = _as_stored(tot, sv.columns)
+    mc = groups.get((name, "market_cap_usd"))
+    if mc is None or mc.empty:
+        return
+    mcd = mc.assign(date=pd.to_datetime(mc["date"]).dt.normalize()) \
+            .drop_duplicates("date", keep="last")[["date", "value"]].astype({"value": float}).sort_values("date")
+    both = pd.merge_asof(pd.DataFrame({"date": sums.index, "vol": sums.values}),
+                         mcd.rename(columns={"value": "cap"}).assign(on=mcd["date"]),
+                         on="date", direction="backward", tolerance=pd.Timedelta(days=7)).dropna()
+    both = both[both["vol"] > 0]
+    if both.empty:
+        _VIEW_BLOCKS[(name, nrr_metric)] = (
+            f"no day with both a full {n}-day volume window (to {last.date()}) and a market cap on that "
+            f"day or within 7 days before it")
+        return
+    lag = (both["date"] - both["on"]).dt.days
+    base = f"derived:market_cap/{sum_metric.replace('_volume', '').replace('_usd', '')}"
+    nrr = pd.DataFrame({"date": both["date"].values, "project": name, "metric": nrr_metric,
+                        "value": (both["cap"] / both["vol"]).values,
+                        "source": [base + (f"[market cap {d} day(s) earlier]" if d else "") for d in lag]})
+    groups[(name, nrr_metric)] = _as_stored(nrr, sv.columns)
 
 
 def _protocol_yield(R: Refs, data_by_key: dict | None = None):

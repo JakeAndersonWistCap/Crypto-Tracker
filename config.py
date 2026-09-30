@@ -210,6 +210,13 @@ METRICS = {
     # (DEX Volumes + NFT Trading Volume + P2P Transfer Volume)". Daily rows from Jake's CSV
     # exports (ARTEMIS_SETTLEMENT); a column with any other name is refused, so no second
     # definition can ever be mixed in.
+    # ===== TRADING THROUGHPUT (Jake, 2026-09-30) — NOT ARTEMIS'S SETTLEMENT VOLUME. =====
+    # DefiLlama's daily DEX volume and perps volume BY CHAIN, one source for all four chains, full
+    # history; their sum and its NRR are their own metrics and never share a column with the
+    # settlement-volume ones. See TRADING_THROUGHPUT.
+    "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "settlement_volume_usd":      {"label": "Settlement volume per day ($, Artemis: DEX + NFT trading + P2P transfers)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"),
                                    "definition": "Artemis SETTLEMENT_VOLUME (Powered by Flipside): total settlement volume per day in USD = DEX volumes + NFT trading volume + P2P transfer volume"},
     # READ-TIME (build_workbook._settlement_views): the 365 days ending on the export's LAST date,
@@ -16597,6 +16604,25 @@ ARTEMIS_SETTLEMENT = {
     "check": {"project": "Ethereum", "to": "2026-08-25", "sum_365d_usd": 6.945e12, "mcap_usd": 3.294e11},
 }
 ARTEMIS_DERIVED = ("settlement_volume_365d_usd", "network_reserve_ratio")
+
+
+# ===== TRADING THROUGHPUT — ONE MEASURE FOR ALL FOUR CHAINS (Jake, 2026-09-30). =====
+# Artemis covers none of NEAR, Hyperliquid and Plume (Jake checked). So besides settlement volume
+# (Artemis's definition, rebuilt only where it can be validated), every chain gets the SAME measure
+# from ONE source: DefiLlama's daily DEX volume and perps volume by chain (fetch/llama.py
+# trading_volume), stored separately; trading_throughput_usd = their sum at read time
+# (build_workbook._throughput_view), and its own 365-day sum and NRR. NOT settlement volume:
+# settlement counts P2P transfers and NFT trades and excludes perps; this counts trading only.
+# `covered` = the legs DefiLlama carries adapters for on that chain; a leg it does not carry is
+# ABSENT, not zero, and the row says so. Coverage per chain is recorded from dimension-adapters.
+TRADING_THROUGHPUT = {
+    "metric": "trading_throughput_usd", "sum_metric": "trading_throughput_365d_usd",
+    "nrr_metric": "network_reserve_ratio_throughput", "window_days": 365,
+    "legs": ("dex_volume_usd", "perps_volume_usd"),
+    "endpoints": {},            # filled from DefiLlama's own server source — see research below
+    "chains": {},
+    "meaningful": {},
+}
 
 
 # PROVIDERS WHOSE NEWEST DAILY POINT IS A PARTIAL DAY, not a finished one.
