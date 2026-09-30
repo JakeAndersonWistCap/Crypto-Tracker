@@ -59,6 +59,9 @@ def test_defillama():
         "/protocols": [{"slug": "ondo", "category": "RWA", "chains": ["Ethereum"]},
                        {"slug": "uni", "category": "Dexes", "chains": ["Ethereum"]}],
         "/protocol/ondo": {"tvl": [], "chainTvls": {"Ethereum": {"tvl": [{"date": TS1, "totalLiquidityUSD": 1e9}]}}},
+        # trading throughput legs (config.TRADING_THROUGHPUT, 2026-09-30) — by chain name
+        "/overview/dexs/ethereum": {"chain": "Ethereum", "totalDataChart": [[TS1, 2e9]]},
+        "/overview/derivatives/ethereum": {"chain": "Ethereum", "totalDataChart": [[TS1, 3e8]]},
     })
     out = FetchOutput()
     aave = {"name": "Aave", "defillama_fees_slug": "aave", "defillama_protocol": "aave", "defillama_chain": None, "archetypes": [3]}
@@ -67,7 +70,8 @@ def test_defillama():
     df = out.frame()
     got = set(zip(df["project"], df["metric"]))
     for want in [("Aave", "fees_usd"), ("Aave", "revenue_usd"), ("Aave", "protocol_tvl_usd"),
-                 ("Ethereum", "tvl_usd"), ("Ethereum", "stablecoin_supply_usd"), ("Ethereum", "rwa_defillama_usd")]:
+                 ("Ethereum", "tvl_usd"), ("Ethereum", "stablecoin_supply_usd"), ("Ethereum", "rwa_defillama_usd"),
+                 ("Ethereum", "dex_volume_usd"), ("Ethereum", "perps_volume_usd")]:
         assert want in got, (want, got)
     stab = df[(df.project == "Ethereum") & (df.metric == "stablecoin_supply_usd")]
     assert abs(stab.value.iloc[0] - 1.201e11) < 1
@@ -20062,6 +20066,71 @@ def test_plume_staking_history_seed_reads_past_blocks_and_stops_where_the_rpc_do
     out = FetchOutput()
     res = PlumeStaking(contract_factory=factory()).seed([plume], 5, out, chain=(block_at, lambda b: b >= 998))
     assert res["stored_days"] == 2 and res["mechanism_start"] == str((today() - pd.Timedelta(days=2)).date())
+
+
+def test_trading_throughput_is_defillama_dex_plus_perps_by_chain_and_never_settlement_volume():
+    """Jake, 2026-09-30: one measure for all four chains — DefiLlama's DEX and perps volume by chain,
+    stored separately, summed at read time into trading_throughput_usd, with its own 365-day sum
+    and NRR in their own A1 columns. The response's chain must be the declared label (two slugs
+    are unverified live); a refused derivatives call (pro-only in today's docs) stores nothing; a
+    chain DefiLlama carries no perps for sums DEX alone and says so."""
+    import build_workbook as bw
+    from fetch.llama import DefiLlama
+    tt = config.TRADING_THROUGHPUT
+    assert tt["chains"]["Hyperliquid"]["slug"] == "hyperliquid-l1" and tt["chains"]["Plume"]["slug"] == "plume-mainnet"
+    assert tt["chains"]["Near"]["covered"] == ("dex_volume_usd",)
+    assert "THROUGHPUT only" in tt["meaningful"]["Hyperliquid"] and "perps" in config.METHODOLOGY_FLAGS["hyperliquid_nrr"]
+    days = pd.date_range("2025-09-01", "2026-09-29")
+    chart = [[int(d.timestamp()), 1e9] for d in days]
+
+    class Http:
+        def __init__(self, label, refuse_derivs=False):
+            self.label, self.refuse, self.calls = label, refuse_derivs, []
+
+        def get(self, url, params=None):
+            self.calls.append(url)
+            if self.refuse and "derivatives" in url:
+                raise RuntimeError("HTTP 402")
+            return {"chain": self.label, "totalDataChart": chart}
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    ll = DefiLlama()
+    ll.http = Http("Hyperliquid L1")
+    out = FetchOutput()
+    ll.trading_volume(hl, out)
+    f = out.frame()
+    assert set(f.metric) == {"dex_volume_usd", "perps_volume_usd"} and len(f) == 2 * len(days)
+    assert set(f.source) == {"defillama:dexs:hyperliquid-l1", "defillama:derivatives:hyperliquid-l1"}
+    assert all("NOT settlement volume" in e.message for e in out.log)
+    # a slug that resolved to another chain stores nothing
+    ll.http, out = Http("HyperEVM"), FetchOutput()
+    ll.trading_volume(hl, out)
+    assert out.frame().empty and any("not 'Hyperliquid L1'" in e.message for e in out.log)
+    # derivatives refused (pro-only): DEX stored, perps not, and the reason says why
+    ll.http, out = Http("Hyperliquid L1", refuse_derivs=True), FetchOutput()
+    ll.trading_volume(hl, out)
+    assert set(out.frame().metric) == {"dex_volume_usd"}
+    assert any("PRO-ONLY" in e.message for e in out.log if e.status == "failed")
+    # NEAR: DEX only is called
+    ll.http, out = Http("Near"), FetchOutput()
+    ll.trading_volume(config.PROJECT_BY_NAME["Near"], out)
+    assert ll.http.calls == ["https://api.llama.fi/overview/dexs/near"]
+    # READ TIME: the sum, its 365d total and NRR — separate metrics from settlement volume
+    groups = {("Hyperliquid", m): f[f.metric == m].assign(tier=1) for m in ("dex_volume_usd", "perps_volume_usd")}
+    groups[("Hyperliquid", "market_cap_usd")] = pd.DataFrame({"date": days, "project": "Hyperliquid",
+                                                             "metric": "market_cap_usd", "value": 1.46e11,
+                                                             "source": "coingecko", "tier": 1})
+    bw._VIEW_BLOCKS.clear()
+    bw._settlement_views(groups)
+    tp = groups[("Hyperliquid", "trading_throughput_usd")]
+    assert float(tp["value"].iloc[0]) == 2e9 and tp["source"].iloc[0] == "derived:dex_volume_usd+perps_volume_usd"
+    nrr = groups[("Hyperliquid", "network_reserve_ratio_throughput")]
+    assert abs(float(nrr["value"].iloc[-1]) - 1.46e11 / (365 * 2e9)) < 1e-12
+    assert nrr["source"].iloc[-1] == "derived:market_cap/trading_throughput_365d"
+    assert ("Hyperliquid", "network_reserve_ratio") not in groups, "never mixed with settlement NRR"
+    groups = {("Near", "dex_volume_usd"): f[f.metric == "dex_volume_usd"].assign(project="Near", tier=1)}
+    bw._settlement_views(groups)
+    assert groups[("Near", "trading_throughput_usd")]["source"].iloc[0] == \
+        "derived:dex_volume_usd[no DefiLlama perps_volume_usd adapter on this chain]"
 
 
 def test_tier_summary_counts_the_rows_each_tier_stored(tmp_path, monkeypatch):

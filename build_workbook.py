@@ -3272,7 +3272,8 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
         return
     mcd = mc.assign(date=pd.to_datetime(mc["date"]).dt.normalize()) \
             .drop_duplicates("date", keep="last")[["date", "value"]].astype({"value": float}).sort_values("date")
-    both = pd.merge_asof(pd.DataFrame({"date": sums.index, "vol": sums.values}),
+    mcd["date"] = mcd["date"].astype("datetime64[ns]")        # one unit on both sides of the asof join
+    both = pd.merge_asof(pd.DataFrame({"date": sums.index.astype("datetime64[ns]"), "vol": sums.values}),
                          mcd.rename(columns={"value": "cap"}).assign(on=mcd["date"]),
                          on="date", direction="backward", tolerance=pd.Timedelta(days=7)).dropna()
     both = both[both["vol"] > 0]

@@ -664,6 +664,19 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                         f"{project.get(field)!r}. Do NOT add a sources.yaml entry or a second "
                         f"contract — the redirect is intentional; see config.py.")
 
+    # TRADING THROUGHPUT LEGS (Jake, 2026-09-30): DefiLlama's chain overviews, declared per chain.
+    tt = config.TRADING_THROUGHPUT
+    if metric in tt["legs"]:
+        spec = tt["chains"].get(name) or {}
+        if metric in spec.get("covered", ()):
+            path = tt["endpoints"][metric].format(slug=spec["slug"])
+            return (f"DefiLlama {path} returned nothing usable this run" +
+                    (" — the derivatives route is PRO-ONLY in DefiLlama's current docs" if "derivatives" in path else ""),
+                    f"Check the Run Log's defillama line for {name}/{metric}; the response's chain must "
+                    f"read {spec['label']!r}.")
+        return (f"DefiLlama carries no {metric} adapter on {name}: {spec.get('coverage', 'not in TRADING_THROUGHPUT')}",
+                "Nothing to add: the throughput sum uses only the legs DefiLlama covers on this chain.")
+
     # A DERIVED METRIC HAS NO SOURCE TO CONFIGURE, so "no source configured for this metric" is
     # the wrong answer and sends the reader looking for one. It needs its INPUTS, and naming them
     # is what makes the row actionable.

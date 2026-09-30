@@ -214,6 +214,8 @@ METRICS = {
     # DefiLlama's daily DEX volume and perps volume BY CHAIN, one source for all four chains, full
     # history; their sum and its NRR are their own metrics and never share a column with the
     # settlement-volume ones. See TRADING_THROUGHPUT.
+    "dex_volume_usd":             {"label": "DEX spot volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume")},
+    "perps_volume_usd":           {"label": "Perps / derivatives volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Hyperliquid")},
     "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
@@ -16619,9 +16621,62 @@ TRADING_THROUGHPUT = {
     "metric": "trading_throughput_usd", "sum_metric": "trading_throughput_365d_usd",
     "nrr_metric": "network_reserve_ratio_throughput", "window_days": 365,
     "legs": ("dex_volume_usd", "perps_volume_usd"),
-    "endpoints": {},            # filled from DefiLlama's own server source — see research below
-    "chains": {},
-    "meaningful": {},
+    # FROM DEFILLAMA'S OWN SOURCE (2026-09-30; api.llama.fi is not reachable from the build host):
+    #   dexs: FREE and documented — DefiLlama/api-docs@634bbbec defillama-openapi-free.json:1967,
+    #         llms.txt:78 "Free API Endpoints": /overview/dexs/{chain}; totalDataChart =
+    #         [[unix seconds 00:00 UTC, usd], ...] over every stored day.
+    #   derivatives: served by the SAME generic route /overview/:type/:chain (server copy
+    #         vanhhhh04/defillamma@1c4ec843 defi/src/api2/routes/index.ts:118-119, no plan gate
+    #         there), but TODAY'S docs list derivatives as PRO-ONLY (defillama-openapi-pro.json:1781,
+    #         "x-api-plan-only"; llms.txt:96). Whether the free host still answers is UNVERIFIED —
+    #         the run says what it got. "perps" is not a type (routes/dimensions.ts:38).
+    #   A chain file is keyed by the chain's DISPLAY LABEL normalised (lowercase, non-alphanumerics
+    #   dropped; api2/cache/file-cache.ts:63), so each response's `chain` must equal the label
+    #   below or nothing is stored.
+    "endpoints": {"dex_volume_usd": "/overview/dexs/{slug}", "perps_volume_usd": "/overview/derivatives/{slug}"},
+    "params": {"excludeTotalDataChart": "false", "excludeTotalDataChartBreakdown": "true",
+               "dataType": "dailyVolume"},
+    # label/slug from defillama-sdk@83ee1f69 src/util/chainUtils/data.json (ll. 176, 356, 248, 413).
+    "chains": {
+        "Ethereum": {"slug": "ethereum", "label": "Ethereum",
+                     "covered": ("dex_volume_usd", "perps_volume_usd"),
+                     "coverage": "DEX: hundreds of adapters (Uniswap, Curve, Balancer...). Perps: few — "
+                                 "apex-omni, aevo, extended, boros, toros, synthetix-v4, Orderly's slice"},
+        "Near": {"slug": "near", "label": "Near", "covered": ("dex_volume_usd",),
+                 "coverage": "DEX: ref-finance (Rhea), NEAR Intents (cross-chain intents booked to NEAR — "
+                             "expect it to DOMINATE the series), veax, delta-trade, Thorchain's NEAR leg. "
+                             "Perps: NONE on chain near (near-perps is a Hyperliquid builder code)"},
+        "Hyperliquid": {"slug": "hyperliquid-l1", "label": "Hyperliquid L1",
+                        "covered": ("dex_volume_usd", "perps_volume_usd"),
+                        "coverage": "Perps: hyperliquid-perp (Hyperliquid's own, incl. HIP-3; builder-code "
+                                    "front-ends are doublecounted and excluded), boros, toros. DEX: "
+                                    "hyperliquid-spot (the spot orderbook, from 2024-12-23) + HyperEVM AMMs "
+                                    "(HyperSwap, Kittenswap, Project X...) — DefiLlama's 'Hyperliquid L1' "
+                                    "mixes HyperCore and HyperEVM. Volume before 2025-08-01 exists only if an "
+                                    "earlier adapter version stored it (helpers/hyperliquid.ts:27)",
+                        "slug_status": "UNVERIFIED live — follows from the code; the label check guards it"},
+        "Plume": {"slug": "plume-mainnet", "label": "Plume Mainnet", "covered": ("dex_volume_usd",),
+                  "coverage": "DEX: rooster (V1), camelot-v3, skate-amm (Ambient's Plume entries are "
+                              "commented out as 'wrong data'). Perps: NONE confirmed (Orderly's Plume slice "
+                              "is not mapped to a listing)",
+                  "slug_status": "UNVERIFIED live — 'plume' is the deprecated chain (dead 2026-02-12)"},
+    },
+    # Jake (2026-09-30): Hyperliquid's activity is dominantly perps, which Artemis's settlement
+    # definition EXCLUDES — so its NRR on trading throughput is the only meaningful one. Flagged for
+    # the methodology work (METHODOLOGY_FLAGS).
+    "meaningful": {
+        "Hyperliquid": "THROUGHPUT only — its activity is perps, which settlement volume excludes; "
+                       "and HyperCore transfers are not publicly indexed, so settlement is not rebuildable",
+        "Ethereum": "both: settlement (Artemis) and throughput — read them as different measures",
+        "Near": "throughput until a settlement rebuild validates (NEAR Intents dominates DEX volume)",
+        "Plume": "throughput until a settlement rebuild validates",
+    },
+}
+METHODOLOGY_FLAGS = {
+    "hyperliquid_nrr": "Hyperliquid's NRR on settlement volume is not meaningful: its activity is perps, "
+                       "which Artemis's definition (DEX + NFT + P2P transfers) excludes. Use the "
+                       "trading-throughput NRR; decide in the methodology work whether A1 should rank on "
+                       "it (Jake, 2026-09-30).",
 }
 
 

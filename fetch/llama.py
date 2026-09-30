@@ -835,7 +835,45 @@ class DefiLlama:
             self.lending_supply(p, window_days, out)
             self.chain_tvl(p, window_days, out)
             self.stablecoins(p, window_days, out)
+            self.trading_volume(p, out)
         self.rwa(projects, window_days, out)
+
+    def trading_volume(self, project: dict, out) -> None:
+        """DEX and perps volume BY CHAIN (config.TRADING_THROUGHPUT; Jake, 2026-09-30) — the whole
+        daily chart each time (two calls a chain), complete days only. The response's `chain` must
+        be the declared label: two slugs are unverified live, and a slug that resolved to another
+        chain would store its volume under this one. A leg the chain is not covered for is not
+        called; a refusal (the derivatives route is pro-only in today's docs) is logged with what
+        came back and stores nothing."""
+        import config
+        name = project["name"]
+        spec = config.TRADING_THROUGHPUT["chains"].get(name)
+        if not spec:
+            return
+        for metric in spec["covered"]:
+            path = config.TRADING_THROUGHPUT["endpoints"][metric].format(slug=spec["slug"])
+            try:
+                j = self.http.get(f"{API}{path}", params=config.TRADING_THROUGHPUT["params"])
+            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(SOURCE, name, f"{metric}: {path}: {e}"
+                         + (" — the derivatives route is PRO-ONLY in DefiLlama's current docs" if
+                            "derivatives" in path else ""), 1)
+                continue
+            got = str((j or {}).get("chain") or "") if isinstance(j, dict) else ""
+            if got.lower() != spec["label"].lower():
+                out.fail(SOURCE, name, f"{metric}: {path} answered for chain {got!r}, not {spec['label']!r} — "
+                                       f"NOTHING STORED ({spec.get('slug_status', 'slug from the sdk')})", 1)
+                continue
+            rows = [(pd.Timestamp(int(t), unit="s").normalize(), float(v)) for t, v in (j.get("totalDataChart") or [])
+                    if v is not None]
+            rows = [(d, v) for d, v in rows if d < today()]
+            if not rows:
+                out.fail(SOURCE, name, f"{metric}: {path} carried no daily chart", 1)
+                continue
+            frame = tidy(rows, name, metric, f"{SOURCE}:{path.split('/')[2]}:{spec['slug']}", 1)
+            out.add(frame, SOURCE, name, f"{metric} = DefiLlama {path}: {len(frame)} day(s) "
+                                         f"{rows[0][0].date()}..{rows[-1][0].date()} (chain {got!r}) — "
+                                         f"NOT settlement volume", 1)
 
 
 # ===== MORPHO'S OWN API: THE SAME FIGURES THE TVL ADAPTER READS AND DISCARDS. 2026-09-23. =====
