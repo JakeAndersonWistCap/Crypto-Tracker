@@ -478,7 +478,7 @@ METRICS = {
     # ===== ETHEREUM'S CONSENSUS REWARDS, FROM ethsupply2's Eth2Staking. 2026-09-29 (Jake). =====
     # Eth2Staking is the cumulative ETH minted as consensus-layer rewards; its daily change is the
     # consensus part of the staking yield (over ETH on the beacon chain). beaconcha.in is demoted
-    # to one call a month, the cross-check of the all-in (MEV-inclusive) figure.
+    # to a one-off seed (2026-09-30), the cross-check of the all-in (MEV-inclusive) figure.
     "consensus_rewards_cumulative": {
         "label": "Consensus rewards minted, cumulative (ethsupply2 Eth2Staking)",
         "kind": "stock", "unit": "tokens", "archetypes": [1],
@@ -2450,33 +2450,37 @@ PROJECTS = [
             # The stdlib reading of 403 as disallow-all refused these reads until 2026-09-28.
             "authorisation": "BEACONCHAIN_API_KEY — the registered key is the permission for "
                              "this endpoint; robots.txt governs crawling, not keyed API use",
-            # A2 (Jake, 2026-09-30): the per-day ETH.Store history, ~365 calls. The cap is
-            # beaconcha.in's OWN monthly counter (x-ratelimit-remaining-month, read from every
-            # response; `reserve` calls kept for the monthly cross-check), paced to its reported
-            # per-minute limit — not a fixed 30/300. Jake's probe (2026-09-30): every counter 0,
-            # Retry-After 36,644s = the month's window, resetting 2026-10-01 00:00 UTC. Published
-            # plans (gobitfly/eth2-beaconchain-explorer templates/payment/pricing.html @fd48389):
-            # Free 0€ — 5/s, 20/min, 30,000/month; Sapphire 59€/mo ex VAT — 500,000/month. After
-            # the reset, `python ethstore_backfill.py` reads all 365 days in one run; the daily
-            # run adds at most calls_per_run (its 60s source budget). If the reported monthly
-            # limit is far below 365, that is reported and the paid month is Jake's call.
+            # ===== OUT OF ROUTINE RUNS (Jake, 2026-09-30). =====
+            # The daily /ethstore/latest call kept triggering long lockouts (150,198s that day),
+            # so no routine run calls beaconcha.in (it left fetch.TIER_ORDER). The ONLY use is the
+            # one-off seed: `python token_metrics.py --seed beaconchain` reads the key's real quota
+            # (one /ethstore/latest call, which is also the staking-yield cross-check), REFUSES
+            # unless every missing day + `reserve` fits in what is left of the month, then reads
+            # /ethstore/{day} for each missing beaconchain-day (~365 on the first run), paced to
+            # the per-minute limit it reports. If the quota cannot cover it, beaconcha.in is
+            # dropped and the history stays forward-only from 2026-09-29 (HISTORY_FORWARD_ONLY).
+            # Published plans (gobitfly/eth2-beaconchain-explorer templates/payment/pricing.html
+            # @fd48389): Free 0€ — 5/s, 20/min, 30,000/month; Sapphire 59€/mo ex VAT — 500,000/month.
+            "routine": False,
             "history": {"metric": "staking_yield_pct", "field": "apr", "scale": 1, "days": 365,
                         "consensus_metric": "consensus_rewards_ethstore_tokens",
-                        "calls_per_run": 15, "reserve": 5, "min_interval_s": 3.1},
+                        "reserve": 5, "min_interval_s": 3.1},
             "base_url": "https://beaconcha.in",
             "key_env": "BEACONCHAIN_API_KEY",
             # gross_issuance_tokens (consensus_rewards_sum_wei) REMOVED 2026-09-28 (A9): issuance
             # now comes from Etherscan ethsupply2 (see etherscan_supply). A beaconcha.in figure
             # beside it would make _derive_issuance stand down on the days the quota allows.
-            "metrics": {
+            # THE CROSS-CHECK: the seed's quota-reading call. Not a routine metric source (the key
+            # was "metrics" until 2026-09-30, when beaconcha.in left routine runs).
+            "crosscheck": {
                 # ===== THE VALIDATOR YIELD, FROM THE SAME RESPONSE. Added 2026-09-24 (Jake). =====
                 # `apr`, NOT cl_apr: the total staker return — consensus rewards PLUS execution-
                 # layer priority fees and MEV. Right for a yield (what a staker earns); wrong for
                 # issuance, which is why gross_issuance_tokens above reads cl only. Stored as a
                 # FRACTION (0.03 = 3%); the metric's 0-0.5 bound rejects a percent-form value.
-                "staking_yield_pct": {"path": "/api/v1/ethstore/latest", "field": "apr", "scale": 1,
-                                      "log_note": "total staker APR (cl + el), a fraction — the "
-                                                  "validator yield, not issuance"},
+                "path": "/api/v1/ethstore/latest", "field": "apr", "scale": 1,
+                "log_note": "total staker APR (cl + el INCLUDING MEV), a fraction — the cross-check "
+                            "of the Etherscan yield, taken once by the seed",
             },
             "field_source": "https://raw.githubusercontent.com/gobitfly/"
                             "eth2-beaconchain-explorer/master/static/openapi/bundled.yaml",
@@ -2488,8 +2492,8 @@ PROJECTS = [
             "live_confirmed": None,      # set from the first run's log line, which prints the row
         },
         "name": "Ethereum", "symbol": "ETH",
-        # beaconcha.in is ONE CALL A MONTH (Jake, 2026-09-29): its apr is a monthly reading, not a
-        # stale daily one.
+        # beaconcha.in's apr is a ONE-OFF seed reading (2026-09-30), dated to its own day; judged
+        # as monthly so it reads stale, not wrong, a month after the seed.
         "manual_granularity": {"staking_yield_pct": "monthly"},
         # Settlement volume for Network Reserve Ratio: Artemis's daily SETTLEMENT_VOLUME from Jake's
         # CSV export (ARTEMIS_SETTLEMENT; 2026-09-30), replacing the manual quarterly The Block row.
@@ -3720,8 +3724,8 @@ PROJECTS = [
             "verified": "2026-09-30",
             "live_confirmed": None,
         },
-        # Settlement volume: the Artemis CSV export (ARTEMIS_SETTLEMENT), when Jake exports one.
-        # The old closure (The Block does not cover Plume) went with that source, 2026-09-30.
+        # Settlement volume: CLOSED as an accepted limit (config.UNAVAILABLE, 2026-09-30) — Plume is
+        # not on Artemis and The Block does not cover it.
         "coingecko_id": "plume",
         "defillama_fees_slug": "plume", "defillama_protocol": None, "defillama_chain": "Plume Mainnet",
         # ===== THE FEES CALLS 400 EVERY RUN: KNOWN ABSENT, RE-CHECKED WEEKLY. 2026-09-28. =====
@@ -15524,7 +15528,7 @@ VALIDATOR_YIELD = {
     # ===== JAKE'S DECISION, 2026-09-29: NO beaconcha.in IN THE HEADLINE. =====
     # consensus = d(Eth2Staking) from ethsupply2 (consensus_rewards_tokens) / ETH staked;
     # execution = priority fees (DefiLlama fees - burned revenue) / ETH staked. Labelled
-    # "excluding MEV". beaconcha.in's apr (MEV-inclusive) is one call a month, a cross-check.
+    # "excluding MEV". beaconcha.in's apr (MEV-inclusive) is a one-off seed reading, a cross-check.
     "Ethereum": {"method": "consensus_plus_execution",
                  "consensus_metric": "consensus_rewards_tokens",
                  "issuance_metric": "gross_issuance_tokens", "stake_metric": "beacon_chain_eth",
@@ -15532,7 +15536,7 @@ VALIDATOR_YIELD = {
                  "cross_check_metric": "staking_yield_pct",
                  "note": "EXCLUDING MEV: consensus (d Eth2Staking) + execution (priority fees) over "
                          "beacon-chain ETH (deposit contract + Eth2Staking - WithdrawnTotal); "
-                         "beaconcha.in's MEV-inclusive apr (one call a month) is the cross-check",
+                         "beaconcha.in's MEV-inclusive apr (one-off seed, dated) is the cross-check",
                  # THE PROTOCOL'S OWN CEILING (consensus-specs @e321975f, 2026-09-28): per epoch
                  # sum(base rewards) = BASE_REWARD_FACTOR (64) x sqrt(total active gwei) when every
                  # duty is met (the Altair weights sum to WEIGHT_DENOMINATOR); x 82,181.25 epochs a
@@ -15975,15 +15979,17 @@ HISTORY_FORWARD_ONLY = {
         "checked_on": "2026-09-30",
     },
     # ETHEREUM (2026-09-30, after Jake's probes): route (a) rejected; ultrasound.money's daily
-    # supply is frozen at 2024-06-22; the ETH.Store per-day backfill (the history leg for both)
-    # waits for beaconcha.in's monthly quota to reset on 2026-10-01. Forward-only from
-    # 2026-09-29 UNTIL `python ethstore_backfill.py` has run — then this entry is removed.
+    # supply is frozen at 2024-06-22; beaconcha.in is OUT of routine runs (Jake, 2026-09-30).
+    # Forward-only from 2026-09-29 UNLESS the one-off seed runs — `python token_metrics.py --seed
+    # beaconchain`, which refuses unless the month's quota covers the whole backfill. If it
+    # refuses, beaconcha.in is dropped and this entry stands as the permanent record.
     "Ethereum": {
         "metrics": ("gross_issuance_tokens", "staking_yield_pct"),
-        "why": "forward-only from 2026-09-29 until the ETH.Store backfill runs after beaconcha.in's "
-               "monthly quota resets (2026-10-01): route (a) (CoinGecko mcap/price) was rejected as "
-               "noise and ultrasound.money's daily supply is frozen at 2024-06-22",
-        "until": "python ethstore_backfill.py after 2026-10-01 00:00 UTC",
+        "why": "forward-only from 2026-09-29: route (a) (CoinGecko mcap/price) was rejected as noise, "
+               "ultrasound.money's daily supply is frozen at 2024-06-22, and beaconcha.in is out of "
+               "routine runs (its daily call kept triggering 150,000s+ lockouts). The only history "
+               "route is a one-off ETH.Store seed, which runs only if the key's quota covers every day",
+        "until": "python token_metrics.py --seed beaconchain (refuses unless ~370 calls remain this month)",
     },
     # 2026-09-29 (Jake: "if an input has no history, say which"):
     "Plume": {
@@ -16303,14 +16309,19 @@ STALE_AFTER_DAYS_BY_GRANULARITY = {"daily": None, "weekly": 14, "monthly": 45}
 # classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME;
 # Excel add-in =ART("ETH","SETTLEMENT_VOLUME").
 #
-# fetch/artemis.py reads every file present in `dir` each run (local files, no network): a file
-# whose value column is not exactly "<artemis_name> - Settlement Volume" is refused — one
-# definition, never mixed. The API (/asset) answered HTTP 410 without a key, so it is NOT wired;
-# with ARTEMIS_API_KEY set the run says so and asks for the probe's keyed response first.
-# Refresh: a monthly manual export (RUNBOOK.md). The derived NRR is stale — AMBER — once the
-# export's last date is more than `stale_after_days` old.
+# fetch/artemis.py reads the exports at RUN TIME from `dir` (the repository root by default — where
+# Jake saved it, C:\Users\jake\Crypto-Tracker\Ethereum_-_Settlement_Volume.csv — overridable by
+# TOKEN_METRICS_ARTEMIS_DIR). Local files, no network. ** THE DATA IS NEVER COMMITTED ** until
+# Artemis's terms are read (.gitignore excludes both file-name forms). A missing file GAPS the
+# metric with that reason; it never fails the run. A file whose value column is not exactly
+# "<artemis_name> - Settlement Volume" is refused — one definition, never mixed. The API (/asset)
+# answered HTTP 410 without a key, so it is NOT wired; with ARTEMIS_API_KEY set the run says so
+# and asks for the probe's keyed response first. Refresh: a monthly manual export (RUNBOOK.md).
+# The derived NRR is stale — AMBER — once the export's last date is more than
+# `stale_after_days` old.
 ARTEMIS_SETTLEMENT = {
-    "dir": "data/artemis",
+    "dir": ".",
+    "dir_env": "TOKEN_METRICS_ARTEMIS_DIR",
     "metric": "settlement_volume_usd",
     "definition": METRICS["settlement_volume_usd"]["definition"],
     "source_url": "https://classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME",
@@ -16319,18 +16330,17 @@ ARTEMIS_SETTLEMENT = {
             "without_key": "https://api.artemisxyz.com/asset answered HTTP 410 (Jake's probe)"},
     "stale_after_days": 45,
     "window_days": 365,
-    # One file per chain, in Artemis's own export naming. exported_on is the day Jake exported it
-    # (it goes in the source string); a file present without one uses the file's own date and
-    # says so.
+    # One file per chain. Either name form is accepted: Artemis's download ("<Chain> - Settlement
+    # Volume.csv") or the underscored one Jake saved ("<Chain>_-_Settlement_Volume.csv").
+    # exported_on is the day Jake exported it (it goes in the source string); a file present
+    # without one uses the file's own date and says so. Jake is checking whether Artemis carries
+    # the same metric for NEAR and Hyperliquid. PLUME IS NOT HERE: not on Artemis, not covered by
+    # The Block — closed as an ACCEPTED LIMIT (config.UNAVAILABLE, 2026-09-30).
     "chains": {
-        "Ethereum":    {"artemis_name": "Ethereum",    "file": "Ethereum_-_Settlement_Volume.csv",
-                        "exported_on": "2026-09-30", "exported_by": "Jake"},
-        "Near":        {"artemis_name": "Near",        "file": "Near_-_Settlement_Volume.csv"},
-        "Hyperliquid": {"artemis_name": "Hyperliquid", "file": "Hyperliquid_-_Settlement_Volume.csv"},
-        "Plume":       {"artemis_name": "Plume",       "file": "Plume_-_Settlement_Volume.csv"},
+        "Ethereum":    {"artemis_name": "Ethereum", "exported_on": "2026-09-30", "exported_by": "Jake"},
+        "Near":        {"artemis_name": "Near"},
+        "Hyperliquid": {"artemis_name": "Hyperliquid"},
     },
-    # Jake's check, 2026-09-30: the 365 days to 2026-08-25 sum to $6,945.0bn; market cap ~$329.4bn
-    # -> NRR ~4.74%. tests/test_adapters.py pins the arithmetic.
     "check": {"project": "Ethereum", "to": "2026-08-25", "sum_365d_usd": 6.945e12, "mcap_usd": 3.294e11},
 }
 ARTEMIS_DERIVED = ("settlement_volume_365d_usd", "network_reserve_ratio")
@@ -17562,9 +17572,86 @@ UNAVAILABLE = [
     # EXISTS AND IS DELIBERATELY UNWIRED. ** Plume's own registry gives a fee receiver, recorded
     # on the project entry above. Calling the metric inapplicable would contradict config's own
     # record that a route is there and was declined on cost.
-    # Plume settlement_volume_annual_usd: closure RETIRED 2026-09-30 with the metric itself —
-    # settlement volume is now Artemis's daily series (settlement_volume_usd) from a CSV export;
-    # Plume's is NEEDS JAKE (export it) in completeness_report.DECISIONS.
+    # ===== PLUME SETTLEMENT VOLUME — ACCEPTED LIMIT (Jake, 2026-09-30). =====
+    # Plume is not on Artemis and The Block does not cover it; no other source carries the same
+    # definition, and a different one is never mixed into a cross-chain ratio.
+    {
+        "project": "Plume", "metric": "settlement_volume_usd",
+        "closed_on": "2026-09-30",
+        "summary": "Plume isn't on Artemis, and The Block doesn't cover it — no source carries "
+                   "settlement volume under the one definition every chain's NRR uses.",
+        "what_was_tried": (
+            "Artemis (Jake checked 2026-09-30: Plume not listed); The Block's adjusted on-chain "
+            "volume (no Plume series, 2026-09-29); Plume's explorer stats service (counts and "
+            "fees, not USD settlement volume); growthepie, Etherscan and Coin Metrics' community "
+            "tier (none carries it for Plume)."),
+        "impact": "Plume has no Network Reserve Ratio; the cells read CLOSED, not missing.",
+        "reopen_if": "Artemis adds Plume — then its CSV export goes beside the others "
+                     "(ARTEMIS_SETTLEMENT).",
+        "native_checked": [
+            {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
+                       "transfer volume, Powered by Flipside)",
+             "finding": "Plume is NOT on Artemis — Jake checked, 2026-09-30"},
+            {"source": "The Block adjusted on-chain volume (the previous definition)",
+             "finding": "does not cover Plume — Jake, 2026-09-29"},
+            {"source": "Plume's own explorer stats service (explorer.plume.org/stats-service)",
+             "finding": "the charts read from it are counts, fees and native supply — none is a USD "
+                        "settlement volume of Artemis's definition; building one from them would be a "
+                        "second definition, which is never mixed into the ratio"},
+            {"source": "growthepie, Etherscan daily stats, Coin Metrics community",
+             "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
+                        "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
+                        "free tier and does not list Plume (2026-09-29)"},
+        ],
+    },
+    {
+        "project": "Plume", "metric": "network_reserve_ratio",
+        "closed_on": "2026-09-30",
+        "summary": "No settlement-volume denominator for Plume (see settlement_volume_usd): Plume "
+                   "isn't on Artemis and The Block doesn't cover it.",
+        "what_was_tried": "As Plume settlement_volume_usd.",
+        "impact": "Plume's NRR cell reads CLOSED.",
+        "reopen_if": "Artemis adds Plume.",
+        "native_checked": [
+            {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
+                       "transfer volume, Powered by Flipside)",
+             "finding": "Plume is NOT on Artemis — Jake checked, 2026-09-30"},
+            {"source": "The Block adjusted on-chain volume (the previous definition)",
+             "finding": "does not cover Plume — Jake, 2026-09-29"},
+            {"source": "Plume's own explorer stats service (explorer.plume.org/stats-service)",
+             "finding": "the charts read from it are counts, fees and native supply — none is a USD "
+                        "settlement volume of Artemis's definition; building one from them would be a "
+                        "second definition, which is never mixed into the ratio"},
+            {"source": "growthepie, Etherscan daily stats, Coin Metrics community",
+             "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
+                        "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
+                        "free tier and does not list Plume (2026-09-29)"},
+        ],
+    },
+    {
+        "project": "Plume", "metric": "settlement_volume_365d_usd",
+        "closed_on": "2026-09-30",
+        "summary": "Built from settlement_volume_usd, which is closed for Plume (not on Artemis; "
+                   "The Block doesn't cover it).",
+        "what_was_tried": "As Plume settlement_volume_usd.",
+        "impact": "Plume's trailing-365d settlement cell reads CLOSED.",
+        "reopen_if": "Artemis adds Plume.",
+        "native_checked": [
+            {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
+                       "transfer volume, Powered by Flipside)",
+             "finding": "Plume is NOT on Artemis — Jake checked, 2026-09-30"},
+            {"source": "The Block adjusted on-chain volume (the previous definition)",
+             "finding": "does not cover Plume — Jake, 2026-09-29"},
+            {"source": "Plume's own explorer stats service (explorer.plume.org/stats-service)",
+             "finding": "the charts read from it are counts, fees and native supply — none is a USD "
+                        "settlement volume of Artemis's definition; building one from them would be a "
+                        "second definition, which is never mixed into the ratio"},
+            {"source": "growthepie, Etherscan daily stats, Coin Metrics community",
+             "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
+                        "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
+                        "free tier and does not list Plume (2026-09-29)"},
+        ],
+    },
 
     # Plume fees_usd: REOPENED 2026-09-30 on its own reopen_if ("growthepie publishes a fee
     # metric for Plume") — growthepie's fees_paid_usd is mapped (growthepie.metrics.fees_usd).
@@ -19549,7 +19636,7 @@ SOURCE_REGISTER = {
         "key": None,
     },
     "beaconcha.in": {
-        "used_for": "ETH.Store apr (monthly cross-check; per-day history backfill)",
+        "used_for": "ONE-OFF SEED only (token_metrics.py --seed beaconchain): per-day ETH.Store history + one apr cross-check; in no routine run since 2026-09-30",
         "paths": ["/api/v1/ethstore/latest", "/api/v1/ethstore/1765"],
         "robots": "robots.txt answered HTTP 403 on 2026-09-27/28 = 'unavailable' under RFC 9309 "
                   "s2.3.1.3 (may access); no robots file in gobitfly/eth2-beaconchain-explorer",

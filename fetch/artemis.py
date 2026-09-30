@@ -1,10 +1,13 @@
 """
 fetch/artemis.py — daily settlement volume from Jake's Artemis CSV exports. 2026-09-30.
 
-    data/artemis/<Chain>_-_Settlement_Volume.csv     DateTime, "<Chain> - Settlement Volume"
+    <repo root>/<Chain> - Settlement Volume.csv      DateTime, "<Chain> - Settlement Volume"
+    <repo root>/<Chain>_-_Settlement_Volume.csv      (the same, as Jake saved Ethereum's)
 
 One file per chain (config.ARTEMIS_SETTLEMENT["chains"]), exported by hand from Artemis's
-Settlement Volume chart. Definition (Artemis, Powered by Flipside): "Total settlement volume per
+Settlement Volume chart, read AT RUN TIME from the repository root (Jake, 2026-09-30) or from
+$TOKEN_METRICS_ARTEMIS_DIR. The files are NEVER committed until Artemis's terms are read
+(.gitignore). A MISSING FILE GAPS THE METRIC with that reason — the run never fails on it. Definition (Artemis, Powered by Flipside): "Total settlement volume per
 day in USD (DEX Volumes + NFT Trading Volume + P2P Transfer Volume)".
 
 ONE DEFINITION, NEVER MIXED: the value column must be exactly "<artemis_name> - Settlement
@@ -16,8 +19,6 @@ Blank cells are days Artemis has no figure for; they are left out and counted in
 LOCAL FILES ONLY — no network. The Artemis API (/asset) answered HTTP 410 without a key
 (2026-09-30), so it is not wired: with ARTEMIS_API_KEY set, the run says so and asks for the
 probe's keyed response before anything is built on it.
-
-Also looks in the repository root, so a file dropped there is used (and the log says to move it).
 """
 from __future__ import annotations
 
@@ -89,9 +90,20 @@ class ArtemisCSV:
     def __init__(self, root: Path | None = None, **_ignored):
         self.root = Path(root) if root else ROOT
 
-    def _find(self, fname: str) -> Path | None:
-        for d in (self.root / config.ARTEMIS_SETTLEMENT["dir"], self.root):
-            f = d / fname
+    def folder(self) -> Path:
+        spec = config.ARTEMIS_SETTLEMENT
+        env = os.environ.get(spec["dir_env"], "").strip()
+        d = Path(env) if env else Path(spec["dir"])
+        return d if d.is_absolute() else self.root / d
+
+    @staticmethod
+    def names(artemis_name: str) -> tuple[str, str]:
+        """Both accepted file names: Artemis's download, and the underscored form."""
+        return (f"{artemis_name} - Settlement Volume.csv", f"{artemis_name}_-_Settlement_Volume.csv")
+
+    def _find(self, artemis_name: str) -> Path | None:
+        for fname in self.names(artemis_name):
+            f = self.folder() / fname
             if f.is_file():
                 return f
         return None
@@ -108,10 +120,15 @@ class ArtemisCSV:
         for name, chain in spec["chains"].items():
             if name not in names:
                 continue
-            path = self._find(chain["file"])
+            path = self._find(chain["artemis_name"])
             if path is None:
-                out.skipped(SOURCE, name, f"{metric}: no Artemis export at {spec['dir']}/{chain['file']} "
-                                          f"— export it from Artemis (RUNBOOK.md, monthly)", TIER)
+                where = " or ".join(repr(n) for n in self.names(chain["artemis_name"]))
+                why = (f"no Artemis export found: {where} is not in {self.folder()} (read at run time, "
+                       f"never committed; set {spec['dir_env']} to read another folder)")
+                out.skipped(SOURCE, name, f"{metric}: {why}", TIER)
+                out.gap(name, metric, reason=why, tiers_attempted="5",
+                        suggestion=f"Export Artemis's {chain['artemis_name']} Settlement Volume chart as "
+                                   f"CSV into the repo root (RUNBOOK.md 11j).")
                 continue
             got = parse(path, chain["artemis_name"])
             if isinstance(got, str):
@@ -126,8 +143,7 @@ class ArtemisCSV:
             frame = tidy(pts, name, metric, label, TIER)
             last = frame["date"].max()
             age = (today() - last).days
-            where = "" if path.parent != self.root else \
-                f" (read from the repository root; move it to {spec['dir']}/)"
+            where = f" — read from {path.name}"
             out.add(frame, SOURCE, name,
                     f"{metric} = {label}: {len(frame)} day(s) {frame['date'].min().date()}..{last.date()}, "
                     f"{blank} blank day(s) left out; last date {age} day(s) ago"

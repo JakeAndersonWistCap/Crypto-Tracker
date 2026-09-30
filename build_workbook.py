@@ -2868,7 +2868,7 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
     return [
         ("Consensus part (d Eth2Staking ÷ ETH on the beacon chain)", part(0), FMT_PCT, "calc"),
         ("Execution part (priority fees ÷ the same; EXCLUDING MEV — no free source)", part(1), FMT_PCT, "calc"),
-        ("Cross-check: beaconcha.in ETH.Store apr (cl + el INCLUDING MEV; one call a month)", cross, FMT_PCT, "pull"),
+        ("Cross-check: beaconcha.in ETH.Store apr (cl + el INCLUDING MEV; one-off seed, dated)", cross, FMT_PCT, "pull"),
         ("Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)", ceiling, FMT_X, "calc"),
     ]
 

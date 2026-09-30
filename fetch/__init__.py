@@ -35,7 +35,6 @@ from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .blockscout_stats import BlockscoutStats
 from .nearblocks import NearBlocks
-from .beaconchain import BeaconChain
 from .maple_transparency import MapleTransparency
 from .llama import DefiLlama, MorphoBlueApi
 from .schedule import Schedule
@@ -68,10 +67,8 @@ TIER_ORDER = [
     ("blockscout_stats", 1, lambda ctx: BlockscoutStats(last_dates=ctx["last_dates"])),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
     ("nearblocks", 1, lambda ctx: NearBlocks(last_dates=ctx["last_dates"])),
-    # Ethereum's own consensus-layer issuance (ETH.Store) — keyed (BEACONCHAIN_API_KEY). Ahead
-    # of _derive_issuance in the pipeline, so a measured figure here suppresses that day's
-    # derivation and the derivation remains the fallback for any day this source fails.
-    ("beaconchain", 1, lambda ctx: BeaconChain()),
+    # beaconcha.in LEFT routine runs 2026-09-30 (Jake): its daily /ethstore/latest call kept
+    # triggering long lockouts. It is `token_metrics.py --seed beaconchain` only (fetch/beaconchain.py).
     # Ethereum's cumulative burn and protocol supply (Etherscan stats/ethsupply2, A9).
     ("etherscan_supply", 1, lambda ctx: EtherscanSupply(prior_dates=ctx["prior_dates"],
                                                         prior_delta=ctx["prior_delta"])),
@@ -98,7 +95,7 @@ TIER_ORDER = [
     ("pendle_api", 3, lambda ctx: PendleEpochs()),
     # Ethereum's daily supply and staked-ETH history, one call (ultrasound.money API, 2026-09-30).
     ("ultrasound", 3, lambda ctx: UltrasoundHistory()),
-    # Artemis settlement volume, from Jake's CSV exports in data/artemis/ (local files, 2026-09-30).
+    # Artemis settlement volume, from Jake's CSV exports in the repo root, read at run time (never committed).
     ("artemis_csv", 5, lambda ctx: ArtemisCSV()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
@@ -1730,7 +1727,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "beaconchain": 60, "coingecko": 240, "hypercore_info": 60,
+    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 60, "blockscout_stats": 90,
 }

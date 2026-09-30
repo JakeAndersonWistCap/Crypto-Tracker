@@ -315,8 +315,9 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                           f"— key UNCONFIRMED ({ds.get('status')})", "hyperliquid_history_routes"))
     if metric == config.ARTEMIS_SETTLEMENT["metric"] and name in config.ARTEMIS_SETTLEMENT["chains"]:
         c = config.ARTEMIS_SETTLEMENT["chains"][name]
-        dedicated.append((f"Jake's Artemis CSV export {config.ARTEMIS_SETTLEMENT['dir']}/{c['file']} "
-                          f"(fetch/artemis.py; RUNBOOK 11j)", "settlement_sources"))
+        dedicated.append((f"Jake's Artemis CSV export '{c['artemis_name']} - Settlement Volume.csv' "
+                          f"in the repo root, read at run time (fetch/artemis.py; RUNBOOK 11j)",
+                          "settlement_sources"))
     if dedicated:
         what, probe = dedicated[0]
         return (f"the route is {what}, and it produced nothing this run",
@@ -473,12 +474,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY are in .env.")
     node_api = project.get("node_api") or {}
     # A SECOND FIELD FROM A RESPONSE ALREADY FETCHED — say which, so nobody hunts for a source.
-    bc = (project.get("beaconchain") or {}).get("metrics") or {}
-    if metric in bc:
-        return (f"beaconcha.in ETH.Store `{bc[metric].get('field')}` is configured but stored "
-                f"nothing this run",
-                f"Read the beaconchain lines in the Run Log for {name}: a 401/429 is the key or "
-                f"quota, 'has not finished' means the latest day is still open.")
+    bc = project.get("beaconchain") or {}
+    if bc and metric in (bc["history"]["metric"], bc["history"].get("consensus_metric")):
+        return (f"beaconcha.in's ETH.Store is a ONE-OFF SEED, in no routine run (Jake, 2026-09-30: "
+                f"its daily call kept triggering long lockouts) — this series holds only what the "
+                f"seed read",
+                "`python token_metrics.py --seed beaconchain` — it reads the key's quota first and "
+                "refuses unless the whole backfill fits; the Etherscan yield is the headline either way.")
     se = project.get("spendle_epochs") or {}
     if se and metric in (se.get("metric"), se.get("apr_metric")):
         return ("Pendle's spendle/data epoch read is configured but stored nothing this run",
@@ -921,8 +923,6 @@ def served_by(source: str, project: dict) -> set[str] | None:
     if source == "nearblocks":
         m = set((project.get("nearblocks") or {}).get("metrics") or {})
         m |= {f["metric"] for f in project.get("near_account_flows") or []}
-    elif source == "beaconchain":
-        m = set((project.get("beaconchain") or {}).get("metrics") or {})
     elif source == "pendle_api":
         se = project.get("spendle_epochs") or {}
         m = {se["metric"], se["apr_metric"]} if se else set()

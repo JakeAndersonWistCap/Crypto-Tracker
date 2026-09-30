@@ -8,3 +8,7 @@ __pycache__/
 .pytest_cache/
 tests/_scratch/
 .cache/
+# Artemis exports (Jake's CSVs, read at run time from the repo root): NOT committed until
+# Artemis's terms are read (config.SOURCE_REGISTER["artemis.xyz"]).
+*Settlement Volume*.csv
+*Settlement_Volume*.csv

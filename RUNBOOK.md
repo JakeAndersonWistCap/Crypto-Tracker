@@ -449,23 +449,44 @@ automatically. Once a month:
 1. Open Artemis → the asset (e.g. Ethereum) → Metrics → Market Data → **Settlement Volume**
    (`classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME`).
    Set the range to the full history, then export as CSV.
-2. Save it, overwriting the old file, as `data/artemis/<Chain>_-_Settlement_Volume.csv`. The chain names are
-   `Ethereum`, `Near`, `Hyperliquid` and `Plume`, as listed in `config.ARTEMIS_SETTLEMENT["chains"]`.
+2. Save it in the **repository root**, overwriting the old file, e.g.
+   `C:\Users\jake\Crypto-Tracker\Ethereum_-_Settlement_Volume.csv`. Both name forms are accepted:
+   `<Chain> - Settlement Volume.csv` (Artemis's download name) or `<Chain>_-_Settlement_Volume.csv`.
+   The chains are those listed in `config.ARTEMIS_SETTLEMENT["chains"]` (Ethereum, Near, Hyperliquid).
+   To keep the files somewhere else, set `TOKEN_METRICS_ARTEMIS_DIR` in `.env`.
    The file must have exactly two columns: `DateTime` and `<Chain> - Settlement Volume`. A file with any
    other column is refused, so a second definition can never be mixed in.
-3. Set `exported_on` for that chain in `config.ARTEMIS_SETTLEMENT` to the export date. It goes into
+3. **Do not commit it.** `.gitignore` excludes both name forms until Artemis's terms have been read.
+4. Set `exported_on` for that chain in `config.ARTEMIS_SETTLEMENT` to the export date. It goes into
    the source string. If you leave it unset, the file's own date is used and the source says so.
-4. Run `python token_metrics.py`. The Run Log line `artemis_csv` gives the day count, the date range
-   and how old the last day is.
+5. Run `python token_metrics.py`. The Run Log line `artemis_csv` gives the day count, the date range
+   and how old the last day is. A missing file is a gap with that reason, never a failed run.
 
 The NRR divides market cap on the export's **last date** by the 365 days ending on that date, so both
 inputs share the same end date. A1 shows that date next to the ratio. Once it is more than 45 days
-old, the cell turns stale (AMBER). If a chain is not on Artemis, record that in
-`completeness_report.DECISIONS` as an ACCEPTED LIMIT, with the page you checked. Do not substitute
-another source's volume.
+old, the cell turns stale (AMBER). Plume is closed as an ACCEPTED LIMIT: it is not on Artemis and
+The Block does not cover it. A chain Artemis does not list gets the same treatment, with the page you
+checked. Do not substitute another source's volume.
 
 If an `ARTEMIS_API_KEY` ever appears, run `python check_offline_items.py settlement_sources` and paste
 back what it prints. The API is wired only after a keyed response has been seen.
+
+## 11k. One-off: Ethereum's ETH.Store history from beaconcha.in
+
+beaconcha.in is **not** part of any routine run: its daily call kept triggering lockouts of 40+ hours.
+Ethereum's current staking yield comes from Etherscan (the daily change in Eth2Staking plus priority
+fees, excluding MEV). beaconcha.in is used once, for the past year's history:
+
+```bash
+python token_metrics.py --seed beaconchain
+```
+
+It spends one call reading the key's real monthly quota, and that call is also the staking-yield
+cross-check. It **refuses to start** unless every missing day plus a small reserve (~370 on the
+first run) fits in what is left of the month, and logs both numbers. If the quota can't cover it,
+leave beaconcha.in out: Ethereum's yield and issuance history then stay forward-only from
+2026-09-29. A 429 stops it with the wait recorded. Re-run after that; days already read are
+never read twice.
 
 ## 11c. Checking numbers without Excel
 

@@ -96,10 +96,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
-    ap.add_argument("--seed", choices=["nearblocks", "geodnet"],
+    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "beaconchain"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
-                         "reads; records no gaps and does not rebuild the workbook.")
+                         "reads; records no gaps and does not rebuild the workbook. beaconchain: "
+                         "Ethereum's one-off ETH.Store history — reads the key's quota first and "
+                         "refuses unless the whole backfill fits (beaconcha.in is in no routine run).")
     return ap.parse_args(argv)
 
 
@@ -206,6 +208,47 @@ def seed_geodnet(st, log) -> int:
     return 0
 
 
+def seed_beaconchain(st, log) -> int:
+    """Ethereum's ONE-OFF ETH.Store history (Jake, 2026-09-30). beaconcha.in is in no routine run.
+
+    One call reads the key's real monthly quota (and is the staking-yield cross-check); the seed
+    REFUSES unless every missing day of the past year + the reserve fits in it, and records the
+    refusal. Otherwise it reads /ethstore/{day} for each missing day — staking_yield_pct and the
+    consensus rewards that are the issuance history's read-time leg. Resumable: days already read
+    are cached (beaconchain-history.json) and never read twice. Records no gaps.
+    """
+    from fetch import Heartbeat
+    from fetch.beaconchain import BeaconChain
+    from fetch.validate import validate_frame
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    bc = BeaconChain()
+    missing = bc.missing_days(eth["beaconchain"])
+    log.info("--seed beaconchain: BEFORE — %d of %d day(s) missing", len(missing),
+             int(eth["beaconchain"]["history"]["days"]))
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        res = bc.seed(eth, out)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed beaconchain: %s %s — %s", e.status, e.project, e.message)
+    lim = ", ".join(f"{k}={v}" for k, v in (res.get("limits") or {}).items() if v is not None)
+    if not res["started"]:
+        log.error("--seed beaconchain: NOT STARTED — %s%s", res["why"], f" [{lim}]" if lim else "")
+        return 1
+    log.info("--seed beaconchain: AFTER (%.0fs, %d call(s), %d row(s) stored, %s day(s) still "
+             "missing) — limits after the last answer: %s", time.monotonic() - t0, res["calls"],
+             written, res["still"], lim or "not reported")
+    if res.get("retry_at"):
+        log.warning("--seed beaconchain: stopped by a 429 — beaconcha.in asks to wait until %s UTC; "
+                    "re-run after that, it resumes", res["retry_at"])
+    return 0 if not res["still"] else 1
+
+
 def resolve_scope(args, log) -> list[dict]:
     """Which projects this run fetches. REFUSES on a name it does not recognise.
 
@@ -265,7 +308,8 @@ def main(argv=None) -> int:
     st = store_mod.Store(store_mod.DB_PATH)
 
     if args.seed:
-        rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet}[args.seed](st, log)
+        rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
+              "beaconchain": seed_beaconchain}[args.seed](st, log)
         st.close()
         return rc
 

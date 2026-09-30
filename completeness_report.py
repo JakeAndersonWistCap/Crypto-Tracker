@@ -82,13 +82,13 @@ DECISIONS = {
                       "unblocks the 365-day archive read; Blockworks stays a cross-check once its "
                       "terms are read (probe blockworks_geodnet)"),
     # SETTLEMENT VOLUME (Jake, 2026-09-30): Artemis's daily series, one definition for every chain,
-    # from CSV exports in data/artemis/ (config.ARTEMIS_SETTLEMENT). Ethereum's is imported; the
-    # other three wait on Jake's export. A chain Artemis does not list becomes ACCEPTED LIMIT with
-    # that as its evidence — never another source's definition.
-    **{(n, m): ("NEEDS JAKE", f"export Artemis's {n} Settlement Volume chart as CSV to "
-                              f"data/artemis/{n}_-_Settlement_Volume.csv (same format as Ethereum's); "
-                              f"if Artemis does not list {n}, say so and it becomes ACCEPTED LIMIT")
-       for n in ("Near", "Hyperliquid", "Plume") for m in ("settlement_volume_usd", "network_reserve_ratio")},
+    # from CSV exports read at run time (config.ARTEMIS_SETTLEMENT). Ethereum's is exported; Jake is
+    # checking whether Artemis carries NEAR and Hyperliquid. Plume is a closure (not on Artemis,
+    # not covered by The Block) — config.UNAVAILABLE, with its evidence.
+    **{(n, m): ("NEEDS JAKE", f"check whether Artemis carries {n}'s Settlement Volume; if it does, "
+                              f"export the CSV to the repo root as '{n} - Settlement Volume.csv'; if "
+                              f"not, it becomes an ACCEPTED LIMIT like Plume's")
+       for n in ("Near", "Hyperliquid") for m in ("settlement_volume_usd", "network_reserve_ratio")},
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
                       "publishes it"),
