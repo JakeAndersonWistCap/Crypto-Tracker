@@ -312,6 +312,46 @@ class DefiLlama:
                         f"{slug}:{data_type}", TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{slug}:{data_type}: {e}", TIER)
+        for spec in project.get("defillama_sum_slugs") or ():
+            self._sum_slugs(project, spec, window_days, out)
+
+    def _sum_slugs(self, project: dict, spec: dict, window_days, out) -> None:
+        """One metric = the SUM of several DefiLlama slugs' daily charts (Chainlink's customer
+        revenue, Jake 2026-09-30: every service's payments, all chains). A day is stored only
+        where EVERY slug reports it — a day missing one service would read low by that service,
+        silently. A repeated date within one slug is reported and the first kept, never added."""
+        name, metric, dt = project["name"], spec["metric"], spec.get("data_type", "dailyFees")
+        per: dict = {}
+        repeated = []
+        for kid in spec["slugs"]:
+            seen: dict = {}
+            dupes = 0
+            try:
+                for d, v in self._summary_chart(kid, dt):
+                    day = pd.Timestamp(d.date())
+                    if day in seen:
+                        dupes += 1
+                        continue
+                    seen[day] = float(v)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{metric}: {kid}:{dt}: {e} — the sum is not stored "
+                                       f"without every service", TIER)
+                return
+            if dupes:
+                repeated.append(f"{kid} repeated {dupes} date(s), first kept")
+            per[kid] = seen
+        common = set.intersection(*(set(v) for v in per.values())) if per else set()
+        rows = sorted((d, sum(per[k][d] for k in per)) for d in common)
+        if not rows:
+            out.fail(SOURCE, name, f"{metric}: no day on which all of {', '.join(spec['slugs'])} "
+                                   f"report", TIER)
+            return
+        src = f"{SOURCE}:sum({'+'.join(spec['slugs'])})"
+        frame = tidy(rows, name, metric, src, TIER)
+        out.add(window(frame, window_days), SOURCE, name,
+                f"{metric} = sum of {dt} over {', '.join(spec['slugs'])} ({len(rows)} common day(s) "
+                f"from {rows[0][0].date()}) — {spec.get('why', '')}"
+                + (f" [{'; '.join(repeated)}]" if repeated else ""), TIER)
 
     def _fees_with_restructure_guard(self, project: dict, slug: str, restructure: dict,
                                      window_days, out) -> None:

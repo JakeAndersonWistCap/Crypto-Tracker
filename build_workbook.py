@@ -1046,6 +1046,54 @@ def _as_stored(view: pd.DataFrame, columns) -> pd.DataFrame:
 _VIEW_BLOCKS: dict = {}
 
 
+def _history_leg_views(groups: dict) -> None:
+    """A flow's DECLARED history leg, prepended at read time (config `history_legs`).
+
+    Ethereum, A1 2026-09-30: consensus_rewards_tokens is d(Eth2Staking), read from 2026-09-29
+    only. New ETH IS consensus rewards (net of penalties), so for the days before its first row
+    the ultrasound-leg gross issuance stands in — a declared series_handover, never overlapping,
+    and never stored under this metric."""
+    for p in scoped_projects():
+        name = p["name"]
+        for metric, leg in (p.get("history_legs") or {}).items():
+            src = groups.get((name, leg["from_metric"]))
+            if src is None or src.empty:
+                continue
+            src = src[src["source"].astype(str).str.startswith(leg["source_prefix"])]
+            held = groups.get((name, metric))
+            if held is not None and not held.empty:
+                src = src[src["date"] < held["date"].min()]
+            if src.empty:
+                continue
+            view = src.copy()
+            view["metric"] = metric
+            cols = held.columns if held is not None and not held.empty else src.columns
+            parts = [_as_stored(view, cols)] + ([held] if held is not None and not held.empty else [])
+            groups[(name, metric)] = pd.concat(parts, ignore_index=True).sort_values("date")
+
+
+def _circulating_views(groups: dict) -> None:
+    """circulating_supply_onchain := on-chain total − the documented non-circulating set, per day
+    (M, Jake 2026-09-30; fetch/circulating.py). Only days where every input was read."""
+    from fetch import circulating as circ_mod
+    for p in scoped_projects():
+        name = p["name"]
+        spec = config.circulating_onchain(name) or {}
+        if spec.get("status") not in ("established", "partial"):
+            continue
+        need = [spec["total"], *spec.get("subtract", ())]
+        parts = [groups.get((name, m)) for m in need]
+        if any(g is None or g.empty for g in parts):
+            continue
+        s = circ_mod.series(pd.concat(parts, ignore_index=True), name)
+        if s.empty:
+            continue
+        tag = circ_mod.SOURCE + ("" if spec["status"] == "established" else "[PARTIAL set]")
+        view = pd.DataFrame({"date": s.index, "project": name, "metric": "circulating_supply_onchain",
+                             "value": s.values, "source": tag, "tier": 2})
+        groups[(name, "circulating_supply_onchain")] = _as_stored(view, parts[0].columns)
+
+
 def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
     """The PRIMARY issuance series, for every consumer. See config.ISSUANCE_PRIMARY.
 
@@ -1135,7 +1183,10 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                                     f"series, annualised over its {covered} covered day(s)); one "
                                     f"of them is wrong, so neither is shown")
             elif spec["kind"] == "first_party":
-                mine = (observed[observed["source"].astype(str).str.startswith(spec["source_prefix"])]
+                # history_prefix (Ethereum, A1 2026-09-30): the declared history leg before the
+                # first-party one — both shown, as the declared handover stitches them.
+                prefixes = tuple(x for x in (spec["source_prefix"], spec.get("history_prefix")) if x)
+                mine = (observed[observed["source"].astype(str).str.startswith(prefixes)]
                         if observed is not None and not observed.empty else None)
                 if mine is not None and not in_q0(mine).empty:
                     groups[key] = _as_stored(mine, observed.columns)
@@ -1196,7 +1247,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _VIEW_BLOCKS.clear()
     _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
     _issuance_views(groups, asof)
+    _history_leg_views(groups)
     _reward_end_views(groups, asof)
+    _circulating_views(groups)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -2418,24 +2471,61 @@ def _protocol_yield_flag(p: dict, data_by_key: dict) -> tuple[str, str] | None:
     return suffix, note
 
 
+def _retirement_zero(p: dict) -> str | None:
+    """Why this project's retirement rate is a STRUCTURAL 0 — or None.
+
+    Aerodrome (Jake, 2026-09-30): no AERO is bought — 100% of fees go to veAERO voters in the
+    pairs' own tokens (fee_split destination_model distribute_to_voters). The rate is 0, not
+    missing; what stakers earn is on PROTOCOL STAKING YIELD."""
+    fs = p.get("fee_split") or {}
+    if fs.get("destination_model") == "distribute_to_voters" and \
+            "actual_buyback_tokens" not in config.metrics_for_project(p):
+        return ("0 — no token is bought: 100% of fees are paid to voters in the pairs' own tokens "
+                "(fee_split: distribute_to_voters). What stakers earn is on PROTOCOL STAKING YIELD.")
+    return None
+
+
 def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
     """BOTH RETIREMENT RATES, OR NEITHER. The gap between them is the dilution warning; the
     circulating rate alone is the flattering half. One gate serves both cells, so a missing
-    market cap, FDV or buyback blanks the pair together."""
+    supply, FDV or buyback blanks the pair together.
+
+    TOKENS PRIMARY (Jake, 2026-09-30): the pair is buyback TOKENS (annualised) over circulating
+    and over the FDV supply (FDV ÷ spot price) — price-independent, so a rising token does not
+    shrink it the way dollars spent at buy-time over today's market cap do (Hyperliquid read 3.9%
+    in tokens against 3.1% in dollars). The dollar pair stays alongside."""
+    bt = lambda r: R.D(r, "actual_buyback_tokens", "q0")  # noqa: E731
     bb = lambda r: R.D(r, "actual_buyback_usd", "q0")  # noqa: E731
     mc = lambda r: R.D(r, "market_cap_usd", "now")  # noqa: E731
     fdv = lambda r: R.D(r, "fdv_usd", "now")  # noqa: E731
+    px = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
+    circ = lambda r, p: _circ(R, r, p)  # noqa: E731
+    fdv_supply = lambda r: f"({fdv(r)}/{px(r)})"  # noqa: E731
+    gate_t = lambda r, p: (f"AND(ISNUMBER({bt(r)}),ISNUMBER({circ(r, p)}),ISNUMBER({fdv(r)}),"  # noqa: E731
+                           f"ISNUMBER({px(r)}))")
     gate = lambda r: f"AND(ISNUMBER({bb(r)}),ISNUMBER({mc(r)}),ISNUMBER({fdv(r)}))"  # noqa: E731
     # THE RATES READ 0 FOR THE SAME REASON THE BUYBACK DOES, and would keep reading 0 if the
     # program restarted at another address — so the program flag rides on them too.
-    flag = lambda p: _program_flag(p, data_by_key or {})  # noqa: E731
+    flag = lambda p: (_program_flag(p, data_by_key or {})  # noqa: E731
+                      or ((" · no buyback — fees to voters", _retirement_zero(p)) if _retirement_zero(p) else None))
+
+    def zero_or(expr_fn):
+        def build(r, p):
+            return "=0" if _retirement_zero(p) else calc(expr_fn(r, p))
+        return build
     return [
-        ("CIRCULATING RETIREMENT RATE = actual buyback $ (annualised) ÷ market cap",
-         lambda r, p: calc(f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{mc(r)},{NA})"), FMT_PCT, "calc", True,
-         {"metric": "actual_buyback_usd", "flag_fn": flag}),
-        ("FDV RETIREMENT RATE = actual buyback $ (annualised) ÷ FDV — always read with the rate to its left",
-         lambda r, p: calc(f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"), FMT_PCT, "calc", True,
-         {"metric": "actual_buyback_usd", "flag_fn": flag}),
+        ("CIRCULATING RETIREMENT RATE (tokens) = actual buyback tokens (annualised) ÷ circulating — primary",
+         zero_or(lambda r, p: f"IF({gate_t(r, p)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/({circ(r, p)}),{NA})"),
+         FMT_PCT, "calc", True, {"metric": "actual_buyback_tokens", "flag_fn": flag}),
+        ("FDV RETIREMENT RATE (tokens) = actual buyback tokens (annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left",
+         zero_or(lambda r, p: f"IF({gate_t(r, p)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/{fdv_supply(r)},{NA})"),
+         FMT_PCT, "calc", True, {"metric": "actual_buyback_tokens", "flag_fn": flag}),
+        ("Circulating retirement rate ($) = actual buyback $ (annualised) ÷ market cap — alongside",
+         zero_or(lambda r, p: f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{mc(r)},{NA})"),
+         FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
+        ("FDV retirement rate ($) = actual buyback $ (annualised) ÷ FDV — alongside",
+         zero_or(lambda r, p: f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"),
+         FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
     ]
 
 
@@ -2505,6 +2595,14 @@ def _circ(R: Refs, r, p: dict) -> str:
     denominator becomes an error and the cell reads n/a rather than guessing.
     """
     c = R.D(r, "circulating_supply", "now")
+    # ON-CHAIN / FIRST-PARTY FIRST where the set is established (M, Jake 2026-09-30): Ethereum's
+    # total supply, Hyperliquid's own tokenDetails.circulatingSupply. CoinGecko is the fallback
+    # and the cross-check. A PARTIAL set never replaces CoinGecko — it reads high.
+    spec = config.circulating_onchain(p["name"]) or {}
+    if spec.get("status") in ("established", "first_party"):
+        m = spec.get("metric") or "circulating_supply_onchain"
+        own = R.D(r, m, "now")
+        c = f"IF(ISNUMBER({own}),{own},{c})"
     if not config.supply_unnetted_burn(p["name"]):
         return c
     tot, gross, burned = (R.D(r, m, "now") for m in ("total_supply", "total_supply_gross",
@@ -2524,7 +2622,7 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
          lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
         ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
-         lambda r, p: _coverage_guard(
+         lambda r, p: _zero_issuance(R, r, p, '"no issuance — burn only"') or _coverage_guard(
              R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"),
                     ("issuance", config.issuance_basis(p["name"]), "q0")],
              f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}/"
@@ -2534,10 +2632,25 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
          lambda r, p: _a4_window_caveat(p, data_by_key or {}), FMT_TEXT, "text", True),
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
-         lambda r, p: _net_guarded(R, r, p, _basis_iss(R, p), burn), FMT_NUM, "calc", True),
+         lambda r, p: _zero_issuance(R, r, p, f"-{burn(r, p)}") or _net_guarded(R, r, p, _basis_iss(R, p), burn),
+         FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
-         lambda r, p: _net_annual_pct(R, r, p, circ(r, p)), FMT_PCT, "calc", True),
+         lambda r, p: _zero_issuance(
+             R, r, p, f"-{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/({circ(r, p)})")
+         or _net_annual_pct(R, r, p, circ(r, p)), FMT_PCT, "calc", True),
     ]
+
+
+def _zero_issuance(R: Refs, r: int, p: dict, expr: str) -> str | None:
+    """A4 for a project that issues nothing (config issuance_declared_zero; Uniswap, Jake
+    2026-09-30): the burn-only cell — or None for everyone else. A positive MEASURED issuance in
+    the window blocks it with the figure: the declaration is checked, not trusted."""
+    z = config.issuance_declared_zero(p["name"])
+    if not z:
+        return None
+    m = R.D(r, z["check_metric"], "q0")
+    return (f'=IF(IFERROR({m}>0,FALSE),"BLOCKED — issuance declared zero ({z["decided_by"]}, '
+            f'{z["decided_on"]}) but "&TEXT({m},"#,##0")&" measured in the window",IFERROR({expr},{NA}))')
 
 
 def _free_float_reason(p: dict) -> str | None:
@@ -2630,7 +2743,11 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
         f = (s or {}).get("issuance_formula")
         if not f:
             return ""
-        im, stake = s["issuance_metric"], R.D(r, s["stake_metric"], "now")
+        # THE STAKE OVER THE SAME WINDOW (A3, 2026-09-30): ultrasound.money's daily staked-ETH
+        # series, Q0 average, where declared; today's reading otherwise.
+        fsm = s.get("formula_stake_metric")
+        stake = R.D(r, fsm, "q0") if fsm else R.D(r, s["stake_metric"], "now")
+        im = s["issuance_metric"]
         return _coverage_guard(R, r, [("issuance", im, "q0")],
                                f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/({f['coefficient']}*SQRT({stake}))")
     return [
@@ -2702,20 +2819,31 @@ def _a1_headline(R: Refs) -> list[tuple]:
     ]
 
 
-def _token_yield(R: Refs):
+def _token_yield(R: Refs, data_by_key: dict | None = None):
     """A3, Pendle (2026-09-29): the staking yield in TOKENS — PENDLE bought (annualised over the
     days it covers) / reward-bearing sPENDLE (lock + lock_add). Price-free, so a rising PENDLE
-    does not understate it the way USD spend at buy-time over staked value at today's price does."""
+    does not understate it the way USD spend at buy-time over staked value at today's price does.
+
+    TOKENS PRIMARY (Jake, 2026-09-30): every PROTOCOL_YIELD project gets this column, placed
+    before the dollar yield. Where no token series is declared, what stakers are paid (dollars,
+    as DefiLlama counts it) is put in tokens at the Q0 AVERAGE price — the price over the days it
+    was paid — rather than at today's spot, which is what the dollar column divides by."""
     def build(r, p):
         spec = config.PROTOCOL_YIELD.get(p["name"]) or {}
+        if not spec:
+            why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
+            return f"n/a — {why}" if why else ""
         ty = spec.get("token_yield")
-        if not ty:
-            return ""
-        tok = R.D(r, ty["tokens"], "q0")
         base = R.D(r, spec["lock"], "now")
         if spec.get("lock_add"):
             add = R.D(r, spec["lock_add"], "now")
             base = f"({base}+IF(ISNUMBER({add}),{add},0))"
+        if not ty:
+            rev, pq0 = R.D(r, spec["revenue"], "q0"), R.D(r, "price_usd", "q0")
+            tok = f"({rev}/{pq0})"
+            return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({pq0}),ISNUMBER({base})),"
+                        f"{_annualise(R, r, p, spec['revenue'], tok)}/{base},{NA})")
+        tok = R.D(r, ty["tokens"], "q0")
         # PER EPOCH (Pendle, 2026-09-29): the mean distribution of the epochs in Q0 x epochs/yr —
         # a 90-day window holds 6 or 7 fortnightly epochs, and x365/90 would swing by one.
         if ty.get("epoch_days"):
@@ -2726,16 +2854,24 @@ def _token_yield(R: Refs):
 
     def note(p):
         ty = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {})
-        return ((" · tokens", f"TOKEN YIELD — PENDLE DISTRIBUTED per epoch (Pendle's "
-                              f"sPendleHistoricalData), mean over the Q0 epochs x 365.25/"
-                              f"{ty.get('epoch_days', '?')}, over real + virtual sPENDLE. Airdrops (in "
-                              f"kind) excluded. Before 2026-09-29: {ty.get('was', 'buyback tokens')}. "
-                              f"Cross-check: {ty['cross_check']}.")
-                if ty else None)
-    return ("Staking yield in TOKENS = tokens distributed per year ÷ reward-bearing stake (real + virtual)",
-            build, FMT_PCT, "calc", False, {"metric_fn": lambda n: ((config.PROTOCOL_YIELD.get(n) or {})
-                                                                  .get("token_yield") or {}).get("tokens"),
-                                            "flag_fn": note})
+        own = ((" · tokens", f"TOKEN YIELD — PENDLE DISTRIBUTED per epoch (Pendle's "
+                             f"sPendleHistoricalData), mean over the Q0 epochs x 365.25/"
+                             f"{ty.get('epoch_days', '?')}, over real + virtual sPENDLE. Airdrops (in "
+                             f"kind) excluded. Before 2026-09-29: {ty.get('was', 'buyback tokens')}. "
+                             f"Cross-check: {ty['cross_check']}.")
+               if ty else None)
+        return own or _protocol_yield_flag(p, data_by_key or {})
+    return ("PROTOCOL STAKING YIELD (tokens) — primary: tokens paid to stakers per year ÷ reward-bearing stake "
+            "(real + virtual); dollars paid are converted at the Q0 average price where no token series exists",
+            build, FMT_PCT, "calc", True,
+            {"metric_fn": lambda n: (((config.PROTOCOL_YIELD.get(n) or {}).get("token_yield") or {}).get("tokens")
+                                     or (config.PROTOCOL_YIELD.get(n) or {}).get("revenue")),
+             "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
+                                      or _virtual_missing(p["name"], data_by_key or {})
+                                      if p["name"] in config.PROTOCOL_YIELD else None),
+             "partial_direction": "the locked value is incomplete, so the yield READS HIGH.",
+             "partial_fmt": '0.0%" PARTIAL↑";(0.0%)" PARTIAL↑"',
+             "flag_fn": note})
 
 
 def _published_apr(R: Refs):
@@ -2806,6 +2942,8 @@ def _restatement_views(groups: dict) -> None:
             if held is not None and not held.empty and (held["source"].astype(str) != restated).any():
                 continue
             view = src.copy()
+            if spec.get("source_prefix"):
+                view = view[view["source"].astype(str).str.startswith(spec["source_prefix"])]
             if spec.get("from_date"):
                 view = view[view["date"] >= pd.Timestamp(spec["from_date"])]
             if view.empty:
@@ -2861,8 +2999,8 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
             return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({lock}),ISNUMBER({px})),{_annualise(R, r, p, spec['revenue'], rev)}/({lock}*{px}),{NA})")
         why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
         return f"n/a — {why}" if why else ""
-    return ("PROTOCOL STAKING YIELD — what a REAL staker earns per staked token = holders revenue (annualised) ÷ "
-            "locked value (real + virtual where rewards are shared with virtual balances) — revenue share, NOT a validator yield",
+    return ("PROTOCOL STAKING YIELD ($) — alongside: what a REAL staker earns per staked token = holders revenue (annualised) ÷ "
+            "locked value at spot (real + virtual where rewards are shared with virtual balances) — revenue share, NOT a validator yield",
             build, FMT_PCT, "calc", False,
             {"metric": "holders_revenue_usd",
              "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
@@ -3378,8 +3516,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{R.D(r, 'locked_tokens_dashboard', 'now')}-1"),
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
+        _token_yield(R, data_by_key),
         _protocol_yield(R, data_by_key),
-        _token_yield(R),
         _published_apr(R),
         _virtual_share(R),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====

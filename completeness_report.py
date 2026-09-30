@@ -49,15 +49,15 @@ WITHHELD = ("orphaned", "withdrawn", "suppressed", "disputed", "blocked", "measu
 _SUPERSEDED = "N/A — the derived d(circulating) - d(total) route is SUPERSEDED: "
 DECISIONS = {
     ("GEODNET", "gross_issuance_tokens"): (
-        "N/A", "by design: emission is per-miner on a halving schedule, so no supply delta recovers "
-               "it (issuance_derivation suppressed); the mining-wallet release is measured as "
-               "pool_release_tokens, the issuance basis"),
-    ("GEODNET", "emissions_tokens"): (
-        "N/A", "answered: not restated from pool_release_tokens (config.EMISSIONS_ALIAS_DECLINED, "
-               "decided 2026-09-24)"),
+        "N/A", "by design: all 1bn GEOD were pre-minted (GEODNET tokenomics, docs.geodnet.com; "
+               "DefiLlama's geodnet adapter reads burns only), so nothing is minted; the mining-"
+               "wallet release is measured as pool_release_tokens (the issuance basis) and, from "
+               "2026-09-30, restated as emissions_tokens"),
     ("Maple", "emissions_tokens"): (
-        "N/A", "answered: not restated from pool_release_tokens (config.EMISSIONS_ALIAS_DECLINED, "
-               "decided 2026-09-24)"),
+        "N/A", "no emission programme runs: staking rewards were sunset by MIP-019 (maple-docs "
+               "@07d8ff8e syrup-tokenomics/staking.md) and Drips ended after Q4 2025, last claims "
+               "18 Feb 2026 (syrupusdc-usdt-for-lenders/drips-rewards.md); the SSF's release is "
+               "pool_release_tokens (H)"),
     ("Near", "emissions_tokens"): (
         "N/A", "the issuance route: NEAR's emission is gross_issuance_tokens (declared 5% protocol "
                "rule, header-supply cross-check)"),
@@ -72,25 +72,40 @@ DECISIONS = {
     ("Aethir", "pool_release_tokens"): (
         "N/A", _SUPERSEDED + "the declared emission schedule supplies emissions_tokens; CoinGecko "
                             "circulating does not update"),
+    # REOPENED 2026-09-30 (H): the ACCEPTED LIMIT had no native-source evidence. The route is
+    # Maple's own transparency page — the SSF chart's SYRUP balance series, less the monthly
+    # buyback inflows the same page lists. The SSF address is in no Maple repository (maple-
+    # labs/address-registry @3df2052c, maple-docs @07d8ff8e), so the series comes from the page.
     ("Maple", "pool_release_tokens"): (
-        "ACCEPTED LIMIT", "no route: CoinGecko circulating does not update, so d(circulating) - "
-                          "d(total) is flat, and no measured release wallet exists"),
+        "NEEDS JAKE", "run `python check_offline_items.py maple_ssf_history` and paste it back: "
+                      "the SSF chart's series on maple.finance's transparency page is the route; "
+                      "release = balance decline net of the monthly buyback inflows it lists"),
     ("GEODNET", "locked_tokens"): (
-        "NEEDS JAKE", "~3M GEOD locked: the manual row in manual_overrides.csv (value, source, date)"),
+        "NEEDS JAKE", "~3M GEOD locked, the manual row (value, source, date) — no staking contract "
+                      "is established: both behavioural candidates are ruled out (0x8f10b468… is "
+                      "KyberSwap's executor, 0x5fe84b85… a QuickSwap pool) and DefiLlama has no "
+                      "GEODNET staking adapter. GEODNET's console or docs naming the contract "
+                      "unblocks the 365-day archive read; Blockworks stays a cross-check once its "
+                      "terms are read (probe blockworks_geodnet)"),
+    # B (2026-09-30): The Block's page is gone. ONE definition must cover Ethereum, NEAR, Plume
+    # and Hyperliquid for the Network Reserve Ratio to be comparable across A1 — Jake's pick.
     ("Ethereum", "settlement_volume_annual_usd"): (
-        "NEEDS JAKE", "annualised settlement volume: The Block's adjusted on-chain volume, a manual "
-                      "quarterly row in manual_overrides.csv"),
+        "NEEDS JAKE", "choose ONE settlement-volume source for all four chains (options in the "
+                      "second-pass report: Artemis 'settlement volume' — keyed, definition and "
+                      "chain coverage not public; Visa Onchain Analytics — adjusted stablecoin "
+                      "volume, no public API; Coin Metrics — CC BY-NC); none is wired until then"),
+    ("Plume", "settlement_volume_annual_usd"): (
+        "NEEDS JAKE", "the same choice as Ethereum's (B): one settlement-volume definition for "
+                      "Ethereum, NEAR, Plume and Hyperliquid"),
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
                       "publishes it"),
 }
 # WAITING ON A SERIES THAT NEEDS n DAILY READINGS (Ethereum's yield: a week of d(Eth2Staking)).
-WAIT_ON_SERIES = {
-    ("Ethereum", "staking_yield_pct"): {
-        "series": "consensus_rewards_cumulative", "days": 7,
-        "why": "the Eth2Staking consensus series needs a week of daily readings; beaconcha.in is a "
-               "monthly cross-check only"},
-}
+# Ethereum staking_yield_pct's week-long wait on Eth2Staking was lifted 2026-09-30: the
+# consensus part now has its declared history leg (ultrasound-derived issuance before the first
+# d(Eth2Staking) row) and ETH.Store is backfilled per day (A1/A2).
+WAIT_ON_SERIES: dict = {}
 
 
 def mechanism_start(p: dict, metric: str, asof: pd.Timestamp) -> dict | None:
@@ -117,8 +132,13 @@ def mechanism_start(p: dict, metric: str, asof: pd.Timestamp) -> dict | None:
 
 
 def forward_only(name: str, metric: str) -> str | None:
+    """The forward-only reason, with the native routes checked where recorded (2026-09-30)."""
     fwd = config.HISTORY_FORWARD_ONLY.get(name) or {}
-    return fwd.get("why") if metric in fwd.get("metrics", ()) else None
+    if metric not in fwd.get("metrics", ()):
+        return None
+    ev = fwd.get("native_checked") or []
+    return fwd.get("why") + (" | native sources checked: " + "; ".join(
+        f"{e['source'].split(' (')[0]}: {e['finding'][:90]}" for e in ev) if ev else "")
 
 
 def portfolio_scope() -> tuple[list[dict], list[str]]:
@@ -172,7 +192,12 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
     future = sorted(d for d in _DATE.findall(note) if d > str(asof.date()))
     decided = DECISIONS.get((name, metric))
     if decided:
-        return decided
+        v, d = decided[:2]
+        # AN ACCEPTED LIMIT NEEDS NATIVE-SOURCE EVIDENCE (Jake, 2026-09-30): the routes tried, on
+        # the project's own dashboards, explorers and APIs — not only the aggregators.
+        if v == "ACCEPTED LIMIT" and not (decided[2:] and decided[2]):
+            return "BUG", f"ACCEPTED LIMIT without evidence that project-native sources were checked: {d}"
+        return v, d
     wait = WAIT_ON_SERIES.get((name, metric))
     if wait:
         f0 = (firsts or {}).get((name, wait["series"]))
@@ -191,7 +216,13 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
     live = (latest is not None and not pd.isna(latest) and str(latest) != ""
             and (asof - pd.Timestamp(latest)).days < Q0_DAYS)
     if closed and status != "ok" and not live:
-        return "ACCEPTED LIMIT", f"closed {closed.get('closed_on', '')}: {closed.get('summary', '')[:220]}"
+        ev = closed.get("native_checked")
+        if not ev:
+            return "BUG", (f"ACCEPTED LIMIT without evidence that project-native sources were "
+                           f"checked (closed {closed.get('closed_on', '')}): {closed.get('summary', '')[:200]}")
+        return "ACCEPTED LIMIT", (f"closed {closed.get('closed_on', '')}: {closed.get('summary', '')[:200]} | "
+                                  f"native sources checked: " + "; ".join(
+                                      f"{e.get('source')}: {e.get('finding')}" for e in ev)[:400])
     fwd = forward_only(name, metric)
     if status == "waiting" or (status in WITHHELD and future):
         return "WAITING ON A DATE", (future[0] + " — " if future else "") + note[:220]

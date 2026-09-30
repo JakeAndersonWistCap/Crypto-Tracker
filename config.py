@@ -176,7 +176,7 @@ METRICS = {
     # percent: 0.03 is 3%, and the 0.5 ceiling rejects a value arriving in percent form.
     # Stored only where a source publishes it (Ethereum, ETH.Store `apr`); NEAR's is computed on
     # the A1 tab from stored issuance and stake, not stored.
-    "staking_yield_pct":          {"label": "Validator staking yield (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Ethereum",)},
+    "staking_yield_pct":          {"label": "Validator staking yield (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1, 2], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Ethereum", "Plume")},
     # Annualised on-chain settlement volume — The Block's "adjusted on-chain volume", entered by
     # hand quarterly. A RATE STATED AS OF A DATE, so kind stock: a quarterly hand entry summed as
     # a flow would mean nothing across a 90-day window.
@@ -207,6 +207,23 @@ METRICS = {
     "settlement_volume_annual_usd": {"label": "On-chain settlement volume, annualised ($, The Block adjusted — manual quarterly)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e14, "only_projects": ("Ethereum", "Plume")},
     # Hyperliquid's staking-reward reserve (tokenDetails.futureEmissions) — pre-minted, INSIDE
     # totalSupply. Its decline over a window is rewards paid; that is the validator-yield input.
+    # ===== ON-CHAIN CIRCULATING SUPPLY (M, Jake 2026-09-30). See CIRCULATING_ONCHAIN. =====
+    # circulating_supply_first_party: the protocol's own circulating figure where it publishes
+    # one (Hyperliquid tokenDetails.circulatingSupply). circulating_supply_onchain: READ-TIME
+    # (build_workbook._circulating_views) = on-chain total − the documented non-circulating set.
+    "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply)",
+                                       "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid",)},
+    "circulating_supply_onchain": {"label": "Circulating supply — on-chain total − the DOCUMENTED non-circulating set (CIRCULATING_ONCHAIN)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
+                                   "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
+    # ===== ETHEREUM DAILY HISTORY FROM ULTRASOUND.MONEY (A1/A3, 2026-09-30). See fetch/ultrasound.py.
+    "total_supply_ultrasound":    {"label": "ETH total supply, daily (ultrasound.money supplyByDay: execution + beacon balances − pending deposits)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3],
+                                   "sanity_min": 1e8, "sanity_max": 1.5e8, "only_projects": ("Ethereum",)},
+    "beacon_validators_eth":      {"label": "ETH held by beacon-chain validators, daily (ultrasound.money inBeaconValidatorsByDay)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [3],
+                                   "sanity_min": 1e6, "sanity_max": 1.5e8, "only_projects": ("Ethereum",)},
     "future_emissions_tokens":    {"label": "Staking-reward reserve remaining (tokenDetails.futureEmissions)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "fdv_usd":                    {"label": "FDV",                             "kind": "stock", "unit": "usd",    "archetypes": [3],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
     # --- free API: DefiLlama
@@ -1739,6 +1756,11 @@ def burn_total(project_name: str) -> dict | None:
     return (PROJECT_BY_NAME.get(project_name) or {}).get("burn_total")
 
 
+def issuance_declared_zero(project_name: str) -> dict | None:
+    """The declaration that a project issues nothing (A4 renders burn only), or None."""
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("issuance_declared_zero")
+
+
 def a4_burn_metric(project_name: str) -> str:
     """The flow archetype 4's headline burn columns read for this project.
 
@@ -2322,7 +2344,55 @@ PROJECTS = [
             "evidence": "run 2026-09-30T09:23:34Z: mean 3,063.1/day over 382 days; daily range "
                         "-626,651.7..+1,331,145.2; 174 negative days; endpoint error of hundreds of "
                         "thousands of ETH against ~245K ETH/quarter of issuance"},
+        # ===== DAILY HISTORY FROM ULTRASOUND.MONEY'S API (A1/A3, Jake 2026-09-30). =====
+        # One call: supplyByDay (the daily ETH supply) and inBeaconValidatorsByDay (staked ETH).
+        # Endpoint and fields READ FROM ITS BACKEND (ultrasoundmoney/eth-analysis-rs @1012fcb7:
+        # src/serve/mod.rs:182; src/bin/update-supply-projection-inputs/main.rs:53-59), shape
+        # checked on every call, robots checked against THIS path (fetch/ultrasound.py). The
+        # supply is a MEASURED reading (execution balances + beacon balances − pending deposits,
+        # src/eth_supply/store.rs:61), not market cap / price — route (a)'s noise does not apply.
+        # Its early segment is Glassnode's daily figure (over_time.rs:358-391; licensing
+        # register). live_confirmed flips on the first run that stores it.
+        "ultrasound_history": {
+            "url": "https://ultrasound.money/api/v2/fees/supply-projection-inputs",
+            "series": {"supplyByDay": "total_supply_ultrasound",
+                       "inBeaconValidatorsByDay": "beacon_validators_eth"},
+            "keep_days": 400,
+            "field_source": "https://github.com/ultrasoundmoney/eth-analysis-rs/blob/1012fcb74037bc45bf545fec240e6a4ad3d36052/src/bin/update-supply-projection-inputs/main.rs",
+            "source_read": "2026-09-30",
+            "note": "a measured daily supply; the first segment of the series is Glassnode's",
+            "live_confirmed": None,
+        },
+        # ISSUANCE HISTORY FROM IT: history_derive's issuance rule reads this supply instead of
+        # the Etherscan stock, for the days BEFORE the Etherscan leg's first row only.
+        "issuance_history_supply": {
+            "metric": "total_supply_ultrasound",
+            "tag": "derived:d_total_supply_ultrasound",
+            "before_first_prefix": "derived:d_total_supply_protocol",
+        },
+        # THE CONSENSUS PART OF THE YIELD, BEFORE Eth2Staking WAS READ: new ETH is consensus
+        # rewards (net of penalties), so the ultrasound-leg issuance stands in for
+        # d(Eth2Staking) on the days before its first row (build_workbook._history_leg_views).
+        "history_legs": {
+            "consensus_rewards_tokens": {"from_metric": "gross_issuance_tokens",
+                                         "source_prefix": "derived:d_total_supply_ultrasound"},
+        },
         "series_handover": {
+            "gross_issuance_tokens": {
+                "ordered_points": ("derived:d_total_supply_ultrasound+burn",
+                                   "derived:d_total_supply_protocol+burn"),
+                "why": "d(ultrasound.money daily supply) + burn before the Etherscan leg, then "
+                       "d(ethsupply2 supply) + d(BurntFees). The history derivation writes only "
+                       "days before the first Etherscan-leg row.",
+                "declared_on": "2026-09-30",
+            },
+            "consensus_rewards_tokens": {
+                "ordered_points": ("derived:d_total_supply_ultrasound+burn",
+                                   "etherscan:ethsupply2.Eth2Staking"),
+                "why": "the ultrasound-leg issuance before the first d(Eth2Staking) row, then "
+                       "d(Eth2Staking) (read-time view; never stored under this metric)",
+                "declared_on": "2026-09-30",
+            },
             "gross_burn_tokens": {
                 "ordered_points": ("derived:defillama_burned_fee_revenue/price",
                                    "etherscan:ethsupply2.BurntFees"),
@@ -2342,6 +2412,16 @@ PROJECTS = [
             # The stdlib reading of 403 as disallow-all refused these reads until 2026-09-28.
             "authorisation": "BEACONCHAIN_API_KEY — the registered key is the permission for "
                              "this endpoint; robots.txt governs crawling, not keyed API use",
+            # A2 (Jake, 2026-09-30): the per-day ETH.Store history, ~365 calls, backfilled under
+            # a budget (fetch/beaconchain.py _history). beaconcha.in's published plans
+            # (gobitfly/eth2-beaconchain-explorer templates/payment/pricing.html @fd48389): Free
+            # 0€ — 5/s, 20/min, 30,000/month; Sapphire 59€/mo (ex VAT) — 500,000/month. The free
+            # month would cover 365 calls IF the key's quota is the published one; it was
+            # exhausted on 2026-09-28, so the real limit is read by the probe beaconchain_quota
+            # before monthly_budget is raised. One paid Sapphire month (59€ + VAT) covers the
+            # whole backfill in one run if the free quota proves too small.
+            "history": {"metric": "staking_yield_pct", "field": "apr", "scale": 1, "days": 365,
+                        "calls_per_run": 30, "monthly_budget": 300, "min_interval_s": 6.0},
             "base_url": "https://beaconcha.in",
             "key_env": "BEACONCHAIN_API_KEY",
             # gross_issuance_tokens (consensus_rewards_sum_wei) REMOVED 2026-09-28 (A9): issuance
@@ -2670,12 +2750,14 @@ PROJECTS = [
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
         "burn_mechanism": {
-            "model": "protocol_level_destruction", "status": "assumed",
-            "source_url": "https://eips.ethereum.org/EIPS/eip-1559", "source_date": None,
-            "note": "ASSUMED, and the easiest of the six to promote: EIP-1559 burns the base fee at the protocol "
-                    "level, which is why totalSupply falls rather than a dead address filling up. The EIP "
-                    "is the primary source and is linked here; it is marked assumed only because nothing "
-                    "in this repo records anyone having read it to settle this question.",
+            "model": "protocol_level_destruction", "status": "confirmed",
+            "source_url": "https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md",
+            "source_date": "2026-09-30",
+            "note": "CONFIRMED 2026-09-30 from the EIP itself (ethereum/EIPs @66daa41, EIPS/eip-1559.md, "
+                    "status Final): \"The base fee per gas is burned\" and \"The base fee is always "
+                    "burned (i.e. it is destroyed by the protocol)\" — no address receives it, so "
+                    "total supply falls. Was 'assumed' only because nothing here recorded the EIP "
+                    "having been read.",
         },
         "burn_read_method": "protocol_level",
         "burn_read_note": "EIP-1559 destroys the base fee at the protocol level. No transfer occurs, so there is NO burn address to read. Needs a chain-data or dashboard source (ultrasound.money publishes it).",
@@ -3519,7 +3601,13 @@ PROJECTS = [
             "value_is_a_string": "'563332.0' — cast, never assumed numeric",
             "endpoint": "https://api.growthepie.com/v1/fundamentals.json",
             "origin_key": "plume",
-            "metrics": {"active_addresses": "daa", "tx_count": "txcount"},
+            # fees_usd ADDED 2026-09-30 (G): growthepie's 'fees' fundamental ("fees paid by users",
+            # metric_keys fees_paid_usd/fees_paid_eth — growthepie/gtp-backend @dd88b59
+            # backend/src/config.py:155-160); fundamentals.json keeps the last 90 days and drops
+            # the _eth keys (api/json_creation.py:3494-3501). Whether Plume's adapter excludes it
+            # (api_exclude_metrics) lives in growthepie's remote config: the adapter reports the
+            # key missing rather than storing anything, and the probe plume_growthepie says.
+            "metrics": {"active_addresses": "daa", "tx_count": "txcount", "fees_usd": "fees_paid_usd"},
             "date_field": "date",
             "value_field": "value",
             "robots_checked": "2026-09-23 — www.growthepie.com/robots.txt disallows page paths "
@@ -3550,6 +3638,22 @@ PROJECTS = [
             "checked_on": "2026-09-28",
         },
         "name": "Plume", "symbol": "PLUME",
+        # ===== PLUME'S OWN STAKING CONTRACT (G, Jake 2026-09-30). See fetch/plume_staking.py. =====
+        # Address, RPC, reward token and cap READ FROM plumenetwork/contracts @8248e78
+        # (plume/test/ForkTestPlumeStaking.s.sol:47-51 "Mainnet Configuration";
+        # PlumeStakingStorage.sol:14; RewardsFacet.sol:67). The validator yield is the contract's
+        # own reward rate for native PLUME, annualised, GROSS of validator commission; the stake
+        # is totalAmountStaked(). live_confirmed flips on the first run that stores it.
+        "plume_staking": {
+            "address": "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d",
+            "rpc": "https://rpc.plume.org",
+            "reward_token": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+            "max_reward_rate": 3171 * 10**9,
+            "apr_metric": "staking_yield_pct", "stake_metric": "locked_tokens",
+            "source_url": "https://github.com/plumenetwork/contracts/blob/8248e78ce0c15ad3875fb2e693de9685ecf982d7/plume/test/ForkTestPlumeStaking.s.sol",
+            "verified": "2026-09-30",
+            "live_confirmed": None,
+        },
         # settlement_volume_annual_usd is CLOSED (config.UNAVAILABLE, 2026-09-29, Jake): The Block's
         # adjusted on-chain volume does not cover Plume. Its manual_quarterly template was removed
         # so it no longer asks for an input that does not exist.
@@ -3597,14 +3701,8 @@ PROJECTS = [
                     "address, not destroyed. No burn address, no protocol-level destruction.",
         },
         "not_applicable": {
-            # ===== SAME REASON AS ETHEREUM'S, AND NOT THE SAME AS ITS STAKING. Declared
-            # 2026-09-23. ===== Plume HAS staking — that is why archetype 3 was considered and
-            # REMOVED on 2026-09-14 — but its staking reward is emissions-funded, and there is no
-            # escrow contract whose balance is "PLUME locked". Nothing to read.
-            "locked_tokens":
-                "PLUME HAS NO LOCK CONTRACT. Its staking is emissions-funded with no ve escrow "
-                "or vault whose balance answers 'how much PLUME is locked'. See archetypes: "
-                "archetype 3 was removed for the same reason on 2026-09-14. Declared 2026-09-23.",
+            # locked_tokens: REOPENED 2026-09-30 — Plume's staking diamond holds the staked
+            # native PLUME and reports it (totalAmountStaked(), see plume_staking).
             "gross_burn_tokens":
                 "PLUME IS NOT BURNED. Plume's own mainnet registry (assets.plume.org) shows an "
                 "Arbitrum Orbit chain whose network and infrastructure fees are both COLLECTED "
@@ -3948,34 +4046,40 @@ PROJECTS = [
         # utilisation_pct is not applicable.
         "archetypes": [1, 2, 3], "archetypes_held": [],
         "manual_quarterly": ["supply_units"],
-        # ===== customer_revenue_usd = fees_usd, A FLOOR. RESOLVED 2026-09-28. =====
-        # The adapter was read (DefiLlama/dimension-adapters fees/chainlink/index.ts, master,
-        # read 2026-09-28): dailyFees = "All the tokens received by the fee aggregator contract"
-        # (0xd6e39d42AceE7Abcc460E6Ea78a0844A0980E78f), described there as "Fees paid by users for
-        # Chainlink oracle data feed services". Reserve inflows are its dailyRevenue, not its fees.
-        # So fees_usd IS consumer spend — but only what reaches that one contract, on Ethereum
-        # only, since 2025-02-21: no other chain, and no off-chain or enterprise agreements. It is
-        # restated as customer revenue and labelled a FLOOR, never the whole.
-        "metric_restatement": {
-            "customer_revenue_usd": {
-                "equals": "fees_usd",
-                "why": "DefiLlama's chainlink adapter books everything the Ethereum fee aggregator "
-                       "receives as fees — what data-feed users pay — and books Reserve inflows "
-                       "separately as revenue. Consumer spend, but one contract on one chain.",
-                "label": "Customer revenue — A FLOOR: THE SAME SERIES AS fees_usd, i.e. tokens "
-                         "received by Chainlink's Ethereum fee aggregator (DefiLlama chainlink "
-                         "adapter). Ethereum only, since 2025-02-21; excludes other chains and "
-                         "off-chain/enterprise payments, so it UNDERSTATES what customers pay.",
-                "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/chainlink/index.ts",
-                "recorded_on": "2026-09-28",
-            },
-        },
+        # ===== A2 CUSTOMER REVENUE = EVERY SERVICE, ALL CHAINS. Jake, 2026-09-30 (F). =====
+        # Everything customers pay the network: the five DefiLlama service adapters, summed per
+        # day (fetch/llama.py _sum_slugs; a day is stored only where all five report). Read from
+        # DefiLlama/dimension-adapters @f16ec99 (2026-09-30):
+        #   chainlink-requests  OracleRequest.payment — LINK to node operators (dailyFees =
+        #                       dailySupplySideRevenue); ETH, BSC, Polygon, OP, Arbitrum, Avax
+        #   chainlink-keepers   UpkeepPerformed.totalPayment (Automation v2.1+); 11 chains
+        #   chainlink-vrf-v1    RandomnessRequest.fee;  chainlink-vrf-v2  RandomWordsFulfilled.payment
+        #   chainlink-ccip      the fee token/amount on each on-ramp send; 8 chains
+        # NOT ADDED: the `chainlink` slug's fees (the Ethereum fee aggregator, Payment Abstraction)
+        # — whether CCIP/Data Streams fees paid in other tokens reach it, and so would be counted
+        # twice, is NOT ESTABLISHED. It stays fees_usd, a separate figure. No adapter exists for
+        # Data Streams or Functions: the sum UNDERSTATES by whatever those earn.
+        # A3'S BUYBACK BASE IS UNCHANGED AND NARROWER: revenue_usd = the `chainlink` slug's
+        # dailyRevenue, LINK sent to the Reserve. The two are separate by design.
+        # Replaces customer_revenue_usd = fees_usd (the floor restated 2026-09-28); its stored rows
+        # are orphan_cleanup.sql section BB.
+        "defillama_sum_slugs": (
+            {"metric": "customer_revenue_usd", "data_type": "dailyFees",
+             "slugs": ("chainlink-requests", "chainlink-keepers", "chainlink-vrf-v1",
+                       "chainlink-vrf-v2", "chainlink-ccip"),
+             "why": "every Chainlink service customers pay for, all chains (Jake, 2026-09-30); "
+                    "Data Streams and Functions have no adapter, so this reads LOW by them",
+             "source_url": "https://github.com/DefiLlama/dimension-adapters/tree/master/fees",
+             "read_on": "2026-09-30"},
+        ),
         # The record it replaces, kept (renamed so fetch/gaps.py no longer reads it as a gap).
         "customer_revenue_usd_resolved": {
             "was": "NOT ESTABLISHED — whether DefiLlama's chainlink fees are consumer payments or "
                    "Reserve inflows (2026-09-24)",
             "answer": "consumer payments: dailyFees = the fee aggregator's receipts; Reserve "
-                      "inflows are dailyRevenue. Restated as a labelled floor (2026-09-28).",
+                      "inflows are dailyRevenue. Restated as a labelled floor (2026-09-28); "
+                      "replaced 2026-09-30 by the sum of the five service adapters "
+                      "(defillama_sum_slugs).",
         },
         # ===== circulating_supply_convention DELIBERATELY UNDECLARED — INCONCLUSIVE, NOT UNCHECKED. =====
         # The audit of 2026-09-17 RAN on this project and came back INCONCLUSIVE: neither
@@ -4329,6 +4433,10 @@ PROJECTS = [
             },
         ],
         "metric_labels": {
+            "customer_revenue_usd": "Customer revenue — EVERY SERVICE, ALL CHAINS: the sum of DefiLlama's "
+                                    "chainlink-requests, -keepers, -vrf-v1, -vrf-v2 and -ccip daily fees. "
+                                    "Reads LOW by Data Streams and Functions (no adapter). NOT the A3 "
+                                    "buyback base, which is the Reserve inflow alone.",
             "actual_buyback_tokens": "LINK inflow to Reserve (Payment Abstraction) — EXCLUDES the "
                                      "staking-reward leg, which is a separate route from source",
         },
@@ -5679,6 +5787,25 @@ PROJECTS = [
                     {"address_prefix": "0x8f10b468…", "distinct_senders": 5_641, "code": True},
                     {"address_prefix": "0x5fe84b85…", "distinct_senders": 5_793, "code": True},
                 ],
+                # ===== BOTH CANDIDATES RULED OUT, 2026-09-30 (D1). =====
+                # Blockworks' staking-flow chart (~12M GEOD at the Nov-2025 peak, ~3.0M now) says
+                # a staking contract exists; neither behavioural candidate is it:
+                #   0x8f10b468b06c6fd214b65f87778827f7d113f996 = KyberSwap's AggregationExecutor
+                #     proxy, CREATE2-deployed at one address on every chain (DefiLlama/
+                #     dimension-adapters @f16ec99 fees/kyberswap-aggregator.ts:75; KyberNetwork/
+                #     kyberswap-documentation @0f8c6bb developer-guide/aggregator-api/contracts.md)
+                #     — swap routing, which is why thousands of senders touch it;
+                #   0x5Fe84b85bA7dEA0FBc8C4571491Aca80d97F5e01 = a QuickSwap V3 (Algebra) pool on
+                #     Polygon (QuickSwap/interface-v2 public/sitemap.xml "analytics/v3/pair/
+                #     0x5fe84b85…") — LP deposits, not stake.
+                # DefiLlama carries no GEODNET staking/TVL adapter (DefiLlama-Adapters @0703eb6c).
+                # The staking contract's address is NOT ESTABLISHED; Blockworks is a cross-check
+                # only and its terms are unread (licensing register). locked_tokens stays the
+                # manual row until GEODNET's console or docs name the contract.
+                "candidates_ruled_out_2026_09_30": {
+                    "0x8f10b468b06c6fd214b65f87778827f7d113f996": "KyberSwap AggregationExecutor proxy (swap routing)",
+                    "0x5Fe84b85bA7dEA0FBc8C4571491Aca80d97F5e01": "QuickSwap V3 (Algebra) pool on Polygon (liquidity)",
+                },
                 "published_total_staked": "none found: console.geodnet.com and docs.geodnet.com are "
                                           "unreachable from here, and no aggregator or GitHub "
                                           "source carries a total-staked figure",
@@ -5831,6 +5958,21 @@ PROJECTS = [
         # caveat — including that it is burn/0.8 and therefore not an independent measurement,
         # and that the 8.8% question above is still open. See metric_restatement.
         "metric_restatement": {
+            # ===== EMISSIONS TO SUPPLIERS = THE MEASURED MINING-WALLET RELEASE. Jake, 2026-09-30.
+            # The mining pool pays miners, so what leaves the two Polygon mining wallets IS miner
+            # reward emissions. ONLY the measured leg (source_prefix): the derived d(circulating)
+            # - d(total) fallback counts every unlock too and stays out. Feeds A2's emissions,
+            # supply trajectory and customer revenue per token emitted.
+            "emissions_tokens": {
+                "equals": "pool_release_tokens",
+                "source_prefix": "balance_flow:mining_wallets_release",
+                "why": "Jake, 2026-09-30: GEODNET's measured mining-wallet release is miner reward "
+                       "emissions (not the derived d(circulating) route, which includes unlocks)",
+                "label": "Emissions to suppliers — THE SAME SERIES AS the measured mining-wallet "
+                         "release (pool_release_tokens from balance_flows.mining_wallets_release): "
+                         "GEOD paid out of the two Polygon mining wallets to miners",
+                "recorded_on": "2026-09-30",
+            },
             "customer_revenue_usd": {
                 "equals": "fees_usd",
                 "why": "DefiLlama's GEODNET adapter computes fees as the on-chain burn / 0.8, "
@@ -8065,18 +8207,40 @@ PROJECTS = [
                  "ongoing staking yield.",
     },
     {
-        # NO EMISSION MECHANISM per Jake's review, 2026-09-23, and it fits what this entry
-        # already records: the fee switch is OFF and share_to_buyback is 0.0. Still carried as
-        # unsourced, because "no emissions" is a claim about the token's schedule rather than
-        # about the fee switch, and those are different facts.
+        # ===== MORPHO INCENTIVES: NOT CONFIRMED ENDED — SO MEASURED. Jake, 2026-09-30 (J). =====
+        # Jake believes Morpho no longer pays MORPHO incentives. Morpho's own code does not
+        # confirm it: morpho-org/morpho-rewards README (@db86ce45, 2024-07-31) says Optimizer
+        # rewards "are now finished (MIP71)… go on Morpho Blue to continue to accrue MORPHO
+        # rewards", and Blue-era rewards run through URD and Merkl (morpho-org/
+        # universal-rewards-distributor, morpho-org/merkl-morpho-recipe). Whether MORPHO is still
+        # paid in 2025-26 is NOT ESTABLISHED from code (docs/governance repos are private). So it
+        # is MEASURED: MORPHO claimed out of Merkl's distributor (log_scans.merkl_morpho_out). A
+        # measured 0 over the window settles Jake's reading as a fact; a non-zero figure reopens
+        # it. The "not emitted" declaration (model none, 2026-09-22/23) is retired.
         "emissions_model": {
-            "model": "none",
-            "sourced": False,
-            "source": None,
-            "declared_by": "Jake, 2026-09-23 review",
-            "note": "consistent with the fee switch being off, but that is a different fact from "
-                    "the emission schedule and does not establish this one.",
+            "model": "distributed_from_premint",
+            "sourced": True,
+            "source": "morpho-org/morpho-rewards README @db86ce45; morpho-org/merkl-morpho-recipe "
+                      "src/lib/constants.ts @b53e90c4 (DISTRIBUTOR_ADDRESS), read 2026-09-30",
+            "declared_by": "Jake, 2026-09-30",
+            "note": "MORPHO is fixed-supply; incentives are paid from the DAO's allocation through "
+                    "Merkl (and, historically, URDs). Measured through Merkl only — PARTIAL: the "
+                    "URD instances that paid MORPHO are not identified in any Morpho repo.",
         },
+        "log_scans": [
+            {"key": "merkl_morpho_out", "metric": "emissions_tokens", "chain": "ethereum",
+             "token": "0x58D97B57BB95320F9a05dC918Aef65434969c2B2",
+             "holders": ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"],
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/morpho-org/merkl-morpho-recipe/blob/main/src/lib/constants.ts "
+                 "(DISTRIBUTOR_ADDRESS, @b53e90c4, read 2026-09-30)"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
+             "partial_reason": "Merkl only (Ethereum): every MORPHO claimed from Merkl's distributor, "
+                               "whoever funded the campaign — Morpho DAO programmes and any third "
+                               "party's; the URDs are not scanned",
+             "wired_on": "2026-09-30"},
+        ],
         "name": "Morpho", "symbol": "MORPHO",
         # A2 FREE FLOAT (2026-09-28, Jake): there is no Morpho staking (not_applicable.
         # locked_tokens), so locked = 0 and free float = circulating supply. Declared here rather
@@ -8151,11 +8315,7 @@ PROJECTS = [
             # stakers — but a classified model is not the same as a scoped-out column, so the
             # row kept appearing as a gap saying "NO EMISSION MECHANISM", which is an answer
             # rather than a question. Declared here so it renders n/a and leaves the list.
-            "emissions_tokens":
-                "MORPHO IS NOT EMITTED. The protocol runs no supply-side or staking emission "
-                "programme — see emissions_model, model 'none' — so there is no flow to source. "
-                "If a programme is ever launched this declaration is what has to be removed "
-                "first, which is the point of recording the reason. Declared 2026-09-22.",
+            # emissions_tokens: RETIRED 2026-09-30 — measured through Merkl (log_scans).
         },
         # ===== THE ARCHETYPE-2 REVENUE COLUMN IS fees_usd, SAID PLAINLY. Added 2026-09-22. =====
         # Morpho is archetype 2, so fees_usd is not one of its columns — but it IS fetched, and
@@ -9515,6 +9675,13 @@ PROJECTS = [
     },
     {
         "name": "Uniswap", "symbol": "UNI",
+        # ===== NO ISSUANCE — BURN ONLY. Jake, 2026-09-30. =====
+        # Burn ÷ issuance is undefined with nothing issued, so A4 says "no issuance — burn only"
+        # and net supply change is minus the burn (annualised against circulating). The measured
+        # issuance (HISTORY_DERIVED gross_issuance) stays the check: any positive reading in the
+        # window blocks the burn-only rendering with the figure.
+        "issuance_declared_zero": {"decided_by": "Jake", "decided_on": "2026-09-30",
+                                   "check_metric": "gross_issuance_tokens"},
         # ===== C2 (2026-09-28): THE NET+BURN ISSUANCE CROSS-CHECK IS RETIRED HERE. =====
         # Review row "issuance_route_divergence, 0 vs 136,000": the gross route read
         # d(totalSupply) = 0 (exactly 1,000,000,000 both times — UNI minted nothing); the
@@ -13515,20 +13682,61 @@ PROJECTS = [
                  "in deployments/1-core.json is the OLD emission model — historical, not current.",
     },
     {
-        # VESTING COMPLETE per Jake's review, 2026-09-23. NOT re-confirmed from Fluid's own
-        # material here — Fluid's docs are not reachable from this environment — so it is carried
-        # as a classification rather than an established fact, and the Gap Report says so.
+        # ===== FLUID EMISSIONS ARE NOT ZERO. Jake, 2026-09-30 (I). =====
+        # The May 2026 post-mortem records a REDUCTION in FLUID emissions, not an end, and the
+        # governance payloads keep funding rewards from the treasury. Read from
+        # Instadapp/fluid-governance @8891f73 (contracts/payloads/): IGP116 500,000 FLUID, IGP118
+        # 1,000,000 and IGP131 750,000 — each TREASURY (0x28849D2b…) -> TEAM_MULTISIG
+        # (0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e, common/constants.sol:68) "for rewards
+        # funding"; also IGP101/103/105/106/109 (500k/125k/11.5k/200k/1M). IGP137's 5M is the AGI3
+        # partnership, not rewards. NO payload sends FLUID to a distributor directly: the multisig
+        # funds them. So emissions are MEASURED where they reach users — FLUID claimed out of
+        # Fluid's own mainnet $FLUID MerkleDistributors (log_scans.merkle_rewards_out). The
+        # retired declaration (vesting_complete, Jake 2026-09-22) and its stored zeros are
+        # orphan_cleanup.sql section BC.
         "emissions_model": {
-            "model": "vesting_complete",
-            "sourced": False,
-            "source": None,
-            "declared_by": "Jake, 2026-09-23 review",
-            "note": "if the vesting schedule has run out, a zero from here on is a FACT about "
-                    "the schedule rather than a failed measurement — but the end date has to "
-                    "come from Fluid's own schedule before this renders as a confident zero. "
-                    "See declared_zero: Jake declared it on 2026-09-22 and the end date is "
-                    "still unsourced, so the zero is stored and labelled as a DECLARATION.",
+            "model": "distributed_from_premint",
+            "sourced": True,
+            "source": "https://github.com/Instadapp/fluid-governance/tree/main/contracts/payloads "
+                      "(IGP116/118/131) and fluid-contracts-public deployments/deployments.md "
+                      "(MerkleDistributors), read 2026-09-30",
+            "declared_by": "Jake, 2026-09-30",
+            "note": "FLUID is fixed-supply; rewards are paid from treasury-funded Merkle "
+                    "distributors. Measured as FLUID claimed out of the mainnet distributors. "
+                    "PARTIAL: the Arbitrum, Base and Plasma distributors pay BRIDGED FLUID and are "
+                    "not scanned.",
         },
+        "emissions_funding_igps": {
+            "to": "0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e",
+            "rewards_fluid": {"IGP101": 500_000, "IGP103": 125_000, "IGP105": 11_500,
+                              "IGP106": 200_000, "IGP109": 1_000_000, "IGP116": 500_000,
+                              "IGP118": 1_000_000, "IGP131": 750_000},
+            "not_rewards": {"IGP137": "5,000,000 FLUID for the AGI3 partnership"},
+            "source": "Instadapp/fluid-governance @8891f73d17887e272a5317065961269aee94f7cd, "
+                      "contracts/payloads/IGP*/PayloadIGP*.sol, read 2026-09-30",
+            "use": "cross-check on the claimed series' order of magnitude — funding is lumpy and "
+                   "precedes claims; it is not itself emissions",
+        },
+        "log_scans": [
+            {"key": "merkle_rewards_out", "metric": "emissions_tokens", "chain": "ethereum",
+             "token": "0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb",
+             # Fluid's own deployments/deployments.md, MerkleDistributors (FLUID reward token):
+             "holders": ["0x7060FE0Dd3E31be01EFAc6B28C8D38018fD163B0",   # Fluid Rewards Dec 2024
+                         "0xbAbB3f87424d900aBd83C807C1E01a22a54E726F",   # cbBTC-wBTC, Dec 2024
+                         "0xB48BbE313eDB7fAAa28C03684D48F58dD7dEA239",   # deUSD-USDC, Jan 2025
+                         "0xD833484b198D3d05707832cc1C2D62b520D95B8A",   # GHO Vaults, Apr 2025
+                         "0x252452ccf245a59A6d1Afab11cF16750029b4620"],  # ETH-USDC LP, Jul 2025
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/Instadapp/fluid-contracts-public/blob/main/deployments/deployments.md "
+                 "(## MerkleDistributors, @9496626, read 2026-09-30)"],
+             # A sweep back to the funders is not a reward paid.
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
+                                        "0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e",
+                                        "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"],
+             "partial_reason": "mainnet distributors only: Arbitrum/Base/Plasma pay bridged FLUID",
+             "wired_on": "2026-09-30"},
+        ],
         # ===== A DECLARED ZERO IS A FIGURE, AND IT SAYS WHO DECLARED IT. Added 2026-09-22. =====
         # A gap reading "THE EMISSION HAS FINISHED" is an ANSWER wearing a question's clothes:
         # it states the emission is zero and then leaves the cell empty, so the sheet shows
@@ -13588,17 +13796,8 @@ PROJECTS = [
                               "tracks the target address behind a paywall. A paywalled address "
                               "is a route, not a source.",
         },
-        "declared_zero": {
-            "emissions_tokens": {
-                "why": "the FLUID emission has finished — the token's distribution was a vesting "
-                       "schedule that has run out, so zero from here on is a fact about the "
-                       "schedule rather than a failed read.",
-                "declared_by": "Jake, 2026-09-22 review",
-                "sourced": False,
-                "still_needed": "the schedule's end date, from Fluid's own material. Until then "
-                                "this is a declaration and not a measurement.",
-            },
-        },
+        # declared_zero.emissions_tokens RETIRED 2026-09-30 (Jake): emissions are measured —
+        # see emissions_model and log_scans.merkle_rewards_out.
         "name": "Fluid", "symbol": "FLUID",
         # ===== THE BUYBACK CONTRACTS ARE IN FLUID'S OWN REPOSITORY. Found 2026-09-23. =====
         # Instadapp/fluid-contracts-public, contracts/periphery/buyback/SPEC.md: "Rebalancer-driven
@@ -15139,6 +15338,11 @@ def buyback_route(project_name: str) -> dict:
 #                   observed issuance as a cross-check: blocked when they differ > max_ratio
 #   pending         the input is being collected; the cell says what is missing
 VALIDATOR_YIELD = {
+    # PLUME (G, 2026-09-30): the staking diamond's own reward rate for native PLUME, annualised,
+    # GROSS of validator commission (fetch/plume_staking.py). Jake's understanding: 5-8%.
+    "Plume": {"method": "stored", "metric": "staking_yield_pct",
+              "note": "GROSS of validator commission: rewardRates[PLUME_NATIVE] x 31,536,000 / 1e18 "
+                      "from Plume's staking diamond"},
     # ===== WITHOUT beaconcha.in (Jake, 2026-09-29). =====
     # consensus = issuance (annualised over its covered days) / ETH on the beacon chain;
     # execution = priority fees (DefiLlama fees - burned revenue, both stored) / price / the same.
@@ -15161,7 +15365,10 @@ VALIDATOR_YIELD = {
                  # duty is met (the Altair weights sum to WEIGHT_DENOMINATOR); x 82,181.25 epochs a
                  # year (12s slots, 32 per epoch, 365.25 days) = 166.32 x sqrt(B ETH) ETH/yr.
                  # Electra leaves BASE_REWARD_FACTOR and the base reward unchanged.
-                 "issuance_formula": {"coefficient": 166.32, "of": "sqrt(staked ETH)",
+                 # A3 (2026-09-30): the formula's stake is the Q0 average of ultrasound.money's daily
+        # staked-ETH series (inBeaconValidatorsByDay), so issuance and stake cover one window.
+        "formula_stake_metric": "beacon_validators_eth",
+        "issuance_formula": {"coefficient": 166.32, "of": "sqrt(staked ETH)",
                                       "source": "ethereum/consensus-specs @e321975f: presets/mainnet/"
                                                 "phase0.yaml BASE_REWARD_FACTOR 64; specs/altair/"
                                                 "beacon-chain.md get_base_reward_per_increment, "
@@ -15288,6 +15495,8 @@ ISSUANCE_PRIMARY = {
     # ethsupply2, i.e. d(total_supply_protocol) + d(BurntFees). beaconcha.in keeps the yield.
     "Ethereum": {"kind": "first_party", "metric": "gross_issuance_tokens",
                  "source_prefix": "derived:d_total_supply_protocol",
+                 # the declared history leg before it (A1, 2026-09-30): d(ultrasound supply) + burn
+                 "history_prefix": "derived:d_total_supply_ultrasound",
                  "block_reason": "waiting for Etherscan ethsupply2 readings (d(total_supply_"
                                  "protocol) + d(BurntFees)) to cover the window. The older "
                                  "d(CoinGecko total_supply) + burn figure is MECHANISM_ASSUMED "
@@ -15344,6 +15553,8 @@ HISTORY_DERIVED = {
     ("Chainlink", "pool_release_tokens"): "pool_release",   # 7 days
     # 8 days; total_supply_gross is exactly 1,000,000,000 on all 366 archived days (Jake, 2026-09-29)
     ("Uniswap", "gross_issuance_tokens"): "gross_issuance",
+    # A1 (2026-09-30): d(ultrasound.money daily supply) + burn, before the Etherscan leg.
+    ("Ethereum", "gross_issuance_tokens"): "issuance",
 }
 
 # ===== A HANDOVER DECLARED FOR EVERY PROJECT. 2026-09-29 (Jake). =====
@@ -15372,6 +15583,17 @@ def issuance_primary(project_name: str) -> dict | None:
 # locked_tokens_underlying.
 PROTOCOL_YIELD = {
     "Sky": {"revenue": "holders_revenue_usd", "lock": "locked_tokens"},
+    # AERODROME (Jake, 2026-09-30): no AERO is bought, so the retirement rate is a structural 0 —
+    # what stakers earn is the voter rewards. holders_revenue_usd IS those rewards: DefiLlama's
+    # aerodrome and aerodrome-slipstream adapters book dailyHoldersRevenue = the staked-LP swap
+    # fees paid to veAERO voters PLUS bribes (BribeVotingReward NotifyReward) — read from
+    # DefiLlama/dimension-adapters @f16ec99 dexs/aerodrome/index.ts L227-250 and
+    # dexs/aerodrome-slipstream/index.ts L252-291, 2026-09-30. Over veAERO's own accounting of
+    # AERO locked (ve_locked_supply_tokens, the same figure A3's lock rate shows). Rewards arrive
+    # in the pairs' own tokens; the dollar value is what DefiLlama prices them at.
+    "Aerodrome": {"revenue": "holders_revenue_usd", "lock": "ve_locked_supply_tokens",
+                  "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/aerodrome/index.ts",
+                  "read_on": "2026-09-30"},
     # lock_add: rewards are pro-rata over REAL + VIRTUAL sPENDLE (see locked_tokens_virtual), so
     # the virtual balance joins the denominator. Until it is read the cell is marked READS HIGH.
     # ===== sPENDLE SHARES, NOT PENDLE ASSETS; VIRTUAL ADDED 1:1. CHANGED 2026-09-28. =====
@@ -15512,6 +15734,23 @@ HISTORY_FORWARD_ONLY = {
         # 365 days, ~110,000 calls against an endpoint that already needs pacing (NearArchive).
         # DECLINED ON COST (Jake, 2026-09-29): the validator yield needs only CURRENT stake, so
         # locked_tokens stays forward-only. A cost decision, not a missing source.
+        # ===== NEARBLOCKS CHECKED FOR A STAKED-OVER-TIME SERIES, 2026-09-30 (K). =====
+        # Nearblocks/nearblocks @d8c66138: the daily_stats table (apps/indexer-base/migrations/
+        # 20251017145138_stats.up.sql) has no stake column; /v3/validators/info serves the CURRENT
+        # validator_config.total_stake only; validator_epoch_data holds current/next epoch. Only
+        # staking_events (per event, contract_staked, epoch_id) could rebuild a per-pool history,
+        # through /v3/staking-txns page by page — under NearBlocks' own limits (rateLimiter.ts:
+        # free 6/min and 333/day; default 20/min and 3,666/day), the same order of cost as the
+        # archival route Jake declined on 2026-09-29.
+        "native_checked": [
+            {"source": "NearBlocks API v1/v3 charts and stats (Nearblocks/nearblocks @d8c66138)",
+             "finding": "no total-staked series; daily_stats has no stake column"},
+            {"source": "NearBlocks /v3/validators/info", "finding": "current total_stake only"},
+            {"source": "NearBlocks /v3/staking-txns (staking_events)", "finding": "per-event history "
+             "could be summed per pool — thousands of pages under a 333-3,666 calls/day limit; "
+             "declined on the same cost ground as the archival route"},
+            {"source": "NEAR archival RPC `validators`", "finding": "refused for past blocks"},
+        ],
         "route_declined": {
             "route": "sum of staking pools' get_total_staked_balance via archival `query` at each "
                      "past day's first block (~110,000 calls for a year)",
@@ -15532,15 +15771,32 @@ HISTORY_FORWARD_ONLY = {
         # The BUYBACK is no longer forward-only: DefiLlama holders revenue is its history leg
         # (buyback_history on the project).
         "checked": "hyperliquid-python-sdk info.py endpoint list, 2026-09-29",
+        # ===== RE-CHECKED AGAINST HYPERLIQUID'S OWN SOURCES, 2026-09-30 (C). =====
+        "native_checked": [
+            {"source": "info API (hyperliquid-dex/hyperliquid-python-sdk @2fdb18f info.py; nktkas/"
+                       "hyperliquid @db80d59 schemas)", "finding": "tokenDetails, validatorSummaries, "
+                       "delegatorSummary are current snapshots; delegatorHistory is per user; "
+                       "time-range queries cap at 500 rows"},
+            {"source": "stats.hyperliquid.xyz (hyperliquid-dex/hyperliquid-stats @86928c3, -stats-web "
+                       "@78cd9c2; data host d2v1fiwobg9w6.cloudfront.net)", "finding": "perp trading "
+                       "only — daily trades, traders, volume, fees; no burn, stake, supply"},
+            {"source": "stats-data.hyperliquid.xyz", "finding": "only /Mainnet/vaults, /leaderboard, "
+                       "/builder_fills referenced anywhere"},
+            {"source": "ASXN hyperscreener", "finding": "no public repository or documented API; the "
+                       "one third-party client covers liquidations/positions/market data only"},
+            {"source": "Hyperliquid S3 (docs historical-data.md: s3://hl-mainnet-node-data "
+                       "misc_events_by_block, replica_cmds; periodic_abci_states)", "finding":
+                       "full history is rebuildable (Delegation, CDeposit, CWithdrawal, "
+                       "ValidatorRewards events) — REQUESTER PAYS: an AWS account and a transfer "
+                       "cost, NOT sized from here (listing a requester-pays bucket needs "
+                       "credentials). Jake's decision"},
+            {"source": "DefiLlama hyperliquid staking history", "finding": "from a PRIVATE indexer "
+                       "(LLAMA_HL_INDEXER, helpers/hyperliquid.ts:28,877), from 2026-04-15"},
+        ],
+        "checked_on": "2026-09-30",
     },
-    # 2026-09-30 (Jake): route (a) rejected — see Ethereum's issuance_history_rejected.
-    "Ethereum": {
-        "metrics": ("gross_issuance_tokens",),
-        "why": "Etherscan ethsupply2 only, from 2026-09-29: it is point-in-time, and the history "
-               "routes were rejected — CoinGecko market cap / price is swamped by noise (daily "
-               "-626,652..+1,331,145 ETH, 174 negative days) and 166.32 x sqrt(staked) needs a "
-               "staked-ETH history no archive read gives",
-    },
+    # Ethereum gross_issuance_tokens: NOT forward-only from 2026-09-30 — route (a) was rejected,
+    # but ultrasound.money's measured daily supply (ultrasound_history) gives d(supply) + burn.
     # 2026-09-29 (Jake: "if an input has no history, say which"):
     "Plume": {
         "metrics": ("gross_issuance_tokens",),
@@ -15548,11 +15804,8 @@ HISTORY_FORWARD_ONLY = {
                "only — /coins/{id}/history carries no supply (confirmed on a live call "
                "2026-09-14); the series is re-derived over every stored day (history_derive)",
     },
-    "Fluid": {
-        "metrics": ("emissions_tokens",),
-        "why": "a DECLARED zero (the FLUID emission has finished) whose end date is not sourced — "
-               "zeros are not dated backwards past a date nobody has read",
-    },
+    # Fluid emissions_tokens REMOVED 2026-09-30: measured from the MerkleDistributor claims
+    # (log_scans.merkle_rewards_out), whose full history the scan reads from the first block.
 }
 # ===== WHERE A MECHANISM BEGINS INSIDE THE WINDOW. 2026-09-29 (Jake). =====
 # A series that starts with its mechanism has no earlier history to fetch: it is COMPLETE from
@@ -17075,37 +17328,20 @@ UNAVAILABLE = [
             "definition) publishes a Plume series — then it is a manual quarterly row again."),
     },
 
-    {
-        "project": "Plume", "metric": "fees_usd",
-        "closed_on": "2026-09-23",
-        "summary": "DefiLlama carries no fee series for Plume, and the on-chain route that would "
-                   "give one is a log scan nobody has costed.",
-        "what_was_tried": (
-            "The DefiLlama slug is configured ('plume', chain 'Plume Mainnet') and returns no fee "
-            "revenue — recorded on the project entry on 2026-09-14, and the reason archetype 3 was "
-            "removed. The on-chain alternative is known and named there too: native PLUME inflows "
-            "to the networkFeeReceiver / infrastructureFeeCollector at "
-            "0x6CBb552855CE5Eb70af49B76a8048be8E3799A05, from Plume's own mainnet registry at "
-            "assets.plume.org. It is NOT wired because a BALANCE is not a FLOW: the receiver's "
-            "balance nets every outflow, so the fees figure needs a log scan of inflows, not a "
-            "balance read. ** NOT RE-VERIFIED LIVE ON 2026-09-23: ** api.llama.fi is unreachable "
-            "from this container (proxy 403), so this closure rests on the 2026-09-14 finding "
-            "rather than a fresh probe, and says so rather than implying one was run."),
-        "impact": (
-            "Plume's fee-derived columns stay empty. Nothing else depends on it: Plume does not "
-            "burn (declared) and its staking is emissions-funded, so there is no fee-funded "
-            "buyback or burn leg whose base this would be."),
-        "reopen_if": (
-            "DefiLlama starts publishing a fees series for the chain — the slug is already "
-            "configured, so it would fill with no edit; OR the fee-receiver inflow scan is costed "
-            "and wired, which is a decision about scope rather than a missing source; OR "
-            "growthepie publishes a fee metric for Plume, whose origin_key is already confirmed "
-            "present there from the 2026-09-23 wiring."),
-    },
-
+    # Plume fees_usd: REOPENED 2026-09-30 on its own reopen_if ("growthepie publishes a fee
+    # metric for Plume") — growthepie's fees_paid_usd is mapped (growthepie.metrics.fees_usd).
     {
         "project": "Ethereum", "metric": "gross_issuance_tokens",
         "closed_on": "2026-09-22",
+        # A ROUTE-SPECIFIC closure (ultrasound.money serves no ISSUANCE figure); the metric itself
+        # is live — Etherscan from 2026-09-29, ultrasound's measured daily SUPPLY + burn before it.
+        "native_checked": [
+            {"source": "ultrasoundmoney/frontend (src/mainsite/api/supply-changes.ts)",
+             "finding": "issuance is computed client-side as d(supply) + burn", "date": "2026-09-18"},
+            {"source": "ultrasoundmoney/eth-analysis-rs @1012fcb (src/serve/mod.rs routes)",
+             "finding": "supply-over-time, supply-parts and supply-projection-inputs serve SUPPLY; "
+                        "the SupplyChanges struct is served by no route", "date": "2026-09-30"},
+        ],
         "summary": "ultrasound.money has no issuance endpoint and never did — it derives issuance "
                    "client-side from delta(supply) + burn, the same formula this tool uses.",
         "what_was_tried": (
@@ -17186,7 +17422,13 @@ def limitation_for(project_name: str, metric: str) -> dict | None:
 # projects names pool_release_tokens as the measured release, which is what it is.
 EMISSIONS_ALIAS_DECLINED = {
     "decision": "emissions_tokens is NOT restated from pool_release_tokens on any project",
-    "projects": ("Chainlink", "GEODNET", "Maple", "Hyperliquid", "Aethir"),
+    "projects": ("Chainlink", "Maple", "Hyperliquid", "Aethir"),
+    # REOPENED FOR GEODNET, 2026-09-30 (Jake), on the reopen_only_if test below: GEODNET's
+    # MEASURED release is out of the mining wallets only, which pay miners — emissions alone, no
+    # other allocation's unlock. It is restated (GEODNET metric_restatement, source_prefix = the
+    # measured leg); the derived fallback, which carries unlocks, is still never copied.
+    "reopened": {"GEODNET": {"on": "2026-09-30", "by": "Jake",
+                             "what": "emissions_tokens = the measured mining-wallet release"}},
     "proposed_on": "2026-09-23",
     "decided_on": "2026-09-24",
     "decided_by": "Jake",
@@ -17202,6 +17444,85 @@ EMISSIONS_ALIAS_DECLINED = {
                       "other allocation in the window — from the project's own schedule. Not "
                       "because the emissions cell is empty.",
 }
+
+# =======================================================================================
+# ON-CHAIN CIRCULATING SUPPLY. M, Jake 2026-09-30.
+#
+# circulating = on-chain total supply − a DOCUMENTED list of non-circulating addresses, each one
+# a contract entry already in this file with its own source_url and verified date (no address is
+# added here). `subtract` names the stored balance metrics those contracts feed; the per-address
+# list is generated from the contracts (fetch/circulating.py exclusions()) so it cannot drift.
+#
+#   established      the set is complete as documented: the on-chain figure is PRIMARY and
+#                    CoinGecko is the cross-check
+#   first_party      the protocol publishes circulating itself: PRIMARY, CoinGecko cross-check
+#   partial          the addresses below are real and sourced, but the set is known to be
+#                    incomplete (`missing` says what): the figure READS HIGH, is shown beside
+#                    CoinGecko's, and does not replace it
+#   not_established  no documented set: CoinGecko stays, and `why` says what is missing
+#
+# Staked / locked tokens are CIRCULATING here (held by holders, as CoinGecko counts them).
+# Differences from CoinGecko beyond CIRCULATING_TOLERANCE go to the Review Queue.
+# =======================================================================================
+CIRCULATING_TOLERANCE = 0.02
+CIRCULATING_ONCHAIN = {
+    "Ethereum": {"status": "established", "total": "total_supply_protocol", "subtract": (),
+                 "why": "ETH has no protocol-held, vesting or treasury supply outside holders' "
+                        "hands: burned ETH is already out of the total. The empty set is a "
+                        "CONVENTION (foundation and exchange balances count as circulating, as "
+                        "CoinGecko counts them) — Jake to confirm"},
+    "Hyperliquid": {"status": "first_party", "metric": "circulating_supply_first_party",
+                    "why": "tokenDetails.circulatingSupply — Hyperliquid's own figure; its "
+                           "nonCirculatingUserBalances is the documented set (logged each run)"},
+    "Uniswap": {"status": "partial", "total": "total_supply_gross",
+                "subtract": ("burn_address_balance", "treasury_holding_tokens"),
+                "missing": "Uniswap Foundation and other team/investor wallets are not documented "
+                           "in config; only the governance Timelock and 0x…dEaD are excluded"},
+    "Sky": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
+            "missing": "the MKR→SKY converter's reserve for unconverted MKR is not identified in "
+                       "config; only the Pause Proxy treasury is excluded"},
+    "Pendle": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
+               "missing": "team, investor and ecosystem vesting wallets are not documented in "
+                          "config; only the treasury is excluded"},
+    "Fluid": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
+              "missing": "team and investor vesting contracts are not documented in config; only "
+                         "the governance treasury is excluded"},
+    "Ether.fi": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
+                 "missing": "team, investor and foundation vesting wallets are not documented in "
+                            "config; only the treasury is excluded"},
+    "Maple": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens_chain",),
+              "missing": "Maple's other non-circulating wallets are not documented in config; "
+                         "only the DAO treasury is excluded"},
+    "Chainlink": {"status": "partial", "total": "total_supply", "subtract": ("buyback_fund_balance",),
+                  "missing": "Chainlink's non-circulating node-operator and team wallets are not "
+                             "documented in config; only the timelocked LINK Reserve is excluded"},
+    "GEODNET": {"status": "partial", "total": "total_supply_gross",
+                "subtract": ("burn_address_balance", "treasury_holding_tokens"),
+                "missing": "the mining, mining-distribution and ecosystem wallets and both burn "
+                           "accounts are excluded; team, investor and foundation allocation wallets "
+                           "are not documented in config"},
+    "Morpho": {"status": "not_established",
+               "why": "no Morpho DAO treasury, vesting or foundation address is documented in config"},
+    "Aerodrome": {"status": "not_established",
+                  "why": "no protocol, team or partner allocation address is documented in config "
+                         "(team allocations were issued as veAERO locks, which count as circulating)"},
+    "Aethir": {"status": "not_established",
+               "why": "supply is split across Arbitrum and a bridged Ethereum representation, and no "
+                      "treasury, vesting or foundation address is documented in config"},
+    "Plume": {"status": "not_established",
+              "why": "PLUME is native gas on Plume with an Ethereum ERC-20, and no treasury, vesting "
+                     "or foundation address is documented in config"},
+    "Near": {"status": "not_established",
+             "why": "NEAR's non-circulating supply sits in per-account lockup contracts and "
+                    "foundation accounts; no documented list exists in config"},
+}
+METRICS["circulating_supply_onchain"]["only_projects"] = tuple(
+    n for n, s in CIRCULATING_ONCHAIN.items() if s["status"] in ("established", "partial"))
+
+
+def circulating_onchain(project_name: str) -> dict | None:
+    return CIRCULATING_ONCHAIN.get(project_name)
+
 
 # =======================================================================================
 # PRE-MINTED POOL RELEASE — WHICH ROUTE IS LIVE, PER PROJECT. 2026-09-23.
@@ -18805,3 +19126,137 @@ def validate_config(raise_on_error: bool = True) -> list[str]:
 
 
 validate_config()
+
+
+# =======================================================================================
+# THE LICENSING REGISTER — every web source: robots.txt, terms, key, licence. 2026-09-30.
+#
+# Jake (second pass): "For each web source: find the underlying JSON/XHR endpoint, check
+# robots.txt and terms (record them in the licensing register)". Each entry says what was
+# established and FROM WHERE. This sandbox reaches only GitHub, so a robots.txt or terms page
+# not readable from a repository is recorded as NOT CHECKED FROM HERE and read by the probe
+# `robots_and_terms` (check_offline_items.py), which evaluates every `paths` entry with the
+# pipeline's own RFC 9309 reader and prints each terms URL's status for pasting back.
+# A source whose robots disallows its path is not used; one whose terms are unread is used only
+# where a key or a published free API is the permission (noted per entry).
+# =======================================================================================
+SOURCE_REGISTER = {
+    "ultrasound.money": {
+        "used_for": "Ethereum daily supply and staked ETH (ultrasound_history)",
+        "paths": ["/api/v2/fees/supply-projection-inputs"],
+        "robots": "NOT CHECKED FROM HERE for the API path; the page root was refused by robots on "
+                  "the live run of 2026-09-17/18. The adapter checks the API path itself on every "
+                  "call and stores nothing if disallowed.",
+        "terms": {"url": "https://ultrasound.money/", "status": "NOT READ — no terms page found in "
+                  "ultrasoundmoney/frontend @f2a86cd"},
+        "licence": "the frontend/backend repos carry their own code licences; the DATA's terms are "
+                   "unstated. supplyByDay's early segment is Glassnode's daily supply "
+                   "(eth-analysis-rs over_time.rs:358-391) — Glassnode's terms apply to it",
+        "key": None,
+    },
+    "beaconcha.in": {
+        "used_for": "ETH.Store apr (monthly cross-check; per-day history backfill)",
+        "paths": ["/api/v1/ethstore/latest", "/api/v1/ethstore/1765"],
+        "robots": "robots.txt answered HTTP 403 on 2026-09-27/28 = 'unavailable' under RFC 9309 "
+                  "s2.3.1.3 (may access); no robots file in gobitfly/eth2-beaconchain-explorer",
+        "terms": {"url": "https://beaconcha.in/terms", "status": "NOT READ FROM HERE"},
+        "licence": "keyed API (BEACONCHAIN_API_KEY); published plans: Free 0€ 30,000/month, "
+                   "Sapphire 59€/mo 500,000/month (templates/payment/pricing.html @fd48389)",
+        "key": "BEACONCHAIN_API_KEY",
+    },
+    "api.hyperliquid.xyz": {
+        "used_for": "HyperCore tokenDetails, spot state, validator summaries",
+        "paths": ["/info"],
+        "robots": "an API host (POST); NOT CHECKED FROM HERE",
+        "terms": {"url": "https://hyperliquid.xyz/terms", "status": "NOT READ FROM HERE"},
+        "licence": "public, unauthenticated, documented API (Hyperliquid docs, info-endpoint)",
+        "key": None,
+    },
+    "explorer.plume.org": {
+        "used_for": "probe only (Blockscout /api/v2/stats and charts; the stats-service host)",
+        "paths": ["/api/v2/stats", "/api/v2/stats/charts/transactions"],
+        "robots": "Blockscout's frontend robots (blockscout/frontend @0abc566, next-sitemap config) "
+                  "allow / and disallow only /auth/*, /login, /chakra, /sprite, /account/* — the API "
+                  "is not disallowed; Plume's own deployment NOT CHECKED FROM HERE",
+        "terms": {"url": "https://explorer.plume.org/", "status": "NOT READ FROM HERE"},
+        "licence": "Blockscout default API rate limit 300/min per IP (blockscout/blockscout "
+                   "config/runtime.exs:157-199)",
+        "key": None,
+    },
+    "rpc.plume.org": {
+        "used_for": "Plume staking diamond reads (plume_staking)",
+        "paths": ["/"],
+        "robots": "JSON-RPC endpoint; not a crawlable site",
+        "terms": {"url": "https://plume.org/", "status": "NOT READ FROM HERE"},
+        "licence": "public RPC named in Plume's own repo (ForkTestPlumeStaking.s.sol:48)",
+        "key": None,
+    },
+    "api.growthepie.com": {
+        "used_for": "Plume daily active addresses, transactions, fees paid",
+        "paths": ["/v1/fundamentals.json"],
+        "robots": "checked 2026-09-23: www.growthepie.com/robots.txt disallows page paths only; no "
+                  "robots.txt on the API host",
+        "terms": {"url": "https://www.growthepie.com/", "status": "NOT READ FROM HERE"},
+        "licence": "free unauthenticated JSON; licence of the data NOT ESTABLISHED",
+        "key": None,
+    },
+    "api.llama.fi": {
+        "used_for": "fees, revenue, holders revenue; Chainlink's five service adapters summed",
+        "paths": ["/summary/fees/chainlink-requests"],
+        "robots": "NOT CHECKED FROM HERE (unchanged since first wiring)",
+        "terms": {"url": "https://defillama.com/terms", "status": "NOT READ FROM HERE"},
+        "licence": "free public API; DefiLlama/dimension-adapters has no LICENSE file (@f16ec99)",
+        "key": None,
+    },
+    "api.nearblocks.io": {
+        "used_for": "NEAR transactions, active accounts, buyback inflows",
+        "paths": ["/v1/charts"],
+        "robots": "NOT CHECKED FROM HERE",
+        "terms": {"url": "https://nearblocks.io/terms-and-conditions", "status": "NOT READ FROM HERE"},
+        "licence": "keyed (NEARBLOCKS_API_KEY); plan limits in Nearblocks/nearblocks "
+                   "apps/api/src/middlewares/rateLimiter.ts:20-39",
+        "key": "NEARBLOCKS_API_KEY",
+    },
+    "api.merkl.xyz": {
+        "used_for": "probe only (live MORPHO campaigns)",
+        "paths": ["/v4/campaigns"],
+        "robots": "NOT CHECKED FROM HERE",
+        "terms": {"url": "https://merkl.xyz/", "status": "NOT READ FROM HERE"},
+        "licence": "public API used by Morpho's own recipe (merkl-morpho-recipe constants.ts:3)",
+        "key": None,
+    },
+    "app.blockworks.com": {
+        "used_for": "NOT USED — GEODNET staking-flow chart named by Jake as a CROSS-CHECK only",
+        "paths": ["/projects/geodnet/analytics/geodnet"],
+        "robots": "NOT CHECKED FROM HERE",
+        "terms": {"url": "https://blockworks.com/terms", "status": "NOT READ FROM HERE — not wired "
+                  "until read"},
+        "licence": "NOT ESTABLISHED",
+        "key": None,
+    },
+    "dashboard.aethir.com": {
+        "used_for": "NOT USED YET — supply-metric page (GPUs, countries, TFLOPs, revenue)",
+        "paths": ["/protocol/supply-metric"],
+        "robots": "NOT CHECKED FROM HERE; no public repository carries its API",
+        "terms": {"url": "https://aethir.com/terms", "status": "NOT READ FROM HERE"},
+        "licence": "NOT ESTABLISHED — the probe aethir_dashboard_xhr finds the endpoint first",
+        "key": None,
+    },
+    "api.artemisxyz.com": {
+        "used_for": "NOT USED — settlement-volume option B",
+        "paths": ["/asset"],
+        "robots": "NOT CHECKED FROM HERE",
+        "terms": {"url": "https://www.artemis.xyz/terms", "status": "NOT READ FROM HERE"},
+        "licence": "keyed (APIKey query parameter, per the third-party client MattMaximo/artemis_py "
+                   "@492ef30 api.py:26-42); free tier NOT ESTABLISHED",
+        "key": "ARTEMIS_API_KEY",
+    },
+    "visaonchainanalytics.com": {
+        "used_for": "NOT USED — settlement-volume option B",
+        "paths": ["/"],
+        "robots": "NOT CHECKED FROM HERE; no public repository",
+        "terms": {"url": "https://visaonchainanalytics.com/", "status": "NOT READ FROM HERE"},
+        "licence": "NOT ESTABLISHED",
+        "key": None,
+    },
+}

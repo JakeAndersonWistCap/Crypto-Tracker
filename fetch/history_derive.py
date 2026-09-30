@@ -146,6 +146,12 @@ def _say(out, name, n, message) -> None:
 def _issuance(out, h, p) -> int:
     name = p["name"]
     smetric = p.get("issuance_supply_metric") or "total_supply"
+    # A DECLARED HISTORY SUPPLY (Ethereum, A1 2026-09-30): the live issuance is differenced from
+    # one stock, its history from another, and the history leg stops at the live leg's first row
+    # (a declared series_handover; the two never overlap).
+    hist = p.get("issuance_history_supply")
+    if hist:
+        smetric = hist["metric"]
     mech = config.burn_mechanism(p)
     rule = config.issuance_supply_rule(p, mech.get("model"))
     # EVERY EXIT SAYS WHY. Before 2026-09-30 these three returned silently, so a run that wrote
@@ -169,7 +175,15 @@ def _issuance(out, h, p) -> int:
     burn = _series(h, name, "gross_burn_tokens").set_index("date")["value"].astype(float)
     iss = _series(h, name, "gross_issuance_tokens")
     measured = iss[~iss["source"].astype(str).str.startswith("derived:")]
-    if len(measured):              # a measured issuance is never overwritten
+    skip_dates = set()
+    if len(measured) and hist:
+        # A DECLARED HISTORY LEG FILLS AROUND A MEASURED ROW, never over it (Ethereum, 2026-09-30):
+        # the dates a measured row holds are skipped, and the log names them.
+        skip_dates = set(measured["date"])
+        srcs = measured["source"].astype(str).value_counts()
+        _say(out, name, 0, f"gross_issuance_tokens history: {len(measured)} measured row(s) kept, "
+                           f"their dates skipped — " + ", ".join(f"{s} x{c}" for s, c in srcs.items()))
+    elif len(measured):            # a measured issuance is never overwritten
         srcs = measured["source"].astype(str).value_counts()
         _say(out, name, 0, f"gross_issuance_tokens history NOT RUN — {len(measured)} stored "
                            f"row(s) are not derived, and a measured issuance is never "
@@ -177,6 +191,13 @@ def _issuance(out, h, p) -> int:
                            + f" ({measured['date'].min().date()}..{measured['date'].max().date()})")
         return 0
     held = dict(zip(iss["date"], iss["value"]))
+    stop = None
+    if hist:
+        live = iss[iss["source"].astype(str).str.startswith(hist["before_first_prefix"])]
+        stop = live["date"].min() if len(live) else None
+        # ONLY THIS LEG'S rows are "held" for the unchanged-value comparison
+        own = iss[iss["source"].astype(str).str.startswith(hist["tag"])]
+        held = dict(zip(own["date"], own["value"]))
     tag = f"derived:d_{smetric}" if smetric != "total_supply" else "derived:d_supply"
     tag += "+burn" if rule == "add_burn" else ""
     rows, refused = [], 0
@@ -196,6 +217,10 @@ def _issuance(out, h, p) -> int:
             continue
         span = (d1 - d0).days
         src = tag + (f"[span={span}d]" if span > 1 else "")
+        if stop is not None and d1 >= stop:
+            continue           # the live leg covers it: the handover never overlaps
+        if d1 in skip_dates:
+            continue
         if _differs(held, d1, issued):
             rows.append((d1, issued, src))
     n = _emit(out, name, "gross_issuance_tokens", rows,

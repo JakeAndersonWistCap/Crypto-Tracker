@@ -147,6 +147,84 @@ class BeaconChain:
             spec = p.get("beaconchain")
             if spec:
                 self._project(p["name"], spec, out)
+                if spec.get("history") and self._key(spec):
+                    self._history(p["name"], spec, out)
+
+    # ===== ETH.STORE PER DAY, BACKFILLED UNDER A BUDGET (A2, Jake 2026-09-30). =====
+    # /api/v1/ethstore/{day} for each beaconchain-day of the last `days` (day N starts at genesis
+    # 2020-12-01T12:00:23Z + N days — gobitfly/eth.store README; the row carries day_start, which
+    # is what dates it). ONE CALL PER DAY, cached for good in beaconchain-history.json: a past
+    # day's aggregate does not change, so nothing is ever read twice. At most calls_per_run per
+    # run and monthly_budget per calendar month (beaconcha.in's free quota is MONTHLY and was
+    # exhausted on 2026-09-28 — the probe `beaconchain_quota` reads the real limit from the
+    # response headers), paced min_interval_s apart, stopping at the first refusal. Every cached
+    # day is stored on every run, so the series is whole whatever the store held.
+    GENESIS_DAY0 = pd.Timestamp("2020-12-01")
+
+    @staticmethod
+    def _hist_file():
+        from .logcache import LogCache
+        return LogCache().root / "beaconchain-history.json"
+
+    def _history(self, name: str, spec: dict, out) -> None:
+        h = spec["history"]
+        f = self._hist_file()
+        try:
+            st = json.loads(f.read_text())
+        except (OSError, ValueError):
+            st = {}
+        days = st.setdefault("days", {})
+        month = str(today().date())[:7]
+        used = st.setdefault("used", {}).get(month, 0)
+        want = [today() - pd.Timedelta(days=i) for i in range(2, int(h.get("days", 365)) + 2)]
+        missing = [d for d in want if str((d - self.GENESIS_DAY0).days) not in days]
+        budget = min(int(h.get("calls_per_run", 30)), max(0, int(h.get("monthly_budget", 300)) - used))
+        key, calls, refused = self._key(spec), 0, None
+        http = Http(min_interval=float(h.get("min_interval_s", 6.0)), retries=0)
+        for d in missing[:budget]:
+            n = (d - self.GENESIS_DAY0).days
+            url = spec["base_url"].rstrip("/") + f"/api/v1/ethstore/{n}"
+            try:
+                body = http.get(url, headers={"apikey": key})
+                calls += 1
+            except Exception as e:  # noqa: BLE001 — stop at the first refusal, keep what was read
+                refused = self._scrub(spec, e)
+                calls += 1
+                break
+            rows = body.get("data") if isinstance(body, dict) and body.get("status") == "OK" else None
+            rec = rows[0] if isinstance(rows, list) and rows else rows if isinstance(rows, dict) else None
+            if not isinstance(rec, dict) or h["field"] not in rec or "day_start" not in rec:
+                keys = sorted(rec) if isinstance(rec, dict) else type(body).__name__
+                out.fail(SOURCE, name, f"{h['metric']} history: /ethstore/{n} carried {keys}, not "
+                                       f"('day_start', {h['field']!r}). NOTHING STORED; backfill stopped.", TIER)
+                break
+            days[str(n)] = {"day_start": str(rec["day_start"]), "value": rec[h["field"]]}
+        st["used"][month] = used + calls
+        if calls:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps(st))
+            tmp.replace(f)
+        pts = []
+        for n, r in days.items():
+            try:
+                pts.append((pd.Timestamp(r["day_start"]).tz_convert("UTC").tz_localize(None).normalize()
+                            if pd.Timestamp(r["day_start"]).tzinfo else pd.Timestamp(r["day_start"]).normalize(),
+                            float(r["value"]) / float(h.get("scale", 1))))
+            except (TypeError, ValueError):
+                continue
+        pts = [(d, v) for d, v in pts if d < today()]
+        if pts:
+            from .base import tidy
+            frame = tidy(sorted(pts), name, h["metric"], SOURCE, TIER)
+            out.add(frame, SOURCE, name,
+                    f"{h['metric']} history = ETH.Store `{h['field']}` per beaconchain-day: "
+                    f"{len(frame)} day(s) held, {calls} call(s) this run, {used + calls} this "
+                    f"month of a {h.get('monthly_budget', 300)} budget; "
+                    f"{max(0, len(missing) - calls)} day(s) still to read", TIER)
+        if refused:
+            out.fail(SOURCE, name, f"{h['metric']} history: stopped at a refusal after {calls} "
+                                   f"call(s) — {refused}. What was read is kept; resumes next run.", TIER)
 
     def _project(self, name: str, spec: dict, out):
         key = self._key(spec)

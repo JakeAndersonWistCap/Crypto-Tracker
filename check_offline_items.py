@@ -2725,6 +2725,285 @@ def _code_at(addr: str):
     return None, None
 
 
+# =====================================================================================
+# SECOND PASS PROBES (Jake, 2026-09-30). Each reads only; each prints what to paste back.
+# =====================================================================================
+def _ua():
+    from fetch.base import USER_AGENT                     # noqa: PLC0415
+    return {"User-Agent": USER_AGENT}
+
+
+def robots_and_terms():
+    """The licensing register (config.SOURCE_REGISTER): every declared path through the
+    pipeline's own RFC 9309 reader, and each terms page's HTTP status. Paste the lines back and
+    the register's 'NOT CHECKED FROM HERE' entries are filled from them."""
+    import config                                          # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("LICENSING REGISTER — robots.txt per path, terms page status")
+    for host, e in config.SOURCE_REGISTER.items():
+        for path in e["paths"]:
+            url = f"https://{host}{path}"
+            try:
+                ok, why = robots_verdict(url)
+                print(f"  {host}{path:<45} robots: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+            except Exception as ex:  # noqa: BLE001
+                print(f"  {host}{path:<45} robots: UNREADABLE — {ex}")
+        t = (e.get("terms") or {}).get("url")
+        if t:
+            try:
+                r = requests.get(t, headers=_ua(), timeout=TIMEOUT)
+                print(f"      terms {t}: HTTP {r.status_code}, {len(r.text):,} chars")
+            except Exception as ex:  # noqa: BLE001
+                print(f"      terms {t}: UNREACHABLE — {ex}")
+    print("  PASTE BACK every line. Read each terms page yourself for redistribution limits.")
+
+
+def ultrasound_history():
+    """A1/A3: ultrasound.money's supply-projection-inputs — the keys, each series' length and
+    ends, and d(supply) over the last week (issuance - burn, ETH/day)."""
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    url = "https://ultrasound.money/api/v2/fees/supply-projection-inputs"
+    head("ETHEREUM — ultrasound.money supplyByDay / inBeaconValidatorsByDay")
+    ok, why = robots_verdict(url)
+    print(f"  robots for the API path: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+    if not ok:
+        return
+    try:
+        j = requests.get(url, headers=_ua(), timeout=TIMEOUT).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    print(f"  keys: {sorted(j) if isinstance(j, dict) else type(j).__name__}")
+    for k in ("supplyByDay", "inBeaconValidatorsByDay"):
+        rows = j.get(k) if isinstance(j, dict) else None
+        if not isinstance(rows, list) or not rows:
+            print(f"  {k}: MISSING or empty")
+            continue
+        f, l = rows[0], rows[-1]
+        print(f"  {k}: {len(rows)} rows, first {f}, last {l}")
+        if k == "supplyByDay":
+            last = rows[-8:]
+            for a, b in zip(last, last[1:]):
+                print(f"    {time.strftime('%Y-%m-%d', time.gmtime(b['t']))}  d(supply) "
+                      f"{b['v'] - a['v']:+,.1f} ETH")
+    print("  PASTE BACK: the keys line and both series lines (d(supply) + ~burn should be ~2,700/day).")
+
+
+def beaconchain_quota():
+    """A2: the key's REAL limits (x-ratelimit-* headers) — one call to /ethstore/latest — plus one
+    historical /epoch/{n} and the withdrawals chart series (website route, JSON)."""
+    head("ETHEREUM — beaconcha.in quota, historical epoch, withdrawals chart")
+    key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
+    try:
+        r = requests.get("https://beaconcha.in/api/v1/ethstore/latest",
+                         headers={**_ua(), **({"apikey": key} if key else {})}, timeout=TIMEOUT)
+        print(f"  /ethstore/latest: HTTP {r.status_code}")
+        for h, v in r.headers.items():
+            if h.lower().startswith("x-ratelimit") or h.lower() == "retry-after":
+                print(f"    {h}: {v}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  /ethstore/latest UNREACHABLE — {e}")
+    try:
+        ep = 225 * 1700
+        r = requests.get(f"https://beaconcha.in/api/v1/epoch/{ep}",
+                         headers={**_ua(), **({"apikey": key} if key else {})}, timeout=TIMEOUT)
+        d = (r.json() or {}).get("data") or {}
+        print(f"  /epoch/{ep}: HTTP {r.status_code}; totalvalidatorbalance "
+              f"{d.get('totalvalidatorbalance')} eligibleether {d.get('eligibleether')} ts {d.get('ts')}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  /epoch UNREACHABLE — {e}")
+    try:
+        r = requests.get("https://beaconcha.in/charts/chart-holder-17/data", headers=_ua(), timeout=TIMEOUT)
+        series = (r.json() or {}).get("data") or []
+        for s_ in series[:2]:
+            pts = s_.get("data") or []
+            print(f"  withdrawals chart series {s_.get('name')!r}: {len(pts)} points, last {pts[-3:]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  withdrawals chart UNREACHABLE — {e}")
+    print("  PASTE BACK the x-ratelimit lines (the monthly limit decides free vs one paid month).")
+
+
+def hyperliquid_history_routes():
+    """C: tokenDetails (circulating + the non-circulating list), validatorSummaries total stake,
+    the stats cloudfront feed's freshness, and HyperEVM's Blockscout (hyperscan.com) stats."""
+    head("HYPERLIQUID — first-party circulating, stake, stats feed, HyperEVM explorer")
+    info = "https://api.hyperliquid.xyz/info"
+    try:
+        td = requests.post(info, json={"type": "tokenDetails", "tokenId": "0x0d01dc56dcaaca66ad901c959b4011ec"},
+                           headers=_ua(), timeout=TIMEOUT).json()
+        print(f"  tokenDetails keys: {sorted(td)[:20]}")
+        print(f"  circulatingSupply {td.get('circulatingSupply')}  totalSupply {td.get('totalSupply')}")
+        for a, b in (td.get("nonCirculatingUserBalances") or [])[:20]:
+            print(f"    non-circulating {a} {b}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  tokenDetails UNREACHABLE — {e}")
+    try:
+        vs = requests.post(info, json={"type": "validatorSummaries"}, headers=_ua(), timeout=TIMEOUT).json()
+        print(f"  validatorSummaries: {len(vs)} validators, total stake {sum(int(v.get('stake', 0)) for v in vs) / 1e8:,.0f} HYPE")
+    except Exception as e:  # noqa: BLE001
+        print(f"  validatorSummaries UNREACHABLE — {e}")
+    for name in ("daily_unique_users", "daily_trades"):
+        url = f"https://d2v1fiwobg9w6.cloudfront.net/{name}"
+        try:
+            j = requests.get(url, headers=_ua(), timeout=TIMEOUT).json()
+            rows = j.get("chart_data") or j.get("table_data") or j
+            print(f"  stats {name}: {len(rows)} rows, last {rows[-1] if rows else None}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  stats {name} UNREACHABLE — {e}")
+    for path in ("/api/v2/stats", "/api/v2/stats/charts/transactions"):
+        try:
+            j = requests.get(f"https://www.hyperscan.com{path}", headers=_ua(), timeout=TIMEOUT).json()
+            print(f"  hyperscan{path}: keys {sorted(j)[:12] if isinstance(j, dict) else type(j).__name__}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  hyperscan{path} UNREACHABLE — {e}")
+    print("  PASTE BACK all lines: the stats feed's last date says whether it is still updated.")
+
+
+def plume_sources():
+    """G: the staking diamond (reward rate -> APR, total staked), Plume's Blockscout stats host
+    (from the explorer's own envs.js), and growthepie's fees_paid_usd for Plume."""
+    head("PLUME — staking APR, explorer stats service, growthepie fees")
+    from eth_utils import keccak                          # noqa: PLC0415
+    diamond = "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d"
+    native = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+    sel_rate = "0x" + keccak(text="getRewardRate(address)").hex()[:8] + native[2:].lower().rjust(64, "0")
+    sel_staked = "0x" + keccak(text="totalAmountStaked()").hex()[:8]
+    for label, data in (("getRewardRate(PLUME)", sel_rate), ("totalAmountStaked()", sel_staked)):
+        try:
+            j = rpc("https://rpc.plume.org", "eth_call", [{"to": diamond, "data": data}, "latest"])
+            v = int(j.get("result") or "0x0", 16)
+            extra = (f" -> gross APR {v * 31_536_000 / 1e18:.4%}" if label.startswith("getRewardRate")
+                     else f" -> {v / 1e18:,.0f} PLUME")
+            print(f"  {label}: {v}{extra}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  {label} UNREACHABLE — {e}")
+    try:
+        env = requests.get("https://explorer.plume.org/assets/envs.js", headers=_ua(), timeout=TIMEOUT).text
+        for k in ("NEXT_PUBLIC_STATS_API_HOST", "NEXT_PUBLIC_STATS_API_BASE_PATH", "NEXT_PUBLIC_API_HOST"):
+            i = env.find(k)
+            print(f"  {k}: {env[i:i + 120].split(',')[0] if i >= 0 else 'absent'}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  envs.js UNREACHABLE — {e}")
+    try:
+        rows = requests.get("https://api.growthepie.com/v1/fundamentals.json", headers=_ua(), timeout=TIMEOUT).json()
+        fees = sorted((r["date"], r["value"]) for r in rows
+                      if r.get("origin_key") == "plume" and r.get("metric_key") == "fees_paid_usd")
+        print(f"  growthepie plume fees_paid_usd: {len(fees)} days, last {fees[-3:]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  growthepie UNREACHABLE — {e}")
+    print("  PASTE BACK all lines. APR should sit in Jake's 5-8%.")
+
+
+def _xhr_capture(url: str, wanted: tuple = ()):
+    """Load a page in Chromium (robots-checked first) and list every JSON response: URL, top-level
+    keys, and any number in it matching `wanted`. Finds a dashboard's API; stores nothing."""
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    ok, why = robots_verdict(url)
+    print(f"  robots for {url}: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+    if not ok:
+        return
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: PLC0415
+    except Exception as e:  # noqa: BLE001
+        print(f"  playwright unavailable — {e}")
+        return
+    seen = []
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        pg = b.new_page(user_agent=_ua()["User-Agent"])
+
+        def grab(resp):
+            if "json" in (resp.headers.get("content-type") or ""):
+                try:
+                    body = resp.json()
+                except Exception:  # noqa: BLE001
+                    return
+                txt = json.dumps(body)[:200000]
+                hits = [w for w in wanted if w in txt]
+                keys = sorted(body)[:15] if isinstance(body, dict) else f"list[{len(body)}]"
+                seen.append((resp.url.split("?")[0], keys, hits))
+        pg.on("response", grab)
+        pg.goto(url, wait_until="networkidle", timeout=60000)
+        b.close()
+    for u, k, h in seen:
+        print(f"  JSON {u}\n       keys {k}{'  MATCHES ' + ', '.join(h) if h else ''}")
+    print(f"  {len(seen)} JSON response(s). PASTE BACK the ones that MATCH.")
+
+
+def aethir_dashboard_xhr():
+    """E: the supply-metric page's own API — GPUs/containers (433704), countries (94), TFLOPs
+    (38509114), and any utilisation / rented / revenue / ARR field."""
+    head("AETHIR — dashboard.aethir.com/protocol/supply-metric: find the underlying endpoint")
+    _xhr_capture("https://dashboard.aethir.com/protocol/supply-metric",
+                 ("433704", "38509114", "utiliz", "utilis", "rented", "revenue", "arr", "ARR"))
+
+
+def maple_ssf_history():
+    """H: the transparency page's SSF chart — the embedded series (Astro island props) holding the
+    SSF's SYRUP balance by date, and the monthly buyback list on the same page."""
+    head("MAPLE — transparency page: the SSF SYRUP balance series")
+    import re                                              # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    url = (config.PROJECT_BY_NAME["Maple"].get("maple_transparency") or {}).get("url") \
+        or "https://maple.finance/transparency"
+    ok, why = robots_verdict(url)
+    print(f"  robots for {url}: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+    if not ok:
+        return
+    html = requests.get(url, headers=_ua(), timeout=TIMEOUT).text
+    for m in re.finditer(r'props="([^"]{0,200000})"', html):
+        blob = m.group(1).replace("&quot;", '"')
+        if any(w in blob for w in ("SSF", "Strategic", "ssf", "syrup", "SYRUP")):
+            dates = re.findall(r"20\d\d-\d\d-\d\d", blob)
+            print(f"  island props {len(blob):,} chars, {len(dates)} dates ({dates[:1]}..{dates[-1:]}); "
+                  f"head: {blob[:300]}")
+    print("  PASTE BACK each island line that names the SSF.")
+
+
+def blockworks_geodnet():
+    """D1 (cross-check only): Blockworks' GEODNET staking-flow chart endpoint, robots-checked. Not
+    wired: its terms are unread (licensing register)."""
+    head("GEODNET — Blockworks staking-flow chart (cross-check only)")
+    _xhr_capture("https://app.blockworks.com/projects/geodnet/analytics/geodnet",
+                 ("stake", "Stake", "unstake"))
+
+
+def morpho_incentives():
+    """J: is Morpho paying MORPHO now? Live Merkl campaigns rewarding MORPHO on Ethereum, and the
+    Merkl distributor's MORPHO balance."""
+    head("MORPHO — live MORPHO reward campaigns (Merkl) and the distributor's balance")
+    morpho = "0x58D97B57BB95320F9a05dC918Aef65434969c2B2"
+    try:
+        j = requests.get("https://api.merkl.xyz/v4/campaigns",
+                         params={"tokenAddress": morpho, "chainId": 1, "status": "LIVE"},
+                         headers=_ua(), timeout=TIMEOUT).json()
+        rows = j if isinstance(j, list) else j.get("campaigns") or []
+        print(f"  live campaigns paying MORPHO: {len(rows)}")
+        for c in rows[:10]:
+            print(f"    {str(c)[:200]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  Merkl API UNREACHABLE — {e}")
+    from eth_utils import keccak                          # noqa: PLC0415
+    sel = "0x" + keccak(text="balanceOf(address)").hex()[:8] + "3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae".lower().rjust(64, "0")
+    w, _ = eth_call(morpho, sel)
+    print(f"  MORPHO held by Merkl's distributor: {int(w, 16) / 1e18:,.0f}" if w else "  balance UNREACHABLE")
+    print("  PASTE BACK: zero live campaigns + a flat balance means Jake's reading holds.")
+
+
+def settlement_sources():
+    """B: which settlement-volume sources answer, and on what terms (robots + a keyed call)."""
+    head("SETTLEMENT VOLUME — Artemis and Visa Onchain Analytics reachability")
+    key = os.environ.get("ARTEMIS_API_KEY", "").strip()
+    try:
+        r = requests.get("https://api.artemisxyz.com/asset", params={"APIKey": key} if key else {},
+                         headers=_ua(), timeout=TIMEOUT)
+        print(f"  Artemis /asset: HTTP {r.status_code} ({'keyed' if key else 'no ARTEMIS_API_KEY'})")
+    except Exception as e:  # noqa: BLE001
+        print(f"  Artemis UNREACHABLE — {e}")
+    _xhr_capture("https://visaonchainanalytics.com/", ("adjusted", "Adjusted", "volume"))
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -2737,6 +3016,9 @@ CHECKS = (
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth,
+    robots_and_terms, ultrasound_history, beaconchain_quota, hyperliquid_history_routes,
+    plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
+    morpho_incentives, settlement_sources,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

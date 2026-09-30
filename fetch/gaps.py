@@ -283,6 +283,26 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
                 f"Log for the {src} fetch{via}.")
 
+    # ===== A DEDICATED ADAPTER DECLARED FOR THIS METRIC (second pass, 2026-09-30). =====
+    # Plume's staking diamond, ultrasound.money's daily history, Hyperliquid's tokenDetails: the
+    # route exists, so the row names it and the probe that checks it.
+    dedicated = []
+    ps = project.get("plume_staking") or {}
+    if metric in (ps.get("apr_metric"), ps.get("stake_metric")):
+        dedicated.append(("Plume's staking diamond (fetch/plume_staking.py, "
+                          f"{ps.get('address')} on {ps.get('rpc')})", "plume_sources"))
+    us = project.get("ultrasound_history") or {}
+    if metric in (us.get("series") or {}).values():
+        dedicated.append((f"ultrasound.money's daily history ({us.get('url')})", "ultrasound_history"))
+    if metric == "circulating_supply_first_party":
+        dedicated.append(("Hyperliquid's own tokenDetails.circulatingSupply (fetch/hypercore.py)",
+                          "hyperliquid_history_routes"))
+    if dedicated:
+        what, probe = dedicated[0]
+        return (f"the route is {what}, and it produced nothing this run",
+                f"Check the Run Log for it; `python check_offline_items.py {probe}` shows what the "
+                f"source answers.")
+
     # ===== A BUYBACK TOKEN COUNT DERIVED FROM THE $ AND THE PRICE. Added 2026-09-28. =====
     if metric == "actual_buyback_tokens" and config.buyback_tokens_from_usd(name):
         return ("DERIVED: actual_buyback_usd / same-day price_usd (config.buyback_tokens_from_usd), "
@@ -344,6 +364,15 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 # emissions rather than emissions — a restatement would put unlock figures in an
                 # emissions cell as a displayed number. The row points; it does not copy.
                 # DECIDED, not deferred: config.EMISSIONS_ALIAS_DECLINED (2026-09-24).
+                reopened = (config.EMISSIONS_ALIAS_DECLINED.get("reopened") or {}).get(project["name"])
+                if reopened:
+                    pref = (config.metric_restatements(project["name"]).get("emissions_tokens")
+                            or {}).get("source_prefix", "the measured release")
+                    return (f"RESTATED FROM THE MEASURED RELEASE ({reopened['by']}, "
+                            f"{reopened['on']}: {reopened['what']}), and {pref} produced nothing "
+                            f"for this window. The derived d(circulating) - d(total) fallback is "
+                            f"never copied here: it carries unlocks as well as rewards.{caveat}",
+                            "See pool_release_tokens' own row: its measured leg is what fills this.")
                 if "pool_release_tokens" in config.metrics_for_project(project):
                     decided = config.EMISSIONS_ALIAS_DECLINED
                     return (f"NOT MINTING — the supply already exists and is being RELEASED, and the "

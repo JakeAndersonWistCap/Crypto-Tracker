@@ -3485,3 +3485,48 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 --  WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
 --    AND source LIKE 'derived:d_coingecko_supply+burn%';
 -- COMMIT;
+
+-- ========================================================================================
+-- BB. CHAINLINK: customer_revenue_usd restated from fees_usd, superseded  2026-09-30
+--     Until 2026-09-30 Chainlink's customer_revenue_usd was fees_usd copied (source
+--     'derived:=fees_usd': the Ethereum fee aggregator alone, a labelled floor). Jake (F): A2
+--     customer revenue is every service, all chains — now the sum of DefiLlama's
+--     chainlink-requests, -keepers, -vrf-v1, -vrf-v2 and -ccip daily fees (source
+--     'defillama:sum(...)'). The old restated rows are a second measuring point under the same
+--     metric and would blank it. fees_usd itself is NOT touched. REVIEW FIRST.
+-- ========================================================================================
+-- BB1. EVERY CHAINLINK customer_revenue_usd ROW, by source.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(SUM(value), 0) AS total_usd
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric = 'customer_revenue_usd'
+ GROUP BY source;
+
+-- BB2. THE PROPOSED DELETE: the restated floor only. Only after BB1 reads as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Chainlink' AND metric = 'customer_revenue_usd'
+--    AND source = 'derived:=fees_usd';
+-- COMMIT;
+
+-- ========================================================================================
+-- BC. FLUID: the DECLARED zero emissions, retired  2026-09-30
+--     emissions_tokens was a declared 0 (source 'schedule:config:declared', Jake 2026-09-22:
+--     "the FLUID emission has finished"). Jake (I): the May 2026 post-mortem records a
+--     REDUCTION, not an end, and IGP116/118/131 fund rewards. Emissions are now MEASURED as
+--     FLUID claimed out of Fluid's mainnet MerkleDistributors (source 'explorer'). The declared
+--     zeros would be a second measuring point and would read as a measured 0. REVIEW FIRST.
+-- ========================================================================================
+-- BC1. EVERY FLUID emissions_tokens ROW, by source.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       SUM(value) AS total_tokens
+  FROM metrics
+ WHERE project = 'Fluid' AND metric = 'emissions_tokens'
+ GROUP BY source;
+
+-- BC2. THE PROPOSED DELETE: the declared zeros only. Only after BC1 reads as expected.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Fluid' AND metric = 'emissions_tokens'
+--    AND source = 'schedule:config:declared';
+-- COMMIT;

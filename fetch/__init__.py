@@ -45,6 +45,8 @@ from .etherscan_supply import EtherscanSupply
 from .balance_flow import BalanceFlow
 from .reward_vault import RewardVaultRates
 from .pendle_epochs import PendleEpochs
+from .ultrasound import UltrasoundHistory
+from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
                        check_flat_series, check_level_breaks, check_reference_values, validate_frame)
@@ -84,10 +86,14 @@ TIER_ORDER = [
     ("balance_flow", 2, lambda ctx: BalanceFlow()),
     # Chainlink staking v0.2 emission rates from the RewardVault (2026-09-29).
     ("reward_vault", 2, lambda ctx: RewardVaultRates(prior_values=ctx["prior_values"])),
+    # Plume's staking APR and total staked, from its own staking diamond (2026-09-30).
+    ("plume_staking", 2, lambda ctx: PlumeStaking()),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).
     ("pendle_api", 3, lambda ctx: PendleEpochs()),
+    # Ethereum's daily supply and staked-ETH history, one call (ultrasound.money API, 2026-09-30).
+    ("ultrasound", 3, lambda ctx: UltrasoundHistory()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),
@@ -817,6 +823,17 @@ def _restate_metrics(out: FetchOutput, projects: list[dict]) -> None:
                     out.skipped(SOURCE_DERIVED, name,
                                 f"{metric}: it IS {source_metric} only from {since}, and this "
                                 f"run's {source_metric} has nothing on or after that.", tier=2)
+                    continue
+            # source_prefix: only rows from this measuring point are the quantity restated
+            # (GEODNET, 2026-09-30: the MEASURED mining-wallet release is emissions; the
+            # derived d(circulating) - d(total) fallback also carries unlocks and is not).
+            pref = spec.get("source_prefix")
+            if pref:
+                rows = rows[rows["source"].astype(str).str.startswith(pref)]
+                if rows.empty:
+                    out.skipped(SOURCE_DERIVED, name,
+                                f"{metric}: it IS {source_metric} from {pref} only, and this run's "
+                                f"{source_metric} has nothing from there.", tier=2)
                     continue
             copy = rows.copy()
             copy["metric"] = metric
@@ -1646,8 +1663,11 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # AFTER every write-time derivation: the same formulas over the FULL span of the stored
     # inputs, so a backfilled input (a year of prices, of header supply) reaches the series
     # derived from it. See fetch/history_derive.py.
-    from .history_derive import derive_from_history
+    from .history_derive import derive_from_history, _history
     derive_from_history(out, projects, ctx.get("stored_long"))
+    # ON-CHAIN CIRCULATING vs CoinGecko's (M, Jake 2026-09-30): beyond the tolerance, reviewed.
+    from . import circulating
+    circulating.check(out, _history(ctx.get("stored_long"), out.frame()), projects)
     check_reference_values(out.frame(), out)
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)
@@ -1698,7 +1718,7 @@ TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 60, "beaconchain": 60, "coingecko": 240, "hypercore_info": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
-    "scrape": 240, "dune": 420,
+    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 60,
 }
 DEFAULT_BUDGET_S = 120
 HEARTBEAT_AFTER_S = 30.0

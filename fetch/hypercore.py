@@ -337,6 +337,26 @@ class HyperCoreInfo:
         out.add(point(name, metric, total, f"{SOURCE}:tokenDetails", TIER, when), SOURCE, name,
                 f"{metric}={total:,.4f} from Hyperliquid's own tokenDetails "
                 f"(circulatingSupply={circ:,.4f}, maxSupply={cap:,.4f})", TIER)
+        # ===== THE FIRST-PARTY CIRCULATING FIGURE (M, Jake 2026-09-30). =====
+        # circulatingSupply is Hyperliquid's own; nonCirculatingUserBalances is the documented
+        # set it excludes ([[address, balance], ...] — field names from nktkas/hyperliquid
+        # tokenDetails.ts and Hyperliquid's docs, info-endpoint/spot.md). The set is LOGGED each
+        # run so the exclusions are on the Run Log beside the figure; CoinGecko is the check.
+        out.add(point(name, "circulating_supply_first_party", circ, f"{SOURCE}:tokenDetails.circulatingSupply",
+                      TIER, when), SOURCE, name,
+                f"circulating_supply_first_party={circ:,.4f} (tokenDetails.circulatingSupply)", TIER)
+        nc = payload.get("nonCirculatingUserBalances") if isinstance(payload, dict) else None
+        if isinstance(nc, list):
+            pairs = [(str(a[0]), parse_number(a[1])) for a in nc
+                     if isinstance(a, (list, tuple)) and len(a) == 2]
+            listed = "; ".join(f"{a} {b:,.2f}" for a, b in pairs if b is not None)
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    f"tokenDetails.nonCirculatingUserBalances — the first-party "
+                                    f"non-circulating set, {len(pairs)} address(es): {listed}", TIER))
+        else:
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    "tokenDetails carried no nonCirculatingUserBalances list: the "
+                                    "excluded set is not on this run's log", TIER))
         # B4 (2026-09-28): THE FALL IN totalSupply IS EVERY BURN OUTSIDE THE ASSISTANCE FUND.
         # Differenced on the negation, as for the reward reserve below; a rise is refused.
         fall = read.get("supply_fall_metric")
