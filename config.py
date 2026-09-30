@@ -257,11 +257,10 @@ METRICS = {
     # Maple (Jake's probe 5, 2026-09-30): the SYRUP Strategic Fund's daily balance from the
     # transparency page's chart data (island props), unrounded.
     "ssf_holdings_tokens":        {"label": "SYRUP Strategic Fund holdings, daily (transparency page chart)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 1_000_000, "sanity_max": 1_000_000_000, "only_projects": ("Maple",)},
-    # Maple (Jake's probes2, 2026-09-30): the SSF's signed monthly net change, DefiLlama's revenue as
-    # the cross-check of Maple's own, and the IMPLIED buyback for paged-out months.
+    # Maple (Jake's probes2, 2026-09-30): the SSF's signed monthly net change, and DefiLlama's revenue
+    # as the cross-check of Maple's own.
     "ssf_net_outflow_tokens":     {"label": "SSF net outflow, monthly = fall in holdings + SYRUP bought (SIGNED; negative = an unclassified inflow)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e9, "only_projects": ("Maple",)},
     "revenue_usd_defillama":      {"label": "Revenue ($) — DefiLlama's series, cross-check of the project's own", "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Maple",)},
-    "actual_buyback_usd_implied": {"label": "Buyback ($) IMPLIED — revenue x MIP-021 tier, for months with no visible buyback row (never measured)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Maple",)},
     # Aethir (Jake's probes2, 2026-09-30): the supply page's other figures, as the page states them.
     "supply_locations":           {"label": "Countries/locations with supply (dashboard `locations`)", "kind": "stock", "unit": "count", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 300, "only_projects": ("Aethir",)},
     "compute_power_total":        {"label": "Total compute power (dashboard `totalComputePower`, TFLOPs)", "kind": "stock", "unit": "TFLOPs", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
@@ -3731,8 +3730,11 @@ PROJECTS = [
             # validators (id 1: 56.41; every commission 0.50%) — impossible for the live network.
             # NOTHING is stored until this address is confirmed as the contract staking.plume.org
             # uses; the stake additionally waits until it matches the app's own total (Jake reads
-            # it). The APR (4.9966% gross, 0.50% commission) goes live, labelled gross/net, only
-            # once `confirmed` is True.
+            # it). The 4.9966% gross / 0.50% commission came from 0xCF8B — the TEST diamond — and are
+            # DISCARDED (Jake, 2026-09-30); the APR stored is the live diamond's own rate.
+            # RECONCILIATION TARGET (Jake, 2026-09-30): staking.plume.org shows 134.1M PLUME staked.
+            # Every candidate is read; exactly one within ±0.5% of it is the live contract (the app
+            # rounds to 0.1M = ±0.04%; the rest allows a few days of stake movement since the read).
             # RESEARCH (plumenetwork/contracts, all branches, 2026-09-30):
             #  - UNITS ARE NOT THE CAUSE: stake is wei of native PLUME, 1:1 from msg.value
             #    (StakingFacet.sol@8248e78:257-260, 641-642; PlumeStakingStorage.sol:59,82), so
@@ -3758,7 +3760,8 @@ PROJECTS = [
                                              "0xA20bfe49969D4a0E9abfdb6a46FeD777304ba07f"),
                               "decider": "plumeStaking() on the myPLUME feed "
                                          "0xFbb53aa72c10680e822e255aC70D10f8bb957D64 (chain 98866)",
-                              "app_total_tokens": None, "app_rounding_tokens": None},
+                              "app_total_tokens": 134_100_000, "app_tolerance": 0.005,
+                              "app_read": "staking.plume.org, Jake, 2026-09-30"},
             "source_url": "https://github.com/plumenetwork/contracts/blob/8248e78ce0c15ad3875fb2e693de9685ecf982d7/plume/test/ForkTestPlumeStaking.s.sol",
             "verified": "2026-09-30",
             "live_confirmed": None,
@@ -8259,12 +8262,12 @@ PROJECTS = [
                 # Maple's OWN monthly revenue (island revenueUsd) is PRIMARY revenue_usd for Maple;
                 # DefiLlama's is revenue_usd_defillama (defillama_metric_as below).
                 "revenue_usd": {"field": "revenue_monthly", "granularity": "monthly"},
-                "actual_buyback_usd_implied": {"field": "implied_buyback", "granularity": "monthly"},
             },
-            # MIP-021 (rules-based buyback, passed 99.97%): 10% of the month's revenue under $1.5M,
-            # 20% from $1.5M to $2M, 30% over $2M — the band of the month's revenue, applied to all
-            # of it (Jake, 2026-09-30). (cap, rate); None = no cap.
-            "mip021_tiers": ((1_500_000, 0.10), (2_000_000, 0.20), (None, 0.30)),
+            # THE IMPLIED BUYBACK WAS WITHDRAWN (Jake, 2026-09-30): the buyback table is newest-first
+            # and contiguous by date (first page: Aug 2026, Jul 2026, Jun 2026, Nov 2025, Sep 2025),
+            # so Oct 2025 and Dec 2025..May 2026 had NO buyback — measured zeros, stored as 0 with
+            # that reason (fetch/maple_transparency.buyback_zero_months); the 8 paged-out rows
+            # predate Sep 2025. Stored implied rows: orphan_cleanup.sql BI.
             # THE DERIVATION d(circulating) - d(total) NEVER RUNS FOR MAPLE (2026-09-30): the SSF
             # is the measured route; pool_release_tokens is HELD (pool_release_tokens_blocked) until
             # the SSF's other inflows are classified. Stored derived rows: orphan_cleanup.sql BF.
@@ -16397,9 +16400,8 @@ STALE_AFTER_DAYS_BY_GRANULARITY = {"daily": None, "weekly": 14, "monthly": 45}
 # classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME;
 # Excel add-in =ART("ETH","SETTLEMENT_VOLUME").
 #
-# fetch/artemis.py reads the exports at RUN TIME from `dir` (the repository root by default — where
-# Jake saved it, C:\Users\jake\Crypto-Tracker\Ethereum_-_Settlement_Volume.csv — overridable by
-# TOKEN_METRICS_ARTEMIS_DIR). Local files, no network. ** THE DATA IS NEVER COMMITTED ** until
+# fetch/artemis.py reads the exports at RUN TIME from the repository root or data/artemis/ (`dirs`;
+# overridable by TOKEN_METRICS_ARTEMIS_DIR), the WHOLE file every run whatever the window. Local files, no network. ** THE DATA IS NEVER COMMITTED ** until
 # Artemis's terms are read (.gitignore excludes both file-name forms). A missing file GAPS the
 # metric with that reason; it never fails the run. A file whose value column is not exactly
 # "<artemis_name> - Settlement Volume" is refused — one definition, never mixed. The API (/asset)
@@ -16408,7 +16410,9 @@ STALE_AFTER_DAYS_BY_GRANULARITY = {"daily": None, "weekly": 14, "monthly": 45}
 # The derived NRR is stale — AMBER — once the export's last date is more than
 # `stale_after_days` old.
 ARTEMIS_SETTLEMENT = {
-    "dir": ".",
+    # Looked for in both, in this order (Jake's file sits in data/artemis/; a fresh download may land
+    # in the root). $TOKEN_METRICS_ARTEMIS_DIR, if set, replaces both.
+    "dirs": (".", "data/artemis"),
     "dir_env": "TOKEN_METRICS_ARTEMIS_DIR",
     "metric": "settlement_volume_usd",
     "definition": METRICS["settlement_volume_usd"]["definition"],
@@ -17965,6 +17969,9 @@ CIRCULATING_ONCHAIN = {
                                  "as permanent locks by Minter.initialize (contracts@1ba30815 "
                                  "contracts/Minter.sol:100-106)",
                        "decided_by": "Jake, 2026-09-30",
+                       # locked (permanent veNFT): in the veAERO locked total too, so free float
+                       # subtracts it ONCE (config.locked_excluded_from_circulating)
+                       "locked": True,
                        "note": "the GENESIS amount: a permanent lock can be unlocked by its owner "
                                "(VotingEscrow.unlockPermanent), so reading the team veNFTs' locked "
                                "balances would replace this constant once their token ids are known"},),
@@ -17976,8 +17983,10 @@ CIRCULATING_ONCHAIN = {
                       "— a separate fund, not team/foundation by its label"),
                   "missing": "the Foundation's LIQUID treasury (the 50M liquid AERO at genesis, "
                              "0xBDE0…) is not read, so the figure reads high and CoinGecko's stays "
-                             "primary; free float would need these locks taken out of the locked "
-                             "total before subtracting (they are already out of circulating)"},
+                             "primary. FREE FLOAT = circulating − the locked tokens INSIDE "
+                             "circulating: once this set is primary, the team's 95M is taken out of "
+                             "the locked total before subtracting, so it is never counted twice "
+                             "(config.locked_excluded_from_circulating)"},
     "Aethir": {"status": "not_established",
                "why": "supply is split across Arbitrum and a bridged Ethereum representation, and no "
                       "treasury, vesting or foundation address is documented in config"},
@@ -18105,6 +18114,21 @@ METRICS["circulating_supply_onchain"]["only_projects"] = tuple(
 
 def circulating_onchain(project_name: str) -> dict | None:
     return CIRCULATING_ONCHAIN.get(project_name)
+
+
+def locked_excluded_from_circulating(project_name: str) -> float:
+    """Tokens that are LOCKED and also on the circulating exclusion list (declared_exclusions
+    flagged locked — Aerodrome's team 95M in permanent veNFTs). Free float = circulating − the locked
+    tokens INSIDE circulating, so these are subtracted once, not twice (Jake, 2026-09-30)."""
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    return float(sum(e["tokens"] for e in spec.get("declared_exclusions") or () if e.get("locked")))
+
+
+def circulating_excludes_declared(project_name: str) -> bool:
+    """Whether the circulating figure the sheet USES already has the declared exclusions taken out:
+    true only where the on-chain set is primary (established / first_party). A PARTIAL set is shown
+    beside CoinGecko's, which stays primary and does not apply them."""
+    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("status") in ("established", "first_party")
 
 
 # =======================================================================================

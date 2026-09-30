@@ -3668,3 +3668,23 @@ SELECT m.date
 -- UPDATE metrics SET metric = 'revenue_usd_defillama'
 --  WHERE project = 'Maple' AND metric = 'revenue_usd' AND source LIKE 'defillama%';
 -- COMMIT;
+
+-- ========================================================================================
+-- BI. MAPLE: THE IMPLIED BUYBACK IS WITHDRAWN  2026-09-30
+--     Jake: the Token Buybacks table is newest-first and contiguous by date — its first page shows
+--     the five MOST RECENT buybacks (Aug, Jul, Jun 2026, Nov, Sep 2025), so Oct 2025 and Dec 2025..
+--     May 2026 had NO buyback: measured zeros (now stored as 0 under actual_buyback_tokens / _usd
+--     with that reason), not unknowns to be implied from revenue x MIP-021 tier. Remove whatever
+--     the implied series stored. REVIEW FIRST.
+-- ========================================================================================
+-- BI1. WHAT IS THERE (expect 0 rows if no run stored it).
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'Maple' AND metric = 'actual_buyback_usd_implied'
+ ORDER BY date;
+
+-- BI2. THE PROPOSED DELETE.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Maple' AND metric = 'actual_buyback_usd_implied';
+-- COMMIT;

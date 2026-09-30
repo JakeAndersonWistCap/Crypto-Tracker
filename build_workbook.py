@@ -2801,7 +2801,19 @@ def _a2_headline(R: Refs) -> list[tuple]:
     off as free float, which would overstate it by everything staked."""
     circ = lambda r, p: _circ(R, r, p)  # noqa: E731
     # A DECLARED ZERO LOCK (free_float_lock_zero) is the number 0, not a missing figure.
-    lock = lambda r, p=None: "0" if (p or {}).get("free_float_lock_zero") else R.D(r, "locked_tokens", "now")  # noqa: E731
+    # LOCKED TOKENS ALREADY OUT OF CIRCULATING ARE SUBTRACTED ONCE (Jake, 2026-09-30): free float =
+    # circulating − the locked tokens INSIDE circulating. Where the circulating figure in use has
+    # the declared locked exclusions taken out (Aerodrome's team 95M, once its on-chain set is
+    # primary), they leave the locked total too.
+    def lock(r, p=None):
+        p = p or {}
+        if p.get("free_float_lock_zero"):
+            return "0"
+        base = R.D(r, "locked_tokens", "now")
+        x = config.locked_excluded_from_circulating(p.get("name", ""))
+        if x and config.circulating_excludes_declared(p["name"]):
+            return f"MAX(0,{base}-{x:.0f})"
+        return base
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     # OVER COVERED DAYS (2026-09-28): a young customer-revenue series is not divided as if it
     # were 90 days old — see _annualise.

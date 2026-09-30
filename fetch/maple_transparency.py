@@ -44,11 +44,14 @@ MAPLE'S OWN MONTHLY REVENUE (revenueUsd) is on the page too, in another island's
 months in LAST_1Y, 31 in ALL; Aug 2026 $1,470,979.15). It is PRIMARY revenue_usd for Maple, monthly,
 dated to month-end; DefiLlama's is stored as revenue_usd_defillama and compared (defillama_metric_as).
 
-IMPLIED BUYBACK for months whose buyback row is paged out of reach: the month's revenue x MIP-021's
-tier (10% under $1.5M, 20% $1.5-2M, 30% over $2M — the band of that month's revenue, applied to
-all of it), stored as actual_buyback_usd_implied, labelled IMPLIED and never mixed with the
-measured actual_buyback_usd. Only inside the table's own span (N rows = N months ending at the
-newest visible one — one row a month is the table's layout).
+MEASURED ZEROS, NOT UNKNOWNS (Jake, 2026-09-30). The Token Buybacks table is NEWEST-FIRST and
+contiguous by date: its first page shows the most recent buybacks (Aug 2026, Jul 2026, Jun 2026,
+Nov 2025, Sep 2025 on 2026-09-30), and the paged-out rows are OLDER than the oldest visible one. So
+a month between the oldest and the newest visible row that has no row had NO buyback: it is
+stored as 0 (buyback_zero_months), under the page's own measuring point with the reason in the
+source. The order is checked on every read — if the visible rows are not strictly newest-first,
+no zero is inferred. (An "implied buyback" from revenue x MIP-021 tier was withdrawn the same day:
+those months were zeros, not unknowns.)
 
 A PRICE IN THE USD FIELD IS REFUSED. The island props' buyback amountUsd held average PRICES for
 Jul/Aug 2026 ("0.1604", "0.2175") and a dollar amount for June ("$375,000.00"). The table text is
@@ -261,28 +264,33 @@ def revenue_series(markup: str) -> tuple[list[tuple], str] | str:
     return sorted(best[0].items()), best[1]
 
 
-def implied_buybacks(revenue: list[tuple], buybacks: pd.DataFrame, showing, tiers, before) -> list[tuple]:
-    """[(month_end, implied usd, rate, revenue)] for complete months inside the table's span that have
-    no visible buyback row. Span: `showing`'s total N rows = the N months ending at the newest
-    visible month. Nothing without a visible row to anchor the span."""
-    if buybacks.empty or not showing:
-        return []
-    newest = buybacks["month"].max()
-    first = newest - pd.DateOffset(months=int(showing[2]) - 1)
-    seen = {month_end(m) for m in buybacks["month"]}
-    out = []
-    for m, rev in revenue:
-        if not (month_end(first) <= m <= month_end(newest)) or m in seen or m >= before:
-            continue
-        rate = next(r for cap, r in tiers if cap is None or rev < cap)
-        out.append((m, rev * rate, rate, rev))
-    return out
+def buyback_zero_months(buybacks: pd.DataFrame, page_order: list, before: pd.Timestamp) -> tuple[list, str]:
+    """([month_start, ...], why) — the complete months between the oldest and the newest visible
+    buyback row that have no row: measured zeros, because the table is newest-first and contiguous
+    by date. Nothing if the visible rows are not strictly newest-first in page order."""
+    if buybacks.empty:
+        return [], "no visible buyback row"
+    if any(a <= b for a, b in zip(page_order, page_order[1:])):
+        return [], (f"the visible rows are not strictly newest-first "
+                    f"({', '.join(f'{m:%Y-%m}' for m in page_order)}) — no zero inferred")
+    seen = set(buybacks["month"])
+    m, newest = min(seen), max(seen)
+    zeros = []
+    while m < newest:
+        if m not in seen and month_end(m) < before:
+            zeros.append(m)
+        m = m + pd.offsets.MonthBegin(1)
+    return zeros, (f"newest-first table, contiguous by date: no row between {min(seen):%Y-%m} and "
+                   f"{newest:%Y-%m} means no buyback that month")
 
 
-def ssf_release(holdings: list[tuple], buybacks: pd.DataFrame, before: pd.Timestamp) -> tuple[list, list]:
-    """([(month_end, release)], [why a month was skipped]) — complete months only."""
+def ssf_release(holdings: list[tuple], buybacks: pd.DataFrame, before: pd.Timestamp,
+                zero_months=()) -> tuple[list, list]:
+    """([(month_end, release)], [why a month was skipped]) — complete months only. A month in
+    `zero_months` (a measured zero: see buyback_zero_months) counts 0 bought."""
     h = dict(holdings)
     bought = {r.month: float(r.syrup) for r in buybacks.itertuples()} if not buybacks.empty else {}
+    bought.update({m: 0.0 for m in zero_months if m not in bought})
     rows, skipped = [], []
     if not h:
         return rows, skipped
@@ -392,7 +400,8 @@ class MapleTransparency:
                             f"{hm} = the SSF chart's syrupHoldings, dataset {key}: {len(pts)} day(s) "
                             f"{pts[0][0].date()}..{pts[-1][0].date()}", TIER)
                 if rm:
-                    rel, skipped = ssf_release(pts, got["buybacks"], today())
+                    zeros_, _ = buyback_zero_months(got["buybacks"], list(got["buybacks"]["month"]), today())
+                    rel, skipped = ssf_release(pts, got["buybacks"], today(), zeros_)
                     neg = [f"{d:%Y-%m} {v:,.0f}" for d, v in rel if v < 0]
                     if rel:
                         out.add(tidy(rel, name, rm, f"{SOURCE}:ssf_release", TIER), SOURCE, name,
@@ -404,15 +413,12 @@ class MapleTransparency:
                         out.fail(SOURCE, name, f"{rm}: no complete month computable — "
                                                f"{'; '.join(skipped[:6]) or 'no chart data'}", TIER)
 
-        # MAPLE'S OWN MONTHLY REVENUE, and the IMPLIED buyback for months paged out of the table.
+        # MAPLE'S OWN MONTHLY REVENUE.
         vm = next((k for k, v in metrics.items() if v["field"] == "revenue_monthly"), None)
-        im = next((k for k, v in metrics.items() if v["field"] == "implied_buyback"), None)
-        if vm or im:
+        if vm:
             rs = revenue_series(text)
             if isinstance(rs, str):
-                for m_ in (vm, im):
-                    if m_:
-                        out.fail(SOURCE, name, f"{m_}: {rs} on {url}. NOTHING STORED.", TIER)
+                out.fail(SOURCE, name, f"{vm}: {rs} on {url}. NOTHING STORED.", TIER)
             else:
                 rev, key = rs
                 rev = [(d, v) for d, v in rev if d < today()]           # complete months only
@@ -420,20 +426,11 @@ class MapleTransparency:
                     out.add(tidy(rev, name, vm, f"{SOURCE}:island.{key}.revenueUsd", TIER), SOURCE, name,
                             f"{vm} = Maple's own monthly revenueUsd (dataset {key}): {len(rev)} month(s) "
                             f"{rev[0][0]:%Y-%m}..{rev[-1][0]:%Y-%m}, dated to month-end", TIER)
-                if im:
-                    imp = implied_buybacks(rev, got["buybacks"], got["showing"], spec["mip021_tiers"], today())
-                    if imp:
-                        out.add(tidy([(d, v) for d, v, _, _ in imp], name, im,
-                                     f"{SOURCE}:IMPLIED(revenueUsd x MIP-021 tier)", TIER), SOURCE, name,
-                                f"{im} = IMPLIED, never measured: " + "; ".join(
-                                    f"{d:%Y-%m} ${r:,.0f} x {rate:.0%} = ${v:,.0f}" for d, v, rate, r in imp), TIER)
-                    else:
-                        out.skipped(SOURCE, name, f"{im}: no month inside the table's span lacks a "
-                                                  f"visible row (or the span is unreadable)", TIER)
 
         bb = got["buybacks"]
         cutoff = today()
         done = bb[[month_end(mo) < cutoff for mo in bb["month"]]] if not bb.empty else bb
+        zeros, zero_why = buyback_zero_months(bb, list(bb["month"]), cutoff)
         shown = got["showing"]
         limit = (f"{len(bb)} of {shown[2]} rows are server-rendered; the rest are paged "
                  f"client-side and unreachable (accepted limit)") if shown else f"{len(bb)} row(s)"
@@ -452,6 +449,14 @@ class MapleTransparency:
             # the page renders, and Q0 missed June and July. Each row is Maple's own published
             # figure for a closed month, so re-writing it is an idempotent upsert.
             frame = tidy(sorted(rows), name, metric, SOURCE, TIER)
+            # MEASURED ZEROS between visible rows (newest-first table): the page's own measuring
+            # point, the reason in brackets (stripped from the measuring point).
+            if zeros:
+                zf = tidy([(month_end(m), 0.0) for m in zeros], name, metric,
+                          f"{SOURCE}[zero: no buyback — {zero_why}]", TIER)
+                frame = pd.concat([frame, zf], ignore_index=True).sort_values("date")
             out.add(frame, SOURCE, name,
                     f"{metric} = Token Buybacks `{v['field']}`, monthly, "
-                    f"{min(rows)[0].date()}..{max(rows)[0].date()} dated to month-end; {limit}", TIER)
+                    f"{min(rows)[0].date()}..{max(rows)[0].date()} dated to month-end; {limit}; "
+                    + (f"ZERO for {', '.join(f'{m:%Y-%m}' for m in zeros)} ({zero_why})" if zeros
+                       else f"no zero inferred ({zero_why})"), TIER)

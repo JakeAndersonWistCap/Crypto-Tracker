@@ -2963,7 +2963,9 @@ def plume_sources():
             try:
                 tot = c.functions.totalAmountStaked().call()
                 cd = c.functions.getCooldownInterval().call()
-                print(f"  {cand}: totalAmountStaked {tot / 1e18:,.2f} PLUME, cooldown {cd:,}s")
+                app = 134_100_000                     # staking.plume.org, Jake 2026-09-30
+                print(f"  {cand}: totalAmountStaked {tot / 1e18:,.2f} PLUME ({tot / 1e18 / app - 1:+.2%} vs the "
+                      f"app's 134.1M; live if within ±0.5%), cooldown {cd:,}s")
             except Exception as e:  # noqa: BLE001
                 print(f"  {cand}: {e}")
         vi_abi = [{"inputs": [{"name": "validatorId", "type": "uint16"}], "name": "getValidatorInfo",
@@ -3201,9 +3203,25 @@ def maple_ssf_inflows():
     pts, key = got
     h = pd.Series(dict(pts)).sort_index()
     bb = mt.parse(html)["buybacks"]
-    rel, _ = mt.ssf_release(pts, bb, pd.Timestamp.now().normalize())
+    now = pd.Timestamp.now().normalize()
+    zeros, zwhy = mt.buyback_zero_months(bb, list(bb["month"]), now)
+    rel, skipped = mt.ssf_release(pts, bb, now, zeros)
     neg = [(d, v) for d, v in rel if v < 0]
     print(f"  SSF dataset {key}: {len(h)} day(s) {h.index[0].date()}..{h.index[-1].date()}; last {h.iloc[-1]:,.2f}")
+    print(f"  buyback zeros: {', '.join(f'{m:%Y-%m}' for m in zeros) or 'none'} — {zwhy}")
+    # THE COMPLETE MONTHLY PICTURE (Jake, 2026-09-30): every month since the first visible buyback
+    bought = {r.month: float(r.syrup) for r in bb.itertuples()}
+    bought.update({m: 0.0 for m in zeros})
+    hd = dict(pts)
+    print("  month     holdings at start    holdings at end     change     bought      net outflow")
+    for d, v in rel:
+        m0 = d.to_period("M").to_timestamp()
+        m1 = m0 + pd.offsets.MonthBegin(1)
+        b = bought.get(m0)
+        print(f"  {m0:%Y-%m} {hd[m0]:>19,.0f} {hd[m1]:>18,.0f} {hd[m1] - hd[m0]:>+12,.0f} "
+              f"{b:>11,.0f}{' (0)' if m0 in zeros else '    '} {v:>+14,.0f}{'  <-- NEGATIVE' if v < 0 else ''}")
+    for w in skipped:
+        print(f"  skipped {w}")
     print(f"  months with a NEGATIVE net outflow (an inflow beyond the buybacks): "
           f"{', '.join(f'{d:%Y-%m} {v:,.0f}' for d, v in neg) or 'none'}")
     # every island key that is not a chart dataset: a transactions list would show senders

@@ -449,18 +449,19 @@ automatically. Once a month:
 1. Open Artemis → the asset (e.g. Ethereum) → Metrics → Market Data → **Settlement Volume**
    (`classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME`).
    Set the range to the full history, then export as CSV.
-2. Save it in the **repository root**, overwriting the old file, e.g.
-   `C:\Users\jake\Crypto-Tracker\Ethereum_-_Settlement_Volume.csv`. Both name forms are accepted:
-   `<Chain> - Settlement Volume.csv` (Artemis's download name) or `<Chain>_-_Settlement_Volume.csv`.
-   The chains are those listed in `config.ARTEMIS_SETTLEMENT["chains"]` (Ethereum, Near, Hyperliquid).
-   To keep the files somewhere else, set `TOKEN_METRICS_ARTEMIS_DIR` in `.env`.
-   The file must have exactly two columns: `DateTime` and `<Chain> - Settlement Volume`. A file with any
-   other column is refused, so a second definition can never be mixed in.
+2. Save it in the **repository root** or in **`data/artemis/`**, overwriting the old file. Both name
+   forms work, so you never need to rename: Artemis's own `<Chain> - Settlement Volume.csv` and
+   `<Chain>_-_Settlement_Volume.csv`. The chains are listed in `config.ARTEMIS_SETTLEMENT["chains"]`
+   (Ethereum, Near, Hyperliquid). Setting `TOKEN_METRICS_ARTEMIS_DIR` in `.env` replaces both folders.
+   The file must have exactly two columns, `DateTime` and `<Chain> - Settlement Volume`, or it is
+   refused, so a second definition can never be mixed in. A UTF-8 byte-order mark is fine. The
+   **whole file** is imported every run, whatever the run's window.
 3. **Do not commit it.** `.gitignore` excludes both name forms until Artemis's terms have been read.
 4. Set `exported_on` for that chain in `config.ARTEMIS_SETTLEMENT` to the export date. It goes into
    the source string. If you leave it unset, the file's own date is used and the source says so.
-5. Run `python token_metrics.py`. The Run Log line `artemis_csv` gives the day count, the date range
-   and how old the last day is. A missing file is a gap with that reason, never a failed run.
+5. Run `python token_metrics.py`. The Run Log line `artemis_csv` gives the exact path read, the rows
+   read and stored, the date range, and how old the last day is. A missing file is a gap with that
+   reason, never a failed run.
 
 The NRR divides market cap on the export's **last date** by the 365 days ending on that date, so both
 inputs share the same end date. A1 shows that date next to the ratio. Once it is more than 45 days

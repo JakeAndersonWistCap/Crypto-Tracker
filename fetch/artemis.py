@@ -1,12 +1,15 @@
 """
 fetch/artemis.py — daily settlement volume from Jake's Artemis CSV exports. 2026-09-30.
 
-    <repo root>/<Chain> - Settlement Volume.csv      DateTime, "<Chain> - Settlement Volume"
-    <repo root>/<Chain>_-_Settlement_Volume.csv      (the same, as Jake saved Ethereum's)
+    <Chain> - Settlement Volume.csv      DateTime, "<Chain> - Settlement Volume"  (Artemis's own name)
+    <Chain>_-_Settlement_Volume.csv      (the same, underscored)
 
-One file per chain (config.ARTEMIS_SETTLEMENT["chains"]), exported by hand from Artemis's
-Settlement Volume chart, read AT RUN TIME from the repository root (Jake, 2026-09-30) or from
-$TOKEN_METRICS_ARTEMIS_DIR. The files are NEVER committed until Artemis's terms are read
+in the repository root OR data/artemis/ (or $TOKEN_METRICS_ARTEMIS_DIR), so Jake never renames or
+moves a download. One file per chain (config.ARTEMIS_SETTLEMENT["chains"]), read AT RUN TIME.
+THE WHOLE FILE IS IMPORTED EVERY RUN, whatever the run's window (Jake's run 2026-09-30: the
+export ends 2026-08-25, and the file was found nowhere the importer looked — 0 rows, 0 failed);
+the upsert makes a re-import idempotent. A UTF-8 byte-order mark on the header is stripped. The
+log line names the exact path read, the rows read, the date range and the rows stored. The files are NEVER committed until Artemis's terms are read
 (.gitignore). A MISSING FILE GAPS THE METRIC with that reason — the run never fails on it. Definition (Artemis, Powered by Flipside): "Total settlement volume per
 day in USD (DEX Volumes + NFT Trading Volume + P2P Transfer Volume)".
 
@@ -53,10 +56,10 @@ def source_label(chain: dict, path: Path) -> str:
 def parse(path: Path, artemis_name: str) -> tuple[list[tuple], int] | str:
     """([(date, usd)], n_blank) from one export, or the reason it is refused."""
     try:
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, encoding="utf-8-sig")        # a BOM would break the header check
     except Exception as e:  # noqa: BLE001
         return f"{path.name} did not read as CSV: {e}"
-    cols = [str(c).strip() for c in df.columns]
+    cols = [str(c).strip().lstrip("\ufeff") for c in df.columns]
     want = f"{artemis_name}{config.ARTEMIS_SETTLEMENT['column_suffix']}"
     if len(cols) != 2 or cols[0] != "DateTime" or cols[1].lower() != want.lower():
         return (f"{path.name}: columns {cols}, not ['DateTime', {want!r}] — a different chain or "
@@ -90,11 +93,16 @@ class ArtemisCSV:
     def __init__(self, root: Path | None = None, **_ignored):
         self.root = Path(root) if root else ROOT
 
-    def folder(self) -> Path:
+    def folders(self) -> list[Path]:
+        """Where exports are looked for, in order: $TOKEN_METRICS_ARTEMIS_DIR if set, else the repo
+        root and data/artemis/."""
         spec = config.ARTEMIS_SETTLEMENT
         env = os.environ.get(spec["dir_env"], "").strip()
-        d = Path(env) if env else Path(spec["dir"])
-        return d if d.is_absolute() else self.root / d
+        dirs = [Path(env)] if env else [Path(d) for d in spec["dirs"]]
+        return [d if d.is_absolute() else self.root / d for d in dirs]
+
+    def folder(self) -> Path:
+        return self.folders()[0]
 
     @staticmethod
     def names(artemis_name: str) -> tuple[str, str]:
@@ -102,10 +110,11 @@ class ArtemisCSV:
         return (f"{artemis_name} - Settlement Volume.csv", f"{artemis_name}_-_Settlement_Volume.csv")
 
     def _find(self, artemis_name: str) -> Path | None:
-        for fname in self.names(artemis_name):
-            f = self.folder() / fname
-            if f.is_file():
-                return f
+        for d in self.folders():
+            for fname in self.names(artemis_name):
+                f = d / fname
+                if f.is_file():
+                    return f
         return None
 
     def run(self, projects: list[dict], window_days, out):
@@ -123,8 +132,9 @@ class ArtemisCSV:
             path = self._find(chain["artemis_name"])
             if path is None:
                 where = " or ".join(repr(n) for n in self.names(chain["artemis_name"]))
-                why = (f"no Artemis export found: {where} is not in {self.folder()} (read at run time, "
-                       f"never committed; set {spec['dir_env']} to read another folder)")
+                why = (f"no Artemis export found: {where} is in none of "
+                       f"{', '.join(str(d) for d in self.folders())} (read at run time, never committed; "
+                       f"set {spec['dir_env']} to read another folder)")
                 out.skipped(SOURCE, name, f"{metric}: {why}", TIER)
                 out.gap(name, metric, reason=why, tiers_attempted="5",
                         suggestion=f"Export Artemis's {chain['artemis_name']} Settlement Volume chart as "
@@ -135,17 +145,19 @@ class ArtemisCSV:
                 out.fail(SOURCE, name, f"{metric}: {got}. NOTHING STORED.", TIER)
                 continue
             pts, blank = got
+            n_read = len(pts) + blank
             pts = [(d, v) for d, v in pts if d < today()]
             if not pts:
-                out.fail(SOURCE, name, f"{metric}: {path.name} holds no complete day", TIER)
+                out.fail(SOURCE, name, f"{metric}: {path} holds no complete day ({n_read} row(s) read)", TIER)
                 continue
             label = source_label(chain, path)
+            # THE WHOLE FILE, never window_days: the export's last day is weeks old by design.
             frame = tidy(pts, name, metric, label, TIER)
             last = frame["date"].max()
             age = (today() - last).days
-            where = f" — read from {path.name}"
             out.add(frame, SOURCE, name,
-                    f"{metric} = {label}: {len(frame)} day(s) {frame['date'].min().date()}..{last.date()}, "
-                    f"{blank} blank day(s) left out; last date {age} day(s) ago"
-                    + (f" — STALE beyond {spec['stale_after_days']} days: re-export" if age > spec["stale_after_days"] else "")
-                    + where, TIER)
+                    f"{metric} = {label}: read {path} — {n_read} row(s) read, {blank} blank, "
+                    f"{len(frame)} day(s) stored {frame['date'].min().date()}..{last.date()} (whole file, "
+                    f"not the run's window); last date {age} day(s) ago"
+                    + (f" — STALE beyond {spec['stale_after_days']} days: re-export" if age > spec["stale_after_days"] else ""),
+                    TIER)

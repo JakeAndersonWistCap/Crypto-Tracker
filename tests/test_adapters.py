@@ -16338,9 +16338,16 @@ def test_maple_stores_every_visible_monthly_buyback_on_a_routine_run(monkeypatch
     out = FetchOutput()
     mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], 30, out)
     usd = out.frame().query("metric == 'actual_buyback_usd'").sort_values("date")
-    assert [str(d.date()) for d in usd.date] == ["2025-09-30", "2025-11-30", "2026-06-30",
-                                                 "2026-07-31", "2026-08-31"], usd
-    assert usd.value.iloc[-3:].sum() == 658_866.00
+    measured = usd[usd.source == "maple_page"]
+    assert [str(d.date()) for d in measured.date] == ["2025-09-30", "2025-11-30", "2026-06-30",
+                                                      "2026-07-31", "2026-08-31"], usd
+    assert measured.value.iloc[-3:].sum() == 658_866.00
+    # Jake, 2026-09-30: newest-first and contiguous by date, so the months BETWEEN visible rows had
+    # no buyback — measured zeros (Oct 2025, Dec 2025..May 2026), not unknowns
+    zeros = usd[usd.source != "maple_page"]
+    assert [str(d.date())[:7] for d in zeros.date] == ["2025-10", "2025-12", "2026-01", "2026-02",
+                                                       "2026-03", "2026-04", "2026-05"]
+    assert set(zeros.value) == {0.0} and all("newest-first" in s_ for s_ in zeros.source)
 
 
 def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plus_virtual():
@@ -19912,41 +19919,51 @@ def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_sto
             def getValidatorsList(self):
                 return type("C", (), {"call": lambda s: validators})()
         return lambda sp: F()
-    rate = 1_584_404_391                                       # Jake's probe: 4.9966%
-    vals = [(1, 2 * 10**27, 5 * 10**16), (2, 1 * 10**27, 2 * 10**16)]   # 2bn at 5%, 1bn at 2%
-    agg = 94_868_945_541_646_499_332                            # "95 PLUME", Jake's probe
     plume = config.PROJECT_BY_NAME["Plume"]
-    # probes2 (2026-09-30): the diamond is NOT confirmed live — its per-validator sum is 94.87 PLUME
-    # and its state matches Plume's deploy script. NOTHING is stored; the readings are logged.
-    assert spec["live_contract"]["confirmed"] is False
-    assert "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871" in spec["live_contract"]["candidates"]
+    live = spec["live_contract"]
+    assert live["app_total_tokens"] == 134_100_000 and live["app_tolerance"] == 0.005
+    cands = list(live["candidates"])
+    assert cands[0] == "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871" and live["confirmed"] is False
+
+    def multi(by_addr):
+        """contract_factory reading per candidate: {address: (rate, aggregate, validators)}."""
+        def make(sp):
+            rate, agg, vals = by_addr[sp["address"]]
+            return factory(rate, agg, vals)(sp)
+        return make
+    test_diamond = (1_584_404_391, 94_868_945_541_646_499_332,         # 0xCF8B: 94.87 PLUME
+                    [(1, 56_410_000_000_000_000_000, 5 * 10**15), (2, 38_458_945_541_646_499_332, 5 * 10**15)])
+    live_diamond = (1_900_000_000, 134_200_000 * 10**18,                # 134.2M: +0.07% vs 134.1M
+                    [(1, 100_000_000 * 10**18, 5 * 10**16), (2, 34_200_000 * 10**18, 2 * 10**16)])
+    far = (1_000_000_000, 1, [(1, 10**24, 0)])                            # 1M PLUME: no match
+    # NO candidate reconciles: nothing stored — the test diamond's 4.9966% included
     out = FetchOutput()
-    PlumeStaking(contract_factory=factory(rate, agg, vals)).run([plume], None, out)
+    PlumeStaking(contract_factory=multi({cands[0]: far, cands[1]: test_diamond, cands[2]: far})).run([plume], None, out)
     assert out.frame().empty
     msg = next(e.message for e in out.log if e.status == "skipped")
-    assert "NOT STORED" in msg and "4.9966%" in msg and "3,000,000,000.00 PLUME" in msg
-
-    def with_live(**kw):
-        return dict(plume, plume_staking=dict(spec, live_contract=dict(spec["live_contract"], **kw)))
-    # CONFIRMED, but the stake not yet reconciled with the app: APR gross/net and commission only
+    assert "0 candidate(s) within ±0.5% of staking.plume.org's 134,100,000" in msg and "94.87 PLUME" in msg
+    # EXACTLY ONE reconciles: it is the live diamond, and its OWN rate and stake are stored
     out = FetchOutput()
-    PlumeStaking(contract_factory=factory(rate, agg, vals)).run([with_live(confirmed=True)], None, out)
+    PlumeStaking(contract_factory=multi({cands[0]: live_diamond, cands[1]: test_diamond, cands[2]: far})).run(
+        [plume], None, out)
     f = out.frame().set_index("metric")
-    assert abs(f.loc["staking_yield_pct", "value"] - 0.049966) < 1e-6
-    assert "[GROSS]" in f.loc["staking_yield_pct", "source"]
-    assert abs(f.loc["staking_commission_pct", "value"] - 0.04) < 1e-12      # (2x5% + 1x2%) / 3
-    assert abs(f.loc["staking_yield_net_pct", "value"] - 0.049966 * 0.96) < 1e-6
-    assert "locked_tokens" not in f.index, "not until it reconciles with the app's total"
-    # CONFIRMED and RECONCILED: the per-validator sum is stored — never totalAmountStaked
+    assert f.loc["locked_tokens", "value"] == 134_200_000.0
+    apr = 1_900_000_000 * 31_536_000 / 1e18
+    assert abs(f.loc["staking_yield_pct", "value"] - apr) < 1e-12 and "[GROSS]" in f.loc["staking_yield_pct", "source"]
+    comm = (100 * 0.05 + 34.2 * 0.02) / 134.2
+    assert abs(f.loc["staking_commission_pct", "value"] - comm) < 1e-9
+    assert abs(f.loc["staking_yield_net_pct", "value"] - apr * (1 - comm)) < 1e-12
+    assert all(cands[0][:10] in s_ for s_ in f["source"])
+    assert any("identified 0x30c791E4" in e.message for e in out.log)
+    # TWO would reconcile: ambiguous, nothing stored
     out = FetchOutput()
-    PlumeStaking(contract_factory=factory(rate, agg, vals)).run(
-        [with_live(confirmed=True, app_total_tokens=3.0e9, app_rounding_tokens=5e6)], None, out)
-    f = out.frame().set_index("metric")
-    assert f.loc["locked_tokens", "value"] == 3e9
-    assert any("totalAmountStaked() = 94.87, not used" in e.message for e in out.log)
-    # a rate above the cap stores nothing at all
+    PlumeStaking(contract_factory=multi({cands[0]: live_diamond, cands[1]: live_diamond, cands[2]: far})).run(
+        [plume], None, out)
+    assert out.frame().empty
+    # a rate above the cap disqualifies a candidate
     out2 = FetchOutput()
-    PlumeStaking(contract_factory=factory(4000 * 10**9, 1, vals)).run([with_live(confirmed=True)], None, out2)
+    bad = (4000 * 10**9,) + live_diamond[1:]
+    PlumeStaking(contract_factory=multi({cands[0]: bad, cands[1]: test_diamond, cands[2]: far})).run([plume], None, out2)
     assert out2.frame().empty and any("above the contract's own cap" in e.message for e in out2.log)
 
 
@@ -20314,12 +20331,12 @@ def test_plume_settlement_volume_is_an_accepted_limit_with_its_evidence():
 # ===================================================================================
 # JAKE'S PROBES2 (2026-09-30)
 # ===================================================================================
-def test_maple_own_monthly_revenue_is_primary_and_the_implied_buyback_is_labelled():
+def test_maple_own_monthly_revenue_is_primary_and_months_between_buybacks_are_zeros():
     """3b: Maple's own monthly revenueUsd (island datasets) is revenue_usd, monthly, dated to
-    month-end; DefiLlama's goes under revenue_usd_defillama. 3d: months inside the buyback table's
-    span with no visible row get an IMPLIED buyback = revenue x MIP-021 tier (10% < $1.5M, 20%
-    $1.5-2M, 30% > $2M), never mixed with the measured months. 3c: the SSF's net change is SIGNED
-    and the release is held."""
+    month-end; DefiLlama's goes under revenue_usd_defillama. Jake, 2026-09-30: the implied buyback is
+    WITHDRAWN — the table is newest-first and contiguous by date, so a month between visible rows
+    had no buyback (a measured 0), and the SSF release is computed for EVERY month since the first
+    visible buyback, zeros included. Not strictly newest-first -> no zero is inferred."""
     import html as _html
     from fetch import maple_transparency as mt
     from fetch.llama import DefiLlama
@@ -20332,29 +20349,35 @@ def test_maple_own_monthly_revenue_is_primary_and_the_implied_buyback_is_labelle
         return [0, v]
     ms = lambda d: int(pd.Timestamp(d).timestamp() * 1000)  # noqa: E731
     months = pd.date_range("2025-09-01", "2026-08-01", freq="MS")
-    revs = [1_200_000.0, 1_600_000.0, 2_400_000.0] * 4
-    rows = [{"ts": ms(m), "revenueUsd": r} for m, r in zip(months, revs)]
+    rows = [{"ts": ms(m), "revenueUsd": 1_000_000.0 + i} for i, m in enumerate(months)]
     top = {"datasets": enc({"LAST_1Y": rows[-6:], "ALL": rows})}
     markup = f'<astro-island uid="r" props="{_html.escape(json.dumps(top))}"></astro-island>'
     rev, key = mt.revenue_series(markup)
-    assert key == "ALL" and len(rev) == 12 and rev[-1] == (pd.Timestamp("2026-08-31"), 2_400_000.0)
-    text = ("Jul 2026 $136,768.00 852,668.33 $0.1604 Aug 2026 $147,098.00 676,293.73 $0.2175 "
-            "Showing 1-2 of 5")
-    got = mt.parse(text)
-    tiers = config.PROJECT_BY_NAME["Maple"]["transparency_page"]["mip021_tiers"]
-    imp = mt.implied_buybacks(rev, got["buybacks"], got["showing"], tiers, pd.Timestamp("2026-09-30"))
-    # span = the 5 months ending Aug 2026 (Apr..Aug); Jul/Aug are measured, so Apr, May, Jun only
-    assert [d for d, *_ in imp] == [pd.Timestamp(x) for x in ("2026-04-30", "2026-05-31", "2026-06-30")]
-    by = {d: (v, rate) for d, v, rate, _ in imp}
-    assert by[pd.Timestamp("2026-04-30")] == (320_000.0, 0.20)      # $1.6M -> 20%
-    assert by[pd.Timestamp("2026-05-31")] == (720_000.0, 0.30)      # $2.4M -> 30%
-    assert by[pd.Timestamp("2026-06-30")] == (120_000.0, 0.10)      # $1.2M -> 10%
+    assert key == "ALL" and len(rev) == 12 and rev[-1][0] == pd.Timestamp("2026-08-31")
+    assert not hasattr(mt, "implied_buybacks"), "the implied buyback is withdrawn"
+    text = ("Aug 2026 $147,098.00 676,293.73 $0.2175 Jul 2026 $136,768.00 852,668.33 $0.1604 "
+            "Jun 2026 $375,000.00 1,500,000.00 $0.2500 Nov 2025 $50,000.00 250,000.00 $0.2000 "
+            "Sep 2025 $40,000.00 250,000.00 $0.1600 Showing 1-5 of 13")
+    bb = mt.parse(text)["buybacks"]
+    zeros, why = mt.buyback_zero_months(bb, list(bb["month"]), pd.Timestamp("2026-09-30"))
+    assert [f"{m:%Y-%m}" for m in zeros] == ["2025-10", "2025-12", "2026-01", "2026-02", "2026-03",
+                                             "2026-04", "2026-05"] and "newest-first" in why
+    z2, why2 = mt.buyback_zero_months(bb, list(reversed(bb["month"])), pd.Timestamp("2026-09-30"))
+    assert z2 == [] and "not strictly newest-first" in why2
+    # the SSF release for EVERY month Sep 2025..Aug 2026: holdings fall 1,000/day
+    days = pd.date_range("2025-08-13", "2026-09-29")
+    pts = [(d, 90e6 - i * 1000.0) for i, d in enumerate(days)]
+    rel, skipped = mt.ssf_release(pts, bb, pd.Timestamp("2026-09-30"), zeros)
+    got = {f"{d:%Y-%m}": v for d, v in rel}
+    assert list(got) == [f"{m:%Y-%m}" for m in months], "every month since the first visible buyback"
+    assert got["2025-10"] == 31_000.0 and got["2026-02"] == 28_000.0, "a zero month is the fall alone"
+    assert got["2025-11"] == 30_000.0 + 250_000.0
     maple = config.PROJECT_BY_NAME["Maple"]
     tp = maple["transparency_page"]["metrics"]
-    assert tp["revenue_usd"]["field"] == "revenue_monthly" and tp["actual_buyback_usd_implied"]["field"] == "implied_buyback"
+    assert tp["revenue_usd"]["field"] == "revenue_monthly" and "actual_buyback_usd_implied" not in tp
+    assert "actual_buyback_usd_implied" not in config.METRICS and "mip021_tiers" not in maple["transparency_page"]
     assert config.series_granularity("Maple", "revenue_usd") == "monthly"
     assert maple["defillama_metric_as"] == {"revenue_usd": "revenue_usd_defillama"}
-    # DefiLlama's Maple revenue lands under the cross-check name
     ll = DefiLlama.__new__(DefiLlama)
     ll._memo, ll.known_absent = {}, set()
     ll._absent = lambda *a, **k: False
@@ -20365,6 +20388,7 @@ def test_maple_own_monthly_revenue_is_primary_and_the_implied_buyback_is_labelle
     assert "HELD" in maple["pool_release_tokens_blocked"]["status"]
     sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
     assert "-- BH. MAPLE revenue_usd" in sql and "-- UPDATE metrics SET metric = 'revenue_usd_defillama'" in sql
+    assert "-- BI. MAPLE: THE IMPLIED BUYBACK IS WITHDRAWN" in sql and "metric = 'actual_buyback_usd_implied'" in sql
 
 
 def test_hyperliquid_a4_total_burn_uses_the_assistance_fund_leg_before_both_legs_exist():
@@ -20449,3 +20473,64 @@ def test_aethir_page_fields_come_from_the_nextjs_server_payload():
         scrape.robots_verdict = orig
     assert config.declared_handover("Aethir", "supply_units")["ordered_points"] == \
         ("manual", "aethir_page:protocol/supply-metric.nodes")
+
+
+def test_artemis_whole_file_with_bom_from_data_artemis_reproduces_jakes_nrr(tmp_path):
+    """Jake's run 2026-09-30: the export sat at data/artemis/Ethereum_-_Settlement_Volume.csv and
+    artemis_csv wrote 0 rows, 0 failed. The WHOLE file is imported every run whatever the window, a
+    UTF-8 BOM is stripped, both folders and both names are searched, and the log names the exact
+    path, the rows read, the date range and the rows stored. $6,945.0bn / 4.74% reproduces."""
+    import build_workbook as bw
+    from fetch.artemis import ArtemisCSV
+    d = tmp_path / "data" / "artemis"
+    d.mkdir(parents=True)
+    days = pd.date_range("2023-09-30", "2026-08-25")
+    body = "DateTime,Ethereum - Settlement Volume\n" + "\n".join(
+        f"{x:%Y-%m-%d}T00:00:00.000Z,{6.945e12 / 365:.2f}" for x in days)
+    f = d / "Ethereum_-_Settlement_Volume.csv"
+    f.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))          # the BOM Excel/Artemis writes
+    out = FetchOutput()
+    ArtemisCSV(root=tmp_path).run([config.PROJECT_BY_NAME["Ethereum"]], 30, out)    # window 30
+    fr = out.frame()
+    assert len(fr) == len(days) == 1_061, "the whole file, not the run's 30-day window"
+    msg = next(e.message for e in out.log if e.status == "ok")
+    assert str(f) in msg and "1061 row(s) read" in msg and "2023-09-30..2026-08-25" in msg
+    assert "1061 day(s) stored" in msg and "not the run's window" in msg
+    mc = pd.DataFrame({"date": [pd.Timestamp("2026-08-25")], "project": "Ethereum", "metric": "market_cap_usd",
+                       "value": [3.294e11], "source": "coingecko", "tier": 1})
+    groups = {("Ethereum", "settlement_volume_usd"): fr, ("Ethereum", "market_cap_usd"): mc}
+    bw._VIEW_BLOCKS.clear()
+    bw._settlement_views(groups)
+    assert round(groups[("Ethereum", "settlement_volume_365d_usd")]["value"].iloc[0] / 1e9, 1) == 6_945.0
+    assert round(groups[("Ethereum", "network_reserve_ratio")]["value"].iloc[0] * 100, 2) == 4.74
+    # Artemis's native download name, with spaces, in the repo root, is found too (root first)
+    f.unlink()
+    (tmp_path / "Ethereum - Settlement Volume.csv").write_text(body)
+    out = FetchOutput()
+    ArtemisCSV(root=tmp_path).run([config.PROJECT_BY_NAME["Ethereum"]], 30, out)
+    assert len(out.frame()) == 1_061
+    assert config.ARTEMIS_SETTLEMENT["dirs"] == (".", "data/artemis")
+
+
+def test_free_float_subtracts_locked_tokens_already_out_of_circulating_only_once(monkeypatch):
+    """Jake, 2026-09-30: free float = circulating − the locked tokens INSIDE circulating. Aerodrome's
+    team 95M (permanent veNFTs) is on the exclusion list AND in the veAERO locked total: where the
+    circulating in use has it taken out, the locked total loses it too; where CoinGecko's
+    circulating is in use (a PARTIAL set), circulating − locked is already right."""
+    import copy
+
+    import build_workbook as bw
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}:{w}]"
+    aero = config.PROJECT_BY_NAME["Aerodrome"]
+    assert config.locked_excluded_from_circulating("Aerodrome") == 95_000_000
+    ff = next(c for c in bw._a2_headline(R()) if c[0].startswith("FREE FLOAT ="))[1]
+    assert "MAX(0" not in (ff(5, aero) or ""), "partial set: CoinGecko circulating, no adjustment"
+    est = copy.deepcopy(config.CIRCULATING_ONCHAIN)
+    est["Aerodrome"]["status"] = "established"
+    monkeypatch.setattr(config, "CIRCULATING_ONCHAIN", est)
+    cell = ff(5, aero)
+    assert "MAX(0,D[locked_tokens:now]-95000000)" in cell, cell
+    assert config.locked_excluded_from_circulating("Uniswap") == 0.0
