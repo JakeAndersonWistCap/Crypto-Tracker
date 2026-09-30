@@ -304,8 +304,13 @@ class DefiLlama:
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{slug}:dailyFees: {e}", TIER)
 
+        # A PROJECT'S OWN FIGURE IS PRIMARY WHERE IT PUBLISHES ONE (Maple, Jake 2026-09-30): the
+        # project then declares `defillama_metric_as`, and DefiLlama's series is stored under that
+        # cross-check name — never beside the first-party one in the same metric.
+        rename = project.get("defillama_metric_as") or {}
         for data_type, metric in (("dailyRevenue", "revenue_usd"),
                                   ("dailyHoldersRevenue", "holders_revenue_usd")):
+            metric = rename.get(metric, metric)
             try:
                 rows = self._summary_chart(slug, data_type)
                 out.add(window(tidy(rows, name, metric, SOURCE, TIER), window_days), SOURCE, name,
@@ -641,57 +646,6 @@ class DefiLlama:
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{slug}:protocol tvl: {e}", TIER)
 
-    # ===== STAKED TOKENS' HISTORY FROM /protocol/{slug} (Hyperliquid, Jake 2026-09-30). =====
-    # DefiLlama's server files a protocol's `staking` export under chainTvls["staking"] and
-    # chainTvls["<Chain>-staking"] (defillama-server normalizeChain.ts extraSections; read via a
-    # fork, 2025-10-13), each {tvl: [{date, totalLiquidityUSD}], tokens: [{date, tokens: {..}}]}.
-    # NO HYPE-staking adapter was found in DefiLlama-Adapters @0703eb6 (2026-09-30), so the key may
-    # well be absent: the run then names the keys that ARE there and stores nothing. Stored under
-    # its own metric; it becomes locked_tokens' history only through the declared history leg,
-    # which checks it against the live validatorSummaries read on a shared day first.
-    def staking_history(self, project: dict, out):
-        spec, name = project.get("defillama_staking_history") or {}, project["name"]
-        if not spec:
-            return
-        slug = spec["protocol"]
-        if not self.daily.due(f"defillama:staking:{slug}", self._today):
-            out.mark_current(SOURCE, name, spec["metric"], f"{spec['metric']}: /protocol/{slug} "
-                                                           f"staking already read today", TIER)
-            return
-        try:
-            j = self.http.get(f"{API}/protocol/{slug}")
-        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-            out.fail(SOURCE, name, f"{spec['metric']}: /protocol/{slug}: {e}", TIER)
-            return
-        self.daily.done(f"defillama:staking:{slug}", self._today)
-        ct = j.get("chainTvls") or {}
-        key = next((k for k in spec["keys"] if isinstance(ct.get(k), dict)), None)
-        if key is None:
-            out.fail(SOURCE, name, f"{spec['metric']}: /protocol/{slug} carries none of "
-                                   f"{list(spec['keys'])} — chainTvls keys present: "
-                                   f"{sorted(ct)[:20] or 'none'}. NOTHING STORED.", TIER)
-            return
-        rows = []
-        for r in ct[key].get("tokens") or []:
-            toks = r.get("tokens") if isinstance(r, dict) else None
-            if not isinstance(toks, dict):
-                continue
-            hit = [v for k, v in toks.items() if str(k).lower() in spec["token_keys"]]
-            if len(hit) == 1 and isinstance(hit[0], (int, float)):
-                rows.append((datetime.fromtimestamp(r["date"], tz=timezone.utc), float(hit[0])))
-        if not rows:
-            sample = next((sorted(r["tokens"])[:8] for r in ct[key].get("tokens") or []
-                           if isinstance(r, dict) and isinstance(r.get("tokens"), dict)), [])
-            out.fail(SOURCE, name, f"{spec['metric']}: chainTvls[{key!r}].tokens holds no "
-                                   f"{list(spec['token_keys'])} amount; token keys seen {sample}. "
-                                   f"NOTHING STORED.", TIER)
-            return
-        frame = tidy(rows, name, spec["metric"], f"{SOURCE}:staking[{key}]", TIER)
-        frame = frame[frame["date"] < today()]
-        out.add(frame, SOURCE, name, f"{spec['metric']} = /protocol/{slug} chainTvls[{key!r}].tokens: "
-                                     f"{len(frame)} day(s) {frame['date'].min().date()}.."
-                                     f"{frame['date'].max().date()}", TIER)
-
     # ===== A LENDING PROTOCOL'S SUPPLY SIDE, AND THE CAVEAT THAT TRAVELS WITH IT. =====
     #
     # supply_units and utilisation_pct are archetype 2's two capacity columns, and for a lending
@@ -879,7 +833,6 @@ class DefiLlama:
             self.check_restructure(p, out)
             self.protocol_tvl(p, window_days, out)
             self.lending_supply(p, window_days, out)
-            self.staking_history(p, out)
             self.chain_tvl(p, window_days, out)
             self.stablecoins(p, window_days, out)
         self.rwa(projects, window_days, out)

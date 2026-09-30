@@ -917,6 +917,20 @@ def _burn_total_views(groups: dict) -> None:
                              "value": [sum(per_leg[m][d] for m in spec["components"]) for d in days],
                              "source": "derived:burn_total(" + "+".join(spec["components"]) + ")",
                              "tier": 2})
+        # BEFORE THE FIRST COMPLETE DAY, ONE DECLARED LEG STANDS IN (Hyperliquid, Jake 2026-09-30):
+        # the Assistance Fund's burn history (its buyback / same-day price) — the Core leg has no
+        # history. Only rows from that leg's declared history source, only before the total's first
+        # day: a declared series_handover, marked by its own source.
+        hl = spec.get("history_leg") or {}
+        g0 = groups.get((name, hl.get("component")))
+        if hl and g0 is not None and not g0.empty:
+            h = g0[(g0["source"].astype(str) == hl["source"]) & (g0["date"] < min(days))]
+            if not h.empty:
+                h = h.drop_duplicates("date", keep="last")[["date", "value"]].assign(
+                    project=name, metric=spec["metric"], tier=2,
+                    source=f"{hl['source']}[{hl['component']} leg only: the other legs are unmeasured "
+                           f"before {min(days).date()}]")
+                view = pd.concat([h[view.columns], view], ignore_index=True).sort_values("date")
         first = groups.get((name, spec["components"][0]))
         groups[(name, spec["metric"])] = _as_stored(view, first.columns if first is not None else view.columns)
 

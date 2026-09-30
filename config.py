@@ -240,10 +240,8 @@ METRICS = {
     "beacon_validators_eth":      {"label": "ETH held by beacon-chain validators, daily (ultrasound.money inBeaconValidatorsByDay)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [3],
                                    "sanity_min": 1e6, "sanity_max": 1.5e8, "only_projects": ("Ethereum",)},
-    # Hyperliquid (Jake, 2026-09-30): DefiLlama's /protocol staking series — history candidate for
-    # locked_tokens (see defillama_staking_history), and the modelled emissions from the published
-    # inverse-square-root reward rate (see reward_formula). Neither is a headline on its own.
-    "locked_tokens_defillama":    {"label": "Staked HYPE, DefiLlama /protocol staking series (history candidate)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    # Hyperliquid (Jake, 2026-09-30): the modelled emissions from the published inverse-square-root
+    # reward rate (see reward_formula) — not a headline on its own.
     "emissions_modelled_tokens":  {"label": "Staking rewards MODELLED from stake: 2.37% x sqrt(400M / staked) x staked / 365 per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",), "view_only": True},
     # Plume (Jake's probe, 2026-09-30): the validators' stake-weighted commission and the APR net
     # of it (fetch/plume_staking.py). staking_yield_pct stays the GROSS rate, labelled so.
@@ -259,6 +257,15 @@ METRICS = {
     # Maple (Jake's probe 5, 2026-09-30): the SYRUP Strategic Fund's daily balance from the
     # transparency page's chart data (island props), unrounded.
     "ssf_holdings_tokens":        {"label": "SYRUP Strategic Fund holdings, daily (transparency page chart)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 1_000_000, "sanity_max": 1_000_000_000, "only_projects": ("Maple",)},
+    # Maple (Jake's probes2, 2026-09-30): the SSF's signed monthly net change, DefiLlama's revenue as
+    # the cross-check of Maple's own, and the IMPLIED buyback for paged-out months.
+    "ssf_net_outflow_tokens":     {"label": "SSF net outflow, monthly = fall in holdings + SYRUP bought (SIGNED; negative = an unclassified inflow)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e9, "only_projects": ("Maple",)},
+    "revenue_usd_defillama":      {"label": "Revenue ($) — DefiLlama's series, cross-check of the project's own", "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Maple",)},
+    "actual_buyback_usd_implied": {"label": "Buyback ($) IMPLIED — revenue x MIP-021 tier, for months with no visible buyback row (never measured)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Maple",)},
+    # Aethir (Jake's probes2, 2026-09-30): the supply page's other figures, as the page states them.
+    "supply_locations":           {"label": "Countries/locations with supply (dashboard `locations`)", "kind": "stock", "unit": "count", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 300, "only_projects": ("Aethir",)},
+    "compute_power_total":        {"label": "Total compute power (dashboard `totalComputePower`, TFLOPs)", "kind": "stock", "unit": "TFLOPs", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
+    "capacity_monthly_total":     {"label": "Total monthly capacity (dashboard `totalMonthlyCapacity`; unit as the page states it — the utilisation denominator)", "kind": "stock", "unit": "capacity", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Aethir",)},
     "future_emissions_tokens":    {"label": "Staking-reward reserve remaining (tokenDetails.futureEmissions)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "fdv_usd":                    {"label": "FDV",                             "kind": "stock", "unit": "usd",    "archetypes": [3],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
     # --- free API: DefiLlama
@@ -3720,6 +3727,38 @@ PROJECTS = [
             # 2026-09-30 (Jake's probe 4a/4b): total staked = per-validator sum (totalAmountStaked
             # read 95 PLUME — impossible); commission stake-weighted from the same list.
             "commission_metric": "staking_commission_pct", "net_apr_metric": "staking_yield_net_pct",
+            # Jake's probes2 (2026-09-30): getValidatorsList() here sums to 94.87 PLUME over 15
+            # validators (id 1: 56.41; every commission 0.50%) — impossible for the live network.
+            # NOTHING is stored until this address is confirmed as the contract staking.plume.org
+            # uses; the stake additionally waits until it matches the app's own total (Jake reads
+            # it). The APR (4.9966% gross, 0.50% commission) goes live, labelled gross/net, only
+            # once `confirmed` is True.
+            # RESEARCH (plumenetwork/contracts, all branches, 2026-09-30):
+            #  - UNITS ARE NOT THE CAUSE: stake is wei of native PLUME, 1:1 from msg.value
+            #    (StakingFacet.sol@8248e78:257-260, 641-642; PlumeStakingStorage.sol:59,82), so
+            #    94.87e18 really is 94.87 PLUME.
+            #  - 0xCF8B LOOKS LIKE A SCRIPT DEPLOYMENT: its state (15 validators, 0.50% commission,
+            #    rate 1,584,404,391) is exactly script/DeployPlumeStaking.s.sol's (@8248e78:53,57;
+            #    @dd5df2e:263 `for (uint16 i = 0; i < 15; i++)`, placeholder L1 data
+            #    "l1val_<id>_placeholder").
+            #  - A NEWER DIAMOND: commit 3ef710a (2025-07-16, "[PDE-2650] v2 fixes") swapped 0xCF8B
+            #    for 0x30c791E4654EdAc575FA1700eD8633CB2FEDE871 (network not stated); 0xA20bfe49… is
+            #    the older (Apr-May 2025) one.
+            #  - THE DECIDER, ON-CHAIN: Mystic's myPLUME feed 0xFbb53aa72c10680e822e255aC70D10f8bb957D64
+            #    (DefiLlama-Adapters projects/mystic-finance-myplume, plume_mainnet) stores
+            #    plumeStaking() — the diamond live staking actually uses. Probe plume_sources reads it.
+            #  - No public repo holds staking.plume.org's frontend (none of ~180 names exist).
+            "live_contract": {"confirmed": False,
+                              "why": "getValidatorsList() here sums to 94.87 PLUME and its state matches "
+                                     "Plume's deploy script (placeholder validators); a newer diamond "
+                                     "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871 replaced it in the v2 "
+                                     "commit — which one staking.plume.org uses is unconfirmed",
+                              "candidates": ("0x30c791E4654EdAc575FA1700eD8633CB2FEDE871",
+                                             "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d",
+                                             "0xA20bfe49969D4a0E9abfdb6a46FeD777304ba07f"),
+                              "decider": "plumeStaking() on the myPLUME feed "
+                                         "0xFbb53aa72c10680e822e255aC70D10f8bb957D64 (chain 98866)",
+                              "app_total_tokens": None, "app_rounding_tokens": None},
             "source_url": "https://github.com/plumenetwork/contracts/blob/8248e78ce0c15ad3875fb2e693de9685ecf982d7/plume/test/ForkTestPlumeStaking.s.sol",
             "verified": "2026-09-30",
             "live_confirmed": None,
@@ -7557,6 +7596,31 @@ PROJECTS = [
         # Move annually, and cost more to automate than to type. A quarterly hand-entry is the
         # right answer for these, not a failure to automate one.
         "manual_quarterly": ["supply_units", "utilisation_pct"],
+        # ===== AETHIR'S OWN DASHBOARD, FROM THE SERVER-RENDERED PAYLOAD (Jake's probes2, 2026-09-30). =====
+        # The supply page's Next.js RSC payload carries {"nodes":433704,"locations":94} and
+        # {"totalComputePower":38509113.66,"totalMonthlyCapacity":638256960} (fetch/aethir_pages.py).
+        # supply_units = nodes, read daily; the monthly manual row is the fallback (series_handover).
+        # The other three pages' fields are listed by probe aethir_pages; utilisation waits for a
+        # USED/RENTED capacity field to divide by totalMonthlyCapacity — none is named yet.
+        "dashboard_pages": {
+            "base": "https://dashboard.aethir.com",
+            "pages": {
+                "protocol/supply-metric": {"fields": {"nodes": "supply_units",
+                                                      "locations": "supply_locations",
+                                                      "totalComputePower": "compute_power_total",
+                                                      "totalMonthlyCapacity": "capacity_monthly_total"}},
+                "protocol/demand-metric": {"fields": {}},
+                "protocol/onchain-metric": {"fields": {}},
+                "protocol/overview": {"fields": {}},
+            },
+            "read_on": "2026-09-30",
+        },
+        "series_handover": {
+            "supply_units": {"ordered_points": ("manual", "aethir_page:protocol/supply-metric.nodes"),
+                             "why": "Jake's monthly manual row (2026-09-30), then the page's own "
+                                    "server-rendered `nodes` read daily",
+                             "declared_on": "2026-09-30"},
+        },
         # supply_units is a MONTHLY manual row from Jake (2026-09-30, probe 8): the supply-metric
         # dashboard's figures reach the browser through no capturable JSON (0 responses), so the
         # containers count is read off the page by hand, monthly. Monthly = stale after 45 days.
@@ -8161,6 +8225,22 @@ PROJECTS = [
         # / Allow: /"; SYRUP Holdings 79,210,000; Liquid Assets $4,310,000; Token Buybacks 5 of 13
         # rows server-rendered. The 2026-09-21 refusal was the stdlib robot parser, never a rule.
         # Read by fetch/maple_transparency.py (plain GET, no browser; cached for the day).
+        # Jake's probes2 (2026-09-30): Maple's own monthly revenue (transparency page) is primary.
+        "defillama_metric_as": {"revenue_usd": "revenue_usd_defillama"},
+        # ===== THE SSF RELEASE IS HELD UNTIL ITS OTHER INFLOWS ARE CLASSIFIED (Jake, 2026-09-30). =====
+        "pool_release_tokens_blocked": {
+            "status": "HELD — SSF inflows other than buybacks are unclassified",
+            "wanted": "the SSF's monthly release (fall in holdings net of buyback inflows)",
+            "why": "the net change came out NEGATIVE for 2025-11 (-3,052,593 SYRUP) and 2026-07 "
+                   "(-971,641): the fund took in more SYRUP than that month's buybacks, so it has "
+                   "another inflow. Until those inflows are traced (probe maple_ssf_inflows) and "
+                   "classified, a fall in holdings is not treated as a release or an emission. The "
+                   "signed series is stored as ssf_net_outflow_tokens.",
+            "source_url": "https://maple.finance/transparency", "source_date": "2026-09-30",
+            "route_that_would_work": "python check_offline_items.py maple_ssf_inflows — lists the "
+                                     "SSF's daily jumps beyond the buybacks and the SYRUP transfers "
+                                     "into Maple's treasury on those days, with each sender",
+        },
         "transparency_page": {
             "url": "https://maple.finance/transparency",
             "robots_checked": "2026-09-24 — HTTP 200, 'User-agent: * / Allow: /' (Jake's run)",
@@ -8173,11 +8253,21 @@ PROJECTS = [
                 # maple_transparency.ssf_series) — daily holdings, and the monthly release:
                 # H(month start) - H(next month start) + SYRUP bought that month.
                 "ssf_holdings_tokens": {"field": "ssf_series"},
-                "pool_release_tokens": {"field": "ssf_release", "granularity": "monthly"},
+                # SIGNED, and NOT pool_release_tokens (Jake's probes2): 2025-11 and 2026-07 came out
+                # negative — an SSF inflow other than buybacks — so see pool_release_tokens_blocked.
+                "ssf_net_outflow_tokens": {"field": "ssf_release", "granularity": "monthly"},
+                # Maple's OWN monthly revenue (island revenueUsd) is PRIMARY revenue_usd for Maple;
+                # DefiLlama's is revenue_usd_defillama (defillama_metric_as below).
+                "revenue_usd": {"field": "revenue_monthly", "granularity": "monthly"},
+                "actual_buyback_usd_implied": {"field": "implied_buyback", "granularity": "monthly"},
             },
+            # MIP-021 (rules-based buyback, passed 99.97%): 10% of the month's revenue under $1.5M,
+            # 20% from $1.5M to $2M, 30% over $2M — the band of the month's revenue, applied to all
+            # of it (Jake, 2026-09-30). (cap, rate); None = no cap.
+            "mip021_tiers": ((1_500_000, 0.10), (2_000_000, 0.20), (None, 0.30)),
             # THE DERIVATION d(circulating) - d(total) NEVER RUNS FOR MAPLE (2026-09-30): the SSF
-            # release is the measured route, monthly; a daily derived row beside it would be a
-            # second measuring point in one series. Stored derived rows: orphan_cleanup.sql BF.
+            # is the measured route; pool_release_tokens is HELD (pool_release_tokens_blocked) until
+            # the SSF's other inflows are classified. Stored derived rows: orphan_cleanup.sql BF.
             "known_limit": "the Token Buybacks table renders 5 of 13 months server-side; the other "
                            "8 are paged client-side and unreachable without a browser. Accepted as "
                            "permanent (Jake, 2026-09-24). The series grows a month at a time.",
@@ -9330,10 +9420,11 @@ PROJECTS = [
                        "futureEmissions fall (only while the two agree within 20%); observed after.",
                 "declared_on": "2026-09-30",
             },
-            "locked_tokens": {
-                "ordered_points": ("defillama:staking", "hypercore_info:validatorSummaries"),
-                "why": "DefiLlama's staking series before the first validatorSummaries read (history "
-                       "leg, only if the two agree within 2% on a shared day); validatorSummaries after.",
+            "total_burn_tokens": {
+                "ordered_points": ("defillama:holders_revenue_usd/price",
+                                   "derived:burn_total(gross_burn_tokens+core_burn_tokens)"),
+                "why": "the Assistance Fund leg alone (its buyback history) before the first day both "
+                       "legs exist; the Core burns before then are unmeasured (Jake, 2026-09-30).",
                 "declared_on": "2026-09-30",
             },
             "gross_burn_tokens": {
@@ -9368,15 +9459,10 @@ PROJECTS = [
         # ** THE LESSON IS RECORDED RATHER THAN THE REFUSAL DELETED. ** "Not in either SDK" was
         # read as "not exposed". An SDK is a convenience wrapper, not an inventory of an API, and
         # the next check of this kind reads the API reference rather than the client libraries.
-        # ===== STAKED HYPE HISTORY: DEFILLAMA'S /protocol STAKING SERIES (Jake, 2026-09-30). =====
-        # Route (b). The key is UNCONFIRMED from a live response: no HYPE-staking adapter exists in
-        # DefiLlama-Adapters @0703eb6 (2026-09-30), and the server files a `staking` export under
-        # chainTvls["staking"] / ["Hyperliquid L1-staking"] (defillama-server normalizeChain.ts
-        # extraSections + chain map "hyperliquid" -> "Hyperliquid L1", read via a 2025-10-13 fork).
-        # The reader tries those keys and, if neither is there, logs the keys that are and stores
-        # nothing; probe hyperliquid_history_routes prints them. Stored as
-        # locked_tokens_defillama; it becomes locked_tokens' history (history_legs) only where it
-        # agrees with the live validatorSummaries read within 2% on a shared day.
+        # STAKED HYPE HISTORY (route b) — NOT AVAILABLE (Jake's probes2, 2026-09-30): DefiLlama's
+        # /protocol/hyperliquid carries chainTvls for Arbitrum and Hyperliquid L1 only — no staking
+        # series. locked_tokens stays forward-only (HISTORY_FORWARD_ONLY, with the evidence); the
+        # reader and its history leg were removed.
         # ===== EMISSIONS HISTORY FROM THE PUBLISHED REWARD FORMULA (Jake, 2026-09-30). =====
         # Route (c). Hyperliquid's staking page: "the reward rate is inversely proportional to the
         # square root of total HYPE staked. At 400M total HYPE staked, the reward rate is
@@ -9388,24 +9474,15 @@ PROJECTS = [
         # validator commission (<= 1% can be raised; line 13). The model is shown as its own row
         # (emissions_modelled_tokens) and becomes emissions_tokens' history ONLY while the observed
         # fall in futureEmissions agrees with it within ±20% over >= 7 shared days. On 2026-09-29
-        # the observed rate was ~half the published one (VALIDATOR_YIELD watch_2026_09_29), so
-        # expect it NOT to be prepended until that is explained; the row states the ratio.
+        # the observed rate was ~half the published one (VALIDATOR_YIELD watch_2026_09_29). With
+        # staked-HYPE history unavailable (no DefiLlama staking series), the model covers only the
+        # days stake was read live, so it cannot reach back before them either way.
         "reward_formula": {
             "metric": "emissions_modelled_tokens", "stake_metric": "locked_tokens",
             "rate_at": 0.0237, "at_staked": 400_000_000, "form": "inverse_sqrt",
             "observed_metric": "emissions_tokens", "agree_within": 0.20, "min_shared_days": 7,
             "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/staking",
             "read_from": "dzmbs/hyperliquid-docs@0f6afd8 docs/hypercore/staking.md:21",
-        },
-        "defillama_staking_history": {
-            "protocol": "hyperliquid", "keys": ("staking", "Hyperliquid L1-staking"),
-            "token_keys": ("hype", "coingecko:hyperliquid", "hyperliquid"),
-            "metric": "locked_tokens_defillama", "status": "unconfirmed — first live response decides",
-        },
-        "history_legs": {
-            "locked_tokens": {"from_metric": "locked_tokens_defillama", "source_prefix": "defillama:staking",
-                              "agree_within": 0.02,
-                              "why": "DefiLlama's staking series before the first validatorSummaries read"},
         },
         "hyperliquid_staking_sourcing": {
             "status": "wired",
@@ -9822,6 +9899,9 @@ PROJECTS = [
             "components": ["gross_burn_tokens", "core_burn_tokens"],
             "core_from_stock": {"metric": "core_burn_tokens", "stock": "total_supply_gross"},
             "decided_by": "Jake, 2026-09-29",
+            # A4 BURN HISTORY (Jake agreed, 2026-09-30): before the first day both legs exist, the
+            # Assistance Fund leg alone (its buyback history) — the Core burns have no history.
+            "history_leg": {"component": "gross_burn_tokens", "source": "defillama:holders_revenue_usd/price"},
         },
         "a4_burn_metric": "total_burn_tokens",
         "destination_effect": "removed_from_supply",
@@ -15940,8 +16020,9 @@ HISTORY_FORWARD_ONLY = {
         # formula within 20%) — until those pass they stay here. total_burn_tokens stays: its
         # Core leg (fall in tokenDetails.totalSupply) has no history, and a day is in the total
         # only when every leg is.
-        "metrics": ("burn_address_balance", "core_burn_tokens",
-                    "total_burn_tokens", "total_supply_gross", "emissions_tokens",
+        # total_burn_tokens LEFT this list 2026-09-30 too (Jake agreed): the A4 total uses the
+        # Assistance Fund leg alone before both legs exist (burn_total.history_leg).
+        "metrics": ("burn_address_balance", "core_burn_tokens", "total_supply_gross", "emissions_tokens",
                     "future_emissions_tokens", "locked_tokens"),
         "why": "HyperCore's info API (api.hyperliquid.xyz/info) serves current state only and "
                "HyperCore has no archive node; nothing older than the first read exists to fetch",
@@ -15975,6 +16056,12 @@ HISTORY_FORWARD_ONLY = {
                        "from the buyback, stake from DefiLlama, emissions from the reward formula"},
             {"source": "DefiLlama hyperliquid staking history", "finding": "from a PRIVATE indexer "
                        "(LLAMA_HL_INDEXER, helpers/hyperliquid.ts:28,877), from 2026-04-15"},
+            {"source": "DefiLlama /protocol/hyperliquid (Jake's probes2, 2026-09-30)", "finding":
+                       "chainTvls carries Arbitrum and Hyperliquid L1 only — NO staking series; "
+                       "staked-HYPE history stays forward-only"},
+            {"source": "HyperEVM via Etherscan V2 chainid 999 (Jake's probes2, 2026-09-30)", "finding":
+                       "daily stats (dailytx, dailynewaddress) are Etherscan API PRO only — not on "
+                       "the existing key; HyperEVM activity history is not available free"},
         ],
         "checked_on": "2026-09-30",
     },
@@ -15985,7 +16072,8 @@ HISTORY_FORWARD_ONLY = {
     # refuses, beaconcha.in is dropped and this entry stands as the permanent record.
     "Ethereum": {
         "metrics": ("gross_issuance_tokens", "staking_yield_pct"),
-        "why": "forward-only from 2026-09-29: route (a) (CoinGecko mcap/price) was rejected as noise, "
+        "why": "forward-only from 2026-09-29 (issuance from 2026-09-30: the 09-29 row was a stale-"
+               "supply reading, removed by SQL BD): route (a) (CoinGecko mcap/price) was rejected as noise, "
                "ultrasound.money's daily supply is frozen at 2024-06-22, and beaconcha.in is out of "
                "routine runs (its daily call kept triggering 150,000s+ lockouts). The only history "
                "route is a one-off ETH.Store seed, which runs only if the key's quota covers every day",
@@ -17480,7 +17568,8 @@ UNAVAILABLE = [
         #     UNCONFIRMED (V1 daily stats were PRO) — probe hyperevm_etherscan. A figure from it
         #     would measure HyperEVM activity ONLY, labelled so, never HyperCore's.
         "rechecked_2026_09_30": {"hypercore_stats_feed": "dead — last updated 2026-04-03; not used",
-                                 "hyperevm": "Etherscan V2 chainid 999 — pending probe hyperevm_etherscan"},
+                                 "hyperevm": "Etherscan V2 chainid 999: dailytx / dailynewaddress are "
+                                             "API PRO only (Jake's probes2) — not available on the key"},
         "summary": "Hyperliquid's info API exposes market, per-user, vault, validator and token "
                    "state and no chain-activity aggregate — there is no daily active-address "
                    "series to read from the protocol.",
@@ -17510,7 +17599,8 @@ UNAVAILABLE = [
         #     UNCONFIRMED (V1 daily stats were PRO) — probe hyperevm_etherscan. A figure from it
         #     would measure HyperEVM activity ONLY, labelled so, never HyperCore's.
         "rechecked_2026_09_30": {"hypercore_stats_feed": "dead — last updated 2026-04-03; not used",
-                                 "hyperevm": "Etherscan V2 chainid 999 — pending probe hyperevm_etherscan"},
+                                 "hyperevm": "Etherscan V2 chainid 999: dailytx / dailynewaddress are "
+                                             "API PRO only (Jake's probes2) — not available on the key"},
         "summary": "Hyperliquid's info API has no transaction-count request type — the same "
                    "shape finding as active_addresses.",
         "what_was_tried": (
@@ -17859,9 +17949,35 @@ CIRCULATING_ONCHAIN = {
                            "are not documented in config"},
     "Morpho": {"status": "not_established",
                "why": "no Morpho DAO treasury, vesting or foundation address is documented in config"},
-    "Aerodrome": {"status": "not_established",
-                  "why": "no protocol, team or partner allocation address is documented in config "
-                         "(team allocations were issued as veAERO locks, which count as circulating)"},
+    # AERODROME (Jake's decision, 2026-09-30): the team's 95M in PERMANENT veNFTs is EXCLUDED from
+    # circulating and INCLUDED in total supply, FDV and the veAERO locked totals — a named line on
+    # the exclusion list. The same principle covers any permanently locked team or foundation
+    # tokens: Flight School's 50M (minted as permanent veNFTs to the Foundation and Incentives
+    # multisig) and the Public Goods Fund's 105M are LISTED for Jake — whether they are still
+    # team/foundation-held (Flight School's veNFTs may have been distributed to partner
+    # protocols; the PGF is its own fund) is not established, so they are not excluded.
+    "Aerodrome": {"status": "partial", "total": "total_supply", "subtract": (),
+                  "declared_exclusions": (
+                      {"name": "Development Team Funding — 95,000,000 AERO in permanent veNFTs (Auto "
+                               "Max-Locked at genesis)", "tokens": 95_000_000,
+                       "source": "aerodrome-finance/docs@99680a79 content/tokenomics.mdx:70-118 "
+                                 "('Development Team Funding (Auto Max-Locked) 95M 19%'); minted "
+                                 "as permanent locks by Minter.initialize (contracts@1ba30815 "
+                                 "contracts/Minter.sol:100-106)",
+                       "decided_by": "Jake, 2026-09-30",
+                       "note": "the GENESIS amount: a permanent lock can be unlocked by its owner "
+                               "(VotingEscrow.unlockPermanent), so reading the team veNFTs' locked "
+                               "balances would replace this constant once their token ids are known"},),
+                  "pending_same_principle": (
+                      "Flight School 50M (permanent veNFTs to the Foundation and Incentives multisig "
+                      "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a) — excluded only if still "
+                      "foundation-held",
+                      "Public Goods Fund 105M (permanent veNFT, 0x834C0DA026d5F933C2c18Fa9F8Ba7f1f792fDa52) "
+                      "— a separate fund, not team/foundation by its label"),
+                  "missing": "the Foundation's LIQUID treasury (the 50M liquid AERO at genesis, "
+                             "0xBDE0…) is not read, so the figure reads high and CoinGecko's stays "
+                             "primary; free float would need these locks taken out of the locked "
+                             "total before subtracting (they are already out of circulating)"},
     "Aethir": {"status": "not_established",
                "why": "supply is split across Arbitrum and a bridged Ethereum representation, and no "
                       "treasury, vesting or foundation address is documented in config"},
@@ -17913,9 +18029,9 @@ NONCIRCULATING_CANDIDATES = {
     "Aerodrome": {
         "note": "team (95M), Public Goods Fund (105M), Flight School (50M) and the airdrop (200M) "
                 "were minted straight into PERMANENT veNFTs (Minter.sol:100-106). The team's 95M "
-                "is BOTH team and locked, where the convention's two rules conflict: counted as "
-                "circulating (locked) until Jake decides. The only liquid genesis allocation is "
-                "the 50M below.",
+                "is EXCLUDED from circulating (Jake, 2026-09-30) while staying in total supply, "
+                "FDV and the veAERO locked total — see CIRCULATING_ONCHAIN['Aerodrome']. The only "
+                "liquid genesis allocation is the 50M below.",
         "addresses": [
             {"role": "Aerodrome Foundation and Incentives multisig (50M liquid + ve locks)", "chain": "base",
              "address": "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a",

@@ -34,6 +34,7 @@ from .gaps import detect as detect_gaps, note_timeouts
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .blockscout_stats import BlockscoutStats
+from .aethir_pages import AethirPages
 from .nearblocks import NearBlocks
 from .maple_transparency import MapleTransparency
 from .llama import DefiLlama, MorphoBlueApi
@@ -91,6 +92,8 @@ TIER_ORDER = [
     ("plume_staking", 2, lambda ctx: PlumeStaking()),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),
+    # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
+    ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).
     ("pendle_api", 3, lambda ctx: PendleEpochs()),
     # Ethereum's daily supply and staked-ETH history, one call (ultrasound.money API, 2026-09-30).
@@ -477,11 +480,10 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
             continue
         # A PAGE-MEASURED RELEASE IS THE ONLY ROUTE (Maple's SSF, 2026-09-30): declared on the page
         # block, so the derivation never writes beside it — not even on a day the page fails.
-        tp = ((p.get("transparency_page") or {}).get("metrics") or {}).get("pool_release_tokens")
-        if tp:
+        held = p.get("pool_release_tokens_blocked")
+        if held:
             out.skipped(SOURCE_DERIVED, name,
-                        f"pool_release_tokens: NOT derived — measured from the transparency page "
-                        f"({tp['field']}, {tp.get('granularity', 'daily')}) and the only route.", tier=2)
+                        f"pool_release_tokens: NOT derived — {held['status']}: {held['why']}", tier=2)
             continue
         # ** A MEASURED RELEASE WINS, AND THE DERIVATION STANDS DOWN RATHER THAN COMPETING. **
         # POOL_RELEASE_ROUTES: where a Transfer-event scan of the pool wallet exists and passed

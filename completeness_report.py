@@ -78,9 +78,12 @@ DECISIONS = {
         "NEEDS JAKE", "~3M GEOD locked, the manual row (value, source, date) — no staking contract "
                       "is established: both behavioural candidates are ruled out (0x8f10b468… is "
                       "KyberSwap's executor, 0x5fe84b85… a QuickSwap pool) and DefiLlama has no "
-                      "GEODNET staking adapter. GEODNET's console or docs naming the contract "
-                      "unblocks the 365-day archive read; Blockworks stays a cross-check once its "
-                      "terms are read (probe blockworks_geodnet)"),
+                      "GEODNET staking adapter. Blockworks' query 1243 names only the GEOD token, "
+                      "so staking likely goes to an EOA: run `check_offline_items.py "
+                      "blockworks_geodnet` then `geod_stake_recipient` — the recipient whose daily "
+                      "inflows match geod_stake, verified against geod_total_stake (~3.0M now, ~12M "
+                      "Nov 2025), is then wired as locked_tokens with archive history; Blockworks "
+                      "stays a cross-check (terms unread)"),
     # SETTLEMENT VOLUME (Jake, 2026-09-30): Artemis's daily series, one definition for every chain,
     # from CSV exports read at run time (config.ARTEMIS_SETTLEMENT). Ethereum's is exported; Jake is
     # checking whether Artemis carries NEAR and Hyperliquid. Plume is a closure (not on Artemis,

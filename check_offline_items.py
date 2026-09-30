@@ -2871,7 +2871,7 @@ def hyperliquid_history_routes():
         except Exception as e:  # noqa: BLE001
             print(f"  hyperscan{path} UNREACHABLE — {e}")
     # (b) DefiLlama's /protocol staking series — the field name decides the wiring
-    # (config Hyperliquid.defillama_staking_history). Prints keys and shapes, not values en masse.
+    # (Jake's probes2, 2026-09-30: Arbitrum and Hyperliquid L1 only — no staking series).
     try:
         j = requests.get("https://api.llama.fi/protocol/hyperliquid", headers=_ua(), timeout=TIMEOUT).json()
         ct = j.get("chainTvls") or {}
@@ -2939,6 +2939,47 @@ def plume_sources():
             print(f"  {label}: {v}{extra}")
         except Exception as e:  # noqa: BLE001
             print(f"  {label} UNREACHABLE — {e}")
+    # probes2 (2026-09-30): WHICH DIAMOND IS LIVE? The myPLUME feed stores the diamond live staking
+    # uses; each candidate's total; and validator 1's L1 address on 0xCF8B — "l1val_1_placeholder"
+    # means the deploy script's placeholder set.
+    try:
+        from web3 import Web3                              # noqa: PLC0415
+        w3 = Web3(Web3.HTTPProvider("https://rpc.plume.org", request_kwargs={"timeout": 25}))
+        cs = Web3.to_checksum_address
+        feed = w3.eth.contract(address=cs("0xFbb53aa72c10680e822e255aC70D10f8bb957D64"), abi=[
+            {"inputs": [], "name": n, "outputs": [{"name": "", "type": "address"}], "stateMutability": "view",
+             "type": "function"} for n in ("plumeStaking", "stPlumeMinter")])
+        for n in ("plumeStaking", "stPlumeMinter"):
+            try:
+                print(f"  myPLUME feed {n}() = {getattr(feed.functions, n)().call()}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  myPLUME feed {n}() failed — {e}")
+        tot_abi = [{"inputs": [], "name": "totalAmountStaked", "outputs": [{"name": "", "type": "uint256"}],
+                    "stateMutability": "view", "type": "function"},
+                   {"inputs": [], "name": "getCooldownInterval", "outputs": [{"name": "", "type": "uint256"}],
+                    "stateMutability": "view", "type": "function"}]
+        for cand in ("0x30c791E4654EdAc575FA1700eD8633CB2FEDE871", diamond, "0xA20bfe49969D4a0E9abfdb6a46FeD777304ba07f"):
+            c = w3.eth.contract(address=cs(cand), abi=tot_abi)
+            try:
+                tot = c.functions.totalAmountStaked().call()
+                cd = c.functions.getCooldownInterval().call()
+                print(f"  {cand}: totalAmountStaked {tot / 1e18:,.2f} PLUME, cooldown {cd:,}s")
+            except Exception as e:  # noqa: BLE001
+                print(f"  {cand}: {e}")
+        vi_abi = [{"inputs": [{"name": "validatorId", "type": "uint16"}], "name": "getValidatorInfo",
+                   "outputs": [{"name": "info", "type": "tuple", "components": [
+                       {"name": "validatorId", "type": "uint16"}, {"name": "active", "type": "bool"},
+                       {"name": "slashed", "type": "bool"}, {"name": "slashedAtTimestamp", "type": "uint256"},
+                       {"name": "maxCapacity", "type": "uint256"}, {"name": "delegatedAmount", "type": "uint256"},
+                       {"name": "commission", "type": "uint256"}, {"name": "l2AdminAddress", "type": "address"},
+                       {"name": "l2WithdrawAddress", "type": "address"}, {"name": "l1ValidatorAddress", "type": "string"},
+                       {"name": "l1AccountAddress", "type": "string"}, {"name": "l1AccountEvmAddress", "type": "address"}]},
+                               {"name": "totalStaked", "type": "uint256"}, {"name": "stakersCount", "type": "uint256"}],
+                   "stateMutability": "view", "type": "function"}]
+        info = w3.eth.contract(address=cs(diamond), abi=vi_abi).functions.getValidatorInfo(1).call()
+        print(f"  {diamond} validator 1: l1ValidatorAddress {info[0][9]!r}, stakers {info[2]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  live-diamond checks UNREACHABLE — {e}")
     # 4a (2026-09-30): the per-validator list — the total staked is its sum, not totalAmountStaked.
     try:
         from web3 import Web3                              # noqa: PLC0415
@@ -2967,10 +3008,11 @@ def plume_sources():
         print(f"  growthepie plume fees_paid_usd: {len(fees)} days, last {fees[-3:]}")
     except Exception as e:  # noqa: BLE001
         print(f"  growthepie UNREACHABLE — {e}")
-    print("  PASTE BACK all lines. APR should sit in Jake's 5-8%.")
+    print("  PASTE BACK all lines, and the TOTAL STAKED staking.plume.org shows: nothing is stored until one\n"
+          "  diamond is confirmed live and its stake matches the app's figure.")
 
 
-def _xhr_capture(url: str, wanted: tuple = (), deep: bool = False, dump_keys: tuple = ()):
+def _xhr_capture(url: str, wanted: tuple = (), deep: bool = False, dump_keys: tuple = (), save_to=None):
     """Load a page in Chromium (robots-checked first) and list every JSON response: URL, top-level
     keys, and any number in it matching `wanted`. Finds a dashboard's API; stores nothing."""
     from fetch.scrape import robots_verdict                # noqa: PLC0415
@@ -3013,6 +3055,11 @@ def _xhr_capture(url: str, wanted: tuple = (), deep: bool = False, dump_keys: tu
                 seen.append((resp.url.split("?")[0], keys, hits))
                 if deep and (hits or dump_keys):
                     _dump(body)
+                if save_to is not None and hits:
+                    # kept for the next probe (geod_stake_recipient) — local, never committed
+                    save_to.mkdir(parents=True, exist_ok=True)
+                    (save_to / f"capture-{len(list(save_to.glob('capture-*.json')))}.json").write_text(
+                        json.dumps({"url": resp.url.split("?")[0], "body": body}))
 
         def req(r):
             # EVERY request, not only JSON answers: a GraphQL POST, an RPC call, a websocket upgrade.
@@ -3059,6 +3106,34 @@ def aethir_dashboard_xhr():
     print("  If nothing matches: supply_units stays a MONTHLY MANUAL row from Jake (manual_overrides.csv).")
 
 
+def aethir_pages():
+    """Jake's probes2 4 (2026-09-30): every numeric field in the server-rendered (Next.js RSC)
+    payload of Aethir's supply, demand, on-chain and overview pages — the used/rented capacity
+    (utilisation = used / totalMonthlyCapacity) and revenue are looked for by name."""
+    from fetch import aethir_pages as ap                   # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("AETHIR — numeric fields in each dashboard page's server-rendered payload")
+    hints = ("used", "rent", "util", "occup", "revenue", "fee", "earn", "income", "arr", "demand", "hours")
+    for page in ("protocol/supply-metric", "protocol/demand-metric", "protocol/onchain-metric",
+                 "protocol/overview", "overview"):
+        url = f"https://dashboard.aethir.com/{page}"
+        ok, why = robots_verdict(url)
+        if not ok:
+            print(f"  {page}: robots DISALLOWS — {why}")
+            continue
+        try:
+            r = requests.get(url, headers=_ua(), timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {page}: UNREACHABLE — {e}")
+            continue
+        f = ap.fields(r.text)
+        print(f"\n  {page}: HTTP {r.status_code}, {len(f)} numeric field(s)")
+        for k, vals in sorted(f.items()):
+            mark = "  <-- CANDIDATE" if any(h in k.lower() for h in hints) else ""
+            print(f"    {k} = {vals[:4]}{' (+' + str(len(vals) - 4) + ' more)' if len(vals) > 4 else ''}{mark}")
+    print("\n  PASTE BACK all lines: a used/rented capacity field and a revenue field get wired by name.")
+
+
 def maple_ssf_history():
     """H: the transparency page's SSF chart — the embedded series (Astro island props) holding the
     SSF's SYRUP balance by date, and the monthly buyback list on the same page."""
@@ -3102,6 +3177,100 @@ def maple_ssf_history():
     print("  PASTE BACK each island line that names the SSF.")
 
 
+def maple_ssf_inflows():
+    """Jake's probes2 3c (2026-09-30): the SSF's net change came out NEGATIVE for 2025-11 and 2026-07
+    — it took in more SYRUP than that month's buybacks. For each such month: the days the SSF
+    series jumped up, and the SYRUP transfers INTO Maple's treasury (daoMultisig) on those days
+    with each sender, so every inflow can be classified before the release is used. Also Maple's
+    own monthly revenue beside DefiLlama's (3b). Reads only; the key is never printed."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch import maple_transparency as mt             # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("MAPLE — SSF inflows beyond the buybacks; revenue vs DefiLlama")
+    url = "https://maple.finance/transparency"
+    ok, why = robots_verdict(url)
+    print(f"  robots for {url}: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+    if not ok:
+        return
+    html = requests.get(url, headers=_ua(), timeout=TIMEOUT).text
+    got = mt.ssf_series(html)
+    if isinstance(got, str):
+        print(f"  ssf_series: {got}")
+        return
+    pts, key = got
+    h = pd.Series(dict(pts)).sort_index()
+    bb = mt.parse(html)["buybacks"]
+    rel, _ = mt.ssf_release(pts, bb, pd.Timestamp.now().normalize())
+    neg = [(d, v) for d, v in rel if v < 0]
+    print(f"  SSF dataset {key}: {len(h)} day(s) {h.index[0].date()}..{h.index[-1].date()}; last {h.iloc[-1]:,.2f}")
+    print(f"  months with a NEGATIVE net outflow (an inflow beyond the buybacks): "
+          f"{', '.join(f'{d:%Y-%m} {v:,.0f}' for d, v in neg) or 'none'}")
+    # every island key that is not a chart dataset: a transactions list would show senders
+    for props in mt.islands(html):
+        other = [k for k in props if k != "datasets"]
+        if other:
+            print(f"  island keys besides datasets: {other[:15]}")
+    p = config.PROJECT_BY_NAME["Maple"]
+    token = p["contracts"]["token"]["address"]
+    treasury = p["contracts"]["treasury"]["address"]
+    known = {c["address"].lower(): k for k, c in p["contracts"].items()}
+    key_ = os.environ.get("ETHERSCAN_API_KEY", "").strip()
+    api = "https://api.etherscan.io/v2/api"
+
+    def es(params):
+        return requests.get(api, params={"chainid": 1, **params, "apikey": key_}, headers=_ua(),
+                            timeout=TIMEOUT).json()
+    for m, v in neg:
+        start = m.to_period("M").to_timestamp()
+        month = h[(h.index >= start - pd.Timedelta(days=1)) & (h.index <= m)]
+        jumps = month.diff().dropna()
+        jumps = jumps[jumps > 0].sort_values(ascending=False).head(8)
+        print(f"\n  {m:%Y-%m}: net {v:,.0f}; the largest daily RISES in SSF holdings:")
+        for d, x in jumps.items():
+            print(f"    {d.date()}: +{x:,.2f} SYRUP")
+        if not key_:
+            print("    (no ETHERSCAN_API_KEY — the treasury's SYRUP inflows are not listed)")
+            continue
+        try:
+            b0 = es({"module": "block", "action": "getblocknobytime", "timestamp": int(start.timestamp()),
+                     "closest": "after"})["result"]
+            b1 = es({"module": "block", "action": "getblocknobytime",
+                     "timestamp": int((m + pd.Timedelta(days=1)).timestamp()), "closest": "before"})["result"]
+            txs = es({"module": "account", "action": "tokentx", "contractaddress": token, "address": treasury,
+                      "startblock": b0, "endblock": b1, "sort": "asc"}).get("result") or []
+        except Exception as e:  # noqa: BLE001
+            print(f"    Etherscan UNREACHABLE — {e}")
+            continue
+        ins = [t for t in txs if isinstance(t, dict) and t.get("to", "").lower() == treasury.lower()]
+        print(f"    SYRUP transfers INTO the treasury {treasury} that month: {len(ins)}")
+        for t in sorted(ins, key=lambda t: -int(t["value"]))[:15]:
+            day = pd.Timestamp(int(t["timeStamp"]), unit="s").date()
+            frm = t["from"]
+            print(f"      {day} {int(t['value']) / 1e18:>16,.2f} SYRUP from {frm} "
+                  f"{('(' + known[frm.lower()] + ')') if frm.lower() in known else ''} tx {t['hash'][:12]}…")
+    # 3b: Maple's own monthly revenue beside DefiLlama's
+    rs = mt.revenue_series(html)
+    if isinstance(rs, str):
+        print(f"\n  revenue_series: {rs}")
+        return
+    rev, rkey = rs
+    try:
+        ll = requests.get("https://api.llama.fi/summary/fees/maple", params={"dataType": "dailyRevenue"},
+                          headers=_ua(), timeout=TIMEOUT).json().get("totalDataChart") or []
+        dl = pd.Series({pd.Timestamp(int(t), unit="s"): float(v) for t, v in ll})
+        dl = dl.groupby(dl.index.to_period("M")).sum()
+    except Exception as e:  # noqa: BLE001
+        dl = pd.Series(dtype=float)
+        print(f"  DefiLlama UNREACHABLE — {e}")
+    print(f"\n  Maple's own monthly revenue (dataset {rkey}) vs DefiLlama's, same month:")
+    for d, v in rev[-14:]:
+        other = dl.get(d.to_period("M"))
+        ratio = f"{v / other:.2f}x" if other else "n/a"
+        print(f"    {d:%Y-%m}: Maple ${v:>14,.2f}   DefiLlama ${other if other is not None else float('nan'):>14,.2f}   {ratio}")
+    print("  PASTE BACK all lines: each inflow's sender decides how the negative months are classified.")
+
+
 def blockworks_geodnet():
     """D1 (cross-check only): Blockworks' GEODNET staking-flow chart endpoint, robots-checked. Not
     wired: its terms are unread (licensing register)."""
@@ -3111,10 +3280,145 @@ def blockworks_geodnet():
     # be verified ON-CHAIN (~3.0M now, ~12M Nov 2025) and read directly; Blockworks is only the
     # pointer.
     _xhr_capture("https://app.blockworks.com/projects/geodnet/analytics/geodnet",
-                 ("stake", "Stake", "unstake", "2669", "2573", "2575"), deep=True,
+                 ("stake", "Stake", "unstake", "2669", "2573", "2575", "geod_stake"), deep=True,
                  dump_keys=("query", "sql", "queryText", "query_sql", "contract", "contractAddress",
-                            "address", "source", "dataSource", "table", "description", "title"))
+                            "address", "source", "dataSource", "table", "description", "title"),
+                 save_to=_blockworks_dir())
+    print(f"  Matching JSON bodies saved under {_blockworks_dir()} for geod_stake_recipient.")
     print("  PASTE BACK the VALUE lines: a contract address there is checked on-chain before any wiring.")
+
+
+def _blockworks_dir():
+    from fetch.logcache import LogCache                    # noqa: PLC0415
+    return LogCache().root / "blockworks-geodnet"
+
+
+def _blockworks_rows() -> list[dict]:
+    """Rows carrying geod_stake from the saved Blockworks captures (query 1243, 'geodnet-issuance-
+    burn-stake'), or from $GEODNET_BLOCKWORKS_CSV if Jake exported the query instead."""
+    import csv                                             # noqa: PLC0415
+    path = os.environ.get("GEODNET_BLOCKWORKS_CSV", "").strip()
+    if path:
+        with open(path, newline="", encoding="utf-8") as fh:
+            return list(csv.DictReader(fh))
+    rows = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            if "geod_stake" in x:
+                rows.append(x)
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    for f in sorted(_blockworks_dir().glob("capture-*.json")):
+        try:
+            walk(json.loads(f.read_text()))
+        except ValueError:
+            continue
+    return rows
+
+
+def geod_stake_recipient():
+    """Jake's probes2 5 (2026-09-30): Blockworks' query 1243 carries geod_stake / geod_unstake /
+    geod_total_stake but names no staking address (only the GEOD token), so staking likely goes
+    to an EOA. Take the days with the most distinctive geod_stake totals, sum each day's GEOD
+    Transfer INFLOWS per recipient on Polygon, and print the recipients whose inflow matches;
+    then compare the best candidate's balance with the latest geod_total_stake. Also compares the
+    series' issuance and burn columns with this store's GEODNET release and burn (cross-check
+    only — Blockworks' terms are unread). Reads only; keys never printed. Run
+    blockworks_geodnet first (it saves the query's rows), or set GEODNET_BLOCKWORKS_CSV."""
+    import pandas as pd                                    # noqa: PLC0415
+    head("GEODNET — who receives the staked GEOD? (Blockworks geod_stake vs Polygon Transfer logs)")
+    rows = _blockworks_rows()
+    if not rows:
+        print(f"  no Blockworks rows: run `check_offline_items.py blockworks_geodnet` first (saves to "
+              f"{_blockworks_dir()}), or set GEODNET_BLOCKWORKS_CSV to an export of query 1243")
+        return
+    dkey = next((k for k in rows[0] if any(w in k.lower() for w in ("date", "day", "time", "block_time"))), None)
+    if dkey is None:
+        print(f"  no date column among {sorted(rows[0])}")
+        return
+    df = pd.DataFrame(rows)
+    df["day"] = pd.to_datetime(df[dkey], errors="coerce", utc=True).dt.tz_localize(None).dt.normalize()
+    for c in df.columns:
+        if c not in (dkey, "day"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=["day"]).sort_values("day")
+    print(f"  {len(df)} row(s) {df['day'].min().date()}..{df['day'].max().date()}; columns {sorted(df.columns)[:20]}")
+    stake = df.dropna(subset=["geod_stake"])
+    stake = stake[stake["geod_stake"] > 0]
+    # distinctive: large, and not round
+    pick = stake.assign(frac=(stake["geod_stake"] % 1).abs()).sort_values(["geod_stake"], ascending=False)
+    pick = pick[pick["frac"] > 0].head(5) if (pick["frac"] > 0).any() else pick.head(5)
+    key = os.environ.get("ETHERSCAN_API_KEY", "").strip()
+    if not key:
+        print("  no ETHERSCAN_API_KEY — cannot scan Polygon (chainid 137) logs")
+        return
+    geod = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+    topic = "0x" + __import__("eth_utils").keccak(text="Transfer(address,address,uint256)").hex().removeprefix("0x")
+    api = "https://api.etherscan.io/v2/api"
+
+    def es(params):
+        return requests.get(api, params={"chainid": 137, **params, "apikey": key}, headers=_ua(),
+                            timeout=TIMEOUT).json()
+    votes: dict = {}
+    for _, r in pick.iterrows():
+        d = r["day"]
+        try:
+            b0 = es({"module": "block", "action": "getblocknobytime", "timestamp": int(d.timestamp()),
+                     "closest": "after"})["result"]
+            b1 = es({"module": "block", "action": "getblocknobytime",
+                     "timestamp": int((d + pd.Timedelta(days=1)).timestamp()) - 1, "closest": "before"})["result"]
+        except Exception as e:  # noqa: BLE001
+            print(f"  {d.date()}: block lookup failed — {e}")
+            continue
+        inflow: dict = {}
+        for page in range(1, 11):
+            j = es({"module": "logs", "action": "getLogs", "address": geod, "topic0": topic,
+                    "fromBlock": b0, "toBlock": b1, "page": page, "offset": 1000})
+            res = j.get("result") if isinstance(j.get("result"), list) else []
+            for lg in res:
+                to = "0x" + lg["topics"][2][-40:]
+                inflow[to] = inflow.get(to, 0.0) + int(lg["data"], 16) / 1e18
+            if len(res) < 1000:
+                break
+        target = float(r["geod_stake"])
+        close = sorted(inflow.items(), key=lambda kv: abs(kv[1] - target))[:3]
+        print(f"  {d.date()}: geod_stake {target:,.4f}; nearest recipients by inflow: " +
+              "; ".join(f"{a} {v:,.4f} ({v / target:.4f}x)" for a, v in close))
+        for a, v in close[:1]:
+            votes[a] = votes.get(a, 0) + (abs(v - target) <= 1.0)
+    if votes:
+        best = max(votes, key=votes.get)
+        print(f"\n  recipient matching geod_stake to within 1 GEOD on {votes[best]} of {len(pick)} day(s): {best}")
+        try:
+            bal = int(es({"module": "account", "action": "tokenbalance", "contractaddress": geod,
+                          "address": best, "tag": "latest"})["result"]) / 1e18
+            last = df.dropna(subset=["geod_total_stake"]).iloc[-1] if "geod_total_stake" in df else None
+            print(f"  its GEOD balance now {bal:,.2f}; Blockworks geod_total_stake "
+                  f"{'n/a' if last is None else f'{last.geod_total_stake:,.2f} on {last.day.date()}'} "
+                  f"(~3.0M now, ~12M Nov 2025 expected)")
+        except Exception as e:  # noqa: BLE001
+            print(f"  balance lookup failed — {e}")
+    # cross-check: the series' issuance and burn columns vs this store's release and burn
+    try:
+        import sqlite3                                     # noqa: PLC0415
+        con = sqlite3.connect("metrics.db")
+        st = pd.read_sql_query("SELECT date, metric, value FROM metrics WHERE project='GEODNET' AND metric IN "
+                               "('emissions_tokens','pool_release_tokens','gross_burn_tokens')", con)
+        st["m"] = pd.to_datetime(st["date"]).dt.to_period("M")
+        ours = st.groupby(["metric", "m"])["value"].sum().unstack(0)
+        cols = [c for c in df.columns if any(w in c.lower() for w in ("issu", "burn"))]
+        theirs = df.assign(m=df["day"].dt.to_period("M")).groupby("m")[cols].sum()
+        both = ours.join(theirs, how="inner").tail(12)
+        print("\n  monthly: this store's GEODNET release/burn vs Blockworks' issuance/burn columns (cross-check only)")
+        print("  " + both.round(0).to_string().replace("\n", "\n  "))
+    except Exception as e:  # noqa: BLE001
+        print(f"  cross-check skipped — {e}")
+    print("  PASTE BACK all lines. A recipient is wired as locked_tokens only after its balance is "
+          "verified to track geod_total_stake.")
 
 
 def morpho_incentives():
@@ -3172,7 +3476,8 @@ CHECKS = (
     hl_af_fills_depth,
     robots_and_terms, ultrasound_history, beaconchain_quota, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
-    morpho_incentives, settlement_sources, hyperevm_etherscan,
+    morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
+    geod_stake_recipient,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

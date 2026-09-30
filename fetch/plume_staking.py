@@ -97,9 +97,17 @@ class PlumeStaking:
                                    f"NOTHING STORED.", TIER)
             return
         apr = rate * SECONDS_PER_YEAR / 1e18
-        out.add(point(name, spec["apr_metric"], apr, f"{SOURCE}:getRewardRate(PLUME_NATIVE)[GROSS]", TIER, when),
-                SOURCE, name, f"{spec['apr_metric']} = {rate} x 31,536,000 / 1e18 = {apr:.4%} GROSS of "
-                              f"validator commission (Plume staking diamond)", TIER)
+        # ===== NOTHING IS STORED UNTIL THIS IS THE LIVE CONTRACT (Jake's probes2, 2026-09-30). =====
+        # getValidatorsList() on this diamond sums to 94.87 PLUME across 15 validators — impossible
+        # for the live network. The readings are LOGGED so the reconciliation can be done, and
+        # stored only once config confirms the address as the one staking.plume.org uses
+        # (live_contract.confirmed) — and the stake only once it matches the app's own total.
+        live = spec.get("live_contract") or {}
+        confirmed = bool(live.get("confirmed"))
+        if confirmed:
+            out.add(point(name, spec["apr_metric"], apr, f"{SOURCE}:getRewardRate(PLUME_NATIVE)[GROSS]", TIER, when),
+                    SOURCE, name, f"{spec['apr_metric']} = {rate} x 31,536,000 / 1e18 = {apr:.4%} GROSS of "
+                                  f"validator commission (Plume staking diamond)", TIER)
         rows = []
         for v in validators if isinstance(validators, (list, tuple)) else ():
             try:
@@ -125,14 +133,29 @@ class PlumeStaking:
             return
         tokens = total / 1e18
         comm = sum(r[1] * r[2] for r in rows) / total / 1e18
-        out.add(point(name, spec["stake_metric"], tokens, f"{SOURCE}:getValidatorsList.sum(totalStaked)", TIER, when),
-                SOURCE, name, f"{spec['stake_metric']} = sum of {len(rows)} validators' totalStaked = "
-                              f"{tokens:,.2f} PLUME (totalAmountStaked() = {agg:,.2f}, not used)", TIER)
+        net = apr * (1 - comm)
+        if not confirmed:
+            out.skipped(SOURCE, name, f"NOT STORED — {spec['address']} is not confirmed as the contract "
+                                      f"staking.plume.org uses ({live.get('why', 'unconfirmed')}). Read: "
+                                      f"{len(rows)} validators, sum totalStaked {tokens:,.2f} PLUME "
+                                      f"(totalAmountStaked {agg!r}), gross APR {apr:.4%}, stake-weighted "
+                                      f"commission {comm:.2%}, net {net:.4%}", TIER)
+            return
+        app = live.get("app_total_tokens")
+        if app is None or abs(tokens - float(app)) > float(live.get("app_rounding_tokens") or 0):
+            out.skipped(SOURCE, name, f"{spec['stake_metric']} NOT STORED — the per-validator sum "
+                                      f"{tokens:,.2f} PLUME does not reconcile with the app's total "
+                                      f"{app!r} (± its display rounding {live.get('app_rounding_tokens')!r})", TIER)
+            tokens = None
+        if tokens is not None:
+            out.add(point(name, spec["stake_metric"], tokens, f"{SOURCE}:getValidatorsList.sum(totalStaked)", TIER, when),
+                    SOURCE, name, f"{spec['stake_metric']} = sum of {len(rows)} validators' totalStaked = "
+                                  f"{tokens:,.2f} PLUME, reconciled with the app's {app:,.0f} "
+                                  f"(totalAmountStaked() = {agg:,.2f}, not used)", TIER)
         out.add(point(name, spec["commission_metric"], comm, f"{SOURCE}:getValidatorsList.commission[stake-weighted]",
                       TIER, when), SOURCE, name,
                 f"{spec['commission_metric']} = stake-weighted commission {comm:.2%} over {len(rows)} "
                 f"validators (min {min(r[2] for r in rows) / 1e18:.2%}, max {max(r[2] for r in rows) / 1e18:.2%})", TIER)
-        net = apr * (1 - comm)
         out.add(point(name, spec["net_apr_metric"], net, f"{SOURCE}:gross*(1-commission)", TIER, when),
                 SOURCE, name, f"{spec['net_apr_metric']} = {apr:.4%} x (1 - {comm:.2%}) = {net:.4%} NET of "
                               f"stake-weighted commission", TIER)

@@ -34,7 +34,21 @@ reading a UTC day (the last). Stored daily as ssf_holdings_tokens (unrounded, e.
     pool_release_tokens(month) = H(first day) - H(first day of next month) + SYRUP bought (month)
 
 a fall in the fund net of the buyback inflow the same page lists — only for months where the
-chart has both boundary days and the buyback row is visible (never assumed 0).
+chart has both boundary days and the buyback row is visible (never assumed 0). ** STORED AS
+ssf_net_outflow_tokens, SIGNED, NOT AS pool_release_tokens (Jake's probes2, 2026-09-30): ** two
+months came out NEGATIVE (2025-11 -3,052,593; 2026-07 -971,641) — the fund took in more than that
+month's buybacks, so it has another inflow. Until those inflows are traced and classified the net
+change is not treated as a release (config Maple.pool_release_tokens_blocked).
+
+MAPLE'S OWN MONTHLY REVENUE (revenueUsd) is on the page too, in another island's datasets (12
+months in LAST_1Y, 31 in ALL; Aug 2026 $1,470,979.15). It is PRIMARY revenue_usd for Maple, monthly,
+dated to month-end; DefiLlama's is stored as revenue_usd_defillama and compared (defillama_metric_as).
+
+IMPLIED BUYBACK for months whose buyback row is paged out of reach: the month's revenue x MIP-021's
+tier (10% under $1.5M, 20% $1.5-2M, 30% over $2M — the band of that month's revenue, applied to
+all of it), stored as actual_buyback_usd_implied, labelled IMPLIED and never mixed with the
+measured actual_buyback_usd. Only inside the table's own span (N rows = N months ending at the
+newest visible one — one row a month is the table's layout).
 
 A PRICE IN THE USD FIELD IS REFUSED. The island props' buyback amountUsd held average PRICES for
 Jul/Aug 2026 ("0.1604", "0.2175") and a dollar amount for June ("$375,000.00"). The table text is
@@ -214,6 +228,57 @@ def ssf_series(markup: str) -> tuple[list[tuple], str] | str:
     return sorted(best[0].items()), best[1]
 
 
+def revenue_series(markup: str) -> tuple[list[tuple], str] | str:
+    """([(month_end, revenueUsd)], dataset) from the island dataset reaching furthest back whose rows
+    carry revenueUsd; or why nothing was taken. One row a month; a repeated month is refused."""
+    best = None
+    for props in islands(markup):
+        ds = props.get("datasets")
+        if not isinstance(ds, dict):
+            continue
+        for key, rows in ds.items():
+            if not isinstance(rows, list):
+                continue
+            pts = {}
+            for r in rows:
+                if not isinstance(r, dict) or "revenueUsd" not in r:
+                    continue
+                d = _ts(r.get("ts") if "ts" in r else r.get("date") or r.get("month"))
+                try:
+                    v = float(str(r["revenueUsd"]).replace(",", "").replace("$", ""))
+                except (TypeError, ValueError):
+                    return f"dataset {key}: revenueUsd {r['revenueUsd']!r} is not a number"
+                if d is None:
+                    return f"dataset {key}: a revenue row has no readable date ({sorted(r)})"
+                m = month_end(d.to_period("M").to_timestamp())
+                if m in pts:
+                    return f"dataset {key}: month {m:%Y-%m} appears twice — not a monthly series"
+                pts[m] = v
+            if pts and (best is None or min(pts) < min(best[0])):
+                best = (pts, key)
+    if best is None:
+        return "no astro-island carries datasets.*[{revenueUsd}]"
+    return sorted(best[0].items()), best[1]
+
+
+def implied_buybacks(revenue: list[tuple], buybacks: pd.DataFrame, showing, tiers, before) -> list[tuple]:
+    """[(month_end, implied usd, rate, revenue)] for complete months inside the table's span that have
+    no visible buyback row. Span: `showing`'s total N rows = the N months ending at the newest
+    visible month. Nothing without a visible row to anchor the span."""
+    if buybacks.empty or not showing:
+        return []
+    newest = buybacks["month"].max()
+    first = newest - pd.DateOffset(months=int(showing[2]) - 1)
+    seen = {month_end(m) for m in buybacks["month"]}
+    out = []
+    for m, rev in revenue:
+        if not (month_end(first) <= m <= month_end(newest)) or m in seen or m >= before:
+            continue
+        rate = next(r for cap, r in tiers if cap is None or rev < cap)
+        out.append((m, rev * rate, rate, rev))
+    return out
+
+
 def ssf_release(holdings: list[tuple], buybacks: pd.DataFrame, before: pd.Timestamp) -> tuple[list, list]:
     """([(month_end, release)], [why a month was skipped]) — complete months only."""
     h = dict(holdings)
@@ -328,14 +393,43 @@ class MapleTransparency:
                             f"{pts[0][0].date()}..{pts[-1][0].date()}", TIER)
                 if rm:
                     rel, skipped = ssf_release(pts, got["buybacks"], today())
+                    neg = [f"{d:%Y-%m} {v:,.0f}" for d, v in rel if v < 0]
                     if rel:
                         out.add(tidy(rel, name, rm, f"{SOURCE}:ssf_release", TIER), SOURCE, name,
                                 f"{rm} = SSF H(month start) - H(next month start) + SYRUP bought, "
-                                f"{len(rel)} month(s) {rel[0][0].date()}..{rel[-1][0].date()}"
+                                f"SIGNED, {len(rel)} month(s) {rel[0][0].date()}..{rel[-1][0].date()}"
+                                + (f"; NEGATIVE (an inflow other than buybacks): {', '.join(neg)}" if neg else "")
                                 + (f"; skipped {'; '.join(skipped[:6])}" if skipped else ""), TIER)
                     else:
                         out.fail(SOURCE, name, f"{rm}: no complete month computable — "
                                                f"{'; '.join(skipped[:6]) or 'no chart data'}", TIER)
+
+        # MAPLE'S OWN MONTHLY REVENUE, and the IMPLIED buyback for months paged out of the table.
+        vm = next((k for k, v in metrics.items() if v["field"] == "revenue_monthly"), None)
+        im = next((k for k, v in metrics.items() if v["field"] == "implied_buyback"), None)
+        if vm or im:
+            rs = revenue_series(text)
+            if isinstance(rs, str):
+                for m_ in (vm, im):
+                    if m_:
+                        out.fail(SOURCE, name, f"{m_}: {rs} on {url}. NOTHING STORED.", TIER)
+            else:
+                rev, key = rs
+                rev = [(d, v) for d, v in rev if d < today()]           # complete months only
+                if vm and rev:
+                    out.add(tidy(rev, name, vm, f"{SOURCE}:island.{key}.revenueUsd", TIER), SOURCE, name,
+                            f"{vm} = Maple's own monthly revenueUsd (dataset {key}): {len(rev)} month(s) "
+                            f"{rev[0][0]:%Y-%m}..{rev[-1][0]:%Y-%m}, dated to month-end", TIER)
+                if im:
+                    imp = implied_buybacks(rev, got["buybacks"], got["showing"], spec["mip021_tiers"], today())
+                    if imp:
+                        out.add(tidy([(d, v) for d, v, _, _ in imp], name, im,
+                                     f"{SOURCE}:IMPLIED(revenueUsd x MIP-021 tier)", TIER), SOURCE, name,
+                                f"{im} = IMPLIED, never measured: " + "; ".join(
+                                    f"{d:%Y-%m} ${r:,.0f} x {rate:.0%} = ${v:,.0f}" for d, v, rate, r in imp), TIER)
+                    else:
+                        out.skipped(SOURCE, name, f"{im}: no month inside the table's span lacks a "
+                                                  f"visible row (or the span is unreadable)", TIER)
 
         bb = got["buybacks"]
         cutoff = today()

@@ -3549,18 +3549,18 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
  GROUP BY source
  ORDER BY first_date;
 
--- BD2. WHAT STAYS (expect the Etherscan leg only, from 2026-09-29).
+-- BD2. WHAT STAYS (expect the Etherscan leg only, from 2026-09-30; 09-30 ≈ 2,980.79).
 SELECT date, value, source
   FROM metrics
  WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
-   AND source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-29'
+   AND source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-30'
  ORDER BY date;
 
 -- BD3. THE PROPOSED DELETE: everything else. Only after BD1 and BD2 read as expected.
 -- BEGIN;
 -- DELETE FROM metrics
 --  WHERE project = 'Ethereum' AND metric = 'gross_issuance_tokens'
---    AND NOT (source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-29');
+--    AND NOT (source LIKE 'derived:d_total_supply_protocol+burn%' AND date >= '2026-09-30');
 -- COMMIT;
 
 -- ========================================================================================
@@ -3612,8 +3612,10 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
  GROUP BY source
  ORDER BY first_date;
 
--- BF2. THE PROPOSED DELETE: every row not from the SSF release. Run only after BF1, and only once
---      a run has stored 'maple_page:ssf_release' rows (BF1 shows them).
+-- BF2. THE PROPOSED DELETE: every derived row. AMENDED 2026-09-30 (Jake's probes2): the SSF net
+--      change is now stored as ssf_net_outflow_tokens (signed) and pool_release_tokens is HELD
+--      until the SSF's other inflows are classified — so nothing replaces these rows yet; they go
+--      because the d(circulating) - d(total) derivation no longer runs for Maple at all.
 -- BEGIN;
 -- DELETE FROM metrics
 --  WHERE project = 'Maple' AND metric = 'pool_release_tokens'
@@ -3637,4 +3639,32 @@ SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS
 -- DELETE FROM metrics
 --  WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
 --    AND source LIKE 'growthepie%';
+-- COMMIT;
+
+-- ========================================================================================
+-- BH. MAPLE revenue_usd: MAPLE'S OWN MONTHLY FIGURE IS PRIMARY; DEFILLAMA'S BECOMES THE CROSS-CHECK  2026-09-30
+--     Jake's probes2: the transparency page carries Maple's own monthly revenueUsd (31 months). It
+--     is stored as revenue_usd (monthly, source 'maple_page:island...'); DefiLlama's daily revenue
+--     is now written as revenue_usd_defillama (config Maple.defillama_metric_as). DefiLlama's rows
+--     already stored under revenue_usd would be a second measuring point in the same series:
+--     RENAME them (keeps the data). REVIEW FIRST.
+-- ========================================================================================
+-- BH1. WHAT IS THERE.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(SUM(value), 0) AS total_usd
+  FROM metrics
+ WHERE project = 'Maple' AND metric = 'revenue_usd'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BH2. A RENAMED ROW WOULD COLLIDE WITH ONE ALREADY UNDER revenue_usd_defillama? (expect 0 rows)
+SELECT m.date
+  FROM metrics m
+  JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = 'revenue_usd_defillama'
+ WHERE m.project = 'Maple' AND m.metric = 'revenue_usd' AND m.source LIKE 'defillama%';
+
+-- BH3. THE RENAME. Only after BH1/BH2.
+-- BEGIN;
+-- UPDATE metrics SET metric = 'revenue_usd_defillama'
+--  WHERE project = 'Maple' AND metric = 'revenue_usd' AND source LIKE 'defillama%';
 -- COMMIT;

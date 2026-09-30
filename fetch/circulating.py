@@ -58,6 +58,10 @@ def series(h: pd.DataFrame, name: str) -> pd.Series:
     for m in spec.get("subtract") or ():
         bal = _daily(h, name, m)
         out = (out - bal).dropna()
+    # DECLARED EXCLUSIONS (Aerodrome, Jake 2026-09-30): a fixed, documented amount — permanently
+    # locked team tokens — that stays in total supply and in the locked total, but not circulating.
+    for ex in spec.get("declared_exclusions") or ():
+        out = out - float(ex["tokens"])
     return out[out >= 0]
 
 
@@ -104,12 +108,19 @@ def report_lines() -> list[str]:
         head = f"{name}: {st.upper()}"
         if st in ("established", "partial"):
             ex = exclusions(name)
-            head += f" — total {spec['total']} − {len(ex)} address(es)"
+            dec = spec.get("declared_exclusions") or ()
+            head += f" — total {spec['total']} − {len(ex)} address(es)" + (
+                f" − {len(dec)} declared amount(s)" if dec else "")
             lines.append(head)
             for e in ex:
                 lines.append(f"    - {e['key']} {e['chain']} {e['address']} ({e['metric']}); "
                              f"source {e['source_url']}, verified {e['verified']}")
-            if not ex:
+            for d in dec:
+                lines.append(f"    - EXCLUDED: {d['name']} = {d['tokens']:,.0f} (still in total supply, "
+                             f"FDV and the locked total); source {d['source']}; decided by {d['decided_by']}")
+            for pnd in spec.get("pending_same_principle") or ():
+                lines.append(f"    - PENDING (same principle, not excluded): {pnd}")
+            if not ex and not dec:
                 lines.append(f"    (no exclusions) {spec.get('why', '')}")
             if st == "partial":
                 lines.append(f"    MISSING: {spec['missing']}")

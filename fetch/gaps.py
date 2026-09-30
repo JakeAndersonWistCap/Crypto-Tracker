@@ -309,10 +309,11 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric in (gp.get("metrics") or {}):
         dedicated.append((f"growthepie fundamentals.json ({gp.get('origin_key')!r}, "
                           f"{gp['metrics'][metric]!r}; fetch/growthepie.py)", "plume_growthepie"))
-    ds = project.get("defillama_staking_history") or {}
-    if metric == ds.get("metric"):
-        dedicated.append((f"DefiLlama /protocol/{ds.get('protocol')} chainTvls {list(ds.get('keys', ()))} "
-                          f"— key UNCONFIRMED ({ds.get('status')})", "hyperliquid_history_routes"))
+    renamed = {v: k for k, v in (project.get("defillama_metric_as") or {}).items()}
+    if metric in renamed:
+        dedicated.append((f"DefiLlama's {renamed[metric]} for slug {project.get('defillama_fees_slug')!r}, "
+                          f"stored under this cross-check name because {name} publishes its own "
+                          f"{renamed[metric]} (defillama_metric_as)", "llama_probe"))
     if metric == config.ARTEMIS_SETTLEMENT["metric"] and name in config.ARTEMIS_SETTLEMENT["chains"]:
         c = config.ARTEMIS_SETTLEMENT["chains"][name]
         dedicated.append((f"Jake's Artemis CSV export '{c['artemis_name']} - Settlement Volume.csv' "
@@ -320,9 +321,10 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                           "settlement_sources"))
     if dedicated:
         what, probe = dedicated[0]
+        run = (f"`python {probe}.py`" if probe == "llama_probe"
+               else f"`python check_offline_items.py {probe}`")
         return (f"the route is {what}, and it produced nothing this run",
-                f"Check the Run Log for it; `python check_offline_items.py {probe}` shows what the "
-                f"source answers.")
+                f"Check the Run Log for it; {run} shows what the source answers.")
 
     # ===== A BUYBACK TOKEN COUNT DERIVED FROM THE $ AND THE PRICE. Added 2026-09-28. =====
     if metric == "actual_buyback_tokens" and config.buyback_tokens_from_usd(name):
