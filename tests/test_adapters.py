@@ -14676,7 +14676,7 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     # manual quarterly figure — no manual template, and Plume's old closure went with The Block
     assert "settlement_volume_annual_usd" not in config.METRICS
     assert "settlement_volume_annual_usd" not in (config.PROJECT_BY_NAME["Ethereum"].get("manual_quarterly") or [])
-    assert set(config.ARTEMIS_SETTLEMENT["chains"]) == {"Ethereum", "Near", "Hyperliquid"}
+    assert set(config.ARTEMIS_SETTLEMENT["chains"]) == {"Ethereum"}
     # Plume: not on Artemis, not covered by The Block — ACCEPTED LIMIT with that evidence
     for m in ("settlement_volume_usd", "network_reserve_ratio", "settlement_volume_365d_usd"):
         u = config.unavailable_for("Plume", m)
@@ -19198,9 +19198,12 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     # (a manual quarterly row that is actually MISSING stays NEEDS JAKE; this store is empty)
     jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
     # settlement volume (2026-09-30): Ethereum's Artemis export is in; the other three wait on Jake's
+    # (Jake, 2026-09-30: Artemis covers none of them — Hyperliquid CLOSED, NEAR waits on the rebuild)
     assert jake <= {("GEODNET", "locked_tokens"), ("Sky", "net_protocol_surplus_usd"),
-                    *((n, m) for n in ("Near", "Hyperliquid")
-                      for m in ("settlement_volume_usd", "network_reserve_ratio"))}
+                    *(("Near", m) for m in ("settlement_volume_usd", "network_reserve_ratio"))}
+    for m in ("settlement_volume_usd", "network_reserve_ratio"):
+        assert got[("Hyperliquid", m)][0] == "ACCEPTED LIMIT", got[("Hyperliquid", m)]
+        assert "SETTLEMENT_REBUILD" in got[("Near", m)][1]
     assert got[("GEODNET", "locked_tokens")][0] == "NEEDS JAKE" and "~3M" in got[("GEODNET", "locked_tokens")][1]
     # a Review Queue flag is informational, never NEEDS JAKE
     v, d = cr.classify(config.PROJECT_BY_NAME["Uniswap"], "fees_usd", {"status": "review", "note": "x"},
@@ -20317,23 +20320,33 @@ def test_artemis_settlement_csv_imports_one_definition_and_nrr_matches_jakes_che
     body = "DateTime,Ethereum - Settlement Volume\n" + "\n".join(
         f"{x:%Y-%m-%d}T00:00:00.000Z,{per_day:.2f}" for x in days)
     (d / "Ethereum_-_Settlement_Volume.csv").write_text(body)
-    # Artemis's own download name, with spaces, is accepted too
-    (d / "Near - Settlement Volume.csv").write_text("DateTime,Near - DEX Volume\n2026-08-01,1\n")
     out = FetchOutput()
     ArtemisCSV(root=tmp_path).run([config.PROJECT_BY_NAME[n] for n in ("Ethereum", "Near", "Hyperliquid", "Plume")],
                                   None, out)
     f = out.frame()
     assert set(f["project"]) == {"Ethereum"} and len(f) == 1_061
     assert set(f["source"]) == {"artemis:settlement_volume (CSV export, Jake, 2026-09-30)"}
-    assert any("never mixed" in e.message and e.status == "failed" for e in out.log), "Near's other metric refused"
-    assert isinstance(parse(d / "Near - Settlement Volume.csv", "Near"), str)
+    # Artemis covers none of NEAR, Hyperliquid, Plume (Jake, 2026-09-30): not read, not gapped here
+    assert set(config.ARTEMIS_SETTLEMENT["chains"]) == {"Ethereum"} and not out.gaps
+    # ANOTHER METRIC'S COLUMN, under Artemis's own download name (spaces), is refused, never mixed
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "Ethereum - Settlement Volume.csv").write_text("DateTime,Ethereum - DEX Volume\n2026-08-01,1\n")
+    ob = FetchOutput()
+    ArtemisCSV(root=bad).run([config.PROJECT_BY_NAME["Ethereum"]], None, ob)
+    assert ob.frame().empty and any("never mixed" in e.message and e.status == "failed" for e in ob.log)
+    assert isinstance(parse(bad / "Ethereum - Settlement Volume.csv", "Ethereum"), str)
     # a MISSING file gaps the metric with that reason — it never fails the run
-    miss = [g for g in out.gaps if g["project"] == "Hyperliquid"]
-    assert len(miss) == 1 and "no Artemis export found" in miss[0]["reason"]
-    assert "'Hyperliquid - Settlement Volume.csv'" in miss[0]["reason"] and "never committed" in miss[0]["reason"]
-    assert not any(e.status == "failed" and e.project == "Hyperliquid" for e in out.log)
-    # Plume is CLOSED (not on Artemis, not covered by The Block) — not read, not gapped
-    assert "Plume" not in config.ARTEMIS_SETTLEMENT["chains"] and not any(g["project"] == "Plume" for g in out.gaps)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    om = FetchOutput()
+    ArtemisCSV(root=empty).run([config.PROJECT_BY_NAME["Ethereum"]], None, om)
+    assert len(om.gaps) == 1 and "no Artemis export found" in om.gaps[0]["reason"]
+    assert "'Ethereum - Settlement Volume.csv'" in om.gaps[0]["reason"] and "never committed" in om.gaps[0]["reason"]
+    assert not any(e.status == "failed" for e in om.log)
+    # Hyperliquid and Plume are CLOSED (config.UNAVAILABLE) with native-source evidence
+    for n in ("Hyperliquid", "Plume"):
+        assert config.unavailable_for(n, "settlement_volume_usd")["native_checked"]
     # the folder is configurable
     monkey = tmp_path / "elsewhere"
     monkey.mkdir()

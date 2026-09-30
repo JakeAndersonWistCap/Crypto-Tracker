@@ -16595,13 +16595,12 @@ ARTEMIS_SETTLEMENT = {
     # One file per chain. Either name form is accepted: Artemis's download ("<Chain> - Settlement
     # Volume.csv") or the underscored one Jake saved ("<Chain>_-_Settlement_Volume.csv").
     # exported_on is the day Jake exported it (it goes in the source string); a file present
-    # without one uses the file's own date and says so. Jake is checking whether Artemis carries
-    # the same metric for NEAR and Hyperliquid. PLUME IS NOT HERE: not on Artemis, not covered by
-    # The Block — closed as an ACCEPTED LIMIT (config.UNAVAILABLE, 2026-09-30).
+    # without one uses the file's own date and says so. ONLY ETHEREUM: Artemis covers none of NEAR,
+    # Hyperliquid and Plume (Jake checked, 2026-09-30). Hyperliquid and Plume are closed as ACCEPTED
+    # LIMITs (config.UNAVAILABLE); NEAR's rebuild waits on SETTLEMENT_REBUILD. A chain Artemis adds
+    # later goes back in here, and its CSV is read the same way.
     "chains": {
         "Ethereum":    {"artemis_name": "Ethereum", "exported_on": "2026-09-30", "exported_by": "Jake"},
-        "Near":        {"artemis_name": "Near"},
-        "Hyperliquid": {"artemis_name": "Hyperliquid"},
     },
     "check": {"project": "Ethereum", "to": "2026-08-25", "sum_365d_usd": 6.945e12, "mcap_usd": 3.294e11},
 }
@@ -16671,6 +16670,46 @@ TRADING_THROUGHPUT = {
         "Near": "throughput until a settlement rebuild validates (NEAR Intents dominates DEX volume)",
         "Plume": "throughput until a settlement rebuild validates",
     },
+}
+# ===== REBUILDING ARTEMIS'S SETTLEMENT VOLUME WHERE ARTEMIS HAS NO SERIES (Jake, 2026-09-30). =====
+# NOTHING IS WIRED YET: Jake asked for coverage and call volume first (probe
+# settlement_rebuild_coverage), and for Ethereum to validate the method before any rebuild is trusted.
+SETTLEMENT_REBUILD = {
+    "artemis_method": {
+        "source": "Artemis-xyz/dbt is not public; newest public mirror rbreejen/dbt @a404d28f (2025-06-17)",
+        "formula": "settlement = Dune dex.trades SUM(amount_usd) (unadjusted) + Flipside nft.ez_nft_sales "
+                   "SUM(price_usd) + P2P transfers (models/projects/ethereum/core/ez_ethereum_metrics.sql:125)",
+        "p2p": "native + stablecoin + other tokens where NEITHER side is a contract (every CREATE/CREATE2 "
+               "in Flipside fact_traces), no self-transfers, no zero/burn address; stablecoins from a "
+               "whitelist, mints/burns out, a same-CEX-label filter; other tokens only if in the top 250 "
+               "DEX pairs by volume (Ethereum) minus a 20-address blacklist; no min/max value filter "
+               "(macros/p2p/*.sql, filter_p2p_token_transfers.sql:84-135)",
+        "near": "Artemis models NEAR p2p and DEX but has NO settlement_volume column for it "
+                "(ez_near_metrics.sql:21,27-29,45,76-79); Plume and Hyperliquid have neither",
+    },
+    "ethereum_validation": {
+        "status": "CANNOT BE COMPLETED FROM FREE SOURCES — so no Plume/NEAR rebuild is trusted yet",
+        "dex": "DefiLlama /overview/dexs/ethereum (free) — not Artemis's Dune dex.trades, so it will "
+               "not match exactly",
+        "nft": "DefiLlama nft-volume adapters exist (dimension-adapters adapters/types.ts:218; Ethereum "
+               "from Allium) — the public path (/overview/nft-volume/ethereum) is UNVERIFIED",
+        "p2p": "NO FREE SERIES: Coin Metrics' free data has TxTfrCnt only, no TxTfrValAdjUSD "
+               "(coinmetrics/data@f1a36afb csv/eth.csv); Artemis's P2P leg rests on Flipside's labelled "
+               "tables, which are not public. Rebuilding it for Ethereum means scanning every transfer "
+               "with a contract list — far beyond a free explorer key",
+        "probe": "settlement_rebuild_coverage prints DefiLlama DEX (+ NFT if it answers) for August 2026 "
+                 "beside Artemis's August total — the share the P2P leg would have to supply",
+    },
+    "plume": {"route": "Blockscout v2 /api/v2/token-transfers (50 per page, is_contract on each side) "
+                       "or /api/v2/advanced-filters/csv (10,000 rows a call, no is_contract); prices are "
+                       "current-only, so each day needs an external price; NFT volume ~0",
+              "estimate": "365 x N / 50 calls on the v2 route, 365 x N / 10,000 on the CSV route plus "
+                          "an is_contract lookup per new address — N measured by the probe"},
+    "near": {"route": "NearBlocks v3 /v3/fts/txns (100 per page, before_ts for days); per-contract "
+                      "/v3/fts/{contract}/stats/transfers gives 365 days in one call but GROSS, not P2P",
+             "estimate": "365 x N / 100 calls and 365 x N / 25 credits against the keyed default plan's "
+                         "3,666 calls a day / 110k a month — N measured by the probe"},
+    "hyperliquid": "NOT REBUILDABLE — see UNAVAILABLE (Hyperliquid, settlement_volume_usd)",
 }
 METHODOLOGY_FLAGS = {
     "hyperliquid_nrr": "Hyperliquid's NRR on settlement volume is not meaningful: its activity is perps, "
@@ -17943,7 +17982,8 @@ UNAVAILABLE = [
             "tier (none carries it for Plume)."),
         "impact": "Plume has no Network Reserve Ratio; the cells read CLOSED, not missing.",
         "reopen_if": "Artemis adds Plume — then its CSV export goes beside the others "
-                     "(ARTEMIS_SETTLEMENT).",
+                     "(ARTEMIS_SETTLEMENT); OR a rebuild of the definition validates on Ethereum "
+                     "(SETTLEMENT_REBUILD) and Jake approves its call volume.",
         "native_checked": [
             {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
                        "transfer volume, Powered by Flipside)",
@@ -17958,6 +17998,90 @@ UNAVAILABLE = [
              "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
                         "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
                         "free tier and does not list Plume (2026-09-29)"},
+        ],
+    },
+    # ===== HYPERLIQUID SETTLEMENT VOLUME — ACCEPTED LIMIT, NOT REBUILDABLE (Jake, 2026-09-30). =====
+    # Its activity is perps, which Artemis's definition excludes: the trading-throughput NRR
+    # (TRADING_THROUGHPUT) is the only meaningful one for it — flagged in METHODOLOGY_FLAGS.
+    {
+        "project": "Hyperliquid", "metric": "settlement_volume_usd",
+        "closed_on": "2026-09-30",
+        "summary": "Hyperliquid isn't on Artemis, and HyperCore transfers are not publicly indexed, so "
+                   "Artemis's definition cannot be rebuilt; its activity is perps, which that definition "
+                   "excludes — the trading-throughput NRR is the meaningful one.",
+        "what_was_tried": "Artemis (not covered); Hyperliquid's info API (per-user only); node logs "
+                          "(no historical series without running a node); HyperEVM explorers (miss HyperCore).",
+        "impact": "Hyperliquid's settlement-volume NRR reads CLOSED; A1 shows its NRR on trading throughput.",
+        "reopen_if": "Artemis adds Hyperliquid, or a public daily HyperCore transfer series appears.",
+        "native_checked": [
+            {"source": "Artemis (the definition: DEX + NFT trading + P2P transfer volume)",
+             "finding": "Hyperliquid is NOT on Artemis — Jake checked, 2026-09-30; Artemis's own dbt "
+                        "models carry only Hyperliquid trading volume, no p2p or NFT model "
+                        "(rbreejen/dbt mirror @a404d28f models/projects/hyperliquid/core/"
+                        "ez_hyperliquid_metrics.sql:45-47,77)"},
+            {"source": "Hyperliquid's own info API (hyperliquid-dex/hyperliquid-python-sdk@2fdb18f9)",
+             "finding": "every transfer/ledger query is PER USER — userNonFundingLedgerUpdates requires "
+                        "`user` (hyperliquid/info.py:652-669); there is no global transfer feed"},
+            {"source": "Hyperliquid node (hyperliquid-dex/node@405cc08b README)",
+             "finding": "the local info server serves no historical time series (l.176); history means "
+                        "running a node and parsing replica_cmds/misc_events (~100 GB of logs a day, l.91)"},
+            {"source": "HyperEVM explorers",
+             "finding": "index HyperEVM only — HyperCore spot/USDC transfers, where most activity is, are "
+                        "not on them, so a HyperEVM-only rebuild would understate by construction"},
+        ],
+    },
+    {
+        "project": "Hyperliquid", "metric": "network_reserve_ratio",
+        "closed_on": "2026-09-30",
+        "summary": "Hyperliquid isn't on Artemis, and HyperCore transfers are not publicly indexed, so "
+                   "Artemis's definition cannot be rebuilt; its activity is perps, which that definition "
+                   "excludes — the trading-throughput NRR is the meaningful one.",
+        "what_was_tried": "Artemis (not covered); Hyperliquid's info API (per-user only); node logs "
+                          "(no historical series without running a node); HyperEVM explorers (miss HyperCore).",
+        "impact": "Hyperliquid's settlement-volume NRR reads CLOSED; A1 shows its NRR on trading throughput.",
+        "reopen_if": "Artemis adds Hyperliquid, or a public daily HyperCore transfer series appears.",
+        "native_checked": [
+            {"source": "Artemis (the definition: DEX + NFT trading + P2P transfer volume)",
+             "finding": "Hyperliquid is NOT on Artemis — Jake checked, 2026-09-30; Artemis's own dbt "
+                        "models carry only Hyperliquid trading volume, no p2p or NFT model "
+                        "(rbreejen/dbt mirror @a404d28f models/projects/hyperliquid/core/"
+                        "ez_hyperliquid_metrics.sql:45-47,77)"},
+            {"source": "Hyperliquid's own info API (hyperliquid-dex/hyperliquid-python-sdk@2fdb18f9)",
+             "finding": "every transfer/ledger query is PER USER — userNonFundingLedgerUpdates requires "
+                        "`user` (hyperliquid/info.py:652-669); there is no global transfer feed"},
+            {"source": "Hyperliquid node (hyperliquid-dex/node@405cc08b README)",
+             "finding": "the local info server serves no historical time series (l.176); history means "
+                        "running a node and parsing replica_cmds/misc_events (~100 GB of logs a day, l.91)"},
+            {"source": "HyperEVM explorers",
+             "finding": "index HyperEVM only — HyperCore spot/USDC transfers, where most activity is, are "
+                        "not on them, so a HyperEVM-only rebuild would understate by construction"},
+        ],
+    },
+    {
+        "project": "Hyperliquid", "metric": "settlement_volume_365d_usd",
+        "closed_on": "2026-09-30",
+        "summary": "Hyperliquid isn't on Artemis, and HyperCore transfers are not publicly indexed, so "
+                   "Artemis's definition cannot be rebuilt; its activity is perps, which that definition "
+                   "excludes — the trading-throughput NRR is the meaningful one.",
+        "what_was_tried": "Artemis (not covered); Hyperliquid's info API (per-user only); node logs "
+                          "(no historical series without running a node); HyperEVM explorers (miss HyperCore).",
+        "impact": "Hyperliquid's settlement-volume NRR reads CLOSED; A1 shows its NRR on trading throughput.",
+        "reopen_if": "Artemis adds Hyperliquid, or a public daily HyperCore transfer series appears.",
+        "native_checked": [
+            {"source": "Artemis (the definition: DEX + NFT trading + P2P transfer volume)",
+             "finding": "Hyperliquid is NOT on Artemis — Jake checked, 2026-09-30; Artemis's own dbt "
+                        "models carry only Hyperliquid trading volume, no p2p or NFT model "
+                        "(rbreejen/dbt mirror @a404d28f models/projects/hyperliquid/core/"
+                        "ez_hyperliquid_metrics.sql:45-47,77)"},
+            {"source": "Hyperliquid's own info API (hyperliquid-dex/hyperliquid-python-sdk@2fdb18f9)",
+             "finding": "every transfer/ledger query is PER USER — userNonFundingLedgerUpdates requires "
+                        "`user` (hyperliquid/info.py:652-669); there is no global transfer feed"},
+            {"source": "Hyperliquid node (hyperliquid-dex/node@405cc08b README)",
+             "finding": "the local info server serves no historical time series (l.176); history means "
+                        "running a node and parsing replica_cmds/misc_events (~100 GB of logs a day, l.91)"},
+            {"source": "HyperEVM explorers",
+             "finding": "index HyperEVM only — HyperCore spot/USDC transfers, where most activity is, are "
+                        "not on them, so a HyperEVM-only rebuild would understate by construction"},
         ],
     },
     {

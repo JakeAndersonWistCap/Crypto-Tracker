@@ -3025,6 +3025,101 @@ def plume_sources():
           "  diamond is confirmed live and its stake matches the app's figure.")
 
 
+def settlement_rebuild_coverage():
+    """Jake 2026-09-30 (settlement volume for NEAR / Hyperliquid / Plume): BEFORE any transfer scan is
+    wired, the coverage per chain and the call volume a year of history would cost, from MEASURED
+    daily transfer counts — and how far the free sources get on Ethereum against Artemis's own
+    August 2026 figure (the validation that decides whether a rebuild can be trusted). Reads only;
+    keys never printed. config.SETTLEMENT_REBUILD holds the method and routes."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head("SETTLEMENT REBUILD — Ethereum validation, then measured call volume for Plume and NEAR")
+    # 1. ETHEREUM: DefiLlama DEX (+ NFT if it answers) for August 2026 beside Artemis's August total
+    m0, m1 = pd.Timestamp("2026-08-01"), pd.Timestamp("2026-08-31")
+
+    def month_sum(path):
+        try:
+            j = requests.get(f"https://api.llama.fi{path}", params={"excludeTotalDataChart": "false",
+                             "excludeTotalDataChartBreakdown": "true"}, headers=_ua(), timeout=TIMEOUT)
+            if not j.ok:
+                return None, f"HTTP {j.status_code}"
+            pts = [(pd.Timestamp(int(t), unit="s"), float(v)) for t, v in j.json().get("totalDataChart") or []]
+            got = [v for d, v in pts if m0 <= d <= m1]
+            return (sum(got), f"{len(got)} day(s)") if got else (None, "no August days")
+        except Exception as e:  # noqa: BLE001
+            return None, str(e)[:120]
+    dex, dex_n = month_sum("/overview/dexs/ethereum")
+    nft, nft_n = month_sum("/overview/nft-volume/ethereum")       # path UNVERIFIED
+    art = None
+    try:
+        from fetch.artemis import ArtemisCSV, parse         # noqa: PLC0415
+        f = ArtemisCSV()._find("Ethereum")
+        got = parse(f, "Ethereum") if f else "no export found"
+        if not isinstance(got, str):
+            vals = [v for d, v in got[0] if m0 <= d <= m1]
+            art = sum(vals) if len(vals) == 31 else None
+    except Exception as e:  # noqa: BLE001
+        print(f"  Artemis CSV: {e}")
+    fmt = lambda v: "n/a" if v is None else f"${v / 1e9:,.1f}bn"          # noqa: E731
+    print(f"  ETHEREUM, August 2026: Artemis settlement {fmt(art)}; DefiLlama DEX {fmt(dex)} ({dex_n}); "
+          f"DefiLlama NFT {fmt(nft)} ({nft_n}, path unverified)")
+    if art and dex:
+        rest = art - dex - (nft or 0)
+        print(f"  DEX{' + NFT' if nft else ''} = {(dex + (nft or 0)) / art:.1%} of Artemis; the P2P leg would have "
+              f"to supply {fmt(rest)} ({rest / art:.1%}). NO FREE P2P VALUE SERIES EXISTS (Coin Metrics' free "
+              f"data has TxTfrCnt only) — the rebuild cannot be validated on Ethereum from free sources.")
+    # 2. PLUME: measured daily ERC-20 transfer rate (Blockscout v2, newest pages) and native transfers
+    base = "https://explorer.plume.org"
+    try:
+        rows, params = [], {"type": "ERC-20"}
+        for _ in range(5):
+            j = requests.get(f"{base}/api/v2/token-transfers", params=params, headers=_ua(), timeout=TIMEOUT).json()
+            rows += j.get("items") or []
+            params = {"type": "ERC-20", **(j.get("next_page_params") or {})}
+            if not j.get("next_page_params"):
+                break
+        ts = sorted(pd.Timestamp(r["timestamp"]) for r in rows if r.get("timestamp"))
+        span = (ts[-1] - ts[0]).total_seconds() if len(ts) > 1 else 0
+        n_day = len(ts) / span * 86_400 if span else None
+        eoa = sum(1 for r in rows if not (r.get("from") or {}).get("is_contract")
+                  and not (r.get("to") or {}).get("is_contract"))
+        print(f"\n  PLUME: {len(ts)} newest ERC-20 transfers span {span / 3600:.1f} h -> ~{n_day or 0:,.0f} a day; "
+              f"{eoa} of {len(rows)} are EOA-to-EOA (is_contract false on both sides)")
+        if n_day:
+            print(f"    a year on /api/v2/token-transfers (50 a page): ~{365 * n_day / 50:,.0f} calls "
+                  f"(~{365 * n_day / 50 / 300 / 60:,.0f} h at 300/min); on the CSV export (10,000 rows a call): "
+                  f"~{365 * n_day / 10_000:,.0f} calls + an is_contract lookup per new address")
+    except Exception as e:  # noqa: BLE001
+        print(f"  PLUME Blockscout: {e}")
+    try:
+        lines = requests.get(f"{base}/stats-service/api/v1/lines", headers=_ua(), timeout=TIMEOUT).json()
+        names = [c.get("id") for sec in lines.get("sections") or [] for c in sec.get("charts") or []]
+        print(f"    stats-service charts: {names}")
+    except Exception as e:  # noqa: BLE001
+        print(f"    stats-service lines: {e}")
+    # 3. NEAR: measured FT transfer rate (NearBlocks, keyed) and the plan budget it would use
+    key = os.environ.get("NEARBLOCKS_API_KEY", "").strip()
+    hdr = {**_ua(), **({"Authorization": f"Bearer {key}"} if key else {})}
+    try:
+        j = requests.get("https://api.nearblocks.io/v1/fts/txns", params={"per_page": 25}, headers=hdr,
+                         timeout=TIMEOUT).json()
+        txs = j.get("txns") or []
+        ts = sorted(int(t.get("block_timestamp") or 0) / 1e9 for t in txs if t.get("block_timestamp"))
+        span = ts[-1] - ts[0] if len(ts) > 1 else 0
+        n_day = len(ts) / span * 86_400 if span else None
+        c = requests.get("https://api.nearblocks.io/v1/fts/txns/count", headers=hdr, timeout=TIMEOUT).json()
+        print(f"\n  NEAR: {len(ts)} newest FT transfers span {span / 60:.1f} min -> ~{n_day or 0:,.0f} a day; "
+              f"lifetime count {c}")
+        if n_day:
+            print(f"    a year on /v3/fts/txns (100 a page): ~{365 * n_day / 100:,.0f} calls, ~{365 * n_day / 25:,.0f} "
+                  f"credits — the keyed default plan allows 3,666 calls a day / 110,000 a month "
+                  f"(~{365 * n_day / 100 / 3_666:,.0f} days of quota)")
+    except Exception as e:  # noqa: BLE001
+        print(f"  NEAR NearBlocks: {str(e).split('?')[0]}")
+    print("\n  HYPERLIQUID: not rebuildable (config.UNAVAILABLE) — HyperCore transfers are per-user only.")
+    print("  PASTE BACK. Nothing is wired until you approve a route and its call volume.")
+
+
 def plume_archive():
     """Jake's run 2026-09-30 17:21: does rpc.plume.org serve HISTORICAL state for the live staking
     diamond? totalAmountStaked() and getRewardRate() at the first block of the day 1, 7, 30, 90,
@@ -3825,7 +3920,7 @@ CHECKS = (
     robots_and_terms, ultrasound_history, beaconchain_quota, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
-    geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive,
+    geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

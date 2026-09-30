@@ -88,10 +88,15 @@ DECISIONS = {
     # from CSV exports read at run time (config.ARTEMIS_SETTLEMENT). Ethereum's is exported; Jake is
     # checking whether Artemis carries NEAR and Hyperliquid. Plume is a closure (not on Artemis,
     # not covered by The Block) — config.UNAVAILABLE, with its evidence.
-    **{(n, m): ("NEEDS JAKE", f"check whether Artemis carries {n}'s Settlement Volume; if it does, "
-                              f"export the CSV to the repo root as '{n} - Settlement Volume.csv'; if "
-                              f"not, it becomes an ACCEPTED LIMIT like Plume's")
-       for n in ("Near", "Hyperliquid") for m in ("settlement_volume_usd", "network_reserve_ratio")},
+    # Jake 2026-09-30: Artemis carries neither. Hyperliquid is CLOSED (config.UNAVAILABLE — not
+    # rebuildable). NEAR's rebuild waits on two things only Jake can decide on.
+    **{("Near", m): ("NEEDS JAKE", "Artemis doesn't carry NEAR (Jake, 2026-09-30). A rebuild (DEX + P2P "
+                                   "via NearBlocks) waits on (1) validating the method on Ethereum, which "
+                                   "free sources cannot complete (no free P2P value series — "
+                                   "config.SETTLEMENT_REBUILD), and (2) your go-ahead on its call volume "
+                                   "(probe settlement_rebuild_coverage). A1's NRR on trading throughput "
+                                   "covers NEAR meanwhile")
+       for m in ("settlement_volume_usd", "network_reserve_ratio")},
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
                       "publishes it"),
