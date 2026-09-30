@@ -3688,3 +3688,32 @@ SELECT date, value, source
 -- DELETE FROM metrics
 --  WHERE project = 'Maple' AND metric = 'actual_buyback_usd_implied';
 -- COMMIT;
+
+-- ========================================================================================
+-- BJ. AETHIR locked_tokens: THE DASHBOARD'S totalStaked IS PRIMARY; THE WRAPPER BECOMES ITS OWN SERIES  2026-09-30
+--     Jake's probes3: dashboard.aethir.com/protocol/onchain-metric totalStaked = 1,789,329,560.63,
+--     which includes the compute providers' IDC stake that the Ethereum wrapper 0x3f69… (808.7M)
+--     never sees. The page is now stored as locked_tokens; the wrapper read lands as
+--     locked_tokens_wrapper (contracts.staking_wrapper metric_override). The wrapper rows already
+--     under locked_tokens would be a second measuring point in the same series: RENAME them
+--     (keeps the data). REVIEW FIRST.
+-- ========================================================================================
+-- BJ1. WHAT IS THERE.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(MIN(value), 0) AS min_tokens, ROUND(MAX(value), 0) AS max_tokens
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'locked_tokens'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BJ2. A RENAMED ROW WOULD COLLIDE WITH ONE ALREADY UNDER locked_tokens_wrapper? (expect 0 rows)
+SELECT m.date
+  FROM metrics m
+  JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = 'locked_tokens_wrapper'
+ WHERE m.project = 'Aethir' AND m.metric = 'locked_tokens' AND m.source LIKE '%staking_wrapper%';
+
+-- BJ3. THE RENAME. Only after BJ1/BJ2.
+-- BEGIN;
+-- UPDATE metrics SET metric = 'locked_tokens_wrapper'
+--  WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE '%staking_wrapper%';
+-- COMMIT;

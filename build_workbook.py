@@ -849,6 +849,22 @@ def _monthly_leg_views(groups: dict) -> None:
             groups[(name, metric)] = g[keep]
 
 
+def _measured_emissions_views(groups: dict) -> None:
+    """A MEASURED emissions series replaces the declared schedule's (config issuance_schedule
+    `emissions_measured_by`). Aethir (Jake's probes3, 2026-09-30): the dashboard's own `emitted`
+    series. Where ANY measured row is stored, the schedule's emissions_tokens rows are dropped at
+    read time — never deleted — so the series has one measuring point; gross_issuance_tokens stays
+    on the schedule. No measured row: the schedule's rows stand."""
+    for p in scoped_projects():
+        want = (p.get("issuance_schedule") or {}).get("emissions_measured_by")
+        g = groups.get((p["name"], "emissions_tokens"))
+        if not want or g is None or g.empty:
+            continue
+        pts = g["source"].astype(str).map(_measuring_point)
+        if (pts == want).any():
+            groups[(p["name"], "emissions_tokens")] = g[pts == want]
+
+
 def _usd_history_views(groups: dict) -> None:
     """A token flow's history BEFORE its live read = a USD series / same-day price (config
     `burn_history`). Hyperliquid, Jake 2026-09-30: the Assistance Fund's buyback IS its burn, so
@@ -1362,6 +1378,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _monthly_leg_views(groups)
+    _measured_emissions_views(groups)
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
     _burn_total_views(groups)
     _one_off_views(groups)        # BEFORE the relabel, so a burn-route buyback copies the ongoing flow

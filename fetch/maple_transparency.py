@@ -231,6 +231,101 @@ def ssf_series(markup: str) -> tuple[list[tuple], str] | str:
     return sorted(best[0].items()), best[1]
 
 
+def ssf_frame(markup: str) -> pd.DataFrame | str:
+    """day, syrup (syrupHoldings), usd (liquidAssetsUsd) from the island dataset reaching furthest
+    back whose rows carry both; one row a UTC day (the last). For the LP test (lp_fit)."""
+    best = None
+    for props in islands(markup):
+        ds = props.get("datasets")
+        if not isinstance(ds, dict):
+            continue
+        for key, rows in ds.items():
+            got = {}
+            for r in rows if isinstance(rows, list) else ():
+                if not isinstance(r, dict) or "syrupHoldings" not in r or "liquidAssetsUsd" not in r:
+                    continue
+                d = _ts(r.get("ts"))
+                try:
+                    got[d.normalize()] = (float(str(r["syrupHoldings"]).replace(",", "")),
+                                          float(str(r["liquidAssetsUsd"]).replace(",", "").replace("$", "")))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            if got and (best is None or min(got) < min(best)):
+                best = got
+    if best is None:
+        return "no astro-island carries datasets.*[{ts, syrupHoldings, liquidAssetsUsd}]"
+    return pd.DataFrame([(d, a, b) for d, (a, b) in sorted(best.items())], columns=["day", "syrup", "usd"])
+
+
+def price_series(markup: str) -> tuple[pd.Series, str] | str:
+    """The page's OWN SYRUP price by day, from any island dataset whose rows carry a ts and a
+    field named like a price; the one reaching furthest back. Or why there is none."""
+    best = None
+    for props in islands(markup):
+        ds = props.get("datasets")
+        if not isinstance(ds, dict):
+            continue
+        for key, rows in ds.items():
+            got, field = {}, None
+            for r in rows if isinstance(rows, list) else ():
+                if not isinstance(r, dict):
+                    continue
+                field = field or next((k for k in r if "price" in k.lower()), None)
+                d = _ts(r.get("ts"))
+                if field is None or d is None or field not in r:
+                    continue
+                try:
+                    got[d.normalize()] = float(str(r[field]).replace(",", "").replace("$", ""))
+                except (TypeError, ValueError):
+                    continue
+            if got and (best is None or min(got) < min(best[0])):
+                best = (got, f"dataset {key}.{field}")
+    if best is None:
+        return "no astro-island dataset carries a price field"
+    return pd.Series(best[0]).sort_index(), best[1]
+
+
+def lp_fit(df: pd.DataFrame, rule: dict) -> dict:
+    """IS THE SSF A CONSTANT-PRODUCT LIQUIDITY POSITION? (Jake's probes3, 2026-09-30.)
+
+    df: day, syrup, usd, price. For an x*y=k position at price P, x = sqrt(k/P) and y = sqrt(kP):
+        d(syrup) = -1/2 * x_lp * dlnP        d(usd) = +1/2 * y_lp * dlnP,   y_lp = x_lp * P
+    so each daily change is regressed on dlnP (with an intercept), giving how much of the movement
+    price explains (R^2) and the implied LP size on each side, which must agree with each other at
+    the mean price. Also d(usd) on -P*d(syrup): an AMM moves its two sides at the market price
+    (slope 1). The verdict applies the declared rule (config Maple.ssf_lp_test), nothing else."""
+    import numpy as np
+    d = df.sort_values("day").dropna(subset=["syrup", "usd", "price"])
+    d = d[d["price"] > 0]
+    dl = np.diff(np.log(d["price"].to_numpy()))
+    ds, du = np.diff(d["syrup"].to_numpy()), np.diff(d["usd"].to_numpy())
+    p = d["price"].to_numpy()[1:]
+
+    def ols(y, x):
+        X = np.column_stack([np.ones_like(x), x])
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        res = y - X @ beta
+        tot = ((y - y.mean()) ** 2).sum()
+        return float(beta[1]), (float(1 - (res ** 2).sum() / tot) if tot > 0 else float("nan"))
+    if len(dl) < 10:
+        return {"n": len(dl), "verdict": None, "why": f"{len(dl)} daily change(s) — too few to fit"}
+    bs, r2s = ols(ds, dl)
+    bu, r2u = ols(du, dl)
+    c, r2c = ols(du, -p * ds)
+    x_lp, y_lp = -2 * bs, 2 * bu
+    pm = float(np.mean(p))
+    agree = y_lp / (x_lp * pm) if x_lp > 0 else float("nan")
+    lo, hi = rule["size_agreement"]
+    ok = (r2s >= rule["min_r2"] and r2u >= rule["min_r2"] and bs < 0 < bu and lo <= agree <= hi)
+    return {"n": len(dl), "first": d["day"].iloc[0], "last": d["day"].iloc[-1],
+            "slope_syrup": bs, "r2_syrup": r2s, "slope_usd": bu, "r2_usd": r2u,
+            "swap_slope": c, "r2_swap": r2c, "x_lp": x_lp, "y_lp": y_lp, "mean_price": pm,
+            "size_agreement": agree, "verdict": bool(ok),
+            "why": (f"R2 syrup {r2s:.2f}, usd {r2u:.2f} (need >= {rule['min_r2']}); slopes {bs:,.0f} / "
+                    f"{bu:,.0f} (need - / +); implied LP {x_lp:,.0f} SYRUP vs ${y_lp:,.0f} at "
+                    f"${pm:.4f} = {agree:.2f}x (need {lo}-{hi})")}
+
+
 def revenue_series(markup: str) -> tuple[list[tuple], str] | str:
     """([(month_end, revenueUsd)], dataset) from the island dataset reaching furthest back whose rows
     carry revenueUsd; or why nothing was taken. One row a month; a repeated month is refused."""

@@ -223,9 +223,17 @@ METRICS = {
     # circulating_supply_first_party: the protocol's own circulating figure where it publishes
     # one (Hyperliquid tokenDetails.circulatingSupply). circulating_supply_onchain: READ-TIME
     # (build_workbook._circulating_views) = on-chain total − the documented non-circulating set.
-    "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply)",
-                                       "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
-                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid",)},
+    "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply; Aethir dashboard athCirculatingSupply)",
+                                       "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 3],
+                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir")},
+    # ===== AETHIR'S STAKE, BY POOL, FROM ITS OWN DASHBOARD (Jake's probes3, 2026-09-30). =====
+    # locked_tokens = the on-chain page's totalStaked; these are the parts it shows beside it, and
+    # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
+    "locked_tokens_ai":      {"label": "Staked — AI pool (Aethir dashboard aiStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "locked_tokens_gaming":  {"label": "Staked — Gaming pool (Aethir dashboard gamingStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "locked_tokens_edge":    {"label": "Staked — Edge (Aethir dashboard edgeStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "locked_tokens_idc":     {"label": "Staked — compute providers / Cloud Hosts (Aethir dashboard idcStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "locked_tokens_wrapper": {"label": "ATH held by the Ethereum staking wrapper 0x3f69… (stAethir/veAethir, 1:1) — reference", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "circulating_supply_onchain": {"label": "Circulating supply — on-chain total − the DOCUMENTED non-circulating set (CIRCULATING_ONCHAIN)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
@@ -3718,7 +3726,15 @@ PROJECTS = [
         "fees_usd_from_native": {"native_metric": "fees_native_tokens",
                                  "source": "derived:blockscout_stats:txnsFee*price"},
         "plume_staking": {
-            "address": "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d",
+            # ===== LIVE DIAMOND CONFIRMED (Jake's probes3, 2026-09-30). =====
+            # 0x30c791E4…: totalAmountStaked() = 134,043,359.31 PLUME, -0.04% against the app's
+            # 134.1M; myPLUME's feed plumeStaking() points to it. locked_tokens = totalAmountStaked().
+            # The ABI in fetch/plume_staking.py IS v2 (facets at 8248e78 = 3ef710a, the v2 commit);
+            # getValidatorInfo is not used (its tuple order changed in d408f63), getValidatorStats is.
+            "address": "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871",
+            # Unstaking cooldown: getCooldownInterval() = 1,814,400 s = 21 days (Jake, 2026-09-30;
+            # seconds per PlumeStakingStorage.sol@3ef710a:111). Read and compared every run.
+            "cooldown_seconds": 1_814_400, "cooldown_read": "Jake's probes3, 2026-09-30",
             "rpc": "https://rpc.plume.org",
             "reward_token": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
             "max_reward_rate": 3171 * 10**9,
@@ -3750,11 +3766,13 @@ PROJECTS = [
             #    (DefiLlama-Adapters projects/mystic-finance-myplume, plume_mainnet) stores
             #    plumeStaking() — the diamond live staking actually uses. Probe plume_sources reads it.
             #  - No public repo holds staking.plume.org's frontend (none of ~180 names exist).
-            "live_contract": {"confirmed": False,
-                              "why": "getValidatorsList() here sums to 94.87 PLUME and its state matches "
-                                     "Plume's deploy script (placeholder validators); a newer diamond "
-                                     "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871 replaced it in the v2 "
-                                     "commit — which one staking.plume.org uses is unconfirmed",
+            "live_contract": {"confirmed": True,
+                              "confirmed_by": "Jake's probes3, 2026-09-30: 0x30c791E4 totalAmountStaked "
+                                              "134,043,359.31 PLUME (-0.04% vs staking.plume.org's "
+                                              "134.1M); myPLUME's plumeStaking() points to it",
+                              "why": "0xCF8B's getValidatorsList() sums to 94.87 PLUME and its state matches "
+                                     "Plume's deploy script (placeholder validators) — the TEST diamond; "
+                                     "its 4.9966% gross / 0.50% commission are DISCARDED",
                               "candidates": ("0x30c791E4654EdAc575FA1700eD8633CB2FEDE871",
                                              "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d",
                                              "0xA20bfe49969D4a0E9abfdb6a46FeD777304ba07f"),
@@ -7288,6 +7306,30 @@ PROJECTS = [
                                  "list could not be opened from here (000).",
             },
             "route_that_would_work": "read docs.aethir.com/aethir-staking/staking-key-information from a host that can reach it and take the Arbitrum contract from there; then an escrow_balance_of read on ATH (contracts.token_arbitrum) against it.",
+            # ===== ANSWERED BY AETHIR'S OWN DASHBOARD (Jake's probes3, 2026-09-30). =====
+            "dashboard_2026_09_30": {
+                "read": "dashboard.aethir.com/protocol/onchain-metric and /supply-metric, Jake, 2026-09-30",
+                "totalStaked": 1_789_329_560.63,
+                "parts_latest": {"aiStaked": 400_200_000, "gamingStaked": 287_600_000,
+                                 "edgeStaked": 149_700_000, "idcStaked": 902_900_000},
+                "parts_sum_vs_total": "1,740.4M vs 1,789.3M: -48.9M (-2.7%) — the parts do NOT sum to the "
+                                      "total on these (rounded, latest-of-series) figures. Not explained; "
+                                      "the run log prints both with each part's date every run.",
+                "idcStaked_supply_page": 866_896_004,
+                "wired_as": "locked_tokens = totalStaked (PRIMARY); the four parts as locked_tokens_ai / "
+                            "_gaming / _edge / _idc; the wrapper read as locked_tokens_wrapper (reference)",
+                "wrapper_relation": "NOT ESTABLISHED. Wrapper 808.7M (2026-09-24) vs ai+gaming 687.8M "
+                                    "(-15%) and ai+gaming+edge 837.5M (+3.6%); the ve pools' supply() "
+                                    "summed 785.4M on 2026-09-24. A June 2026 THIRD-PARTY snapshot of the "
+                                    "page reads '1.75B total veATH staked, 735.54M native veATH staked' "
+                                    "(chuhemiao/portfolio@08cc0b07, aethir-ath-gpu-cloud-depin-token-supply-"
+                                    "risk.mdx:23,75-79) — i.e. totalStaked is veATH staked and the wrapper "
+                                    "(which mints veAethir 1:1) is the 'native' part; unverified. Probe "
+                                    "aethir_pages reads wrapper, veAethir and pool supply() beside the "
+                                    "page's parts at the same time.",
+                "defillama": "DefiLlama's Aethir staking is this same wrapper only "
+                             "(DefiLlama-Adapters@b8804e76 registries/sumTokens/data3.js:398-403).",
+            },
         },
         "coingecko_id": "aethir",
         # ===== FEES SLUG WIRED 2026-09-24, ON JAKE'S INSTRUCTION — UNCONFIRMED UNTIL A LIVE RUN. =====
@@ -7446,6 +7488,10 @@ PROJECTS = [
             # bonus are supplier buckets too, but neither has a declared schedule (see phase_2
             # and the staking-pool note), so emissions UNDERSTATES what suppliers receive.
             "also_emissions": True,
+            # probes3 (Jake, 2026-09-30): the dashboard's own `emitted` series REPLACES this
+            # schedule's emissions_tokens wherever it is stored (build_workbook._measured_emissions_views);
+            # gross_issuance_tokens stays on the schedule. No measured rows = the schedule stays.
+            "emissions_measured_by": "aethir_page:protocol/onchain-metric.emitted",
             "emissions_partial_reason": "Checker Node BASE rewards only. Compute-provider "
                                         "rewards and the Checker Node bonus are supplier "
                                         "buckets with no declared schedule, so this UNDERSTATES "
@@ -7540,10 +7586,14 @@ PROJECTS = [
                 token_standard="erc20",
                 purpose="ATH on ETHEREUM — the balanceOf target for the staking wrapper. "
                         "REFERENCE ONLY for supply: never summed."),
+            # ===== NO LONGER locked_tokens (Jake's probes3, 2026-09-30). The dashboard's totalStaked
+            # (1,789,329,560.63) includes the compute providers' IDC stake this wrapper never sees;
+            # it is locked_tokens now, and this read lands as locked_tokens_wrapper beside it
+            # (orphan_cleanup.sql BJ renames the rows it stored as locked_tokens). =====
             "staking_wrapper": _contract(
                 "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE", "ethereum", "ve_total_supply", "ATH",
                 "https://aethir.com/",
-                verified="2026-09-24",
+                verified="2026-09-24", metric_override="locked_tokens_wrapper",
                 provenance="Structural proof, Jake's live reads 2026-09-24: ATH.balanceOf(wrapper) = "
                            "stAethir.totalSupply() = veAethir.totalSupply() = 808,689,366.92, all "
                            "three to the wei — see aethir_staking.wrapper_three_way_match_2026_09_24. "
@@ -7611,11 +7661,54 @@ PROJECTS = [
                 "protocol/supply-metric": {"fields": {"nodes": "supply_units",
                                                       "locations": "supply_locations",
                                                       "totalComputePower": "compute_power_total",
-                                                      "totalMonthlyCapacity": "capacity_monthly_total"}},
+                                                      "totalMonthlyCapacity": "capacity_monthly_total"},
+                                           # probes3: 866,896,004 here against the on-chain page's
+                                           # latest 902.9M — logged side by side (cross_checks)
+                                           "report": ("idcStaked", "totalOnlineHours")},
+                # probes3 2d: `amount` and `earning` series are NOT wired — whether they are USD
+                # revenue or ATH purchases, monthly or cumulative, is not established from the page
+                # (probe aethir_pages prints the text beside each). A June 2026 third-party snapshot
+                # of this page reads "$179.43M total network revenue since June 2024" (USD,
+                # cumulative) and "8.69B ATH in on-chain compute purchases" — which key is which is
+                # unverified (chuhemiao/portfolio@08cc0b07, aethir-ath-gpu-cloud-depin-token-supply-risk.mdx:75-79).
                 "protocol/demand-metric": {"fields": {}},
-                "protocol/onchain-metric": {"fields": {}},
+                # ===== FIRST-PARTY A2 DATA (Jake's probes3, 2026-09-30). =====
+                # totalStaked 1,789,329,560.63 -> locked_tokens (PRIMARY); aiStaked ~400.2M,
+                # gamingStaked ~287.6M, edgeStaked ~149.7M, idcStaked ~902.9M (latest of each
+                # series) stored beside it. THE PARTS DO NOT SUM TO THE TOTAL on Jake's figures:
+                # 1,740.4M vs 1,789.3M (-48.9M, -2.7%) — logged every run with each part's date.
+                # athCirculatingSupply 23,308,238,268 -> circulating_supply_first_party (PRIMARY,
+                # CIRCULATING_ONCHAIN "first_party"; CoinGecko the cross-check).
+                "protocol/onchain-metric": {
+                    "fields": {"totalStaked": "locked_tokens", "aiStaked": "locked_tokens_ai",
+                               "gamingStaked": "locked_tokens_gaming", "edgeStaked": "locked_tokens_edge",
+                               "idcStaked": "locked_tokens_idc",
+                               "athCirculatingSupply": "circulating_supply_first_party"},
+                    "components": {"total": "totalStaked",
+                                   "parts": ("aiStaked", "gamingStaked", "edgeStaked", "idcStaked")},
+                    # `emitted` (614,412,275 -> …) is emissions_tokens when the page settles its shape:
+                    # CUMULATIVE if it never falls and its last point matches one of the page's own
+                    # cumulative totals below, PER-MONTH if its sum does. ±5%: the series is
+                    # month-end while the totals are live, and one month of base rewards is ~3.6%
+                    # of baseRewardDistributed. Neither: nothing stored, the schedule stays.
+                    "flows": {"emitted": {"metric": "emissions_tokens", "granularity": "monthly",
+                                          "totals": ("baseRewardDistributed", "bonusRewardDistributed",
+                                                     "airdropRewardDistributed"),
+                                          "agree_within": 0.05}},
+                    # baseRewardDistributed 2,418,496,407 vs the declared Checker Node schedule
+                    # (4.2bn / 1461 days from 2024-06-12): 841 days to 2026-09-30 = 2,417,659,140
+                    # (+0.03%) — the page's figure IS the cumulative base schedule. Logged each run.
+                    "report": ("baseRewardDistributed", "bonusRewardDistributed", "airdropRewardDistributed",
+                               "numberDelegatedCheckers", "totalRunningHours"),
+                },
                 "protocol/overview": {"fields": {}},
             },
+            "cross_checks": (
+                {"what": "idcStaked on the two pages",
+                 "pair": (("protocol/onchain-metric", "idcStaked"), ("protocol/supply-metric", "idcStaked"))},
+            ),
+            "schedule_check": {"page": "protocol/onchain-metric", "key": "baseRewardDistributed",
+                               "from": "2024-06-12", "tokens_per_day": 4_200_000_000 / 1461},
             "read_on": "2026-09-30",
         },
         "series_handover": {
@@ -8230,6 +8323,61 @@ PROJECTS = [
         # Read by fetch/maple_transparency.py (plain GET, no browser; cached for the day).
         # Jake's probes2 (2026-09-30): Maple's own monthly revenue (transparency page) is primary.
         "defillama_metric_as": {"revenue_usd": "revenue_usd_defillama"},
+        # ===== WHY MAPLE'S OWN REVENUE RUNS ABOVE DEFILLAMA'S FROM 2025-10 (Jake's probes3 3d). =====
+        # Maple's monthly revenueUsd matches DefiLlama's through 2025-09 (0.99-1.01x), then runs
+        # 1.24-2.23x higher. DefiLlama's ONE adapter (DefiLlama/dimension-adapters fees/maple-
+        # finance.ts, read at HEAD 8f969826, 2026-09-30) and its history explain most of it:
+        "revenue_divergence": {
+            "observed": "Maple/DefiLlama 0.99-1.01x through 2025-09; 1.24-2.23x from 2025-10 (Jake)",
+            "defillama_counts_now": "Ethereum + off_chain only. Fixed-term loan fees and interest "
+                                    "(factories 0x36a73503…/0xeA067DB5…, feeManager 0xFeACa6A5…); open-term "
+                                    "managers discovered from factory 0x90b14505… (delegate + platform "
+                                    "management and service fees); strategy performance fees from the Aave "
+                                    "and Sky strategy factories ONLY; OTC desk revenue from Maple's Dune "
+                                    "dataset (L43-298)",
+            "history": "aa73dd18 2025-08-20: a HARDCODED list of 9 stablecoin + 1 WETH open-term managers "
+                       "and transfer-based revenue; d0e747a6 2026-01-07: management + service fees of those "
+                       "hardcoded managers only (no strategies, no fixed-term, no OTC); 0acfa457 2026-02-11: "
+                       "factory discovery, fixed-term, Aave/Sky strategy fees, OTC; f14e261f 2026-08-22: "
+                       "'crash on pre-2023 days, dead OTC leg, wrong buyback rate' — the OTC query matched "
+                       "one timestamp (OTC ~0 Feb-Aug 2026) and one PaymentMade signature dropped every "
+                       "fixed-term payment",
+            "likely_causes": ("DefiLlama's stored history from 2025-08 to 2026-02 was produced by the "
+                              "narrow hardcoded-manager versions — pools launched after the list "
+                              "(syrupUSDG 2026-05, Secured Lending) and strategy/OTC fees are missing "
+                              "unless DefiLlama refilled history; whether it did is not established",
+                              "Basic-strategy performance fees: basicStrategyFactory "
+                              "0x876D54DBF61473cA169b89B95344A14E81F37afe (address-registry@3df2052 "
+                              "MapleAddressRegistryETH.md:25) is not read — only Aave and Sky are",
+                              "Maple's Base deployment (feeManager 0xc4D7…99b0, "
+                              "MapleAddressRegistryBASEL2.md:109-110) is not read",
+                              "compare like with like: DefiLlama's protocol revenue nets a holders "
+                              "share (25% from 2025-11 under e4cb48f9; 10% from 2026-07) — 1.33x / 1.11x "
+                              "by itself, not the whole 1.24-2.23x"),
+            "status": "RECORDED — Maple's own figure stays primary (revenue_usd); DefiLlama's is "
+                      "revenue_usd_defillama, the cross-check. Not reconciled month by month.",
+            "source": "DefiLlama/dimension-adapters@8f969826 fees/maple-finance.ts and git log -- that file",
+        },
+        # ===== IS THE SSF A LIQUIDITY POSITION? THE TEST AND ITS RULE (Jake's probes3 3a-c). =====
+        # Last week: SYRUP ~$0.20 -> ~$0.24 (+20%); syrupHoldings 79,206,477 -> 74,891,424 (-5.4%);
+        # liquidAssetsUsd 4,305,019 -> 4,756,501 (+10.5%) — the shape of an x*y=k pool (+9.5%).
+        # BUT on those numbers alone: USD gained / SYRUP lost = $0.105 per SYRUP, half the market
+        # price, and a full-range pool holding all 79M SYRUP would need ~$15.8M on its USD side, not
+        # $4.3M. So one week does not settle it; the daily regression over every day the page serves
+        # does (probe maple_ssf_lp_test, fetch/maple_transparency.lp_fit). Maple's own docs describe
+        # the SSF as a WALLET receiving 25% of revenue for buybacks and a DAO balance sheet
+        # (maple-docs syrup-tokenomics/staking.md:5; unconverted MPL minted to it, mpl-token-
+        # migration.md:11) and name no LP position; the only public SYRUP pools found are SYRUP/ETH
+        # (Uniswap v4, 1%; Uniswap v3 SYRUP-WETH 1%) — no SYRUP/USDC pool, no address guessed.
+        "ssf_lp_test": {
+            "min_r2": 0.5,                      # price explains most of BOTH sides' daily moves
+            "size_agreement": (0.8, 1.25),      # the two sides imply one x*y=k position at the mean price
+            "if_confirmed": "SSF holding changes are price-driven rebalancing, NOT release: retire the "
+                            "SSF-based pool_release (pool_release_tokens_blocked -> RETIRED) and take "
+                            "Maple's emissions from syrupDrip instead (probe maple_drips)",
+            "one_week_check": "Jake 2026-09-30: -5.4% SYRUP / +10.5% USD for +20% price; implied "
+                              "$0.105/SYRUP — not a clean single-pool fit",
+        },
         # ===== THE SSF RELEASE IS HELD UNTIL ITS OTHER INFLOWS ARE CLASSIFIED (Jake, 2026-09-30). =====
         "pool_release_tokens_blocked": {
             "status": "HELD — SSF inflows other than buybacks are unclassified",
@@ -8243,6 +8391,17 @@ PROJECTS = [
             "route_that_would_work": "python check_offline_items.py maple_ssf_inflows — lists the "
                                      "SSF's daily jumps beyond the buybacks and the SYRUP transfers "
                                      "into Maple's treasury on those days, with each sender",
+            # probes3 (2026-09-30): holdings also ROSE in 5 months with ZERO SYRUP transferred into the
+            # treasury — the LP hypothesis. maple_ssf_lp_test decides: LP CONFIRMED = this release is
+            # RETIRED (not merely held) and emissions come from syrupDrip (maple_drips).
+            "lp_hypothesis": "probe maple_ssf_lp_test; rule in ssf_lp_test",
+            "emissions_route": "syrupDrip 0x509712F368255E92410893Ba2E488f40f7E986EA (maple-labs/address-"
+                               "registry@3df2052 MapleAddressRegistryETH.md:273): Claimed + Staked - "
+                               "Reclaimed by month (probe maple_drips). Drips ended with Season 12 (Q4 2025, "
+                               "claims to 2026-02-18; maple-docs drips-rewards.md:7-20); staking rewards "
+                               "sunset under MIP-019 (staking.md:3); later incentives are partner-funded on "
+                               "Merkl — no Maple-funded SYRUP campaign found. NOT WIRED until the probe's "
+                               "monthly figures are read.",
         },
         "transparency_page": {
             "url": "https://maple.finance/transparency",
@@ -16755,6 +16914,12 @@ def series_granularity(project_name: str, metric: str) -> str:
     page = ((p.get("transparency_page") or {}).get("metrics") or {}).get(metric) or {}
     if page.get("granularity"):
         return page["granularity"]
+    # A DASHBOARD FLOW, declared beside the read that produces it (Aethir's `emitted`, monthly —
+    # fetch/aethir_pages refuses the series if its points are not that far apart).
+    for pg in ((p.get("dashboard_pages") or {}).get("pages") or {}).values():
+        for f in (pg.get("flows") or {}).values():
+            if f.get("metric") == metric and f.get("granularity"):
+                return f["granularity"]
     q = (p.get("dune_queries") or {}).get(metric) or {}
     if str(q.get("date_col") or "").lower() == "month":
         return "monthly"
@@ -17987,9 +18152,13 @@ CIRCULATING_ONCHAIN = {
                              "circulating: once this set is primary, the team's 95M is taken out of "
                              "the locked total before subtracting, so it is never counted twice "
                              "(config.locked_excluded_from_circulating)"},
-    "Aethir": {"status": "not_established",
-               "why": "supply is split across Arbitrum and a bridged Ethereum representation, and no "
-                      "treasury, vesting or foundation address is documented in config"},
+    # Jake's probes3 (2026-09-30): Aethir's own dashboard publishes athCirculatingSupply
+    # (23,308,238,268 on 2026-09-30) — PRIMARY, CoinGecko the cross-check (Review Queue beyond ±2%).
+    "Aethir": {"status": "first_party", "metric": "circulating_supply_first_party",
+               "why": "athCirculatingSupply on dashboard.aethir.com/protocol/onchain-metric — Aethir's "
+                      "own figure (fetch/aethir_pages.py). No on-chain set: supply is split across "
+                      "Arbitrum and a bridged Ethereum representation, and no treasury, vesting or "
+                      "foundation address is documented in config"},
     "Plume": {"status": "not_established",
               "why": "PLUME is native gas on Plume with an Ethereum ERC-20, and no treasury, vesting "
                      "or foundation address is documented in config"},

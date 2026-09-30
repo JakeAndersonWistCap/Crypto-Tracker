@@ -21,11 +21,26 @@ READ FROM PLUME'S OWN SOURCE, plumenetwork/contracts @8248e78ce0c15ad3875fb2e693
     commission   = stake-weighted mean of getValidatorsList()[i].commission / 1e18
     net APR      = gross x (1 - commission)          (stored as its own metric)
 
-** totalAmountStaked() IS NOT THE TOTAL ON MAINNET (Jake's probe, 2026-09-30). ** It answered
-94,868,945,541,646,499,332 — "95 PLUME" — which is impossible for a live network. Source does not
-explain it (between dd5df2e and d408f63, May 2025, unstake stopped decrementing it — that would
-push it UP); the deployed storage evidently differs. The total is the per-validator sum; the
-aggregate is logged beside it and never stored.
+** THE LIVE DIAMOND IS 0x30c791E4654EdAc575FA1700eD8633CB2FEDE871 (Jake's probes3, 2026-09-30). **
+Its totalAmountStaked() = 134,043,359.31 PLUME, -0.04% against staking.plume.org's 134.1M, and
+Mystic's myPLUME feed plumeStaking() points to it. 0xCF8B (94.87 PLUME) is the deploy script's test
+diamond; its 4.9966% rate is never stored. locked_tokens = totalAmountStaked() on the live diamond;
+the per-validator sum is logged beside it.
+
+THE ABI IS ALREADY v2. The staking facets at 8248e78 are byte-identical to 3ef710a ("[PDE-2650] v2
+fixes", 2025-07-16), the commit that moved the scripts to 0x30c791E4. getValidatorInfo(uint16)
+failed to decode for Jake because ValidatorInfo's field ORDER changed in d408f63 (same selector,
+different tuple). It is not used: getValidatorStats(uint16) -> (bool active, uint256 commission,
+uint256 totalStaked, uint256 stakersCount) (ValidatorFacet.sol@3ef710a:899-913) has kept its shape
+in every version, and gives the active flag.
+  - the rate is GLOBAL: setRewardRates writes one rate into every validator's checkpoint
+    (RewardsFacet.sol@3ef710a:252-284); an inactive validator gets a 0-rate checkpoint
+    (ValidatorFacet.sol:279-282) and its stake earns nothing (PlumeRewardLogic.sol:141-157)
+  - commission is taken per validator (PlumeRewardLogic.sol:163-190, 339-354)
+    net APR (per staked PLUME) = gross x sum_active(staked x (1 - commission)) / sum_all(staked)
+    commission (reported)      = stake-weighted over ACTIVE validators
+  - getCooldownInterval() is in SECONDS (PlumeStakingStorage.sol:111, StakingFacet.sol:830):
+    1,814,400 = 21 days (Jake, 2026-09-30); read and compared with the recorded value every run.
 
 The rate is capped by the contract at 3171e9; a reading above the cap, or a non-integer answer,
 stores nothing. (MAX_REWARD_RATE x 31,536,000 / 1e18 = 100x a year — the interface's "~100% APY"
@@ -49,6 +64,12 @@ ABI = [
      "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "totalAmountStaked",
      "outputs": [{"name": "amount", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [{"name": "validatorId", "type": "uint16"}], "name": "getValidatorStats",
+     "outputs": [{"name": "active", "type": "bool"}, {"name": "commission", "type": "uint256"},
+                 {"name": "totalStaked", "type": "uint256"}, {"name": "stakersCount", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "getCooldownInterval",
+     "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "getValidatorsList",
      "outputs": [{"name": "list", "type": "tuple[]", "components": [
          {"name": "id", "type": "uint16"}, {"name": "totalStaked", "type": "uint256"},
@@ -78,8 +99,9 @@ class PlumeStaking:
                 self._project(p["name"], spec, out)
 
     def _read(self, spec: dict, address: str) -> dict | str:
-        """One diamond's readings, or why they are unusable: {address, rate, apr, aggregate,
-        rows [(id, staked wei, commission 1e18)], total (PLUME), commission (fraction)}."""
+        """One diamond's readings, or why they are unusable: {address, rate, apr, aggregate
+        (totalAmountStaked, PLUME), rows [(id, staked wei, commission 1e18, active)], total (the
+        per-validator sum, PLUME), commission (stake-weighted over active), net_factor, cooldown}."""
         try:
             c = self._contract(dict(spec, address=address))
             rate = c.functions.getRewardRate(spec["reward_token"]).call()
@@ -92,6 +114,8 @@ class PlumeStaking:
         if rate > int(spec["max_reward_rate"]):
             return (f"{address}: getRewardRate = {rate} is above the contract's own cap "
                     f"{spec['max_reward_rate']} — not the quantity read from source")
+        if not isinstance(aggregate, int) or aggregate <= 0:
+            return f"{address}: totalAmountStaked answered {aggregate!r}"
         rows = []
         for v in validators if isinstance(validators, (list, tuple)) else ():
             try:
@@ -100,26 +124,43 @@ class PlumeStaking:
                 return f"{address}: getValidatorsList answered {str(validators)[:160]!r}"
             if staked < 0 or not 0 <= comm <= 10**18:
                 return f"{address}: validator {vid} carries staked {staked} / commission {comm}"
-            rows.append((vid, staked, comm))
+            try:
+                active = bool(c.functions.getValidatorStats(vid).call()[0])
+            except Exception as e:  # noqa: BLE001
+                active = None
+                log.info("plume_staking: getValidatorStats(%s) on %s: %s", vid, address, e)
+            rows.append((vid, staked, comm, active))
         total = sum(r[1] for r in rows)
         if not rows or total <= 0:
             return f"{address}: getValidatorsList holds no stake"
+        try:
+            cooldown = int(c.functions.getCooldownInterval().call())
+        except Exception:  # noqa: BLE001
+            cooldown = None
+        known = all(r[3] is not None for r in rows)
+        act = [r for r in rows if r[3]] if known else []
+        act_stake = sum(r[1] for r in act)
         return {"address": address, "rate": rate, "apr": rate * SECONDS_PER_YEAR / 1e18,
-                "aggregate": aggregate / 1e18 if isinstance(aggregate, int) else None, "rows": rows,
-                "total": total / 1e18, "commission": sum(r[1] * r[2] for r in rows) / total / 1e18}
+                "aggregate": aggregate / 1e18, "rows": rows, "total": total / 1e18,
+                "active_known": known, "n_active": len(act), "active_share": act_stake / total,
+                "commission": (sum(r[1] * r[2] for r in act) / act_stake / 1e18) if act_stake else None,
+                "net_factor": (sum(r[1] * (10**18 - r[2]) for r in act) / total / 1e18) if known else None,
+                "cooldown": cooldown}
 
     def _project(self, name: str, spec: dict, out) -> None:
         """NOTHING IS STORED UNTIL ONE DIAMOND RECONCILES WITH THE APP (Jake, 2026-09-30).
 
-        staking.plume.org showed 134.1M PLUME staked (live_contract.app_total_tokens). Every
-        candidate diamond is read and its per-validator total compared with that figure; exactly
-        ONE within ±app_tolerance is the live contract, and only then are its stake, gross APR,
-        commission and net APR stored. 0xCF8B (the deploy script's test diamond, 94.87 PLUME)
-        cannot match, so its 4.9966% rate is never stored. None, or more than one, matching stores
-        nothing and logs every candidate against the target."""
+        UNCONFIRMED: every candidate is read and its totalAmountStaked() compared with
+        staking.plume.org's figure (live_contract.app_total_tokens); exactly ONE within
+        ±app_tolerance is the live contract. CONFIRMED (0x30c791E4, Jake's probes3): only that
+        address is read and the app comparison is LOGGED — it no longer gates, because the stake
+        moves away from a one-day app reading as weeks pass. Stored: locked_tokens =
+        totalAmountStaked(); the GROSS APR; the stake-weighted commission over ACTIVE validators;
+        the NET APR = gross x sum_active(staked x (1 - commission)) / sum_all(staked)."""
         when = today()
         live = spec.get("live_contract") or {}
-        cands = [spec["address"]] if live.get("confirmed") else list(live.get("candidates") or (spec["address"],))
+        confirmed = bool(live.get("confirmed"))
+        cands = [spec["address"]] if confirmed else list(live.get("candidates") or (spec["address"],))
         target, tol = live.get("app_total_tokens"), float(live.get("app_tolerance") or 0)
         reads, lines = [], []
         for addr in cands:
@@ -128,33 +169,50 @@ class PlumeStaking:
                 lines.append(got)
                 continue
             reads.append(got)
-            vs = (f" vs the app's {target:,.0f} ({got['total'] / target - 1:+.2%})" if target else "")
-            lines.append(f"{addr}: {len(got['rows'])} validators, {got['total']:,.2f} PLUME{vs}, gross APR "
-                         f"{got['apr']:.4%}, commission {got['commission']:.2%}")
-        match = [g for g in reads if target and abs(g["total"] / target - 1) <= tol]
+            vs = (f" vs the app's {target:,.0f} ({got['aggregate'] / target - 1:+.2%})" if target else "")
+            lines.append(f"{addr}: totalAmountStaked {got['aggregate']:,.2f} PLUME{vs}; {len(got['rows'])} "
+                         f"validators summing {got['total']:,.2f}; gross APR {got['apr']:.4%}")
+        if confirmed:
+            match = reads
+        else:
+            match = [g for g in reads if target and abs(g["aggregate"] / target - 1) <= tol]
         if len(match) != 1:
-            why = ("no app total to reconcile against (live_contract.app_total_tokens)" if not target else
+            why = (f"the confirmed diamond {spec['address']} could not be read" if confirmed else
+                   "no app total to reconcile against (live_contract.app_total_tokens)" if not target else
                    f"{len(match)} candidate(s) within ±{tol:.1%} of staking.plume.org's {target:,.0f} PLUME "
                    f"({live.get('app_read', '')})")
             out.skipped(SOURCE, name, f"NOTHING STORED — {why}. Candidates: " + " | ".join(lines), TIER)
             return
         g = match[0]
         tag = f"{SOURCE}:{g['address'][:10]}"
+        vs = (f"{g['aggregate'] / target - 1:+.2%} against the app's {target:,.0f} ({live.get('app_read', '')})"
+              if target else "no app figure")
         out.add(point(name, spec["apr_metric"], g["apr"], f"{tag}.getRewardRate(PLUME_NATIVE)[GROSS]", TIER, when),
                 SOURCE, name, f"{spec['apr_metric']} = {g['rate']} x 31,536,000 / 1e18 = {g['apr']:.4%} GROSS "
                               f"of validator commission — live diamond {g['address']}", TIER)
-        out.add(point(name, spec["stake_metric"], g["total"], f"{tag}.getValidatorsList.sum(totalStaked)", TIER, when),
-                SOURCE, name, f"{spec['stake_metric']} = sum of {len(g['rows'])} validators' totalStaked = "
-                              f"{g['total']:,.2f} PLUME, reconciled with the app's {target:,.0f} "
-                              f"({g['total'] / target - 1:+.2%}, within ±{tol:.1%}) — {g['address']} is the live "
-                              f"diamond (totalAmountStaked() = {g['aggregate']!r}, not used)", TIER)
-        out.add(point(name, spec["commission_metric"], g["commission"],
-                      f"{tag}.getValidatorsList.commission[stake-weighted]", TIER, when), SOURCE, name,
-                f"{spec['commission_metric']} = stake-weighted commission {g['commission']:.2%}", TIER)
-        net = g["apr"] * (1 - g["commission"])
-        out.add(point(name, spec["net_apr_metric"], net, f"{tag}.gross*(1-commission)", TIER, when),
-                SOURCE, name, f"{spec['net_apr_metric']} = {g['apr']:.4%} x (1 - {g['commission']:.2%}) = "
-                              f"{net:.4%} NET of stake-weighted commission", TIER)
-        if not live.get("confirmed"):
+        out.add(point(name, spec["stake_metric"], g["aggregate"], f"{tag}.totalAmountStaked", TIER, when),
+                SOURCE, name, f"{spec['stake_metric']} = totalAmountStaked() = {g['aggregate']:,.2f} PLUME "
+                              f"({vs}); {len(g['rows'])} validators sum to {g['total']:,.2f} "
+                              f"({g['total'] / g['aggregate'] - 1:+.4%})", TIER)
+        if g["commission"] is None or g["net_factor"] is None:
+            out.skipped(SOURCE, name, f"{spec['commission_metric']} / {spec['net_apr_metric']}: NOT STORED — "
+                                      f"getValidatorStats did not give every validator's active flag, and "
+                                      f"inactive stake earns nothing", TIER)
+        else:
+            out.add(point(name, spec["commission_metric"], g["commission"],
+                          f"{tag}.getValidatorsList.commission[stake-weighted, active]", TIER, when), SOURCE, name,
+                    f"{spec['commission_metric']} = {g['commission']:.2%}, stake-weighted over {g['n_active']} "
+                    f"active of {len(g['rows'])} validators ({g['active_share']:.2%} of stake)", TIER)
+            net = g["apr"] * g["net_factor"]
+            out.add(point(name, spec["net_apr_metric"], net, f"{tag}.gross*active(1-commission)", TIER, when),
+                    SOURCE, name, f"{spec['net_apr_metric']} = {g['apr']:.4%} x {g['net_factor']:.4f} (active "
+                                  f"stake net of commission, over all stake) = {net:.4%}", TIER)
+        want = spec.get("cooldown_seconds")
+        cd = g["cooldown"]
+        out.skipped(SOURCE, name, f"getCooldownInterval() = "
+                                  + (f"{cd:,} s = {cd / 86_400:g} days" if cd is not None else "UNREAD")
+                                  + (f"; recorded {want:,} s" + ("" if cd == want else " — DIFFERENT: update "
+                                     "plume_staking.cooldown_seconds with the date") if want else ""), TIER)
+        if not confirmed:
             out.skipped(SOURCE, name, f"identified {g['address']} as the live diamond by reconciliation; set "
                                       f"plume_staking.address to it and live_contract.confirmed = True", TIER)

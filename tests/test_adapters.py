@@ -14686,7 +14686,10 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     assert config.VALIDATOR_YIELD["Near"]["share_path"][-1] == "validator_share"
     assert {n for n in ("GEODNET", "Hyperliquid", "Ethereum", "Near", "Uniswap", "Sky")
             if config.issuance_basis(n) == "pool_release_tokens"} == {"GEODNET", "Hyperliquid"}
-    assert "EigenLayer" in config.lock_partial_reason("Aethir")
+    # Jake's probes3 (2026-09-30): locked_tokens is the dashboard's totalStaked now; the wrapper
+    # (whose partial reason named the EigenLayer vault) serves locked_tokens_wrapper instead
+    assert config.lock_partial_reason("Aethir") is None
+    assert "EigenLayer" in config.PROJECT_BY_NAME["Aethir"]["contracts"]["staking_wrapper"]["partial_reason"]
 
 
 def test_archetype_tabs_open_on_the_valuation_headlines():
@@ -14979,9 +14982,9 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 4 checks" in out2
+    assert "'maple' matches 6 checks" in out2
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
-                                   "maple_ssf_inflows"))
+                                   "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips"))
 
 
 def test_offline_checks_unmatched_name_refuses_and_points_at_list(monkeypatch, capsys):
@@ -19895,16 +19898,23 @@ def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_ac
 
 
 def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_stores_nothing():
-    """G + Jake's probe 4a/4b (2026-09-30): gross APR = rewardRates[PLUME_NATIVE] x 31,536,000 /
-    1e18, stored labelled GROSS; total staked = the SUM of getValidatorsList()'s totalStaked —
-    totalAmountStaked() read 95 PLUME on mainnet and is never stored; commission is stake-weighted
-    from the same list and the net APR is its own metric. A rate above the cap stores nothing."""
+    """G + Jake's probes3 (2026-09-30): the LIVE diamond is 0x30c791E4 (totalAmountStaked
+    134,043,359.31, -0.04% vs the app's 134.1M). locked_tokens = totalAmountStaked(); gross APR =
+    rewardRates[PLUME_NATIVE] x 31,536,000 / 1e18, labelled GROSS; commission stake-weighted over
+    ACTIVE validators (getValidatorStats — getValidatorInfo's tuple order changed in d408f63); net
+    APR = gross x sum_active(staked x (1-commission)) / all stake. The 21-day cooldown is read and
+    compared. Unconfirmed, exactly one candidate must reconcile with the app; a rate above the cap
+    stores nothing."""
+    import copy
     from fetch.plume_staking import PlumeStaking
     spec = config.PROJECT_BY_NAME["Plume"]["plume_staking"]
-    assert spec["address"] == "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d"
+    assert spec["address"] == "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871"
+    assert spec["live_contract"]["confirmed"] is True and spec["cooldown_seconds"] == 1_814_400
     assert config.VALIDATOR_YIELD["Plume"]["metric"] == "staking_yield_pct"
 
-    def factory(rate, aggregate, validators):
+    def factory(rate, aggregate, validators, active=None, cooldown=1_814_400):
+        active = active or {}
+
         class F:
             def __init__(self):
                 self.functions = self
@@ -19918,52 +19928,74 @@ def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_sto
 
             def getValidatorsList(self):
                 return type("C", (), {"call": lambda s: validators})()
+
+            def getValidatorStats(self, vid):
+                v = next(x for x in validators if x[0] == vid)
+                return type("C", (), {"call": lambda s: (active.get(vid, True), v[2], v[1], 10)})()
+
+            def getCooldownInterval(self):
+                return type("C", (), {"call": lambda s: cooldown})()
         return lambda sp: F()
     plume = config.PROJECT_BY_NAME["Plume"]
     live = spec["live_contract"]
     assert live["app_total_tokens"] == 134_100_000 and live["app_tolerance"] == 0.005
     cands = list(live["candidates"])
-    assert cands[0] == "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871" and live["confirmed"] is False
+    assert cands[0] == spec["address"]
 
     def multi(by_addr):
-        """contract_factory reading per candidate: {address: (rate, aggregate, validators)}."""
+        """contract_factory reading per candidate: {address: (rate, aggregate, validators[, active])}."""
         def make(sp):
-            rate, agg, vals = by_addr[sp["address"]]
-            return factory(rate, agg, vals)(sp)
+            return factory(*by_addr[sp["address"]])(sp)
         return make
     test_diamond = (1_584_404_391, 94_868_945_541_646_499_332,         # 0xCF8B: 94.87 PLUME
                     [(1, 56_410_000_000_000_000_000, 5 * 10**15), (2, 38_458_945_541_646_499_332, 5 * 10**15)])
-    live_diamond = (1_900_000_000, 134_200_000 * 10**18,                # 134.2M: +0.07% vs 134.1M
-                    [(1, 100_000_000 * 10**18, 5 * 10**16), (2, 34_200_000 * 10**18, 2 * 10**16)])
-    far = (1_000_000_000, 1, [(1, 10**24, 0)])                            # 1M PLUME: no match
-    # NO candidate reconciles: nothing stored — the test diamond's 4.9966% included
+    agg = 134_043_359_310_000_000_000_000_000                          # Jake's read, -0.04% vs 134.1M
+    vals = [(1, 100_000_000 * 10**18, 5 * 10**16), (2, 30_000_000 * 10**18, 2 * 10**16),
+            (3, 4_043_359_310_000_000_000_000_000, 10**17)]
+    live_diamond = (1_900_000_000, agg, vals, {3: False})              # validator 3 inactive
+    far = (1_000_000_000, 10**24, [(1, 10**24, 0)])                    # 1M PLUME: no match
+
+    # CONFIRMED: only the live diamond is read, and its own figures are stored
     out = FetchOutput()
-    PlumeStaking(contract_factory=multi({cands[0]: far, cands[1]: test_diamond, cands[2]: far})).run([plume], None, out)
+    PlumeStaking(contract_factory=multi({cands[0]: live_diamond})).run([plume], None, out)
+    f = out.frame().set_index("metric")
+    assert f.loc["locked_tokens", "value"] == agg / 1e18
+    assert f.loc["locked_tokens", "source"] == "plume_staking:0x30c791E4.totalAmountStaked"
+    apr = 1_900_000_000 * 31_536_000 / 1e18
+    assert abs(f.loc["staking_yield_pct", "value"] - apr) < 1e-12 and "[GROSS]" in f.loc["staking_yield_pct", "source"]
+    comm = (100 * 0.05 + 30 * 0.02) / 130                              # active validators only
+    assert abs(f.loc["staking_commission_pct", "value"] - comm) < 1e-9
+    net_factor = (100 * 0.95 + 30 * 0.98) / (agg / 1e24)               # inactive stake earns nothing
+    assert abs(f.loc["staking_yield_net_pct", "value"] - apr * net_factor) < 1e-9
+    msgs = " ".join(e.message for e in out.log)
+    assert "-0.04% against the app's 134,100,000" in msgs and "1,814,400 s = 21 days" in msgs
+    assert "DIFFERENT" not in msgs
+    # a changed cooldown is flagged, not silently accepted
+    out = FetchOutput()
+    PlumeStaking(contract_factory=lambda sp: factory(*live_diamond, cooldown=604_800)(sp)).run([plume], None, out)
+    assert any("DIFFERENT" in e.message for e in out.log)
+
+    # UNCONFIRMED (the gate that identified it): exactly one candidate within ±0.5% of the app
+    unconf = copy.deepcopy(plume)
+    unconf["plume_staking"]["live_contract"]["confirmed"] = False
+    out = FetchOutput()
+    PlumeStaking(contract_factory=multi({cands[0]: far, cands[1]: test_diamond, cands[2]: far})).run([unconf], None, out)
     assert out.frame().empty
     msg = next(e.message for e in out.log if e.status == "skipped")
     assert "0 candidate(s) within ±0.5% of staking.plume.org's 134,100,000" in msg and "94.87 PLUME" in msg
-    # EXACTLY ONE reconciles: it is the live diamond, and its OWN rate and stake are stored
     out = FetchOutput()
     PlumeStaking(contract_factory=multi({cands[0]: live_diamond, cands[1]: test_diamond, cands[2]: far})).run(
-        [plume], None, out)
-    f = out.frame().set_index("metric")
-    assert f.loc["locked_tokens", "value"] == 134_200_000.0
-    apr = 1_900_000_000 * 31_536_000 / 1e18
-    assert abs(f.loc["staking_yield_pct", "value"] - apr) < 1e-12 and "[GROSS]" in f.loc["staking_yield_pct", "source"]
-    comm = (100 * 0.05 + 34.2 * 0.02) / 134.2
-    assert abs(f.loc["staking_commission_pct", "value"] - comm) < 1e-9
-    assert abs(f.loc["staking_yield_net_pct", "value"] - apr * (1 - comm)) < 1e-12
-    assert all(cands[0][:10] in s_ for s_ in f["source"])
+        [unconf], None, out)
+    assert out.frame().set_index("metric").loc["locked_tokens", "value"] == agg / 1e18
     assert any("identified 0x30c791E4" in e.message for e in out.log)
-    # TWO would reconcile: ambiguous, nothing stored
     out = FetchOutput()
     PlumeStaking(contract_factory=multi({cands[0]: live_diamond, cands[1]: live_diamond, cands[2]: far})).run(
-        [plume], None, out)
+        [unconf], None, out)
     assert out.frame().empty
     # a rate above the cap disqualifies a candidate
     out2 = FetchOutput()
     bad = (4000 * 10**9,) + live_diamond[1:]
-    PlumeStaking(contract_factory=multi({cands[0]: bad, cands[1]: test_diamond, cands[2]: far})).run([plume], None, out2)
+    PlumeStaking(contract_factory=multi({cands[0]: bad, cands[1]: test_diamond, cands[2]: far})).run([unconf], None, out2)
     assert out2.frame().empty and any("above the contract's own cap" in e.message for e in out2.log)
 
 
@@ -20305,7 +20337,9 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
     assert sum("convention: staked/locked count as circulating" in ln for ln in lines) == n_projects
     for name in ("Morpho", "Aerodrome", "Aethir", "Plume", "Near"):
         # Aerodrome is PARTIAL since Jake's decision (2026-09-30): the team's 95M permanent veNFTs
-        assert config.circulating_onchain(name)["status"] == ("partial" if name == "Aerodrome" else "not_established")
+        # Aethir is FIRST_PARTY since Jake's probes3 (2026-09-30): the dashboard's athCirculatingSupply
+        assert config.circulating_onchain(name)["status"] == {"Aerodrome": "partial", "Aethir": "first_party"}.get(
+            name, "not_established")
         cand = config.NONCIRCULATING_CANDIDATES[name]
         assert cand["addresses"] and all(a["source"] and a["address"] for a in cand["addresses"])
     assert any(a["address"] == "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa"
@@ -20473,6 +20507,145 @@ def test_aethir_page_fields_come_from_the_nextjs_server_payload():
         scrape.robots_verdict = orig
     assert config.declared_handover("Aethir", "supply_units")["ordered_points"] == \
         ("manual", "aethir_page:protocol/supply-metric.nodes")
+
+
+def test_aethir_onchain_page_locked_circulating_components_and_emitted_shape():
+    """Jake's probes3 2 (2026-09-30): the on-chain page is first-party A2 data. totalStaked is
+    locked_tokens (the wrapper moves to locked_tokens_wrapper, SQL BJ renames its old rows); the
+    four parts are stored beside it with their history and their sum is LOGGED against the total;
+    athCirculatingSupply is the first-party circulating (primary); `emitted` becomes
+    emissions_tokens only when the page settles its shape — cumulative (last point = a page total)
+    or per-month (sum = a page total) — and then replaces the schedule's emissions rows."""
+    import build_workbook as bw
+    from fetch.aethir_pages import AethirPages, flow_shape, reading
+
+    def page(objs):
+        chunk = json.dumps("1a:" + json.dumps(objs))[1:-1]
+        return f'<html><script>self.__next_f.push([1,"{chunk}"])</script></html>'
+    months = ["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01", "2026-09-01"]
+    emitted_cum = [3_400e6, 3_500e6, 3_600e6, 3_700e6, 3_820e6]
+    base, bonus, air = 2_418_496_407, 1_181_250_000, 249_123_076          # sum 3,848,869,483
+    series = [{"date": m, "aiStaked": 380.2e6 + i * 5e6, "gamingStaked": 287.6e6, "edgeStaked": 149.7e6,
+               "idcStaked": 900.1e6 + i * 0.7e6, "emitted": e} for i, (m, e) in enumerate(zip(months, emitted_cum))]
+    onchain = page([{"totalStaked": 1_789_329_560.63, "athCirculatingSupply": 23_308_238_268,
+                     "baseRewardDistributed": base, "bonusRewardDistributed": bonus,
+                     "airdropRewardDistributed": air, "numberDelegatedCheckers": 84_562,
+                     "totalRunningHours": 197_245_731}] + series)
+    supply = page([{"nodes": 433704, "locations": 94},
+                   {"totalComputePower": 38509113.66, "totalMonthlyCapacity": 638256960},
+                   {"idcStaked": 866_896_004, "totalOnlineHours": 3_514_810_067}])
+    assert reading(onchain, "totalStaked") == ("scalar", 1_789_329_560.63)
+    kind, pts = reading(onchain, "aiStaked")
+    assert kind == "series" and len(pts) == 5 and pts[-1] == (pd.Timestamp("2026-09-01"), 400.2e6)
+
+    class Daily:
+        def due(self, *a):
+            return True
+
+        def done(self, *a):
+            pass
+    import fetch.scrape as scrape
+    orig = scrape.robots_verdict
+    scrape.robots_verdict = lambda url: (True, "test")
+    aeth = config.PROJECT_BY_NAME["Aethir"]
+    try:
+        out = FetchOutput()
+        AethirPages(get=lambda url: onchain if "onchain" in url else supply if "supply" in url else "",
+                    daily=Daily()).run([aeth], None, out)
+    finally:
+        scrape.robots_verdict = orig
+    f = out.frame()
+    one = lambda m: f[f.metric == m]                                        # noqa: E731
+    assert float(one("locked_tokens").value.iloc[0]) == 1_789_329_560.63
+    assert one("locked_tokens").source.iloc[0] == "aethir_page:protocol/onchain-metric.totalStaked"
+    assert float(one("circulating_supply_first_party").value.iloc[0]) == 23_308_238_268
+    assert len(one("locked_tokens_ai")) == 5 and abs(float(one("locked_tokens_idc").value.max()) - 902.9e6) < 1
+    em = one("emissions_tokens").sort_values("date")
+    assert list(em.value) == [100e6, 100e6, 100e6, 120e6]                  # cumulative, differenced
+    assert em.source.iloc[0] == "aethir_page:protocol/onchain-metric.emitted[cumulative, differenced]"
+    msgs = " ".join(e.message for e in out.log)
+    assert "totalStaked 1,789,329,560.63 vs the sum of its parts 1,740,400,000.00 (-2.73%)" in msgs
+    assert "idcStaked on the two pages" in msgs and "baseRewardDistributed 2,418,496,407 vs the declared schedule" in msgs
+    assert "numberDelegatedCheckers` = 84,562.00 (scalar) — REPORTED, not stored" in msgs
+    assert "totalRunningHours" not in set(f.metric)
+
+    # PER-MONTH when the SUM matches a page total; neither/both settles nothing
+    per = [(pd.Timestamp(m), v) for m, v in zip(months, [800e6, 700e6, 800e6, 800e6, 748.9e6])]
+    assert flow_shape(per, {"base+bonus+airdrop": base + bonus + air}, 0.05)[0] == "per_period"
+    assert flow_shape([(pd.Timestamp(m), 1e6) for m in months], {"base": base}, 0.05)[0] is None
+    # a series whose points are not a month apart is refused against the monthly declaration
+    daily = page([{"totalStaked": 1.0}, {"baseRewardDistributed": base}] + [
+        {"date": f"2026-09-0{i}", "emitted": 3.8e9 + i} for i in range(1, 6)])
+    scrape.robots_verdict = lambda url: (True, "test")
+    try:
+        out = FetchOutput()
+        AethirPages(get=lambda url: daily if "onchain" in url else "", daily=Daily()).run([aeth], None, out)
+    finally:
+        scrape.robots_verdict = orig
+    assert "emissions_tokens" not in set(out.frame().metric)
+    assert any("declared monthly, but its points are a median 1.0 day(s) apart" in e.message for e in out.log)
+
+    # config: the wrapper is its own series; circulating first-party; emitted monthly; SQL BJ
+    assert aeth["contracts"]["staking_wrapper"]["metric_override"] == "locked_tokens_wrapper"
+    assert config.circulating_onchain("Aethir")["status"] == "first_party"
+    assert config.series_granularity("Aethir", "emissions_tokens") == "monthly"
+    sql = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "orphan_cleanup.sql")).read()
+    assert "-- BJ. AETHIR locked_tokens" in sql and "-- UPDATE metrics SET metric = 'locked_tokens_wrapper'" in sql
+
+    # READ TIME: measured rows replace the schedule's emissions rows; none measured, the schedule stays
+    d = pd.date_range("2026-08-01", "2026-09-29")
+    sched = pd.DataFrame({"date": d, "project": "Aethir", "metric": "emissions_tokens", "value": 2.87e6,
+                          "source": "schedule:config:PARTIAL", "tier": 1})
+    meas = em.assign(tier=3)[sched.columns]
+    groups = {("Aethir", "emissions_tokens"): pd.concat([sched, meas], ignore_index=True)}
+    bw._measured_emissions_views(groups)
+    assert set(groups[("Aethir", "emissions_tokens")]["source"]) == {meas.source.iloc[0]}
+    groups = {("Aethir", "emissions_tokens"): sched.copy()}
+    bw._measured_emissions_views(groups)
+    assert len(groups[("Aethir", "emissions_tokens")]) == len(sched)
+
+
+def test_maple_ssf_lp_test_fits_a_constant_product_position_and_rejects_noise():
+    """Jake's probes3 3a-c: is the SSF an x*y=k position? Daily d(syrup) and d(usd) regressed on
+    dlnP; the declared rule (config Maple.ssf_lp_test) decides. A real CP position is confirmed; a
+    random walk is not; the page's island datasets give holdings, liquid assets and any price."""
+    import numpy as np
+    from fetch import maple_transparency as mt
+    rule = config.PROJECT_BY_NAME["Maple"]["ssf_lp_test"]
+    assert rule["min_r2"] == 0.5 and rule["size_agreement"] == (0.8, 1.25)
+    rng = np.random.default_rng(7)
+    days = pd.date_range("2025-08-13", periods=413)
+    price = 0.2 * np.exp(np.cumsum(rng.normal(0, 0.03, 413)))
+    k = (20e6 * 0.2) * 20e6
+    lp = pd.DataFrame({"day": days, "syrup": np.sqrt(k / price) + 55e6, "usd": np.sqrt(k * price) + 2e5,
+                       "price": price})
+    r = mt.lp_fit(lp, rule)
+    assert r["verdict"] is True and r["r2_syrup"] > 0.9 and abs(r["swap_slope"] - 1) < 0.05
+    walk = lp.assign(syrup=55e6 + rng.normal(0, 2e5, 413).cumsum(), usd=4e6 + rng.normal(0, 2e4, 413).cumsum())
+    assert mt.lp_fit(walk, rule)["verdict"] is False
+    assert mt.lp_fit(lp.head(5), rule)["verdict"] is None
+    props = {"datasets": [0, {"ALL": [1, [[0, {"ts": [0, 1_755_043_200_000], "syrupHoldings": [0, 79_206_477],
+                                               "liquidAssetsUsd": [0, 4_305_019], "syrupPrice": [0, 0.2]}]]]}]}
+    html_ = f'<astro-island props="{json.dumps(props).replace(chr(34), "&quot;")}"></astro-island>'
+    f = mt.ssf_frame(html_)
+    assert list(f.columns) == ["day", "syrup", "usd"] and f.iloc[0].usd == 4_305_019
+    px, where = mt.price_series(html_)
+    assert float(px.iloc[0]) == 0.2 and where == "dataset ALL.syrupPrice"
+    maple = config.PROJECT_BY_NAME["Maple"]
+    assert "0x509712F368255E92410893Ba2E488f40f7E986EA" in maple["pool_release_tokens_blocked"]["emissions_route"]
+    assert "f14e261f" in maple["revenue_divergence"]["history"]
+
+
+def test_geod_blockworks_unix_dates_are_seconds_not_nanoseconds():
+    """Jake's probes3 4a: every Blockworks date parsed as 1970-01-01 — a UNIX timestamp read as
+    nanoseconds. Seconds and milliseconds are recognised, ISO text still parses, and a column that
+    still lands before 2015 is refused."""
+    import check_offline_items as c
+    assert c._bw_days([1_761_955_200]).tolist() == [pd.Timestamp("2025-11-01")]
+    assert c._bw_days(["1761955200000"]).tolist() == [pd.Timestamp("2025-11-01")]
+    assert c._bw_days(["2025-11-01T00:00:00.000Z"]).tolist() == [pd.Timestamp("2025-11-01")]
+    with _pytest.raises(ValueError):
+        c._bw_days(["1999-01-01"])
 
 
 def test_artemis_whole_file_with_bom_from_data_artemis_reproduces_jakes_nrr(tmp_path):
