@@ -3570,8 +3570,8 @@ SELECT date, value, source
 --     growthepie writes to its own cross-check metrics from now on (tx_count_growthepie,
 --     active_addresses_growthepie, fees_usd_growthepie). Its rows already stored under the
 --     primary names would mix two measuring points in one series (and daa ≠ distinct senders).
---     Option A (preferred) KEEPS them, renamed to the cross-check metrics; option B deletes.
---     REVIEW FIRST.
+--     This section RENAMES them to the cross-check metrics (keeps the data; preferred). Section
+--     BG is the alternative that deletes them instead — run ONE of the two. REVIEW FIRST.
 -- ========================================================================================
 -- BE1. WHAT IS THERE.
 SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
@@ -3581,26 +3581,20 @@ SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS
  ORDER BY metric, first_date;
 
 -- BE2. A RENAMED ROW WOULD COLLIDE WITH ONE ALREADY UNDER THE CROSS-CHECK NAME ON THE SAME DAY?
---      (expect 0 rows; if any, run option B for those days instead)
+--      (expect 0 rows; if any, use section BG instead)
 SELECT m.metric, m.date
   FROM metrics m
   JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = m.metric || '_growthepie'
  WHERE m.project = 'Plume' AND m.metric IN ('tx_count', 'active_addresses', 'fees_usd')
    AND m.source LIKE 'growthepie%';
 
--- BE3. OPTION A — RENAME to the cross-check metrics (keeps the data). Only after BE1/BE2.
+-- BE3. RENAME to the cross-check metrics (keeps the data). Only after BE1/BE2.
 -- BEGIN;
 -- UPDATE metrics SET metric = metric || '_growthepie'
 --  WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
 --    AND source LIKE 'growthepie%';
 -- COMMIT;
 
--- BE4. OPTION B — DELETE instead of renaming.
--- BEGIN;
--- DELETE FROM metrics
---  WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
---    AND source LIKE 'growthepie%';
--- COMMIT;
 
 -- ========================================================================================
 -- BF. MAPLE pool_release_tokens: THE SSF RELEASE IS THE ONLY ROUTE  2026-09-30
@@ -3624,4 +3618,23 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 -- DELETE FROM metrics
 --  WHERE project = 'Maple' AND metric = 'pool_release_tokens'
 --    AND source NOT LIKE 'maple_page:ssf_release%';
+-- COMMIT;
+
+-- ========================================================================================
+-- BG. PLUME: THE ALTERNATIVE TO BE — DELETE THE growthepie ROWS INSTEAD OF RENAMING  2026-09-30
+--     Only if BE's rename is not wanted (or BE2 found collisions). Run ONE of BE / BG, never both.
+--     REVIEW FIRST.
+-- ========================================================================================
+-- BG1. WHAT WOULD GO.
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
+   AND source LIKE 'growthepie%'
+ GROUP BY metric, source;
+
+-- BG2. THE PROPOSED DELETE.
+-- BEGIN;
+-- DELETE FROM metrics
+--  WHERE project = 'Plume' AND metric IN ('tx_count', 'active_addresses', 'fees_usd')
+--    AND source LIKE 'growthepie%';
 -- COMMIT;
