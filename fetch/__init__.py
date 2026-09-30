@@ -1637,13 +1637,19 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
         out.gaps.extend(sub.gaps)
         out.staged.extend(sub.staged)
         out.current |= sub.current
-        out.timings.append({"source": name, "tier": tier, "seconds": seconds,
-                            "frames": len(sub.frames), "timed_out": timed_out})
         if timed_out:
             out.timed_out[name] = (tier, TIER_BUDGET_S.get(name, DEFAULT_BUDGET_S))
         # validate each tier's own output, so a rejection names the tier that produced it
         for i in range(before, len(out.frames)):
             out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out)
+        # ROWS COUNTED BY TIER, from what survived validation (Jake's run 2026-09-30 17:21:
+        # artemis_csv read "0 rows" while storing 1,061 — the summary looked its rows up by the log
+        # entries' source name, "artemis", not by the tier's own name). Failures and skips likewise.
+        out.timings.append({"source": name, "tier": tier, "seconds": seconds,
+                            "frames": len(sub.frames), "timed_out": timed_out,
+                            "rows": sum(len(f) for f in out.frames[before:] if f is not None),
+                            "failed": sum(e.status == "failed" for e in sub.log),
+                            "skipped": sum(e.status == "skipped" for e in sub.log)})
         out.frames = [f for f in out.frames if f is not None and not f.empty]
 
     _resolve_tier_collisions(out)

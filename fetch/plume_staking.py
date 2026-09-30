@@ -52,6 +52,10 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
+
+import config
+
 from .base import point, today
 
 log = logging.getLogger("token_metrics.fetch.plume_staking")
@@ -98,15 +102,19 @@ class PlumeStaking:
             if spec:
                 self._project(p["name"], spec, out)
 
-    def _read(self, spec: dict, address: str) -> dict | str:
+    @staticmethod
+    def _call(fn, block):
+        return fn.call() if block is None else fn.call(block_identifier=block)
+
+    def _read(self, spec: dict, address: str, block=None) -> dict | str:
         """One diamond's readings, or why they are unusable: {address, rate, apr, aggregate
         (totalAmountStaked, PLUME), rows [(id, staked wei, commission 1e18, active)], total (the
         per-validator sum, PLUME), commission (stake-weighted over active), net_factor, cooldown}."""
         try:
             c = self._contract(dict(spec, address=address))
-            rate = c.functions.getRewardRate(spec["reward_token"]).call()
-            aggregate = c.functions.totalAmountStaked().call()
-            validators = c.functions.getValidatorsList().call()
+            rate = self._call(c.functions.getRewardRate(spec["reward_token"]), block)
+            aggregate = self._call(c.functions.totalAmountStaked(), block)
+            validators = self._call(c.functions.getValidatorsList(), block)
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             return f"{address} on {spec['rpc'].split('/')[2]}: {e}"
         if not isinstance(rate, int) or rate < 0:
@@ -125,7 +133,7 @@ class PlumeStaking:
             if staked < 0 or not 0 <= comm <= 10**18:
                 return f"{address}: validator {vid} carries staked {staked} / commission {comm}"
             try:
-                active = bool(c.functions.getValidatorStats(vid).call()[0])
+                active = bool(self._call(c.functions.getValidatorStats(vid), block)[0])
             except Exception as e:  # noqa: BLE001
                 active = None
                 log.info("plume_staking: getValidatorStats(%s) on %s: %s", vid, address, e)
@@ -134,7 +142,7 @@ class PlumeStaking:
         if not rows or total <= 0:
             return f"{address}: getValidatorsList holds no stake"
         try:
-            cooldown = int(c.functions.getCooldownInterval().call())
+            cooldown = int(self._call(c.functions.getCooldownInterval(), block))
         except Exception:  # noqa: BLE001
             cooldown = None
         known = all(r[3] is not None for r in rows)
@@ -216,3 +224,84 @@ class PlumeStaking:
         if not confirmed:
             out.skipped(SOURCE, name, f"identified {g['address']} as the live diamond by reconciliation; set "
                                       f"plume_staking.address to it and live_contract.confirmed = True", TIER)
+
+    # ===== HISTORY: THE LIVE DIAMOND READ ON PAST DAYS (Jake's run 2026-09-30 17:21). =====
+    def _chain(self, spec: dict):
+        """(block_at(day) -> first block at/after 00:00 UTC, has_code(block) -> bool). Binary
+        search on block timestamps over rpc.plume.org; tests inject their own."""
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(spec["rpc"], request_kwargs={"timeout": 25}))
+        head = int(w3.eth.block_number)
+        ts = {}
+
+        def t(n):
+            if n not in ts:
+                ts[n] = int(w3.eth.get_block(n)["timestamp"])
+            return ts[n]
+
+        def block_at(day):
+            want = int(pd.Timestamp(day).tz_localize("UTC").timestamp())
+            lo, hi = 1, head
+            if t(hi) < want:
+                return None
+            while lo < hi:
+                mid = (lo + hi) // 2
+                lo, hi = (mid + 1, hi) if t(mid) < want else (lo, mid)
+            return lo
+
+        def has_code(block):
+            return len(w3.eth.get_code(Web3.to_checksum_address(spec["address"]), block_identifier=block)) > 0
+        return block_at, has_code
+
+    def seed(self, projects: list[dict], days: int, out, have: set | None = None, chain=None) -> dict:
+        """Read the CONFIRMED live diamond at the first block of each of the last `days` days,
+        newest first, skipping days already held (`have`), and store locked_tokens, the gross and
+        net APR and the commission for each, dated to that day and marked `archive` (the same
+        measuring point as the live read). STOPS at the first day the RPC will not serve state
+        at — that is the answer to "does rpc.plume.org serve history" — or the first block where
+        the diamond has no code yet (its deployment: the series' mechanism start)."""
+        res = {"stored_days": 0, "stopped": None, "mechanism_start": None}
+        for p in projects:
+            spec = p.get("plume_staking") or {}
+            if not spec or not (spec.get("live_contract") or {}).get("confirmed"):
+                continue
+            name = p["name"]
+            block_at, has_code = chain or self._chain(spec)
+            tag = f"{SOURCE}:{spec['address'][:10]}"
+            for k in range(1, int(days) + 1):
+                day = (today() - pd.Timedelta(days=k)).normalize()
+                if have and day in have:
+                    continue
+                try:
+                    b = block_at(day)
+                    if b is None:
+                        continue
+                    if not has_code(b):
+                        res["mechanism_start"] = str((day + pd.Timedelta(days=1)).date())
+                        out.skipped(SOURCE, name, f"history: the live diamond has no code at block {b} "
+                                                  f"({day.date()}) — deployed after it; the series starts "
+                                                  f"{res['mechanism_start']}", TIER)
+                        break
+                except Exception as e:  # noqa: BLE001
+                    res["stopped"] = f"{day.date()}: block lookup failed — {e}"
+                    break
+                g = self._read(spec, spec["address"], block=b)
+                if isinstance(g, str):
+                    res["stopped"] = f"{day.date()} (block {b}): {g}"
+                    out.skipped(SOURCE, name, f"history STOPPED — rpc.plume.org did not serve state at "
+                                              f"{day.date()} (block {b}): {g}. Days before it are "
+                                              f"FORWARD-ONLY unless an archive endpoint serves them.", TIER)
+                    break
+                rows = [(spec["stake_metric"], g["aggregate"], f"{tag}.totalAmountStaked"),
+                        (spec["apr_metric"], g["apr"], f"{tag}.getRewardRate(PLUME_NATIVE)[GROSS]")]
+                if g["commission"] is not None and g["net_factor"] is not None:
+                    rows += [(spec["commission_metric"], g["commission"],
+                              f"{tag}.getValidatorsList.commission[stake-weighted, active]"),
+                             (spec["net_apr_metric"], g["apr"] * g["net_factor"],
+                              f"{tag}.gross*active(1-commission)")]
+                for metric, v, src in rows:
+                    src = config.mark_source(src, "archive")      # the live read's measuring point
+                    out.add(point(name, metric, v, src, TIER, day), SOURCE, name,
+                            f"history {day.date()} (block {b}): {metric} = {v:,.6g}", TIER)
+                res["stored_days"] += 1
+        return res

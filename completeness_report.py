@@ -101,6 +101,16 @@ DECISIONS = {
 # consensus part now has its declared history leg (ultrasound-derived issuance before the first
 # d(Eth2Staking) row) and ETH.Store is backfilled per day (A1/A2).
 WAIT_ON_SERIES: dict = {}
+# WAITING ON A NAMED DATE, recorded (Jake's run 2026-09-30 17:21): a pending seed is not a bug.
+# While the cell is not yet ok and the date has not passed it reads WAITING ON A DATE; after the
+# date it is classified on its own status again, so a seed that never lands still surfaces.
+WAIT_UNTIL = {
+    ("Ethereum", "staking_yield_pct"): {
+        "until": "2026-10-06",
+        "why": "the Etherscan consensus leg (d(Eth2Staking), a week of daily readings) arrives "
+               "~2026-10-06, and the one-off ETH.Store seed (`token_metrics.py --seed beaconchain`) "
+               "runs after beaconcha.in's 2026-10-01 quota reset — a pending seed, not a fault"},
+}
 
 
 def mechanism_start(p: dict, metric: str, asof: pd.Timestamp) -> dict | None:
@@ -200,6 +210,9 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
             when = (str((pd.Timestamp(f0) + pd.Timedelta(days=wait["days"])).date()) if f0
                     else f"{wait['days']} days after the first {wait['series']} reading")
             return "WAITING ON A DATE", f"{when} — {wait['why']}"
+    until = WAIT_UNTIL.get((name, metric))
+    if until and status not in ("ok", "review") and str(asof.date()) < until["until"]:
+        return "WAITING ON A DATE", f"{until['until']} — {until['why']}"
     if status == "n/a":
         return "N/A", note.split(" | ")[0] or "not applicable to this project"
     closed = config.unavailable_for(name, metric)

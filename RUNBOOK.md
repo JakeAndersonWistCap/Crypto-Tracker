@@ -489,6 +489,20 @@ leave beaconcha.in out: Ethereum's yield and issuance history then stay forward-
 2026-09-29. A 429 stops it with the wait recorded. Re-run after that; days already read are
 never read twice.
 
+## 11l. One-off: Plume's staking history from the live diamond
+
+`locked_tokens`, the gross and net staking APR and the commission are read from Plume's live staking
+diamond (0x30c791E4…). Its past days are read the same way, at the first block of each day:
+
+```bash
+python check_offline_items.py plume_archive      # does rpc.plume.org serve past state? (1..365 days back)
+python token_metrics.py --seed plume_staking     # a year of history, newest first; held days skipped
+```
+
+The seed **stops** at the first day the RPC refuses state and says so: days before that are
+forward-only on this RPC. A block where the diamond has no code yet is its deployment, recorded as
+the series' start.
+
 ## 11c. Checking numbers without Excel
 
 Every derived column in the workbook is a formula with no cached result — Excel computes on open,

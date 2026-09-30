@@ -8381,6 +8381,8 @@ PROJECTS = [
         # ===== THE SSF RELEASE IS HELD UNTIL ITS OTHER INFLOWS ARE CLASSIFIED (Jake, 2026-09-30). =====
         "pool_release_tokens_blocked": {
             "status": "HELD — SSF inflows other than buybacks are unclassified",
+            # one row a month, dated to the month's end (fetch/maple_transparency.ssf_release)
+            "granularity": "monthly",
             "wanted": "the SSF's monthly release (fall in holdings net of buyback inflows)",
             "why": "the net change came out NEGATIVE for 2025-11 (-3,052,593 SYRUP) and 2026-07 "
                    "(-971,641): the fund took in more SYRUP than that month's buybacks, so it has "
@@ -16870,7 +16872,15 @@ def lumpy_flow(project_name: str, metric: str) -> dict | None:
 
 
 def stale_after_days(project_name: str, metric: str, default: int) -> int:
-    """The staleness threshold for this series, widened where its cadence demands it."""
+    """The staleness threshold for this series, widened where its cadence demands it.
+
+    DAILY VALUES, MONTHLY REFRESH (Jake's run 2026-09-30 17:21): Artemis settlement volume is one
+    value a day — summed daily, so its granularity stays daily — but arrives by a MANUAL MONTHLY
+    EXPORT, so its newest day is weeks old by design. The agreed rule is stale (AMBER) only after
+    ARTEMIS_SETTLEMENT["stale_after_days"] (45), declared beside the importer that reads it."""
+    art = ARTEMIS_SETTLEMENT
+    if metric == art["metric"] and project_name in art["chains"]:
+        return int(art["stale_after_days"])
     return STALE_AFTER_DAYS_BY_GRANULARITY.get(series_granularity(project_name, metric)) or default
 
 
@@ -16914,6 +16924,12 @@ def series_granularity(project_name: str, metric: str) -> str:
     page = ((p.get("transparency_page") or {}).get("metrics") or {}).get(metric) or {}
     if page.get("granularity"):
         return page["granularity"]
+    # A HELD SERIES KEEPS ITS CADENCE (Jake's run 2026-09-30 17:21): Maple's SSF release is one
+    # row a month, dated to the month's end; its hold record declares that, so a current series is
+    # stale only when the latest COMPLETE month is missing — not after 7 days.
+    held = p.get(f"{metric}_blocked") or {}
+    if held.get("granularity"):
+        return held["granularity"]
     # A DASHBOARD FLOW, declared beside the read that produces it (Aethir's `emitted`, monthly —
     # fetch/aethir_pages refuses the series if its points are not that far apart).
     for pg in ((p.get("dashboard_pages") or {}).get("pages") or {}).values():

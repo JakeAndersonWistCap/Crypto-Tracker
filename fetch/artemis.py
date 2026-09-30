@@ -155,9 +155,10 @@ class ArtemisCSV:
             frame = tidy(pts, name, metric, label, TIER)
             last = frame["date"].max()
             age = (today() - last).days
-            out.add(frame, SOURCE, name,
-                    f"{metric} = {label}: read {path} — {n_read} row(s) read, {blank} blank, "
-                    f"{len(frame)} day(s) stored {frame['date'].min().date()}..{last.date()} (whole file, "
-                    f"not the run's window); last date {age} day(s) ago"
-                    + (f" — STALE beyond {spec['stale_after_days']} days: re-export" if age > spec["stale_after_days"] else ""),
-                    TIER)
+            msg = (f"{metric} = {label}: read {path} — {n_read} row(s) read, {blank} blank, "
+                   f"{len(frame)} day(s) stored {frame['date'].min().date()}..{last.date()} (whole file, "
+                   f"not the run's window); last date {age} day(s) ago"
+                   + (f" — STALE beyond {spec['stale_after_days']} days: re-export" if age > spec["stale_after_days"] else ""))
+            # ON THE CONSOLE TOO (Jake, 2026-09-30 17:21): the path, rows read and date range
+            log.info("artemis_csv %s: %s", name, msg)
+            out.add(frame, SOURCE, name, msg, TIER)

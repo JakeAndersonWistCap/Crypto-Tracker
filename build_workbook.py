@@ -758,7 +758,7 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append("flagged to the Review Queue")
     if row["status"] == "stale":
         limit = (config.MANUAL_QUARTERLY_STALE_DAYS if config.is_manual_quarterly(project, metric)
-                 else GLOBALS["stale_after_days"])
+                 else config.stale_after_days(project, metric, GLOBALS["stale_after_days"]))
         why.append(f"stale — no fresh value in {limit} days")
     if row["status"] == "manual" and config.is_manual_quarterly(project, metric):
         entered = str(row.get("entered_on") or "")[:10]
@@ -3182,12 +3182,14 @@ DERIVED_USD_OVER_PRICE = "derived:usd/price"
 def _settlement_views(groups: dict) -> None:
     """Network Reserve Ratio = market cap / trailing-365-day settlement volume. Jake, 2026-09-30.
 
-    The window ENDS ON THE ARTEMIS EXPORT'S LAST DATE, and market cap is read on that same date,
-    so both sides measure the same day; both views are dated to it, which is what the cell's
-    staleness (45 days, config.ARTEMIS_SETTLEMENT) and its Latest date read. A market cap from an
-    earlier day is used only within 7 days, and the source string states the lag. Fewer than 365
-    days in the window (a blank Artemis day, a short export) builds nothing and says why: a short
-    sum would understate the volume and overstate the ratio.
+    EVERY DAY BOTH SIDES EXIST (Jake's run 2026-09-30 17:21: the ratio was built for the export's
+    last day only, 37 days of history from 2026-08-25, although the volume covers three years and
+    market cap a year). For each day D the window is the 365 days ending D, and it must hold all
+    365 of them — a short sum would understate the volume and overstate the ratio, so a day with a
+    blank Artemis day in its window gets nothing. Market cap is read on D; an earlier one is used
+    only within 7 days, and that row's source states the lag. Both views are dated to D, so the
+    latest point is the export's last date, which is what the cell's staleness (45 days,
+    config.ARTEMIS_SETTLEMENT) and its Latest date read.
     """
     spec = config.ARTEMIS_SETTLEMENT
     n = int(spec["window_days"])
@@ -3199,35 +3201,39 @@ def _settlement_views(groups: dict) -> None:
         daily = sv.assign(date=pd.to_datetime(sv["date"]).dt.normalize()) \
                   .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
         last = daily.index.max()
-        window = daily[daily.index > last - pd.Timedelta(days=n)]
-        if len(window) < n:
+        full = daily.reindex(pd.date_range(daily.index.min(), last, freq="D"))
+        sums = full.rolling(n, min_periods=n).sum().dropna()
+        if sums.empty:
+            window = daily[daily.index > last - pd.Timedelta(days=n)]
             for m in config.ARTEMIS_DERIVED:
                 _VIEW_BLOCKS[(name, m)] = (f"the Artemis export holds {len(window)} of the {n} days ending "
                                            f"{last.date()} — a short window would understate settlement "
                                            f"volume and overstate the ratio; re-export the full history")
             continue
-        total = float(window.sum())
         src = str(sv.sort_values("date").iloc[-1]["source"])
-        tot = pd.DataFrame({"date": [last], "project": name, "metric": "settlement_volume_365d_usd",
-                            "value": [total],
-                            "source": f"derived:sum365({src}) {window.index.min().date()}..{last.date()}"})
+        tot = pd.DataFrame({"date": sums.index, "project": name, "metric": "settlement_volume_365d_usd",
+                            "value": sums.values,
+                            "source": f"derived:sum365({src})"})
         groups[(name, "settlement_volume_365d_usd")] = _as_stored(tot, sv.columns)
         mc = groups.get((name, "market_cap_usd"))
-        if mc is None or mc.empty or total <= 0:
+        if mc is None or mc.empty:
             continue
         mcd = mc.assign(date=pd.to_datetime(mc["date"]).dt.normalize()) \
-                .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
-        mcd = mcd[(mcd.index <= last) & (mcd.index >= last - pd.Timedelta(days=7))]
-        if mcd.empty:
+                .drop_duplicates("date", keep="last")[["date", "value"]].astype({"value": float}).sort_values("date")
+        both = pd.merge_asof(pd.DataFrame({"date": sums.index, "vol": sums.values}),
+                             mcd.rename(columns={"value": "cap"}).assign(on=mcd["date"]),
+                             on="date", direction="backward", tolerance=pd.Timedelta(days=7)).dropna()
+        both = both[both["vol"] > 0]
+        if both.empty:
             _VIEW_BLOCKS[(name, "network_reserve_ratio")] = (
-                f"no market cap within 7 days before the Artemis export's last date {last.date()} — "
-                f"the ratio is not built on a later market cap than the volume it divides")
+                f"no day with both a full 365-day settlement window (to {last.date()}) and a market cap "
+                f"on that day or within 7 days before it")
             continue
-        on, cap = mcd.index.max(), float(mcd.iloc[-1])
-        lag = "" if on == last else f"; market cap {(last - on).days} day(s) EARLIER, on {on.date()}"
-        nrr = pd.DataFrame({"date": [last], "project": name, "metric": "network_reserve_ratio",
-                            "value": [cap / total],
-                            "source": f"derived:market_cap({on.date()})/settlement_365d(to {last.date()}){lag}"})
+        lag = (both["date"] - both["on"]).dt.days
+        nrr = pd.DataFrame({"date": both["date"].values, "project": name, "metric": "network_reserve_ratio",
+                            "value": (both["cap"] / both["vol"]).values,
+                            "source": ["derived:market_cap/settlement_365d" + (f"[market cap {d} day(s) earlier]"
+                                                                              if d else "") for d in lag]})
         groups[(name, "network_reserve_ratio")] = _as_stored(nrr, sv.columns)
 
 

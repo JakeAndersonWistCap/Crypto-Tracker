@@ -3025,6 +3025,39 @@ def plume_sources():
           "  diamond is confirmed live and its stake matches the app's figure.")
 
 
+def plume_archive():
+    """Jake's run 2026-09-30 17:21: does rpc.plume.org serve HISTORICAL state for the live staking
+    diamond? totalAmountStaked() and getRewardRate() at the first block of the day 1, 7, 30, 90,
+    180 and 365 days back. Every answer = `token_metrics.py --seed plume_staking` backfills a year;
+    the first refusal is where the series becomes forward-only on this RPC."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.plume_staking import PlumeStaking           # noqa: PLC0415
+    head("PLUME — historical state on rpc.plume.org for the live staking diamond")
+    spec = config.PROJECT_BY_NAME["Plume"]["plume_staking"]
+    try:
+        block_at, has_code = PlumeStaking()._chain(spec)
+    except Exception as e:  # noqa: BLE001
+        print(f"  rpc.plume.org UNREACHABLE — {e}")
+        return
+    ps = PlumeStaking()
+    for back in (1, 7, 30, 90, 180, 365):
+        day = (pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=back))
+        try:
+            b = block_at(day)
+            code = has_code(b)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {day.date()} ({back}d back): block lookup failed — {e}")
+            continue
+        if not code:
+            print(f"  {day.date()} ({back}d back): block {b} — the diamond has NO CODE yet (not deployed)")
+            continue
+        g = ps._read(spec, spec["address"], block=b)
+        print(f"  {day.date()} ({back}d back): block {b} — " + (g if isinstance(g, str) else
+              f"totalAmountStaked {g['aggregate']:,.2f} PLUME, gross APR {g['apr']:.4%}"))
+    print("  PASTE BACK. All served = run `python token_metrics.py --seed plume_staking`.")
+
+
 def _xhr_capture(url: str, wanted: tuple = (), deep: bool = False, dump_keys: tuple = (), save_to=None):
     """Load a page in Chromium (robots-checked first) and list every JSON response: URL, top-level
     keys, and any number in it matching `wanted`. Finds a dashboard's API; stores nothing."""
@@ -3792,7 +3825,7 @@ CHECKS = (
     robots_and_terms, ultrasound_history, beaconchain_quota, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
-    geod_stake_recipient, maple_ssf_lp_test, maple_drips,
+    geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

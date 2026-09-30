@@ -19187,9 +19187,10 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     for m in ("actual_buyback_tokens", "actual_buyback_usd"):
         v, d = got[("Fluid", m)]
         assert v == "COMPLETE" and "PROGRAMME HALTED 2026-05-11" in d, (m, v, d)
-    # the week-long wait on Eth2Staking was lifted 2026-09-30 (ETH.Store backfilled per day)
+    # the week-long wait on Eth2Staking was lifted 2026-09-30 — but while the cell is not yet ok it
+    # waits on its DATED seed (Jake's run 2026-09-30 17:21): a pending seed is not a bug
     v, d = got[("Ethereum", "staking_yield_pct")]
-    assert v != "WAITING ON A DATE", (v, d)
+    assert v != "BUG" and (v != "WAITING ON A DATE" or d.startswith("2026-10-06")), (v, d)
     # (a manual quarterly row that is actually MISSING stays NEEDS JAKE; this store is empty)
     jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
     # settlement volume (2026-09-30): Ethereum's Artemis export is in; the other three wait on Jake's
@@ -19999,6 +20000,104 @@ def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_sto
     assert out2.frame().empty and any("above the contract's own cap" in e.message for e in out2.log)
 
 
+def test_plume_staking_history_seed_reads_past_blocks_and_stops_where_the_rpc_does():
+    """Jake's run 2026-09-30 17:21: Plume locked_tokens / staking_yield_pct held 1 day each, NOT
+    forward-only. `--seed plume_staking` reads the live diamond at the first block of each past day,
+    newest first, skipping days held; the rows are the live read's measuring point marked archive.
+    The first day the RPC refuses state STOPS it (forward-only from there on this RPC); a block
+    with no code is the diamond's deployment — the series' start."""
+    from fetch.base import _measuring_point, today
+    from fetch.plume_staking import PlumeStaking
+    plume = config.PROJECT_BY_NAME["Plume"]
+    vals = [(1, 100_000_000 * 10**18, 5 * 10**16)]
+
+    def factory(refuse_below=None):
+        def mk(sp):
+            class F:
+                def __init__(self):
+                    self.functions = self
+
+                def _c(self, v):
+                    def call(block_identifier=None):
+                        if refuse_below is not None and block_identifier is not None and block_identifier < refuse_below:
+                            raise ValueError("missing trie node")
+                        return v
+                    return type("C", (), {"call": staticmethod(call)})()
+
+                def getRewardRate(self, tok):
+                    return self._c(1_900_000_000)
+
+                def totalAmountStaked(self):
+                    return self._c(134_000_000 * 10**18)
+
+                def getValidatorsList(self):
+                    return self._c(vals)
+
+                def getValidatorStats(self, vid):
+                    return self._c((True, 5 * 10**16, 100_000_000 * 10**18, 3))
+
+                def getCooldownInterval(self):
+                    return self._c(1_814_400)
+            return F()
+        return mk
+    block_at = lambda day: 1000 - (today() - day).days                   # noqa: E731
+    have = {(today() - pd.Timedelta(days=2)).normalize()}
+    out = FetchOutput()
+    res = PlumeStaking(contract_factory=factory()).seed([plume], 5, out, have=have,
+                                                        chain=(block_at, lambda b: True))
+    f = out.frame()
+    assert res == {"stored_days": 4, "stopped": None, "mechanism_start": None}
+    assert len(f[f.metric == "locked_tokens"]) == 4 and (today() - pd.Timedelta(days=2)) not in set(f.date)
+    lt = f[f.metric == "locked_tokens"].iloc[0]
+    assert lt["source"] == "plume_staking:0x30c791E4.totalAmountStaked:archive"
+    assert _measuring_point(lt["source"]) == "plume_staking:0x30c791E4.totalAmountStaked"
+    assert set(f.metric) == {"locked_tokens", "staking_yield_pct", "staking_commission_pct", "staking_yield_net_pct"}
+    # the RPC refuses state before block 997 (3 days back): STOPPED at day 4, days 1-3 stored
+    out = FetchOutput()
+    res = PlumeStaking(contract_factory=factory(refuse_below=997)).seed([plume], 5, out,
+                                                                        chain=(block_at, lambda b: True))
+    assert res["stored_days"] == 3 and res["stopped"].startswith(str((today() - pd.Timedelta(days=4)).date()))
+    assert any("history STOPPED" in e.message and "FORWARD-ONLY" in e.message for e in out.log)
+    # no code before block 998: deployed then — the series starts the day after the last codeless day
+    out = FetchOutput()
+    res = PlumeStaking(contract_factory=factory()).seed([plume], 5, out, chain=(block_at, lambda b: b >= 998))
+    assert res["stored_days"] == 2 and res["mechanism_start"] == str((today() - pd.Timedelta(days=2)).date())
+
+
+def test_tier_summary_counts_the_rows_each_tier_stored(tmp_path, monkeypatch):
+    """Jake's run 2026-09-30 17:21: artemis_csv logged "0 rows" while storing Ethereum's series —
+    the summary keyed its counts by the log's source name ("artemis"), not the tier's. Rows,
+    failures and skips are now counted per tier from what it produced and passed validation."""
+    import fetch
+    body = "DateTime,Ethereum - Settlement Volume\n" + "\n".join(
+        f"{x:%Y-%m-%d}T00:00:00.000Z,{1e10:.2f}" for x in pd.date_range("2026-08-01", "2026-08-25"))
+    (tmp_path / "Ethereum - Settlement Volume.csv").write_text(body)
+    monkeypatch.setenv("TOKEN_METRICS_ARTEMIS_DIR", str(tmp_path))
+    out = fetch.fetch_all([config.PROJECT_BY_NAME["Ethereum"]], 30, sources=["artemis_csv"])
+    t = next(x for x in out.timings if x["source"] == "artemis_csv")
+    assert t["rows"] == 25 and t["failed"] == 0
+
+
+def test_completeness_cadence_staleness_and_a_pending_seed_are_not_bugs():
+    """Jake's run 2026-09-30 17:21 (3 BUGs, all classification): Artemis settlement volume is daily
+    data refreshed by a monthly export — stale only after 45 days; Maple's held SSF release is one
+    row a month — stale only when the latest complete month is missing; Ethereum's staking yield
+    waits on a dated seed until 2026-10-06, and after that date is classified on its own again."""
+    import build_workbook as bw
+    import completeness_report as cr
+    assert config.stale_after_days("Ethereum", "settlement_volume_usd", 7) == 45
+    assert config.stale_after_days("Ethereum", "price_usd", 7) == 7
+    assert config.series_granularity("Maple", "pool_release_tokens") == "monthly"
+    asof = pd.Timestamp("2026-09-30")
+    assert bw._age_in_days(pd.Timestamp("2026-08-31"), asof, "monthly") == 30 <= 45
+    assert bw._age_in_days(pd.Timestamp("2026-08-25"), asof, "daily") == 36 <= 45
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    row = {"status": "missing", "note": ""}
+    v, why = cr.classify(eth, "staking_yield_pct", row, None, asof)
+    assert v == "WAITING ON A DATE" and why.startswith("2026-10-06") and "--seed beaconchain" in why
+    assert cr.classify(eth, "staking_yield_pct", row, None, pd.Timestamp("2026-10-07"))[0] == "BUG"
+
+
 def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_reviews_a_gap():
     """M: circulating = on-chain total − the documented set; every excluded address comes from a
     contract entry with its source and date; a day missing an excluded balance is not computed;
@@ -20186,10 +20285,22 @@ def test_artemis_settlement_csv_imports_one_definition_and_nrr_matches_jakes_che
     groups = {("Ethereum", "settlement_volume_usd"): f, ("Ethereum", "market_cap_usd"): mc}
     bw._VIEW_BLOCKS.clear()
     bw._settlement_views(groups)
-    tot = groups[("Ethereum", "settlement_volume_365d_usd")].iloc[0]
-    nrr = groups[("Ethereum", "network_reserve_ratio")].iloc[0]
+    tot = groups[("Ethereum", "settlement_volume_365d_usd")].iloc[-1]
+    nrr = groups[("Ethereum", "network_reserve_ratio")].iloc[-1]
     assert abs(tot["value"] - 6.945e12) < 1e3 and tot["date"] == pd.Timestamp("2026-08-25")
-    assert abs(nrr["value"] - 0.0474) < 5e-5 and "market_cap(2026-08-25)" in nrr["source"]
+    assert abs(nrr["value"] - 0.0474) < 5e-5 and nrr["source"] == "derived:market_cap/settlement_365d"
+    # EVERY DAY BOTH SIDES EXIST (Jake's run 2026-09-30 17:21): a year of market cap gives a year of
+    # ratios, each over the 365 days ending that day; the 365-day sum starts once a full year of
+    # volume is behind it (2024-09-28 for an export from 2023-09-30)
+    assert groups[("Ethereum", "settlement_volume_365d_usd")]["date"].min() == pd.Timestamp("2024-09-28")
+    year = pd.date_range("2025-08-26", "2026-08-25")
+    mcy = pd.DataFrame({"date": year, "project": "Ethereum", "metric": "market_cap_usd", "value": 3.294e11,
+                        "source": "coingecko", "tier": 1}).iloc[::2]            # every other day: lag 1
+    groups = {("Ethereum", "settlement_volume_usd"): f, ("Ethereum", "market_cap_usd"): mcy}
+    bw._settlement_views(groups)
+    g = groups[("Ethereum", "network_reserve_ratio")]
+    assert len(g) == 365 and g["date"].min() == pd.Timestamp("2025-08-26")
+    assert (g["source"] == "derived:market_cap/settlement_365d[market cap 1 day(s) earlier]").sum() == 182
     assert config.series_granularity("Ethereum", "network_reserve_ratio") == "monthly"
     assert config.stale_after_days("Ethereum", "network_reserve_ratio", 7) == 45
     # a short export builds nothing and says why
@@ -20674,8 +20785,8 @@ def test_artemis_whole_file_with_bom_from_data_artemis_reproduces_jakes_nrr(tmp_
     groups = {("Ethereum", "settlement_volume_usd"): fr, ("Ethereum", "market_cap_usd"): mc}
     bw._VIEW_BLOCKS.clear()
     bw._settlement_views(groups)
-    assert round(groups[("Ethereum", "settlement_volume_365d_usd")]["value"].iloc[0] / 1e9, 1) == 6_945.0
-    assert round(groups[("Ethereum", "network_reserve_ratio")]["value"].iloc[0] * 100, 2) == 4.74
+    assert round(groups[("Ethereum", "settlement_volume_365d_usd")]["value"].iloc[-1] / 1e9, 1) == 6_945.0
+    assert round(groups[("Ethereum", "network_reserve_ratio")]["value"].iloc[-1] * 100, 2) == 4.74
     # Artemis's native download name, with spaces, in the repo root, is found too (root first)
     f.unlink()
     (tmp_path / "Ethereum - Settlement Volume.csv").write_text(body)

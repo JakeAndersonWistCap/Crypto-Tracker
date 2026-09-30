@@ -96,12 +96,15 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
-    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "beaconchain"],
+    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "beaconchain", "plume_staking"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. beaconchain: "
                          "Ethereum's one-off ETH.Store history — reads the key's quota first and "
-                         "refuses unless the whole backfill fits (beaconcha.in is in no routine run).")
+                         "refuses unless the whole backfill fits (beaconcha.in is in no routine run). "
+                         "plume_staking: the live diamond read at the first block of each past day "
+                         "(locked_tokens, gross/net APR, commission); stops where rpc.plume.org "
+                         "serves no historical state.")
     return ap.parse_args(argv)
 
 
@@ -208,6 +211,49 @@ def seed_geodnet(st, log) -> int:
     return 0
 
 
+def seed_plume_staking(st, log) -> int:
+    """Plume's staking history from the LIVE diamond (Jake's run 2026-09-30 17:21: locked_tokens and
+    staking_yield_pct held 1 day each, flagged NOT FORWARD-ONLY). One read of the diamond at the
+    first block of each past day, a year back, newest first; days already held are skipped. It
+    STOPS at the first day rpc.plume.org will not serve state for — the answer to whether Plume's
+    RPC serves history, printed — or at the diamond's deployment (recorded as the series' start).
+    Records NO gaps and NO review items."""
+    from fetch import Heartbeat
+    from fetch.archive import record_series_start
+    from fetch.plume_staking import PlumeStaking
+    from fetch.validate import validate_frame
+    import pandas as pd
+    plume = [p for p in config.PROJECTS if p.get("plume_staking")]
+    spec = plume[0]["plume_staking"] if plume else {}
+    long = st.load_long()
+    held = long[(long["project"] == "Plume") & (long["metric"] == spec.get("stake_metric"))] if not long.empty else long
+    have = set(pd.to_datetime(held["date"]).dt.normalize()) if not held.empty else set()
+    log.info("--seed plume_staking: BEFORE — %d day(s) of %s held", len(have), spec.get("stake_metric"))
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        res = PlumeStaking().seed(plume, SEED_WINDOW_DAYS, out, have=have)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        if e.status != "ok":
+            log.info("--seed plume_staking: %s — %s", e.status, e.message)
+    if res["mechanism_start"]:
+        for m in ("stake_metric", "apr_metric", "commission_metric", "net_apr_metric"):
+            record_series_start("Plume", spec[m], res["mechanism_start"],
+                                f"the live staking diamond {spec['address']} has no code before "
+                                f"{res['mechanism_start']} (its deployment)")
+    log.info("--seed plume_staking: AFTER (%.0fs) — %d day(s) read, %d row(s) stored; %s",
+             time.monotonic() - t0, res["stored_days"], written,
+             f"STOPPED at {res['stopped']} — earlier days are FORWARD-ONLY on this RPC" if res["stopped"]
+             else f"series starts {res['mechanism_start']} (deployment)" if res["mechanism_start"]
+             else f"the whole {SEED_WINDOW_DAYS} days were served")
+    return 0
+
+
 def seed_beaconchain(st, log) -> int:
     """Ethereum's ONE-OFF ETH.Store history (Jake, 2026-09-30). beaconcha.in is in no routine run.
 
@@ -309,7 +355,7 @@ def main(argv=None) -> int:
 
     if args.seed:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
-              "beaconchain": seed_beaconchain}[args.seed](st, log)
+              "beaconchain": seed_beaconchain, "plume_staking": seed_plume_staking}[args.seed](st, log)
         st.close()
         return rc
 
@@ -427,8 +473,8 @@ def main(argv=None) -> int:
     for t in sorted(out.timings, key=lambda x: -x["seconds"]):
         src = t["source"]
         log.info("    tier %-3s %-16s %7.1fs  %6d rows  %d failed  %d skipped",
-                 t["tier"], src, t["seconds"], rows_by_source.get(src, 0),
-                 fails_by_source.get(src, 0), skips_by_source.get(src, 0))
+                 t["tier"], src, t["seconds"], t.get("rows", rows_by_source.get(src, 0)),
+                 t.get("failed", fails_by_source.get(src, 0)), t.get("skipped", skips_by_source.get(src, 0)))
     # SLOWEST FIRST, and the slowest line is the answer. A source taking minutes and returning
     # nothing is the most useful row in a slow run's log, and a rows-only summary cannot show it.
 
