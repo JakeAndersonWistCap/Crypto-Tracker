@@ -248,6 +248,7 @@ METRICS = {
     # ===== AETHIR'S OWN DASHBOARD, BY LABEL (Jake's PDFs, 2026-10-01). fetch/aethir_pages.py. =====
     # Each is matched to its payload key by value against the figure Jake read beside the label.
     "arr_usd":               {"label": "Annual Recurring Revenue (ARR, 1d) — Aethir's own headline (demand-metric)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Aethir",)},
+    "customer_revenue_monthly_usd": {"label": "Aethir Monthly Network Revenue (USD) — monthlyNetworkRevenue on demand-metric, from Aug 2024 (history beside the weekly customer_revenue_usd; never summed with it)", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",)},
     "customer_revenue_cumulative_usd": {"label": "Total Network Revenue since June 2024 — Aethir's own cumulative (demand-metric)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
     "customer_revenue_usd_defillama": {"label": "DefiLlama aethir fees — AethirCore service-fee deposits net of withdrawals (PREPAYMENT, can be negative); cross-check of Aethir's own weekly revenue", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [1], "sanity_min": -1e11, "sanity_max": 1e11, "only_projects": ("Aethir",)},
     "compute_purchases_cumulative_tokens": {"label": "Onchain Compute Purchases (ATH, cumulative) — demand-metric", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
@@ -1322,6 +1323,13 @@ def is_manual_quarterly(project_name: str, metric: str) -> bool:
 # than a second reading of it.
 # "archive" (2026-09-29): a row read at a PAST block by archive_backfill.py — the same measuring
 # point as the live read, so it strips like the others and never splits a series.
+# A READ METHOD CHANGING ON ONE CONTRACT (Plume locked_tokens: totalAmountStaked vs
+# getValidatorsList.sum(totalStaked), Jake 2026-10-01) is the same measuring point while the two
+# methods' values agree to within this — on shared dates, else across the junction. 0.5%: wider than
+# two exact reads of one quantity disagree, narrower than any re-pointing this tool has seen
+# (Uniswap's fire_pit -> burn_dead was x27,000). build_workbook.method_points.
+METHOD_AGREEMENT_TOLERANCE = 0.005
+
 SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback", "archive", "one-off-removed")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
@@ -2906,10 +2914,10 @@ PROJECTS = [
             # THE TOP-UP RESERVE (Jake, 2026-10-01): backfill spends only what is left after reserving
             # days-left-in-month x the latest measured one-day top-up dry run x this margin.
             "topup_reserve_margin": 1.2,
-            # BACKFILL STOPS AT THE UNEXPLAINED BREAK (Jake, 2026-10-01): top-ups and April-onward
-            # backfill only, until probe near_activity_break says whether the Mar->Apr drop is real
-            # (then pre-April can be reconsidered) or the dataset recording less (SERIES_BREAKS).
-            "backfill_floor": "2026-04-01",
+            # NO BACKFILL FLOOR (Jake, probes5 2026-10-01): the Mar->Apr drop is REAL — both BigQuery
+            # and NearBlocks fell to x0.26 (SERIES_BREAKS) — so the full year is valid and the 365-day
+            # NRR needs it. Backfill runs newest first within the budget after the top-up reserve
+            # (~3 months for the 1.91 TB year). `backfill_floor` (a date) would stop it again.
             "max_bytes_per_query": 400 * 10 ** 9,
             "days": 365, "chunk_days": 31, "max_chunks_per_run": 1, "census_every_days": 30,
             "value_cover": 0.95,
@@ -3738,14 +3746,36 @@ PROJECTS = [
         # ===== SETTLEMENT VOLUME REBUILT BY ARTEMIS'S METHOD — UNVALIDATED (Jake, 2026-10-01). =====
         # fetch/plume_settlement.py: P2P (ERC-20 + native, both sides non-contract) at same-day
         # DefiLlama prices + DefiLlama DEX volume; NFT ~0. Jake's measure: ~2,980 ERC-20 transfers a
-        # day, 25 of 250 sampled EOA-to-EOA — a year is ~21,755 pages once (~1.5h at 4/s, under
-        # Blockscout's default 300/min), then daily top-ups. `--seed plume_settlement` for the year.
+        # day, 25 of 250 sampled EOA-to-EOA — a year is ~21,755 pages once on the v2 route (~1.5h at a
+        # steady 4/s; Jake's sequential run went 1h+ unfinished, latency-bound), then daily top-ups.
+        # `--seed plume_settlement` for the year; probe plume_settlement_routes times each route.
         "settlement_rebuild": {
             "base": "https://explorer.plume.org", "days": 365,
             "p2p_metric": "p2p_transfer_volume_usd", "dex_metric": "dex_volume_usd",
             "price_api": "https://coins.llama.fi", "chain_key": "plume_mainnet", "native_coin": "coingecko:plume",
             # a day with more native transfers than this many 50-row pages is not stored (and says so)
             "native_max_pages_per_day": 400,
+            # ===== FASTER SEED (Jake, 2026-10-01: the chain-wide seed ran 1h+ unfinished). =====
+            # "v2" = the chain-wide token-transfers list (every token, 50 a page, ~21,755 pages a year).
+            # "tokentx" = the TOKEN-SCOPED backfill (fetch/plume_settlement docstring): only tokens
+            # DefiLlama has ever priced, via the Etherscan-compatible tokentx at 10,000 rows a call, with
+            # eth_getCode on rpc.plume.org for the non-contract test (cached). STAYS "v2" UNTIL probe
+            # plume_settlement_routes has measured both on Jake's machine (Jake: report expected run
+            # times before switching). One run on the token route without a config change:
+            # PLUME_SETTLEMENT_ROUTE=tokentx python token_metrics.py --seed plume_settlement
+            "erc20_route": "v2",
+            "tokentx": {"offset": 10_000, "segments": 8, "workers": 4, "scope_pages": 20,
+                        # Blockscout's DEFAULT per-IP limit is 300/min = 5/s for both /api and /api/v2
+                        # (blockscout/blockscout master: config/runtime.exs API_RATE_LIMIT_BY_IP 300 per
+                        # 1m; apps/block_scout_web/priv/rate_limit_config.json "default" and "api/v2/*",
+                        # read 2026-10-01). explorer.plume.org's own setting is NOT KNOWN until the probe
+                        # reads its x-ratelimit-limit header: 4/s shared by every worker stays under the
+                        # default. Raise only on the probe's measured figure.
+                        "rate_per_s": 4,
+                        "rpc": "https://rpc.plume.org", "rpc_rate_per_s": 10, "code_batch": 100},
+            # native PLUME days read side by side, within the same shared 4/s (each day is its own chain
+            # of advanced-filters pages, so days are independent)
+            "native_workers": 4,
             "label": "Artemis method, UNVALIDATED",
             "validation": "UNVALIDATED until the method reproduces Artemis's Ethereum figure "
                           "(SETTLEMENT_REBUILD.ethereum_validation; Flipside on Snowflake is the one route left)",
@@ -7188,27 +7218,30 @@ PROJECTS = [
             "gross_issuance_tokens": {
                 "why": "ATH is pre-minted (42,000,000,000); supplier and staker rewards are releases from "
                        "pre-minted pools, measured as pool_release_tokens — nothing is minted",
-                "declared_by": "Jake, 2026-10-01", "sourced": False,
-                "still_needed": "probe aethir_mint_path (rewritten 2026-10-01): the Ethereum cap and minter, "
-                                "and the Arbitrum proxy's implementation"},
+                "declared_by": "Jake, 2026-10-01",
+                # sourced from the contracts (probes5): Ethereum totalSupply = hard cap 42bn; Arbitrum is
+                # Axelar ITS (cross-chain mint/burn) — config Aethir.mint_path
+                "sourced": True,
+                "source": "aethir_mint_path probe (Jake's probes5 run, 2026-10-01): Ethereum ATH totalSupply "
+                          "42,000,000,000 = cap 42,000,000,000; Arbitrum = Axelar ITS InterchainToken"},
         },
-        # ===== THE MINT PATH, AS READ (Jake's run 2026-10-01 14:34). =====
-        # Ethereum ATH 0xbe0E… DISPATCHES mint(uint256) — 8,806 bytes, not an EIP-1967 proxy,
-        # totalSupply 42,000,000,000. So a mint path EXISTS there; whether it can still mint depends on
-        # a cap equal to supply, or on who holds the minting right. Arbitrum 0xc87B… is 45 bytes — an
-        # EIP-1167 minimal proxy; Axelar's registry gives its ITS InterchainToken implementation as
-        # 0x7F9F70Da…8819 (axelar-contract-deployments@c30f3359 mainnet.json), whose mint/burn moves
-        # supply between chains. The probe now computes both verdicts; until they come back the
-        # declared zero stands ON THE CONDITION that Ethereum totalSupply stays 42bn.
+        # ===== THE MINT PATH — SETTLED (Jake's probes5, 2026-10-01). The declared zero stands. =====
+        # Ethereum ATH 0xbe0E… DISPATCHES mint(uint256) — 8,806 bytes, not an EIP-1967 proxy — but its
+        # totalSupply 42,000,000,000 EQUALS its hard cap 42,000,000,000, so minting is impossible; owner
+        # 0x1246ae66… is a contract. Arbitrum 0xc87B… (45 bytes) is an EIP-1167 minimal proxy to Axelar's
+        # ITS InterchainToken (0x7F9F70Da…8819, axelar-contract-deployments@c30f3359 mainnet.json): its
+        # mint/burn belong to the token manager and MOVE supply between chains — not new issuance.
         "mint_path": {
             "ethereum": {"address": "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B", "mint_dispatched": "mint(uint256)",
                          "eip1967_proxy": False, "bytes": 8806, "total_supply": 42_000_000_000,
-                         "cap": "NOT YET READ", "minter": "NOT YET READ"},
+                         "cap": 42_000_000_000, "owner": "0x1246ae66c4c5e51f0b985f8e6716481c2eb422bd",
+                         "owner_is_contract": True, "verdict": "minting impossible: totalSupply = hard cap"},
             "arbitrum": {"address": "0xc87B37a581ec3257B734886d9d3a581F5A9d056c", "eip1167_proxy": True,
-                         "bytes": 45, "implementation": "NOT YET READ",
-                         "expected": "Axelar ITS InterchainToken 0x7F9F70Da4af54671a6abAc58e705b5634cac8819"},
-            "read": "Jake's run 2026-10-01 14:34",
-            "verdict": "OPEN — probe aethir_mint_path",
+                         "bytes": 45, "implementation": "Axelar ITS InterchainToken",
+                         "expected": "Axelar ITS InterchainToken 0x7F9F70Da4af54671a6abAc58e705b5634cac8819",
+                         "verdict": "mint/burn by the ITS token manager: moves supply between chains"},
+            "read": "Jake's probes5 run of aethir_mint_path, 2026-10-01",
+            "verdict": "SETTLED — no mint path that adds supply; the declared zero stands",
         },
         # ===== B7 (2026-09-28): AETHIR'S OWN REVENUE FIGURES, BESIDE DEFILLAMA'S. RECORDED BOTH. =====
         # DefiLlama's fees (~$4.5M/30d) are DepositServiceFee - WithdrawServiceFee on AethirCore
@@ -7811,15 +7844,38 @@ PROJECTS = [
                 # (638,256,960) is "Total Monthly Capacity of Players" (Jake's supply-page screenshot,
                 # 2026-10-01) — a gaming-players measure, NOT GPU-hours: stored under its own name,
                 # never a utilisation denominator. totalOnlineHours waits for its label (Jake).
+                # POSSIBLE CLOUD-HOST REWARDS — NOT WIRED (Jake's probes5, 2026-10-01). A block on this
+                # page carries {"idcStaked":866896004.12,"totalOnlineHours":3519720273} and
+                # {"totalRewards":3063771452.71,"totalServiceFee":8841927451.05,"totalLockedRewards":
+                # 2040911539.99,"weeklyData":[{"week":"30/08","reward":18364931.51,"service":149152120.69},..]}.
+                # IF `reward` is cloud-host (compute provider) rewards, supplier emissions rise by ~18.4M
+                # ATH/week (~950M/yr) on top of checker + edge. totalServiceFee is ATH PAID FOR SERVICE —
+                # DEMAND, never rewards. Waiting on Jake's Supply Metrics PDF for the labels: REPORTED only.
                 "protocol/supply-metric": {"fields": {"nodes": "supply_units",
                                                       "locations": "supply_locations",
                                                       "totalComputePower": "compute_power_total",
                                                       "totalMonthlyCapacity": "capacity_monthly_total"},
-                                           "report": ("idcStaked", "totalOnlineHours")},
-                # Labelled figures on this page are matched by value (see `labelled`). The earlier
-                # unlabelled `amount` / `earning` charts are candidates for the weekly revenue chart
-                # and are used only if one of them fits it (range, cadence, sum ~ total revenue).
-                "protocol/demand-metric": {"fields": {}, "report": ("amount", "earning")},
+                                           "report": ("idcStaked", "totalOnlineHours", "totalRewards",
+                                                      "totalServiceFee", "totalLockedRewards")},
+                # PINNED BY KEY NAME (Jake's probes5, 2026-10-01 — the value matcher found nothing; the
+                # keys are in the payload): weeklyNetworkRevenue [{"startDate":"08/06","amount":868693.77},
+                # ..] is DD/MM WITH NO YEAR, inferred from the sequence ending at the current week;
+                # monthlyNetworkRevenue [{"month":"August, 2024","earning":1023490.62}, ..] from Aug 2024.
+                # Only FINISHED weeks/months are stored; the one in progress is reported. Weekly compute
+                # hours are NOT in the server payload (client-loaded) — config UNAVAILABLE.
+                "protocol/demand-metric": {
+                    "fields": {},
+                    "arrays": {
+                        "weeklyNetworkRevenue": {"value_key": "amount", "metric": "customer_revenue_usd",
+                                                 "granularity": "weekly", "date_key": "startDate", "yearless": True,
+                                                 "complete_only": True,
+                                                 "label": "Aethir Weekly Network Revenue (USD), week starting"},
+                        "monthlyNetworkRevenue": {"value_key": "earning", "metric": "customer_revenue_monthly_usd",
+                                                  "granularity": "monthly", "date_key": "month",
+                                                  "complete_only": True,
+                                                  "label": "Aethir Monthly Network Revenue (USD)"},
+                    },
+                },
                 # ===== FIRST-PARTY STAKE AND REWARDS (probes3 2026-09-30; probes4 + labels 2026-10-01). =====
                 # totalStaked "Total Staked ATH (veATH)" 1,789,329,561 = idcStaked 866,896,004 + aiStaked
                 # 416,297,029 + gamingStaked 369,439,890 + edgeStaked 136,696,638 EXACTLY (Jake, probes4).
@@ -7833,7 +7889,9 @@ PROJECTS = [
                                "idcStaked": "locked_tokens_idc",
                                "athCirculatingSupply": "circulating_supply_first_party",
                                "numberDelegatedCheckers": "supply_units_checker_licences"},
-                    "current_only": ("totalStaked",),
+                    # The component TILES are current-only: their history comes from stakeHistory below,
+                    # under the same measuring point (one source per component).
+                    "current_only": ("totalStaked", "aiStaked", "gamingStaked", "edgeStaked", "idcStaked"),
                     "components": {"total": "totalStaked",
                                    "parts": ("idcStaked", "aiStaked", "gamingStaked", "edgeStaked")},
                     # "Staking Rewards Emission Schedule" — paid to STAKERS, not A2's supplier emissions.
@@ -7841,7 +7899,18 @@ PROJECTS = [
                     # +2,000,000 ATH a week; Total Emitted Rewards 630,412,275 at 24-09-2026.
                     "arrays": {"emissionStakeRewardSchedule": {
                         "value_key": "emitted", "metric": "staker_rewards_emitted", "granularity": "weekly",
-                        "cumulative": True, "label": "Aethir published schedule"}},
+                        "cumulative": True, "label": "Aethir published schedule"},
+                        # stakeHistory [{"startTime":"2025-10-01T00:00:00.000Z","endTime":..,"aiStaked":..,
+                        # "gamingStaked":..}] — PINNED BY KEY (probes5): monthly component history, dated at
+                        # the period's startTime as served (whether a figure is the period's opening or
+                        # closing stake is not established); finished periods only. `cadence`, not
+                        # `granularity`: the components are read DAILY from their tiles, so their staleness
+                        # stays daily. A component absent from stakeHistory is said, not zeroed.
+                        "stakeHistory": {"values": {"aiStaked": "locked_tokens_ai", "gamingStaked": "locked_tokens_gaming",
+                                                    "edgeStaked": "locked_tokens_edge", "idcStaked": "locked_tokens_idc"},
+                                         "cadence": "monthly", "date_key": "startTime", "end_key": "endTime",
+                                         "complete_only": True, "source": "field",
+                                         "label": "stakeHistory, monthly"}},
                     # totalRunningHours is "Cumulative Runtime (Hours)" under Aethir Checker Nodes —
                     # checker-node runtime, NOT GPU utilisation (Jake's labels, 2026-10-01).
                     "report": ("baseRewardDistributed", "bonusRewardDistributed", "airdropRewardDistributed",
@@ -7857,8 +7926,9 @@ PROJECTS = [
             # matched BY VALUE among the named pages' current figures; ambiguity stores nothing.
             # Pin each `key` from the Run Log's "matched by value" line.
             "labelled": {
+                # PINNED (probes5): "arr": 62489999.90221721 on demand-metric; the anchor is now a cross-check.
                 "arr": {"label": "Annual Recurring Revenue (ARR) (1d)", "metric": "arr_usd",
-                        "pages": ("protocol/demand-metric",), "key": None, "anchor": 62_490_000,
+                        "pages": ("protocol/demand-metric",), "key": "arr", "anchor": 62_490_000,
                         "within": 0.30, "read_on": "2026-10-01"},
                 "revenue_total": {"label": "Total Network Revenue (Since June 2024)",
                                   "metric": "customer_revenue_cumulative_usd", "pages": ("protocol/demand-metric",),
@@ -7905,25 +7975,9 @@ PROJECTS = [
                 "edge_devices": {"label": "Staked edge devices", "metric": "supply_units_edge",
                                  "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
                                  "anchor": 64_869, "within": 0.10, "read_on": "2026-10-01"},
-                # CHARTS. The weekly revenue chart (axis to $2.4M) must sum, since June 2024, to within
-                # 10% of Total Network Revenue — Jake's check; ATH-denominated charts fall outside the range.
-                "revenue_weekly": {"label": "Aethir Weekly Network Revenue", "metric": "customer_revenue_usd",
-                                   "pages": ("protocol/demand-metric",), "granularity": "weekly",
-                                   "value_range": (0, 2_600_000),
-                                   "sum_check": {"against": "revenue_total", "since": "2024-06-01", "within": 0.10}},
-                "hours_weekly": {"label": "Weekly Compute Hours Delivered", "metric": "compute_hours_weekly",
-                                 "pages": ("protocol/demand-metric",), "granularity": "weekly",
-                                 "value_range": (0, 1e9),
-                                 "latest_check": {"against": "hours_last_week", "within": 0.15}},
-                # Daily, AI vs Gaming told apart by the key's name (camelCase Ai/AI, or gaming); values
-                # inside a 4-year maximum lock.
-                "duration_ai": {"label": "Average Stake Duration (Days) — AI Pool",
-                                "metric": "avg_lock_duration_days_ai", "pages": ("protocol/onchain-metric",),
-                                "granularity": "daily", "value_range": (1, 1461),
-                                "name_re": r"^ai|Ai|AI|_ai", "not_name_re": r"(?i)gaming"},
-                "duration_gaming": {"label": "Average Stake Duration (Days) — Gaming Pool",
-                                    "metric": "avg_lock_duration_days_gaming", "pages": ("protocol/onchain-metric",),
-                                    "granularity": "daily", "value_range": (1, 1461), "name_re": r"(?i)gaming"},
+                # CHARTS. Weekly revenue, weekly compute hours and the two stake-duration charts are no
+                # longer matched by value: revenue is pinned by key (demand-metric `arrays`), and hours and
+                # durations are NOT in the server payload — client-loaded (Jake's probes5): UNAVAILABLE.
                 "edge_monthly": {"label": "Edge monthly earnings (03/26-09/26)", "metric": "edge_earnings_monthly_tokens",
                                  "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "granularity": "monthly",
                                  "value_range": (1e6, 2e8), "first_on_or_after": "2026-03-01"},
@@ -7961,6 +8015,16 @@ PROJECTS = [
                                            "protocol/onchain-metric#bonusRewardDistributed",
                                            "protocol/onchain-metric#airdropRewardDistributed",
                                            "edge_earnings", "edge_stipend")},
+            ),
+            # THE PINNED REVENUE SERIES, CHECKED (logged). The monthly list starts August 2024, so its sum
+            # should fall short of the since-June-2024 total by June and July 2024.
+            "series_checks": (
+                {"kind": "sum_vs", "series": "monthlyNetworkRevenue", "against": "revenue_total",
+                 "anchor": 192_220_803, "read_on": "2026-10-01",
+                 "what": "monthlyNetworkRevenue summed vs Total Network Revenue (Since June 2024)",
+                 "note": "the monthly list starts Aug 2024; June-July 2024 are in the total only"},
+                {"kind": "weekly_vs_monthly", "weekly": "weeklyNetworkRevenue", "monthly": "monthlyNetworkRevenue",
+                 "what": "weeklyNetworkRevenue (pro rata by day) vs monthlyNetworkRevenue"},
             ),
             "cross_checks": (
                 {"what": "idcStaked on the two pages",
@@ -17087,7 +17151,12 @@ SETTLEMENT_REBUILD = {
 # `clean_from`; with none, the NRR and its 365-day sum are blocked with this reason.
 SERIES_BREAKS = {
     ("Near", "settlement_volume_usd"): {
-        "status": "UNRESOLVED",
+        # RESOLVED — REAL (Jake's probes5, 2026-10-01): mean daily transactions Apr 2-30 / Mar 1-23 are
+        # x0.26 in BigQuery AND in NearBlocks (txn-stats, one call, 61 days): two independent indexers
+        # agree, so NEAR activity genuinely fell ~74%. Windows may span it; nothing is SUSPECT.
+        "status": "RESOLVED",
+        "resolution": "REAL: Apr 2-30 / Mar 1-23 mean daily transactions x0.26 in BigQuery and x0.26 in "
+                      "NearBlocks txn-stats (Jake's run of probe near_activity_break, 2026-10-01)",
         "between": ("2026-03-24", "2026-04-01"),
         "clean_from": "2026-04-01",
         "evidence": "BigQuery receipt_actions 516.1M rows (2026-03) -> 104.3M (2026-04); ft_events 191.0M -> "
@@ -17102,7 +17171,7 @@ SERIES_BREAKS = {
         #             marked SUSPECT (a possible undercount) on its cell, not only the windows
         #   REAL      both fell: activity really fell; the break no longer blocks windows (pre-April
         #             backfill can then be reconsidered — near_bigquery.backfill_floor stays until then)
-        "verdict": "UNDETERMINED",
+        "verdict": "REAL",
         "verdict_file": "near-activity-break.json",
         "suspect_sources": ("near_bigquery",),
         "suspect_metrics": ("p2p_transfer_volume_usd", "settlement_volume_usd", "settlement_volume_365d_usd",
@@ -17164,15 +17233,14 @@ METHODOLOGY_FLAGS = {
                        "which Artemis's definition (DEX + NFT + P2P transfers) excludes. Use the "
                        "trading-throughput NRR; decide in the methodology work whether A1 should rank on "
                        "it (Jake, 2026-09-30).",
-    "near_activity_break": "UNRESOLVED (Jake's run 2026-10-01): NEAR activity in BigQuery fell ~80% between "
-                           "2026-03 and 2026-04 and stayed there — receipt_actions 516.1M rows (Mar) -> 104.3M "
-                           "(Apr); ft_events 191.0M -> 47.3M. NO NEAR settlement figure is read across that "
-                           "boundary until the cause is known (config SERIES_BREAKS). Candidates: a bot/spam or "
-                           "incentive campaign ending, a programme ending, or THE PIPELINE — NEAR Lake (the "
-                           "dataset's only documented ingestion source) was deprecated 2026-03-24, inside the "
-                           "boundary, so a change in what the dataset records is the first to rule out. Probe "
-                           "near_activity_break sets BigQuery's daily rows beside NearBlocks' own daily "
-                           "transaction counts.",
+    "near_activity_break": "CONFIRMED REAL by two independent indexers (Jake's probes5, 2026-10-01): NEAR "
+                           "activity fell ~74% between March and April 2026 — mean daily transactions Apr 2-30 "
+                           "/ Mar 1-23 are x0.26 in BigQuery's crypto_near_mainnet_us AND x0.26 in NearBlocks' "
+                           "txn-stats. BigQuery's row counts (receipt_actions 516.1M Mar -> 104.3M Apr; "
+                           "ft_events 191.0M -> 47.3M) are activity, not a pipeline change, although NEAR Lake "
+                           "was deprecated 2026-03-24 inside the window. NEAR settlement windows and the "
+                           "365-day NRR may span the boundary; a NEAR figure across it reflects the real drop. "
+                           "The cause (a campaign or programme ending) is not established.",
     "maple_ssf_selling": "QUESTION, NOT ESTABLISHED: Maple's buyback-funded SSF appears to SELL SYRUP at "
                          "market — last 90 days d(usd) on -price x d(syrup) slope 0.979, R2 0.643; "
                          "2026-09-24..29 holdings 79.2M -> 74.9M SYRUP while liquid assets rose. If so, "
@@ -18086,6 +18154,22 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
 # load-bearing field: it is what stops the next person repeating the work.
 # =======================================================================================
 UNAVAILABLE = [
+    # ---------------------------------------------------------------- Aethir (Jake's probes5, 2026-10-01)
+    # The dashboard draws these three charts in the browser from a call made after the page loads;
+    # they are not in the server-rendered payload this tool reads (one GET per page, no browser).
+    *({"project": "Aethir", "metric": m, "closed_on": "2026-10-01",
+       "summary": f"{what} is CLIENT-LOADED on dashboard.aethir.com — not in the server-rendered payload.",
+       "what_was_tried": ("Jake's probes5 (2026-10-01) searched the demand-metric and onchain-metric pages' "
+                          "Next.js server payload by key: arr, weeklyNetworkRevenue, monthlyNetworkRevenue and "
+                          "stakeHistory are there; this chart is not — it is fetched by the browser after load."),
+       "impact": impact,
+       "reopen_if": "the chart's figures appear in the server payload, or Aethir publishes the API the page calls."}
+      for m, what, impact in (
+          ("compute_hours_weekly", "Weekly Compute Hours Delivered",
+           "No weekly hours history. compute_hours_last_week (the tile) and compute_hours_cumulative are read."),
+          ("avg_lock_duration_days_ai", "Average Stake Duration (Days) — AI Pool", "No stake-duration series."),
+          ("avg_lock_duration_days_gaming", "Average Stake Duration (Days) — Gaming Pool", "No stake-duration series."),
+      )),
     # ===== WORLD MOBILE'S TWO BUYBACK CLOSURES WERE REMOVED 2026-09-17, NOT SOFTENED. =====
     # actual_buyback_tokens and actual_buyback_usd were closed here on the grounds that "the
     # destination is undocumented, so a token figure cannot be given a meaning". The MiCA filing

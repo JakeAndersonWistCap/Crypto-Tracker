@@ -36,6 +36,14 @@ labels, so each labelled figure is matched to its key BY VALUE (resolve_scalar /
 the one current figure within a declared distance of the value Jake read, or the one chart with the
 declared cadence, value range and check against a resolved figure. Ambiguous or absent: nothing is
 stored and every candidate is named; the Run Log names each match so the key can be pinned.
+PINNED BY KEY NAME (Jake's probes5, 2026-10-01): the value matcher found no ARR — "arr" sits in an
+object that also holds arrays, which the flat-object reader cannot see — but the keys are in the
+payload. A pinned scalar is read anywhere in the payload (key_scalar) and its anchor becomes a logged
+cross-check. weeklyNetworkRevenue (DD/MM, no year: yearless_days infers it from the sequence ending at
+the current week), monthlyNetworkRevenue ("August, 2024") and stakeHistory (ISO startTime, one metric
+per component) are `arrays`; only finished periods are stored; series_checks log the monthly sum
+against Total Network Revenue and weekly against monthly. Weekly compute hours and stake durations
+are client-loaded, not in the payload (config UNAVAILABLE).
 DERIVED (config `derived`): same-run sums and ratios — the checker-node and edge reward
 cumulatives that supplier emissions are differenced from at read time, and the utilisation
 labelled "derived: assumes every container available 24/7".
@@ -107,7 +115,9 @@ _DATE_KEYS = ("t", "ts", "x", "label", "name", "key", "category")
 # "26-11-2026" — day first, settled by the 26. MM-DD-YYYY is deliberately NOT accepted beside it,
 # so no string can parse both ways.
 _DATE_FORMATS = ("%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m", "%b %Y", "%B %Y", "%b %y", "%b '%y",
-                 "%m/%Y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y", "%d-%m-%Y")
+                 "%m/%Y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y", "%d-%m-%Y",
+                 # monthlyNetworkRevenue (Jake's probes5, 2026-10-01): {"month": "August, 2024", ...}
+                 "%B, %Y", "%b, %Y")
 
 
 def _as_day(v, numeric_ok: bool = True) -> pd.Timestamp | None:
@@ -230,6 +240,56 @@ def array_objects(html: str, key: str):
     return f"`{key}`: the array is not closed in the payload"
 
 
+def key_scalar(html: str, key: str):
+    """(value, why) for `"key": <number>` ANYWHERE in the payload — inside nested objects and beside
+    arrays, where rsc_objects() (flat objects only) cannot see it. Jake's probes5 (2026-10-01): the
+    value matcher found no ARR because "arr": 62489999.90221721 sits in an object that also holds
+    the revenue arrays. One distinct value, or nothing."""
+    text = rsc_text(html)
+    vals = sorted({float(m.group(1)) for m in re.finditer(
+        re.escape(f'"{key}"') + r"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b", text)})
+    if not vals:
+        return None, f"`{key}` is not in the server-rendered payload as a number"
+    if len(vals) > 1:
+        return None, f"`{key}` carries {len(vals)} different values ({vals[:5]})"
+    return vals[0], ""
+
+
+def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = None):
+    """[day] for labels served as DD/MM with NO YEAR (weeklyNetworkRevenue "08/06"), or why not.
+    The year is INFERRED FROM THE SEQUENCE, which ends at the current week (Jake's probes5): the last
+    label gets the latest year that does not put it after today; walking back, the year drops by one
+    whenever a label would not fall before the one after it. Accepted only if every step is exactly
+    the declared cadence and the last point is within two weeks of today — otherwise nothing."""
+    asof = (asof or today()).normalize()
+    try:
+        dm = [tuple(int(x) for x in str(t).strip().split("/")) for t in labels]
+        if not dm or any(len(x) != 2 or not (1 <= x[0] <= 31 and 1 <= x[1] <= 12) for x in dm):
+            raise ValueError
+    except ValueError:
+        return f"labels are not DD/MM ({list(labels)[:3]})"
+    step = {"weekly": 7, "daily": 1}.get(granularity)
+    if step is None:
+        return f"yearless labels are read only for weekly/daily series, not {granularity}"
+    for order in (1, -1):                                   # as served, else newest-first
+        seq = dm[::order]
+        try:
+            d, m = seq[-1]
+            year = asof.year if pd.Timestamp(asof.year, m, d) <= asof else asof.year - 1
+            days = [pd.Timestamp(year, m, d)]
+            for d, m in reversed(seq[:-1]):
+                cand = pd.Timestamp(days[0].year, m, d)
+                if cand >= days[0]:
+                    cand = pd.Timestamp(days[0].year - 1, m, d)
+                days.insert(0, cand)
+        except ValueError:                                  # 29/02 in a year without one
+            continue
+        if all((b - a).days == step for a, b in zip(days, days[1:])) and (asof - days[-1]).days < 14:
+            return days[::order]
+    return (f"no year assignment makes {len(dm)} DD/MM labels {step} days apart and ending within two "
+            f"weeks of {asof.date()} (first {labels[0]}, last {labels[-1]})")
+
+
 def _cadence_ok(pts: list, granularity: str) -> bool:
     gaps = pd.Series([(b[0] - a[0]).days for a, b in zip(pts, pts[1:])])
     lo, hi = {"monthly": (27, 32), "daily": (1, 1), "weekly": (7, 7)}[granularity]
@@ -250,6 +310,8 @@ def resolve_scalar(spec: dict, pages: dict):
         keys = [spec["key"]] if spec.get("key") else sorted(fields(html))
         for k in keys:
             cur, _, _ = current_and_series(html, k)
+            if cur is None and spec.get("key"):
+                cur, _ = key_scalar(html, k)            # PINNED: anywhere in the payload
             if cur is None:
                 continue
             for scale in ((1.0, 100.0) if spec.get("pct") else (1.0,)):
@@ -260,6 +322,8 @@ def resolve_scalar(spec: dict, pages: dict):
     if len(cands) == 1:
         return cands[0]
     if not cands:
+        if spec.get("key"):
+            return f"pinned `{spec['key']}` is not in the payload of {', '.join(spec['pages'])}"
         return (f"no current figure within {spec['within']:.0%} of {spec['anchor']:,} on "
                 f"{', '.join(spec['pages'])}")
     return "ambiguous — " + ", ".join(f"{p} `{k}` {v:,.4f}" for p, k, v in cands)
@@ -343,6 +407,7 @@ class AethirPages:
 
     def __init__(self, get=None, daily=None, **_ignored):
         self._get = get
+        self._series: dict = {}
         if daily is None:
             from .logcache import DailyChecks
             daily = DailyChecks()
@@ -410,6 +475,7 @@ class AethirPages:
         resolved = self._labelled(name, spec, pages, out)
         self._derived(name, spec, pages, resolved, out)
         self._cross_checks(name, spec, pages, out)
+        self._series_checks(name, spec, resolved, out)
 
     def _store(self, name: str, page: str, key: str, metric: str, html: str, out,
                history: bool = True) -> None:
@@ -432,32 +498,126 @@ class AethirPages:
                                         if len(rows) > (cur is not None) else "")
                                      + (f" ({why})" if why else ""), TIER)
 
+    def _array_points(self, objs: list, a: dict, value_key: str):
+        """[(day, value, period_end)] from a dated list, or why not. The date is `date_key` when
+        declared (ISO, a strict format, or DD/MM with no year — inferred from the sequence), else
+        whatever date the object carries (_date_of)."""
+        gran = a.get("granularity") or a.get("cadence")
+        rows = [o for o in objs if isinstance(o.get(value_key), (int, float)) and not isinstance(o.get(value_key), bool)]
+        if not rows:
+            return f"no object carries a numeric `{value_key}`"
+        dk = a.get("date_key")
+        if dk and a.get("yearless"):
+            days = yearless_days([o.get(dk) for o in rows], gran)
+            if isinstance(days, str):
+                return days
+        elif dk:
+            days = [_as_day(o.get(dk)) for o in rows]
+            if any(d is None for d in days):
+                return f"`{dk}` does not parse as a date on every object ({[o.get(dk) for o in rows][:3]})"
+        else:
+            days = [_date_of(o) for o in rows]
+        ek = a.get("end_key")
+        pts = sorted((d, float(o[value_key]), _as_day(o.get(ek)) if ek else None)
+                     for d, o in zip(days, rows) if d is not None)
+        if len(pts) < 2 or not _cadence_ok([(d, v) for d, v, _ in pts], gran):
+            return f"not a {gran} dated list ({len(pts)} dated point(s) of {len(objs)})"
+        if len({d for d, _, _ in pts}) != len(pts):
+            return "two objects share a date"
+        return pts
+
+    def _period_done(self, a: dict, d: pd.Timestamp, end) -> bool:
+        """A FINISHED period only, when `complete_only`: the week/month in progress (or one whose
+        served end is after today) is a partial figure, reported, never stored."""
+        if not a.get("complete_only"):
+            return d <= today()
+        if end is not None:
+            return end <= today()
+        gran = a.get("granularity") or a.get("cadence")
+        nxt = d + (pd.Timedelta(days=7) if gran == "weekly" else pd.DateOffset(months=1) if gran == "monthly"
+                   else pd.Timedelta(days=1))
+        return nxt <= today()
+
     def _array(self, name: str, page: str, key: str, a: dict, html: str, out) -> None:
-        """A dated list under its own key (emissionStakeRewardSchedule). Kept: dates up to today
-        (the published schedule runs past it); a cumulative that falls is refused."""
+        """A dated list under its own key — pinned BY KEY NAME (Jake's probes5): the staker reward
+        schedule, weeklyNetworkRevenue (DD/MM, year inferred), monthlyNetworkRevenue ("August, 2024"),
+        stakeHistory (ISO startTime; one metric per component key). Kept: dates up to today, or only
+        finished periods (`complete_only`); a cumulative that falls is refused."""
         objs = array_objects(html, key)
+        values = a.get("values") or {a["value_key"]: a["metric"]}
         if isinstance(objs, str):
-            out.fail(SOURCE, name, f"{a['metric']}: {objs} on {page}. NOTHING STORED.", TIER)
+            for m in values.values():
+                out.fail(SOURCE, name, f"{m}: {objs} on {page}. NOTHING STORED.", TIER)
             return
-        pts = sorted((d, float(o[a["value_key"]])) for o in objs
-                     if (d := _date_of(o)) is not None and isinstance(o.get(a["value_key"]), (int, float)))
-        if len(pts) < 2 or not _cadence_ok(pts, a["granularity"]):
-            out.fail(SOURCE, name, f"{a['metric']}: `{key}` on {page} is not a {a['granularity']} dated list "
-                                   f"({len(pts)} dated point(s) of {len(objs)}). NOTHING STORED.", TIER)
-            return
-        if a.get("cumulative") and any(b[1] < x[1] for x, b in zip(pts, pts[1:])):
-            out.fail(SOURCE, name, f"{a['metric']}: `{key}` falls somewhere — not the cumulative it is "
-                                   f"declared to be. NOTHING STORED.", TIER)
-            return
-        past = [(d, v) for d, v in pts if d <= today()]
-        if not past:
-            out.skipped(SOURCE, name, f"{a['metric']}: every point of `{key}` is after today", TIER)
-            return
-        frame = tidy(past, name, a["metric"], f"{SOURCE}:{page}.{key}.{a['value_key']}", TIER)
-        out.add(frame, SOURCE, name, f"{a['metric']} = `{key}` ({a['label']}): {len(past)} point(s) "
-                                     f"{past[0][0].date()}..{past[-1][0].date()}, latest {past[-1][1]:,.0f}; "
-                                     f"{len(pts) - len(past)} published point(s) after today not stored "
-                                     f"(last {pts[-1][0].date()} {pts[-1][1]:,.0f})", TIER)
+        for vk, metric in values.items():
+            pts = self._array_points(objs, a, vk)
+            if isinstance(pts, str):
+                if a.get("values") and pts.startswith("no object carries"):
+                    out.skipped(SOURCE, name, f"{metric}: `{key}` on {page} {pts} — that component has no "
+                                              f"history there; its current figure is read from the tile", TIER)
+                else:
+                    out.fail(SOURCE, name, f"{metric}: `{key}` on {page}: {pts}. NOTHING STORED.", TIER)
+                continue
+            self._series[key + ("." + vk if a.get("values") else "")] = [(d, v) for d, v, _ in pts]
+            if a.get("cumulative") and any(b[1] < x[1] for x, b in zip(pts, pts[1:])):
+                out.fail(SOURCE, name, f"{metric}: `{key}` falls somewhere — not the cumulative it is "
+                                       f"declared to be. NOTHING STORED.", TIER)
+                continue
+            keep = [(d, v) for d, v, e in pts if self._period_done(a, d, e)]
+            later = [(d, v) for d, v, e in pts if not self._period_done(a, d, e)]
+            if not keep:
+                out.skipped(SOURCE, name, f"{metric}: no finished/past point in `{key}`", TIER)
+                continue
+            src = (f"{SOURCE}:{page}.{vk}" if a.get("source") == "field"
+                   else f"{SOURCE}:{page}.{key}.{vk}")
+            out.add(tidy(keep, name, metric, src, TIER), SOURCE, name,
+                    f"{metric} = `{key}`.{vk} ({a['label']}): {len(keep)} point(s) "
+                    f"{keep[0][0].date()}..{keep[-1][0].date()}, latest {keep[-1][1]:,.2f}"
+                    + (f"; {len(later)} point(s) not stored ({'in progress' if a.get('complete_only') else 'after today'}"
+                       f": {later[0][0].date()} {later[0][1]:,.2f}"
+                       + (f" .. {later[-1][0].date()}" if len(later) > 1 else "") + ")" if later else ""), TIER)
+
+    def _series_checks(self, name: str, spec: dict, resolved: dict, out) -> None:
+        """Cross-checks between the pinned revenue series and the cumulative total (logged only):
+        the monthly sum against "Total Network Revenue (Since June 2024)", and weekly against monthly
+        where they overlap (each week split pro rata by day across months)."""
+        for c in spec.get("series_checks") or ():
+            if c["kind"] == "sum_vs":
+                pts = self._series.get(c["series"])
+                ref = resolved.get(c["against"])
+                tot, how = ((ref[2], f"{ref[0]} `{ref[1]}` today") if ref else
+                            (c["anchor"], f"as read {c['read_on']}"))
+                if not pts:
+                    continue
+                got = sum(v for _, v in pts)
+                out.skipped(SOURCE, name, f"{c['what']}: {got:,.0f} over {len(pts)} month(s) "
+                                          f"{pts[0][0].strftime('%b %Y')}..{pts[-1][0].strftime('%b %Y')} vs "
+                                          f"{tot:,.0f} ({how}): {got / tot - 1:+.2%}"
+                                          + (f" — {c['note']}" if c.get("note") else "") + " — LOGGED", TIER)
+            elif c["kind"] == "weekly_vs_monthly":
+                wk, mo = self._series.get(c["weekly"]), self._series.get(c["monthly"])
+                if not wk or not mo:
+                    continue
+                spread: dict = {}
+                for d, v in wk:
+                    for k in range(7):
+                        day = d + pd.Timedelta(days=k)
+                        spread[day.to_period("M")] = spread.get(day.to_period("M"), 0.0) + v / 7
+                first, last = wk[0][0], wk[-1][0] + pd.Timedelta(days=6)
+                rows = []
+                for d, v in mo:
+                    per = d.to_period("M")
+                    if per.start_time >= first and per.end_time.normalize() <= last and per in spread:
+                        rows.append((per, spread[per], v))
+                if not rows:
+                    out.skipped(SOURCE, name, f"{c['what']}: no month wholly inside the weekly series", TIER)
+                    continue
+                w, m = sum(r[1] for r in rows), sum(r[2] for r in rows)
+                worst = max(rows, key=lambda r: abs(r[1] / r[2] - 1) if r[2] else 0)
+                out.skipped(SOURCE, name, f"{c['what']}: {len(rows)} overlapping month(s) "
+                                          f"{rows[0][0]}..{rows[-1][0]}: weekly {w:,.0f} vs monthly {m:,.0f} "
+                                          f"({w / m - 1:+.2%}); widest {worst[0]} {worst[1]:,.0f} vs "
+                                          f"{worst[2]:,.0f} ({worst[1] / worst[2] - 1:+.2%}) — LOGGED", TIER)
 
     def _components(self, name: str, page: str, comp: dict, html: str, out) -> None:
         """The tile total beside the sum of its parts' CURRENT figures. LOGGED, never gating; a part
@@ -489,7 +649,9 @@ class AethirPages:
                 continue
             resolved[fid] = r
             page, key, v = r
-            how = "pinned" if f.get("key") else f"matched by value to {f['anchor']:,} as read {f['read_on']}"
+            how = (f"pinned by key; cross-check vs {f['anchor']:,} as read {f['read_on']}: {v / f['anchor'] - 1:+.1%}"
+                   + ("" if abs(v / f["anchor"] - 1) <= f["within"] else f" — OUTSIDE ±{f['within']:.0%}, CHECK")
+                   if f.get("key") else f"matched by value to {f['anchor']:,} as read {f['read_on']}")
             if f.get("metric"):
                 out.add(point(name, f["metric"], v, f"{SOURCE}:{page}.{key}", TIER, today()), SOURCE, name,
                         f"{f['metric']} = \"{f['label']}\" = {page} `{key}` {v:,.4f} ({how})", TIER)

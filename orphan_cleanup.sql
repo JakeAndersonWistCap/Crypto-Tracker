@@ -3847,3 +3847,86 @@ SELECT COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
 -- DELETE FROM metrics
 --  WHERE project = 'Plume'
 --    AND (source LIKE 'plume_staking:0xCF8B9726%' OR source LIKE 'plume_staking:0xA20bfe49%');
+--
+-- BN RESULT (Jake, 2026-10-01): BN1 found NO test-diamond rows — 0xCF8B9726 and 0xA20bfe49 are
+--     absent; every plume_staking row is the live diamond 0x30c791E4. Nothing to delete; BN3 is
+--     not to be run.
+
+-- ========================================================================================
+-- BO. PLUME: ONE READ METHOD PER METRIC ON THE LIVE DIAMOND — THE 2026-09-30 ONE-OFFS  2026-10-01
+--     Jake, 2026-10-01: locked_tokens "measuring point changed" came from three labels on the SAME
+--     contract 0x30c791E4: ...totalAmountStaked:archive (364 rows), ...getValidatorsList.sum(
+--     totalStaked) (2026-09-30 only), ...totalAmountStaked (2026-10-01). Likewise commission
+--     ("stake-weighted" vs "stake-weighted, active") and net yield ("gross*(1-commission)" vs
+--     "gross*active(1-commission)"). The values agree throughout (net 4.4969% all year = the app's
+--     4.5%; commission 10%). ONE METHOD PER METRIC, as the adapter writes today:
+--       locked_tokens            .totalAmountStaked
+--       staking_commission_pct   .getValidatorsList.commission[stake-weighted, active]
+--       staking_yield_net_pct    .gross*active(1-commission)
+--     The old labels' rows: DELETED where a standard row (live or :archive) holds the same date —
+--     the standard one is the series — and RELABELLED to the standard live label where none does.
+--     ":archive" is already the same measuring point as its live label (config.SOURCE_MARKERS).
+--     Run: python run_sql.py BO, then python run_sql.py --delete BO (preview + typed "DELETE BO").
+-- ========================================================================================
+-- BO1. THE OLD LABELS' ROWS, each beside the standard row on the same date (if any) and the gap.
+SELECT o.metric, o.date, o.source AS old_source, o.value AS old_value,
+       s.source AS standard_source, s.value AS standard_value,
+       CASE WHEN s.value IS NULL OR s.value = 0 THEN NULL
+            ELSE ROUND(100.0 * (o.value - s.value) / s.value, 4) END AS pct_apart
+  FROM metrics o
+  LEFT JOIN metrics s
+    ON s.project = o.project AND s.metric = o.metric AND s.date = o.date
+   AND s.source IN ('plume_staking:0x30c791E4.totalAmountStaked',
+                    'plume_staking:0x30c791E4.totalAmountStaked:archive',
+                    'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]',
+                    'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]:archive',
+                    'plume_staking:0x30c791E4.gross*active(1-commission)',
+                    'plume_staking:0x30c791E4.gross*active(1-commission):archive')
+ WHERE o.project = 'Plume'
+   AND o.source IN ('plume_staking:0x30c791E4.getValidatorsList.sum(totalStaked)',
+                    'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted]',
+                    'plume_staking:0x30c791E4.gross*(1-commission)')
+ ORDER BY o.metric, o.date;
+
+-- BO2. EVERY plume_staking LABEL ON THE LIVE DIAMOND, with its span (after BO: one per metric,
+--      plus its :archive twin).
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Plume' AND source LIKE 'plume_staking:0x30c791E4%'
+ GROUP BY metric, source
+ ORDER BY metric, first_date;
+
+-- BO3. THE DELETE (old label, a standard row on the same date) and THE RELABEL (old label, none).
+--      The two WHERE clauses are exclusive, so the order does not matter.
+-- DELETE FROM metrics
+--  WHERE project = 'Plume'
+--    AND source IN ('plume_staking:0x30c791E4.getValidatorsList.sum(totalStaked)',
+--                   'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted]',
+--                   'plume_staking:0x30c791E4.gross*(1-commission)')
+--    AND EXISTS (SELECT 1 FROM metrics s
+--                 WHERE s.project = metrics.project AND s.metric = metrics.metric AND s.date = metrics.date
+--                   AND s.source IN ('plume_staking:0x30c791E4.totalAmountStaked',
+--                                    'plume_staking:0x30c791E4.totalAmountStaked:archive',
+--                                    'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]',
+--                                    'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]:archive',
+--                                    'plume_staking:0x30c791E4.gross*active(1-commission)',
+--                                    'plume_staking:0x30c791E4.gross*active(1-commission):archive'));
+-- UPDATE metrics
+--    SET source = CASE source
+--          WHEN 'plume_staking:0x30c791E4.getValidatorsList.sum(totalStaked)'
+--            THEN 'plume_staking:0x30c791E4.totalAmountStaked'
+--          WHEN 'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted]'
+--            THEN 'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]'
+--          ELSE 'plume_staking:0x30c791E4.gross*active(1-commission)' END
+--  WHERE project = 'Plume'
+--    AND source IN ('plume_staking:0x30c791E4.getValidatorsList.sum(totalStaked)',
+--                   'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted]',
+--                   'plume_staking:0x30c791E4.gross*(1-commission)')
+--    AND NOT EXISTS (SELECT 1 FROM metrics s
+--                     WHERE s.project = metrics.project AND s.metric = metrics.metric AND s.date = metrics.date
+--                       AND s.source IN ('plume_staking:0x30c791E4.totalAmountStaked',
+--                                        'plume_staking:0x30c791E4.totalAmountStaked:archive',
+--                                        'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]',
+--                                        'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]:archive',
+--                                        'plume_staking:0x30c791E4.gross*active(1-commission)',
+--                                        'plume_staking:0x30c791E4.gross*active(1-commission):archive'));

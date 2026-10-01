@@ -4152,6 +4152,173 @@ def settlement_sources():
     _xhr_capture("https://visaonchainanalytics.com/", ("adjusted", "Adjusted", "volume"))
 
 
+def plume_settlement_routes():
+    """Jake, 2026-10-01: `--seed plume_settlement` (chain-wide v2, ~21,755 pages) ran 1h+ unfinished.
+    MEASURES, on this machine, what each route would cost for the year, before the seed switches:
+      A  v2 chain-wide token-transfers (today's route): 50 rows a call, one cursor (sequential)
+      B  token-scoped tokentx (Etherscan-compatible): 10,000 rows a call, in-scope tokens only,
+         + eth_getCode once per address (JSON-RPC batches)
+      C  eth_getLogs on rpc.plume.org for the in-scope tokens' Transfer events: the node's max block
+         range is found by trying 1,000,000 / 100,000 / 10,000 / 1,000 blocks; + the same getCode
+      N  native PLUME (no Transfer event): advanced-filters per day — pages for yesterday
+    and the explorer's rate limit from its x-ratelimit-* headers, with and without BLOCKSCOUT_API_KEY
+    (the key is SENT to explorer.plume.org once, in the query, to see if it applies; never printed).
+    About 40-60 calls in all, each paced >= 0.3 s apart."""
+    import statistics
+    import config                                          # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    from fetch.base import USER_AGENT                      # noqa: PLC0415
+    head("PLUME settlement seed — what each route costs for a year (measured here)")
+    spec = config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"]
+    base, cfg = spec["base"].rstrip("/"), spec["tokentx"]
+    S = requests.Session()
+    S.headers["User-Agent"] = USER_AGENT
+    lat = {}
+
+    def call(kind, url, params=None, post=None, timeout=90):
+        time.sleep(0.3)
+        t = time.monotonic()
+        r = (S.post(url, json=post, timeout=timeout) if post is not None
+             else S.get(url, params=params, timeout=timeout))
+        dt = time.monotonic() - t
+        lat.setdefault(kind, []).append(dt)
+        return r, dt
+
+    def limits(r):
+        return {k: r.headers.get(k) for k in ("x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset")}
+
+    # --- rate limit, with and without the key -------------------------------------------------
+    r, dt = call("v2", f"{base}/api/v2/token-transfers", {"type": "ERC-20"})
+    print(f"  v2 token-transfers: HTTP {r.status_code}, {dt:.2f}s, {len(r.content):,} bytes; limits {limits(r)}")
+    sample = (r.json().get("items") or []) if r.ok else []
+    key = os.environ.get("BLOCKSCOUT_API_KEY")
+    if key:
+        r2, dt2 = call("v2", f"{base}/api/v2/token-transfers", {"type": "ERC-20", "apikey": key})
+        print(f"  ... with BLOCKSCOUT_API_KEY: HTTP {r2.status_code}, {dt2:.2f}s; limits {limits(r2)}")
+        same = limits(r2).get("x-ratelimit-limit") == limits(r).get("x-ratelimit-limit")
+        print("  KEY " + ("DOES NOT CHANGE the limit here — it is not an account key on this instance"
+                          if same else "RAISES the limit here — it applies"))
+    else:
+        print("  BLOCKSCOUT_API_KEY not set — the keyed limit is not tested")
+    nxt = r.json().get("next_page_params") if r.ok else None
+    for _ in range(4):                                      # 250 transfers: the in-scope share
+        if not nxt:
+            break
+        rr, _ = call("v2", f"{base}/api/v2/token-transfers", {"type": "ERC-20", **nxt})
+        if not rr.ok:
+            break
+        sample += rr.json().get("items") or []
+        nxt = rr.json().get("next_page_params")
+    # --- scope: tokens DefiLlama has ever priced ----------------------------------------------
+    toks, params = [], {"type": "ERC-20"}
+    for _ in range(int(cfg.get("scope_pages", 20))):
+        rr, _ = call("v2", f"{base}/api/v2/tokens", params)
+        if not rr.ok:
+            print(f"  token list: HTTP {rr.status_code}")
+            break
+        toks += [str(i.get("address_hash") or "").lower() for i in rr.json().get("items") or []]
+        params = {"type": "ERC-20", **(rr.json().get("next_page_params") or {})}
+        if not rr.json().get("next_page_params"):
+            break
+    toks = sorted(set(t for t in toks if t) | {str((i.get("token") or {}).get("address_hash") or "").lower()
+                                                 for i in sample} - {""})
+    priced = set()
+    for i in range(0, len(toks), 50):
+        rr, _ = call("llama", f"{spec['price_api']}/prices/first/" + ",".join(f"{spec['chain_key']}:{a}" for a in toks[i:i + 50]))
+        if rr.ok:
+            priced |= {c.split(":", 1)[1].lower() for c in (rr.json().get("coins") or {})}
+    share = (sum(str((i.get("token") or {}).get("address_hash") or "").lower() in priced for i in sample) / len(sample)
+             if sample else None)
+    per_day = 2_980                                          # Jake's measure, ERC-20 transfers a day
+    print(f"  SCOPE: {len(priced)} of {len(toks)} candidate tokens DefiLlama has ever priced; "
+          f"{share:.0%} of the last {len(sample)} transfers are in them" if share is not None else "  SCOPE: no sample")
+    for t in sorted(priced)[:30]:
+        rr, _ = call("v2", f"{base}/api/v2/tokens/{t}/counters")
+        c = rr.json() if rr.ok else {}
+        print(f"    {t}  all-time transfers {c.get('transfers_count')}, holders {c.get('token_holders_count')}")
+    # --- B: one tokentx call over the last day for the busiest in-scope token -----------------
+    rr, _ = call("api", f"{base}/api", {"module": "block", "action": "getblocknobytime",
+                                         "timestamp": int(time.time()) - 86_400, "closest": "after"})
+    b_day = int(((rr.json() or {}).get("result") or {}).get("blockNumber") or 0) if rr.ok else 0
+    rr, _ = call("api", f"{base}/api", {"module": "block", "action": "getblocknobytime",
+                                         "timestamp": int(time.time()) - 365 * 86_400, "closest": "after"})
+    b_year = int(((rr.json() or {}).get("result") or {}).get("blockNumber") or 0) if rr.ok else 0
+    busiest = max(priced, key=lambda t: sum(str((i.get("token") or {}).get("address_hash") or "").lower() == t
+                                            for i in sample), default=None)
+    tt_rows, addrs = [], set()
+    if busiest and b_day:
+        rr, dt = call("tokentx", f"{base}/api", {"module": "account", "action": "tokentx", "contractaddress": busiest,
+                                                  "startblock": b_day, "endblock": 99_999_999_999, "sort": "asc",
+                                                  "page": 1, "offset": int(cfg["offset"])}, timeout=180)
+        tt_rows = (rr.json().get("result") or []) if rr.ok and isinstance(rr.json().get("result"), list) else []
+        addrs = {str(x.get(k)).lower() for x in tt_rows for k in ("from", "to")}
+        print(f"  B tokentx {busiest} last day: HTTP {rr.status_code}, {len(tt_rows):,} rows in {dt:.1f}s, "
+              f"{len(rr.content) / 1e6:.1f} MB; {len(addrs):,} distinct addresses; limits {limits(rr)}")
+    # --- getCode batch ------------------------------------------------------------------------
+    batch = sorted(addrs)[:int(cfg["code_batch"])] or ["0x" + "0" * 40]
+    rr, dt = call("rpc", cfg["rpc"], post=[{"jsonrpc": "2.0", "id": k, "method": "eth_getCode", "params": [a, "latest"]}
+                                            for k, a in enumerate(batch)])
+    ok_batch = rr.ok and isinstance(rr.json(), list) and all("result" in x for x in rr.json())
+    print(f"  eth_getCode batch of {len(batch)} on {cfg['rpc'].split('//')[1]}: HTTP {rr.status_code}, {dt:.2f}s, "
+          f"{'ANSWERED' if ok_batch else 'REFUSED: ' + rr.text[:160]}")
+    # --- C: eth_getLogs max range -------------------------------------------------------------
+    rr, _ = call("rpc", cfg["rpc"], post={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []})
+    headb = int(rr.json()["result"], 16) if rr.ok and "result" in rr.json() else 0
+    max_range, logs_per_block = None, None
+    TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    for span in (1_000_000, 100_000, 10_000, 1_000):
+        rr, dt = call("rpc", cfg["rpc"], post={"jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [{
+            "fromBlock": hex(max(headb - span, 0)), "toBlock": hex(headb), "address": sorted(priced)[:50],
+            "topics": [TRANSFER]}]}, timeout=120)
+        j = rr.json() if rr.ok else {}
+        if "result" in j:
+            max_range, logs_per_block = span, len(j["result"]) / span
+            print(f"  C eth_getLogs over {span:,} blocks: {len(j['result']):,} logs in {dt:.1f}s — ACCEPTED")
+            break
+        print(f"  C eth_getLogs over {span:,} blocks: REFUSED {str(j.get('error') or rr.text)[:160]}")
+    # --- N: native, yesterday -----------------------------------------------------------------
+    yday = (pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1)).date()
+    params, npages = {"transaction_types": "COIN_TRANSFER", "age_from": f"{yday}T00:00:00Z",
+                      "age_to": f"{yday}T23:59:59Z"}, 0
+    while npages < 60:
+        rr, _ = call("v2", f"{base}/api/v2/advanced-filters", params)
+        if not rr.ok:
+            break
+        npages += 1
+        if not rr.json().get("next_page_params"):
+            break
+        params = {**params, **rr.json()["next_page_params"]}
+    print(f"  N native PLUME {yday}: {npages}{'+' if npages >= 60 else ''} advanced-filters page(s)")
+    # --- THE ESTIMATES -----------------------------------------------------------------------
+    m = {k: statistics.median(v) for k, v in lat.items()}
+    rate = float(cfg["rate_per_s"])
+    lim = limits(r).get("x-ratelimit-limit")
+    print(f"\n  median latency: " + ", ".join(f"{k} {v:.2f}s" for k, v in m.items()))
+    print(f"  explorer limit header: {lim} (Blockscout's default is 300 per minute per IP = 5/s); pacing {rate}/s shared")
+    year_v2 = per_day * 365 / 50
+    a_h = year_v2 * m.get("v2", 1.0) / 3600
+    print(f"  A v2 chain-wide: {year_v2:,.0f} pages x {m.get('v2', 1):.2f}s, ONE cursor (sequential) = ~{a_h:.1f} h")
+    blocks_year = headb - b_year if headb and b_year else None
+    in_year = per_day * 365 * (share or 0)
+    uniq = (len(addrs) / max(len(tt_rows), 1)) * in_year if tt_rows else None
+    codes = (uniq or 0) / int(cfg["code_batch"])
+    if share is not None and "tokentx" in m:
+        calls = in_year / (int(cfg["offset"]) - 1) + len(priced) * int(cfg["segments"])
+        b_h = (calls * m["tokentx"] / int(cfg["workers"]) + codes * m.get("rpc", 0.5)) / 3600
+        print(f"  B tokentx: ~{in_year:,.0f} in-scope transfers/yr -> ~{calls:,.0f} calls x {m['tokentx']:.1f}s over "
+              f"{cfg['workers']} workers + ~{codes:,.0f} getCode batches (<= {uniq or 0:,.0f} addresses, an upper bound) "
+              f"= ~{b_h:.2f} h")
+    if max_range and blocks_year:
+        c_calls = blocks_year / max_range * max(1.0, (logs_per_block or 0) * max_range / 10_000)
+        c_h = (c_calls * m.get("rpc", 0.5) + codes * m.get("rpc", 0.5) + 366 * m.get("api", 0.5)) / 3600
+        print(f"  C eth_getLogs: {blocks_year:,} blocks a year / {max_range:,} per call -> ~{c_calls:,.0f} calls "
+              f"+ the same getCode + 366 day-boundary lookups = ~{c_h:.2f} h (one RPC; limit not published)")
+    n_h = npages * 365 * m.get("v2", 1.0) / 3600
+    print(f"  N native: ~{npages * 365:,} pages a year: sequential ~{n_h:.1f} h; {spec['native_workers']} days side "
+          f"by side at {rate}/s ~{max(npages * 365 / rate, npages * 365 * m.get('v2', 1) / spec['native_workers']) / 3600:.1f} h")
+    print("  PASTE BACK all lines. The seed's ERC-20 route stays v2 (config erc20_route) until Jake chooses.")
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -4171,6 +4338,7 @@ CHECKS = (
     near_settlement_routes,
     aethir_mint_path,
     near_activity_break,
+    plume_settlement_routes,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

@@ -442,6 +442,45 @@ TELESCOPING_ABS_EPS = 1e-6
 TELESCOPING_REL_EPS = 1e-9
 
 
+def method_points(g: pd.DataFrame):
+    """(measuring point per row, note) — where every point is the SAME CONTRACT (the text before the
+    first '.': "plume_staking:0x30c791E4") read by different METHODS, they are ONE point when their
+    values agree within config.METHOD_AGREEMENT_TOLERANCE: on every shared date, else across the
+    junction between the legs. A label difference alone is not a change of what was measured
+    (Jake, 2026-10-01). Values that diverge keep the points apart, and the note says by how much.
+    Different contracts, or one point, are returned untouched."""
+    g = g.sort_values("date")
+    mp = g["source"].astype(str).map(_measuring_point)
+    pts = list(dict.fromkeys(mp))
+    if len(pts) < 2 or any("." not in p for p in pts) or len({p.split(".", 1)[0] for p in pts}) != 1:
+        return mp, None
+    latest = mp.iloc[-1]
+    ref = g[mp == latest].groupby("date")["value"].last().astype(float)
+    worst, how = 0.0, []
+    for p in pts:
+        if p == latest:
+            continue
+        oth = g[mp == p].groupby("date")["value"].last().astype(float)
+        common = oth.index.intersection(ref.index)
+        if len(common):
+            a, b = oth[common], ref[common]
+            where = f"{len(common)} shared date(s)"
+        else:                                   # no shared date: the two values either side of the junction
+            if oth.index.max() < ref.index.min():
+                a, b = oth.iloc[[-1]], ref.iloc[[0]]
+            else:
+                a, b = oth.iloc[[0]], ref.iloc[[-1]]
+            where = "the junction"
+        rel = ((a.values - b.values) / pd.Series(b.values).abs().replace(0, float("nan")).values)
+        d = float(pd.Series(abs(rel)).fillna(float("inf")).max())
+        worst = max(worst, d)
+        how.append(f"{p.split('.', 1)[1]} vs {latest.split('.', 1)[1]}: {d:.3%} at {where}")
+    if worst <= config.METHOD_AGREEMENT_TOLERANCE:
+        return mp.map(lambda _: latest), (f"read method changed on {latest.split('.', 1)[0]}, values agree "
+                                          f"({'; '.join(how)}) — one measuring point")
+    return mp, f"READ METHOD CHANGED and the values DIVERGE ({'; '.join(how)})"
+
+
 def handover_refusal(project: str, metric: str, points, spans: dict) -> str | None:
     """None when a multi-point series is a DECLARED, non-overlapping handover; else why not.
 
@@ -543,7 +582,8 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
             f"the move between two different addresses as though it were a flow. The figure is not "
             f"understated or overstated by a little; it is the gap between two unrelated "
             f"measurements. Clear the superseded rows, or declare the pair a handover if the two "
-            f"legs are one continuous series — {refusal}.")
+            f"legs are one continuous series — {refusal}."
+            + (f" {row['method_change']}." if row.get("method_change") else ""))
 
     # 6. ONE OBSERVATION IS TOO LARGE TO BE A FLOW — the read-time half of case 5.
     #
@@ -1556,12 +1596,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             row["source"] = latest["source"]
             # Every distinct place this series was read from. More than one means the window can
             # span a change of address, and the delta across it is not a flow.
-            row["measuring_points"] = tuple({_measuring_point(v) for v in g["source"].dropna().unique()})
+            # A READ METHOD CHANGING ON THE SAME CONTRACT is one measuring point while the values
+            # agree (Jake, 2026-10-01: Plume's totalAmountStaked vs getValidatorsList.sum(totalStaked)).
+            mps, row["method_change"] = method_points(g)
+            row["measuring_points"] = tuple(sorted(set(mps)))
             # WHEN each measuring point was in use. A declared handover is accepted only if the
             # stored dates show no overlap, so the spans have to travel with the row.
-            row["point_spans"] = {
-                mp: (gg["date"].min(), gg["date"].max())
-                for mp, gg in g.groupby(g["source"].astype(str).map(_measuring_point))}
+            row["point_spans"] = {mp: (gg["date"].min(), gg["date"].max()) for mp, gg in g.groupby(mps)}
             # A DIFFERENCED FLOW IS BOUNDED BY THE STOCK IT CAME FROM. Captured here rather than
             # inside withheld_for because only aggregate() has the series; withheld_for sees one
             # row. Restricted to rows whose source carries the :delta marker, so a genuine

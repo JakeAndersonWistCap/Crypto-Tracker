@@ -20370,19 +20370,27 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
                      "aprAi": 12.49, "aprGaming": 14.08, "lockedRatio": 7.44,
                      "edgeTotalEarnings": 2_363_422_512, "edgeStipend": 44_917_651,
                      "edgeDailyPool": 1_184_420, "edgeDevices": 64_869}]
-                   + [{"date": m, "aiStaked": 380.2e6 + i * 5e6, "gamingStaked": 287.6e6} for i, m in enumerate(months)]
-                   + [{"date": f"2026-09-{d:02d}", "avgAiDays": 300 + d, "avgGamingDays": 400 + d} for d in range(1, 6)]
                    + [{"x": 1}]) .replace("</script>", "") + \
         f'<script>self.__next_f.push([1,"{json.dumps(chr(34) + "emissionStakeRewardSchedule" + chr(34) + ":" + json.dumps(sched))[1:-1]}"])</script>'
-    weeks = pd.date_range("2024-06-03", "2026-09-21", freq="7D")
-    rev = [192_220_803 / len(weeks)] * len(weeks)
-    demand = page([{"arrUsd": 62_490_000, "totalRevenue": 192_220_803, "purchasesAth": 11_182_170_271,
-                    "computeHours": 2_433_230_876, "hoursLastWeek": 22_089_416}]
-                  + [{"date": str(w.date()), "earning": r, "amount": 93e6} for w, r in zip(weeks, rev)]
-                  + [{"date": str(w.date()), "hours": 22_089_416.0} for w in weeks[-6:]])
+    # stakeHistory (probes5): ISO startTime/endTime, monthly, ai + gaming only
+    hist = [{"startTime": f"{m}T00:00:00.000Z", "endTime": f"{(pd.Timestamp(m) + pd.DateOffset(months=1)).date()}T00:00:00.000Z",
+             "aiStaked": 380.2e6 + i * 5e6, "gamingStaked": 287.6e6} for i, m in enumerate(months)]
+    onchain += f'<script>self.__next_f.push([1,"{json.dumps(chr(34) + "stakeHistory" + chr(34) + ":" + json.dumps(hist))[1:-1]}"])</script>'
+    # demand-metric (probes5): "arr" sits in an object that also holds the two revenue arrays — the
+    # flat-object reader cannot see it; weekly labels are DD/MM with no year
+    weeks = pd.date_range("2024-06-03", "2026-09-28", freq="7D")             # the last week is in progress
+    wk = [{"startDate": w.strftime("%d/%m"), "amount": 868_693.77} for w in weeks]
+    mons = pd.date_range("2024-08-01", "2026-10-01", freq="MS")              # October 2026 is in progress
+    mo = [{"month": m.strftime("%B, %Y"), "earning": 868_693.77 * m.days_in_month / 7} for m in mons]
+    blob = {"arr": 62_489_999.90221721, "weeklyNetworkRevenue": wk, "monthlyNetworkRevenue": mo}
+    demand = page([{"totalRevenue": 192_220_803, "purchasesAth": 11_182_170_271,
+                    "computeHours": 2_433_230_876, "hoursLastWeek": 22_089_416}]) + \
+        f'<script>self.__next_f.push([1,"{json.dumps("1b:" + json.dumps(blob))[1:-1]}"])</script>'
     supply = page([{"nodes": 433704, "locations": 94}, {"totalComputePower": 38509113.66,
                                                          "totalMonthlyCapacity": 638256960},
-                   {"idcStaked": 866_896_004, "totalOnlineHours": 3_514_810_067}])
+                   {"idcStaked": 866_896_004, "totalOnlineHours": 3_514_810_067},
+                   {"totalRewards": 3_063_771_452.71, "totalServiceFee": 8_841_927_451.05,
+                    "totalLockedRewards": 2_040_911_539.99}])
 
     assert current_and_series(onchain, "aiStaked")[0] == 416_297_029
     assert len(current_and_series(onchain, "aiStaked")[1]) == 5
@@ -20422,6 +20430,9 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     # tiles current, charts history; totalStaked current-only (the wrapper handover)
     assert list(one("locked_tokens").value) == [1_789_329_561]
     assert len(one("locked_tokens_ai")) == 6 and one("locked_tokens_ai").value.iloc[-1] == 416_297_029
+    assert set(one("locked_tokens_ai").source) == {"aethir_page:protocol/onchain-metric.aiStaked"}   # one point
+    assert one("locked_tokens_ai").date.iloc[0] == pd.Timestamp("2026-05-01")      # stakeHistory startTime
+    assert len(one("locked_tokens_edge")) == 1 and "locked_tokens_edge: `stakeHistory` on protocol/onchain-metric no object carries" in msgs
     assert "totalStaked 1,789,329,561.00 vs the sum of its parts 1,789,329,561.00 (+0.00%)" in msgs
     assert float(one("circulating_supply_first_party").value.iloc[-1]) == 24_053_550_151
     assert float(one("supply_units_checker_licences").value.iloc[0]) == 84_562
@@ -20429,15 +20440,33 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     st = one("staker_rewards_emitted")
     # 06-08 .. 01-10 weekly = 9 points on 2026-10-01 (Jake's page read 630,412,275 "at 24-09-2026")
     assert len(st) == 9 and st.value.iloc[-2] == 630_412_275 and "emissions_tokens" not in set(f.metric)
-    assert "8 published point(s) after today not stored" in msgs
+    assert "8 point(s) not stored (after today: 2026-10-08 634,412,275.00 .. 2026-11-26)" in msgs
+    # ARR PINNED BY KEY (probes5), the value as read kept as a cross-check
+    assert float(one("arr_usd").value.iloc[0]) == 62_489_999.90221721
+    assert "pinned by key; cross-check vs 62,490,000 as read 2026-10-01: -0.0%" in msgs
     # labelled, by value
-    assert float(one("arr_usd").value.iloc[0]) == 62_490_000
     assert one("staking_apr_ai").value.iloc[0] == pytest.approx(0.1249)
     assert one("staking_apr_gaming").value.iloc[0] == pytest.approx(0.1408)
-    assert len(one("customer_revenue_usd")) == len(weeks)                    # `earning`, not `amount`
-    assert one("customer_revenue_usd").source.iloc[0] == "aethir_page:protocol/demand-metric.earning"
-    assert len(one("compute_hours_weekly")) == 6
-    assert len(one("avg_lock_duration_days_ai")) == 5 and one("avg_lock_duration_days_gaming").value.iloc[-1] == 405
+    # WEEKLY REVENUE: DD/MM, year inferred from the sequence; the week in progress reported, not stored
+    rv = one("customer_revenue_usd")
+    assert len(rv) == len(weeks) - 1 and rv.date.iloc[0] == pd.Timestamp("2024-06-03")
+    assert rv.date.iloc[-1] == pd.Timestamp("2026-09-21") and rv.value.iloc[0] == 868_693.77
+    assert rv.source.iloc[0] == "aethir_page:protocol/demand-metric.weeklyNetworkRevenue.amount"
+    assert "1 point(s) not stored (in progress: 2026-09-28 868,693.77)" in msgs
+    # MONTHLY REVENUE from Aug 2024; October in progress
+    mv = one("customer_revenue_monthly_usd")
+    assert len(mv) == 26 and mv.date.iloc[0] == pd.Timestamp("2024-08-01") and mv.date.iloc[-1] == pd.Timestamp("2026-09-01")
+    assert config.series_granularity("Aethir", "customer_revenue_monthly_usd") == "monthly"
+    assert "monthlyNetworkRevenue summed vs Total Network Revenue (Since June 2024)" in msgs
+    assert "the monthly list starts Aug 2024" in msgs
+    wvm = next(e.message for e in out.log if e.message.startswith("weeklyNetworkRevenue (pro rata by day) vs"))
+    assert "(+0.00%)" in wvm and "2024-08..2026-09" in wvm, wvm
+    # client-loaded charts: nothing stored, closed in config with why
+    assert not {"compute_hours_weekly", "avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"} & set(f.metric)
+    assert "CLIENT-LOADED" in config.unavailable_for("Aethir", "avg_lock_duration_days_ai")["summary"]
+    # supply page: possible cloud-host rewards REPORTED, never stored (waits on Jake's PDF)
+    assert "protocol/supply-metric `totalRewards` = 3,063,771,452.71" in msgs and "REPORTED, not stored" in msgs
+    assert not any("reward" in m.lower() for m in set(one("supply_units").metric))
     assert float(one("supply_units_edge").value.iloc[0]) == 64_869
     # derived: supplier stocks, utilisation, the ratio check
     assert float(one("checker_rewards_cumulative_tokens").value.iloc[0]) == base + bonus + air
@@ -20448,7 +20477,10 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert aeth["dashboard_pages"]["pages"]["protocol/ecosystem"] == {"fields": {}}   # pinned (Jake, 2026-10-01)
     # ambiguity stores nothing
     two = page([{"a": 62_000_000, "b": 63_000_000}])
-    assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}).startswith("ambiguous")
+    unpinned = {**aeth["dashboard_pages"]["labelled"]["arr"], "key": None}
+    assert resolve_scalar(unpinned, {"protocol/demand-metric": two}).startswith("ambiguous")
+    assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}) == \
+        "pinned `arr` is not in the payload of protocol/demand-metric"
 
     # READ TIME: supplier emissions from the stocks' day-on-day rise; the schedule gives way
     d = pd.date_range("2026-09-25", "2026-10-03")
@@ -20964,9 +20996,10 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     assert cl2.ran == ["circ", "census", "p2p", "p2p", "p2p"] and "BACKFILL HELD" in msgs
     assert "(backfill 434.00 GB); month used 511.0 GB; remaining 389.0 GB" in msgs
 
-    # THE BACKFILL FLOOR (Jake, 2026-10-01): not across the unexplained Mar->Apr break. With the budget
-    # out of the way, an unbounded seed reads nothing older than the floor, and says where it is.
-    assert config.PROJECT_BY_NAME["Near"]["near_bigquery"]["backfill_floor"] == "2026-04-01"
+    # THE BACKFILL FLOOR: lifted (probes5 — the Mar->Apr drop is REAL, the full year is valid), but the
+    # mechanism stays: with a floor set and the budget out of the way, an unbounded seed reads nothing
+    # older than it, and says where it is.
+    assert "backfill_floor" not in config.PROJECT_BY_NAME["Near"]["near_bigquery"]
     floor = (yday - pd.Timedelta(days=40)).normalize()
     spec.update(backfill_floor=str(floor.date()), monthly_budget_bytes=900e12)
     cl3 = Client()
@@ -21091,6 +21124,13 @@ def test_jake_run_2026_10_01_1434_fixes():
     stmts = [x.strip() for x in code.split(";") if "SELECT" in x]
     assert len(stmts) == 3 and all(x.startswith("SELECT") for x in stmts)
     # 1d — the break: a NEAR settlement series from 2025-10 to 2027-05; only windows from 2026-04-01 on
+    # RESOLVED REAL by Jake's probes5: no guard on the live config; the guard itself is tested on the
+    # entry as it stood (UNRESOLVED)
+    assert config.series_break("Near", "settlement_volume_usd") is None
+    unresolved = {**config.SERIES_BREAKS[("Near", "settlement_volume_usd")], "status": "UNRESOLVED",
+                  "verdict": "UNDETERMINED", "verdict_file": "no-such-file.json"}
+    _orig_breaks = dict(config.SERIES_BREAKS)
+    config.SERIES_BREAKS[("Near", "settlement_volume_usd")] = unresolved
     b = config.series_break("Near", "settlement_volume_usd")
     assert b and b["clean_from"] == "2026-04-01" and "near_activity_break" in config.METHODOLOGY_FLAGS
     days = pd.date_range("2025-10-01", "2027-05-01")
@@ -21109,6 +21149,8 @@ def test_jake_run_2026_10_01_1434_fixes():
                   365, ("settlement_volume_365d_usd", "network_reserve_ratio"), "short")
     assert "unexplained break" in bw._VIEW_BLOCKS[("Near", "network_reserve_ratio")]
     bw._VIEW_BLOCKS.clear()
+    config.SERIES_BREAKS.clear()
+    config.SERIES_BREAKS.update(_orig_breaks)
     # 3 — manual rows
     g = config.PROJECT_BY_NAME["GEODNET"]
     asof = pd.Timestamp("2026-10-01")
@@ -21278,8 +21320,16 @@ def test_near_break_verdict_pipeline_marks_bigquery_cells_suspect_and_real_relea
     cells. If both fell, the drop is real: the window guard lifts. Undetermined changes nothing."""
     import build_workbook as bw
     monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
-    b = config.SERIES_BREAKS[("Near", "settlement_volume_usd")]
-    assert b["verdict"] == "UNDETERMINED" and config.series_break_verdict(b)[0] == "UNDETERMINED"
+    # RESOLVED by Jake's probes5 run (2026-10-01): REAL, x0.26 in both indexers — no window guard, no SUSPECT
+    real = config.SERIES_BREAKS[("Near", "settlement_volume_usd")]
+    assert real["status"] == "RESOLVED" and real["verdict"] == "REAL" and "x0.26" in real["resolution"]
+    assert config.series_break("Near", "settlement_volume_usd") is None
+    assert config.break_suspect("Near", "p2p_transfer_volume_usd", "near_bigquery:p2p") is None
+    assert config.METHODOLOGY_FLAGS["near_activity_break"].startswith("CONFIRMED REAL by two independent indexers")
+    # the mechanism, on the entry as it stood before the verdict
+    b = {**real, "status": "UNRESOLVED", "verdict": "UNDETERMINED"}
+    monkeypatch.setitem(config.SERIES_BREAKS, ("Near", "settlement_volume_usd"), b)
+    assert config.series_break_verdict(b)[0] == "UNDETERMINED"
     asof = pd.Timestamp("2026-10-01")
     row = {"status": "ok", "value": 1.0, "date": asof - pd.Timedelta(days=1), "n_points": 30, "entered_on": "",
            "source": "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]", "tier": 1}
@@ -21352,3 +21402,222 @@ def test_near_activity_break_probe_computes_and_saves_the_verdict(tmp_path, monk
     out = capsys.readouterr().out
     assert "VERDICT: UNDETERMINED" in out and "nothing saved" in out
     assert json.loads((tmp_path / "lc" / "near-activity-break.json").read_text())["verdict"] == "PIPELINE"
+
+
+def test_aethir_yearless_week_labels_take_their_year_from_the_sequence():
+    """weeklyNetworkRevenue serves "08/06" with no year (Jake's probes5): the sequence ends at the
+    current week, so years are assigned backwards from today, across a new year, in either order.
+    A broken cadence or a sequence not ending near today stores nothing."""
+    from fetch.aethir_pages import yearless_days
+    asof = pd.Timestamp("2027-01-10")
+    got = yearless_days(["18/12", "25/12", "01/01", "08/01"], "weekly", asof)
+    assert got == [pd.Timestamp(x) for x in ("2026-12-18", "2026-12-25", "2027-01-01", "2027-01-08")]
+    assert yearless_days(["08/01", "01/01", "25/12"], "weekly", asof) == \
+        [pd.Timestamp(x) for x in ("2027-01-08", "2027-01-01", "2026-12-25")]
+    assert "no year assignment" in yearless_days(["18/12", "26/12", "01/01"], "weekly", asof)
+    assert "no year assignment" in yearless_days(["01/06", "08/06"], "weekly", asof)       # not near today
+    assert yearless_days(["2026-01-01"], "weekly", asof).startswith("labels are not DD/MM")
+
+
+def _plume_chain_fixture():
+    """A small fake Plume: day k (k days ago) holds blocks 901-100k .. 1000-100k. Serves the v2
+    chain-wide list, the Etherscan-compatible tokentx / getblocknobytime, the token list, eth_getCode
+    batches and native advanced-filters — the SAME transfers through every route."""
+    from fetch.base import today
+    from fetch.plume_settlement import ZERO
+    t0 = today().normalize()
+    contracts = {"0xpool", "0xrouter"}
+    tx = []                                            # (block, idx, token, from, to, units)
+    plan = [("0xusd", "0xa", "0xb", 7), ("0xusd", "0xa", "0xpool", 50), ("0xeth", "0xc", "0xd", 3),
+            ("0xjunk", "0xc", "0xd", 9), ("0xusd", ZERO, "0xd", 11), ("0xeth", "0xd", "0xd", 4),
+            ("0xusd", "0xc", "0xa", 2), ("0xeth", "0xrouter", "0xb", 6)]
+    for k in range(0, 7):
+        for i, (tok, a, b, u) in enumerate(plan):
+            tx.append((1000 - 100 * k - 10 * i, 0, tok, a, b, u + k))
+    tx.sort(key=lambda r: (r[0], r[1]), reverse=True)
+    day_of = lambda blk: t0 - pd.Timedelta(days=(1000 - blk) // 100)               # noqa: E731
+
+    class Cut(KeyboardInterrupt):
+        pass
+
+    class Http:
+        def __init__(self, cut_tokentx_at=None, cut_v2_at=None):
+            self.calls, self.windows, self.v2 = [], [], 0
+            self.cut_tokentx_at, self.cut_v2_at = cut_tokentx_at, cut_v2_at
+
+        def post(self, url, json_body=None):
+            assert url == "https://rpc.plume.org"
+            self.calls.append(("rpc", len(json_body)))
+            return [{"jsonrpc": "2.0", "id": q["id"],
+                     "result": "0x6080" if q["params"][0] in contracts else "0x"} for q in json_body]
+
+        def get(self, url, params=None):
+            p = dict(params or {})
+            if url.endswith("/api/v2/token-transfers"):
+                self.v2 += 1
+                if self.cut_v2_at and self.v2 == self.cut_v2_at:
+                    raise Cut()
+                rows = [r for r in tx if "block_number" not in p or (r[0], r[1]) < (p["block_number"], p["index"])]
+                page = rows[:3]
+                items = [{"timestamp": f"{day_of(r[0]).date()}T12:00:00Z", "block_number": r[0],
+                          "type": "token_minting" if r[3] == ZERO else "token_transfer",
+                          "from": {"hash": r[3], "is_contract": r[3] in contracts},
+                          "to": {"hash": r[4], "is_contract": r[4] in contracts},
+                          "total": {"value": str(r[5] * 10 ** 6), "decimals": "6"}, "token": {"address_hash": r[2]}}
+                         for r in page]
+                nxt = {"block_number": page[-1][0], "index": page[-1][1]} if len(rows) > 3 else None
+                return {"items": items, "next_page_params": nxt}
+            if url.endswith("/api/v2/tokens"):
+                return {"items": [{"address_hash": t} for t in ("0xusd", "0xeth", "0xjunk")], "next_page_params": None}
+            if url.endswith("/api/v2/advanced-filters"):
+                day = p["age_from"][:10]
+                return {"items": [{"type": "coin_transfer", "from": {"hash": "0xx", "is_contract": False},
+                                   "to": {"hash": "0xy", "is_contract": False}, "value": str(2 * 10 ** 18),
+                                   "status": "ok", "timestamp": f"{day}T01:00:00Z"}], "next_page_params": None}
+            if url.endswith("/api"):
+                if p["action"] == "getblocknobytime":
+                    k = (t0 - pd.Timestamp(int(p["timestamp"]), unit="s").normalize()).days
+                    return {"status": "1", "result": {"blockNumber": str(901 - 100 * k)}}
+                if p["action"] == "tokentx":
+                    self.windows.append((p["contractaddress"], p["startblock"]))
+                    if self.cut_tokentx_at and len(self.windows) == self.cut_tokentx_at:
+                        raise Cut()
+                    rows = sorted(r for r in tx if r[2] == p["contractaddress"] and p["startblock"] <= r[0] <= p["endblock"])
+                    rows = rows[:p["offset"]]
+                    if not rows:
+                        return {"status": "0", "message": "No token transfers found", "result": []}
+                    return {"status": "1", "message": "OK", "result": [
+                        {"blockNumber": str(r[0]), "timeStamp": str(int((day_of(r[0]) + pd.Timedelta(hours=12)).timestamp())),
+                         "from": r[3], "to": r[4], "value": str(r[5] * 10 ** 6), "tokenDecimal": "6",
+                         "contractAddress": r[2]} for r in rows]}
+            raise AssertionError(url)
+    days = [t0 - pd.Timedelta(days=k) for k in range(0, 8)]
+    prices = {(str(x.date()), c): v for x in days
+              for c, v in (("coingecko:plume", 0.1), ("plume_mainnet:0xusd", 1.0), ("plume_mainnet:0xeth", 2.0))}
+    return Http, Cut, prices
+
+
+def test_plume_token_route_gives_the_v2_answer_resumes_and_continues_a_v2_scan(tmp_path, monkeypatch):
+    """Jake, 2026-10-01: the year's ERC-20 backfill reads ONLY the tokens DefiLlama prices (Etherscan-
+    compatible tokentx, 10,000 rows a call, eth_getCode cached for the non-contract test), segments run
+    side by side within one shared rate, native days side by side. The answer must be the v2 route's
+    to the cent: fresh, cut and resumed (no window read twice), and taking over a v2 scan already
+    under way (its whole days kept, its partial oldest day re-read)."""
+    import copy
+    import fetch.base as fb
+    from fetch.plume_settlement import PlumeSettlement
+    Http, Cut, prices = _plume_chain_fixture()
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    spec = plume["settlement_rebuild"]
+    assert spec["erc20_route"] == "v2", "stays v2 until probe plume_settlement_routes has timed both"
+    assert spec["tokentx"]["rate_per_s"] == 4 and spec["tokentx"]["rpc"] == "https://rpc.plume.org"
+    spec.update(days=4)
+    spec["tokentx"].update(offset=2, segments=3)
+    nosleep = lambda s: None                                                  # noqa: E731
+
+    def run(route, http, f, **kw):
+        monkeypatch.setenv("PLUME_SETTLEMENT_ROUTE", route)
+        out = FetchOutput()
+        PlumeSettlement(http=http, prices=prices, cache_file=tmp_path / f, max_seconds=None, sleep=nosleep).run(
+            [plume], None, out, **kw)
+        return out
+
+    ref = run("v2", Http(), "v2.json").frame().set_index("date")["value"].sort_index()
+    assert len(ref) == 4                                                       # yesterday .. the floor
+    # FRESH on the token route: one v2 page for the newest block, then tokens in scope only
+    h = Http()
+    out = run("tokentx", h, "t.json")
+    got = out.frame().set_index("date")["value"].sort_index()
+    assert got.round(9).to_dict() == ref.round(9).to_dict()
+    assert h.v2 == 1 and {w[0] for w in h.windows} == {"0xusd", "0xeth"}, "0xjunk is unpriced: never read"
+    assert len(h.windows) == len(set(h.windows)), "no window read twice"
+    st = json.loads((tmp_path / "t.json").read_text())
+    assert st["tokentx"]["scope"]["tokens"] == ["0xeth", "0xusd"] and st["erc20"]["done_back"] is True
+    assert st["tokentx"]["code"]["0xpool"] == 1 and st["tokentx"]["code"]["0xa"] == 0
+    assert sum(n for kind, n in h.calls if kind == "rpc") == len(st["tokentx"]["code"]), "each address once"
+
+    # CUT on the 4th tokentx call (one worker: deterministic), then resumed
+    monkeypatch.setattr(fb, "PROGRESS_EVERY_UNITS", 1)
+    spec["tokentx"]["workers"] = 1
+    h1 = Http(cut_tokentx_at=4)
+    try:
+        run("tokentx", h1, "cut.json")
+        raise AssertionError("not cut")
+    except Cut:
+        pass
+    h2 = Http()
+    out = run("tokentx", h2, "cut.json")
+    got = out.frame().set_index("date")["value"].sort_index()
+    assert got.round(9).to_dict() == ref.round(9).to_dict()
+    assert not set(h1.windows[:3]) & set(h2.windows), "the 3 applied windows are not read again"
+
+    # A v2 SCAN UNDER WAY (cut on its 4th page), then the token route takes over
+    try:
+        run("v2", Http(cut_v2_at=4), "mix.json")
+        raise AssertionError("not cut")
+    except Cut:
+        pass
+    before = json.loads((tmp_path / "mix.json").read_text())["erc20"]
+    assert before["cursor"] and not before["done_back"]
+    out = run("tokentx", Http(), "mix.json")
+    got = out.frame().set_index("date")["value"].sort_index()
+    assert got.round(9).to_dict() == ref.round(9).to_dict()
+    plan = json.loads((tmp_path / "mix.json").read_text())["tokentx"]["plan"]
+    assert plan["v2_days_kept_from"] == str((pd.Timestamp(before["oldest"]).normalize() + pd.Timedelta(days=1)).date())
+
+
+def test_plume_pace_is_shared_and_eip7702_accounts_are_not_contracts():
+    from fetch.plume_settlement import _Pace, code_is_account
+    t, naps = [0.0], []
+    p = _Pace(4, sleep=naps.append, clock=lambda: t[0])
+    for _ in range(3):
+        p.wait()
+    assert naps == [0.25, 0.5]
+    assert code_is_account("0x") and code_is_account("0xef0100" + "ab" * 20)
+    assert not code_is_account("0x6080604052") and not code_is_account("0xef0100" + "ab" * 21)
+
+
+def test_plume_one_method_per_metric_section_bo_and_a_label_change_is_not_a_measuring_point_change():
+    """Jake, 2026-10-01: Plume locked_tokens' "measuring point changed" was three labels on ONE
+    contract (0x30c791E4) with agreeing values. ':archive' is the same point as its live label; a
+    read method changing on one contract is flagged only when the values diverge; section BO
+    deletes the 2026-09-30 one-offs where a standard row holds the date and relabels the rest."""
+    import sqlite3
+    import build_workbook as bw
+    import run_sql
+    from fetch.base import _measuring_point
+    tag = "plume_staking:0x30c791E4"
+    assert _measuring_point(f"{tag}.totalAmountStaked:archive") == _measuring_point(f"{tag}.totalAmountStaked")
+    d = pd.to_datetime(["2026-09-29", "2026-09-30", "2026-09-30", "2026-10-01"])
+    g = pd.DataFrame({"date": d, "value": [133.9e6, 134.0e6, 134.0e6, 134.04e6],
+                      "source": [f"{tag}.totalAmountStaked:archive", f"{tag}.totalAmountStaked:archive",
+                                 f"{tag}.getValidatorsList.sum(totalStaked)", f"{tag}.totalAmountStaked"]})
+    mps, note = bw.method_points(g)
+    assert set(mps) == {f"{tag}.totalAmountStaked"} and "values agree" in note
+    off = g.assign(value=[133.9e6, 134.0e6, 120.0e6, 134.04e6])            # the methods disagree by 10%
+    mps, note = bw.method_points(off)
+    assert len(set(mps)) == 2 and note.startswith("READ METHOD CHANGED and the values DIVERGE")
+    other = g.assign(source=["chain:ethereum:a", "chain:ethereum:a", "chain:ethereum:b", "chain:ethereum:a"])
+    assert len(set(bw.method_points(other)[0])) == 2, "different addresses are never merged"
+    # SECTION BO, run against a scratch store
+    sql = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "orphan_cleanup.sql")).read()
+    assert "BN RESULT (Jake, 2026-10-01): BN1 found NO test-diamond rows" in sql
+    sec = run_sql.parse_sections(sql)["BO"]["text"]
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL, source TEXT, tier INT)")
+    rows = [("2026-09-30", "locked_tokens", 134.0e6, f"{tag}.totalAmountStaked:archive"),
+            ("2026-09-30", "locked_tokens", 134.0e6, f"{tag}.getValidatorsList.sum(totalStaked)"),
+            ("2026-09-30", "staking_yield_net_pct", 0.044969, f"{tag}.gross*(1-commission)"),
+            ("2026-09-30", "staking_commission_pct", 0.10, f"{tag}.getValidatorsList.commission[stake-weighted]"),
+            ("2026-09-30", "staking_commission_pct", 0.10, f"{tag}.getValidatorsList.commission[stake-weighted, active]:archive")]
+    con.executemany("INSERT INTO metrics VALUES (?, 'Plume', ?, ?, ?, 3)", rows)
+    for stmt in run_sql.split_statements(sec):
+        body = run_sql.strip_comments(stmt).strip()
+        if body.upper().startswith("SELECT"):
+            con.execute(body).fetchall()
+    for stmt in run_sql.split_statements("\n".join(run_sql.uncommented_write(sec))):
+        con.execute(run_sql.strip_comments(stmt))
+    got = sorted(con.execute("SELECT metric, source FROM metrics").fetchall())
+    assert got == [("locked_tokens", f"{tag}.totalAmountStaked:archive"),
+                   ("staking_commission_pct", f"{tag}.getValidatorsList.commission[stake-weighted, active]:archive"),
+                   ("staking_yield_net_pct", f"{tag}.gross*active(1-commission)")]

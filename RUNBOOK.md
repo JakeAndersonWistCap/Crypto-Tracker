@@ -500,6 +500,26 @@ A stalled call times out (60 s read timeout) and is retried. Each retry is logge
 `RETRY <host>: ReadTimeout after 60s (attempt 1 of 4)`, with the host only and never the URL or key.
 Change the intervals with `TOKEN_METRICS_PROGRESS_EVERY` (units) and `TOKEN_METRICS_PROGRESS_SECONDS`.
 
+**Plume settlement: a faster seed (Jake, 2026-10-01).** The chain-wide v2 route reads every
+ERC-20 transfer, about 21,755 pages of 50 a year, through one sequential cursor. Two faster
+paths now exist:
+- **Token route.** It reads only the tokens DefiLlama has ever priced, the only ones that can
+  count, through Blockscout's Etherscan-compatible `tokentx` at 10,000 rows a call. It runs 8
+  segments per token, 4 at a time, sharing one 4 requests/s pace. Each address gets one
+  `eth_getCode` check on rpc.plume.org, which is cached.
+- **Native PLUME** is still read from advanced-filters, but now 4 days at a time.
+
+It resumes from whatever is already saved, including a v2 scan that's partway through: that
+scan's full days are kept, and its partial oldest day is read again. Measure first:
+```bash
+python check_offline_items.py plume_settlement_routes   # ~50 calls; timings, scope, limits, estimates
+```
+then, to try the token route for one run without a config change:
+```bash
+PLUME_SETTLEMENT_ROUTE=tokentx python token_metrics.py --seed plume_settlement
+```
+`config Plume.settlement_rebuild.erc20_route` stays `"v2"` until the probe's numbers are in.
+
 A Plume seed started on code older than 2026-10-01 saved its state only at the end. Let it finish,
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
@@ -546,29 +566,16 @@ access, which also reaches cbc-risk-regime-api. So the adapter:
 Without credentials the run does not fail: NEAR's BigQuery figures gap with "run `gcloud auth
 application-default login`", and the CSV fallback below still works.
 
-**P2P backfill stops at 2026-04-01 (Jake, 2026-10-01).** NEAR's BigQuery rows fell ~80% between
-March and April 2026, and the cause isn't known yet. So top-ups run every day, but backfill goes no
-further back than `near_bigquery.backfill_floor` (2026-04-01). Run the break probe **before any NEAR
-seed**:
-```bash
-python check_offline_items.py near_activity_break
-```
-It compares BigQuery's daily transaction counts (partition metadata, about 200 MB at most) with
-NearBlocks' over March–April. It reads NearBlocks' txn-stats once for the missing days, which costs
-about 9 credits. It then saves a verdict to `.cache/logscan/near-activity-break.json`, and the
-workbook reads that file:
-- **PIPELINE**: BigQuery fell but NearBlocks didn't, so the dataset is recording less. Every
-  BigQuery-derived NEAR figure (P2P, settlement volume and its 365-day sum, NRR, first-party
-  circulating) gets an AMBER caveat on its cell: "SUSPECT — possible UNDERCOUNT", including
-  post-April figures.
-- **REAL**: both fell, so activity really dropped. Windows may span the break, and pre-April
-  backfill can be reconsidered (remove `backfill_floor` only once Jake decides).
-- **UNCLEAR / UNDETERMINED**: nothing changes. An undetermined run never overwrites an earlier
-  verdict.
+**The March–April drop is REAL (Jake's probes5, 2026-10-01).** Average daily transactions for
+Apr 2–30 compared with Mar 1–23 are ×0.26 in BigQuery *and* ×0.26 in NearBlocks. Two independent
+indexers agree, so NEAR activity genuinely fell about 74%. The series break is RESOLVED, nothing
+is marked SUSPECT, and there is no backfill floor any more. The full year is valid, and the 365-day
+NRR needs it. Backfill runs newest first within the budget left after the top-up reserve (about
+3 months for the 1.91 TB year). `check_offline_items.py near_activity_break` can still be re-run;
+the verdict typed in config (REAL) takes precedence over the file.
 
 **Then:**
 ```bash
-python check_offline_items.py near_activity_break      # FIRST (above)
 python check_offline_items.py near_settlement_routes   # layout + dry-run bytes (~30 MB; dry runs free)
 python token_metrics.py --seed near_bigquery           # top-up, then month chunks until only the top-up reserve is left
 python token_metrics.py                                # routine: circulating (10 MB) + top-up + one chunk

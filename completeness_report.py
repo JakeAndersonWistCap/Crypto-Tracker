@@ -71,8 +71,9 @@ DECISIONS = {
                             "CoinGecko circulating does not update"),
     ("Aethir", "gross_issuance_tokens"): (
         "COMPLETE", "0 — DECLARED (Jake, 2026-10-01): ATH is pre-minted (42bn); supplier and staker rewards "
-                    "are releases from pre-minted pools (pool_release_tokens), nothing is minted. Holds unless "
-                    "the token contract shows a mint path — probe aethir_mint_path"),
+                    "are releases from pre-minted pools (pool_release_tokens), nothing is minted. SOURCED (probes5, "
+                    "2026-10-01): Ethereum totalSupply 42bn = hard cap, so mint() cannot add supply; "
+                    "Arbitrum is Axelar ITS, whose mint/burn moves supply between chains"),
     # Aethir pool_release_tokens: WIRED 2026-10-01 (Jake) — supplier + staker rewards, measured from
     # the dashboard's cumulatives (build_workbook._measured_emissions_views); no decision left.
     # Maple pool_release_tokens: WIRED 2026-09-30 from Jake's probe 5 — the SSF chart's island

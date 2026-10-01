@@ -28,12 +28,36 @@ A DAY IS STORED ONLY WHEN BOTH LEGS COVER IT COMPLETELY. Progress is cached
 `token_metrics.py --seed plume_settlement` (~21,755 ERC-20 pages at Jake's measured ~2,980
 transfers/day, plus the native pages), then each run tops up the newest blocks and days.
 Blockscout's default limit is 300 requests/min per IP; requests are paced under it.
+
+THE TOKEN-SCOPED BACKFILL (Jake, 2026-10-01: the chain-wide seed ran 1h+ without finishing). Only
+tokens DefiLlama prices can ever count (the liquidity filter above), so the year's ERC-20 backfill can
+read THOSE TOKENS ONLY, through Blockscout's Etherscan-compatible API — `erc20_route: "tokentx"`:
+
+  scope     tokens seen so far + Blockscout's ERC-20 list (most holders first, `scope_pages` pages),
+            kept where DefiLlama has ever priced them (coins.llama.fi /prices/first). Fixed once chosen.
+  read      GET {base}/api?module=account&action=tokentx&contractaddress=<token>&startblock&endblock
+            &sort=asc&offset=10000 (Blockscout's cap: page x offset <= 10,000). A full answer drops its
+            last block (it may be cut) and the next call starts there, so no row is read twice; each
+            token's block range is split into `segments` independent cursors, run `workers` at a time
+            within one shared request rate.
+  is_contract  tokentx carries no is_contract, so each address is checked ONCE with eth_getCode on
+            {rpc} (JSON-RPC batches), cached in the state file: empty code = not a contract (an
+            EIP-7702 delegation designator 0xef0100.. counts as an account, not a contract).
+  kept      the v2 rule: neither side a contract, not a self-transfer, not a mint or burn (0x0 side).
+  resume    the cursors, day totals and code cache are checkpointed together. A v2 scan already
+            under way is KEPT: its fully covered days stand, its partial oldest day is dropped, and the
+            token route covers floor .. the block before that day ends — nothing read twice.
+Native PLUME has no Transfer event: it stays on advanced-filters, one day per call chain, now run
+`native_workers` days at a time within the same rate. Daily top-ups stay on v2 (one day is ~60 pages).
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import pandas as pd
@@ -55,6 +79,31 @@ def _ts(item) -> pd.Timestamp | None:
         return None
 
 
+ZERO = "0x" + "0" * 40
+
+
+def code_is_account(code) -> bool:
+    """eth_getCode says no contract: empty, or an EIP-7702 delegation designator (an account)."""
+    c = str(code or "0x").lower()
+    return c in ("0x", "0x0", "") or (c.startswith("0xef0100") and len(c) == 2 + 46)
+
+
+class _Pace:
+    """Thread-safe spacing of calls to ONE host at `per_s` requests a second (all workers share it)."""
+
+    def __init__(self, per_s: float, sleep=time.sleep, clock=time.monotonic):
+        self.gap = 1.0 / float(per_s) if per_s else 0.0
+        self.sleep, self.clock, self._next, self._lock = sleep, clock, 0.0, threading.Lock()
+
+    def wait(self) -> None:
+        with self._lock:
+            now = self.clock()
+            at = max(now, self._next)
+            self._next = at + self.gap
+        if at > now:
+            self.sleep(at - now)
+
+
 def p2p_side_ok(item) -> bool:
     """Neither side a contract, and not a self-transfer."""
     f, t = item.get("from") or {}, item.get("to") or {}
@@ -68,10 +117,33 @@ class PlumeSettlement:
     TIER = TIER
 
     def __init__(self, http: Http | None = None, prices=None, cache_file: Path | None = None,
-                 max_seconds: float | None = 240, clock=time.monotonic, **_ignored):
+                 max_seconds: float | None = 240, clock=time.monotonic, sleep=time.sleep, **_ignored):
+        self._injected = http is not None
         self.http = http or Http(min_interval=0.25, retries=3)
         self._prices = prices                # tests inject {(day, coin): price}
-        self.cache_file, self.max_seconds, self.clock = cache_file, max_seconds, clock
+        self.cache_file, self.max_seconds, self.clock, self._sleep = cache_file, max_seconds, clock, sleep
+        self._tls = threading.local()
+        self._code_lock = threading.Lock()
+        self._paces: dict = {}
+
+    def _client(self):
+        """One Http per worker thread (a requests.Session is not shared across threads); the spacing
+        is _Pace's, shared, so `min_interval` is 0 here."""
+        if self._injected:
+            return self.http
+        if not hasattr(self._tls, "h"):
+            self._tls.h = Http(min_interval=0.0, retries=3)
+        return self._tls.h
+
+    def _pace(self, host: str, per_s: float) -> _Pace:
+        if host not in self._paces:
+            self._paces[host] = _Pace(per_s, sleep=self._sleep)
+        return self._paces[host]
+
+    @staticmethod
+    def _route(spec) -> str:
+        """`erc20_route` from config; PLUME_SETTLEMENT_ROUTE overrides it for one run."""
+        return os.environ.get("PLUME_SETTLEMENT_ROUTE") or spec.get("erc20_route", "v2")
 
     # --- state ------------------------------------------------------------------------------
     def _path(self) -> Path:
@@ -127,6 +199,16 @@ class PlumeSettlement:
         url, pages = f"{spec['base'].rstrip('/')}/api/v2/token-transfers", 0
         e = st["erc20"]
         first = e["newest"] is None
+        tokentx = self._route(spec) == "tokentx" and not e.get("done_back")
+        if tokentx and first:
+            # the TOKEN ROUTE does the year: v2 is read for ONE page, to fix the newest block covered
+            j = self.http.get(url, params={"type": "ERC-20"})
+            items = j.get("items") or []
+            if not items:
+                return 1
+            e["newest"], e["newest_ts"] = int(items[0].get("block_number") or 0), str(_ts(items[0]))
+            self._save(st)
+            return 1 + self._tokentx(spec, st, floor, t0, unbounded, name)
         params, top, fresh = {"type": "ERC-20"}, None, {"days": {}}
         self._kept = 0
 
@@ -185,6 +267,10 @@ class PlumeSettlement:
             params = {"type": "ERC-20", **nxt}
         if first and top is not None:
             e["newest"], e["newest_ts"] = top[0], str(top[1])
+        if tokentx:
+            if pages:
+                prog.flush(final=False)
+            return pages + self._tokentx(spec, st, floor, t0, unbounded, name)
         # BACKFILL: from the saved cursor towards the floor (a first run cut short)
         while not first and not e["done_back"] and e["cursor"]:
             if self._over(t0, unbounded):
@@ -205,14 +291,212 @@ class PlumeSettlement:
             prog.flush(final=bool(e.get("done_back")))
         return pages
 
+    # --- THE TOKEN-SCOPED BACKFILL (module docstring) -------------------------------------------
+    def _api(self, spec, params: dict):
+        tt = spec.get("tokentx") or {}
+        self._pace(spec["base"], float(tt.get("rate_per_s", 4))).wait()
+        return self._client().get(f"{spec['base'].rstrip('/')}/api", params=params)
+
+    def _block_at(self, spec, ts: pd.Timestamp, closest: str) -> int:
+        j = self._api(spec, {"module": "block", "action": "getblocknobytime",
+                             "timestamp": int(pd.Timestamp(ts).timestamp()), "closest": closest})
+        r = (j or {}).get("result")
+        try:
+            return int(r["blockNumber"] if isinstance(r, dict) else r)
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError(f"getblocknobytime {pd.Timestamp(ts)} ({closest}) answered {str(j)[:200]}") from None
+
+    def _scope(self, spec, st) -> list[str]:
+        """The tokens DefiLlama has ever priced, among those seen so far and Blockscout's ERC-20 list.
+        Chosen ONCE and kept in the state, so a resumed seed reads the same set."""
+        tt = st["tokentx"]
+        if tt.get("scope"):
+            return tt["scope"]["tokens"]
+        cfg = spec.get("tokentx") or {}
+        cands = {t for toks in st["erc20"]["days"].values() for t in toks}
+        params = {"type": "ERC-20"}
+        for _ in range(int(cfg.get("scope_pages", 20))):
+            self._pace(spec["base"], float(cfg.get("rate_per_s", 4))).wait()
+            j = self._client().get(f"{spec['base'].rstrip('/')}/api/v2/tokens", params=params)
+            for it in j.get("items") or []:
+                a = str(it.get("address_hash") or it.get("address") or "").lower()
+                if a:
+                    cands.add(a)
+            nxt = j.get("next_page_params")
+            if not nxt:
+                break
+            params = {"type": "ERC-20", **nxt}
+        cands = sorted(cands)
+        if self._prices is not None:
+            priced = sorted({c.split(":", 1)[1] for (_, c) in self._prices
+                             if c.startswith(spec["chain_key"] + ":") and c.split(":", 1)[1] in cands})
+        else:
+            priced = []
+            for i in range(0, len(cands), 50):
+                coins = [f"{spec['chain_key']}:{a}" for a in cands[i:i + 50]]
+                j = self._client().get(f"{spec['price_api'].rstrip('/')}/prices/first/{','.join(coins)}")
+                priced += [c.split(":", 1)[1].lower() for c in ((j or {}).get("coins") or {})]
+            priced = sorted(set(priced))
+        tt["scope"] = {"tokens": priced, "candidates": len(cands), "chosen_on": str(today().date())}
+        return priced
+
+    def _plan(self, spec, st, floor) -> dict:
+        """The block range the token route covers, and its cursors — fixed once (resumable)."""
+        tt, e = st["tokentx"], st["erc20"]
+        if tt.get("plan"):
+            return tt["plan"]
+        cfg = spec.get("tokentx") or {}
+        lo = self._block_at(spec, floor, "after")
+        if e.get("cursor") and e.get("oldest"):
+            # a v2 scan under way: its days from the one after its oldest stand; the partial oldest
+            # day (and anything before it) is dropped and re-read by the token route
+            first_full = pd.Timestamp(e["oldest"]).normalize() + pd.Timedelta(days=1)
+            hi = self._block_at(spec, first_full, "after") - 1
+            for d in [d for d in e["days"] if d < str(first_full.date())]:
+                del e["days"][d]
+            kept_from = str(first_full.date())
+        else:
+            hi, kept_from = int(e["newest"]), None
+        segs = max(int(cfg.get("segments", 8)), 1)
+        bounds = [lo + (hi - lo + 1) * k // segs for k in range(segs + 1)]
+        tasks = [{"token": t, "next": a, "end": b - 1, "done": False}
+                 for t in self._scope(spec, st) for a, b in zip(bounds, bounds[1:]) if b > a]
+        tt["plan"] = {"from_block": lo, "to_block": hi, "floor": str(floor.date()), "v2_days_kept_from": kept_from,
+                      "segments": segs, "planned_on": str(today().date())}
+        tt["tasks"] = tasks
+        self._save(st)
+        return tt["plan"]
+
+    def _codes(self, spec, addrs: list[str]) -> None:
+        """eth_getCode for addresses not yet cached — JSON-RPC batches, ONE check per address ever."""
+        cfg = spec.get("tokentx") or {}
+        code = self._state_codes
+        with self._code_lock:
+            todo = sorted({a for a in addrs if a not in code})
+        batch = int(cfg.get("code_batch", 100))
+        for i in range(0, len(todo), batch):
+            chunk = todo[i:i + batch]
+            self._pace(cfg.get("rpc", "rpc"), float(cfg.get("rpc_rate_per_s", 10))).wait()
+            got = self._client().post(cfg["rpc"], json_body=[
+                {"jsonrpc": "2.0", "id": k, "method": "eth_getCode", "params": [a, "latest"]}
+                for k, a in enumerate(chunk)])
+            if not isinstance(got, list):
+                raise RuntimeError(f"eth_getCode batch of {len(chunk)} answered {str(got)[:200]}")
+            res = {int(r.get("id")): r for r in got if isinstance(r, dict)}
+            vals = {}
+            for k, a in enumerate(chunk):
+                r = res.get(k) or {}
+                if "result" not in r:
+                    raise RuntimeError(f"eth_getCode {a}: {str(r.get('error') or r)[:200]}")
+                vals[a] = 0 if code_is_account(r["result"]) else 1
+            with self._code_lock:
+                code.update(vals)
+
+    def _tokentx_call(self, spec, task: dict):
+        """ONE window of one token: (rows [(day, token, amount, from, to)], next block, finished)."""
+        cfg = spec.get("tokentx") or {}
+        n = int(cfg.get("offset", 10000))
+        j = self._api(spec, {"module": "account", "action": "tokentx", "contractaddress": task["token"],
+                             "startblock": task["next"], "endblock": task["end"], "sort": "asc",
+                             "page": 1, "offset": n})
+        res = (j or {}).get("result")
+        if not isinstance(res, list):
+            if str((j or {}).get("message", "")).lower().startswith("no token transfers"):
+                res = []
+            else:
+                raise RuntimeError(f"tokentx {task['token']} {task['next']}..{task['end']}: {str(j)[:200]}")
+        finished, nxt = len(res) < n, task["end"] + 1
+        if not finished:
+            last = int(res[-1]["blockNumber"])
+            if last <= task["next"]:
+                raise RuntimeError(f"tokentx {task['token']}: block {last} alone holds {n:,}+ transfers — "
+                                   f"lower tokentx.offset is no help; read it with v2")
+            res = [r for r in res if int(r["blockNumber"]) < last]     # the last block may be cut
+            nxt = last
+        rows = []
+        for r in res:
+            try:
+                rows.append((str(pd.Timestamp(int(r["timeStamp"]), unit="s").date()), task["token"],
+                             float(r["value"]) / 10 ** int(r.get("tokenDecimal") or 0),
+                             str(r["from"]).lower(), str(r["to"]).lower()))
+            except (KeyError, TypeError, ValueError):
+                continue
+        self._codes(spec, [a for row in rows for a in row[3:] if a != ZERO])
+        return rows, nxt, finished
+
+    def _tokentx(self, spec, st, floor, t0, unbounded, name) -> int:
+        """Run the token route to completion or the budget. Returns calls made."""
+        tt = st.setdefault("tokentx", {})
+        self._state_codes = tt.setdefault("code", {})
+        plan = self._plan(spec, st, floor)
+        e, cfg = st["erc20"], spec.get("tokentx") or {}
+        tasks = [t for t in tt["tasks"] if not t["done"]]
+        span = max(plan["to_block"] - plan["from_block"] + 1, 1) * max(len(tt["scope"]["tokens"]), 1)
+        kept = [0]
+
+        def covered():
+            left = sum(max(t["end"] - t["next"] + 1, 0) for t in tt["tasks"] if not t["done"])
+            return 1 - left / span
+
+        prog = Progress(f"plume_settlement tokentx {name}", unit="calls", fraction=covered,
+                        checkpoint=lambda: self._save(st),
+                        status=lambda: (f"{len(tt['scope']['tokens'])} token(s) in scope, blocks "
+                                        f"{plan['from_block']:,}..{plan['to_block']:,}; "
+                                        f"{sum(t['done'] for t in tt['tasks'])}/{len(tt['tasks'])} segment(s) done; "
+                                        f"{kept[0]:,} P2P transfer(s) kept this run; "
+                                        f"{len(self._state_codes):,} address(es) checked"))
+        calls, err = 0, None
+        workers = max(int(cfg.get("workers", 4)), 1)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            queue, inflight = list(tasks), {}
+            while queue or inflight:
+                while queue and len(inflight) < workers and err is None and not self._over(t0, unbounded):
+                    t = queue.pop(0)
+                    inflight[ex.submit(self._tokentx_call, spec, t)] = t
+                if not inflight:
+                    break
+                done, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
+                for f in done:
+                    t = inflight.pop(f)
+                    try:
+                        rows, nxt, finished = f.result()
+                    except Exception as ex_:  # noqa: BLE001 — the rest drain; state stays consistent
+                        err = err or ex_
+                        continue
+                    calls += 1
+                    for day, tok, amt, a, b in rows:
+                        if a == ZERO or b == ZERO or a == b:
+                            continue
+                        if self._state_codes.get(a) == 0 and self._state_codes.get(b) == 0:
+                            dd = e["days"].setdefault(day, {})
+                            dd[tok] = dd.get(tok, 0.0) + amt
+                            kept[0] += 1
+                    t["next"], t["done"] = nxt, finished
+                    prog.tick()
+                    if not finished and err is None and not self._over(t0, unbounded):
+                        queue.insert(0, t)
+        done_all = all(t["done"] for t in tt["tasks"])
+        if done_all:
+            e["oldest"], e["done_back"], e["cursor"] = str(floor), True, None
+            tt["completed_on"] = str(today().date())
+        prog.flush(final=done_all)
+        if err is not None:
+            raise err
+        return calls
+
     def _native_day(self, spec, day: pd.Timestamp) -> tuple[float | None, int, str]:
         """(PLUME moved P2P that day, pages, why-None)."""
         url = f"{spec['base'].rstrip('/')}/api/v2/advanced-filters"
         params = {"transaction_types": "COIN_TRANSFER", "age_from": f"{day.date()}T00:00:00Z",
                   "age_to": f"{day.date()}T23:59:59Z"}
         total, pages = 0.0, 0
+        concurrent = int(spec.get("native_workers", 1)) > 1
         while True:
-            j = self.http.get(url, params=params)
+            if concurrent:                     # days run side by side: shared pacing, a client per thread
+                self._pace(spec["base"], float((spec.get("tokentx") or {}).get("rate_per_s", 4))).wait()
+                j = self._client().get(url, params=params)
+            else:
+                j = self.http.get(url, params=params)
             pages += 1
             for it in j.get("items") or []:
                 if it.get("type") == "coin_transfer" and p2p_side_ok(it) and str(it.get("status", "ok")) in ("ok", "success", "None"):
@@ -258,12 +542,45 @@ class PlumeSettlement:
         yday = (today() - pd.Timedelta(days=1)).normalize()
         hi = min(hi, yday) if hi is not None else None
         stored, native_pages, notes = [], 0, []
-        todo_native = ([d for d in pd.date_range(hi, lo, freq="-1D") if str(d.date()) not in st["native"]["days"]]
-                       if lo is not None and hi is not None and lo <= hi else [])
+        nw = int(spec.get("native_workers", 1))
+        if nw > 1:
+            # side by side, the native leg covers the WHOLE window (yesterday back to the floor) without
+            # waiting for the ERC-20 leg to reach a day — a day is still stored only when both cover it
+            n_hi = min(hi, yday) if hi is not None else yday
+            todo_native = [d for d in pd.date_range(n_hi, floor, freq="-1D") if str(d.date()) not in st["native"]["days"]]
+        else:
+            todo_native = ([d for d in pd.date_range(hi, lo, freq="-1D") if str(d.date()) not in st["native"]["days"]]
+                           if lo is not None and hi is not None and lo <= hi else [])
         nprog = Progress(f"plume_settlement native PLUME {name}", total=len(todo_native) or None, unit="days",
                          every_units=25, checkpoint=lambda: self._save(st),
                          status=lambda: f"{native_pages:,} page(s) read; {len(st['native']['days'])} day(s) held")
-        if lo is not None and hi is not None and lo <= hi:
+        if nw > 1 and todo_native:
+            # NATIVE DAYS SIDE BY SIDE (Jake, 2026-10-01): each day is its own call chain, so `nw` run at
+            # once within the shared request rate; results are applied here, one thread, newest first
+            with ThreadPoolExecutor(max_workers=nw) as ex:
+                queue, inflight, stop = list(todo_native), {}, False
+                while queue or inflight:
+                    while queue and len(inflight) < nw and not stop and not self._over(t0, unbounded):
+                        d = queue.pop(0)
+                        inflight[ex.submit(self._native_day, spec, d)] = d
+                    if not inflight:
+                        break
+                    done, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
+                    for f in done:
+                        d = inflight.pop(f)
+                        try:
+                            amt, n, why = f.result()
+                        except Exception as ex_:  # noqa: BLE001
+                            notes.append(f"native {d.date()}: {str(ex_).split('?')[0]}")
+                            stop = True
+                            continue
+                        native_pages += n
+                        nprog.tick()
+                        if amt is None:
+                            notes.append(why)
+                        else:
+                            st["native"]["days"][str(d.date())] = amt
+        elif lo is not None and hi is not None and lo <= hi:
             for day in pd.date_range(hi, lo, freq="-1D"):           # newest first
                 key = str(day.date())
                 nd = st["native"]["days"].get(key)
