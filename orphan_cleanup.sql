@@ -3817,3 +3817,33 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 -- BM2. THE DELETE: only the schedule's rows; the declared zero stays.
 -- DELETE FROM metrics
 --  WHERE project = 'Aethir' AND metric = 'gross_issuance_tokens' AND source = 'schedule:config';
+
+
+-- ========================================================================================
+-- BN. PLUME: THE TEST DIAMOND'S ROWS GO — THE LIVE DIAMOND IS THE WHOLE HISTORY  2026-10-01
+--     Jake's run 2026-10-01 14:34: locked_tokens BUG, measuring_point_changed — rows from the
+--     deploy-script TEST diamond 0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d (source
+--     'plume_staking:0xCF8B9726…', 94.87 PLUME staked over placeholder validators) sit in one series
+--     with the LIVE diamond 0x30c791E4654EdAc575FA1700eD8633CB2FEDE871 ('plume_staking:0x30c791E4…').
+--     The live diamond's archive backfill covers the year, so the test rows are not history — they
+--     measure a different contract. Also the older Apr-May 2025 candidate 0xA20bfe49… if any rows
+--     exist. Every Plume metric the staking read writes is covered (stake, APR, commission, net APR).
+--     Run: python run_sql.py BN, then python run_sql.py --delete BN (preview + typed "DELETE BN").
+-- ========================================================================================
+-- BN1. EVERY plume_staking SOURCE IN PLUME'S SERIES, with its span (the live ones stay).
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Plume' AND source LIKE 'plume_staking:%'
+ GROUP BY metric, source
+ ORDER BY metric, first_date;
+
+-- BN2. THE LIVE DIAMOND'S locked_tokens SPAN AFTER THE MOVE (expect the archive year, unbroken).
+SELECT COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Plume' AND metric = 'locked_tokens' AND source LIKE 'plume_staking:0x30c791E4%';
+
+-- BN3. THE DELETE: only the test and superseded diamonds' rows.
+-- DELETE FROM metrics
+--  WHERE project = 'Plume'
+--    AND (source LIKE 'plume_staking:0xCF8B9726%' OR source LIKE 'plume_staking:0xA20bfe49%');

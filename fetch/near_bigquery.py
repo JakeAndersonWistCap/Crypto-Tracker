@@ -159,6 +159,16 @@ class NearBigQuery:
             if not ref.startswith(allowed):
                 raise PermissionError(f"query names `{ref}`, outside {allowed} — refused")
 
+    @staticmethod
+    def billing_cap(est: int) -> int:
+        """maximum_bytes_billed for a job whose dry run said `est`. NOT the dry run itself: billing
+        rounds up (Jake's run 2026-10-01: the census dry-ran 1,592,724,227 bytes and BigQuery refused it
+        at that cap — "1592786944 or higher required"). Dry run x 1.05 + 10 MB, and never below
+        BigQuery's 10 MB minimum. The monthly budget and the backfill reserve are still judged on the
+        dry run; the ledger records what was actually billed."""
+        mb10 = 10 * 1024 ** 2
+        return max(int(est * 1.05) + mb10, mb10)
+
     def _dry(self, client, sql: str, params: dict, spec: dict | None = None) -> int:
         self._guard_sql(sql, spec or {})
         cfg = self._bq.QueryJobConfig(dry_run=True, use_query_cache=False, query_parameters=self._params(params))
@@ -200,7 +210,7 @@ class NearBigQuery:
                                       f"next month", TIER)
             return None
         cfg = self._bq.QueryJobConfig(use_query_cache=True, query_parameters=self._params(params),
-                                      maximum_bytes_billed=max(est, 10 * 1024 ** 2))
+                                      maximum_bytes_billed=self.billing_cap(est))
         try:
             job = client.query(sql, job_config=cfg)
             rows = [dict(r.items()) if hasattr(r, "items") else dict(r) for r in job.result()]

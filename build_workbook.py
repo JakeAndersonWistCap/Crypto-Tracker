@@ -3356,6 +3356,16 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
     last = daily.index.max()
     full = daily.reindex(pd.date_range(daily.index.min(), last, freq="D"))
     sums = full.rolling(n, min_periods=n).sum().dropna()
+    # AN UNEXPLAINED BREAK IS NEVER SPANNED (NEAR, Jake 2026-10-01): only windows starting on or after
+    # its clean date are kept; with none, the sum and the ratio are blocked with the break's reason.
+    brk = config.series_break(name, vol_metric)
+    if brk:
+        sums = sums[sums.index - pd.Timedelta(days=n - 1) >= pd.Timestamp(brk["clean_from"])]
+        if sums.empty:
+            for m in blocked:
+                _VIEW_BLOCKS[(name, m)] = (f"no {n}-day window yet starts after the unexplained break "
+                                           f"{brk['between'][0]}..{brk['between'][1]}: {brk['why']}")
+            return
     if sums.empty:
         have = len(daily[daily.index > last - pd.Timedelta(days=n)])
         for m in blocked:

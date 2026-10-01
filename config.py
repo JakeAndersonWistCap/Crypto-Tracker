@@ -7184,8 +7184,26 @@ PROJECTS = [
                 "why": "ATH is pre-minted (42,000,000,000); supplier and staker rewards are releases from "
                        "pre-minted pools, measured as pool_release_tokens — nothing is minted",
                 "declared_by": "Jake, 2026-10-01", "sourced": False,
-                "still_needed": "probe aethir_mint_path: no mint selector or upgradeable proxy on either "
-                                "ATH contract (Ethereum 0xbe0Ed4…, Arbitrum 0xc87B37…)"},
+                "still_needed": "probe aethir_mint_path (rewritten 2026-10-01): the Ethereum cap and minter, "
+                                "and the Arbitrum proxy's implementation"},
+        },
+        # ===== THE MINT PATH, AS READ (Jake's run 2026-10-01 14:34). =====
+        # Ethereum ATH 0xbe0E… DISPATCHES mint(uint256) — 8,806 bytes, not an EIP-1967 proxy,
+        # totalSupply 42,000,000,000. So a mint path EXISTS there; whether it can still mint depends on
+        # a cap equal to supply, or on who holds the minting right. Arbitrum 0xc87B… is 45 bytes — an
+        # EIP-1167 minimal proxy; Axelar's registry gives its ITS InterchainToken implementation as
+        # 0x7F9F70Da…8819 (axelar-contract-deployments@c30f3359 mainnet.json), whose mint/burn moves
+        # supply between chains. The probe now computes both verdicts; until they come back the
+        # declared zero stands ON THE CONDITION that Ethereum totalSupply stays 42bn.
+        "mint_path": {
+            "ethereum": {"address": "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B", "mint_dispatched": "mint(uint256)",
+                         "eip1967_proxy": False, "bytes": 8806, "total_supply": 42_000_000_000,
+                         "cap": "NOT YET READ", "minter": "NOT YET READ"},
+            "arbitrum": {"address": "0xc87B37a581ec3257B734886d9d3a581F5A9d056c", "eip1167_proxy": True,
+                         "bytes": 45, "implementation": "NOT YET READ",
+                         "expected": "Axelar ITS InterchainToken 0x7F9F70Da4af54671a6abAc58e705b5634cac8819"},
+            "read": "Jake's run 2026-10-01 14:34",
+            "verdict": "OPEN — probe aethir_mint_path",
         },
         # ===== B7 (2026-09-28): AETHIR'S OWN REVENUE FIGURES, BESIDE DEFILLAMA'S. RECORDED BOTH. =====
         # DefiLlama's fees (~$4.5M/30d) are DepositServiceFee - WithdrawServiceFee on AethirCore
@@ -17058,6 +17076,29 @@ SETTLEMENT_REBUILD = {
                          "3,666 calls a day / 110k a month — N measured by the probe"},
     "hyperliquid": "NOT REBUILDABLE — see UNAVAILABLE (Hyperliquid, settlement_volume_usd)",
 }
+# ===== A SERIES BREAK NOT YET EXPLAINED: NO WINDOW MAY SPAN IT (Jake, 2026-10-01). =====
+# A rolling window that straddles an unexplained ~80% step reports the step, not the activity. Until
+# `status` is RESOLVED, build_workbook._nrr_views keeps only the windows that START on or after
+# `clean_from`; with none, the NRR and its 365-day sum are blocked with this reason.
+SERIES_BREAKS = {
+    ("Near", "settlement_volume_usd"): {
+        "status": "UNRESOLVED",
+        "between": ("2026-03-24", "2026-04-01"),
+        "clean_from": "2026-04-01",
+        "evidence": "BigQuery receipt_actions 516.1M rows (2026-03) -> 104.3M (2026-04); ft_events 191.0M -> "
+                    "47.3M (Jake's metadata run, 2026-10-01)",
+        "why": "NEAR activity in BigQuery fell ~80% between 2026-03 and 2026-04 — cause not established "
+               "(METHODOLOGY_FLAGS near_activity_break; probe near_activity_break)",
+    },
+}
+
+
+def series_break(project_name: str, metric: str) -> dict | None:
+    """The unresolved break a window of this series must not span, or None."""
+    b = SERIES_BREAKS.get((project_name, metric))
+    return b if b and b.get("status") != "RESOLVED" else None
+
+
 METHODOLOGY_FLAGS = {
     # Jake's run 2026-10-01, Ethereum August 2026 (Aug 1-25, the export's days): DefiLlama DEX
     # ~$1.12bn/day vs Artemis settlement ~$14.5bn/day — DEX is ~7.7% of settlement, so P2P transfers
@@ -17070,6 +17111,15 @@ METHODOLOGY_FLAGS = {
                        "which Artemis's definition (DEX + NFT + P2P transfers) excludes. Use the "
                        "trading-throughput NRR; decide in the methodology work whether A1 should rank on "
                        "it (Jake, 2026-09-30).",
+    "near_activity_break": "UNRESOLVED (Jake's run 2026-10-01): NEAR activity in BigQuery fell ~80% between "
+                           "2026-03 and 2026-04 and stayed there — receipt_actions 516.1M rows (Mar) -> 104.3M "
+                           "(Apr); ft_events 191.0M -> 47.3M. NO NEAR settlement figure is read across that "
+                           "boundary until the cause is known (config SERIES_BREAKS). Candidates: a bot/spam or "
+                           "incentive campaign ending, a programme ending, or THE PIPELINE — NEAR Lake (the "
+                           "dataset's only documented ingestion source) was deprecated 2026-03-24, inside the "
+                           "boundary, so a change in what the dataset records is the first to rule out. Probe "
+                           "near_activity_break sets BigQuery's daily rows beside NearBlocks' own daily "
+                           "transaction counts.",
     "maple_ssf_selling": "QUESTION, NOT ESTABLISHED: Maple's buyback-funded SSF appears to SELL SYRUP at "
                          "market — last 90 days d(usd) on -price x d(syrup) slope 0.979, R2 0.643; "
                          "2026-09-24..29 holdings 79.2M -> 74.9M SYRUP while liquid assets rose. If so, "

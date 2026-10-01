@@ -2198,33 +2198,112 @@ MINT_SELECTORS = {"40c10f19": "mint(address,uint256)", "a0712d68": "mint(uint256
 EIP1967_IMPL = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 
 
+# Axelar's Interchain Token Service, the same address on every EVM chain, and its InterchainToken
+# implementation (axelarnetwork/axelar-contract-deployments@c30f3359 axelar-chains-config/info/
+# mainnet.json, chains.ethereum/arbitrum.contracts.InterchainTokenService.address / .interchainToken).
+AXELAR_ITS = "0xb5fb4be02232b1bba4dc8f81dc24c26980de9e3c"
+AXELAR_INTERCHAIN_TOKEN_IMPL = "0x7f9f70da4af54671a6abac58e705b5634cac8819"
+
+
+def _sel(sig: str) -> str:
+    from eth_utils import keccak                           # noqa: PLC0415
+    return keccak(text=sig).hex().removeprefix("0x")[:8]
+
+
+def _dispatches(code: str, sig: str) -> bool:
+    return ("63" + _sel(sig)) in (code or "").lower()
+
+
+def _call_word(to: str, data: str, chain: str) -> str | None:
+    word, _ = eth_call(to, data, chain=chain)
+    return None if not word or word == "0x" else word
+
+
+def _eip1167_impl(code: str) -> str | None:
+    """The implementation an EIP-1167 minimal proxy delegates to (363d3d373d3d3d363d73<20 bytes>5af4…)."""
+    c = (code or "").lower().removeprefix("0x")
+    if c.startswith("363d3d373d3d3d363d73") and c[60:64] == "5af4":
+        return "0x" + c[20:60]
+    return None
+
+
 def aethir_mint_path():
-    """Jake 2026-10-01: Aethir's gross_issuance_tokens is a DECLARED ZERO (ATH pre-minted) unless the
-    token contract shows a mint path. For both ATH contracts: totalSupply now, whether the runtime
-    code dispatches a mint selector, and whether it is an EIP-1967 upgradeable proxy (then the
-    implementation's code is checked too — an upgradeable token can gain a mint path later)."""
-    head("AETHIR — does either ATH contract carry a mint path?")
-    for chain, addr in (("ethereum", "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"),
-                        ("arbitrum", "0xc87B37a581ec3257B734886d9d3a581F5A9d056c")):
-        ts = _uint(addr, "0x18160ddd", chain)
-        code = _raw_code(addr, chain)
-        if not code or code in ("0x", "0x0"):
-            print(f"  {chain} {addr}: code {'UNREACHABLE' if code is None else 'NONE'}")
-            continue
-        impl_word = _slot(addr, EIP1967_IMPL, chain)
-        impl = ("0x" + impl_word[-40:]) if impl_word and int(impl_word, 16) else None
-        codes = [("contract", code)]
-        if impl:
-            codes.append((f"implementation {impl}", _raw_code(impl, chain) or ""))
-        print(f"  {chain} {addr}: totalSupply {'n/a' if ts is None else f'{ts / 1e18:,.0f}'}; "
-              f"{'EIP-1967 PROXY -> ' + impl if impl else 'not an EIP-1967 proxy'}")
-        for what, c in codes:
-            found = [name for sel, name in MINT_SELECTORS.items() if ("63" + sel) in c.lower()]
-            print(f"    {what}: {len(c) // 2 - 1:,} bytes; mint selectors dispatched: {found or 'NONE'}")
-    print("  READ: no mint selector and no proxy on either = no mint path, the declared zero stands.\n"
-          "  A mint selector on Arbitrum may be the bridge's (Axelar ITS mint/burn for bridged supply), which\n"
-          "  moves supply between chains rather than creating it — paste back and it is classified.\n"
-          "  PASTE BACK all lines.")
+    """Jake 2026-10-01: Aethir's gross_issuance_tokens is a DECLARED ZERO (ATH pre-minted) unless a
+    token contract shows a mint path. His first run: Ethereum ATH dispatches mint(uint256) (8,806 bytes,
+    not EIP-1967, totalSupply 42bn) — and the old summary line wrongly said "no mint selector". Now the
+    verdict is computed from what is read:
+      ETHEREUM  which mint functions are dispatched; a cap (cap() / maxSupply() / MAX_SUPPLY()) and
+                whether totalSupply already equals it; who may mint (owner(), MINTER_ROLE holders).
+      ARBITRUM  45 bytes = an EIP-1167 minimal proxy: followed to its implementation, which is checked
+                for mint/burn and against Axelar's InterchainToken; interchainTokenService() read through
+                the proxy. Axelar ITS mint/burn moves supply between chains — it creates none."""
+    head("AETHIR — does either ATH contract carry a mint path? (verdict from the reads)")
+    verdicts = []
+    # ---- Ethereum
+    eth = "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"
+    code = _raw_code(eth, "ethereum") or ""
+    ts = _uint(eth, "0x18160ddd", "ethereum")
+    print(f"  ETHEREUM {eth}: {len(code) // 2 - 1:,} bytes; totalSupply "
+          f"{'n/a' if ts is None else f'{ts / 1e18:,.0f}'}")
+    mints = [sig for sig in ("mint(uint256)", "mint(address,uint256)", "mintTo(address,uint256)") if _dispatches(code, sig)]
+    print(f"    mint functions dispatched: {mints or 'NONE'}")
+    cap = None
+    for sig in ("cap()", "maxSupply()", "MAX_SUPPLY()", "totalSupplyCap()"):
+        if _dispatches(code, sig):
+            v = _uint(eth, "0x" + _sel(sig), "ethereum")
+            print(f"    {sig} = {'n/a' if v is None else f'{v / 1e18:,.0f}'}")
+            cap = v if v is not None else cap
+    if cap is None:
+        print("    no cap function dispatched (cap()/maxSupply()/MAX_SUPPLY()/totalSupplyCap())")
+    owner = _call_word(eth, "0x" + _sel("owner()"), "ethereum") if _dispatches(code, "owner()") else None
+    if owner:
+        print(f"    owner() = 0x{owner[-40:]}  (code: {_code('0x' + owner[-40:], 'ethereum')})")
+    if _dispatches(code, "MINTER_ROLE()") and _dispatches(code, "getRoleMemberCount(bytes32)"):
+        role = (_call_word(eth, "0x" + _sel("MINTER_ROLE()"), "ethereum") or "").removeprefix("0x")
+        n = _uint(eth, "0x" + _sel("getRoleMemberCount(bytes32)") + role, "ethereum") or 0
+        holders = [("0x" + (_call_word(eth, "0x" + _sel("getRoleMember(bytes32,uint256)") + role
+                                       + hex(i)[2:].rjust(64, "0"), "ethereum") or "0" * 64)[-40:]) for i in range(n)]
+        print(f"    MINTER_ROLE holders ({n}): {holders}")
+    elif _dispatches(code, "hasRole(bytes32,address)"):
+        print("    AccessControl present (hasRole) but not enumerable — role holders need the RoleGranted logs")
+    if not mints:
+        verdicts.append("ETHEREUM: no mint function dispatched — no mint path")
+    elif cap is not None and ts is not None and ts >= cap:
+        verdicts.append(f"ETHEREUM: mint dispatched but totalSupply {ts / 1e18:,.0f} = the hard cap "
+                        f"{cap / 1e18:,.0f} — MINTING IMPOSSIBLE; the declared zero stands")
+    else:
+        verdicts.append("ETHEREUM: MINT PATH EXISTS and no reached cap was read — record who can mint (above) "
+                        "and WATCH totalSupply; the declared zero holds only while it stays at 42bn")
+    # ---- Arbitrum
+    arb = "0xc87B37a581ec3257B734886d9d3a581F5A9d056c"
+    acode = _raw_code(arb, "arbitrum") or ""
+    impl = _eip1167_impl(acode)
+    ats = _uint(arb, "0x18160ddd", "arbitrum")
+    print(f"\n  ARBITRUM {arb}: {len(acode) // 2 - 1:,} bytes; totalSupply "
+          f"{'n/a' if ats is None else f'{ats / 1e18:,.0f}'}; "
+          + (f"EIP-1167 minimal proxy -> {impl}" if impl else "not an EIP-1167 proxy"))
+    target = _raw_code(impl, "arbitrum") if impl else acode
+    am = [sig for sig in ("mint(address,uint256)", "burn(address,uint256)") if _dispatches(target, sig)]
+    print(f"    implementation dispatches: {am or 'no mint/burn'}")
+    its = _call_word(arb, "0x" + _sel("interchainTokenService()"), "arbitrum")
+    its = ("0x" + its[-40:]).lower() if its else None
+    tid = _call_word(arb, "0x" + _sel("interchainTokenId()"), "arbitrum")
+    print(f"    interchainTokenService() = {its}; interchainTokenId() = {tid}")
+    axelar = (impl or "").lower() == AXELAR_INTERCHAIN_TOKEN_IMPL or its == AXELAR_ITS
+    if not am:
+        verdicts.append("ARBITRUM: no mint/burn in the implementation — no mint path")
+    elif axelar:
+        verdicts.append("ARBITRUM: Axelar ITS InterchainToken (implementation and/or service match Axelar's "
+                        "registry) — mint/burn by its token manager when ATH bridges; it MOVES supply between "
+                        "chains and creates none; the declared zero stands for this chain")
+    else:
+        verdicts.append("ARBITRUM: mint/burn present and NOT matched to Axelar's InterchainToken — classify "
+                        "before relying on the declared zero")
+    print("\n  VERDICT:")
+    for v in verdicts:
+        print(f"    {v}")
+    print("  PASTE BACK all lines.")
+
 
 
 def aethir_staking_probe():
@@ -3045,6 +3124,57 @@ def settlement_rebuild_coverage():
     print("  PASTE BACK. Nothing is wired until you approve a route and its call volume.")
 
 
+def near_activity_break():
+    """Jake 2026-10-01: NEAR's BigQuery rows fell ~80% from 2026-03 to 2026-04 (receipt_actions 516.1M ->
+    104.3M; ft_events 191.0M -> 47.3M). Real activity, or the pipeline? Daily row counts per table from
+    INFORMATION_SCHEMA.PARTITIONS (metadata: tens of MB, capped at 200 MB) for 2026-03-01..2026-04-30,
+    beside NearBlocks' own daily transaction count from metrics.db (an independent indexer). READ: if
+    blocks/day hold steady while transactions fall in BOTH sources, activity really fell (a campaign or
+    programme ended — the day it fell names the candidate); if BigQuery falls and NearBlocks does not,
+    the dataset records less since then (NEAR Lake, its documented source, was deprecated 2026-03-24)."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery           # noqa: PLC0415
+    head("NEAR — the 2026-03 -> 2026-04 drop: BigQuery rows per day vs NearBlocks transactions")
+    spec = config.PROJECT_BY_NAME["Near"]["near_bigquery"]
+    nb = NearBigQuery()
+    client, why = nb._client(spec)
+    sql = ("SELECT table_name, PARSE_DATE('%Y%m%d', partition_id) AS day, total_rows "
+           "FROM `bigquery-public-data.crypto_near_mainnet_us`.INFORMATION_SCHEMA.PARTITIONS "
+           "WHERE table_name IN ('blocks', 'chunks', 'transactions', 'receipt_actions', 'ft_events') "
+           "AND partition_id BETWEEN '20260301' AND '20260430' ORDER BY day, table_name")
+    if client is None:
+        print(f"  not run here: {why}. In the console (near-data-510309) run:\n  {sql}")
+        bq = None
+    else:
+        from google.cloud import bigquery                  # noqa: PLC0415
+        nb._guard_sql(sql, spec)
+        rows = [dict(r.items()) for r in client.query(sql, job_config=bigquery.QueryJobConfig(
+            maximum_bytes_billed=200 * 1024 ** 2)).result()]
+        bq = pd.DataFrame(rows).pivot_table(index="day", columns="table_name", values="total_rows", aggfunc="sum")
+    try:
+        nbk = pd.read_sql_query("SELECT date, value FROM metrics WHERE project='Near' AND metric='tx_count' "
+                                "AND date BETWEEN '2026-03-01' AND '2026-04-30'", sqlite3.connect("metrics.db"))
+        nbk = nbk.assign(date=pd.to_datetime(nbk["date"]).dt.date).groupby("date")["value"].last()
+    except Exception as e:  # noqa: BLE001
+        print(f"  NearBlocks tx_count from metrics.db: {e}")
+        nbk = pd.Series(dtype=float)
+    if bq is None and nbk.empty:
+        return
+    days = sorted(set(bq.index if bq is not None else []) | set(nbk.index))
+    cols = ["blocks", "chunks", "transactions", "receipt_actions", "ft_events"]
+    print("  day          " + "  ".join(f"{c[:12]:>12}" for c in cols) + "  nearblocks_tx  bq_tx/nb_tx")
+    for d in days:
+        vals = [bq.loc[d, c] if bq is not None and d in bq.index and c in bq.columns else None for c in cols]
+        nt = nbk.get(d)
+        ratio = f"{vals[2] / nt:>11.2f}" if (vals[2] and nt) else f"{'-':>11}"
+        cells = "  ".join(f"{v:>12,.0f}" if v is not None else f"{'-':>12}" for v in vals)
+        ntxt = f"{nt:>13,.0f}" if nt is not None else f"{'-':>13}"
+        print(f"  {d}  {cells}  {ntxt}  {ratio}")
+    print("  PASTE BACK all lines. The break stays UNRESOLVED (config SERIES_BREAKS) until the cause is recorded.")
+
+
 def near_settlement_routes():
     """Jake 2026-10-01: NEAR from Google's public BigQuery dataset — LIVE (MAX(block_date) 2026-10-01).
     Dune (paid plan to save a query) and Flipside (API shut 2025-07-31) are CLOSED.
@@ -3095,11 +3225,14 @@ def near_settlement_routes():
               f"  PASTE BACK: each file's bytes, and the metadata results.")
         return
     from google.cloud import bigquery                      # noqa: PLC0415
-    for stmt in [x for x in (here / "bigquery_metadata.sql").read_text().split(";") if "SELECT" in x]:
+    # COMMENTS OUT BEFORE SPLITTING (Jake's run 2026-10-01: "Syntax error: Unexpected identifier
+    # circulating_supply at [1:2]") — a ';' inside a comment split the file mid-sentence.
+    code = "\n".join(line.split("--", 1)[0] for line in (here / "bigquery_metadata.sql").read_text().splitlines())
+    for stmt in [x for x in code.split(";") if "SELECT" in x]:
         try:
             nb._guard_sql(stmt, spec)
             for row in client.query(stmt, job_config=bigquery.QueryJobConfig(
-                    maximum_bytes_billed=100 * 1024 ** 2)).result():
+                    maximum_bytes_billed=200 * 1024 ** 2)).result():
                 print(f"  {dict(row.items())}")
         except Exception as e:  # noqa: BLE001
             print(f"  metadata query refused: {type(e).__name__}: {str(e)[:200]}")
@@ -3979,6 +4112,7 @@ CHECKS = (
     geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     aethir_mint_path,
+    near_activity_break,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

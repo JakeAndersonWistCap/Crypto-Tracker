@@ -21033,3 +21033,69 @@ def test_every_section_write_runs_through_run_sql_delete_and_nothing_is_uncommen
         if flush:
             assert R.uncommented_write(sec["text"]), f"section {label} ships a write --delete cannot find"
     assert "python run_sql.py --delete BL" in text and "python run_sql.py --delete BM" in text
+
+
+def test_jake_run_2026_10_01_1434_fixes():
+    """Jake's run 2026-10-01 14:34: (1b) BigQuery billing rounds up — cap = dry run x 1.05 + 10 MB;
+    (1c) the metadata SQL splits only outside comments; (1d) NEAR's unexplained Mar->Apr break is never
+    spanned by a 365-day window; (3) a sourced manual row is COMPLETE (MANUAL) inside its cadence;
+    (4) BN deletes the test diamond's rows through --delete; (5) a monthly series missing only the
+    unpublished newest month waits on the source; (2) the mint-path helpers read proxies right."""
+    import build_workbook as bw
+    import check_offline_items as c
+    import completeness_report as cr
+    import run_sql as R
+    from fetch.near_bigquery import NearBigQuery
+    # 1b — the census that failed: 1,592,724,227 dry-run bytes, 1,592,786,944 required
+    assert NearBigQuery.billing_cap(1_592_724_227) >= 1_592_786_944
+    assert NearBigQuery.billing_cap(0) == 10 * 1024 ** 2
+    # 1c — no statement starts mid-comment
+    sqlp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sql", "near", "bigquery_metadata.sql")
+    code = "\n".join(line.split("--", 1)[0] for line in open(sqlp).read().splitlines())
+    stmts = [x.strip() for x in code.split(";") if "SELECT" in x]
+    assert len(stmts) == 3 and all(x.startswith("SELECT") for x in stmts)
+    # 1d — the break: a NEAR settlement series from 2025-10 to 2027-05; only windows from 2026-04-01 on
+    b = config.series_break("Near", "settlement_volume_usd")
+    assert b and b["clean_from"] == "2026-04-01" and "near_activity_break" in config.METHODOLOGY_FLAGS
+    days = pd.date_range("2025-10-01", "2027-05-01")
+    sv = pd.DataFrame({"date": days, "project": "Near", "metric": "settlement_volume_usd", "value": 1e6,
+                       "source": "x", "tier": 1})
+    mc = sv.assign(metric="market_cap_usd", value=3e9)
+    groups = {("Near", "settlement_volume_usd"): sv, ("Near", "market_cap_usd"): mc}
+    bw._VIEW_BLOCKS.clear()
+    bw._nrr_views(groups, "Near", "settlement_volume_usd", "settlement_volume_365d_usd", "network_reserve_ratio",
+                  365, ("settlement_volume_365d_usd", "network_reserve_ratio"), "short")
+    first_ok = groups[("Near", "settlement_volume_365d_usd")]["date"].min()
+    assert first_ok == pd.Timestamp("2026-04-01") + pd.Timedelta(days=364)
+    short = {("Near", "settlement_volume_usd"): sv[sv.date <= "2026-12-31"], ("Near", "market_cap_usd"): mc}
+    bw._VIEW_BLOCKS.clear()
+    bw._nrr_views(short, "Near", "settlement_volume_usd", "settlement_volume_365d_usd", "network_reserve_ratio",
+                  365, ("settlement_volume_365d_usd", "network_reserve_ratio"), "short")
+    assert "unexplained break" in bw._VIEW_BLOCKS[("Near", "network_reserve_ratio")]
+    bw._VIEW_BLOCKS.clear()
+    # 3 — manual rows
+    g = config.PROJECT_BY_NAME["GEODNET"]
+    asof = pd.Timestamp("2026-10-01")
+    row = {"status": "manual", "note": "Blockworks Staking Flow chart, read by Jake 2026-09-30",
+           "latest_date": "2026-09-30", "entered_on": "2026-10-01"}
+    v, d = cr.classify(g, "locked_tokens", row, "2026-09-30", asof, {})
+    assert v == "COMPLETE (MANUAL)" and "refreshed quarterly, due by 2027-01-14" in d
+    v, d = cr.classify(g, "locked_tokens", row, "2026-09-30", pd.Timestamp("2027-02-01"), {})
+    assert v == "NEEDS JAKE" and "past its 106-day cadence" in d
+    assert cr.classify(g, "locked_tokens", {**row, "note": ""}, "2026-09-30", asof, {})[0] == "BUG"
+    # 5 — Maple: history from 2024, newest month not published yet
+    m = config.PROJECT_BY_NAME["Maple"]
+    mrow = {"status": "ok", "q0_basis": "3 complete months", "q0_covered_days": 62, "latest_date": "2026-08-31"}
+    v, d = cr.classify(m, "revenue_usd", mrow, "2024-03-31", asof, {})
+    assert v == "WAITING ON A DATE" and "2026-09..2026-09 not published yet" in d
+    # 4 — BN runs through --delete and touches only the test/superseded diamonds
+    secs = R.parse_sections(R.SQL_FILE.read_text())
+    w = [R.write_target(x) for x in R.split_statements("\n".join(R.uncommented_write(secs["BN"]["text"])))
+         if R.write_target(x)]
+    assert w and w[0][0] == "DELETE" and "0xCF8B9726" in w[0][2] and "0x30c791E4" not in w[0][2]
+    # 2 — proxies and dispatch
+    impl = "0x7f9f70da4af54671a6abac58e705b5634cac8819"
+    assert c._eip1167_impl("0x363d3d373d3d3d363d73" + impl[2:] + "5af43d82803e903d91602b57fd5bf3") == impl
+    assert c._eip1167_impl("0x6080") is None
+    assert c._sel("mint(uint256)") == "a0712d68" and c._dispatches("0x...63a0712d68...", "mint(uint256)")
+    assert config.PROJECT_BY_NAME["Aethir"]["mint_path"]["ethereum"]["mint_dispatched"] == "mint(uint256)"

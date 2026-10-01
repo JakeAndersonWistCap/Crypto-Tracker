@@ -108,6 +108,9 @@ DECISIONS = {
 # Ethereum staking_yield_pct's week-long wait on Eth2Staking was lifted 2026-09-30: the
 # consensus part now has its declared history leg (ultrasound-derived issuance before the first
 # d(Eth2Staking) row) and ETH.Store is backfilled per day (A1/A2).
+# A MANUAL ROW'S REFRESH CADENCE, in days (a quarter or a month, plus two weeks' grace — the same
+# grace the monthly staleness threshold carries). Jake, 2026-10-01.
+MANUAL_REFRESH_DAYS = {"quarterly": 106, "monthly": 45, "weekly": 14}
 WAIT_ON_SERIES: dict = {
     # Aethir's release is a day-on-day rise: its first row needs two days of the checker total.
     ("Aethir", "pool_release_tokens"): {
@@ -273,6 +276,23 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
                                         note, re.I):
         return "MATURING", (f"blocked until its readings cover the window: {note[:200]}"
                             + (f" — FORWARD-ONLY: {fwd}" if fwd else ""))
+    # A SOURCED MANUAL ROW IS COMPLETE (Jake's run 2026-10-01: GEODNET locked_tokens, the Blockworks
+    # chart read by Jake, came out BUG only because its status reads "manual"). Complete while it is
+    # inside its refresh cadence; past it, the action is Jake's — refresh the row. A manual row with no
+    # source note is still a fault: nobody could check it.
+    if status == "manual":
+        cadence = "quarterly" if config.is_manual_quarterly(name, metric) else config.series_granularity(name, metric)
+        limit = MANUAL_REFRESH_DAYS.get(cadence) or config.stale_after_days(name, metric, 7)
+        latest = row.get("latest_date")
+        if not note.strip() or latest is None or (isinstance(latest, float) and pd.isna(latest)):
+            return "BUG", "a manual row without a source note or a date — nobody can check it"
+        age = (asof - pd.Timestamp(latest)).days
+        due = (pd.Timestamp(latest) + pd.Timedelta(days=limit)).date()
+        if age > limit:
+            return "NEEDS JAKE", (f"refresh the {cadence} manual row: the latest ({str(latest)[:10]}) is {age} days "
+                                  f"old, past its {limit}-day cadence | {note[:160]}")
+        return "COMPLETE (MANUAL)", (f"{note[:200]} (dated {str(latest)[:10]}, entered "
+                                     f"{str(row.get('entered_on') or '')[:10]}; refreshed {cadence}, due by {due})")
     if status in ("missing", "gap") and (name, metric) in PENDING_SEED:
         return "NEEDS JAKE", f"run the one-off seed: {PENDING_SEED[(name, metric)]}"
     if status in ("missing", "gap") and config.is_manual_quarterly(name, metric):
@@ -301,6 +321,21 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
         cov = row.get("q0_covered_days")
         if cov is not None and not pd.isna(cov) and cov < 89:
             last = asof.to_period("M") - 1
+            # THE NEWEST MONTH NOT YET PUBLISHED IS NOT A MISSING HISTORY (Jake's run 2026-10-01:
+            # Maple's revenue and buybacks read "62 of the Q0 months' days ... a backfill should fill
+            # it" — the page's 31 months were held; September had not been published on 1 October).
+            # History before the Q0 months and nothing after the latest stored month: waiting on the
+            # source, not on a backfill.
+            q0_start = (last - 2).start_time
+            latest = row.get("latest_date")
+            if (first and pd.Timestamp(first) < q0_start and latest is not None
+                    and not (isinstance(latest, float) and pd.isna(latest))
+                    and pd.Timestamp(latest) < last.end_time.normalize()):
+                held_to = pd.Timestamp(latest).to_period("M")
+                return "WAITING ON A DATE", (
+                    f"{held_to + 1}..{last} not published yet — the series is held from {str(first)[:10]} "
+                    f"to {str(latest)[:10]} ({int(cov)} of the Q0 months' days); the month lands when the "
+                    f"source publishes it" + flag)
             return "MATURING", (f"{int(cov)} of the Q0 months' days held; full with {last + 3} "
                                 f"complete" + why_wait + flag)
     elif first:
