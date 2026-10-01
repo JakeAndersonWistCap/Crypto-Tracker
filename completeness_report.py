@@ -128,7 +128,8 @@ PENDING_SEED = {
     **{("Near", m): "NEAR's P2P leg from BigQuery (fetch/near_bigquery.py, approved): run `gcloud auth "
                     "application-default login` and `gcloud auth application-default set-quota-project "
                     "near-data-510309` (RUNBOOK 11n), then python token_metrics.py --seed near_bigquery (top-up "
-                    "first, then month chunks within the 900 GB/month budget; Artemis method adapted to NEAR, "
+                    "first, then month chunks from what the 900 GB/month budget leaves after reserving the month's "
+                    "top-ups; Artemis method adapted to NEAR, "
                     "UNVALIDATED)"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
                  "settlement_volume_365d_usd")},

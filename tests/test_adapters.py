@@ -20824,7 +20824,7 @@ def test_plume_reward_payouts_from_the_treasury_and_the_apy_reconciles_to_the_ap
     assert "2026-09-30,Plume,staking_apy_published,0.045," in mo
 
 
-def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values_p2p(tmp_path):
+def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values_p2p(tmp_path, monkeypatch):
     """Jake 2026-10-01: BigQuery's NEAR dataset is live. Nothing heavy runs until approved: the
     year/day/census dry runs are logged; circulating (10 MB) is approved and stored /1e24 as
     NEAR's own circulating supply. Approved P2P: census -> >95% token set; month chunks newest first
@@ -20834,7 +20834,8 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     import pytest
     from types import SimpleNamespace
     from fetch import near_bigquery as nbq
-    from fetch.base import today
+    monkeypatch.setattr(nbq, "today", lambda: pd.Timestamp("2026-10-01"))     # 30 days left in the month
+    today = nbq.today
 
     class Bq:
         class QueryJobConfig:
@@ -20902,7 +20903,7 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     assert "CoinGecko's latest 1,240,000,000 (+0.89% ours vs CoinGecko)" in msgs
     assert "DRY RUNS (free): p2p year 2,555.0 GB; one day 7.0 GB; token census (30 days) 70.0 GB" in msgs
     assert "p2p NOT APPROVED" in msgs and cl.ran == ["circ"] and "p2p_transfer_volume_usd" not in set(f.metric)
-    assert "BYTES THIS RUN: 0.01 GB billed" in msgs
+    assert "QUOTA 2026-10: 0.01 GB billed this run (backfill 0.00 GB)" in msgs
     st = json.loads((tmp_path / "c.json").read_text())
     assert st["ledger"][str(today().date())[:7]] == 10 * 1024 ** 2
 
@@ -20916,19 +20917,42 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     assert f"p2p top-up {yday.date()}..{yday.date()}" in msgs
     assert f"p2p backfill {(yday - pd.Timedelta(days=31)).date()}..{(yday - pd.Timedelta(days=1)).date()}" in msgs
     assert "token census: 2 token(s) carry 100.0% of 30 days' priced ft_transfer value" in msgs
-    assert "BYTES THIS RUN: 294.00 GB billed" in msgs                         # census 70 + top-up 7 + 31 x 7 GB
+    # census 70 + top-up 7 + one 31-day chunk 217 GB; the month's top-ups reserved first:
+    # 30 days left x 7 GB (the measured one-day top-up) x 1.2 = 252 GB
+    assert ("QUOTA 2026-10: 294.00 GB billed this run (backfill 217.00 GB); month used 294.0 GB; remaining "
+            "606.0 GB of the 900 GB budget (free tier 1 TB); top-up reserve 252.0 GB (30 day(s) left x 7.00 "
+            "GB/day") in msgs and "left for backfill 354.0 GB" in msgs
     p2p = out.frame().query("metric == 'p2p_transfer_volume_usd'")
     assert len(p2p) == 32 and p2p.source.iloc[0] == "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]"
     last = p2p.sort_values("date").value.iloc[-1]
     assert last == pytest.approx(1000 * 2.5 + 500 * 2.5 + 2_000 * 1.0)      # store price for NEAR + wNEAR
     assert p2p.sort_values("date").value.iloc[0] == 0.0                       # days in the chunk with no rows
 
-    # THE BUDGET: a chunk that would pass the month's budget is NOT RUN, and says so
+    # THE RESERVE HOLDS BACKFILL: with a 300 GB budget, 294 GB used and 252 GB reserved, no chunk runs
     spec["monthly_budget_bytes"] = 300e9
     out = FetchOutput()
     nbq.NearBigQuery(client=cl, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "c.json",
                      csv_dir=tmp_path / "none").run([proj], None, out)
-    assert any("past the budget 300 GB — NOT RUN" in e.message for e in out.log) and cl.ran.count("p2p") == 2
+    assert any("BACKFILL HELD — dry run 217.0 GB is more than the 0.0 GB left for backfill after the top-up "
+               "reserve (252.0 GB" in e.message for e in out.log) and cl.ran.count("p2p") == 2
+    spec["monthly_budget_bytes"] = 900e9
+
+    # THE SEED (unbounded) spends backfill only down to the reserve: two 217 GB chunks, then held,
+    # leaving 389 GB >= the 252 GB the rest of October's top-ups need
+    cl2 = Client()
+    out = FetchOutput()
+    nbq.NearBigQuery(client=cl2, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "seed.json",
+                     csv_dir=tmp_path / "none").run([proj], None, out, unbounded=True)
+    msgs = " ".join(e.message for e in out.log)
+    assert cl2.ran == ["circ", "census", "p2p", "p2p", "p2p"] and "BACKFILL HELD" in msgs
+    assert "(backfill 434.00 GB); month used 511.0 GB; remaining 389.0 GB" in msgs
+    # no measured top-up yet: the reserve is unknown and backfill is held, not guessed
+    r, why = nbq.NearBigQuery()._reserve(spec, {})
+    assert r is None and "no top-up has been dry-run yet" in why
+    # a census falling due before the month ends is reserved too
+    r, why = nbq.NearBigQuery()._reserve(spec, {"topup_bytes": {"bytes": 7e9, "on": "2026-10-01", "source": "x"},
+                                                "tokens": {"on": "2026-09-20"}, "census_bytes": {"bytes": 70e9}})
+    assert r == int(30 * 7e9 * 1.2 + 70e9 * 1.2) and "token census due this month" in why
 
     # THE GUARD: a query naming a table outside the public NEAR dataset is refused before it is sent
     with pytest.raises(PermissionError):

@@ -3104,12 +3104,25 @@ def near_settlement_routes():
         except Exception as e:  # noqa: BLE001
             print(f"  metadata query refused: {type(e).__name__}: {str(e)[:200]}")
         print("  --")
+    measured = {}
     for label, (fn, params) in runs.items():
         try:
             b = nb._dry(client, (here / fn).read_text(), params, spec)
+            measured[label] = b
             print(f"  DRY RUN {label}: {b / 1e9:,.2f} GB ({b / 1e12:,.3f} TB) — free; nothing billed")
         except Exception as e:  # noqa: BLE001
             print(f"  DRY RUN {label}: {type(e).__name__}: {str(e)[:200]}")
+    # THE REAL SIZES FEED THE TOP-UP RESERVE (Jake, 2026-10-01): saved where the adapter reads them,
+    # so the first seed reserves the month's top-ups from measured figures, not estimates.
+    st = nb._load()
+    day = str(pd.Timestamp.now(tz="UTC").date())
+    if "p2p_one_day" in measured:
+        st["topup_bytes"] = {"bytes": measured["p2p_one_day"], "on": day, "source": "probe near_settlement_routes"}
+    if "token_census_30d" in measured:
+        st["census_bytes"] = {"bytes": measured["token_census_30d"], "on": day}
+    nb._save(st)
+    nb._run_bytes = nb._backfill_bytes = 0
+    print("  " + nb._quota_line(spec, st))
     print(f"  Budget in config: {int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB/month of the free 1 TB; per query "
           f"<= {int(spec['max_bytes_per_query']) / 1e9:,.0f} GB. The FT leg's dry run ignores clustering (it bills less).")
     print("  PASTE BACK all lines. P2P is approved: routine runs top up first, then backfill under the budget.")

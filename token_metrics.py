@@ -104,8 +104,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "year of Plume P2P transfers from Blockscout (~21,755 pages, ~1.5h). hl_candles: a year "
                          "of daily candles for every Hyperliquid perp market (~1 call each, paced). plume_staking: the live diamond read at the first block of each past day "
                          "(locked_tokens, gross/net APR, commission); stops where rpc.plume.org "
-                         "serves no historical state. near_bigquery: NEAR's P2P month chunks from "
-                         "BigQuery until the month's byte budget is spent (only once approved).")
+                         "serves no historical state. near_bigquery: NEAR's daily top-up, then P2P month "
+                         "chunks from BigQuery until only the reserve for the rest of the month's "
+                         "top-ups is left of the 900 GB budget.")
     return ap.parse_args(argv)
 
 
@@ -213,8 +214,9 @@ def seed_geodnet(st, log) -> int:
 
 
 def seed_near_bigquery(st, log) -> int:
-    """NEAR from BigQuery with no chunk limit (Jake, 2026-10-01): every month chunk the month's byte
-    budget allows, newest first — only reads config Near.near_bigquery.approved allows. Records no gaps."""
+    """NEAR from BigQuery with no chunk limit (Jake, 2026-10-01): the top-up, then every month chunk the
+    budget allows AFTER reserving the rest of the month's top-ups, newest first — only reads config
+    Near.near_bigquery.approved allows. Records no gaps."""
     from fetch.near_bigquery import NearBigQuery
     from fetch.validate import validate_frame
     pl = [p for p in config.PROJECTS if p.get("near_bigquery")]

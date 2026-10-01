@@ -24,6 +24,12 @@ THREE READS, EACH GATED BY config Near.near_bigquery.approved (Jake decides afte
                 logged, and the year-backfill and one-day figures are logged once a day even when
                 nothing is approved — the numbers Jake decides on.
 
+THE MONTH'S TOP-UPS ARE RESERVED BEFORE BACKFILL SPENDS (Jake, 2026-10-01). The daily top-up comes
+out of the same budget, so backfill may spend only budget − used − reserve, where reserve = the days
+left in the month x the latest measured one-day top-up dry run x 1.2 (+ the token census if its refresh
+falls due this month). No measured top-up yet: backfill is held. Every run logs the QUOTA line: bytes
+this run, backfill spend, month used, remaining, the reserve and what it leaves for backfill.
+
 THE QUOTA IS LEDGERED. Each query's bytes billed is added to <logcache>/near-bq.json under its UTC
 month; a query whose dry run would take the month past `monthly_budget_bytes`, or is larger than
 `max_bytes_per_query`, is not run, and says so. maximum_bytes_billed is set on every job to its dry
@@ -158,19 +164,35 @@ class NearBigQuery:
         cfg = self._bq.QueryJobConfig(dry_run=True, use_query_cache=False, query_parameters=self._params(params))
         return int(client.query(sql, job_config=cfg).total_bytes_processed or 0)
 
-    def _run(self, client, what: str, sql: str, params: dict, spec: dict, st: dict, out, name: str):
-        """Rows, or None with the reason logged. Dry run, budget, then the job capped at its dry run."""
+    def _run(self, client, what: str, sql: str, params: dict, spec: dict, st: dict, out, name: str,
+             backfill: bool = False, topup_days: int = 0):
+        """Rows, or None with the reason logged. Dry run, budget, then the job capped at its dry run.
+        A BACKFILL query may only spend what the month's top-up reserve leaves (_reserve)."""
         try:
             est = self._dry(client, sql, params, spec)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{what}: dry run failed — {type(e).__name__}: {str(e)[:200]}", TIER)
             return None
+        if topup_days:                                    # a measured top-up size, per day
+            st["topup_bytes"] = {"bytes": est / topup_days, "on": str(today().date()),
+                                 "source": f"top-up dry run ({topup_days} day(s))"}
         month = str(today().date())[:7]
         used = int(st["ledger"].get(month, 0))
         if est > int(spec["max_bytes_per_query"]):
             out.skipped(SOURCE, name, f"{what}: dry run {est / 1e9:,.1f} GB is over the per-query cap "
                                       f"{int(spec['max_bytes_per_query']) / 1e9:,.0f} GB — NOT RUN", TIER)
             return None
+        if backfill:
+            reserve, why = self._reserve(spec, st)
+            if reserve is None:
+                out.skipped(SOURCE, name, f"{what}: BACKFILL HELD — {why}", TIER)
+                return None
+            room = int(spec["monthly_budget_bytes"]) - used - reserve
+            if est > room:
+                out.skipped(SOURCE, name, f"{what}: BACKFILL HELD — dry run {est / 1e9:,.1f} GB is more than the "
+                                          f"{max(room, 0) / 1e9:,.1f} GB left for backfill after the top-up reserve "
+                                          f"({reserve / 1e9:,.1f} GB: {why}); resumes next month", TIER)
+                return None
         if used + est > int(spec["monthly_budget_bytes"]):
             out.skipped(SOURCE, name, f"{what}: dry run {est / 1e9:,.1f} GB would take {month} to "
                                       f"{(used + est) / 1e9:,.1f} GB, past the budget "
@@ -190,12 +212,51 @@ class NearBigQuery:
             return None
         billed = int(getattr(job, "total_bytes_billed", None) or est)
         self._run_bytes += billed
+        if backfill:
+            self._backfill_bytes += billed
         st["ledger"][month] = used + billed
         self._save(st)
         out.skipped(SOURCE, name, f"{what}: {len(rows)} row(s); {billed / 1e9:,.2f} GB billed (dry run "
                                   f"{est / 1e9:,.2f} GB); {month} so far {(used + billed) / 1e9:,.1f} GB of "
                                   f"{int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB", TIER)
         return rows
+
+    def _reserve(self, spec: dict, st: dict):
+        """(bytes, how) the rest of the month's top-ups need — or (None, why) when no top-up has been
+        measured yet, which HOLDS the backfill rather than guess. Jake, 2026-10-01: a seed spending the
+        whole 900 GB on day 1 would block every top-up for the rest of the month, so backfill spends only
+        budget − used − reserve. reserve = days left in the month after today x the latest measured
+        one-day top-up dry run x the margin (1.2), plus the token census's last dry run (x the margin)
+        when its refresh falls due before the month ends."""
+        tb = st.get("topup_bytes") or {}
+        if not tb.get("bytes"):
+            return None, ("no top-up has been dry-run yet, so the month's top-up reserve is unknown — "
+                          "run `check_offline_items.py near_settlement_routes` or let a routine run dry-run one")
+        now = today().normalize()
+        month_end = (now + pd.offsets.MonthEnd(0)).normalize()
+        days_left = (month_end - now).days
+        margin = float(spec["topup_reserve_margin"])
+        reserve = days_left * float(tb["bytes"]) * margin
+        how = (f"{days_left} day(s) left x {float(tb['bytes']) / 1e9:,.2f} GB/day ({tb.get('source')}, "
+               f"{tb.get('on')}) x {margin:g}")
+        on = (st.get("tokens") or {}).get("on")
+        cb = (st.get("census_bytes") or {}).get("bytes")
+        if on and cb and (month_end - pd.Timestamp(on)).days > int(spec["census_every_days"]):
+            reserve += float(cb) * margin
+            how += f" + the token census due this month {float(cb) / 1e9:,.1f} GB x {margin:g}"
+        return int(reserve), how
+
+    def _quota_line(self, spec: dict, st: dict) -> str:
+        month = str(today().date())[:7]
+        budget, used = int(spec["monthly_budget_bytes"]), int(st["ledger"].get(month, 0))
+        reserve, how = self._reserve(spec, st)
+        line = (f"QUOTA {month}: {self._run_bytes / 1e9:,.2f} GB billed this run (backfill "
+                f"{self._backfill_bytes / 1e9:,.2f} GB); month used {used / 1e9:,.1f} GB; remaining "
+                f"{(budget - used) / 1e9:,.1f} GB of the {budget / 1e9:,.0f} GB budget (free tier 1 TB); ")
+        if reserve is None:
+            return line + f"top-up reserve UNKNOWN — backfill held ({how})"
+        return line + (f"top-up reserve {reserve / 1e9:,.1f} GB ({how}); left for backfill "
+                       f"{max(budget - used - reserve, 0) / 1e9:,.1f} GB")
 
     # --- the read ------------------------------------------------------------------------------
     def run(self, projects: list[dict], window_days, out, unbounded: bool = False):
@@ -205,7 +266,7 @@ class NearBigQuery:
                 self._project(p["name"], spec, out, unbounded)
 
     def _project(self, name: str, spec: dict, out, unbounded: bool) -> None:
-        self._run_bytes = 0
+        self._run_bytes = self._backfill_bytes = 0
         st = self._load()
         st.setdefault("ledger", {})
         st.setdefault("days", {})
@@ -225,10 +286,7 @@ class NearBigQuery:
             else:
                 out.skipped(SOURCE, name, "p2p NOT APPROVED — dry runs only (config Near.near_bigquery."
                                           "approved.p2p, Jake's decision on the logged estimates)", TIER)
-            month = str(today().date())[:7]
-            out.skipped(SOURCE, name, f"BYTES THIS RUN: {self._run_bytes / 1e9:,.2f} GB billed; {month} so far "
-                                      f"{int(st['ledger'].get(month, 0)) / 1e9:,.1f} GB of "
-                                      f"{int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB budget (free tier 1 TB)", TIER)
+            out.skipped(SOURCE, name, self._quota_line(spec, st), TIER)
         self._save(st)
         self._value(spec, st, out, name)
 
@@ -274,9 +332,11 @@ class NearBigQuery:
                 b = self._dry(client, _sql("bigquery_p2p_daily.sql"),
                               {"d0": d0.date(), "d1": yday.date(), "tokens": toks}, spec)
                 parts.append(f"{label} {b / 1e9:,.1f} GB")
+            st["topup_bytes"] = {"bytes": b, "on": day, "source": "daily one-day dry run"}
             b = self._dry(client, _sql("bigquery_token_census.sql"),
                           {"d0": (yday - pd.Timedelta(days=29)).date(), "d1": yday.date()}, spec)
             parts.append(f"token census (30 days) {b / 1e9:,.1f} GB")
+            st["census_bytes"] = {"bytes": b, "on": day}
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"dry runs failed — {type(e).__name__}: {str(e)[:200]}", TIER)
             return
@@ -347,7 +407,8 @@ class NearBigQuery:
                 done_backfill += 1
             d0, d1 = min(days), max(days)
             rows = self._run(client, f"p2p {kind} {d0.date()}..{d1.date()}", _sql("bigquery_p2p_daily.sql"),
-                             {"d0": d0.date(), "d1": d1.date(), "tokens": toks}, spec, st, out, name)
+                             {"d0": d0.date(), "d1": d1.date(), "tokens": toks}, spec, st, out, name,
+                             backfill=(kind == "backfill"), topup_days=len(days) if kind == "top-up" else 0)
             if rows is None:
                 break
             for d in days:

@@ -494,7 +494,16 @@ Each seed caches its progress, so an interrupted run resumes; routine runs then 
 Google's public NEAR dataset (`bigquery-public-data.crypto_near_mainnet_us`) is live. Queries run in
 Jake's sandbox project **near-data-510309**, which has no billing: it cannot be charged, and BigQuery
 refuses queries once the free 1 TB/month is used. fetch/near_bigquery.py keeps its own ledger under
-900 GB/month and logs `BYTES THIS RUN` on every run. Circulating supply and the P2P leg are both
+900 GB/month and logs a `QUOTA` line on every run.
+
+**The month's top-ups are reserved before backfill spends (Jake, 2026-10-01).** The daily top-up
+comes out of the same 900 GB, so backfill may spend only `900 − used − reserve`, where reserve =
+days left in the month × the latest measured one-day top-up dry run × 1.2 (plus the 30-day token
+census, ×1.2, if its refresh falls due before the month ends). The one-day size is measured by the
+`near_settlement_routes` probe (saved for the adapter) and refreshed by every day's own dry run;
+until one exists, backfill is held. The `QUOTA` line prints the bytes billed this run, the backfill
+spend, the month used, the remaining quota, the reserve with its arithmetic, and what is left for
+backfill. Circulating supply and the P2P leg are both
 approved (Jake, 2026-10-01): each run tops up the newest days first, then backfills one month chunk,
 newest first.
 
@@ -525,7 +534,7 @@ application-default login`", and the CSV fallback below still works.
 **Then:**
 ```bash
 python check_offline_items.py near_settlement_routes   # layout + dry-run bytes (~30 MB; dry runs free)
-python token_metrics.py --seed near_bigquery           # top-up, then month chunks until the month's budget
+python token_metrics.py --seed near_bigquery           # top-up, then month chunks until only the top-up reserve is left
 python token_metrics.py                                # routine: circulating (10 MB) + top-up + one chunk
 ```
 

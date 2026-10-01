@@ -2902,6 +2902,9 @@ PROJECTS = [
                                  "2026-10-01) — service-account keys cannot be created; ADC chosen instead",
             "approved": {"circulating": True, "p2p": True, "balances": False},
             "monthly_budget_bytes": 900 * 10 ** 9,        # of the free 1 TB, leaving room for console use
+            # THE TOP-UP RESERVE (Jake, 2026-10-01): backfill spends only what is left after reserving
+            # days-left-in-month x the latest measured one-day top-up dry run x this margin.
+            "topup_reserve_margin": 1.2,
             "max_bytes_per_query": 400 * 10 ** 9,
             "days": 365, "chunk_days": 31, "max_chunks_per_run": 1, "census_every_days": 30,
             "value_cover": 0.95,
