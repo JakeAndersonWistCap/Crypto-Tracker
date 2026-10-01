@@ -88,29 +88,46 @@ def fields(html: str) -> dict:
     return {k: sorted(v) for k, v in got.items()}
 
 
-_DATE_WORDS = ("date", "time", "day", "month", "period")
+_DATE_WORDS = ("date", "time", "day", "month", "period", "week", "year")
+_DATE_KEYS = ("t", "ts", "x", "label", "name", "key", "category")
+# STRICT text formats only (Jake's probes3 run: `emitted` read as 17 undated values — its axis is
+# in a key or a format the first reader did not know). Each is a whole-string match, so a figure
+# never parses as a date by accident.
+_DATE_FORMATS = ("%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m", "%b %Y", "%B %Y", "%b %y", "%b '%y",
+                 "%m/%Y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y")
 
 
-def _as_day(v) -> pd.Timestamp | None:
-    """A date as the page serves it — ISO text, or UNIX seconds / milliseconds — as a UTC day."""
+def _as_day(v, numeric_ok: bool = True) -> pd.Timestamp | None:
+    """A date as the page serves it — ISO text, a strict month/day format, or UNIX seconds /
+    milliseconds (only where the key says it is a time) — as a UTC day."""
     try:
         if isinstance(v, (int, float)) and not isinstance(v, bool):
-            if v < 1e9:
+            if not numeric_ok or v < 1e9:
                 return None
             ts = pd.to_datetime(v, unit="ms" if v > 1e11 else "s", utc=True)
-        elif isinstance(v, str) and re.match(r"^\d{4}-\d{2}", v.strip()):
-            ts = pd.to_datetime(v.strip(), utc=True)
-        else:
+            return ts.tz_localize(None).normalize()
+        if not isinstance(v, str):
             return None
+        t = v.strip()
+        if re.match(r"^\d{4}-\d{2}-\d{2}[T ]", t):
+            return pd.to_datetime(t, utc=True).tz_localize(None).normalize()
+        for fmt in _DATE_FORMATS:
+            try:
+                return pd.Timestamp(pd.to_datetime(t, format=fmt)).normalize()
+            except (ValueError, TypeError):
+                continue
     except (ValueError, OverflowError):
         return None
-    return ts.tz_localize(None).normalize()
+    return None
 
 
 def _date_of(obj: dict) -> pd.Timestamp | None:
+    """The object's date: a key named like a time (any accepted form), or a common axis key (t, ts,
+    x, label, name...) holding a date in a strict form."""
     for k, v in obj.items():
-        if any(w in k.lower() for w in _DATE_WORDS):
-            d = _as_day(v)
+        kl = k.lower()
+        if any(w in kl for w in _DATE_WORDS) or kl in _DATE_KEYS:
+            d = _as_day(v, numeric_ok=any(w in kl for w in _DATE_WORDS) or kl in ("t", "ts", "x"))
             if d is not None:
                 return d
     return None

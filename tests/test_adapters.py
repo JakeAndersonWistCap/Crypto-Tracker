@@ -16137,12 +16137,16 @@ def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plu
     assert config.PROTOCOL_YIELD["Pendle"]["lock_add"] == "locked_tokens_virtual"
 
 
-def test_geodnet_locked_tokens_has_a_manual_quarterly_path_and_no_value_is_entered():
+def test_geodnet_locked_tokens_has_a_manual_quarterly_path_and_jakes_figure_is_entered():
+    """Jake (2026-10-01): enter 3,000,000 GEOD from the Blockworks Staking Flow chart, read by him
+    2026-09-30 — the ONE manual row, sourced and marked as entered on his instruction."""
     assert config.is_manual_quarterly("GEODNET", "locked_tokens")
     import csv
     live = [r for r in csv.reader(l for l in open("manual_overrides.csv") if not l.startswith("#"))
             if r and r[:3] and r[1:3] == ["GEODNET", "locked_tokens"]]
-    assert live == [], "the figure is Jake's to enter"
+    assert len(live) == 1 and live[0][0] == "2026-09-30" and float(live[0][3]) == 3_000_000
+    assert "app.blockworks.com/projects/geodnet/analytics/geodnet" in live[0][4] and "read by Jake 2026-09-30" in live[0][4]
+    assert "Entered by Claude Code on Jake's instruction" in live[0][4] and live[0][5] == "2026-10-01"
 
 
 def test_defillama_reuses_the_days_responses_and_runs_its_checks_once_a_day(monkeypatch):
@@ -18908,12 +18912,11 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     # (NEEDS JAKE: run the probe), Plume's fees come from growthepie (no longer closed)
     # Jake's probe 5 (2026-09-30): the SSF chart is in the page's island props, so the release is
     # WIRED (no decision left; this empty store simply holds none of it yet)
-    assert ("Maple", "pool_release_tokens") not in cr.DECISIONS
-    # probes2 (2026-09-30): the SSF's net change is SIGNED and stored on its own; the release is
-    # HELD until the SSF's other inflows are classified (two negative months)
+    # Jake (2026-10-01): no release programme runs (MIP-019; Drips ended after Q4 2025) — N/A, not HELD
+    assert got[("Maple", "pool_release_tokens")][0] == "N/A" and "MIP-019" in got[("Maple", "pool_release_tokens")][1]
+    # the SSF's net change stays SIGNED and stored on its own, for the record
     assert config.PROJECT_BY_NAME["Maple"]["transparency_page"]["metrics"]["ssf_net_outflow_tokens"]["field"] == "ssf_release"
-    assert "HELD" in config.PROJECT_BY_NAME["Maple"]["pool_release_tokens_blocked"]["status"]
-    assert got[("Maple", "pool_release_tokens")][0] != "ACCEPTED LIMIT"
+    assert config.PROJECT_BY_NAME["Maple"]["pool_release_tokens_blocked"]["status"].startswith("CLOSED — N/A")
     assert got[("Plume", "fees_usd")][0] != "ACCEPTED LIMIT", got[("Plume", "fees_usd")]
     assert all("native sources checked:" in d for k, (v, d) in got.items() if v == "ACCEPTED LIMIT"), \
         "no ACCEPTED LIMIT survives without native-source evidence"
@@ -18932,7 +18935,10 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     for m in ("settlement_volume_usd", "network_reserve_ratio"):
         assert got[("Hyperliquid", m)][0] == "ACCEPTED LIMIT", got[("Hyperliquid", m)]
         assert "SETTLEMENT_REBUILD" in got[("Near", m)][1]
-    assert got[("GEODNET", "locked_tokens")][0] == "NEEDS JAKE" and "~3M" in got[("GEODNET", "locked_tokens")][1]
+    # GEODNET locked_tokens: the manual row is in (3,000,000 GEOD, 2026-10-01) — no decision left
+    assert ("GEODNET", "locked_tokens") not in cr.DECISIONS
+    mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
+    assert "2026-09-30,GEODNET,locked_tokens,3000000," in mo and "Entered by Claude Code on Jake's instruction" in mo
     # a Review Queue flag is informational, never NEEDS JAKE
     v, d = cr.classify(config.PROJECT_BY_NAME["Uniswap"], "fees_usd", {"status": "review", "note": "x"},
                        "2025-01-01", asof)
@@ -20214,7 +20220,9 @@ def test_maple_own_monthly_revenue_is_primary_and_months_between_buybacks_are_ze
     out = FetchOutput()
     ll.fees(maple, None, out)
     assert set(out.frame()["metric"]) == {"fees_usd", "revenue_usd_defillama", "holders_revenue_usd"}
-    assert "HELD" in maple["pool_release_tokens_blocked"]["status"]
+    # the release is no longer HELD but CLOSED N/A (Jake, 2026-10-01): no release programme runs;
+    # the block record still stops _derive_pool_release
+    assert maple["pool_release_tokens_blocked"]["status"].startswith("CLOSED — N/A")
     sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
     assert "-- BH. MAPLE revenue_usd" in sql and "-- UPDATE metrics SET metric = 'revenue_usd_defillama'" in sql
     assert "-- BI. MAPLE: THE IMPLIED BUYBACK IS WITHDRAWN" in sql and "metric = 'actual_buyback_usd_implied'" in sql
@@ -20523,3 +20531,64 @@ def test_beaconchain_is_dropped_entirely():
     assert "DROPPED 2026-10-01" in fwd["why"] and fwd["until"] is None
     assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "DROPPED"
     assert not any("beaconcha" in h[0] for h in bw._eth_yield_columns(bw.Refs.__new__(bw.Refs)))
+
+
+def test_hyperliquid_perps_volume_from_its_own_daily_candles(tmp_path):
+    """Jake, 2026-10-01: DefiLlama's derivatives route is paid (402), so Hyperliquid's perps volume
+    comes from its own info API — every perp market (main dex + HIP-3, prefixed names), daily candle
+    v x close summed (an approximation of notional). A day is stored only when every market has been
+    read through it; a run cut short resumes from the cache; delisted markets are read once; the
+    pacer keeps weight under the per-minute limit; dayNtlVlm is logged beside yesterday."""
+    from fetch.base import today
+    from fetch.hl_candles import HLCandles, Pacer
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    spec = hl["hl_candles"]
+    assert spec["metric"] == "perps_volume_usd" and spec["weight_per_min"] <= 1200
+    assert "perps_volume_usd" in config.TRADING_THROUGHPUT["chains"]["Hyperliquid"]["covered"]
+    yday = (today() - pd.Timedelta(days=1)).normalize()
+    days = pd.date_range(yday - pd.Timedelta(days=4), yday)
+
+    class Http:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, json_body=None):
+            self.calls.append(json_body)
+            t = json_body["type"]
+            if t == "perpDexs":
+                return [None, {"name": "xyz"}]
+            if t == "meta":
+                return {"universe": [{"name": "BTC"}, {"name": "OLD", "isDelisted": True}]} if json_body["dex"] == "" \
+                    else {"universe": [{"name": "xyz:TSLA"}]}
+            if t == "metaAndAssetCtxs":
+                return [{}, [{"dayNtlVlm": "100"}]]
+            coin = json_body["req"]["coin"]
+            px = {"BTC": 100.0, "xyz:TSLA": 10.0, "OLD": 1.0}[coin]
+            s0 = json_body["req"]["startTime"]
+            return [{"t": int(d.timestamp() * 1000), "v": "2", "c": str(px)} for d in days
+                    if int(d.timestamp() * 1000) >= s0 and coin != "OLD"]
+    clock = iter(range(0, 10_000, 1))
+    a = HLCandles(http=Http(), pacer=Pacer(10_000), cache_file=tmp_path / "c.json", max_seconds=1.5,
+                  clock=lambda: next(clock))
+    out = FetchOutput()
+    a.run([hl], None, out)                         # the budget cuts it after two markets
+    assert out.frame().empty and any("no day stored until every one of 3 markets" in e.message for e in out.log)
+    a = HLCandles(http=Http(), pacer=Pacer(10_000), cache_file=tmp_path / "c.json", max_seconds=None)
+    out = FetchOutput()
+    a.run([hl], None, out)                         # resumes, completes
+    f = out.frame()
+    assert len(f) == len(days) and set(f.value) == {2 * 100.0 + 2 * 10.0}
+    assert f.source.iloc[0] == "hl_candles:candleSnapshot[1d, sum v x close ~ notional]"
+    msg = next(e.message for e in out.log if e.status == "ok")
+    assert "3 perp markets (2 main, 1 HIP-3; 1 delisted)" in msg and "APPROXIMATION of notional" in msg
+    assert "dayNtlVlm (rolling 24h at read time) 200" in msg
+    http = Http()
+    a = HLCandles(http=http, pacer=Pacer(10_000), cache_file=tmp_path / "c.json", max_seconds=None)
+    a.run([hl], None, FetchOutput())               # nothing new: no candle calls, OLD not re-read
+    assert not any(c["type"] == "candleSnapshot" for c in http.calls)
+    # the pacer waits once a minute's weight is spent
+    t, slept = [0.0], []
+    p = Pacer(40, clock=lambda: t[0], sleep=lambda s: (slept.append(s), t.__setitem__(0, t[0] + s)))
+    for _ in range(3):
+        p.take(20)
+    assert slept and abs(slept[0] - 60) < 1e-9

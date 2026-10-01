@@ -74,16 +74,14 @@ DECISIONS = {
                             "circulating does not update"),
     # Maple pool_release_tokens: WIRED 2026-09-30 from Jake's probe 5 — the SSF chart's island
     # props on maple.finance/transparency (fetch/maple_transparency.ssf_series); no decision left.
-    ("GEODNET", "locked_tokens"): (
-        "NEEDS JAKE", "~3M GEOD locked, the manual row (value, source, date) — no staking contract "
-                      "is established: both behavioural candidates are ruled out (0x8f10b468… is "
-                      "KyberSwap's executor, 0x5fe84b85… a QuickSwap pool) and DefiLlama has no "
-                      "GEODNET staking adapter. Blockworks' query 1243 names only the GEOD token, "
-                      "so staking likely goes to an EOA: run `check_offline_items.py "
-                      "blockworks_geodnet` then `geod_stake_recipient` — the recipient whose daily "
-                      "inflows match geod_stake, verified against geod_total_stake (~3.0M now, ~12M "
-                      "Nov 2025), is then wired as locked_tokens with archive history; Blockworks "
-                      "stays a cross-check (terms unread)"),
+    # GEODNET locked_tokens: the manual row (3,000,000 GEOD, Blockworks chart read by Jake 2026-09-30)
+    # is in manual_overrides.csv since 2026-10-01 — no decision left; geod_stake_recipient may replace it.
+    # Maple pool_release_tokens (Jake, 2026-10-01): no release programme runs, so N/A — not HELD.
+    ("Maple", "pool_release_tokens"): (
+        "N/A", "no release or emission programme runs: staking rewards were sunset by MIP-019 "
+               "(maple-docs syrup-tokenomics/staking.md:3) and Drips ended after Q4 2025, last claims "
+               "2026-02-18 (drips-rewards.md:7-20); the SSF's holding changes are buybacks and treasury "
+               "movements, not a release (probe maple_ssf_lp_test records what moves them)"),
     # SETTLEMENT VOLUME (Jake, 2026-09-30): Artemis's daily series, one definition for every chain,
     # from CSV exports read at run time (config.ARTEMIS_SETTLEMENT). Ethereum's is exported; Jake is
     # checking whether Artemis carries NEAR and Hyperliquid. Plume is a closure (not on Artemis,

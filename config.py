@@ -7631,6 +7631,18 @@ PROJECTS = [
             "read_on": "2026-09-30",
         },
         "series_handover": {
+            # THE BUG IN JAKE'S 2026-09-30 18:36 RUN: locked_tokens held two measuring points — the
+            # Ethereum wrapper's ATH (808.7M, to 2026-09-30) and the dashboard's totalStaked (1.789bn,
+            # from 2026-09-30). DECLARED (Jake, 2026-10-01): the wrapper first, then the dashboard. The
+            # step on the handover day is a CHANGE OF DEFINITION (the dashboard adds the compute
+            # providers' IDC stake), not a flow. The wrapper keeps being read as its own named series,
+            # locked_tokens_wrapper. Overlapping wrapper rows move there by SQL BK (BJ is superseded).
+            "locked_tokens": {"ordered_points": ("chain:ethereum:staking_wrapper",
+                                                 "aethir_page:protocol/onchain-metric.totalStaked"),
+                              "why": "the Ethereum staking wrapper's ATH (stAethir/veAethir, 808.7M) until the "
+                                     "dashboard was read, then Aethir's own totalStaked (1.789bn, which adds "
+                                     "the IDC stake): a change of definition on the handover day, not a flow",
+                              "declared_on": "2026-10-01"},
             "supply_units": {"ordered_points": ("manual", "aethir_page:protocol/supply-metric.nodes"),
                              "why": "Jake's monthly manual row (2026-09-30), then the page's own "
                                     "server-rendered `nodes` read daily",
@@ -8299,7 +8311,11 @@ PROJECTS = [
         },
         # ===== THE SSF RELEASE IS HELD UNTIL ITS OTHER INFLOWS ARE CLASSIFIED (Jake, 2026-09-30). =====
         "pool_release_tokens_blocked": {
-            "status": "HELD — SSF inflows other than buybacks are unclassified",
+            # CLOSED N/A (Jake, 2026-10-01): staking rewards sunset by MIP-019 and Drips ended after
+            # Q4 2025 (last claims 2026-02-18) — there is no release to measure, so the SSF's net
+            # change is never treated as one. completeness_report.DECISIONS carries the N/A.
+            "status": "CLOSED — N/A: no release programme runs (MIP-019; Drips ended after Q4 2025, last claims 2026-02-18)",
+            "was": "HELD — SSF inflows other than buybacks are unclassified",
             # one row a month, dated to the month's end (fetch/maple_transparency.ssf_release)
             "granularity": "monthly",
             "wanted": "the SSF's monthly release (fall in holdings net of buyback inflows)",
@@ -9580,6 +9596,14 @@ PROJECTS = [
         },
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
+        # ===== PERPS VOLUME FROM HYPERLIQUID'S OWN DAILY CANDLES (Jake, 2026-10-01). =====
+        # DefiLlama's derivatives route is paid (HTTP 402). Every perp market (main dex + HIP-3),
+        # daily candle v x close summed — an approximation of notional (fetch/hl_candles.py). The
+        # first year: `python token_metrics.py --seed hl_candles` (~1 call per market).
+        "hl_candles": {"url": "https://api.hyperliquid.xyz/info", "metric": "perps_volume_usd", "days": 365,
+                       # published: 1200 weight/min per IP; info requests weigh 20 (candleSnapshot
+                       # + more per 60 items) — rate-limits-and-user-limits.md:5-14 (dzmbs/hyperliquid-docs@91d05aa)
+                       "weight": 20, "weight_per_min": 1000},
         "defillama_fees_slug": "hyperliquid", "defillama_protocol": "hyperliquid", "defillama_chain": "Hyperliquid L1",
         # ===== ARCHETYPE 4 ADDED 2026-09-22. It was missing, and nothing new was needed to add it.
         # Hyperliquid had 47.3m HYPE confirmed burned and did not appear on the A4 tab, because it
@@ -16557,8 +16581,10 @@ TRADING_THROUGHPUT = {
                              "Perps: NONE on chain near (near-perps is a Hyperliquid builder code)"},
         "Hyperliquid": {"slug": "hyperliquid-l1", "label": "Hyperliquid L1",
                         "covered": ("dex_volume_usd", "perps_volume_usd"),
-                        "coverage": "Perps: hyperliquid-perp (Hyperliquid's own, incl. HIP-3; builder-code "
-                                    "front-ends are doublecounted and excluded), boros, toros. DEX: "
+                        "coverage": "Perps: from Hyperliquid's OWN info API (fetch/hl_candles.py — DefiLlama's "
+                                    "derivatives route is paid): every perp market incl. HIP-3, daily candle "
+                                    "v x close (approx. notional); DefiLlama's listing (hyperliquid-perp, boros, "
+                                    "toros) is not read. DEX: "
                                     "hyperliquid-spot (the spot orderbook, from 2024-12-23) + HyperEVM AMMs "
                                     "(HyperSwap, Kittenswap, Project X...) — DefiLlama's 'Hyperliquid L1' "
                                     "mixes HyperCore and HyperEVM. Volume before 2025-08-01 exists only if an "
@@ -20096,7 +20122,8 @@ SOURCE_REGISTER = {
         "status": "DROPPED",
     },
     "api.hyperliquid.xyz": {
-        "used_for": "HyperCore tokenDetails, spot state, validator summaries",
+        "used_for": "HyperCore tokenDetails, spot state, validator summaries; perps volume from daily "
+                    "candles (perpDexs, meta, candleSnapshot, metaAndAssetCtxs — 2026-10-01)",
         "paths": ["/info"],
         "robots": "an API host (POST); NOT CHECKED FROM HERE",
         "terms": {"url": "https://hyperliquid.xyz/terms", "status": "HTTP 403 — UNREACHABLE for Jake's probe (2026-09-30); unread"},

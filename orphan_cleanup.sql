@@ -3691,6 +3691,7 @@ SELECT date, value, source
 
 -- ========================================================================================
 -- BJ. AETHIR locked_tokens: THE DASHBOARD'S totalStaked IS PRIMARY; THE WRAPPER BECOMES ITS OWN SERIES  2026-09-30
+--     ** SUPERSEDED BY BK (2026-10-01): Jake declared a handover — keep the wrapper's history; do NOT run BJ3. **
 --     Jake's probes3: dashboard.aethir.com/protocol/onchain-metric totalStaked = 1,789,329,560.63,
 --     which includes the compute providers' IDC stake that the Ethereum wrapper 0x3f69… (808.7M)
 --     never sees. The page is now stored as locked_tokens; the wrapper read lands as
@@ -3716,4 +3717,44 @@ SELECT m.date
 -- BEGIN;
 -- UPDATE metrics SET metric = 'locked_tokens_wrapper'
 --  WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE '%staking_wrapper%';
+-- COMMIT;
+
+-- ========================================================================================
+-- BK. AETHIR locked_tokens: THE HANDOVER IS DECLARED — MOVE ONLY THE OVERLAPPING WRAPPER ROWS  2026-10-01
+--     SUPERSEDES BJ (do NOT run BJ3). Jake (2026-10-01): declare the handover — the Ethereum
+--     wrapper's rows stay as locked_tokens history BEFORE the dashboard's first day, then the
+--     dashboard's totalStaked. A wrapper row dated ON/AFTER the dashboard's first row would overlap
+--     it (a declared handover never overlaps, or the series is blanked), so only those rows move to
+--     locked_tokens_wrapper — the wrapper's own named series, read live from now on.
+-- ========================================================================================
+-- BK1. THE TWO MEASURING POINTS, with their date spans.
+SELECT CASE WHEN source LIKE 'aethir_page%' THEN 'dashboard' ELSE 'wrapper' END AS point,
+       COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'locked_tokens'
+ GROUP BY 1;
+
+-- BK2. THE WRAPPER ROWS THAT OVERLAP THE DASHBOARD (these move; the rest stay as history).
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE '%staking_wrapper%'
+   AND date >= (SELECT MIN(date) FROM metrics
+                 WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE 'aethir_page%')
+ ORDER BY date;
+
+-- BK3. A MOVED ROW WOULD COLLIDE WITH ONE ALREADY UNDER locked_tokens_wrapper? (expect 0 rows)
+SELECT m.date
+  FROM metrics m
+  JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = 'locked_tokens_wrapper'
+ WHERE m.project = 'Aethir' AND m.metric = 'locked_tokens' AND m.source LIKE '%staking_wrapper%'
+   AND m.date >= (SELECT MIN(date) FROM metrics
+                   WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE 'aethir_page%');
+
+-- BK4. THE MOVE. Only after BK1-BK3. (If BK3 shows a collision, the wrapper already read that day
+--      under its own name: DELETE that overlapping locked_tokens row instead — ask first.)
+-- BEGIN;
+-- UPDATE metrics SET metric = 'locked_tokens_wrapper'
+--  WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE '%staking_wrapper%'
+--    AND date >= (SELECT MIN(date) FROM metrics
+--                  WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE 'aethir_page%');
 -- COMMIT;

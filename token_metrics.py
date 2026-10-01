@@ -96,10 +96,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
-    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking"],
+    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
-                         "reads; records no gaps and does not rebuild the workbook. plume_staking: the live diamond read at the first block of each past day "
+                         "reads; records no gaps and does not rebuild the workbook. hl_candles: a year "
+                         "of daily candles for every Hyperliquid perp market (~1 call each, paced). plume_staking: the live diamond read at the first block of each past day "
                          "(locked_tokens, gross/net APR, commission); stops where rpc.plume.org "
                          "serves no historical state.")
     return ap.parse_args(argv)
@@ -208,6 +209,29 @@ def seed_geodnet(st, log) -> int:
     return 0
 
 
+def seed_hl_candles(st, log) -> int:
+    """Hyperliquid's perps volume, the first year in one sitting (Jake, 2026-10-01): one 1d
+    candleSnapshot per perp market (main dex + HIP-3), paced to the published weight limit, with
+    no time budget. Progress is cached per market, so an interrupted seed resumes. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.hl_candles import HLCandles
+    from fetch.validate import validate_frame
+    hl = [p for p in config.PROJECTS if p.get("hl_candles")]
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        HLCandles(max_seconds=None).run(hl, None, out, unbounded=True)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed hl_candles: %s — %s", e.status, e.message)
+    log.info("--seed hl_candles: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0
+
+
 def seed_plume_staking(st, log) -> int:
     """Plume's staking history from the LIVE diamond (Jake's run 2026-09-30 17:21: locked_tokens and
     staking_yield_pct held 1 day each, flagged NOT FORWARD-ONLY). One read of the diamond at the
@@ -311,7 +335,7 @@ def main(argv=None) -> int:
 
     if args.seed:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
-              "plume_staking": seed_plume_staking}[args.seed](st, log)
+              "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles}[args.seed](st, log)
         st.close()
         return rc
 

@@ -3172,6 +3172,9 @@ def aethir_pages():
                 parts[k] = got[1] if got[0] == "scalar" else got[1][-1][1]
             print(f"    >> {k}: {shape}")
             print(f"       labels near it: {ap.labels_near(html, k) or '(none found)'}")
+            if k == "emitted" or (isinstance(got, str) and "beside a date" in got):
+                objs = [o for o in ap.rsc_objects(html) if k in o][:3]
+                print(f"       raw objects carrying it (keys reveal the date axis): {objs}")
             for c in ap.context(html, k, width=160, limit=1):
                 print(f"       context: …{c}…")
     # THE WRAPPER BESIDE THE PAGE'S PARTS, read now (Ethereum).

@@ -31,6 +31,7 @@ from .chain import Chain
 from .coingecko import CoinGecko
 from .dune import Dune
 from .gaps import detect as detect_gaps, note_timeouts
+from .hl_candles import HLCandles
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .blockscout_stats import BlockscoutStats
@@ -74,6 +75,8 @@ TIER_ORDER = [
     ("etherscan_supply", 1, lambda ctx: EtherscanSupply(prior_dates=ctx["prior_dates"],
                                                         prior_delta=ctx["prior_delta"])),
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
+    # Hyperliquid's perps volume per day from its own daily candles (DefiLlama's is paid). 2026-10-01.
+    ("hl_candles", 1, lambda ctx: HLCandles()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
@@ -1737,7 +1740,10 @@ TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 60, "coingecko": 240, "hypercore_info": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
-    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 60, "blockscout_stats": 90,
+    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
+    # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);
+    # the adapter stops itself at 540s and resumes next run, storing only fully-read days
+    "hl_candles": 600,
 }
 DEFAULT_BUDGET_S = 120
 HEARTBEAT_AFTER_S = 30.0
