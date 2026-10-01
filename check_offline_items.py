@@ -4,7 +4,7 @@ check_offline_items.py — every check this sandbox cannot reach, in one command
 
     python check_offline_items.py              run every check
     python check_offline_items.py <name>       run just that one — exact name, or an
-                                                unambiguous prefix (e.g. "beaconchain")
+                                                unambiguous prefix (e.g. "maple_transparency")
     python check_offline_items.py --list       print the check names, run nothing
 
 The build environment's proxy blocks chain RPCs, Cosmos LCDs and beaconcha.in, so a handful of
@@ -1815,91 +1815,6 @@ def uniswap_firepit_threshold():
           "reading is an ASSUMPTION about units, not something this read establishes.")
 
 
-def beaconchain():
-    """BEACONCHA.IN — the wired route (ETH.Store, Ethereum consensus-layer issuance). 2026-09-24.
-
-    fetch/beaconchain.py stores consensus_rewards_sum_wei from /api/v1/ethstore/latest, auth as
-    an `apikey` header (from beaconcha.in's own OpenAPI spec — its docs site is unreachable from
-    here, so this is a source reading, never a live confirmation, until this runs). This check IS
-    that live confirmation: it makes the exact call the adapter makes, with
-    BEACONCHAIN_API_KEY from .env, and prints the actual shape returned.
-
-    ** NO UNAUTHENTICATED BASELINE CALL. ** There used to be one, against /api/v1/epoch/latest,
-    run immediately before this. It served no purpose once the key was confirmed working, and on
-    the free tier's fair-use limit — 10 requests/minute per IP, beaconcha.in's own OpenAPI spec,
-    read 2026-09-24 — it was spending quota the very call this check exists to test then needed.
-    That is why Jake's run got a 429 here and not a 401: auth was fine, the budget wasn't. Cut
-    2026-09-24 rather than left to burn quota it has no use for.
-    """
-    head("BEACONCHA.IN — ETH.Store, the wired route for Ethereum's consensus-layer issuance")
-    try:
-        from dotenv import load_dotenv                    # noqa: PLC0415
-        load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
-    except ImportError:
-        pass
-    key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
-    print(f"  BEACONCHAIN_API_KEY: {'set' if key else 'NOT SET'}")
-
-    if not key:
-        print("\n  NO KEY SET — cannot exercise the authenticated route. Set BEACONCHAIN_API_KEY "
-              "in .env and re-run.")
-        return
-
-    # 429 on this endpoint means quota, not a broken key — the free tier's fair-use limit is 10
-    # requests/minute per IP (beaconcha.in's OpenAPI spec, read 2026-09-24), tight enough that one
-    # earlier call this run, or a neighbour on the same IP, can exhaust it. A SHORT, NARROW retry:
-    # only on 429, only here, at most twice — never a blind retry against an API in general.
-    print("\n  THE WIRED CALL — GET /api/v1/ethstore/latest, header apikey: ***:")
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.get("https://beaconcha.in/api/v1/ethstore/latest",
-                             headers={"apikey": key}, timeout=TIMEOUT)
-        except Exception as e:  # noqa: BLE001
-            print(f"    UNREACHABLE — {e}")
-            return
-        if r.status_code != 429 or attempt == 2:
-            break
-        wait = 5 * (attempt + 1)
-        print(f"    HTTP 429 — quota, not a bad key. Retrying in {wait}s "
-              f"(attempt {attempt + 1}/2)…")
-        time.sleep(wait)
-    print(f"    HTTP {r.status_code}")
-    try:
-        body = r.json()
-    except ValueError:
-        print(f"    NON-JSON BODY: {r.text[:300]}")
-        return
-    if not isinstance(body, dict):
-        print(f"    top level is {type(body).__name__}, not an object: {str(body)[:300]}")
-        return
-    print(f"    top-level keys: {sorted(body)}")
-    print(f"    status: {body.get('status')!r}")
-    rows = body.get("data")
-    if not isinstance(rows, list) or not rows:
-        print(f"    data: {body.get('data')!r} — no row to inspect")
-        return
-    rec = rows[0]
-    if not isinstance(rec, dict):
-        print(f"    data[0] is {type(rec).__name__}, not an object: {str(rec)[:300]}")
-        return
-    print(f"    data[0] keys: {sorted(rec)}")
-    for k in ("day", "day_start", "day_end", "consensus_rewards_sum_wei", "tx_fees_sum_wei",
-             "apr", "cl_apr", "el_apr"):
-        print(f"      {k:<28} {rec.get(k)!r}")
-    wei = rec.get("consensus_rewards_sum_wei")
-    try:
-        eth = float(wei) / 1e18
-        print(f"\n    consensus_rewards_sum_wei / 1e18 = {eth:,.4f} ETH for this beaconchain-day")
-    except (TypeError, ValueError):
-        print(f"\n    consensus_rewards_sum_wei did not parse as a number: {wei!r}")
-    print("\n  PASTE BACK. If the shape above matches fetch/beaconchain.py's expectations "
-          "(status 'OK', data[0] carrying day_start/day_end/consensus_rewards_sum_wei), the "
-          "adapter will store it on the next run — nothing here writes to the store.")
-
-
-
-
 def near_buyback_inflow_probe():
     """NEAR actual_buyback_tokens — WHAT DID THE NEARBLOCKS CALL RETURN? 2026-09-24.
 
@@ -2788,54 +2703,6 @@ def ultrasound_history():
                 print(f"    {time.strftime('%Y-%m-%d', time.gmtime(b['t']))}  d(supply) "
                       f"{b['v'] - a['v']:+,.1f} ETH")
     print("  PASTE BACK: the keys line and both series lines (d(supply) + ~burn should be ~2,700/day).")
-
-
-def beaconchain_quota():
-    """A2 / addendum 12: the key's REAL limits for EACH endpoint separately — /ethstore/latest and
-    one /ethstore/{day} (the history route) — each call's x-ratelimit-* headers and Retry-After
-    printed under its own name (Jake's run 2026-09-30: latest asked 150,198s, history 36,338s).
-    Plus one historical /epoch/{n} and the withdrawals chart series (website route, JSON)."""
-    import pandas as pd                                    # noqa: PLC0415
-    head("ETHEREUM — beaconcha.in quota per endpoint, historical epoch, withdrawals chart")
-    key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
-    day_n = (pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=2)
-             - pd.Timestamp("2020-12-01")).days
-    for label, path in (("/ethstore/latest", "latest"), (f"/ethstore/{day_n} (history)", str(day_n))):
-        try:
-            r = requests.get(f"https://beaconcha.in/api/v1/ethstore/{path}",
-                             headers={**_ua(), **({"apikey": key} if key else {})}, timeout=TIMEOUT)
-            print(f"  {label}: HTTP {r.status_code}")
-            for h, v in r.headers.items():
-                if h.lower().startswith("x-ratelimit") or h.lower() in ("retry-after", "ratelimit-reset",
-                                                                        "ratelimit-window"):
-                    print(f"    {h}: {v}")
-            ra = r.headers.get("Retry-After")
-            if ra:
-                try:
-                    print(f"    -> this endpoint asks {float(ra):,.0f}s (~{float(ra) / 3600:.1f}h)")
-                except ValueError:
-                    pass
-        except Exception as e:  # noqa: BLE001
-            print(f"  {label} UNREACHABLE — {e}")
-    try:
-        ep = 225 * 1700
-        r = requests.get(f"https://beaconcha.in/api/v1/epoch/{ep}",
-                         headers={**_ua(), **({"apikey": key} if key else {})}, timeout=TIMEOUT)
-        d = (r.json() or {}).get("data") or {}
-        print(f"  /epoch/{ep}: HTTP {r.status_code}; totalvalidatorbalance "
-              f"{d.get('totalvalidatorbalance')} eligibleether {d.get('eligibleether')} ts {d.get('ts')}")
-    except Exception as e:  # noqa: BLE001
-        print(f"  /epoch UNREACHABLE — {e}")
-    try:
-        r = requests.get("https://beaconcha.in/charts/chart-holder-17/data", headers=_ua(), timeout=TIMEOUT)
-        series = (r.json() or {}).get("data") or []
-        for s_ in series[:2]:
-            pts = s_.get("data") or []
-            print(f"  withdrawals chart series {s_.get('name')!r}: {len(pts)} points, last {pts[-3:]}")
-    except Exception as e:  # noqa: BLE001
-        print(f"  withdrawals chart UNREACHABLE — {e}")
-    print("  PASTE BACK both endpoints' x-ratelimit lines and Retry-After (the monthly limit decides free vs\n"
-          "  one paid month; the two waits are kept separately).")
 
 
 def hyperliquid_history_routes():
@@ -3910,14 +3777,14 @@ CHECKS = (
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
-    uniswap_firepit_threshold, beaconchain, near_buyback_inflow_probe,
+    uniswap_firepit_threshold, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth,
-    robots_and_terms, ultrasound_history, beaconchain_quota, hyperliquid_history_routes,
+    robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
@@ -3982,7 +3849,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("check", nargs="?", default=None,
                     help="run only this check — its exact name, or an unambiguous prefix "
-                         "(e.g. 'beaconchain'). Omit to run everything.")
+                         "(e.g. 'maple_transparency'). Omit to run everything.")
     ap.add_argument("--list", action="store_true",
                     help="print the check names and exit; nothing is run")
     ap.add_argument("--splitter", default=SKY_SPLITTER,

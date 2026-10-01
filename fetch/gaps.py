@@ -476,13 +476,6 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY are in .env.")
     node_api = project.get("node_api") or {}
     # A SECOND FIELD FROM A RESPONSE ALREADY FETCHED — say which, so nobody hunts for a source.
-    bc = project.get("beaconchain") or {}
-    if bc and metric in (bc["history"]["metric"], bc["history"].get("consensus_metric")):
-        return (f"beaconcha.in's ETH.Store is a ONE-OFF SEED, in no routine run (Jake, 2026-09-30: "
-                f"its daily call kept triggering long lockouts) — this series holds only what the "
-                f"seed read",
-                "`python token_metrics.py --seed beaconchain` — it reads the key's quota first and "
-                "refuses unless the whole backfill fits; the Etherscan yield is the headline either way.")
     se = project.get("spendle_epochs") or {}
     if se and metric in (se.get("metric"), se.get("apr_metric")):
         return ("Pendle's spendle/data epoch read is configured but stored nothing this run",
@@ -668,6 +661,10 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     tt = config.TRADING_THROUGHPUT
     if metric in tt["legs"]:
         spec = tt["chains"].get(name) or {}
+        if metric in spec.get("covered", ()) and metric not in tt["endpoints"]:
+            return ("Hyperliquid's own info API candles (fetch/hl_candles.py) stored nothing this run",
+                    "Check the Run Log's hl_candles line; the first year comes from "
+                    "`python token_metrics.py --seed hl_candles`.")
         if metric in spec.get("covered", ()):
             path = tt["endpoints"][metric].format(slug=spec["slug"])
             return (f"DefiLlama {path} returned nothing usable this run" +

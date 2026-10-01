@@ -68,8 +68,8 @@ TIER_ORDER = [
     ("blockscout_stats", 1, lambda ctx: BlockscoutStats(last_dates=ctx["last_dates"])),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
     ("nearblocks", 1, lambda ctx: NearBlocks(last_dates=ctx["last_dates"])),
-    # beaconcha.in LEFT routine runs 2026-09-30 (Jake): its daily /ethstore/latest call kept
-    # triggering long lockouts. It is `token_metrics.py --seed beaconchain` only (fetch/beaconchain.py).
+    # beaconcha.in was DROPPED ENTIRELY 2026-10-01 (Jake): a zero allowance in the new month
+    # (config Ethereum.beaconchain_dropped).
     # Ethereum's cumulative burn and protocol supply (Etherscan stats/ethsupply2, A9).
     ("etherscan_supply", 1, lambda ctx: EtherscanSupply(prior_dates=ctx["prior_dates"],
                                                         prior_delta=ctx["prior_delta"])),

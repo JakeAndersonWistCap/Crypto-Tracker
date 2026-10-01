@@ -2878,7 +2878,8 @@ def _eth_yield_parts(R: Refs, r: int, p: dict, spec: dict) -> tuple[str, str, li
 
 def _eth_yield_columns(R: Refs) -> list[tuple]:
     """Beside A1's validator yield, for a consensus_plus_execution project only (Ethereum): the
-    two parts, the beaconcha.in cross-check, and issuance against the protocol's own maximum."""
+    two parts and issuance against the protocol's own maximum (beaconcha.in's cross-check was
+    dropped with the source, 2026-10-01)."""
     def spec_of(p):
         s = config.VALIDATOR_YIELD.get(p["name"]) or {}
         return s if s.get("method") == "consensus_plus_execution" else None
@@ -2891,10 +2892,6 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
             parts = _eth_yield_parts(R, r, p, s)
             return _coverage_guard(R, r, parts[2], parts[i])
         return build
-
-    def cross(r, p):
-        s = spec_of(p)
-        return pull(R.D(r, s["cross_check_metric"], "now")) if s and s.get("cross_check_metric") else ""
 
     def ceiling(r, p):
         s = spec_of(p)
@@ -2911,7 +2908,6 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
     return [
         ("Consensus part (d Eth2Staking ÷ ETH on the beacon chain)", part(0), FMT_PCT, "calc"),
         ("Execution part (priority fees ÷ the same; EXCLUDING MEV — no free source)", part(1), FMT_PCT, "calc"),
-        ("Cross-check: beaconcha.in ETH.Store apr (cl + el INCLUDING MEV; one-off seed, dated)", cross, FMT_PCT, "pull"),
         ("Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)", ceiling, FMT_X, "calc"),
     ]
 

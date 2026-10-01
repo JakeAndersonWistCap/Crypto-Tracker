@@ -71,7 +71,7 @@ def test_defillama():
     got = set(zip(df["project"], df["metric"]))
     for want in [("Aave", "fees_usd"), ("Aave", "revenue_usd"), ("Aave", "protocol_tvl_usd"),
                  ("Ethereum", "tvl_usd"), ("Ethereum", "stablecoin_supply_usd"), ("Ethereum", "rwa_defillama_usd"),
-                 ("Ethereum", "dex_volume_usd"), ("Ethereum", "perps_volume_usd")]:
+                 ("Ethereum", "dex_volume_usd")]:
         assert want in got, (want, got)
     stab = df[(df.project == "Ethereum") & (df.metric == "stablecoin_supply_usd")]
     assert abs(stab.value.iloc[0] - 1.201e11) < 1
@@ -14223,11 +14223,16 @@ def test_maple_page_run_stores_holdings_and_complete_months_only(monkeypatch, tm
     mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], None, out)
     df = out.frame()
     assert df[df.metric == "treasury_holding_tokens"]["value"].tolist() == [79_210_000]
-    tok = df[df.metric == "actual_buyback_tokens"]
+    # measured rows only: a month between two visible rows is a MEASURED ZERO (newest-first table),
+    # which from October 2026 includes September in this fixture
+    measured = df[~df["source"].str.contains(r"\[zero")]
+    tok = measured[measured.metric == "actual_buyback_tokens"]
     assert tok["value"].tolist() == [676_293.73], "the unfinished month must not be stored"
     assert tok["date"].iloc[0] == pd.Timestamp("2026-08-31"), "dated to month-end"
-    assert df[df.metric == "actual_buyback_usd"]["value"].tolist() == [147_098.00]
-    assert set(df["source"]) == {"maple_page"}
+    assert measured[measured.metric == "actual_buyback_usd"]["value"].tolist() == [147_098.00]
+    assert set(measured["source"]) == {"maple_page"}
+    buys = df[df.metric.isin(["actual_buyback_tokens", "actual_buyback_usd"])]
+    assert not (buys["date"] >= today().replace(day=1)).any(), "no buyback row for the month still running"
     assert any("2 of 13 rows" in e.message for e in out.log)
 
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (False, "a Disallow rule"))
@@ -14541,101 +14546,6 @@ def test_aethir_veaethir_probe_is_registered_and_prints_its_section():
     assert coi.VE_AETHIR.lower() == "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490"
 
 
-class _BeaconChainHttp:
-    """Answers the ethstore call with a canned response, recording every call made."""
-
-    def __init__(self, body):
-        self.body, self.calls = body, []
-
-    def get(self, url, params=None, headers=None):
-        self.calls.append((url, params, headers))
-        return self.body
-
-
-def _beaconchain_run(monkeypatch, body, key="bc-secret-456"):
-    """The row rules (prior-day only, shape checked, scale) as the seed applies them to the
-    /ethstore/latest row — beaconcha.in is in no routine run since 2026-09-30."""
-    from fetch import beaconchain
-    from fetch.base import FetchOutput
-
-    monkeypatch.setenv("BEACONCHAIN_API_KEY", key)
-    http = _BeaconChainHttp(body)
-    out = FetchOutput()
-    bc = beaconchain.BeaconChain(http=http)
-    for metric, m in _bc_fixture_project().items():
-        bc._store("Ethereum", metric, m, body, out)
-    return out, http
-
-
-def _bc_fixture_project() -> dict:
-    """{metric: row spec}: the seed's cross-check (apr) and, for the row mechanics, the
-    consensus-rewards read config dropped on 2026-09-28 (A9: issuance comes from Etherscan)."""
-    return {"gross_issuance_tokens": {"path": "/api/v1/ethstore/latest",
-                                      "field": "consensus_rewards_sum_wei", "scale": 1e18},
-            "staking_yield_pct": config.PROJECT_BY_NAME["Ethereum"]["beaconchain"]["crosscheck"]}
-
-
-def _ethstore_row(day_start, day_end, consensus_wei, tx_fees_wei=999_999e18):
-    """A row shaped exactly like beaconcha.in's own OpenAPI spec (types.APIEthStoreResponse) —
-    tx_fees_sum_wei deliberately huge and wrong-signed-if-summed, so a test that accidentally
-    included it would be caught by a wildly wrong stored value."""
-    return {"day": 1, "day_start": day_start, "day_end": day_end,
-            "apr": 0.05, "cl_apr": 0.045, "el_apr": 0.005,
-            "consensus_rewards_sum_wei": consensus_wei, "tx_fees_sum_wei": tx_fees_wei}
-
-
-def test_beaconchain_stores_the_complete_prior_day_consensus_rewards_only(monkeypatch):
-    """The header is literally `apikey`, not Authorization: Bearer (beaconcha.in's OpenAPI spec:
-    type apiKey, name apikey — the stray 'Bearer' prose beside it describes neither declared
-    form). Only consensus_rewards_sum_wei is stored; tx_fees_sum_wei is not summed in even
-    though the row deliberately carries an enormous, obviously-wrong value for it."""
-    import pandas as pd
-
-    from fetch.base import today
-
-    t = today()
-    start = (t - pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
-    end = (t - pd.Timedelta(days=1) + pd.Timedelta(hours=23, minutes=59)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    body = {"status": "OK", "data": [_ethstore_row(start, end, 1_349_850_765_807_000_000_000)]}
-    out, http = _beaconchain_run(monkeypatch, body)
-
-    df = out.frame()
-    row = df[df.metric == "gross_issuance_tokens"]
-    assert len(row) == 1
-    assert abs(row["value"].iloc[0] - 1_349.850765807) < 1e-6, row["value"].iloc[0]
-    assert row["source"].iloc[0] == "beaconchain"
-    assert row["date"].iloc[0] == (t - pd.Timedelta(days=1)).normalize()
-
-    # the seed's one quota-reading call: the literal `apikey` header, and the key in no message
-    from fetch import beaconchain
-    seed_out = FetchOutput()
-    beaconchain.BeaconChain().seed(config.PROJECT_BY_NAME["Ethereum"], seed_out, http=http)
-    url, params, headers = http.calls[0]
-    assert url == "https://beaconcha.in/api/v1/ethstore/latest"
-    assert headers == {"apikey": "bc-secret-456"}, \
-        "auth must be the literal `apikey` header, not Authorization: Bearer"
-    assert params is None
-    assert "bc-secret-456" not in " ".join(e.message for e in out.log + seed_out.log)
-
-
-def test_beaconchain_stores_apr_as_the_validator_yield_from_the_same_single_call(monkeypatch):
-    """Jake, 2026-09-24: staking_yield_pct = `apr` (not cl_apr), from the response already
-    fetched. Two metrics, ONE call — the free tier is 10 req/min."""
-    import pandas as pd
-
-    from fetch.base import today
-
-    t = today()
-    start = (t - pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
-    end = (t - pd.Timedelta(days=1) + pd.Timedelta(hours=23, minutes=59)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out, http = _beaconchain_run(monkeypatch, {"status": "OK", "data": [_ethstore_row(start, end, 10 ** 21)]})
-    df = out.frame()
-    y = df[df.metric == "staking_yield_pct"]
-    assert list(y["value"]) == [0.05], "apr (cl + el), not cl_apr's 0.045"
-    assert http.calls == [], "the row rules are applied to a response already fetched"
-    assert config.sanity_bounds("Ethereum", "staking_yield_pct") == (0, 0.5), "a percent-form 5.0 must be rejected"
-
-
 def test_hyperliquid_future_emissions_is_its_own_series_never_pool_release():
     from fetch.base import FetchOutput
     from fetch.hypercore import HyperCoreInfo
@@ -14744,164 +14654,6 @@ def test_archetype_tabs_open_on_the_valuation_headlines():
     assert a3[bw._hcol(wb["A3 Revenue Buyback"], "BUYBACK AS % OF SUPPLY") - 1].startswith("BUYBACK AS % OF SUPPLY")
 
 
-def test_beaconchain_never_stores_an_incomplete_or_todays_day(monkeypatch):
-    import pandas as pd
-
-    from fetch.base import today
-
-    t = today()
-    wall_now = pd.Timestamp.now("UTC").tz_localize(None)
-    # day_end genuinely still in the future relative to wall-clock now, whatever time of day
-    # this test happens to run at.
-    start = t.strftime("%Y-%m-%dT00:00:00Z")
-    end = (wall_now + pd.Timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    body = {"status": "OK", "data": [_ethstore_row(start, end, 1_000 * 10**18)]}
-    out, _ = _beaconchain_run(monkeypatch, body)
-    assert out.frame().empty
-    assert any("still in the future" in e.message for e in out.log if e.status == "skipped")
-
-    # day_end has elapsed but day_start is today — still not a complete PRIOR day.
-    start2 = t.strftime("%Y-%m-%dT00:00:00Z")
-    end2 = min(wall_now - pd.Timedelta(minutes=1), t + pd.Timedelta(hours=23, minutes=59))
-    end2 = end2.strftime("%Y-%m-%dT%H:%M:%SZ")
-    body2 = {"status": "OK", "data": [_ethstore_row(start2, end2, 1_000 * 10**18)]}
-    out2, _ = _beaconchain_run(monkeypatch, body2)
-    assert out2.frame().empty
-    assert any("which is today" in e.message for e in out2.log if e.status == "skipped")
-
-
-def test_beaconchain_stores_nothing_when_the_live_shape_differs_from_the_spec(monkeypatch):
-    out, _ = _beaconchain_run(monkeypatch, {"status": "OK", "data": [{"foo": "bar"}]})
-    assert out.frame().empty
-    gaps = {g["metric"]: g["reason"] for g in out.gaps}
-    assert "day_start" in gaps["gross_issuance_tokens"] and "['foo']" in gaps["gross_issuance_tokens"]
-
-    out2, _ = _beaconchain_run(monkeypatch, {"status": "ERROR: invalid apikey", "data": None})
-    assert out2.frame().empty
-    assert "'OK'" in out2.gaps[0]["reason"] and "invalid apikey" in out2.gaps[0]["reason"]
-
-    out3, _ = _beaconchain_run(monkeypatch, {"status": "OK", "data": []})
-    assert out3.frame().empty
-    assert "empty or missing" in out3.gaps[0]["reason"]
-
-
-def test_beaconchain_seed_without_a_key_is_named_and_calls_nothing(monkeypatch):
-    from fetch import beaconchain
-    from fetch.base import FetchOutput
-
-    monkeypatch.delenv("BEACONCHAIN_API_KEY", raising=False)
-    http = _BeaconChainHttp({})
-    out = FetchOutput()
-    res = beaconchain.BeaconChain().seed(config.PROJECT_BY_NAME["Ethereum"], out, http=http)
-    assert res["started"] is False and "BEACONCHAIN_API_KEY" in res["why"]
-    assert http.calls == [] and any(e.status == "unconfigured" for e in out.log)
-
-
-def test_beaconchain_measured_figure_suppresses_that_days_issuance_derivation(monkeypatch):
-    """Registered ahead of _derive_issuance in TIER_ORDER for exactly this reason: on a day it
-    answers, the generic d(total_supply_gross)+burn derivation must stand down for Ethereum
-    rather than compute a second, conflicting figure."""
-    import pandas as pd
-
-    from fetch import _derive_issuance
-    from fetch.base import FetchOutput, point
-
-    out = FetchOutput()
-    out.add(point("Ethereum", "gross_issuance_tokens", 1_349.85, "beaconchain", 1,
-                  pd.Timestamp("2026-09-23")), "beaconchain", "Ethereum")
-    _derive_issuance(out, [config.PROJECT_BY_NAME["Ethereum"]], {}, {})
-    df = out.frame()
-    rows = df[(df.project == "Ethereum") & (df.metric == "gross_issuance_tokens")]
-    assert len(rows) == 1 and rows["source"].iloc[0] == "beaconchain", \
-        "the derivation must not add a second row once beaconchain has already answered"
-
-
-def test_beaconchain_check_makes_no_unauthenticated_baseline_call(monkeypatch):
-    """429, not 401 — Jake's read. Auth was fine; the free tier's 10 req/min quota (beaconcha.in's
-    OpenAPI spec) was spent by an unauthenticated epoch/latest probe run immediately before the
-    real call. That probe served no purpose once the key was confirmed working, so it is gone —
-    this test proves it: the check must issue exactly ONE request, to ethstore/latest, never to
-    epoch/latest, key set or not."""
-    import check_offline_items as coi
-
-    monkeypatch.setenv("BEACONCHAIN_API_KEY", "testkey")
-    calls = []
-
-    class _Resp:
-        status_code = 200
-        text = '{"status":"OK","data":[]}'
-        def json(self):
-            return {"status": "OK", "data": []}
-
-    def fake_get(url, headers=None, timeout=None, **_):
-        calls.append(url)
-        return _Resp()
-
-    monkeypatch.setattr(coi.requests, "get", fake_get)
-    coi.beaconchain()
-
-    assert calls == ["https://beaconcha.in/api/v1/ethstore/latest"], \
-        f"expected exactly one call, to ethstore/latest — got {calls}"
-
-
-def test_beaconchain_check_retries_429_twice_then_reports_the_final_status(monkeypatch):
-    """A short, narrow retry — a few seconds, one or two attempts — scoped to this one endpoint's
-    429, never a blind retry against an API in general. First two calls come back 429 (quota);
-    the third succeeds, and the check must not give up after the first 429."""
-    import check_offline_items as coi
-
-    monkeypatch.setenv("BEACONCHAIN_API_KEY", "testkey")
-    slept = []
-    monkeypatch.setattr(coi.time, "sleep", lambda s: slept.append(s))
-
-    class _Resp:
-        def __init__(self, status_code, body):
-            self.status_code = status_code
-            self._body = body
-            self.text = str(body)
-        def json(self):
-            return self._body
-
-    responses = [_Resp(429, {}), _Resp(429, {}), _Resp(200, {"status": "OK", "data": []})]
-    calls = []
-
-    def fake_get(url, headers=None, timeout=None, **_):
-        calls.append(url)
-        return responses[len(calls) - 1]
-
-    monkeypatch.setattr(coi.requests, "get", fake_get)
-    coi.beaconchain()
-
-    assert len(calls) == 3, f"expected 3 attempts (2x 429 then success) — got {len(calls)}"
-    assert len(slept) == 2, f"expected exactly 2 retry waits — got {slept}"
-
-
-def test_beaconchain_check_stops_retrying_after_two_attempts(monkeypatch):
-    """At most two retries, per the user's instruction — a persistent 429 must not be retried
-    forever."""
-    import check_offline_items as coi
-
-    monkeypatch.setenv("BEACONCHAIN_API_KEY", "testkey")
-    monkeypatch.setattr(coi.time, "sleep", lambda s: None)
-
-    class _Resp:
-        status_code = 429
-        text = "rate limited"
-        def json(self):
-            raise ValueError("no body")
-
-    calls = []
-
-    def fake_get(url, headers=None, timeout=None, **_):
-        calls.append(url)
-        return _Resp()
-
-    monkeypatch.setattr(coi.requests, "get", fake_get)
-    coi.beaconchain()
-
-    assert len(calls) == 3, f"expected exactly 3 attempts total (1 + 2 retries) — got {len(calls)}"
-
-
 def _kill_network(monkeypatch, coi):
     """Every network path in check_offline_items empties or raises, so a filtered-run test
     exercises only the selection logic — never real network, and never a real RPC/API answer
@@ -14924,13 +14676,13 @@ def test_offline_checks_filter_runs_only_the_named_check(monkeypatch, capsys):
     import check_offline_items as coi
 
     _kill_network(monkeypatch, coi)
-    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "beaconchain"])
+    monkeypatch.setattr(sys, "argv", ["check_offline_items.py", "settlement_rebuild_coverage"])
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 0
-    assert "running only beaconchain" in out
-    assert "Done. 1 check ran: beaconchain" in out
-    assert "ETH.Store" in out, "the one selected check must still actually run"
+    assert "running only settlement_rebuild_coverage" in out
+    assert "Done. 1 check ran: settlement_rebuild_coverage" in out
+    assert "HYPERLIQUID: not rebuildable" in out, "the one selected check must still actually run"
     # Nothing else ran: another check's own section header must not appear.
     assert "SKY — is the 2024 flapper" not in out
     assert "GEODNET — GEOD destinations" not in out
@@ -16615,26 +16367,6 @@ def pathlib_exists(p):
     return pathlib.Path(p).exists()
 
 
-def test_beaconchain_is_in_no_routine_run_and_is_a_seed_only():
-    """Jake, 2026-09-30: the daily /ethstore/latest call kept triggering long lockouts (150,198s).
-    beaconcha.in left routine runs entirely — not in TIER_ORDER, no routine budget, no gap blaming
-    it — and survives only as `token_metrics.py --seed beaconchain`."""
-    import fetch
-    import token_metrics
-    from fetch import beaconchain
-    assert "beaconchain" not in {t[0] for t in fetch.TIER_ORDER}
-    assert "beaconchain" not in fetch.TIER_BUDGET_S
-    assert not hasattr(beaconchain.BeaconChain, "run")
-    assert token_metrics.parse_args(["--seed", "beaconchain"]).seed == "beaconchain"
-    eth = config.PROJECT_BY_NAME["Ethereum"]
-    assert eth["beaconchain"]["routine"] is False and "metrics" not in eth["beaconchain"]
-    # the current yield is Etherscan's, labelled excluding MEV
-    assert config.VALIDATOR_YIELD["Ethereum"]["method"] == "consensus_plus_execution"
-    assert "EXCLUDING MEV" in config.VALIDATOR_YIELD["Ethereum"]["note"]
-    fo = config.HISTORY_FORWARD_ONLY["Ethereum"]
-    assert "--seed beaconchain" in fo["until"] and "2026-09-29" in fo["why"]
-
-
 def test_ether_fi_silence_uses_the_scans_cow_only_date_not_older_stored_rows():
     """Run 20260928T142424Z: the CoW-only last purchase is 2026-04-01, but a non-CoW 2026-06-30
     inflow stored before attribution changed still sat in the store, and max() with it made the
@@ -17618,8 +17350,8 @@ def test_ethereum_burn_and_issuance_come_from_etherscan_ethsupply2(monkeypatch):
     assert bw.handover_refusal("Ethereum", "gross_burn_tokens", points, spans) is None
     overlap = {points[0]: spans[points[0]], points[1]: (pd.Timestamp("2026-09-28"), pd.Timestamp("2026-09-30"))}
     assert "OVERLAP" in bw.handover_refusal("Ethereum", "gross_burn_tokens", points, overlap)
-    # beaconcha.in is a one-off seed only (2026-09-30): its apr is the yield cross-check
-    assert eth["beaconchain"]["crosscheck"]["field"] == "apr" and "metrics" not in eth["beaconchain"]
+    # beaconcha.in was DROPPED entirely (2026-10-01)
+    assert "beaconchain" not in eth and eth["beaconchain_dropped"]["decided"] == "Jake, 2026-10-01"
 
     # a refusal (plan, rate limit, bad key) stores nothing and quotes Etherscan, scrubbed
     a2 = EtherscanSupply()
@@ -18496,20 +18228,17 @@ def test_ethereum_issuance_route_a_is_removed_and_its_rejection_recorded():
     assert rej["source"] == "derived:d_coingecko_supply+burn" and rej["rejected_on"] == "2026-09-30"
     assert "174 negative days" in rej["evidence"] and "-626,651.7..+1,331,145.2" in rej["evidence"]
     assert "gross_burn_tokens" in eth["series_handover"], "the burn's history leg is kept"
-    # Jake's probe (2026-09-30): ultrasound.money's daily supply is FROZEN at 2024-06-22, so the
-    # history leg is ETH.Store's per-day consensus rewards (beaconcha.in), and until that backfill
-    # runs after the monthly quota reset the series is FORWARD-ONLY from 2026-09-29, with the reason
-    hand = config.declared_handover("Ethereum", "gross_issuance_tokens")["ordered_points"]
-    assert hand == ("beaconchain:ethstore.consensus_rewards_sum_wei", "derived:d_total_supply_protocol+burn")
-    assert "derived:d_coingecko_supply+burn" not in hand
-    assert "derived:d_total_supply_ultrasound+burn" not in hand
+    # ultrasound.money's daily supply is FROZEN at 2024-06-22 and beaconcha.in (the ETH.Store history
+    # leg) was DROPPED 2026-10-01: no handover — Etherscan alone, FORWARD-ONLY from 2026-09-29
+    assert config.declared_handover("Ethereum", "gross_issuance_tokens") is None
+    assert "DROPPED 2026-10-01" in config.HISTORY_FORWARD_ONLY["Ethereum"]["why"]
     fo = config.HISTORY_FORWARD_ONLY["Ethereum"]
     assert "gross_issuance_tokens" in fo["metrics"] and "2026-09-29" in fo["why"] and "frozen" in fo["why"]
     assert eth["ultrasound_history"]["frozen_since"] == "2024-06-22"
-    # nothing is DERIVED for the history at fetch time any more: it is a read-time leg of the
-    # ETH.Store consensus rewards (history_legs), so there are no derived inputs to re-read
+    # nothing is DERIVED for the history at fetch time, and the ETH.Store read-time leg went with
+    # beaconcha.in (2026-10-01): forward-only
     assert backfill.derived_inputs(eth, "gross_issuance_tokens") == set()
-    assert eth["history_legs"]["gross_issuance_tokens"]["from_metric"] == "consensus_rewards_ethstore_tokens"
+    assert "history_legs" not in eth
     sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
     assert "-- BA. ETHEREUM: issuance ROUTE (a) rows" in sql and "-- DELETE FROM metrics" in sql
     # ADDENDUM 11: whatever the retired routes wrote, SELECT first; only Etherscan's leg from 09-29 stays
@@ -18667,7 +18396,7 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     assert "166.32*SQRT(D[beacon_chain_eth:now])" in ceil
     assert "beacon_validators_eth" not in ceil
     assert cols["Consensus part (d Eth2Staking ÷ ETH on the beacon chain)"][1](5, config.PROJECT_BY_NAME["Near"]) == ""
-    assert any("EXCLUDING MEV" in k for k in cols) and any("INCLUDING MEV; one-off seed, dated" in k for k in cols)
+    assert any("EXCLUDING MEV" in k for k in cols) and not any("beaconcha" in k for k in cols)
     # 64 x sqrt(B gwei) per epoch x 82,181.25 epochs/yr / 1e9 = 166.32 x sqrt(B ETH)
     assert abs(64 * (1e9) ** 0.5 * 365.25 * 86_400 / (32 * 12) / 1e9 - 166.32) < 0.01
     assert config.PROJECT_BY_NAME["Ethereum"]["coinmetrics_community"]["available"] is False
@@ -19191,10 +18920,9 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     for m in ("actual_buyback_tokens", "actual_buyback_usd"):
         v, d = got[("Fluid", m)]
         assert v == "COMPLETE" and "PROGRAMME HALTED 2026-05-11" in d, (m, v, d)
-    # the week-long wait on Eth2Staking was lifted 2026-09-30 — but while the cell is not yet ok it
-    # waits on its DATED seed (Jake's run 2026-09-30 17:21): a pending seed is not a bug
-    v, d = got[("Ethereum", "staking_yield_pct")]
-    assert v != "BUG" and (v != "WAITING ON A DATE" or d.startswith("2026-10-06")), (v, d)
+    # beaconcha.in dropped (2026-10-01): staking_yield_pct no longer applies to Ethereum — its yield
+    # is A1's calculation from d(Eth2Staking) + priority fees
+    assert ("Ethereum", "staking_yield_pct") not in got
     # (a manual quarterly row that is actually MISSING stays NEEDS JAKE; this store is empty)
     jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
     # settlement volume (2026-09-30): Ethereum's Artemis export is in; the other three wait on Jake's
@@ -19723,141 +19451,6 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
     assert not calls and any("robots.txt disallows" in e.message for e in out3.log)
 
 
-def test_ethereum_issuance_history_is_the_ethstore_consensus_leg_before_the_etherscan_leg():
-    """Jake's probe 2026-09-30: ultrasound.money's supplyByDay is frozen at 2024-06-22, so nothing
-    derives the issuance history from it any more. The history is ETH.Store's per-day consensus
-    rewards (consensus_rewards_ethstore_tokens), prepended at READ time to both
-    gross_issuance_tokens and consensus_rewards_tokens for the days before their first live row —
-    a declared handover, never overlapping, never stored under either metric."""
-    import build_workbook as bw
-    from fetch.base import today
-    from fetch.history_derive import derive_from_history
-    eth = config.PROJECT_BY_NAME["Ethereum"]
-    base = {"tier": 2, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
-    days = pd.date_range(today() - pd.Timedelta(days=100), today() - pd.Timedelta(days=1))
-    etherscan_from = days[-3]
-    rows = []
-    for d in days:
-        rows.append(dict(base, project="Ethereum", metric="total_supply_ultrasound", date=d, value=1.2e8,
-                         source="ultrasound:supplyByDay"))
-        rows.append(dict(base, project="Ethereum", metric="consensus_rewards_ethstore_tokens", date=d,
-                         value=2_700.0, source="beaconchain:ethstore.consensus_rewards_sum_wei", tier=1))
-        if d >= etherscan_from:
-            rows.append(dict(base, project="Ethereum", metric="gross_issuance_tokens", date=d, value=2_650.0,
-                             source="derived:d_total_supply_protocol+burn"))
-            rows.append(dict(base, project="Ethereum", metric="consensus_rewards_tokens", date=d, value=2_690.0,
-                             source="etherscan:ethsupply2.Eth2Staking:delta"))
-    stored = pd.DataFrame(rows)
-    out = FetchOutput()
-    derive_from_history(out, [eth], stored)
-    assert out.frame().query("metric == 'gross_issuance_tokens'").empty, \
-        "the frozen ultrasound series derives nothing"
-    groups = {k: g for k, g in stored.groupby(["project", "metric"])}
-    bw._VIEW_BLOCKS.clear()
-    bw._history_leg_views(groups)
-    bw._issuance_views(groups, today())
-    for metric, live in (("gross_issuance_tokens", "derived:d_total_supply_protocol+burn"),
-                         ("consensus_rewards_tokens", "etherscan:ethsupply2.Eth2Staking:delta")):
-        v = groups[("Ethereum", metric)]
-        hist = v[v["source"].astype(str).str.startswith("beaconchain:ethstore")]
-        assert len(hist) and hist["date"].max() < etherscan_from, (metric, "never over the live leg")
-        assert set(v[v["date"] >= etherscan_from]["source"]) == {live}
-        assert v["date"].is_monotonic_increasing and not v["date"].duplicated().any()
-        assert (hist["value"] - 2_700.0).abs().max() < 1e-6
-    assert ("Ethereum", "gross_issuance_tokens") not in bw._VIEW_BLOCKS
-    assert config.declared_handover("Ethereum", "consensus_rewards_tokens")["ordered_points"] == \
-        ("beaconchain:ethstore.consensus_rewards_sum_wei", "etherscan:ethsupply2.Eth2Staking")
-    assert config.ISSUANCE_PRIMARY["Ethereum"]["history_prefix"] == "beaconchain:ethstore"
-
-
-def _seed_http(bc, left, calls, refuse=None):
-    """An Http stand-in for the seed: /ethstore/latest and /ethstore/{n}, each answer carrying
-    x-ratelimit headers counted down from `left`; `refuse` raises on the first call."""
-    class H:
-        def __init__(self, *a, **k):
-            self.min_interval, self.last_headers = 3.1, {}
-
-        def get(self, url, headers=None):
-            calls.append(url)
-            if refuse is not None:
-                raise refuse
-            left["n"] -= 1
-            self.last_headers = {"x-ratelimit-remaining-month": str(left["n"]),
-                                 "x-ratelimit-limit-month": "30000", "x-ratelimit-limit-minute": "20"}
-            tail = url.rsplit("/", 1)[1]
-            n = (bc.today() - pd.Timedelta(days=2) - bc.BeaconChain.GENESIS_DAY0).days if tail == "latest" else int(tail)
-            start = bc.BeaconChain.GENESIS_DAY0 + pd.Timedelta(days=n, hours=12)
-            row = {"day": n, "day_start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                   "day_end": (start + pd.Timedelta(hours=23, minutes=59)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                   "apr": 0.03, "consensus_rewards_sum_wei": str(2_700 * 10**18)}
-            return {"status": "OK", "data": [row] if tail == "latest" else row}
-    return H()
-
-
-def test_beaconchain_seed_reads_the_quota_first_and_refuses_unless_the_whole_backfill_fits(monkeypatch, tmp_path):
-    """Jake, 2026-09-30: the seed spends ONE call reading the key's real quota (it is also the apr
-    cross-check) and refuses to start unless every missing day + the reserve fits. Refused, it
-    stores nothing — beaconcha.in is dropped and the history stays forward-only."""
-    import fetch.beaconchain as bc
-    monkeypatch.setenv("BEACONCHAIN_API_KEY", "k" * 8)
-    monkeypatch.setattr(bc.BeaconChain, "_hist_file", staticmethod(lambda: tmp_path / "h.json"))
-    eth = config.PROJECT_BY_NAME["Ethereum"]
-    b = bc.BeaconChain()
-    assert len(b.missing_days(eth["beaconchain"])) == 365
-    calls, left = [], {"n": 300}
-    out = FetchOutput()
-    res = b.seed(eth, out, http=_seed_http(bc, left, calls))
-    assert res["started"] is False and len(calls) == 1, "one quota call, then refused"
-    assert "299 call(s) left" in res["why"] and "365 day(s) + 5 reserve = 370" in res["why"]
-    assert "forward-only from 2026-09-29" in res["why"] and out.frame().empty
-    assert json.loads((tmp_path / "h.json").read_text())["last_refusal"]["why"] == res["why"]
-    # with the quota: the cross-check from the quota call, then every missing day
-    calls.clear()
-    left["n"] = 30_000
-    out = FetchOutput()
-    res = b.seed(eth, out, http=_seed_http(bc, left, calls))
-    f = out.frame()
-    assert res["started"] and res["calls"] == 366 and res["still"] == 0
-    yld = f[f.metric == "staking_yield_pct"]
-    cons = f[f.metric == "consensus_rewards_ethstore_tokens"]
-    assert len(cons) == 365 and (cons["value"] - 2_700.0).abs().max() < 1e-9
-    assert set(cons["source"]) == {"beaconchain:ethstore.consensus_rewards_sum_wei"}
-    assert len(yld[yld.source == "beaconchain"]) >= 365 and set(yld["value"]) == {0.03}
-    # re-run: nothing missing, so the quota call alone — nothing read twice
-    calls.clear()
-    res = b.seed(eth, FetchOutput(), http=_seed_http(bc, left, calls))
-    assert res["started"] and len(calls) == 1
-
-
-def test_beaconchain_seed_stops_at_the_reserve_and_honours_a_429s_own_wait(monkeypatch, tmp_path):
-    """The per-day reads stop when the server's own counter reaches the reserve; a 429 on the quota
-    call records ITS Retry-After (Jake's run: 150,198s) and no call is made before it passes."""
-    import fetch.beaconchain as bc
-    from fetch.base import RateLimited
-    now = {"t": pd.Timestamp("2026-09-30 14:54:00")}
-    monkeypatch.setattr(bc, "_now", lambda: now["t"])
-    monkeypatch.setenv("BEACONCHAIN_API_KEY", "k" * 8)
-    monkeypatch.setattr(bc.BeaconChain, "_hist_file", staticmethod(lambda: tmp_path / "h.json"))
-    eth = dict(config.PROJECT_BY_NAME["Ethereum"])
-    eth["beaconchain"] = dict(eth["beaconchain"], history=dict(eth["beaconchain"]["history"], days=10))
-    b = bc.BeaconChain()
-    calls = []
-    res = b.seed(eth, FetchOutput(), http=_seed_http(bc, {"n": 99}, calls, refuse=RateLimited(
-        "HTTP 429 from beaconcha.in: the server asks for a 150,198s wait", retry_after=150_198,
-        headers={"x-ratelimit-remaining-month": "0"})))
-    assert res["started"] is False and res["retry_at"] == "2026-10-02 08:37:18" and len(calls) == 1
-    out = FetchOutput()
-    res = b.seed(eth, out, http=_seed_http(bc, {"n": 99}, calls))
-    assert len(calls) == 1 and "until 2026-10-02 08:37:18 UTC" in res["why"], "no call before its wait"
-    now["t"] = pd.Timestamp("2026-10-02 09:00:00")
-    calls.clear()
-    # 16 left: the quota call leaves 15 >= 10 + 5, then the reads stop when 5 remain
-    out = FetchOutput()
-    res = b.seed(eth, out, http=_seed_http(bc, {"n": 16}, calls))
-    assert res["started"] and len(calls) == 11 and res["still"] == 0
-    assert res["limits"]["x-ratelimit-remaining-month"] == 5
-
-
 def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_active_service():
     """Addendum 10 (Jake's run 2026-09-30 14:54: "Fees for chainlink-keepers not found" emptied the
     whole sum). Services are resolved from the PARENT's childProtocols (Keepers -> Automation) with
@@ -20101,24 +19694,27 @@ def test_trading_throughput_is_defillama_dex_plus_perps_by_chain_and_never_settl
     out = FetchOutput()
     ll.trading_volume(hl, out)
     f = out.frame()
-    assert set(f.metric) == {"dex_volume_usd", "perps_volume_usd"} and len(f) == 2 * len(days)
-    assert set(f.source) == {"defillama:dexs:hyperliquid-l1", "defillama:derivatives:hyperliquid-l1"}
+    # DefiLlama's derivatives route is PAID (HTTP 402, 2026-10-01): it is never called; Hyperliquid's
+    # perps come from its own info API (fetch/hl_candles.py)
+    assert set(f.metric) == {"dex_volume_usd"} and len(f) == len(days)
+    assert not any("derivatives" in u for u in ll.http.calls)
+    assert set(f.source) == {"defillama:dexs:hyperliquid-l1"}
     assert all("NOT settlement volume" in e.message for e in out.log)
+    assert "derivatives" not in str(config.TRADING_THROUGHPUT["endpoints"])
+    assert config.TRADING_THROUGHPUT["chains"]["Ethereum"]["covered"] == ("dex_volume_usd",)
+    assert "402" in str(config.SOURCE_REGISTER["api.llama.fi"]["paid_only"])
+    assert "~7.7%" in config.METHODOLOGY_FLAGS["throughput_vs_settlement"]
     # a slug that resolved to another chain stores nothing
     ll.http, out = Http("HyperEVM"), FetchOutput()
     ll.trading_volume(hl, out)
     assert out.frame().empty and any("not 'Hyperliquid L1'" in e.message for e in out.log)
-    # derivatives refused (pro-only): DEX stored, perps not, and the reason says why
-    ll.http, out = Http("Hyperliquid L1", refuse_derivs=True), FetchOutput()
-    ll.trading_volume(hl, out)
-    assert set(out.frame().metric) == {"dex_volume_usd"}
-    assert any("PRO-ONLY" in e.message for e in out.log if e.status == "failed")
     # NEAR: DEX only is called
     ll.http, out = Http("Near"), FetchOutput()
     ll.trading_volume(config.PROJECT_BY_NAME["Near"], out)
     assert ll.http.calls == ["https://api.llama.fi/overview/dexs/near"]
     # READ TIME: the sum, its 365d total and NRR — separate metrics from settlement volume
-    groups = {("Hyperliquid", m): f[f.metric == m].assign(tier=1) for m in ("dex_volume_usd", "perps_volume_usd")}
+    perps = f.assign(metric="perps_volume_usd", source="hl_candles:candleSnapshot[1d, v x close]")
+    groups = {("Hyperliquid", "dex_volume_usd"): f.assign(tier=1), ("Hyperliquid", "perps_volume_usd"): perps.assign(tier=1)}
     groups[("Hyperliquid", "market_cap_usd")] = pd.DataFrame({"date": days, "project": "Hyperliquid",
                                                              "metric": "market_cap_usd", "value": 1.46e11,
                                                              "source": "coingecko", "tier": 1})
@@ -20130,7 +19726,7 @@ def test_trading_throughput_is_defillama_dex_plus_perps_by_chain_and_never_settl
     assert abs(float(nrr["value"].iloc[-1]) - 1.46e11 / (365 * 2e9)) < 1e-12
     assert nrr["source"].iloc[-1] == "derived:market_cap/trading_throughput_365d"
     assert ("Hyperliquid", "network_reserve_ratio") not in groups, "never mixed with settlement NRR"
-    groups = {("Near", "dex_volume_usd"): f[f.metric == "dex_volume_usd"].assign(project="Near", tier=1)}
+    groups = {("Near", "dex_volume_usd"): f.assign(project="Near", tier=1)}
     bw._settlement_views(groups)
     assert groups[("Near", "trading_throughput_usd")]["source"].iloc[0] == \
         "derived:dex_volume_usd[no DefiLlama perps_volume_usd adapter on this chain]"
@@ -20163,11 +19759,16 @@ def test_completeness_cadence_staleness_and_a_pending_seed_are_not_bugs():
     asof = pd.Timestamp("2026-09-30")
     assert bw._age_in_days(pd.Timestamp("2026-08-31"), asof, "monthly") == 30 <= 45
     assert bw._age_in_days(pd.Timestamp("2026-08-25"), asof, "daily") == 36 <= 45
+    # the dated-wait mechanism (its Ethereum entry went with beaconcha.in, 2026-10-01)
     eth = config.PROJECT_BY_NAME["Ethereum"]
     row = {"status": "missing", "note": ""}
-    v, why = cr.classify(eth, "staking_yield_pct", row, None, asof)
-    assert v == "WAITING ON A DATE" and why.startswith("2026-10-06") and "--seed beaconchain" in why
-    assert cr.classify(eth, "staking_yield_pct", row, None, pd.Timestamp("2026-10-07"))[0] == "BUG"
+    cr.WAIT_UNTIL[("Ethereum", "consensus_rewards_tokens")] = {"until": "2026-10-06", "why": "a pending seed"}
+    try:
+        v, why = cr.classify(eth, "consensus_rewards_tokens", row, None, asof)
+        assert v == "WAITING ON A DATE" and why.startswith("2026-10-06")
+        assert cr.classify(eth, "consensus_rewards_tokens", row, None, pd.Timestamp("2026-10-07"))[0] == "BUG"
+    finally:
+        cr.WAIT_UNTIL.pop(("Ethereum", "consensus_rewards_tokens"))
 
 
 def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_reviews_a_gap():
@@ -20289,9 +19890,10 @@ def test_licensing_register_and_second_pass_probes_cover_every_new_source():
                  "api.growthepie.com", "api.llama.fi", "app.blockworks.com", "dashboard.aethir.com",
                  "api.artemisxyz.com", "visaonchainanalytics.com"):
         e = reg[host]
-        assert e["used_for"] and e["paths"] and e["robots"] and e["terms"]["url"], host
+        assert e["used_for"] and (e["paths"] or e.get("status") == "DROPPED") and e["robots"] \
+            and e["terms"]["url"], host
     names = {f.__name__ for f in coi.CHECKS}
-    assert {"robots_and_terms", "ultrasound_history", "beaconchain_quota", "hyperliquid_history_routes",
+    assert {"robots_and_terms", "ultrasound_history", "hyperliquid_history_routes",
             "plume_sources", "aethir_dashboard_xhr", "maple_ssf_history", "blockworks_geodnet",
             "morpho_incentives", "settlement_sources"} <= names
     # GEODNET's two behavioural candidates are recorded as ruled out, with what each is
@@ -20900,3 +20502,24 @@ def test_free_float_subtracts_locked_tokens_already_out_of_circulating_only_once
     cell = ff(5, aero)
     assert "MAX(0,D[locked_tokens:now]-95000000)" in cell, cell
     assert config.locked_excluded_from_circulating("Uniswap") == 0.0
+
+
+def test_beaconchain_is_dropped_entirely():
+    """Jake, 2026-10-01: a ZERO allowance after the monthly reset (every Limit/Remaining 0,
+    Ratelimit-Reset 2,649,797 s). The module, the seed, the cross-check column and the ETH.Store
+    history legs are gone; Ethereum's yield and issuance history are forward-only from 2026-09-29."""
+    import importlib.util
+    import token_metrics
+    import build_workbook as bw
+    assert importlib.util.find_spec("fetch.beaconchain") is None
+    with _pytest.raises(SystemExit):
+        token_metrics.parse_args(["--seed", "beaconchain"])
+    eth = config.PROJECT_BY_NAME["Ethereum"]
+    assert "beaconchain" not in eth and "2,649,797" in eth["beaconchain_dropped"]["why"]
+    assert "history_legs" not in eth and "gross_issuance_tokens" not in eth["series_handover"]
+    assert "Ethereum" not in config.METRICS["staking_yield_pct"]["only_projects"]
+    assert "cross_check_metric" not in config.VALIDATOR_YIELD["Ethereum"]
+    fwd = config.HISTORY_FORWARD_ONLY["Ethereum"]
+    assert "DROPPED 2026-10-01" in fwd["why"] and fwd["until"] is None
+    assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "DROPPED"
+    assert not any("beaconcha" in h[0] for h in bw._eth_yield_columns(bw.Refs.__new__(bw.Refs)))

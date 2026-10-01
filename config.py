@@ -176,7 +176,7 @@ METRICS = {
     # percent: 0.03 is 3%, and the 0.5 ceiling rejects a value arriving in percent form.
     # Stored only where a source publishes it (Ethereum, ETH.Store `apr`); NEAR's is computed on
     # the A1 tab from stored issuance and stake, not stored.
-    "staking_yield_pct":          {"label": "Validator staking yield (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1, 2], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Ethereum", "Plume")},
+    "staking_yield_pct":          {"label": "Validator staking yield (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1, 2], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Plume",)},
     # Annualised on-chain settlement volume — The Block's "adjusted on-chain volume", entered by
     # hand quarterly. A RATE STATED AS OF A DATE, so kind stock: a quarterly hand entry summed as
     # a flow would mean nothing across a 90-day window.
@@ -215,7 +215,7 @@ METRICS = {
     # history; their sum and its NRR are their own metrics and never share a column with the
     # settlement-volume ones. See TRADING_THROUGHPUT.
     "dex_volume_usd":             {"label": "DEX spot volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume")},
-    "perps_volume_usd":           {"label": "Perps / derivatives volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Hyperliquid")},
+    "perps_volume_usd":           {"label": "Perps volume per day ($ ≈ Σ daily candle volume × close, Hyperliquid's own info API — an approximation of notional)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)},
     "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
@@ -250,10 +250,6 @@ METRICS = {
     "total_supply_ultrasound":    {"label": "ETH total supply, daily (ultrasound.money supplyByDay: execution + beacon balances − pending deposits)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3],
                                    "sanity_min": 1e8, "sanity_max": 1.5e8, "only_projects": ("Ethereum",)},
-    "consensus_rewards_ethstore_tokens": {"label": "ETH minted as consensus rewards per beaconchain-day (beaconcha.in ETH.Store consensus_rewards_sum_wei)",
-                                   "kind": "flow", "unit": "tokens", "archetypes": [1, 4], "tiers": [1],
-                                   "sanity_min": 0, "sanity_max": 20_000, "only_projects": ("Ethereum",),
-                                   "view_only": True},
     "beacon_validators_eth":      {"label": "ETH held by beacon-chain validators, daily (ultrasound.money inBeaconValidatorsByDay)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [3],
                                    "sanity_min": 1e6, "sanity_max": 1.5e8, "only_projects": ("Ethereum",)},
@@ -500,8 +496,8 @@ METRICS = {
     # change is gross_burn_tokens. Bounded by what could possibly have been burned: 0 .. supply.
     # ===== ETHEREUM'S CONSENSUS REWARDS, FROM ethsupply2's Eth2Staking. 2026-09-29 (Jake). =====
     # Eth2Staking is the cumulative ETH minted as consensus-layer rewards; its daily change is the
-    # consensus part of the staking yield (over ETH on the beacon chain). beaconcha.in is demoted
-    # to a one-off seed (2026-09-30), the cross-check of the all-in (MEV-inclusive) figure.
+    # consensus part of the staking yield (over ETH on the beacon chain). beaconcha.in was dropped
+    # entirely on 2026-10-01 (Ethereum.beaconchain_dropped).
     "consensus_rewards_cumulative": {
         "label": "Consensus rewards minted, cumulative (ethsupply2 Eth2Staking)",
         "kind": "stock", "unit": "tokens", "archetypes": [1],
@@ -2338,30 +2334,8 @@ PROJECTS = [
             "confirmed_on": "2026-09-23 — date_field 'date', value_field 'value', read off "
                             "live sample rows for both projects and both metrics.",
         },
-        # ===== gross_issuance_tokens — beaconcha.in's ETH.Store, wired 2026-09-24. =====
-        # BEACONCHAIN_API_KEY is in .env. Field names read from beaconcha.in's OWN published
-        # OpenAPI spec (its docs site is egress-blocked here; the spec is published in its
-        # backend repo — see fetch/beaconchain.py's docstring for the exact source and path)
-        # and checked against every live row anyway, the same discipline as growthepie/NearBlocks.
-        #
-        # AUTH IS A HEADER NAMED LITERALLY `apikey`, NOT `Authorization: Bearer`. The spec's
-        # security schemes are `type: apiKey`, `name: apikey`, one `in: query` and one
-        # `in: header` — that machine-readable definition is followed, not a stray line of
-        # prose beside it ('Authorization header with value: `Bearer <token>`') that describes
-        # neither the query nor the header form actually declared.
-        #
-        # CONSENSUS-LAYER REWARDS ONLY (consensus_rewards_sum_wei). The same response also
-        # carries tx_fees_sum_wei / el_apr — execution-layer priority fees and MEV, paid by
-        # senders TO the proposer out of already-circulating ETH. That is a transfer, not
-        # issuance, and is deliberately never read into this metric.
-        #
-        # THIS DOES NOT REPLACE THE DERIVATION. gross_issuance_tokens for Ethereum already
-        # resolves via _derive_issuance (d(total_supply_gross) + gross_burn_tokens, since
-        # burn_mechanism.model is protocol_level_destruction) whenever ultrasound.money answers
-        # gross_burn_tokens in the same run. beaconchain is registered AHEAD of the derivation
-        # in TIER_ORDER (tier 1), so a measured figure here suppresses that day's derivation —
-        # _derive_issuance already stands down whenever the metric is already in the run's
-        # frame — and the derivation remains the fallback for any day this source fails.
+        # (beaconcha.in's ETH.Store, wired 2026-09-24, demoted 2026-09-28, DROPPED 2026-10-01 —
+        # see beaconchain_dropped below.)
         # ===== A9 (Jake, 2026-09-28): BURN AND ISSUANCE FROM ETHERSCAN, NOT BEACONCHA.IN. =====
         # One free-tier call (stats/ethsupply2, ETHERSCAN_API_KEY) gives cumulative BurntFees and
         # the supply components (fetch/etherscan_supply.py). gross_burn_tokens = d(BurntFees) is
@@ -2369,7 +2343,7 @@ PROJECTS = [
         # revenue/price derivation stands down beside it (it is logged as the cross-check);
         # series_handover below declares the switch so the stitched series is not blanked.
         # Issuance = d(total_supply_protocol) + burn = d(EthSupply + Eth2Staking), via
-        # issuance_supply_metric. beaconcha.in keeps the staking yield only.
+        # issuance_supply_metric.
         "etherscan_supply": {
             "key_env": "ETHERSCAN_API_KEY", "chainid": 1,
             "burn_metric": "burn_cumulative_tokens", "supply_metric": "total_supply_protocol",
@@ -2426,34 +2400,10 @@ PROJECTS = [
             "note": "a measured daily supply; the first segment of the series is Glassnode's",
             "live_confirmed": None,
         },
-        # THE HISTORY LEG IS ETH.STORE'S DAILY CONSENSUS REWARDS (2026-09-30, after ultrasound's
-        # series proved frozen at 2024-06-22): new ETH is minted only as consensus rewards, so
-        # consensus_rewards_sum_wei per beaconchain-day stands in for d(Eth2Staking) and for
-        # gross issuance on the days BEFORE their first Etherscan row — prepended at read time
-        # (build_workbook._history_leg_views), stored under its own metric, never overlapping.
-        # Beaconchain-days run 12:00:23 UTC to 12:00:23 UTC; dated by day_start.
-        "history_legs": {
-            "consensus_rewards_tokens": {"from_metric": "consensus_rewards_ethstore_tokens",
-                                         "source_prefix": "beaconchain:ethstore"},
-            "gross_issuance_tokens": {"from_metric": "consensus_rewards_ethstore_tokens",
-                                      "source_prefix": "beaconchain:ethstore"},
-        },
+        # ETH.STORE HISTORY LEGS REMOVED 2026-10-01 with beaconcha.in (beaconchain_dropped below):
+        # gross_issuance_tokens and consensus_rewards_tokens are Etherscan's alone, forward-only
+        # from 2026-09-29 (HISTORY_FORWARD_ONLY).
         "series_handover": {
-            "gross_issuance_tokens": {
-                "ordered_points": ("beaconchain:ethstore.consensus_rewards_sum_wei",
-                                   "derived:d_total_supply_protocol+burn"),
-                "why": "ETH.Store consensus rewards per day before the Etherscan leg (read-time "
-                       "leg, days before its first row only), then d(ethsupply2 supply) + "
-                       "d(BurntFees) — the same quantity, new ETH minted, measured two ways.",
-                "declared_on": "2026-09-30",
-            },
-            "consensus_rewards_tokens": {
-                "ordered_points": ("beaconchain:ethstore.consensus_rewards_sum_wei",
-                                   "etherscan:ethsupply2.Eth2Staking"),
-                "why": "ETH.Store consensus rewards before the first d(Eth2Staking) row, then "
-                       "d(Eth2Staking) (read-time leg; never stored under this metric)",
-                "declared_on": "2026-09-30",
-            },
             "gross_burn_tokens": {
                 "ordered_points": ("derived:defillama_burned_fee_revenue/price",
                                    "etherscan:ethsupply2.BurntFees"),
@@ -2464,60 +2414,20 @@ PROJECTS = [
                 "declared_on": "2026-09-28",
             },
         },
-        "beaconchain": {
-            # ** ROBOTS.TXT GOVERNS CRAWLING; THE KEY AUTHORISES THIS ENDPOINT. Recorded
-            # 2026-09-28. ** /api/v1/ethstore is a keyed API Jake registered for — the key is the
-            # permission to call it. robots.txt is still checked (a courtesy this tool pays every
-            # host), read per RFC 9309: beaconcha.in's robots.txt answered HTTP 403 on two
-            # consecutive runs, which is "unavailable" (s2.3.1.3, may access), not a Disallow.
-            # The stdlib reading of 403 as disallow-all refused these reads until 2026-09-28.
-            "authorisation": "BEACONCHAIN_API_KEY — the registered key is the permission for "
-                             "this endpoint; robots.txt governs crawling, not keyed API use",
-            # ===== OUT OF ROUTINE RUNS (Jake, 2026-09-30). =====
-            # The daily /ethstore/latest call kept triggering long lockouts (150,198s that day),
-            # so no routine run calls beaconcha.in (it left fetch.TIER_ORDER). The ONLY use is the
-            # one-off seed: `python token_metrics.py --seed beaconchain` reads the key's real quota
-            # (one /ethstore/latest call, which is also the staking-yield cross-check), REFUSES
-            # unless every missing day + `reserve` fits in what is left of the month, then reads
-            # /ethstore/{day} for each missing beaconchain-day (~365 on the first run), paced to
-            # the per-minute limit it reports. If the quota cannot cover it, beaconcha.in is
-            # dropped and the history stays forward-only from 2026-09-29 (HISTORY_FORWARD_ONLY).
-            # Published plans (gobitfly/eth2-beaconchain-explorer templates/payment/pricing.html
-            # @fd48389): Free 0€ — 5/s, 20/min, 30,000/month; Sapphire 59€/mo ex VAT — 500,000/month.
-            "routine": False,
-            "history": {"metric": "staking_yield_pct", "field": "apr", "scale": 1, "days": 365,
-                        "consensus_metric": "consensus_rewards_ethstore_tokens",
-                        "reserve": 5, "min_interval_s": 3.1},
-            "base_url": "https://beaconcha.in",
-            "key_env": "BEACONCHAIN_API_KEY",
-            # gross_issuance_tokens (consensus_rewards_sum_wei) REMOVED 2026-09-28 (A9): issuance
-            # now comes from Etherscan ethsupply2 (see etherscan_supply). A beaconcha.in figure
-            # beside it would make _derive_issuance stand down on the days the quota allows.
-            # THE CROSS-CHECK: the seed's quota-reading call. Not a routine metric source (the key
-            # was "metrics" until 2026-09-30, when beaconcha.in left routine runs).
-            "crosscheck": {
-                # ===== THE VALIDATOR YIELD, FROM THE SAME RESPONSE. Added 2026-09-24 (Jake). =====
-                # `apr`, NOT cl_apr: the total staker return — consensus rewards PLUS execution-
-                # layer priority fees and MEV. Right for a yield (what a staker earns); wrong for
-                # issuance, which is why gross_issuance_tokens above reads cl only. Stored as a
-                # FRACTION (0.03 = 3%); the metric's 0-0.5 bound rejects a percent-form value.
-                "path": "/api/v1/ethstore/latest", "field": "apr", "scale": 1,
-                "log_note": "total staker APR (cl + el INCLUDING MEV), a fraction — the cross-check "
-                            "of the Etherscan yield, taken once by the seed",
-            },
-            "field_source": "https://raw.githubusercontent.com/gobitfly/"
-                            "eth2-beaconchain-explorer/master/static/openapi/bundled.yaml",
-            "source_read": "2026-09-24",
-            "excludes": "tx_fees_sum_wei, el_apr, cl_apr and the 7d/31d trailing averages. "
-                       "consensus_rewards_sum_wei is stored as issuance and apr as the validator "
-                       "yield; the rest is either a component of apr or execution-layer fee "
-                       "revenue (a transfer, not issuance).",
-            "live_confirmed": None,      # set from the first run's log line, which prints the row
+        # ===== beaconcha.in DROPPED ENTIRELY (Jake, 2026-10-01). =====
+        "beaconchain_dropped": {
+            "decided": "Jake, 2026-10-01",
+            "why": "after the monthly reset the key's allowance was ZERO: every x-ratelimit Limit and "
+                   "Remaining header read 0, with Ratelimit-Reset 2,649,797 s (Jake's post-reset probe). "
+                   "Before that its daily /ethstore/latest call kept triggering 150,000 s+ lockouts",
+            "removed": "fetch/beaconchain.py, `token_metrics.py --seed beaconchain`, the A1 cross-check "
+                       "column (ETH.Store apr), probes beaconchain / beaconchain_quota, and the ETH.Store "
+                       "history legs of gross_issuance_tokens and consensus_rewards_tokens",
+            "consequence": "Ethereum's validator yield is Etherscan's d(Eth2Staking) + priority fees over "
+                           "beacon-chain ETH (excluding MEV), filling once a week of d(Eth2Staking) exists "
+                           "(~2026-10-06); its history is FORWARD-ONLY from 2026-09-29 (HISTORY_FORWARD_ONLY)",
         },
         "name": "Ethereum", "symbol": "ETH",
-        # beaconcha.in's apr is a ONE-OFF seed reading (2026-09-30), dated to its own day; judged
-        # as monthly so it reads stale, not wrong, a month after the seed.
-        "manual_granularity": {"staking_yield_pct": "monthly"},
         # Settlement volume for Network Reserve Ratio: Artemis's daily SETTLEMENT_VOLUME from Jake's
         # CSV export (ARTEMIS_SETTLEMENT; 2026-09-30), replacing the manual quarterly The Block row.
         # ===== COIN METRICS' TxTfrValAdjUSD IS NOT ON THE FREE TIER (checked 2026-09-29). =====
@@ -15786,10 +15696,9 @@ VALIDATOR_YIELD = {
                  "consensus_metric": "consensus_rewards_tokens",
                  "issuance_metric": "gross_issuance_tokens", "stake_metric": "beacon_chain_eth",
                  "fees_metric": "fees_usd", "burned_metric": "revenue_usd",
-                 "cross_check_metric": "staking_yield_pct",
                  "note": "EXCLUDING MEV: consensus (d Eth2Staking) + execution (priority fees) over "
-                         "beacon-chain ETH (deposit contract + Eth2Staking - WithdrawnTotal); "
-                         "beaconcha.in's MEV-inclusive apr (one-off seed, dated) is the cross-check",
+                         "beacon-chain ETH (deposit contract + Eth2Staking - WithdrawnTotal); no "
+                         "cross-check since beaconcha.in was dropped (2026-10-01)",
                  # THE PROTOCOL'S OWN CEILING (consensus-specs @e321975f, 2026-09-28): per epoch
                  # sum(base rewards) = BASE_REWARD_FACTOR (64) x sqrt(total active gwei) when every
                  # duty is met (the Altair weights sum to WEIGHT_DENOMINATOR); x 82,181.25 epochs a
@@ -15924,8 +15833,6 @@ ISSUANCE_PRIMARY = {
     # ethsupply2, i.e. d(total_supply_protocol) + d(BurntFees). beaconcha.in keeps the yield.
     "Ethereum": {"kind": "first_party", "metric": "gross_issuance_tokens",
                  "source_prefix": "derived:d_total_supply_protocol",
-                 # the declared history leg before it (2026-09-30): ETH.Store consensus rewards
-                 "history_prefix": "beaconchain:ethstore",
                  "block_reason": "waiting for Etherscan ethsupply2 readings (d(total_supply_"
                                  "protocol) + d(BurntFees)) to cover the window. The older "
                                  "d(CoinGecko total_supply) + burn figure is MECHANISM_ASSUMED "
@@ -16238,19 +16145,17 @@ HISTORY_FORWARD_ONLY = {
         ],
         "checked_on": "2026-09-30",
     },
-    # ETHEREUM (2026-09-30, after Jake's probes): route (a) rejected; ultrasound.money's daily
-    # supply is frozen at 2024-06-22; beaconcha.in is OUT of routine runs (Jake, 2026-09-30).
-    # Forward-only from 2026-09-29 UNLESS the one-off seed runs — `python token_metrics.py --seed
-    # beaconchain`, which refuses unless the month's quota covers the whole backfill. If it
-    # refuses, beaconcha.in is dropped and this entry stands as the permanent record.
+    # ETHEREUM — FORWARD-ONLY FROM 2026-09-29, FINAL (Jake, 2026-10-01): beaconcha.in, the one
+    # history route left, was dropped entirely (zero allowance after the monthly reset).
     "Ethereum": {
-        "metrics": ("gross_issuance_tokens", "staking_yield_pct"),
+        "metrics": ("gross_issuance_tokens", "consensus_rewards_tokens"),
         "why": "forward-only from 2026-09-29 (issuance from 2026-09-30: the 09-29 row was a stale-"
                "supply reading, removed by SQL BD): route (a) (CoinGecko mcap/price) was rejected as noise, "
-               "ultrasound.money's daily supply is frozen at 2024-06-22, and beaconcha.in is out of "
-               "routine runs (its daily call kept triggering 150,000s+ lockouts). The only history "
-               "route is a one-off ETH.Store seed, which runs only if the key's quota covers every day",
-        "until": "python token_metrics.py --seed beaconchain (refuses unless ~370 calls remain this month)",
+               "ultrasound.money's daily supply is frozen at 2024-06-22, and beaconcha.in — the only "
+               "per-day history route (ETH.Store) — was DROPPED 2026-10-01: after the monthly reset every "
+               "rate-limit header read 0 (Ratelimit-Reset 2,649,797 s). The validator yield built on "
+               "these is forward-only too",
+        "until": None,
     },
     # 2026-09-29 (Jake: "if an input has no history, say which"):
     "Plume": {
@@ -16632,13 +16537,18 @@ TRADING_THROUGHPUT = {
     #   A chain file is keyed by the chain's DISPLAY LABEL normalised (lowercase, non-alphanumerics
     #   dropped; api2/cache/file-cache.ts:63), so each response's `chain` must equal the label
     #   below or nothing is stored.
-    "endpoints": {"dex_volume_usd": "/overview/dexs/{slug}", "perps_volume_usd": "/overview/derivatives/{slug}"},
+    # DEX ONLY from DefiLlama: its derivatives route answered HTTP 402 (paid) on 2026-10-01
+    # (SOURCE_REGISTER["api.llama.fi"].paid_only). Hyperliquid's perps come from its own info API
+    # (fetch/hl_candles.py); no other chain has a free perps source.
+    "endpoints": {"dex_volume_usd": "/overview/dexs/{slug}"},
     "params": {"excludeTotalDataChart": "false", "excludeTotalDataChartBreakdown": "true",
                "dataType": "dailyVolume"},
     # label/slug from defillama-sdk@83ee1f69 src/util/chainUtils/data.json (ll. 176, 356, 248, 413).
     "chains": {
         "Ethereum": {"slug": "ethereum", "label": "Ethereum",
-                     "covered": ("dex_volume_usd", "perps_volume_usd"),
+                     # DEX ONLY: DefiLlama's perps route is paid (HTTP 402, 2026-10-01) and no free
+                     # source carries Ethereum's perps — the throughput row says so
+                     "covered": ("dex_volume_usd",),
                      "coverage": "DEX: hundreds of adapters (Uniswap, Curve, Balancer...). Perps: few — "
                                  "apex-omni, aevo, extended, boros, toros, synthetix-v4, Orderly's slice"},
         "Near": {"slug": "near", "label": "Near", "covered": ("dex_volume_usd",),
@@ -16712,6 +16622,13 @@ SETTLEMENT_REBUILD = {
     "hyperliquid": "NOT REBUILDABLE — see UNAVAILABLE (Hyperliquid, settlement_volume_usd)",
 }
 METHODOLOGY_FLAGS = {
+    # Jake's run 2026-10-01, Ethereum August 2026 (Aug 1-25, the export's days): DefiLlama DEX
+    # ~$1.12bn/day vs Artemis settlement ~$14.5bn/day — DEX is ~7.7% of settlement, so P2P transfers
+    # are ~92%. The two NRRs measure different things by an order of magnitude.
+    "throughput_vs_settlement": "NEVER COMPARE the two NRRs: on Ethereum, August 2026, DefiLlama DEX "
+                                "volume (~$1.12bn/day) is ~7.7% of Artemis settlement volume "
+                                "(~$14.5bn/day, Aug 1-25) — P2P transfers are ~92% — so the "
+                                "trading-throughput NRR runs ~13x the settlement NRR (Jake, 2026-10-01).",
     "hyperliquid_nrr": "Hyperliquid's NRR on settlement volume is not meaningful: its activity is perps, "
                        "which Artemis's definition (DEX + NFT + P2P transfers) excludes. Use the "
                        "trading-throughput NRR; decide in the methodology work whether A1 should rank on "
@@ -20166,14 +20083,17 @@ SOURCE_REGISTER = {
         "key": None,
     },
     "beaconcha.in": {
-        "used_for": "ONE-OFF SEED only (token_metrics.py --seed beaconchain): per-day ETH.Store history + one apr cross-check; in no routine run since 2026-09-30",
-        "paths": ["/api/v1/ethstore/latest", "/api/v1/ethstore/1765"],
+        "used_for": "NOTHING — DROPPED 2026-10-01 (Jake): zero allowance after the monthly reset "
+                    "(every Limit/Remaining header 0, Ratelimit-Reset 2,649,797 s)",
+        "paths": [],
         "robots": "robots.txt answered HTTP 403 on 2026-09-27/28 = 'unavailable' under RFC 9309 "
                   "s2.3.1.3 (may access); no robots file in gobitfly/eth2-beaconchain-explorer",
         "terms": {"url": "https://beaconcha.in/terms", "status": "HTTP 403 — UNREACHABLE for Jake's probe (2026-09-30); unread"},
         "licence": "keyed API (BEACONCHAIN_API_KEY); published plans: Free 0€ 30,000/month, "
-                   "Sapphire 59€/mo 500,000/month (templates/payment/pricing.html @fd48389)",
-        "key": "BEACONCHAIN_API_KEY",
+                   "Sapphire 59€/mo 500,000/month (templates/payment/pricing.html @fd48389) — the key "
+                   "showed a ZERO allowance in October 2026",
+        "key": "BEACONCHAIN_API_KEY (no longer read)",
+        "status": "DROPPED",
     },
     "api.hyperliquid.xyz": {
         "used_for": "HyperCore tokenDetails, spot state, validator summaries",
@@ -20213,8 +20133,14 @@ SOURCE_REGISTER = {
         "key": None,
     },
     "api.llama.fi": {
-        "used_for": "fees, revenue, holders revenue; Chainlink's five service adapters summed",
-        "paths": ["/summary/fees/chainlink-requests"],
+        "used_for": "fees, revenue, holders revenue; Chainlink's five service adapters summed; DEX volume "
+                    "by chain (/overview/dexs/{chain}, trading throughput)",
+        "paths": ["/summary/fees/chainlink-requests", "/overview/dexs/{chain}"],
+        # PERPS ARE PAID (Jake's run 2026-10-01): /overview/derivatives/ethereum and
+        # /overview/derivatives/hyperliquid-l1 answered HTTP 402, matching DefiLlama's own docs
+        # (defillama-openapi-pro.json "x-api-plan-only"; Pro API $300/mo). NOT used: Ethereum's
+        # throughput is DEX-only, Hyperliquid's perps come from Hyperliquid's own info API.
+        "paid_only": {"/overview/derivatives/{chain}": "HTTP 402 on ethereum and hyperliquid-l1, 2026-10-01"},
         "robots": "NOT CHECKED FROM HERE (unchanged since first wiring)",
         "terms": {"url": "https://defillama.com/terms", "status": "REACHABLE (Jake's probe 2026-09-30) — NOT YET READ: Jake to read"},
         "licence": "free public API; DefiLlama/dimension-adapters has no LICENSE file (@f16ec99)",

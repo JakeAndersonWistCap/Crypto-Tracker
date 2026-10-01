@@ -147,13 +147,6 @@ def protocol_api_plan() -> list[tuple[str, str, str]]:
         for metric, m in (nb.get("metrics") or {}).items():
             out.append((p["name"], metric, f"nearblocks -> GET {nb['base_url']}{m['path']} "
                                            f"`{m['field']}` ({keyed})"))
-    # beaconcha.in: NOT in routine runs since 2026-09-30 — the one-off seed only.
-    for p in config.PROJECTS:
-        bc = p.get("beaconchain") or {}
-        if bc:
-            out.append((p["name"], bc["history"]["metric"],
-                        "beaconchain -> NOT FETCHED in routine runs; one-off: "
-                        "`token_metrics.py --seed beaconchain` (quota-checked first)"))
     return out
 
 

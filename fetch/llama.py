@@ -851,6 +851,8 @@ class DefiLlama:
         if not spec:
             return
         for metric in spec["covered"]:
+            if metric not in config.TRADING_THROUGHPUT["endpoints"]:
+                continue                    # served elsewhere (Hyperliquid perps: fetch/hl_candles.py)
             path = config.TRADING_THROUGHPUT["endpoints"][metric].format(slug=spec["slug"])
             try:
                 j = self.http.get(f"{API}{path}", params=config.TRADING_THROUGHPUT["params"])
