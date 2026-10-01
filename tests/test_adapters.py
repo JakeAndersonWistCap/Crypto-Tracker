@@ -21621,3 +21621,66 @@ def test_plume_one_method_per_metric_section_bo_and_a_label_change_is_not_a_meas
     assert got == [("locked_tokens", f"{tag}.totalAmountStaked:archive"),
                    ("staking_commission_pct", f"{tag}.getValidatorsList.commission[stake-weighted, active]:archive"),
                    ("staking_yield_net_pct", f"{tag}.gross*active(1-commission)")]
+
+
+def test_history_audit_reads_completeness_classifications_and_the_hyperliquid_view(tmp_path, monkeypatch):
+    """Jake's history_audit (2026-10-01): Hyperliquid's buyback held 8 days and its burn 20 in the
+    STORE, while the workbook reads a year — DefiLlama holders revenue / same-day price, prepended at
+    read time and never stored (Jake, 2026-09-29/30). And decided items (declared zeros, N/A,
+    superseded, mechanism starts) were listed as short. The audit now counts the series AS READ and
+    reads completeness_report.py's classifications, so --short-only holds only real gaps."""
+    import sqlite3
+    import store as store_mod
+    import history_audit as ha
+    from fetch.base import today
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    db = str(tmp_path / "m.db")
+    store_mod.Store(db)
+    t = today().normalize()
+    year = pd.date_range(t - pd.Timedelta(days=365), t - pd.Timedelta(days=1))
+    rows = [(d, "holders_revenue_usd", 1e6, "defillama") for d in year]
+    rows += [(d, "price_usd", 40.0, "coingecko") for d in year]
+    rows += [(d, "actual_buyback_tokens", 25_000.0, "derived:burn_total(gross_burn_tokens+core_burn_tokens):as-buyback")
+             for d in year[-8:]]
+    rows += [(d, "gross_burn_tokens", 25_000.0, "hypercore_info:spotClearinghouseState:delta") for d in year[-20:]]
+    rows += [(d, "core_burn_tokens", 100.0, "hypercore_info:tokenDetails:delta") for d in year[-20:]]
+    conn = sqlite3.connect(db)
+    conn.executemany("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)",
+                     [(str(d.date()), "Hyperliquid", m, v, src, 1, "x") for d, m, v, src in rows])
+    conn.commit()
+    got = {(r[0], r[1]): (r[7], r[8]) for r in ha.rows(db, short_only=False)}
+    v, why = got[("Hyperliquid", "gross_burn_tokens")]
+    assert v == "FULL AS READ" and "holders_revenue_usd / same-day price" in why, (v, why)
+    assert got[("Hyperliquid", "actual_buyback_tokens")][0] == "FULL AS READ"
+    short = {(r[0], r[1]) for r in ha.rows(db, short_only=True)}
+    assert ("Hyperliquid", "gross_burn_tokens") not in short and ("Hyperliquid", "actual_buyback_tokens") not in short
+    # decided items are not short: Aethir's declared zero, GEODNET's issuance, Chainlink's superseded release
+    for k in (("Aethir", "gross_issuance_tokens"), ("Chainlink", "pool_release_tokens")):
+        assert k not in short, k
+        if k in got:
+            assert got[k][0] in ("DECIDED", "FULL", "COMPLETE"), (k, got[k])
+
+
+def test_history_audit_reads_coingecko_total_supply_as_by_design(tmp_path, monkeypatch):
+    """Jake's history_audit (2026-10-01): total_supply held 21 days on nine projects and the audit
+    said "archive_backfill.py --run fills it" — but the backfill refuses, by design: CoinGecko's
+    total_supply is read "now" only, and the chain read is another measuring point (where a chain
+    history is wanted it is total_supply_gross). The audit now says BY DESIGN and keeps it off the
+    short list."""
+    import sqlite3
+    import store as store_mod
+    import history_audit as ha
+    from fetch.base import today
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    db = str(tmp_path / "m.db")
+    store_mod.Store(db)
+    conn = sqlite3.connect(db)
+    for k in range(21):
+        conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)",
+                     (str((today() - pd.Timedelta(days=k + 1)).date()), "Chainlink", "total_supply", 1e9, "coingecko", 1, "x"))
+    conn.commit()
+    got = {(r[0], r[1]): (r[7], r[8]) for r in ha.rows(db, short_only=False, classify=False)}
+    v, why = got[("Chainlink", "total_supply")]
+    assert v == "BY DESIGN" and why.startswith("BY DESIGN") and "total_supply_gross" in why
+    assert ("Chainlink", "total_supply") not in {(r[0], r[1]) for r in ha.rows(db, short_only=True, classify=False)}
+    assert "archive_backfill" not in ha.why_short(config.PROJECT_BY_NAME["Chainlink"], "total_supply", None)

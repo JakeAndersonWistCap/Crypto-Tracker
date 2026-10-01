@@ -524,6 +524,26 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11o. history_audit.py reads what completeness_report.py reads (2026-10-01)
+
+`python history_audit.py --short-only` lists only REAL gaps. It works on the series the workbook
+reads, read-time views included, and uses completeness_report.py's own classifications:
+- **FULL AS READ**: short in the store, full as read. Example: Hyperliquid's buyback and burn
+  before the live read come from DefiLlama holders revenue divided by the same-day price. That
+  history is prepended when the workbook is built and never stored.
+- **DECIDED**: the completeness report calls it COMPLETE, N/A, ACCEPTED LIMIT or WAITING ON A
+  DATE. That covers declared zeros, superseded releases, mechanism starts and halted programmes.
+- **BY DESIGN**: `total_supply` is CoinGecko's figure, and only today's value is read. Chain
+  history, where it's wanted, is `total_supply_gross`.
+
+`--no-classify` skips the workbook build and is fast, but decided items then show as short.
+
+Archive passes run per project. Aethir's `locked_tokens_wrapper` (the Ethereum wrapper's ATH) is
+archivable:
+```bash
+python archive_backfill.py --run --project Aethir
+```
+
 ## 11n. NEAR from BigQuery — Jake's own login (Application Default Credentials)
 
 Google's public NEAR dataset (`bigquery-public-data.crypto_near_mainnet_us`) is live. Queries run in

@@ -18672,6 +18672,18 @@ LIMITATION_BY_KEY = {(u["project"], u["metric"]): u for u in UNAVAILABLE
                      if u.get("kind") == "history"}
 
 
+def read_time_history(project_name: str, metric: str) -> str | None:
+    """The declared read-time history leg of a series, as text (history_audit), or None."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    bh, burn = p.get("buyback_history") or {}, p.get("burn_history") or {}
+    if bh and metric in ("actual_buyback_tokens", "actual_buyback_usd"):
+        return f"{bh['usd_metric']} / same-day price ({bh['source']}), declared by {bh['declared_by']}"
+    if burn and metric == burn.get("metric"):
+        return f"{burn['usd_metric']} / same-day price ({burn['source']}), declared by {burn['declared_by']}"
+    leg = (p.get("history_legs") or {}).get(metric)
+    return f"history leg {leg}" if leg else None
+
+
 def unavailable_for(project_name: str, metric: str) -> dict | None:
     """The closure record for a FIGURE that was chased and has no route, or None.
 

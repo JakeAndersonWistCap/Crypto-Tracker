@@ -15,6 +15,15 @@ newest stored date, the days stored, and what the backfill has learned about the
                 (recorded by archive_backfill.py) or the series is declared to begin then
                 (config.ARCHIVE_SERIES_START). Nothing earlier exists to fill.
     EMPTY       nothing stored
+    FULL AS READ  short in the store, full as the workbook reads it — a declared read-time history
+                (Hyperliquid's buyback and burn: DefiLlama holders revenue / same-day price)
+    BY DESIGN   short and meant to be: config.ARCHIVE_NOT_BY_DESIGN (total_supply is CoinGecko's figure,
+                read "now" only — FDV and every supply denominator; chain history is total_supply_gross)
+    DECIDED     short or empty in the store, but completeness_report.py classifies it as settled —
+                COMPLETE (a declared zero, a read-time view such as Pendle's buyback tokens or
+                Hyperliquid's DefiLlama history, a mechanism start), N/A, ACCEPTED LIMIT, or WAITING
+                ON A DATE. The audit reads the SAME classifications (Jake, 2026-10-01), on the series
+                as the workbook reads it, so --short-only lists only real gaps.
 
 Usage:  python history_audit.py [--db metrics.db] [--short-only]
         python history_audit.py --forget price_usd [--yes]
@@ -45,6 +54,8 @@ PRICE_DAYS = 365          # prices: every row of every USD valuation is priced o
 def why_short(p: dict, m: str, first: str | None) -> str:
     """For a short series: what fills it, or the specific reason nothing can (2026-09-29)."""
     from fetch import archive as ar
+    if m in config.ARCHIVE_NOT_BY_DESIGN:
+        return config.ARCHIVE_NOT_BY_DESIGN[m]
     fwd = config.HISTORY_FORWARD_ONLY.get(p["name"]) or {}
     if m in fwd.get("metrics", ()):
         if not first:
@@ -79,8 +90,45 @@ def series_start(p: dict, m: str) -> dict | None:
     return None
 
 
-def rows(db: str, short_only: bool) -> list[tuple]:
+# completeness_report.py verdicts that SETTLE a series — never a gap for the audit.
+SETTLED = ("COMPLETE", "COMPLETE (MANUAL)", "N/A", "ACCEPTED LIMIT", "WAITING ON A DATE", "PARKED")
+
+
+def classifications(db: str):
+    """{(project, metric): (verdict, detail)} exactly as completeness_report.py classifies them —
+    on the workbook's own aggregate (its read-time views included), for every pair the audit lists."""
+    import build_workbook as bw
+    import completeness_report as cr
+    from store import Store
+    scope, parked = cr.portfolio_scope()
+    bw._SCOPE = list(scope)
+    st = Store(db)
+    try:
+        long = st.load_long()
+        asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+        data = bw.aggregate(long, st.fetch_status(), asof, gaps=st.gap_report(), review=st.review_queue())
+    finally:
+        st.close()
+    firsts = (long.groupby(["project", "metric"])["date"].min().dt.strftime("%Y-%m-%d").to_dict()
+              if not long.empty else {})
+    got = {(r["project"], r["metric"]): r for r in data.to_dict("records")}
+    out = {}
+    for p in config.PROJECTS:
+        if p["name"] in parked or p["name"] in cr.PARKED:
+            out.update({(p["name"], m): ("PARKED", "not in portfolio.txt / parked", None)
+                        for m in config.metrics_for_project(p)})
+            continue
+        for m in config.metrics_for_project(p):
+            row = got.get((p["name"], m)) or {"status": "missing"}
+            fd = row.get("first_date")
+            first = fd if isinstance(fd, str) and fd else firsts.get((p["name"], m))
+            out[(p["name"], m)] = (*cr.classify(p, m, row, first, asof, firsts), first)
+    return out
+
+
+def rows(db: str, short_only: bool, classify: bool = True) -> list[tuple]:
     from fetch import archive as ar
+    settled = classifications(db) if classify else {}
     conn = sqlite3.connect(db)
     span = {(p, m): (a, b, n) for p, m, a, b, n in conn.execute(
         "SELECT project, metric, MIN(date), MAX(date), COUNT(*) FROM metrics GROUP BY project, metric")}
@@ -91,7 +139,13 @@ def rows(db: str, short_only: bool) -> list[tuple]:
             if m not in config.metrics_for_project(p):
                 continue
             first, last, n = span.get((p["name"], m), (None, None, 0))
+            cls = settled.get((p["name"], m))
+            decided = cls if cls and cls[0] in SETTLED else None
             if first is None:
+                if decided:
+                    if not short_only:
+                        out.append((p["name"], m, "", "", 0, 0, "", "DECIDED", f"{decided[0]}: {decided[1][:200]}"))
+                    continue
                 out.append((p["name"], m, "", "", 0, 0, "", "EMPTY", why_short(p, m, None)))
                 continue
             days = (pd.Timestamp(last) - pd.Timestamp(first)).days + 1
@@ -101,10 +155,26 @@ def rows(db: str, short_only: bool) -> list[tuple]:
             verdict = ("FULL" if (today() - pd.Timestamp(first)).days >= need - bf.SLACK_DAYS else
                        "COMPLETE" if start and first <= start["from"] else
                        "SOURCE-LIMITED" if seen.get("first") == first else "BACKFILLING")
-            if short_only and verdict in ("FULL", "COMPLETE"):
+            # AS READ: a read-time view can carry history the store does not (Hyperliquid's buyback
+            # and burn before the live read = DefiLlama holders revenue / same-day price, prepended in
+            # build_workbook, never stored — Jake 2026-09-29/30). The audit counts the series the
+            # workbook reads.
+            as_read = cls[2] if cls else None
+            if (verdict not in ("FULL", "COMPLETE") and as_read and as_read < first
+                    and (today() - pd.Timestamp(as_read)).days >= need - bf.SLACK_DAYS):
+                verdict = "FULL AS READ"
+            elif verdict not in ("FULL", "COMPLETE") and m in config.ARCHIVE_NOT_BY_DESIGN:
+                verdict = "BY DESIGN"          # total_supply: CoinGecko's, read "now" only (Jake, 2026-10-01)
+            elif verdict not in ("FULL", "COMPLETE") and decided:
+                verdict = "DECIDED"
+            if short_only and verdict in ("FULL", "COMPLETE", "DECIDED", "FULL AS READ", "BY DESIGN"):
                 continue
             why = ("" if verdict == "FULL" else
                    f"series starts {start['from']}: {start['why']}" if verdict == "COMPLETE" else
+                   f"{decided[0]}: {decided[1][:200]}" if verdict == "DECIDED" else
+                   config.ARCHIVE_NOT_BY_DESIGN.get(m, "") if verdict == "BY DESIGN" else
+                   f"stored from {first}; the workbook reads it from {as_read} (a read-time view: "
+                   f"{config.read_time_history(p['name'], m) or 'see build_workbook'})" if verdict == "FULL AS READ" else
                    why_short(p, m, first))
             out.append((p["name"], m, first, last, n, days,
                         seen.get("first", "") + (f" (checked {seen['checked_on']})" if seen else ""),
@@ -116,6 +186,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--db", default="metrics.db")
     ap.add_argument("--short-only", action="store_true")
+    ap.add_argument("--no-classify", action="store_true",
+                    help="skip completeness_report.py's classifications (fast; decided items show as short)")
     ap.add_argument("--forget", metavar="METRIC", help="drop the backfill memo for METRIC")
     ap.add_argument("--cadence", nargs=2, metavar=("PROJECT", "METRIC"),
                     help="how often a stored daily series actually changes (e.g. Ethereum "
@@ -151,7 +223,7 @@ def main(argv=None) -> int:
         print(f"{len(drop)} memo entr{'y' if len(drop) == 1 else 'ies'} for {a.forget}"
               + ("" if a.yes else " — nothing written; add --yes"))
         return 0
-    table = rows(a.db, a.short_only)
+    table = rows(a.db, a.short_only, classify=not a.no_classify)
     print(f"{'project':<13} {'metric':<24} {'oldest':<11} {'newest':<11} {'rows':>5} "
           f"{'days':>5}  {'source reaches (backfill memo)':<34} verdict / what fills it")
     for r in table:
