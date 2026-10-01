@@ -488,6 +488,21 @@ python check_offline_items.py near_settlement_routes   # NEAR: BigQuery layout +
 
 Each seed caches its progress, so an interrupted run resumes; routine runs then add each new day.
 
+**Progress lines and checkpoints (2026-10-01).** Every long seed prints a line like
+```
+PROGRESS plume_settlement ERC-20 Plume: 1,500/~21,700 pages (6.9%); reached back to 2026-09-12 (floor 2025-10-01); 18 day(s) with transfers; 41,230 P2P transfer(s) kept this run; elapsed 5m12s; remaining ~1h10m; state saved
+```
+every 500 pages or 60 seconds, whichever comes first (day loops print every 10–50 days or 60 s).
+"state saved" means the checkpoint was written to the seed's state file
+(`.cache/logscan/plume-settlement.json` for Plume) at that moment, so Ctrl-C loses at most
+the work since the last line, and re-running the same command picks up from there.
+A stalled call times out (60 s read timeout) and is retried. Each retry is logged as
+`RETRY <host>: ReadTimeout after 60s (attempt 1 of 4)`, with the host only and never the URL or key.
+Change the intervals with `TOKEN_METRICS_PROGRESS_EVERY` (units) and `TOKEN_METRICS_PROGRESS_SECONDS`.
+
+A Plume seed started on code older than 2026-10-01 saved its state only at the end. Let it finish,
+or stop it and start again on the new code. Don't run both at once: they write the same state file.
+
 
 ## 11n. NEAR from BigQuery — Jake's own login (Application Default Credentials)
 
@@ -531,8 +546,29 @@ access, which also reaches cbc-risk-regime-api. So the adapter:
 Without credentials the run does not fail: NEAR's BigQuery figures gap with "run `gcloud auth
 application-default login`", and the CSV fallback below still works.
 
+**P2P backfill stops at 2026-04-01 (Jake, 2026-10-01).** NEAR's BigQuery rows fell ~80% between
+March and April 2026, and the cause isn't known yet. So top-ups run every day, but backfill goes no
+further back than `near_bigquery.backfill_floor` (2026-04-01). Run the break probe **before any NEAR
+seed**:
+```bash
+python check_offline_items.py near_activity_break
+```
+It compares BigQuery's daily transaction counts (partition metadata, about 200 MB at most) with
+NearBlocks' over March–April. It reads NearBlocks' txn-stats once for the missing days, which costs
+about 9 credits. It then saves a verdict to `.cache/logscan/near-activity-break.json`, and the
+workbook reads that file:
+- **PIPELINE**: BigQuery fell but NearBlocks didn't, so the dataset is recording less. Every
+  BigQuery-derived NEAR figure (P2P, settlement volume and its 365-day sum, NRR, first-party
+  circulating) gets an AMBER caveat on its cell: "SUSPECT — possible UNDERCOUNT", including
+  post-April figures.
+- **REAL**: both fell, so activity really dropped. Windows may span the break, and pre-April
+  backfill can be reconsidered (remove `backfill_floor` only once Jake decides).
+- **UNCLEAR / UNDETERMINED**: nothing changes. An undetermined run never overwrites an earlier
+  verdict.
+
 **Then:**
 ```bash
+python check_offline_items.py near_activity_break      # FIRST (above)
 python check_offline_items.py near_settlement_routes   # layout + dry-run bytes (~30 MB; dry runs free)
 python token_metrics.py --seed near_bigquery           # top-up, then month chunks until only the top-up reserve is left
 python token_metrics.py                                # routine: circulating (10 MB) + top-up + one chunk

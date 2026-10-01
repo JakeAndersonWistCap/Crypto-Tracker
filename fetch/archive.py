@@ -39,7 +39,7 @@ import pandas as pd
 
 import config
 
-from .base import AdaptivePacer, FetchOutput, LONG_COLUMNS, RateLimitedTooLong, redact, _measuring_point, derive_flow_from_cumulative, today
+from .base import AdaptivePacer, FetchOutput, LONG_COLUMNS, Progress, RateLimitedTooLong, redact, _measuring_point, derive_flow_from_cumulative, today
 
 log = logging.getLogger("token_metrics.fetch.archive")
 
@@ -586,7 +586,14 @@ class ArchiveBackfill:
                 sol_daily[key] = hist.daily(days)
         written, refused = {}, {}
         from .chain import Chain
+        # PROGRESS (Jake, 2026-10-01): rows are written to the store day by day; the line saves the
+        # block-time caches too, so a cut run re-resolves nothing it already found.
+        prog = Progress("archive_backfill", total=len(days), unit="days", every_units=10,
+                        checkpoint=lambda: [c.save() for c in clocks.values()],
+                        status=lambda: (f"{sum(written.values())} row(s) written over {len(written)} series; "
+                                        f"{len(refused)} series refused"))
         for d in days:
+            prog.tick()
             if time.monotonic() >= deadline:
                 self.report.append(f"budget spent at {d.date()}; re-run to continue")
                 break

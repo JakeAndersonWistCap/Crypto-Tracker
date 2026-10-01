@@ -19680,6 +19680,21 @@ def test_plume_staking_history_seed_reads_past_blocks_and_stops_where_the_rpc_do
     out = FetchOutput()
     res = PlumeStaking(contract_factory=factory()).seed([plume], 5, out, chain=(block_at, lambda b: b >= 998))
     assert res["stored_days"] == 2 and res["mechanism_start"] == str((today() - pd.Timedelta(days=2)).date())
+    # CHECKPOINTED (Jake, 2026-10-01): `flush` (the store write in token_metrics.seed_plume_staking)
+    # runs at every progress line and at the end, so an interrupted seed keeps the days it read
+    import fetch.plume_staking as ps
+    from fetch.base import Progress
+    seen = []
+    out = FetchOutput()
+    orig = ps.Progress
+    ps.Progress = lambda *a, **k: Progress(*a, **{**k, "every_units": 2})
+    try:
+        res = PlumeStaking(contract_factory=factory()).seed(
+            [plume], 5, out, chain=(block_at, lambda b: True),
+            flush=lambda: seen.append(len(out.frame()) if out.frames else 0))
+    finally:
+        ps.Progress = orig
+    assert res["stored_days"] == 5 and len(seen) >= 3 and seen[0] > 0, seen
 
 
 def test_trading_throughput_is_defillama_dex_plus_perps_by_chain_and_never_settlement_volume():
@@ -20824,7 +20839,7 @@ def test_plume_reward_payouts_from_the_treasury_and_the_apy_reconciles_to_the_ap
     assert "2026-09-30,Plume,staking_apy_published,0.045," in mo
 
 
-def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values_p2p(tmp_path, monkeypatch):
+def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values_p2p(tmp_path, monkeypatch, caplog):
     """Jake 2026-10-01: BigQuery's NEAR dataset is live. Nothing heavy runs until approved: the
     year/day/census dry runs are logged; circulating (10 MB) is approved and stored /1e24 as
     NEAR's own circulating supply. Approved P2P: census -> >95% token set; month chunks newest first
@@ -20863,6 +20878,8 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
             if job_config.dry_run:
                 return SimpleNamespace(total_bytes_processed=est)
             self.ran.append(kind)
+            if kind == "p2p":
+                self.p2p_from = getattr(self, "p2p_from", []) + [pd.Timestamp(p["d0"])]
             if kind == "circ":
                 rows = [{"block_date": pd.Timestamp("2026-09-29"), "computed_at_block_height": 1,
                          "circulating_tokens_supply": 1.25e33, "total_tokens_supply": 1.30e33},
@@ -20946,6 +20963,25 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     msgs = " ".join(e.message for e in out.log)
     assert cl2.ran == ["circ", "census", "p2p", "p2p", "p2p"] and "BACKFILL HELD" in msgs
     assert "(backfill 434.00 GB); month used 511.0 GB; remaining 389.0 GB" in msgs
+
+    # THE BACKFILL FLOOR (Jake, 2026-10-01): not across the unexplained Mar->Apr break. With the budget
+    # out of the way, an unbounded seed reads nothing older than the floor, and says where it is.
+    assert config.PROJECT_BY_NAME["Near"]["near_bigquery"]["backfill_floor"] == "2026-04-01"
+    floor = (yday - pd.Timedelta(days=40)).normalize()
+    spec.update(backfill_floor=str(floor.date()), monthly_budget_bytes=900e12)
+    cl3 = Client()
+    out = FetchOutput()
+    import logging
+    with caplog.at_level(logging.INFO, logger="token_metrics.progress"):
+        nbq.NearBigQuery(client=cl3, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "floor.json",
+                         csv_dir=tmp_path / "none").run([proj], None, out, unbounded=True)
+    lines = [r.getMessage() for r in caplog.records]
+    assert cl3.ran.count("p2p") == 3 and min(cl3.p2p_from) == floor, "top-up, 31 days, then the 9 days to the floor"
+    held = json.loads((tmp_path / "floor.json").read_text())["days"]
+    assert min(held) == str(floor.date()) and len(held) == 41
+    prog = [m for m in lines if m.startswith("PROGRESS near_bigquery p2p Near")]
+    assert len(prog) >= 3 and "3/3 chunk(s)" in prog[-1] and "DONE" in prog[-1] and "state saved" in prog[-1]
+    assert f"41 day(s) held (floor {floor.date()})" in prog[-1]
     # no measured top-up yet: the reserve is unknown and backfill is held, not guessed
     r, why = nbq.NearBigQuery()._reserve(spec, {})
     assert r is None and "no top-up has been dry-run yet" in why
@@ -21099,3 +21135,220 @@ def test_jake_run_2026_10_01_1434_fixes():
     assert c._eip1167_impl("0x6080") is None
     assert c._sel("mint(uint256)") == "a0712d68" and c._dispatches("0x...63a0712d68...", "mint(uint256)")
     assert config.PROJECT_BY_NAME["Aethir"]["mint_path"]["ethereum"]["mint_dispatched"] == "mint(uint256)"
+
+
+def test_progress_lines_checkpoint_on_units_or_seconds_and_estimate_the_rest():
+    """Jake, 2026-10-01: `--seed plume_settlement` printed nothing for hours and saved no state after
+    it started. Every long loop now ticks a Progress: a line (done/total, coverage, rows, elapsed,
+    ETA) every N units or S seconds, and the caller's checkpoint runs with EVERY line."""
+    from fetch.base import Progress
+    t = [0.0]
+    saved, got = [], []
+
+    class L:
+        def info(self, m):
+            got.append(m)
+    p = Progress("seed x", total=10, unit="pages", every_units=3, every_s=60, clock=lambda: t[0],
+                 checkpoint=lambda: saved.append(t[0]), status=lambda: "12 rows kept", logger=L())
+    for _ in range(3):
+        t[0] += 10
+        p.tick()
+    assert len(got) == 1 and len(saved) == 1
+    assert got[0] == "PROGRESS seed x: 3/10 pages (30.0%); 12 rows kept; elapsed 0m30s; remaining ~1m10s; state saved"
+    t[0] += 61                                    # a slow page: the 60 s rule fires on the next tick
+    p.tick()
+    assert len(got) == 2 and "4/10 pages" in got[1]
+    p.flush(final=True)
+    assert got[-1].endswith("DONE; state saved") and len(saved) == 3
+    # no total: the fraction covered gives an estimated total and the ETA
+    got.clear()
+    q = Progress("scan", unit="pages", every_units=500, every_s=1000, fraction=lambda: 0.25, clock=lambda: t[0],
+                 logger=L())
+    t0 = t[0]
+    for _ in range(500):
+        t[0] += 0.25
+        q.tick()
+    assert got == ["PROGRESS scan: 500/~2,000 pages (25.0%); elapsed 2m05s; remaining ~6m15s"], got
+    assert t[0] - t0 == 125
+
+
+def test_http_retry_of_a_stalled_call_is_logged_with_the_host_only(caplog, monkeypatch):
+    """A stalled call times out (READ_TIMEOUT_S) and is retried — and now SAID, host only: the
+    exception text can carry the URL, and the URL a key."""
+    import logging
+    import requests
+    from fetch.base import Http
+    h = Http(retries=2, timeout=5)
+    monkeypatch.setattr(base, "sleep", lambda s, what=None: None)
+    calls = []
+
+    def get(url, params=None, headers=None, timeout=None):
+        calls.append(timeout)
+        if len(calls) < 2:
+            raise requests.ReadTimeout(f"read timed out: {url}?apikey=SECRETKEY")
+        r = requests.Response()
+        r.status_code, r._content = 200, b'{"ok": 1}'
+        r.headers["Content-Type"] = "application/json"
+        return r
+    monkeypatch.setattr(h.s, "get", get)
+    with caplog.at_level(logging.WARNING, logger="token_metrics.progress"):
+        got = h.get("https://api.example.org/v2/x", params={"apikey": "SECRETKEY"})
+    assert got == {"ok": 1} and len(calls) == 2 and calls[0][1] == 5
+    lines = [r.getMessage() for r in caplog.records if r.name == "token_metrics.progress"]
+    assert len(lines) == 1 and lines[0].startswith("RETRY api.example.org: ReadTimeout after")
+    assert "attempt 1 of 3" in lines[0] and "SECRETKEY" not in lines[0] and "/v2/x" not in lines[0]
+
+
+def test_plume_settlement_first_run_cut_short_resumes_from_its_checkpoint(tmp_path, monkeypatch, caplog):
+    """Jake, 2026-10-01: an interrupted seed must GENUINELY resume. The first run is killed (a
+    KeyboardInterrupt — nothing is saved on the way out) on its third page; the checkpoint written at
+    its progress line holds the newest block AND the backfill cursor, so the next run tops up (nothing
+    new), continues from the cursor (never re-reading pages 1-2), and ends with exactly the figures an
+    uninterrupted seed gives."""
+    import copy
+    import logging
+    import fetch.base as fb
+    from fetch.base import today
+    from fetch.plume_settlement import PlumeSettlement
+    monkeypatch.setattr(fb, "PROGRESS_EVERY_UNITS", 1)
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    plume["settlement_rebuild"]["days"] = 4
+    d = [(today() - pd.Timedelta(days=k)).normalize() for k in range(0, 7)]
+    eoa = lambda h: {"hash": h, "is_contract": False}                         # noqa: E731
+
+    def tt(day, block, val):
+        return {"timestamp": f"{day.date()}T12:00:00Z", "block_number": block, "type": "token_transfer",
+                "from": eoa("a"), "to": eoa("b"), "total": {"value": str(val * 10**6), "decimals": "6"},
+                "token": {"address_hash": "0xUSD"}}
+    pages = {None: ({"items": [tt(d[0], 900, 1), tt(d[1], 800, 10)], "next_page_params": {"block_number": 800}}),
+             800: ({"items": [tt(d[2], 700, 20)], "next_page_params": {"block_number": 700}}),
+             700: ({"items": [tt(d[3], 600, 30)], "next_page_params": {"block_number": 600}}),
+             600: ({"items": [tt(d[4], 500, 40), tt(d[6], 100, 99)], "next_page_params": {"block_number": 100}})}
+
+    class Cut(KeyboardInterrupt):
+        pass
+
+    class Http:
+        def __init__(self, cut_at=None):
+            self.cut_at, self.erc = cut_at, []
+
+        def get(self, url, params=None):
+            if url.endswith("/token-transfers"):
+                self.erc.append((params or {}).get("block_number"))
+                if self.cut_at is not None and len(self.erc) == self.cut_at:
+                    raise Cut()
+                return pages[(params or {}).get("block_number")]
+            day = params["age_from"][:10]
+            return {"items": [{"type": "coin_transfer", "from": eoa("x"), "to": eoa("y"), "value": str(10**18),
+                               "status": "ok", "timestamp": f"{day}T01:00:00Z"}], "next_page_params": None}
+    prices = {(str(x.date()), c): v for x in d for c, v in (("coingecko:plume", 0.1), ("plume_mainnet:0xusd", 1.0))}
+
+    # the reference: one uninterrupted seed
+    ref = FetchOutput()
+    PlumeSettlement(http=Http(), prices=prices, cache_file=tmp_path / "ref.json", max_seconds=None).run([plume], None, ref)
+    want = ref.frame().set_index("date")["value"].sort_index()
+
+    # the interrupted one: killed fetching page 3
+    h1 = Http(cut_at=3)
+    try:
+        with caplog.at_level(logging.INFO, logger="token_metrics.progress"):
+            PlumeSettlement(http=h1, prices=prices, cache_file=tmp_path / "s.json", max_seconds=None).run(
+                [plume], None, FetchOutput())
+        raise AssertionError("not cut")
+    except Cut:
+        pass
+    st = json.loads((tmp_path / "s.json").read_text())["erc20"]
+    assert st["newest"] == 900 and st["cursor"] == {"block_number": 700} and not st["done_back"]
+    assert set(st["days"]) == {str(d[0].date()), str(d[1].date()), str(d[2].date())}
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("PROGRESS plume_settlement ERC-20")]
+    assert len(lines) == 2 and "2/~" in lines[1] and "state saved" in lines[1] and "reached back to" in lines[1]
+
+    # resumed: a top-up that finds nothing new, then the cursor — pages 1-2 never re-read
+    h2 = Http()
+    out = FetchOutput()
+    PlumeSettlement(http=h2, prices=prices, cache_file=tmp_path / "s.json", max_seconds=None).run([plume], None, out)
+    assert h2.erc == [None, 700, 600]
+    got = out.frame().set_index("date")["value"].sort_index()
+    assert got.to_dict() == want.to_dict() and len(want) == 4
+
+
+def test_near_break_verdict_pipeline_marks_bigquery_cells_suspect_and_real_releases_the_window(tmp_path, monkeypatch):
+    """Jake, 2026-10-01: if near_activity_break shows BigQuery's counts fell and NearBlocks' did not,
+    EVERY BigQuery-derived NEAR figure is SUSPECT (a possible post-April undercount) — said on the
+    cells. If both fell, the drop is real: the window guard lifts. Undetermined changes nothing."""
+    import build_workbook as bw
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    b = config.SERIES_BREAKS[("Near", "settlement_volume_usd")]
+    assert b["verdict"] == "UNDETERMINED" and config.series_break_verdict(b)[0] == "UNDETERMINED"
+    asof = pd.Timestamp("2026-10-01")
+    row = {"status": "ok", "value": 1.0, "date": asof - pd.Timedelta(days=1), "n_points": 30, "entered_on": "",
+           "source": "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]", "tier": 1}
+    assert config.break_suspect("Near", "p2p_transfer_volume_usd", row["source"]) is None
+    assert config.series_break("Near", "settlement_volume_usd") is not None
+
+    (tmp_path / b["verdict_file"]).write_text(json.dumps({"verdict": "PIPELINE", "bq_ratio": 0.21, "nb_ratio": 0.97,
+                                                          "computed_on": "2026-10-02"}))
+    sus = config.break_suspect("Near", "p2p_transfer_volume_usd", row["source"])
+    assert sus.startswith("SUSPECT — possible UNDERCOUNT") and "x0.21" in sus and "x0.97" in sus
+    assert config.break_suspect("Near", "circulating_supply_first_party", "near_bigquery:circulating_supply")
+    assert config.break_suspect("Near", "price_usd", "coingecko") is None
+    assert config.break_suspect("Aethir", "p2p_transfer_volume_usd", row["source"]) is None
+    assert config.series_break("Near", "settlement_volume_usd") is not None, "PIPELINE: the window guard stays"
+    band, why = bw.confidence_for("Near", "p2p_transfer_volume_usd", row, asof)
+    assert band != "GREEN" and "SUSPECT — possible UNDERCOUNT" in why
+
+    (tmp_path / b["verdict_file"]).write_text(json.dumps({"verdict": "REAL", "bq_ratio": 0.2, "nb_ratio": 0.25}))
+    assert config.series_break("Near", "settlement_volume_usd") is None, "a real drop: windows may span it"
+    assert config.break_suspect("Near", "p2p_transfer_volume_usd", row["source"]) is None
+
+
+def test_near_activity_break_probe_computes_and_saves_the_verdict(tmp_path, monkeypatch, capsys):
+    """The probe sets BigQuery's daily transactions beside NearBlocks' and SAVES the verdict the
+    workbook reads; an undetermined run (one side missing) never overwrites an earlier verdict."""
+    import sqlite3
+    import sys as _sys
+    import types
+    import check_offline_items as coi
+    from fetch.near_bigquery import NearBigQuery
+    from fetch.nearblocks import NearBlocks
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "lc"))
+    fake = types.ModuleType("google.cloud.bigquery")
+    fake.QueryJobConfig = lambda **kw: kw
+    g, gc = types.ModuleType("google"), types.ModuleType("google.cloud")
+    g.cloud, gc.bigquery = gc, fake
+    monkeypatch.setitem(_sys.modules, "google", g)
+    monkeypatch.setitem(_sys.modules, "google.cloud", gc)
+    monkeypatch.setitem(_sys.modules, "google.cloud.bigquery", fake)
+    days = pd.date_range("2026-03-01", "2026-04-30")
+
+    class R(dict):
+        def items(self):
+            return dict.items(self)
+
+    class Client:
+        def query(self, sql, job_config=None):
+            rows = [R(table_name="transactions", day=x.date(), total_rows=(1000 if x < pd.Timestamp("2026-03-24") else 200))
+                    for x in days]
+            return types.SimpleNamespace(result=lambda: rows)
+    monkeypatch.setattr(NearBigQuery, "_client", lambda self, spec: (Client(), None))
+    monkeypatch.setattr(NearBlocks, "_key", staticmethod(lambda spec: ""))
+    con = sqlite3.connect("metrics.db")
+    con.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL)")
+    con.executemany("INSERT INTO metrics VALUES (?, 'Near', 'tx_count', ?)", [(str(x.date()), 5000.0) for x in days])
+    con.commit()
+    con.close()
+    coi.near_activity_break()
+    out = capsys.readouterr().out
+    assert "BigQuery x0.20, NearBlocks x1.00" in out and "VERDICT: PIPELINE" in out
+    saved = json.loads((tmp_path / "lc" / "near-activity-break.json").read_text())
+    assert saved["verdict"] == "PIPELINE" and abs(saved["bq_ratio"] - 0.2) < 1e-9
+    # NearBlocks' side missing (empty db, no key): UNDETERMINED, and the saved PIPELINE stands
+    con = sqlite3.connect("metrics.db")
+    con.execute("DELETE FROM metrics")
+    con.commit()
+    con.close()
+    coi.near_activity_break()
+    out = capsys.readouterr().out
+    assert "VERDICT: UNDETERMINED" in out and "nothing saved" in out
+    assert json.loads((tmp_path / "lc" / "near-activity-break.json").read_text())["verdict"] == "PIPELINE"

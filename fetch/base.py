@@ -549,6 +549,8 @@ class Http:
                         wait = asked
                         if wait is None and r.status_code == 429 and self.rate_limit_wait:
                             wait = self.rate_limit_wait
+                        _progress_log.warning("RETRY %s: HTTP %d (attempt %d of %d)", host, r.status_code,
+                                              attempt + 1, self.retries + 1)
                         nap(min(max(wait or 0.0, backoff), self.max_retry_wait), last_err)
                         backoff *= 2
                     continue
@@ -570,9 +572,91 @@ class Http:
             except requests.RequestException as e:
                 last_err = e
                 if attempt < self.retries:
+                    # A STALLED OR DROPPED CALL IS SAID, NOT WAITED ON IN SILENCE (Jake, 2026-10-01).
+                    # Host and error type only: the exception text can carry the URL, and the URL a key.
+                    _progress_log.warning("RETRY %s: %s after %.0fs (attempt %d of %d); next try in %.0fs",
+                                          host, type(e).__name__, time.monotonic() - t0, attempt + 1,
+                                          self.retries + 1, backoff)
                     nap(backoff, e)
                     backoff *= 2
         raise RuntimeError(f"gave up after {self.retries + 1} attempts: {last_err}")
+
+
+# ===== A LONG SEED SAYS WHERE IT IS, AND SAVES WHERE IT IS. Jake, 2026-10-01. =====
+# `--seed plume_settlement` ran for hours with no console line, and its state file was not written
+# after it started — so it could not be watched, and an interrupt would have started it over. Every
+# long loop now ticks a Progress: every `every_units` units or `every_s` seconds it CHECKPOINTS (the
+# caller's save) and prints one line — done / total (or an estimate from the fraction covered), what
+# is covered, rows kept, elapsed, time remaining.
+PROGRESS_EVERY_UNITS = int(os.environ.get("TOKEN_METRICS_PROGRESS_EVERY", 500))
+PROGRESS_EVERY_S = float(os.environ.get("TOKEN_METRICS_PROGRESS_SECONDS", 60))
+_progress_log = logging.getLogger("token_metrics.progress")
+
+
+def _hms(seconds: float | None) -> str:
+    if seconds is None or seconds != seconds or seconds == float("inf"):
+        return "unknown"
+    seconds = int(max(seconds, 0))
+    h, rem = divmod(seconds, 3600)
+    return f"{h}h{rem // 60:02d}m" if h else f"{rem // 60}m{rem % 60:02d}s"
+
+
+class Progress:
+    """tick() per unit of work; flush() at the end. `total` when it is known; otherwise `fraction`
+    (a callable, 0..1 of the job covered — e.g. days reached back towards the floor) gives the ETA
+    and an estimated total. `status` (a callable) says what is covered and kept; `checkpoint` (a
+    callable) saves state — it runs on every line, so the line never claims progress that is not on
+    disk."""
+
+    def __init__(self, label: str, total: int | None = None, unit: str = "pages", status=None,
+                 checkpoint=None, fraction=None, every_units: int | None = None,
+                 every_s: float | None = None, clock=time.monotonic, logger=None):
+        self.label, self.total, self.unit = label, total, unit
+        self.status, self.checkpoint, self.fraction = status, checkpoint, fraction
+        self.every_units = PROGRESS_EVERY_UNITS if every_units is None else every_units
+        self.every_s = PROGRESS_EVERY_S if every_s is None else every_s
+        self.clock, self.log = clock, logger or _progress_log
+        self.t0 = self._last_t = clock()
+        self.done = self._last_n = 0
+        self.lines: list[str] = []
+
+    def tick(self, n: int = 1) -> None:
+        self.done += n
+        if self.done - self._last_n >= self.every_units or self.clock() - self._last_t >= self.every_s:
+            self.flush()
+
+    def flush(self, final: bool = False) -> str:
+        if self.checkpoint:
+            self.checkpoint()
+        now = self.clock()
+        self._last_n, self._last_t = self.done, now
+        elapsed = now - self.t0
+        frac = None
+        if self.fraction is not None:
+            try:
+                frac = self.fraction()
+            except Exception:  # noqa: BLE001 — a progress estimate never breaks the work
+                frac = None
+        elif self.total:
+            frac = self.done / self.total
+        if frac is not None:
+            frac = min(max(frac, 0.0), 1.0)
+        tot = (f"/{self.total:,}" if self.total else
+               (f"/~{int(self.done / frac):,}" if frac and self.done else ""))
+        eta = 0.0 if final else (elapsed * (1 - frac) / frac if frac else None)
+        st = ""
+        if self.status is not None:
+            try:
+                st = f"; {self.status()}"
+            except Exception:  # noqa: BLE001
+                st = ""
+        line = (f"PROGRESS {self.label}: {self.done:,}{tot} {self.unit}"
+                + (f" ({frac:.1%})" if frac is not None else "") + st
+                + f"; elapsed {_hms(elapsed)}; " + ("DONE" if final else f"remaining ~{_hms(eta)}")
+                + ("; state saved" if self.checkpoint else ""))
+        self.log.info(line)
+        self.lines.append(line)
+        return line
 
 
 def tidy(rows, project: str, metric: str, source: str, tier: int) -> pd.DataFrame:

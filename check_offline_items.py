@@ -3160,6 +3160,29 @@ def near_activity_break():
     except Exception as e:  # noqa: BLE001
         print(f"  NearBlocks tx_count from metrics.db: {e}")
         nbk = pd.Series(dtype=float)
+    if len(nbk) < 40:
+        # metrics.db holds only what the daily run kept (100 days a call), so March-April may be
+        # missing. ONE txn-stats call reaching back to 2026-03-01 (free API; NearBlocks bills
+        # ceil(limit / 25) credits at most, ~9 of the 333 a day; limit <= 365 per nb-schemas
+        # packages/nb-schemas/src/stats/request.ts, read 2026-10-01). Key in the header, never printed.
+        from fetch.nearblocks import NearBlocks                # noqa: PLC0415
+        nspec = config.PROJECT_BY_NAME["Near"]["nearblocks"]
+        nbl = NearBlocks()
+        key = nbl._key(nspec)
+        limit = int((pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timestamp("2026-03-01")).days) + 2
+        if not key:
+            print(f"  NearBlocks: no {nspec['key_env']} in .env — its side of the comparison is missing")
+        else:
+            try:
+                body = nbl._get(nspec["base_url"].rstrip("/") + "/v3/txn-stats", {"limit": limit}, key)
+                got = {pd.Timestamp(r["date"]).date(): float(r["txns"]) for r in (body or {}).get("data") or []
+                       if r.get("date") and r.get("txns") is not None}
+                got = {d: v for d, v in got.items() if pd.Timestamp("2026-03-01").date() <= d
+                       <= pd.Timestamp("2026-04-30").date()}
+                print(f"  NearBlocks txn-stats (limit {limit}, one call): {len(got)} day(s) in 2026-03..04")
+                nbk = pd.Series(got, dtype=float).sort_index() if got else nbk
+            except Exception as e:  # noqa: BLE001
+                print(f"  NearBlocks txn-stats: {nbl._scrub(nspec, e)}")
     if bq is None and nbk.empty:
         return
     days = sorted(set(bq.index if bq is not None else []) | set(nbk.index))
@@ -3172,7 +3195,42 @@ def near_activity_break():
         cells = "  ".join(f"{v:>12,.0f}" if v is not None else f"{'-':>12}" for v in vals)
         ntxt = f"{nt:>13,.0f}" if nt is not None else f"{'-':>13}"
         print(f"  {d}  {cells}  {ntxt}  {ratio}")
-    print("  PASTE BACK all lines. The break stays UNRESOLVED (config SERIES_BREAKS) until the cause is recorded.")
+    # THE VERDICT (Jake, 2026-10-01): mean daily transactions 2026-03-01..23 against 2026-04-02..30, in
+    # BOTH sources. BigQuery fell (< 0.5x) and NearBlocks held (> 0.8x) -> PIPELINE: every BigQuery NEAR
+    # figure is marked SUSPECT on its cell. Both fell -> REAL: windows may span it. Otherwise UNCLEAR.
+    def ratio(series):
+        if series is None or len(series) == 0:
+            return None
+        s_ = pd.Series(series).dropna()
+        s_.index = pd.to_datetime(s_.index)
+        before = s_[(s_.index >= "2026-03-01") & (s_.index <= "2026-03-23")]
+        after = s_[(s_.index >= "2026-04-02") & (s_.index <= "2026-04-30")]
+        return float(after.mean() / before.mean()) if len(before) and len(after) and before.mean() else None
+    bq_r = ratio(bq["transactions"]) if bq is not None and "transactions" in bq.columns else None
+    nb_r = ratio(nbk) if not nbk.empty else None
+    if bq_r is None or nb_r is None:
+        verdict = "UNDETERMINED"
+        print(f"\n  VERDICT: UNDETERMINED — needs both series (BigQuery x{bq_r}, NearBlocks x{nb_r}); nothing saved.")
+    else:
+        verdict = ("PIPELINE" if bq_r < 0.5 and nb_r > 0.8 else "REAL" if bq_r < 0.5 and nb_r < 0.5 else "UNCLEAR")
+        print(f"\n  mean daily transactions, Apr 2-30 / Mar 1-23: BigQuery x{bq_r:.2f}, NearBlocks x{nb_r:.2f}")
+        print("  VERDICT: " + {
+            "PIPELINE": "PIPELINE — BigQuery fell and NearBlocks did not: the dataset records less since NEAR Lake's "
+                        "deprecation. Every BigQuery-derived NEAR figure is now marked SUSPECT on its cell.",
+            "REAL": "REAL — both indexers fell: NEAR activity really dropped. Windows may span the break; "
+                    "pre-April backfill can be reconsidered (config Near.near_bigquery.backfill_floor).",
+            "UNCLEAR": "UNCLEAR — neither pattern is clean; nothing changes. Paste back for a closer look.",
+        }[verdict])
+    if verdict != "UNDETERMINED":
+        # an undetermined run (a source missing) never overwrites a verdict an earlier run computed
+        from fetch.logcache import LogCache                # noqa: PLC0415
+        b = config.SERIES_BREAKS[("Near", "settlement_volume_usd")]
+        LogCache().root.mkdir(parents=True, exist_ok=True)
+        (LogCache().root / b["verdict_file"]).write_text(json.dumps({
+            "verdict": verdict, "bq_ratio": bq_r, "nb_ratio": nb_r,
+            "computed_on": str(pd.Timestamp.now(tz="UTC").date())}))
+        print(f"  saved to {LogCache().root / b['verdict_file']} — the workbook reads it on its next build.")
+    print("  PASTE BACK all lines.")
 
 
 def near_settlement_routes():

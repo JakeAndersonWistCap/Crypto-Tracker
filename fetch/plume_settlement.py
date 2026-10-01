@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, tidy, today
+from .base import Http, Progress, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.plume_settlement")
 
@@ -116,6 +116,7 @@ class PlumeSettlement:
             return
         day = st["days"].setdefault(str(d.normalize().date()), {})
         day[addr] = day.get(addr, 0.0) + amt
+        self._kept = getattr(self, "_kept", 0) + 1
 
     def _erc20(self, spec, st, floor, t0, unbounded, out, name) -> int:
         """FIRST RUN: newest first back to the floor, page by page, the cursor saved after each page
@@ -127,6 +128,23 @@ class PlumeSettlement:
         e = st["erc20"]
         first = e["newest"] is None
         params, top, fresh = {"type": "ERC-20"}, None, {"days": {}}
+        self._kept = 0
+
+        def covered() -> float | None:
+            """How far back towards the floor the scan has reached (0..1)."""
+            if not e.get("oldest") or not e.get("newest_ts"):
+                return None
+            hi, lo = pd.Timestamp(e["newest_ts"]), pd.Timestamp(e["oldest"])
+            span = (hi - floor).total_seconds()
+            return (hi - lo).total_seconds() / span if span > 0 else None
+
+        # CHECKPOINTED (Jake, 2026-10-01): the cursor and the day totals are saved together every
+        # PROGRESS_EVERY_UNITS pages or seconds, so an interrupted seed resumes from the line it printed.
+        prog = Progress(f"plume_settlement ERC-20 {name}", unit="pages", fraction=covered,
+                        checkpoint=lambda: self._save(st),
+                        status=lambda: (f"reached back to {str(e.get('oldest') or '?')[:10]} (floor "
+                                        f"{floor.date()}); {len(e['days'])} day(s) with transfers; "
+                                        f"{self._kept:,} P2P transfer(s) kept this run"))
         while True:
             if self._over(t0, unbounded):
                 break
@@ -135,6 +153,11 @@ class PlumeSettlement:
             items = j.get("items") or []
             if top is None and items:
                 top = (int(items[0].get("block_number") or 0), _ts(items[0]))
+                if first:
+                    # RECORDED AT ONCE, so a first run cut short resumes as a top-up plus the saved
+                    # backfill cursor — before 2026-10-01 it was written only at the end, and a cut
+                    # first run started again from the top.
+                    e["newest"], e["newest_ts"] = top[0], str(top[1])
             reached = False
             for it in items:
                 if not first and int(it.get("block_number") or 0) <= e["newest"]:
@@ -158,6 +181,7 @@ class PlumeSettlement:
                 e["newest"], e["newest_ts"] = top[0], str(top[1])
                 top = None
                 break
+            prog.tick()
             params = {"type": "ERC-20", **nxt}
         if first and top is not None:
             e["newest"], e["newest_ts"] = top[0], str(top[1])
@@ -176,6 +200,9 @@ class PlumeSettlement:
             e["cursor"] = j.get("next_page_params")
             if not e["cursor"] or last is None or last < floor:
                 e["done_back"] = True
+            prog.tick()
+        if pages:
+            prog.flush(final=bool(e.get("done_back")))
         return pages
 
     def _native_day(self, spec, day: pd.Timestamp) -> tuple[float | None, int, str]:
@@ -231,11 +258,17 @@ class PlumeSettlement:
         yday = (today() - pd.Timedelta(days=1)).normalize()
         hi = min(hi, yday) if hi is not None else None
         stored, native_pages, notes = [], 0, []
+        todo_native = ([d for d in pd.date_range(hi, lo, freq="-1D") if str(d.date()) not in st["native"]["days"]]
+                       if lo is not None and hi is not None and lo <= hi else [])
+        nprog = Progress(f"plume_settlement native PLUME {name}", total=len(todo_native) or None, unit="days",
+                         every_units=25, checkpoint=lambda: self._save(st),
+                         status=lambda: f"{native_pages:,} page(s) read; {len(st['native']['days'])} day(s) held")
         if lo is not None and hi is not None and lo <= hi:
             for day in pd.date_range(hi, lo, freq="-1D"):           # newest first
                 key = str(day.date())
                 nd = st["native"]["days"].get(key)
                 if nd is None:
+                    nprog.tick()
                     if self._over(t0, unbounded):
                         break
                     try:
@@ -248,12 +281,18 @@ class PlumeSettlement:
                         notes.append(why)
                         continue
                     st["native"]["days"][key] = nd = amt
+        if nprog.done:
+            nprog.flush(final=True)
         self._save(st)
         # value every day both legs cover
         days = sorted(d for d in st["native"]["days"] if lo is not None and hi is not None
                       and str(lo.date()) <= d <= str(hi.date()))
         unpriced_total = 0.0
+        pprog = Progress(f"plume_settlement prices {name}", total=len(days) or None, unit="days",
+                         every_units=50, checkpoint=lambda: self._save(st),
+                         status=lambda: f"{len(stored)} day(s) valued")
         for key in days:
+            pprog.tick()
             day = pd.Timestamp(key)
             toks = e["days"].get(key, {})
             coins = [f"{spec['chain_key']}:{a}" for a in toks] + [spec["native_coin"]]

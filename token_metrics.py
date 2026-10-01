@@ -301,11 +301,20 @@ def seed_plume_staking(st, log) -> int:
     run_id = fetch.new_run_id()
     out = fetch.FetchOutput()
     t0 = time.monotonic()
-    with Heartbeat():
-        res = PlumeStaking().seed(plume, SEED_WINDOW_DAYS, out, have=have)
     prior = st.latest_values()
-    frames = [validate_frame(f, prior, out) for f in out.frames]
-    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    written = 0
+
+    def flush():
+        # CHECKPOINT (Jake, 2026-10-01): the days read so far go to the store at every progress
+        # line, so an interrupted seed keeps them and resumes past them (`have`).
+        nonlocal written
+        frames = [validate_frame(f, prior, out) for f in out.frames]
+        out.frames.clear()
+        written += sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+
+    with Heartbeat():
+        res = PlumeStaking().seed(plume, SEED_WINDOW_DAYS, out, have=have, flush=flush)
+    flush()
     for e in out.log:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
         if e.status != "ok":

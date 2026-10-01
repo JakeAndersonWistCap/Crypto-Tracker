@@ -41,7 +41,7 @@ from pathlib import Path
 import pandas as pd
 
 import config
-from .base import LogEntry, tidy, today
+from .base import LogEntry, tidy, today, Progress
 from .logcache import LogCache, stream_id
 from .explorer import ExplorerLogs, ExplorerRefused, TRANSFER_TOPIC, pad_address, topic_address
 
@@ -163,7 +163,11 @@ class BalanceFlow:
         days = [t_today - pd.Timedelta(days=i) for i in range(int(spec.get("days", 365)) + 1)]
         known = [(int(b), int(pd.Timestamp(d).timestamp())) for d, b in st["boundary"].items()]
         filled, archive_err = 0, None
+        prog = Progress(f"balance_flow {key}", total=len(days), unit="days", every_units=25,
+                        status=lambda: f"{filled} day(s) read this run; {len(st['balance'])} day(s) held; "
+                                       f"state saved after each day")
         for d in days:
+            prog.tick()
             if deadline and time.monotonic() > deadline:
                 break
             ds = str(d.date())

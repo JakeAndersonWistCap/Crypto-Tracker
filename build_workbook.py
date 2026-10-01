@@ -699,6 +699,9 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     # by the figure changing source, not by a config flag saying a better route exists — a
     # confirmed route that fails to write leaves the OLD rows on the sheet, and they still have
     # the old bias. See config.is_non_comparable.
+    sus = config.break_suspect(project, metric, row.get("source"))
+    if sus:
+        why.append(sus)
     nc = config.is_non_comparable(project, metric, row.get("source"))
     if nc:
         why.append(f"NOT COMPARABLE: {nc['why']} Use {nc['use_instead']}")

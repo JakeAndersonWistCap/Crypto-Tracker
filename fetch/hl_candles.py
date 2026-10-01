@@ -43,7 +43,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, tidy, today
+from .base import Http, Progress, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.hl_candles")
 
@@ -137,7 +137,11 @@ class HLCandles:
         yday = (today() - pd.Timedelta(days=1)).normalize()
         floor = (today() - pd.Timedelta(days=int(spec["days"]))).normalize()
         read = cut = 0
+        prog = Progress(f"hl_candles {name}", total=len(universe), unit="markets", every_units=50,
+                        checkpoint=lambda: self._save(state),
+                        status=lambda: f"{read} read this run, {cut} left for the next (budget)")
         for m in universe:
+            prog.tick()
             if not unbounded and self.max_seconds is not None and self.clock() - t0 > self.max_seconds:
                 cut += 1
                 continue
@@ -164,6 +168,7 @@ class HLCandles:
                     st["days"][str(d.date())] = float(c["v"]) * float(c["c"])
             st["through"] = str(yday.date())
             read += 1
+        prog.flush(final=not cut)
         # prune what no window can reach
         keep = str((floor - pd.Timedelta(days=30)).date())
         for st in mk.values():

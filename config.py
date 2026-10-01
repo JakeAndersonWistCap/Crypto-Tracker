@@ -50,6 +50,7 @@ Where a split's status is "unconfirmed" the workbook greys the cell and SUPPRESS
 derived figure. Never estimate a split we have not documented.
 """
 
+import os
 import re
 
 BRIEF_DATE = "2026-09-11"
@@ -2905,6 +2906,10 @@ PROJECTS = [
             # THE TOP-UP RESERVE (Jake, 2026-10-01): backfill spends only what is left after reserving
             # days-left-in-month x the latest measured one-day top-up dry run x this margin.
             "topup_reserve_margin": 1.2,
+            # BACKFILL STOPS AT THE UNEXPLAINED BREAK (Jake, 2026-10-01): top-ups and April-onward
+            # backfill only, until probe near_activity_break says whether the Mar->Apr drop is real
+            # (then pre-April can be reconsidered) or the dataset recording less (SERIES_BREAKS).
+            "backfill_floor": "2026-04-01",
             "max_bytes_per_query": 400 * 10 ** 9,
             "days": 365, "chunk_days": 31, "max_chunks_per_run": 1, "census_every_days": 30,
             "value_cover": 0.95,
@@ -17089,14 +17094,62 @@ SERIES_BREAKS = {
                     "47.3M (Jake's metadata run, 2026-10-01)",
         "why": "NEAR activity in BigQuery fell ~80% between 2026-03 and 2026-04 — cause not established "
                "(METHODOLOGY_FLAGS near_activity_break; probe near_activity_break)",
+        # THE VERDICT DECIDES WHAT ELSE IS SUSPECT (Jake, 2026-10-01). Probe near_activity_break sets
+        # BigQuery's daily transactions beside NearBlocks' (an independent indexer) and writes its
+        # verdict to <logcache>/near-activity-break.json; a verdict typed here overrides the file.
+        #   PIPELINE  BigQuery fell, NearBlocks did not: the dataset records less since NEAR Lake's
+        #             deprecation, so EVERY BigQuery-derived NEAR figure — post-April included — is
+        #             marked SUSPECT (a possible undercount) on its cell, not only the windows
+        #   REAL      both fell: activity really fell; the break no longer blocks windows (pre-April
+        #             backfill can then be reconsidered — near_bigquery.backfill_floor stays until then)
+        "verdict": "UNDETERMINED",
+        "verdict_file": "near-activity-break.json",
+        "suspect_sources": ("near_bigquery",),
+        "suspect_metrics": ("p2p_transfer_volume_usd", "settlement_volume_usd", "settlement_volume_365d_usd",
+                            "network_reserve_ratio", "circulating_supply_first_party"),
     },
 }
 
 
+def series_break_verdict(b: dict) -> tuple[str, dict]:
+    """(verdict, evidence): the one typed in config, else the probe's saved verdict, else UNDETERMINED."""
+    if b.get("verdict") and b["verdict"] != "UNDETERMINED":
+        return b["verdict"], {"source": "config"}
+    import json as _json
+    root = os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan")
+    try:
+        got = _json.loads(open(os.path.join(root, b["verdict_file"])).read())
+    except (OSError, ValueError, KeyError):
+        return "UNDETERMINED", {}
+    return str(got.get("verdict") or "UNDETERMINED"), got
+
+
 def series_break(project_name: str, metric: str) -> dict | None:
-    """The unresolved break a window of this series must not span, or None."""
+    """The unresolved break a window of this series must not span, or None. A REAL drop (both
+    indexers fell) is a fact about the activity, not a defect in the data: windows may span it."""
     b = SERIES_BREAKS.get((project_name, metric))
-    return b if b and b.get("status") != "RESOLVED" else None
+    if not b or b.get("status") == "RESOLVED":
+        return None
+    return None if series_break_verdict(b)[0] == "REAL" else b
+
+
+def break_suspect(project_name: str, metric: str, source) -> str | None:
+    """The SUSPECT caveat for a cell whose figure comes from a dataset a PIPELINE verdict says now
+    records less (NEAR, Jake 2026-10-01) — or None."""
+    for (proj, _m), b in SERIES_BREAKS.items():
+        if proj != project_name or b.get("status") == "RESOLVED":
+            continue
+        verdict, ev = series_break_verdict(b)
+        if verdict != "PIPELINE":
+            continue
+        src = str(source or "")
+        if metric in b.get("suspect_metrics", ()) or any(src.startswith(x) for x in b.get("suspect_sources", ())):
+            ratios = (f" (BigQuery transactions x{ev['bq_ratio']:.2f}, NearBlocks x{ev['nb_ratio']:.2f}, "
+                      f"{ev.get('computed_on', '')})" if "bq_ratio" in ev and "nb_ratio" in ev else "")
+            return (f"SUSPECT — possible UNDERCOUNT: BigQuery's NEAR data fell across "
+                    f"{b['between'][0]}..{b['between'][1]} while NearBlocks' did not{ratios}; the dataset "
+                    f"appears to record less since NEAR Lake's deprecation, so figures after it may be low too")
+    return None
 
 
 METHODOLOGY_FLAGS = {

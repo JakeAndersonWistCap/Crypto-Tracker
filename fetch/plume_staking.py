@@ -58,7 +58,7 @@ import pandas as pd
 
 import config
 
-from .base import point, today
+from .base import point, today, Progress
 
 log = logging.getLogger("token_metrics.fetch.plume_staking")
 
@@ -346,7 +346,8 @@ class PlumeStaking:
             return len(w3.eth.get_code(Web3.to_checksum_address(spec["address"]), block_identifier=block)) > 0
         return block_at, has_code
 
-    def seed(self, projects: list[dict], days: int, out, have: set | None = None, chain=None) -> dict:
+    def seed(self, projects: list[dict], days: int, out, have: set | None = None, chain=None,
+             flush=None) -> dict:
         """Read the CONFIRMED live diamond at the first block of each of the last `days` days,
         newest first, skipping days already held (`have`), and store locked_tokens, the gross and
         net APR and the commission for each, dated to that day and marked `archive` (the same
@@ -361,7 +362,12 @@ class PlumeStaking:
             name = p["name"]
             block_at, has_code = chain or self._chain(spec)
             tag = f"{SOURCE}:{spec['address'][:10]}"
+            # CHECKPOINTED (Jake, 2026-10-01): `flush` writes the days read so far to the store, so an
+            # interrupted seed resumes (the days held are skipped through `have`).
+            prog = Progress(f"plume_staking history {name}", total=int(days), unit="days", every_units=25,
+                            checkpoint=flush, status=lambda: f"{res['stored_days']} day(s) stored")
             for k in range(1, int(days) + 1):
+                prog.tick()
                 day = (today() - pd.Timedelta(days=k)).normalize()
                 if have and day in have:
                     continue
@@ -397,4 +403,5 @@ class PlumeStaking:
                     out.add(point(name, metric, v, src, TIER, day), SOURCE, name,
                             f"history {day.date()} (block {b}): {metric} = {v:,.6g}", TIER)
                 res["stored_days"] += 1
+            prog.flush(final=True)
         return res

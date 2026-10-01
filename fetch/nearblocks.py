@@ -83,7 +83,7 @@ from collections import deque
 
 import pandas as pd
 
-from .base import Http, sleep as base_sleep, tidy, today, window
+from .base import Http, sleep as base_sleep, tidy, today, window, Progress
 from .logcache import LogCache
 
 log = logging.getLogger("token_metrics.fetch.nearblocks")
@@ -396,7 +396,12 @@ class NearBlocks:
             total_rows, excluded_hits = int(pend.get("rows", 0)), int(pend.get("excluded", 0))
             log.info("%s/%s: resuming a partial read at cursor %s (%d txn(s) read so far)",
                      name, metric, cursor, total_rows)
+        # PROGRESS (Jake, 2026-10-01): every page is already saved as `pending`; the line says so.
+        prog = Progress(f"nearblocks {name}/{metric} {account}", unit="pages", every_units=100,
+                        status=lambda: f"{total_rows:,} txn(s) read; {len(new_by_day)} day(s) with inflows; "
+                                       f"cursor saved after each page")
         for _page in range(self.page_cap):
+            prog.tick()
             params = {"action": action, "after_date": after, "before_date": before,
                      "per_page": FLOW_PER_PAGE, "order": "desc"}
             if cursor:

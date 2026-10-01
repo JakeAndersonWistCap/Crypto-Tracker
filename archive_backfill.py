@@ -68,6 +68,9 @@ def main(argv=None) -> int:
     ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply (stake is forward-only)")
     ap.add_argument("--no-solana", action="store_true")
     a = ap.parse_args(argv)
+    import logging
+    # PROGRESS and RETRY lines (Jake, 2026-10-01) are log records; without a handler they were never shown.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     import store as store_mod
     ar.load_env()          # the keyed <CHAIN>_RPC_URL entries live in .env
     from fetch.base import install_redaction

@@ -56,7 +56,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, tidy, today
+from .base import Http, Progress, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.near_bigquery")
 
@@ -391,6 +391,8 @@ class NearBigQuery:
         toks = st["tokens"]["list"]
         yday = (today() - pd.Timedelta(days=1)).normalize()
         floor = yday - pd.Timedelta(days=int(spec["days"]) - 1)
+        if spec.get("backfill_floor"):                       # Jake, 2026-10-01: not across the break
+            floor = max(floor, pd.Timestamp(spec["backfill_floor"]))
         held = sorted(st["days"])
         newest = pd.Timestamp(held[-1]) if held else None
         # 1. THE DAILY TOP-UP FIRST: every missing day newer than the newest held (just yesterday on a
@@ -410,6 +412,11 @@ class NearBigQuery:
                 chunks.append(("backfill", [d]))
         limit = None if unbounded else int(spec["max_chunks_per_run"])
         done_backfill = 0
+        n_run = len(chunks) if limit is None else min(len(chunks), 1 + limit)
+        prog = Progress(f"near_bigquery p2p {name}", total=n_run or None, unit="chunk(s)", every_units=1,
+                        checkpoint=lambda: self._save(st),
+                        status=lambda: (f"{len(st['days'])} day(s) held (floor {floor.date()}); "
+                                        f"{self._run_bytes / 1e9:,.1f} GB billed this run"))
         for kind, days in chunks:
             if kind == "backfill":
                 if limit is not None and done_backfill >= limit:
@@ -425,7 +432,9 @@ class NearBigQuery:
                 st["days"].setdefault(str(d.date()), {})
             for r in rows:
                 st["days"].setdefault(str(pd.Timestamp(r["day"]).date()), {})[r["token"]] = str(r["amount"])
-            self._save(st)
+            prog.tick()                                      # saves st and prints the line
+        if prog.done:
+            prog.flush(final=True)
 
     def _import_csv(self, st, out, name) -> None:
         """FALLBACK: data/near/*.csv saved from the console (day, token, amount, n)."""
