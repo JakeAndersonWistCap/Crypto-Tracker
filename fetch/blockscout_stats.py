@@ -13,9 +13,8 @@ One definition per chart, the explorer's own:
     activeAccounts   distinct addresses that SENT a transaction that day
     txnsFee          fees paid per day, in the NATIVE coin (PLUME) — valued at the same-day price
                      at read time (build_workbook._native_fee_usd_views)
-    nativeCoinSupply the sum of native balances on this chain — NOT issuance: native PLUME moves
-                     with bridging to and from Ethereum, and PLUME's total supply is flat and
-                     vesting-driven (see the Plume entry). Stored as its own series, used by nothing.
+    (nativeCoinSupply was configured too, and answered HTTP 404 on Plume's instance, 2026-10-01 —
+    removed; Plume's supply is read from the Ethereum ERC-20 instead.)
 
 A value that is not a number refuses that chart; an `is_approximate` point (the running day) is
 left out. The value is a STRING in the response and is always cast.

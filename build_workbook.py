@@ -3201,6 +3201,8 @@ def _settlement_views(groups: dict) -> None:
     """
     spec = config.ARTEMIS_SETTLEMENT
     for p in scoped_projects():
+        _rebuilt_settlement_view(groups, p)
+    for p in scoped_projects():
         _nrr_views(groups, p["name"], spec["metric"], "settlement_volume_365d_usd", "network_reserve_ratio",
                    int(spec["window_days"]), config.ARTEMIS_DERIVED,
                    "the Artemis export holds {have} of the {n} days ending {last} — a short window would "
@@ -3214,6 +3216,32 @@ def _settlement_views(groups: dict) -> None:
                    (tt["sum_metric"], tt["nrr_metric"]),
                    "DefiLlama's DEX + perps series holds {have} of the {n} days ending {last} — a short "
                    "window would understate throughput and overstate the ratio")
+
+
+def _rebuilt_settlement_view(groups: dict, p: dict) -> None:
+    """settlement_volume_usd REBUILT by Artemis's method where Artemis has no series (Plume, Jake
+    2026-10-01): DEX volume + P2P transfer volume per day, NFT ~0 — a day only where both legs have
+    a value. Every row says UNVALIDATED (config <project>.settlement_rebuild)."""
+    spec = p.get("settlement_rebuild") or {}
+    name = p["name"]
+    if not spec or (groups.get((name, "settlement_volume_usd")) is not None
+                    and not groups[(name, "settlement_volume_usd")].empty):
+        return
+    legs = []
+    for m in (spec["dex_metric"], spec["p2p_metric"]):
+        g = groups.get((name, m))
+        if g is None or g.empty:
+            return
+        legs.append(g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+                    .set_index("date")["value"].astype(float).rename(m))
+    both = pd.concat(legs, axis=1).dropna()
+    if both.empty:
+        return
+    view = pd.DataFrame({"date": both.index, "project": name, "metric": "settlement_volume_usd",
+                         "value": both.sum(axis=1).values,
+                         "source": f"derived:{spec['dex_metric']}+{spec['p2p_metric']}[{spec['label']}; NFT ~0]",
+                         "tier": 1})
+    groups[(name, "settlement_volume_usd")] = _as_stored(view, groups[(name, spec["p2p_metric"])].columns)
 
 
 def _throughput_view(groups: dict, name: str) -> None:

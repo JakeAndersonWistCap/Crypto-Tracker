@@ -472,22 +472,21 @@ checked. Do not substitute another source's volume.
 If an `ARTEMIS_API_KEY` ever appears, run `python check_offline_items.py settlement_sources` and paste
 back what it prints. The API is wired only after a keyed response has been seen.
 
-## 11k. One-off: Ethereum's ETH.Store history from beaconcha.in
+## 11k. beaconcha.in — dropped (2026-10-01)
 
-beaconcha.in is **not** part of any routine run: its daily call kept triggering lockouts of 40+ hours.
-Ethereum's current staking yield comes from Etherscan (the daily change in Eth2Staking plus priority
-fees, excluding MEV). beaconcha.in is used once, for the past year's history:
+beaconcha.in is no longer used at all: after the monthly reset the key's allowance was zero. Ethereum's
+validator yield is Etherscan's d(Eth2Staking) plus priority fees (excluding MEV); its history is
+forward-only from 2026-09-29.
+
+## 11m. One-off seeds added 2026-10-01
 
 ```bash
-python token_metrics.py --seed beaconchain
+python token_metrics.py --seed hl_candles         # Hyperliquid perps volume: a year of daily candles, ~1 call per market
+python token_metrics.py --seed plume_settlement   # Plume P2P transfers (Artemis method, UNVALIDATED): ~21,755 pages, ~1.5h
+python check_offline_items.py near_settlement_routes   # NEAR: BigQuery freshness, Dune datapoints, Flipside status
 ```
 
-It spends one call reading the key's real monthly quota, and that call is also the staking-yield
-cross-check. It **refuses to start** unless every missing day plus a small reserve (~370 on the
-first run) fits in what is left of the month, and logs both numbers. If the quota can't cover it,
-leave beaconcha.in out: Ethereum's yield and issuance history then stay forward-only from
-2026-09-29. A 429 stops it with the wait recorded. Re-run after that; days already read are
-never read twice.
+Each seed caches its progress, so an interrupted run resumes; routine runs then add each new day.
 
 ## 11l. One-off: Plume's staking history from the live diamond
 

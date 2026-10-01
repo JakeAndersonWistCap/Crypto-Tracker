@@ -88,12 +88,12 @@ DECISIONS = {
     # not covered by The Block) — config.UNAVAILABLE, with its evidence.
     # Jake 2026-09-30: Artemis carries neither. Hyperliquid is CLOSED (config.UNAVAILABLE — not
     # rebuildable). NEAR's rebuild waits on two things only Jake can decide on.
-    **{("Near", m): ("NEEDS JAKE", "Artemis doesn't carry NEAR (Jake, 2026-09-30). A rebuild (DEX + P2P "
-                                   "via NearBlocks) waits on (1) validating the method on Ethereum, which "
-                                   "free sources cannot complete (no free P2P value series — "
-                                   "config.SETTLEMENT_REBUILD), and (2) your go-ahead on its call volume "
-                                   "(probe settlement_rebuild_coverage). A1's NRR on trading throughput "
-                                   "covers NEAR meanwhile")
+    **{("Near", m): ("NEEDS JAKE", "Artemis doesn't carry NEAR. Three routes, in order (config."
+                                   "SETTLEMENT_REBUILD near_routes): (a) BigQuery's public NEAR dataset — "
+                                   "check it is not frozen at ~2026-03-24; (b) Dune near.ft_transfers — one "
+                                   "~365-row aggregate; (c) Flipside — API sunset 2025-07-31, Snowflake only. "
+                                   "Run `check_offline_items.py near_settlement_routes`; NEAR closes as an "
+                                   "ACCEPTED LIMIT only if all three fail. A1's throughput NRR covers it meanwhile")
        for m in ("settlement_volume_usd", "network_reserve_ratio")},
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
@@ -107,6 +107,18 @@ WAIT_ON_SERIES: dict = {}
 # WAITING ON A NAMED DATE, recorded (Jake's run 2026-09-30 17:21): a pending seed is not a bug.
 # While the cell is not yet ok and the date has not passed it reads WAITING ON A DATE; after the
 # date it is classified on its own status again, so a seed that never lands still surfaces.
+# A SERIES WHOSE FIRST YEAR COMES FROM A ONE-OFF SEED (Jake, 2026-10-01): while the store holds none
+# of it, the cell is NEEDS JAKE — run the seed — not a BUG; once rows exist it is classified as usual.
+PENDING_SEED = {
+    **{("Plume", m): "python token_metrics.py --seed plume_settlement (Plume's P2P transfers from Blockscout, "
+                     "~21,755 pages, ~1.5h; Artemis method, UNVALIDATED) — routine runs then top it up"
+       for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
+                 "settlement_volume_365d_usd")},
+    ("Hyperliquid", "perps_volume_usd"): "python token_metrics.py --seed hl_candles (a year of daily candles, "
+                                         "~1 call per perp market) — routine runs then add each day",
+    **{("Hyperliquid", m): "python token_metrics.py --seed hl_candles — the throughput sum needs its perps leg"
+       for m in ("trading_throughput_usd", "trading_throughput_365d_usd", "network_reserve_ratio_throughput")},
+}
 WAIT_UNTIL: dict = {
     # ("Ethereum", "staking_yield_pct") waited on beaconcha.in's seed until 2026-10-01, when the
     # source was dropped (config Ethereum.beaconchain_dropped): the metric no longer applies to
@@ -240,6 +252,8 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
                                         note, re.I):
         return "MATURING", (f"blocked until its readings cover the window: {note[:200]}"
                             + (f" — FORWARD-ONLY: {fwd}" if fwd else ""))
+    if status in ("missing", "gap") and (name, metric) in PENDING_SEED:
+        return "NEEDS JAKE", f"run the one-off seed: {PENDING_SEED[(name, metric)]}"
     if status in ("missing", "gap") and config.is_manual_quarterly(name, metric):
         return "NEEDS JAKE", f"a manual quarterly row for {metric} in manual_overrides.csv"
     # A REVIEW QUEUE FLAG IS INFORMATIONAL (a change threshold, a partial-coverage note): the

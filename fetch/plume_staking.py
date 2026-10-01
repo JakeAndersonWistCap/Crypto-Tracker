@@ -72,6 +72,8 @@ ABI = [
      "outputs": [{"name": "active", "type": "bool"}, {"name": "commission", "type": "uint256"},
                  {"name": "totalStaked", "type": "uint256"}, {"name": "stakersCount", "type": "uint256"}],
      "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "getTreasury",
+     "outputs": [{"name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "getCooldownInterval",
      "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "getValidatorsList",
@@ -86,8 +88,10 @@ class PlumeStaking:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, contract_factory=None, **_ignored):
+    def __init__(self, contract_factory=None, http=None, cache_file=None, **_ignored):
         self._factory = contract_factory       # tests inject; production builds a web3 contract
+        self._http = http
+        self._cache_file = cache_file
 
     def _contract(self, spec: dict):
         if self._factory:
@@ -124,7 +128,7 @@ class PlumeStaking:
                     f"{spec['max_reward_rate']} — not the quantity read from source")
         if not isinstance(aggregate, int) or aggregate <= 0:
             return f"{address}: totalAmountStaked answered {aggregate!r}"
-        rows = []
+        parsed = []
         for v in validators if isinstance(validators, (list, tuple)) else ():
             try:
                 vid, staked, comm = int(v[0]), int(v[1]), int(v[2])
@@ -132,12 +136,19 @@ class PlumeStaking:
                 return f"{address}: getValidatorsList answered {str(validators)[:160]!r}"
             if staked < 0 or not 0 <= comm <= 10**18:
                 return f"{address}: validator {vid} carries staked {staked} / commission {comm}"
+            parsed.append((vid, staked, comm))
+
+        def active_of(vid):
             try:
-                active = bool(self._call(c.functions.getValidatorStats(vid), block)[0])
+                return bool(self._call(c.functions.getValidatorStats(vid), block)[0])
             except Exception as e:  # noqa: BLE001
-                active = None
                 log.info("plume_staking: getValidatorStats(%s) on %s: %s", vid, address, e)
-            rows.append((vid, staked, comm, active))
+                return None
+        # BATCHED (Jake's run 2026-10-01: plume_staking timed out at 60s on one-by-one reads)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            flags = list(pool.map(active_of, [r[0] for r in parsed]))
+        rows = [(vid, staked, comm, act) for (vid, staked, comm), act in zip(parsed, flags)]
         total = sum(r[1] for r in rows)
         if not rows or total <= 0:
             return f"{address}: getValidatorsList holds no stake"
@@ -212,9 +223,14 @@ class PlumeStaking:
                     f"{spec['commission_metric']} = {g['commission']:.2%}, stake-weighted over {g['n_active']} "
                     f"active of {len(g['rows'])} validators ({g['active_share']:.2%} of stake)", TIER)
             net = g["apr"] * g["net_factor"]
+            app = spec.get("app_net_apy") or {}
+            apy = (1 + net / 365) ** 365 - 1
+            recon = (f"; RECONCILED to staking.plume.org: net APR {net:.4%} -> net APY {apy:.4%} with daily "
+                     f"compounding, vs the app's {app['value']:.2%} NET APY ({app['read']}): "
+                     f"{apy - app['value']:+.2%} points" if app else "")
             out.add(point(name, spec["net_apr_metric"], net, f"{tag}.gross*active(1-commission)", TIER, when),
                     SOURCE, name, f"{spec['net_apr_metric']} = {g['apr']:.4%} x {g['net_factor']:.4f} (active "
-                                  f"stake net of commission, over all stake) = {net:.4%}", TIER)
+                                  f"stake net of commission, over all stake) = {net:.4%} APR{recon}", TIER)
         want = spec.get("cooldown_seconds")
         cd = g["cooldown"]
         out.skipped(SOURCE, name, f"getCooldownInterval() = "
@@ -224,6 +240,81 @@ class PlumeStaking:
         if not confirmed:
             out.skipped(SOURCE, name, f"identified {g['address']} as the live diamond by reconciliation; set "
                                       f"plume_staking.address to it and live_contract.confirmed = True", TIER)
+        else:
+            self._payouts(name, spec, out)
+
+    # ===== REWARDS PAID, FROM THE TREASURY'S OWN EVENTS (Jake, 2026-10-01). =====
+    def _payouts(self, name: str, spec: dict, out) -> None:
+        """Every reward payout — claim and restake alike — goes through the treasury's
+        distributeReward(token, amount, recipient), which emits RewardDistributed(address indexed
+        token, uint256 amount, address indexed recipient) (PlumeEvents.sol@3ef710a:260;
+        PlumeStakingRewardTreasury.sol:160-198). The treasury is read from the diamond
+        (getTreasury(), RewardsFacet.sol:809), never assumed. Native PLUME only (topic1 =
+        PLUME_NATIVE), summed per UTC day from the explorer's logs API (1000 a call, paged by block;
+        progress cached). Stored as emissions_claimed_tokens: PAID, not accrued — the pre-funded
+        treasury releasing PLUME to stakers, nothing minted."""
+        pay = spec.get("payouts") or {}
+        if not pay:
+            return
+        import json
+        from pathlib import Path
+        import pandas as pd
+        from .base import Http, tidy
+        try:
+            treasury = self._call(self._contract(spec).functions.getTreasury(), None)
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"{pay['metric']}: getTreasury() on {spec['address']}: {e}", TIER)
+            return
+        if self._cache_file:
+            path = Path(self._cache_file)
+        else:
+            from .logcache import LogCache
+            path = LogCache().root / "plume-payouts.json"
+        try:
+            st = json.loads(path.read_text())
+        except (OSError, ValueError):
+            st = {}
+        if st.get("treasury", "").lower() != str(treasury).lower():
+            st = {"treasury": str(treasury), "next_block": 0, "days": {}}
+        http = self._http or Http(min_interval=0.25, retries=2)
+        native_topic = "0x" + spec["reward_token"][2:].lower().rjust(64, "0")
+        calls = 0
+        while calls < int(pay["max_calls_per_run"]):
+            j = http.get(pay["logs_api"], params={
+                "module": "logs", "action": "getLogs", "address": str(treasury), "fromBlock": st["next_block"],
+                "toBlock": "latest", "topic0": pay["topic0"], "topic1": native_topic, "topic0_1_opr": "and"})
+            calls += 1
+            res = j.get("result") if isinstance(j, dict) else None
+            if not isinstance(res, list):
+                break
+            blocks = [int(str(r["blockNumber"]), 16) if str(r["blockNumber"]).startswith("0x") else int(r["blockNumber"])
+                      for r in res]
+            full = len(res) >= int(pay["page_cap"])
+            edge = max(blocks) if (full and blocks) else None
+            for r, b in zip(res, blocks):
+                if edge is not None and b == edge:
+                    continue                      # re-read with the next page, never counted twice
+                ts = int(str(r["timeStamp"]), 16) if str(r["timeStamp"]).startswith("0x") else int(r["timeStamp"])
+                day = str(pd.Timestamp(ts, unit="s").normalize().date())
+                st["days"][day] = st["days"].get(day, 0.0) + int(str(r["data"]), 16) / 1e18
+            if full:
+                st["next_block"] = edge
+                continue
+            st["next_block"] = (max(blocks) + 1) if blocks else st["next_block"]
+            break
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(st))
+        today_ = str(pd.Timestamp.now(tz="UTC").tz_localize(None).normalize().date())
+        pts = sorted((pd.Timestamp(d), v) for d, v in st["days"].items() if d < today_)
+        if not pts:
+            out.skipped(SOURCE, name, f"{pay['metric']}: no RewardDistributed(PLUME) events yet from treasury "
+                                      f"{treasury} ({calls} logs call(s))", TIER)
+            return
+        frame = tidy(pts, name, pay["metric"], f"{SOURCE}:treasury.RewardDistributed[paid, PLUME]", TIER)
+        out.add(frame, SOURCE, name, f"{pay['metric']} = PLUME paid to stakers by treasury {treasury} "
+                                     f"(RewardDistributed, claims + restakes; PAID, not accrued): {len(pts)} day(s) "
+                                     f"{pts[0][0].date()}..{pts[-1][0].date()}; unlocks are NOT in it (no vesting "
+                                     f"address is documented)", TIER)
 
     # ===== HISTORY: THE LIVE DIAMOND READ ON PAST DAYS (Jake's run 2026-09-30 17:21). =====
     def _chain(self, spec: dict):

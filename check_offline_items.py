@@ -2987,6 +2987,79 @@ def settlement_rebuild_coverage():
     print("  PASTE BACK. Nothing is wired until you approve a route and its call volume.")
 
 
+def near_settlement_routes():
+    """Jake 2026-10-01 (C): NEAR settlement volume, three routes in order — report before building.
+    (a) BigQuery bigquery-public-data.crypto_near_mainnet_us: FIRST its freshness (NEAR Lake, its
+        only ingestion source in code, was deprecated 2026-03-24). Runs sql/near/bigquery_freshness.sql
+        when google-cloud-bigquery and a service-account key (GOOGLE_APPLICATION_CREDENTIALS) are
+        present, plus a DRY RUN of sql/near/bigquery_p2p_daily.sql for the bytes a year scans
+        (free: 1 TB/month); otherwise says what to paste into the BigQuery console.
+    (b) Dune near.ft_transfers: executes the saved query NEAR_DUNE_QUERY_ID once (Jake saves
+        sql/near/dune_ft_p2p_daily.sql) and reports rows and datapoints used.
+    (c) Flipside: its API and SDK were sunset 2025-07-31 — nothing to call (config.SETTLEMENT_REBUILD).
+    Keys are never printed."""
+    import time as _t                                      # noqa: PLC0415
+    from pathlib import Path                               # noqa: PLC0415
+    head("NEAR SETTLEMENT — route (a) BigQuery freshness, (b) Dune datapoints, (c) Flipside")
+    here = Path(__file__).resolve().parent / "sql" / "near"
+    # (a)
+    try:
+        from google.cloud import bigquery                  # noqa: PLC0415
+        if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip():
+            raise ImportError("GOOGLE_APPLICATION_CREDENTIALS not set")
+        bq = bigquery.Client()
+        sql = (here / "bigquery_freshness.sql").read_text()
+        for stmt in [x for x in sql.split(";") if "SELECT" in x]:
+            for row in bq.query(stmt).result():
+                print(f"  (a) {dict(row)}")
+        job = bq.query((here / "bigquery_p2p_daily.sql").read_text(),
+                       job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
+        print(f"  (a) a year of the P2P query would scan {job.total_bytes_processed / 1e12:,.3f} TB "
+              f"(free tier 1 TB/month)")
+    except Exception as e:  # noqa: BLE001
+        print(f"  (a) not run here ({str(e)[:120]}). Paste sql/near/bigquery_freshness.sql into "
+              f"console.cloud.google.com/bigquery (metadata + one date column: free) and PASTE BACK the "
+              f"last dates. If they stop near 2026-03-24 the dataset is FROZEN and route (a) is closed.")
+    # (b)
+    key = os.environ.get("DUNE_API_KEY", "").strip()
+    qid = os.environ.get("NEAR_DUNE_QUERY_ID", "").strip()
+    if not key or not qid:
+        print(f"  (b) {'no DUNE_API_KEY' if not key else 'no NEAR_DUNE_QUERY_ID'}: save "
+              f"sql/near/dune_ft_p2p_daily.sql as a Dune query (run `SELECT MAX(block_date) FROM "
+              f"near.ft_transfers` first), put its id in .env as NEAR_DUNE_QUERY_ID, and re-run this check.")
+    else:
+        hdr = {**_ua(), "X-Dune-API-Key": key}
+        api = "https://api.dune.com/api/v1"
+        try:
+            r = requests.post(f"{api}/query/{int(qid)}/execute", headers=hdr, timeout=TIMEOUT)
+            if not r.ok:
+                print(f"  (b) execute: HTTP {r.status_code} — {r.text[:200]}")
+            else:
+                eid = r.json().get("execution_id")
+                state = ""
+                for _ in range(60):
+                    st = requests.get(f"{api}/execution/{eid}/status", headers=hdr, timeout=TIMEOUT).json()
+                    state = st.get("state", "")
+                    if state in ("QUERY_STATE_COMPLETED", "QUERY_STATE_FAILED", "QUERY_STATE_CANCELLED"):
+                        break
+                    _t.sleep(5)
+                res = requests.get(f"{api}/execution/{eid}/results", headers=hdr, timeout=TIMEOUT).json()
+                meta = (res.get("result") or {}).get("metadata") or {}
+                rows = (res.get("result") or {}).get("rows") or []
+                days = sorted({str(x.get("day"))[:10] for x in rows})
+                print(f"  (b) {state}: {len(rows)} row(s), {len(days)} day(s) {days[:1]}..{days[-1:]}; "
+                      f"datapoints {meta.get('datapoint_count')}, columns {meta.get('column_names')}")
+                if res.get("error"):
+                    print(f"  (b) error: {str(res.get('error'))[:200]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  (b) Dune: {str(e).split('?')[0][:160]}")
+    # (c)
+    print("  (c) Flipside: API and SDK sunset 2025-07-31 (FlipsideCrypto/gitbook@8ef31d0a "
+          "2025-06-20-or-deprecating-studio-dashboards-api-sdk.md:11,29); the only route left is its free "
+          "core data on the Snowflake Marketplace (Snowflake compute is NOT free; a trial carries $400 credit).")
+    print("  PASTE BACK all lines. NEAR closes as ACCEPTED LIMIT only if all three fail.")
+
+
 def plume_archive():
     """Jake's run 2026-09-30 17:21: does rpc.plume.org serve HISTORICAL state for the live staking
     diamond? totalAmountStaked() and getRewardRate() at the first block of the day 1, 7, 30, 90,
@@ -3791,6 +3864,7 @@ CHECKS = (
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
+    near_settlement_routes,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

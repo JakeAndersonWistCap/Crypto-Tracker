@@ -14587,10 +14587,10 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     assert "settlement_volume_annual_usd" not in config.METRICS
     assert "settlement_volume_annual_usd" not in (config.PROJECT_BY_NAME["Ethereum"].get("manual_quarterly") or [])
     assert set(config.ARTEMIS_SETTLEMENT["chains"]) == {"Ethereum"}
-    # Plume: not on Artemis, not covered by The Block — ACCEPTED LIMIT with that evidence
+    # Plume: the 2026-09-30 ACCEPTED LIMIT was withdrawn 2026-10-01 — rebuilt by Artemis's method
     for m in ("settlement_volume_usd", "network_reserve_ratio", "settlement_volume_365d_usd"):
-        u = config.unavailable_for("Plume", m)
-        assert u and "Artemis" in u["summary"] and u["native_checked"]
+        assert config.unavailable_for("Plume", m) is None
+    assert config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"]["label"] == "Artemis method, UNVALIDATED"
     # validator and protocol yields never share a project list or a metric
     assert not set(config.VALIDATOR_YIELD) & set(config.PROTOCOL_YIELD)
     # Aerodrome joined 2026-09-30 (L1): voter rewards (fees + bribes) over veAERO locked
@@ -18786,7 +18786,8 @@ def test_derived_series_use_the_full_span_of_their_stored_inputs():
     for d in days[-29:]:
         add("Sky", "actual_buyback_usd", d, 934_665.27 * 0.05, "derived:tokens*price")          # stale valuations
     for i, d in enumerate(days[-8:]):
-        add("Plume", "total_supply", d, 10_000_000_000.0 + 1_000.0 * i, "coingecko:coins")
+        # Plume's issuance is d(totalSupply()) of the Ethereum ERC-20 since 2026-10-01 (not CoinGecko's)
+        add("Plume", "total_supply_protocol", d, 10_000_000_000.0 + 1_000.0 * i, "chain:ethereum:token_ethereum")
         add("Chainlink", "circulating_supply", d, 678_000_000.0 + 50_000.0 * i, "coingecko:coins")
         add("Chainlink", "total_supply", d, 1_000_000_000.0, "coingecko:coins")
     stored = pd.DataFrame(rows)
@@ -18930,8 +18931,10 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
     # settlement volume (2026-09-30): Ethereum's Artemis export is in; the other three wait on Jake's
     # (Jake, 2026-09-30: Artemis covers none of them — Hyperliquid CLOSED, NEAR waits on the rebuild)
+    import completeness_report as _cr
     assert jake <= {("GEODNET", "locked_tokens"), ("Sky", "net_protocol_surplus_usd"),
-                    *(("Near", m) for m in ("settlement_volume_usd", "network_reserve_ratio"))}
+                    *(("Near", m) for m in ("settlement_volume_usd", "network_reserve_ratio")),
+                    *_cr.PENDING_SEED}           # one-off seeds Jake runs (Plume rebuild, Hyperliquid candles)
     for m in ("settlement_volume_usd", "network_reserve_ratio"):
         assert got[("Hyperliquid", m)][0] == "ACCEPTED LIMIT", got[("Hyperliquid", m)]
         assert "SETTLEMENT_REBUILD" in got[("Near", m)][1]
@@ -19952,9 +19955,10 @@ def test_artemis_settlement_csv_imports_one_definition_and_nrr_matches_jakes_che
     assert len(om.gaps) == 1 and "no Artemis export found" in om.gaps[0]["reason"]
     assert "'Ethereum - Settlement Volume.csv'" in om.gaps[0]["reason"] and "never committed" in om.gaps[0]["reason"]
     assert not any(e.status == "failed" for e in om.log)
-    # Hyperliquid and Plume are CLOSED (config.UNAVAILABLE) with native-source evidence
-    for n in ("Hyperliquid", "Plume"):
-        assert config.unavailable_for(n, "settlement_volume_usd")["native_checked"]
+    # Hyperliquid is CLOSED (config.UNAVAILABLE) with native-source evidence; Plume was REOPENED
+    # 2026-10-01 (rebuilt by Artemis's method, UNVALIDATED)
+    assert config.unavailable_for("Hyperliquid", "settlement_volume_usd")["native_checked"]
+    assert config.unavailable_for("Plume", "settlement_volume_usd") is None
     # the folder is configurable
     monkey = tmp_path / "elsewhere"
     monkey.mkdir()
@@ -20151,16 +20155,19 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
                - hl["headline_change"]["factor"]) < 0.001
 
 
-def test_plume_settlement_volume_is_an_accepted_limit_with_its_evidence():
-    """Jake, 2026-09-30: Plume isn't on Artemis and The Block doesn't cover it — closed as an
-    ACCEPTED LIMIT, which the completeness report shows with the native sources checked."""
+def test_plume_settlement_volume_is_reopened_and_rebuilt_pending_its_seed():
+    """Jake, 2026-10-01: the 2026-09-30 ACCEPTED LIMIT is withdrawn — Plume's settlement volume is
+    rebuilt by Artemis's method (UNVALIDATED). Until the seed has run, a missing cell is NEEDS JAKE
+    (run the seed), never a BUG and never closed."""
     import completeness_report as cr
-    asof = pd.Timestamp("2026-09-30")
-    for m in ("settlement_volume_usd", "network_reserve_ratio"):
+    asof = pd.Timestamp("2026-10-01")
+    for m in ("settlement_volume_usd", "network_reserve_ratio", "p2p_transfer_volume_usd"):
+        assert config.unavailable_for("Plume", m) is None
         v, d = cr.classify(config.PROJECT_BY_NAME["Plume"], m, {"status": "missing"}, None, asof)
-        assert v == "ACCEPTED LIMIT", (m, v, d)
-        assert "native sources checked:" in d and "Plume is NOT on Artemis" in d
+        assert v == "NEEDS JAKE" and "--seed plume_settlement" in d, (m, v, d)
         assert ("Plume", m) not in cr.DECISIONS
+    v, d = cr.classify(config.PROJECT_BY_NAME["Hyperliquid"], "perps_volume_usd", {"status": "missing"}, None, asof)
+    assert v == "NEEDS JAKE" and "--seed hl_candles" in d
 
 
 # ===================================================================================
@@ -20592,3 +20599,161 @@ def test_hyperliquid_perps_volume_from_its_own_daily_candles(tmp_path):
     for _ in range(3):
         p.take(20)
     assert slept and abs(slept[0] - 60) < 1e-9
+
+
+def test_plume_settlement_rebuild_by_artemis_method_is_unvalidated_and_stores_only_complete_days(tmp_path):
+    """Jake, 2026-10-01: Plume's settlement volume rebuilt by Artemis's method — ERC-20 and native
+    PLUME transfers where NEITHER side is a contract (mints/burns and value into contracts out),
+    at same-day DefiLlama prices (an unpriced token is left out: the liquidity filter, adapted),
+    plus DefiLlama DEX volume at read time; NFT ~0. Labelled UNVALIDATED. A day is stored only
+    when both legs cover it; a later run tops up without double counting."""
+    import copy
+    import build_workbook as bw
+    from fetch.base import today
+    from fetch.plume_settlement import PlumeSettlement
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    spec = plume["settlement_rebuild"]
+    assert spec["label"] == "Artemis method, UNVALIDATED" and spec["chain_key"] == "plume_mainnet"
+    assert config.unavailable_for("Plume", "settlement_volume_usd") is None, "reopened: Jake decided to build it"
+    spec["days"] = 3
+    d = [(today() - pd.Timedelta(days=k)).normalize() for k in range(0, 5)]   # today, -1, -2, -3, -4
+    eoa = lambda h: {"hash": h, "is_contract": False}                         # noqa: E731
+    con = lambda h: {"hash": h, "is_contract": True}                          # noqa: E731
+
+    def tt(day, block, frm, to, val, typ="token_transfer", tok="0xUSD"):
+        return {"timestamp": f"{day.date()}T12:00:00Z", "block_number": block, "type": typ, "from": frm, "to": to,
+                "total": {"value": str(val * 10**6), "decimals": "6"}, "token": {"address_hash": tok}}
+    pages = {
+        None: {"items": [tt(d[0], 500, eoa("a"), eoa("b"), 7),                     # today: never stored
+                         tt(d[1], 400, eoa("a"), eoa("b"), 100),                   # yesterday: kept
+                         tt(d[1], 399, eoa("a"), con("pool"), 50),                 # into a contract: out
+                         tt(d[1], 398, eoa("a"), eoa("a"), 5)],                    # self: out
+               "next_page_params": {"block_number": 398, "index": 0}},
+        398: {"items": [tt(d[2], 300, eoa("c"), eoa("d"), 40),
+                        tt(d[2], 299, eoa("0x0"), eoa("d"), 9, typ="token_minting"),  # mint: out
+                        tt(d[2], 298, eoa("c"), eoa("d"), 3, tok="0xJUNK"),           # unpriced: out
+                        tt(d[4], 100, eoa("c"), eoa("d"), 1)],                        # before the floor
+              "next_page_params": {"block_number": 100, "index": 0}},
+    }
+
+    class Http:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, params=None):
+            self.calls.append((url, dict(params or {})))
+            if url.endswith("/token-transfers"):
+                return pages[(params or {}).get("block_number")]
+            if url.endswith("/advanced-filters"):
+                day = params["age_from"][:10]
+                return {"items": [{"type": "coin_transfer", "from": eoa("x"), "to": eoa("y"), "value": str(2 * 10**18),
+                                   "status": "ok", "timestamp": f"{day}T01:00:00Z"},
+                                  {"type": "contract_interaction", "from": eoa("x"), "to": con("dex"),
+                                   "value": str(10**21), "status": "ok"}], "next_page_params": None}
+            raise AssertionError(url)
+    prices = {}
+    for day in d:
+        prices[(str(day.date()), "coingecko:plume")] = 0.1
+        prices[(str(day.date()), "plume_mainnet:0xusd")] = 1.0
+    a = PlumeSettlement(http=Http(), prices=prices, cache_file=tmp_path / "s.json", max_seconds=None)
+    out = FetchOutput()
+    a.run([plume], None, out)
+    f = out.frame().set_index("date")["value"]
+    # floor = today-3 and the scan passed it -> complete days -1, -2 and -3 (the floor day: native
+    # only in this fixture); today, the newest item's day, is never stored
+    assert set(f.index) == {d[1], d[2], d[3]}
+    assert f[d[1]] == 100 * 1.0 + 2 * 0.1 and f[d[2]] == 40 * 1.0 + 2 * 0.1 and abs(f[d[3]] - 0.2) < 1e-12
+    msg = next(e.message for e in out.log if e.status == "ok")
+    assert "Artemis method, UNVALIDATED" in msg and "unpriced and left out" in msg and "NFT ~0" in msg
+    assert out.frame()["source"].iloc[0] == "plume_settlement:p2p[Artemis method, UNVALIDATED]"
+    # a later run: the top-up stops at the newest block already covered — nothing counted twice
+    pages[None] = {"items": [tt(d[0], 600, eoa("a"), eoa("b"), 1), tt(d[0], 500, eoa("a"), eoa("b"), 7)],
+                   "next_page_params": {"block_number": 500, "index": 0}}
+    out = FetchOutput()
+    PlumeSettlement(http=Http(), prices=prices, cache_file=tmp_path / "s.json", max_seconds=None).run([plume], None, out)
+    f2 = out.frame().set_index("date")["value"]
+    assert f2[d[1]] == f[d[1]] and f2[d[2]] == f[d[2]]
+    # READ TIME: settlement = DEX + P2P (NFT ~0), labelled UNVALIDATED, then its NRR
+    p2p = out.frame().assign(tier=1)
+    dex = p2p.assign(metric="dex_volume_usd", value=10.0, source="defillama:dexs:plume-mainnet")
+    groups = {("Plume", "p2p_transfer_volume_usd"): p2p, ("Plume", "dex_volume_usd"): dex}
+    bw._rebuilt_settlement_view(groups, plume)
+    sv = groups[("Plume", "settlement_volume_usd")].set_index("date")
+    assert sv.loc[d[1], "value"] == f[d[1]] + 10.0
+    assert sv["source"].iloc[0] == "derived:dex_volume_usd+p2p_transfer_volume_usd[Artemis method, UNVALIDATED; NFT ~0]"
+    assert "UNVALIDATED" in config.TRADING_THROUGHPUT["meaningful"]["Plume"]
+
+
+def test_plume_reward_payouts_from_the_treasury_and_the_apy_reconciles_to_the_app(tmp_path):
+    """Jake, 2026-10-01: rewards PAID (claims and restakes) are the treasury's RewardDistributed events
+    for native PLUME — the treasury read from the diamond's getTreasury(), summed per day, paged by
+    block without counting the boundary block twice; the net APR is turned into an APY (daily
+    compounding) beside the app's 4.5% NET APY; the 4.5% is a manual cross-check row."""
+    from fetch.base import today
+    from fetch.plume_staking import PlumeStaking
+    plume = config.PROJECT_BY_NAME["Plume"]
+    spec = plume["plume_staking"]
+    assert spec["app_net_apy"]["value"] == 0.045 and "REWARD_MANAGER_ROLE" in spec["rate_governance"]
+    assert spec["myplume"]["wired"] is False and "1:1" in spec["myplume"]["exchange_rate"]
+
+    class C:
+        def __init__(self, v):
+            self.v = v
+
+        def call(self, block_identifier=None):
+            return self.v
+
+    class F:
+        def __init__(self):
+            self.functions = self
+
+        def getRewardRate(self, tok):
+            return C(1_426_700_000)                    # ~4.5% gross
+
+        def totalAmountStaked(self):
+            return C(134_000_000 * 10**18)
+
+        def getValidatorsList(self):
+            return C([(1, 134_000_000 * 10**18, 0)])
+
+        def getValidatorStats(self, vid):
+            return C((True, 0, 134_000_000 * 10**18, 9))
+
+        def getCooldownInterval(self):
+            return C(1_814_400)
+
+        def getTreasury(self):
+            return C("0xTreasury")
+    d1 = (today() - pd.Timedelta(days=2)).normalize()
+    d2 = (today() - pd.Timedelta(days=1)).normalize()
+
+    def log_(block, day, amt):
+        return {"blockNumber": hex(block), "timeStamp": hex(int(day.timestamp()) + 3600),
+                "data": hex(int(amt * 10**18))}
+
+    class Http:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, params=None):
+            self.calls.append(dict(params))
+            fb = params["fromBlock"]
+            if fb == 0:                                  # a FULL page (cap 2): its last block is re-read
+                return {"result": [log_(10, d1, 5), log_(11, d1, 7)]}
+            if fb == 11:                                 # full again: block 12 deferred to the next page
+                return {"result": [log_(11, d1, 7), log_(12, d2, 1)]}
+            if fb == 12:
+                return {"result": [log_(12, d2, 1)]}
+            return {"result": []}
+    s2 = {**spec, "payouts": {**spec["payouts"], "page_cap": 2}}
+    p2 = {**plume, "plume_staking": s2}
+    out = FetchOutput()
+    PlumeStaking(contract_factory=lambda sp: F(), http=Http(), cache_file=tmp_path / "p.json").run([p2], None, out)
+    f = out.frame()
+    paid = f[f.metric == "emissions_claimed_tokens"].set_index("date")["value"]
+    assert paid[d1] == 12.0 and paid[d2] == 1.0, "block 11 counted once"
+    assert set(f[f.metric == "emissions_claimed_tokens"]["source"]) == {"plume_staking:treasury.RewardDistributed[paid, PLUME]"}
+    net = next(e.message for e in out.log if e.message.startswith("staking_yield_net_pct"))
+    assert "RECONCILED to staking.plume.org" in net and "vs the app's 4.50% NET APY" in net
+    mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
+    assert "2026-09-30,Plume,staking_apy_published,0.045," in mo

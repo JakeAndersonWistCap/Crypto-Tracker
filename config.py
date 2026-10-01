@@ -216,6 +216,7 @@ METRICS = {
     # settlement-volume ones. See TRADING_THROUGHPUT.
     "dex_volume_usd":             {"label": "DEX spot volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume")},
     "perps_volume_usd":           {"label": "Perps volume per day ($ ≈ Σ daily candle volume × close, Hyperliquid's own info API — an approximation of notional)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)},
+    "p2p_transfer_volume_usd":    {"label": "P2P transfer volume per day ($, Artemis method: ERC-20 + native between non-contract accounts, same-day prices) — UNVALIDATED", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Plume",)},
     "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
@@ -263,7 +264,6 @@ METRICS = {
     # Plume (Jake's probe 4c, 2026-09-30): the explorer stats service's own series, and
     # growthepie's kept as cross-checks under their own names (never mixed into the primaries).
     "fees_native_tokens":         {"label": "Fees paid per day in the native coin (explorer txnsFee)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume",)},
-    "native_coin_supply":         {"label": "Native coin on this chain (explorer nativeCoinSupply) — NOT issuance; moves with bridging", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Plume",)},
     "tx_count_growthepie":        {"label": "Transactions per day — growthepie txcount (cross-check)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume",)},
     "active_addresses_growthepie": {"label": "Daily active addresses — growthepie daa (cross-check)", "kind": "stock", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume",)},
     "fees_usd_growthepie":        {"label": "Fees paid per day ($) — growthepie fees_paid_usd (cross-check)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Plume",)},
@@ -441,7 +441,13 @@ METRICS = {
     "emissions_claimed_tokens": {
         "label": "Staking rewards CLAIMED — LINK out of the reward vault (lumpy; not accrual)",
         "kind": "flow", "unit": "tokens", "archetypes": [1, 3],
-        "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Chainlink",)},
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Chainlink", "Plume")},
+    # Plume (Jake, 2026-10-01): the NET APY staking.plume.org shows, entered by hand — the
+    # cross-check of the diamond's own rate (plume_staking reconciles APR -> APY in its log line).
+    "staking_apy_published": {
+        "label": "Staking APY as the protocol's own app shows it (NET of commission, fraction) — cross-check only",
+        "kind": "stock", "unit": "fraction", "archetypes": [1],
+        "tiers": [3], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Plume",)},
     "total_burn_tokens": {
         "label": "HYPE burned in total — Assistance Fund (gross_burn_tokens) + burns outside it "
                  "(core_burn_tokens); both components stay on the sheet",
@@ -491,7 +497,7 @@ METRICS = {
                  "Ethereum: Etherscan ethsupply2 EthSupply + Eth2Staking - BurntFees)",
         "kind": "stock", "unit": "tokens", "archetypes": [1],
         # Bounds are NEAR's; Ethereum's own band (100m-140m) is on its project entry.
-        "tiers": [1, 2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near", "Ethereum")},
+        "tiers": [1, 2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near", "Ethereum", "Plume")},
     # Ethereum's cumulative EIP-1559 burn (Etherscan ethsupply2 BurntFees). A STOCK whose daily
     # change is gross_burn_tokens. Bounded by what could possibly have been burned: 0 .. supply.
     # ===== ETHEREUM'S CONSENSUS REWARDS, FROM ethsupply2's Eth2Staking. 2026-09-29 (Jake). =====
@@ -3634,9 +3640,11 @@ PROJECTS = [
         # a metric. nativeCoinSupply is stored but is NOT issuance (bridging moves it).
         "blockscout_stats": {
             "base": "https://explorer.plume.org/stats-service",
+            # nativeCoinSupply REMOVED 2026-10-01: HTTP 404 (Jake's run) — the stats service has no
+            # supply chart; supply is measured from the Ethereum ERC-20 (contracts.token_ethereum).
             "lines": {"tx_count": "newTxns", "active_addresses": "activeAccounts",
-                      "fees_native_tokens": "txnsFee", "native_coin_supply": "nativeCoinSupply"},
-            "unit_note": {"fees_native_tokens": "PLUME", "native_coin_supply": "PLUME on Plume (bridging moves it)"},
+                      "fees_native_tokens": "txnsFee"},
+            "unit_note": {"fees_native_tokens": "PLUME"},
             "days": 365,
             "source_url": "https://explorer.plume.org/stats-service",
             "read_on": "2026-09-30",
@@ -3644,6 +3652,21 @@ PROJECTS = [
         # fees_usd = the day's fee in PLUME x that day's PLUME price (build_workbook._native_fee_usd_views).
         "fees_usd_from_native": {"native_metric": "fees_native_tokens",
                                  "source": "derived:blockscout_stats:txnsFee*price"},
+        # ===== SETTLEMENT VOLUME REBUILT BY ARTEMIS'S METHOD — UNVALIDATED (Jake, 2026-10-01). =====
+        # fetch/plume_settlement.py: P2P (ERC-20 + native, both sides non-contract) at same-day
+        # DefiLlama prices + DefiLlama DEX volume; NFT ~0. Jake's measure: ~2,980 ERC-20 transfers a
+        # day, 25 of 250 sampled EOA-to-EOA — a year is ~21,755 pages once (~1.5h at 4/s, under
+        # Blockscout's default 300/min), then daily top-ups. `--seed plume_settlement` for the year.
+        "settlement_rebuild": {
+            "base": "https://explorer.plume.org", "days": 365,
+            "p2p_metric": "p2p_transfer_volume_usd", "dex_metric": "dex_volume_usd",
+            "price_api": "https://coins.llama.fi", "chain_key": "plume_mainnet", "native_coin": "coingecko:plume",
+            # a day with more native transfers than this many 50-row pages is not stored (and says so)
+            "native_max_pages_per_day": 400,
+            "label": "Artemis method, UNVALIDATED",
+            "validation": "UNVALIDATED until the method reproduces Artemis's Ethereum figure "
+                          "(SETTLEMENT_REBUILD.ethereum_validation; Flipside on Snowflake is the one route left)",
+        },
         "plume_staking": {
             # ===== LIVE DIAMOND CONFIRMED (Jake's probes3, 2026-09-30). =====
             # 0x30c791E4…: totalAmountStaked() = 134,043,359.31 PLUME, -0.04% against the app's
@@ -3654,6 +3677,29 @@ PROJECTS = [
             # Unstaking cooldown: getCooldownInterval() = 1,814,400 s = 21 days (Jake, 2026-09-30;
             # seconds per PlumeStakingStorage.sol@3ef710a:111). Read and compared every run.
             "cooldown_seconds": 1_814_400, "cooldown_read": "Jake's probes3, 2026-09-30",
+            # THE APP'S OWN FIGURE (Jake, 2026-10-01): staking.plume.org shows 4.5% NET APY, unchanged
+            # for a long time — stored as the cross-check (manual_overrides staking_apy_published);
+            # the adapter turns the diamond's net APR into an APY (daily compounding) beside it.
+            "app_net_apy": {"value": 0.045, "read": "staking.plume.org, Jake, 2026-09-30"},
+            # THE RATE IS ADMIN-SET, NOT MARKET-DRIVEN: setRewardRates(tokens, rates) is
+            # onlyRole(REWARD_MANAGER_ROLE) — one global per-second rate per token, checkpointed per
+            # validator, capped by maxRewardRates or MAX_REWARD_RATE (RewardsFacet.sol@3ef710a:252-287);
+            # REWARD_MANAGER_ROLE's admin is ADMIN_ROLE (AccessControlFacet.sol:53). Who holds it on
+            # mainnet is not established. A flat APY for months is what an admin-set rate looks like.
+            "rate_governance": "admin-set via setRewardRates (REWARD_MANAGER_ROLE), capped; not emission-scheduled",
+            # REWARDS PAID = the treasury's RewardDistributed(token, amount, recipient) for native PLUME.
+            "payouts": {"metric": "emissions_claimed_tokens",
+                        "logs_api": "https://explorer.plume.org/api",
+                        "topic0": "0xf1eed3d591352eb08c0dc172ef5a4d787195741a1cd3bea8fe04e701940964ab",
+                        "page_cap": 1000, "max_calls_per_run": 40},
+            # myPLUME (Mystic) HAS NO RISING EXCHANGE RATE: it mints 1:1 on deposit
+            # (frxETHMinter.sol:77 @b5b4fa5) and streams rewards separately (stPlumeRewards
+            # rewardPerToken()), so "exchange-rate growth" does not exist to wire; MyPlumeFeed.
+            # getMyPlumePrice() stays ~1.0 by construction (MyPlumeFeed.sol:46-52). Not wired.
+            "myplume": {"token": "0xc2387E0feA344D1edEC3E93Bf2124f909f74938C",
+                        "source": "plumenetwork/mystic-liquid-staking-contracts@b5b4fa5 script/deployMinter.s.sol:105-112",
+                        "exchange_rate": "NONE — 1:1 mint; rewards via stPlumeRewards (0x6B9D6efF3f9B15b0655C5f5c2f27Fcc9A87f9087)",
+                        "wired": False},
             "rpc": "https://rpc.plume.org",
             "reward_token": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
             "max_reward_rate": 3171 * 10**9,
@@ -3917,7 +3963,30 @@ PROJECTS = [
                           "order; nothing here overrides it.",
             "source_date": "2026-09-15",
         },
-        "contracts": {},
+        # ===== SUPPLY, MEASURED (Jake, 2026-10-01). =====
+        # The 10,000,000,000 total is Plume's stated tokenomics (docs.plume.org, vesting_schedule
+        # below) — NOT a contract cap: the Ethereum PLUME ERC-20 (plumenetwork/contracts@3ef710a
+        # plume/src/Plume.sol) is UUPS-upgradeable with mint(address,uint256) gated only by MINTER_ROLE
+        # (L110-112) and no max-supply check. So gross issuance is NOT zero by construction; it is
+        # MEASURED as d(totalSupply()) of that token, which archive reads give a year of history.
+        # Native PLUME on Plume is bridged from it (Arbitrum Orbit custom gas token: locked in the
+        # bridge 0x35381f63…, l2beat discovered.json:145,190), not issued on L2. The stats service's
+        # nativeCoinSupply chart answered HTTP 404 (Jake, 2026-10-01): it was removed from
+        # blockscout_stats — the stats service has no supply chart.
+        "issuance_supply_metric": "total_supply_protocol",
+        "sanity": {"total_supply_protocol": {"min": 9_000_000_000, "max": 11_000_000_000}},
+        "contracts": {
+            "token_ethereum": _contract(
+                "0x4C1746A800D224393fE2470C70A35717eD4eA5F1", "ethereum", "erc20_total_supply", "PLUME",
+                "https://github.com/plumenetwork/contracts/blob/3ef710a/plume/script/deploy/DeployToken.s.sol",
+                verified="2026-10-01",
+                provenance="plumenetwork/contracts@3ef710a plume/script/deploy/DeployToken.s.sol:13 (deterministic "
+                           "deploy of PlumeProxy over Plume.sol); l2beat discovered.json:145,190 (the rollup's "
+                           "nativeToken eth:0x4C17…A5F1, decimals 18)",
+                metric_override="total_supply_protocol", token_standard="erc20",
+                purpose="PLUME's total supply on Ethereum — the token every native PLUME is bridged from. "
+                        "Mintable by MINTER_ROLE (no cap in code), so its daily change IS gross issuance."),
+        },
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
         "dune_queries": _dune("gross_issuance_tokens", "locked_tokens", "emissions_tokens", "tx_count", "active_addresses"),
@@ -16181,13 +16250,8 @@ HISTORY_FORWARD_ONLY = {
                "these is forward-only too",
         "until": None,
     },
-    # 2026-09-29 (Jake: "if an input has no history, say which"):
-    "Plume": {
-        "metrics": ("gross_issuance_tokens",),
-        "why": "d(CoinGecko total_supply), and CoinGecko serves total_supply as a current value "
-               "only — /coins/{id}/history carries no supply (confirmed on a live call "
-               "2026-09-14); the series is re-derived over every stored day (history_derive)",
-    },
+    # Plume gross_issuance_tokens: NOT forward-only since 2026-10-01 — measured as d(totalSupply()) of
+    # the Ethereum PLUME ERC-20 (Plume.contracts.token_ethereum), which archive reads backfill a year.
     # Fluid emissions_tokens REMOVED 2026-09-30: measured from the MerkleDistributor claims
     # (log_scans.merkle_rewards_out), whose full history the scan reads from the first block.
 }
@@ -16604,7 +16668,8 @@ TRADING_THROUGHPUT = {
                        "and HyperCore transfers are not publicly indexed, so settlement is not rebuildable",
         "Ethereum": "both: settlement (Artemis) and throughput — read them as different measures",
         "Near": "throughput until a settlement rebuild validates (NEAR Intents dominates DEX volume)",
-        "Plume": "throughput until a settlement rebuild validates",
+        "Plume": "both, read apart: settlement is REBUILT by Artemis's method (UNVALIDATED until checked on "
+                 "Ethereum; P2P expected to dominate — few DEXs); throughput is DefiLlama DEX only",
     },
 }
 # ===== REBUILDING ARTEMIS'S SETTLEMENT VOLUME WHERE ARTEMIS HAS NO SERIES (Jake, 2026-09-30). =====
@@ -16641,6 +16706,46 @@ SETTLEMENT_REBUILD = {
                        "current-only, so each day needs an external price; NFT volume ~0",
               "estimate": "365 x N / 50 calls on the v2 route, 365 x N / 10,000 on the CSV route plus "
                           "an is_contract lookup per new address — N measured by the probe"},
+    # ===== NEAR: THREE ROUTES, IN ORDER (Jake, 2026-10-01). Report before building. =====
+    "near_routes": {
+        "a_bigquery": {
+            "dataset": "bigquery-public-data.crypto_near_mainnet_us",
+            "cost": "\"NEAR pays for the storage and doesn't charge you to use the public dataset\" — "
+                    "queries are billed by Google, first 1 TB/month free (near/docs@c0686549 "
+                    "data-infrastructure/big-query.mdx:62-64)",
+            "freshness": "IN DOUBT: big-query.mdx:38-40 (added 2026-05-07) says NEAR Lake, the S3 source, was "
+                         "deprecated 2026-03-24; the only ingestion code (near/near-public-lakehouse, last "
+                         "commit 2025-03-21) still reads s3a://near-lake-data-mainnet/ — likely FROZEN at "
+                         "~2026-03-24 unless ingestion moved without a commit. MAX(block_date) settles it.",
+            "tables": "blocks, transactions, receipt_actions, execution_outcomes (logs), receipt_origin(_transaction), "
+                      "account_changes; ft_events (clustered on contract_account_id) is written by the code "
+                      "but NOT in the docs list — presence unverified. Day-partitioned on block_date.",
+            "contracts_rule": "an account is a CONTRACT if it ever received DEPLOY_CONTRACT (it has code); "
+                              "Artemis's own NEAR rule is a signer that never receives a FUNCTION_CALL",
+            "sql": "sql/near/bigquery_freshness.sql, then sql/near/bigquery_p2p_daily.sql (dry-run for bytes)",
+            "delivery_options": ("a service-account key in .env (GOOGLE_APPLICATION_CREDENTIALS) — the "
+                                 "probe/import runs it", "a saved query Jake runs monthly, exporting a CSV "
+                                 "into data/near/ (never committed)"),
+        },
+        "b_dune": {
+            "table": "near.ft_transfers — RAW delta_amount, no USD column; each transfer twice (+/-), mints and "
+                     "burns included (spellbook @c7c8b514 near_base_sources.yml:166-227); decimals from "
+                     "tokens_near.nep141; no NEAR DEX spell; prices.usd for NEAR unverified",
+            "freshness": "Dune's NEAR tables match the NEAR lakehouse exports, so the 2026-03-24 Lake "
+                         "deprecation may apply — check MAX(block_date) first",
+            "sql": "sql/near/dune_ft_p2p_daily.sql (~365 x top-20 tokens rows)",
+        },
+        "c_flipside": {
+            "status": "API and SDK SUNSET 2025-07-31 (FlipsideCrypto/gitbook@8ef31d0a "
+                      "support/product-special-releases/2025/2025-06-20-or-deprecating-studio-dashboards-api-sdk.md:11,29)",
+            "what_is_left": "free Flipside core data on the Snowflake Marketplace — Snowflake compute is billed "
+                            "(a trial carries $400 credit). Ethereum ez_native_transfers/ez_dex_swaps/ez_nft_sales "
+                            "exist with USD columns, so a trial COULD validate the Artemis method on Ethereum; "
+                            "NEAR's ez_token_transfers/ez_native_transfers are not in Flipside's docs (unverified)",
+        },
+        "closes_as_accepted_limit_only_if": "all three fail",
+        "probe": "check_offline_items.py near_settlement_routes",
+    },
     "near": {"route": "NearBlocks v3 /v3/fts/txns (100 per page, before_ts for days); per-contract "
                       "/v3/fts/{contract}/stats/transfers gives 365 days in one call but GROSS, not P2P",
              "estimate": "365 x N / 100 calls and 365 x N / 25 credits against the keyed default plan's "
@@ -17910,39 +18015,10 @@ UNAVAILABLE = [
     # EXISTS AND IS DELIBERATELY UNWIRED. ** Plume's own registry gives a fee receiver, recorded
     # on the project entry above. Calling the metric inapplicable would contradict config's own
     # record that a route is there and was declined on cost.
-    # ===== PLUME SETTLEMENT VOLUME — ACCEPTED LIMIT (Jake, 2026-09-30). =====
-    # Plume is not on Artemis and The Block does not cover it; no other source carries the same
-    # definition, and a different one is never mixed into a cross-chain ratio.
-    {
-        "project": "Plume", "metric": "settlement_volume_usd",
-        "closed_on": "2026-09-30",
-        "summary": "Plume isn't on Artemis, and The Block doesn't cover it — no source carries "
-                   "settlement volume under the one definition every chain's NRR uses.",
-        "what_was_tried": (
-            "Artemis (Jake checked 2026-09-30: Plume not listed); The Block's adjusted on-chain "
-            "volume (no Plume series, 2026-09-29); Plume's explorer stats service (counts and "
-            "fees, not USD settlement volume); growthepie, Etherscan and Coin Metrics' community "
-            "tier (none carries it for Plume)."),
-        "impact": "Plume has no Network Reserve Ratio; the cells read CLOSED, not missing.",
-        "reopen_if": "Artemis adds Plume — then its CSV export goes beside the others "
-                     "(ARTEMIS_SETTLEMENT); OR a rebuild of the definition validates on Ethereum "
-                     "(SETTLEMENT_REBUILD) and Jake approves its call volume.",
-        "native_checked": [
-            {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
-                       "transfer volume, Powered by Flipside)",
-             "finding": "Plume is NOT on Artemis — Jake checked, 2026-09-30"},
-            {"source": "The Block adjusted on-chain volume (the previous definition)",
-             "finding": "does not cover Plume — Jake, 2026-09-29"},
-            {"source": "Plume's own explorer stats service (explorer.plume.org/stats-service)",
-             "finding": "the charts read from it are counts, fees and native supply — none is a USD "
-                        "settlement volume of Artemis's definition; building one from them would be a "
-                        "second definition, which is never mixed into the ratio"},
-            {"source": "growthepie, Etherscan daily stats, Coin Metrics community",
-             "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
-                        "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
-                        "free tier and does not list Plume (2026-09-29)"},
-        ],
-    },
+    # ===== PLUME SETTLEMENT VOLUME — REOPENED 2026-10-01 (Jake: build it). =====
+    # The 2026-09-30 ACCEPTED LIMIT (not on Artemis, not covered by The Block) is withdrawn: the
+    # settlement volume is rebuilt by Artemis's own published method (Plume.settlement_rebuild),
+    # labelled UNVALIDATED until the method is validated on Ethereum.
     # ===== HYPERLIQUID SETTLEMENT VOLUME — ACCEPTED LIMIT, NOT REBUILDABLE (Jake, 2026-09-30). =====
     # Its activity is perps, which Artemis's definition excludes: the trading-throughput NRR
     # (TRADING_THROUGHPUT) is the only meaningful one for it — flagged in METHODOLOGY_FLAGS.
@@ -18025,54 +18101,6 @@ UNAVAILABLE = [
             {"source": "HyperEVM explorers",
              "finding": "index HyperEVM only — HyperCore spot/USDC transfers, where most activity is, are "
                         "not on them, so a HyperEVM-only rebuild would understate by construction"},
-        ],
-    },
-    {
-        "project": "Plume", "metric": "network_reserve_ratio",
-        "closed_on": "2026-09-30",
-        "summary": "No settlement-volume denominator for Plume (see settlement_volume_usd): Plume "
-                   "isn't on Artemis and The Block doesn't cover it.",
-        "what_was_tried": "As Plume settlement_volume_usd.",
-        "impact": "Plume's NRR cell reads CLOSED.",
-        "reopen_if": "Artemis adds Plume.",
-        "native_checked": [
-            {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
-                       "transfer volume, Powered by Flipside)",
-             "finding": "Plume is NOT on Artemis — Jake checked, 2026-09-30"},
-            {"source": "The Block adjusted on-chain volume (the previous definition)",
-             "finding": "does not cover Plume — Jake, 2026-09-29"},
-            {"source": "Plume's own explorer stats service (explorer.plume.org/stats-service)",
-             "finding": "the charts read from it are counts, fees and native supply — none is a USD "
-                        "settlement volume of Artemis's definition; building one from them would be a "
-                        "second definition, which is never mixed into the ratio"},
-            {"source": "growthepie, Etherscan daily stats, Coin Metrics community",
-             "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
-                        "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
-                        "free tier and does not list Plume (2026-09-29)"},
-        ],
-    },
-    {
-        "project": "Plume", "metric": "settlement_volume_365d_usd",
-        "closed_on": "2026-09-30",
-        "summary": "Built from settlement_volume_usd, which is closed for Plume (not on Artemis; "
-                   "The Block doesn't cover it).",
-        "what_was_tried": "As Plume settlement_volume_usd.",
-        "impact": "Plume's trailing-365d settlement cell reads CLOSED.",
-        "reopen_if": "Artemis adds Plume.",
-        "native_checked": [
-            {"source": "Artemis (the definition every chain's NRR uses: DEX + NFT trading + P2P "
-                       "transfer volume, Powered by Flipside)",
-             "finding": "Plume is NOT on Artemis — Jake checked, 2026-09-30"},
-            {"source": "The Block adjusted on-chain volume (the previous definition)",
-             "finding": "does not cover Plume — Jake, 2026-09-29"},
-            {"source": "Plume's own explorer stats service (explorer.plume.org/stats-service)",
-             "finding": "the charts read from it are counts, fees and native supply — none is a USD "
-                        "settlement volume of Artemis's definition; building one from them would be a "
-                        "second definition, which is never mixed into the ratio"},
-            {"source": "growthepie, Etherscan daily stats, Coin Metrics community",
-             "finding": "growthepie has no value-transferred metric (2026-09-25); Etherscan's daily "
-                        "stats are counts/gas/fees, PRO; Coin Metrics' TxTfrValAdjUSD is not on the "
-                        "free tier and does not list Plume (2026-09-29)"},
         ],
     },
 

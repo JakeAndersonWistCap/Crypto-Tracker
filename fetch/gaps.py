@@ -657,6 +657,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                         f"{project.get(field)!r}. Do NOT add a sources.yaml entry or a second "
                         f"contract — the redirect is intentional; see config.py.")
 
+    # PLUME'S SETTLEMENT REBUILD AND REWARD PAYOUTS (Jake, 2026-10-01).
+    if metric == ((project.get("settlement_rebuild") or {}).get("p2p_metric")):
+        return ("Plume's P2P transfer scan (fetch/plume_settlement.py) has no complete day stored yet",
+                "Run `python token_metrics.py --seed plume_settlement` once (~1.5h); routine runs top it up.")
+    pay = (project.get("plume_staking") or {}).get("payouts") or {}
+    if metric == pay.get("metric"):
+        return ("the staking treasury's RewardDistributed scan (fetch/plume_staking.py) stored nothing this run",
+                "Check the Run Log's plume_staking lines: getTreasury() and the explorer logs call.")
     # TRADING THROUGHPUT LEGS (Jake, 2026-09-30): DefiLlama's chain overviews, declared per chain.
     tt = config.TRADING_THROUGHPUT
     if metric in tt["legs"]:
