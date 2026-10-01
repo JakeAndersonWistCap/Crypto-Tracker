@@ -20,15 +20,25 @@ gamingStaked, edgeStaked, idcStaked, emitted — as objects that also hold a dat
 the two shapes apart: a key whose every occurrence sits beside a date is a SERIES and is stored
 with its history; a key with one value is a SCALAR stored today; anything else stores nothing.
 
-  fields      key -> metric; scalar or series, as the page serves it
-  components  a total and the parts the page shows beside it: the latest parts are summed and the
-              difference from the total LOGGED (both dates) — informational, nothing is gated
-  flows       a series that is a FLOW (emitted -> emissions_tokens). Its cadence must match the
-              declared granularity, and its shape is settled from the page itself: CUMULATIVE when
-              it never falls and its last point matches one of the page's own cumulative reward
-              totals (baseRewardDistributed, + bonus, + airdrop), PER-PERIOD when its SUM does.
-              Neither, or both, stores nothing and logs every figure.
-  report      scalars logged each run and never stored (cross-checks, fields not yet understood)
+  fields      key -> metric: the tile's CURRENT figure (one undated value) dated today, plus the
+              chart's dated points before today as history (current_and_series) — unless the key
+              is `current_only` (totalStaked: locked_tokens has a declared wrapper -> dashboard
+              handover, and chart history would overlap the wrapper leg)
+  arrays      a dated list under its own key (emissionStakeRewardSchedule — the Staking Rewards
+              Emission Schedule, cumulative, weekly, DD-MM-YYYY, published past today: only dates
+              up to today are stored, as staker_rewards_emitted)
+  components  a total and its parts' CURRENT figures: the sum is LOGGED against the total, and a
+              part not read is named, never counted as zero
+  report      figures logged each run and never stored
+
+LABELLED FIGURES (Jake's PDFs of the rendered pages, 2026-10-01). The payload carries keys, not
+labels, so each labelled figure is matched to its key BY VALUE (resolve_scalar / resolve_series):
+the one current figure within a declared distance of the value Jake read, or the one chart with the
+declared cadence, value range and check against a resolved figure. Ambiguous or absent: nothing is
+stored and every candidate is named; the Run Log names each match so the key can be pinned.
+DERIVED (config `derived`): same-run sums and ratios — the checker-node and edge reward
+cumulatives that supplier emissions are differenced from at read time, and the utilisation
+labelled "derived: assumes every container available 24/7".
 
 POLITE: robots.txt is checked (fetch.scrape.robots_verdict); one GET per page per day; an honest
 User-Agent. The monthly manual supply_units row stays as the fallback (a declared handover).
@@ -93,8 +103,11 @@ _DATE_KEYS = ("t", "ts", "x", "label", "name", "key", "category")
 # STRICT text formats only (Jake's probes3 run: `emitted` read as 17 undated values — its axis is
 # in a key or a format the first reader did not know). Each is a whole-string match, so a figure
 # never parses as a date by accident.
+# DD-MM-YYYY (Jake's probes4, 2026-10-01): emissionStakeRewardSchedule dates read "06-08-2026" ..
+# "26-11-2026" — day first, settled by the 26. MM-DD-YYYY is deliberately NOT accepted beside it,
+# so no string can parse both ways.
 _DATE_FORMATS = ("%Y-%m-%d", "%Y-%m", "%Y/%m/%d", "%Y/%m", "%b %Y", "%B %Y", "%b %y", "%b '%y",
-                 "%m/%Y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y")
+                 "%m/%Y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y", "%d-%m-%Y")
 
 
 def _as_day(v, numeric_ok: bool = True) -> pd.Timestamp | None:
@@ -155,22 +168,149 @@ def reading(html: str, key: str):
             f"beside a date — which one is the figure is not established")
 
 
-def flow_shape(pts: list, totals: dict, agree_within: float) -> tuple[str | None, str]:
-    """("cumulative" | "per_period" | None, the evidence) for a dated flow series, from the page's
-    own cumulative totals: cumulative when it never falls and its LAST point matches one of them,
-    per-period when its SUM does. Neither or both is not settled."""
-    vals = [v for _, v in pts]
-    last, total = vals[-1], sum(vals)
-    rising = all(b >= a for a, b in zip(vals, vals[1:]))
-    cum = [n for n, t in totals.items() if t and abs(last / t - 1) <= agree_within]
-    per = [n for n, t in totals.items() if t and abs(total / t - 1) <= agree_within]
-    ev = (f"last {last:,.0f}, sum {total:,.0f}, never falls: {rising}; page totals "
-          + ", ".join(f"{n} {t:,.0f}" for n, t in totals.items()) + f" (±{agree_within:.0%})")
-    if cum and rising and not per:
-        return "cumulative", f"last point = {cum[0]} — {ev}"
-    if per and not (cum and rising):
-        return "per_period", f"sum = {per[0]} — {ev}"
-    return None, f"not settled — {ev}"
+def current_and_series(html: str, key: str):
+    """(current, series, why) for `key` on a page that serves it BOTH ways — a headline tile (one
+    undated value: the CURRENT figure) and a chart (dated values: its HISTORY). Jake's probes4
+    (2026-10-01): aiStaked is 416,297,029 on the tile and 400.2M at the chart's last month-start;
+    reading() saw the mix as ambiguous, and the probe's sum silently dropped idcStaked. Either part
+    may be None; `why` says what was not read."""
+    objs = [o for o in rsc_objects(html)
+            if isinstance(o.get(key), (int, float)) and not isinstance(o.get(key), bool)]
+    if not objs:
+        return None, None, f"`{key}` is not in the server-rendered payload"
+    undated = sorted({float(o[key]) for o in objs if _date_of(o) is None})
+    by_day: dict = {}
+    why = []
+    for o in objs:
+        d = _date_of(o)
+        if d is None:
+            continue
+        if by_day.setdefault(d, float(o[key])) != float(o[key]):
+            why.append(f"`{key}` carries two values on {d.date()} ({by_day[d]:,.2f} and {float(o[key]):,.2f})")
+            by_day = {}
+            break
+    if len(undated) > 1:
+        why.append(f"`{key}` carries {len(undated)} different values ({undated[:5]}) beside no date — "
+                   f"which one is the figure is not established")
+    current = undated[0] if len(undated) == 1 else None
+    series = sorted(by_day.items()) if len(by_day) > 1 else None
+    return current, series, "; ".join(why)
+
+
+def array_objects(html: str, key: str):
+    """The list served under `"key":[...]` in the payload (emissionStakeRewardSchedule,
+    stakeHistory), or why not. Bracket-matched over the unescaped payload, strings respected."""
+    text = rsc_text(html)
+    m = re.search(re.escape(f'"{key}"') + r"\s*:\s*\[", text)
+    if not m:
+        return f"`{key}` is not in the server-rendered payload"
+    i, depth, in_str, esc = m.end() - 1, 0, False, False
+    for j in range(i, len(text)):
+        c = text[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    got = json.loads(text[i:j + 1])
+                except ValueError as e:
+                    return f"`{key}`: the array does not parse ({e})"
+                return [o for o in got if isinstance(o, dict)]
+    return f"`{key}`: the array is not closed in the payload"
+
+
+def _cadence_ok(pts: list, granularity: str) -> bool:
+    gaps = pd.Series([(b[0] - a[0]).days for a, b in zip(pts, pts[1:])])
+    lo, hi = {"monthly": (27, 32), "daily": (1, 1), "weekly": (7, 7)}[granularity]
+    return not gaps.empty and lo <= float(gaps.median()) <= hi
+
+
+def resolve_scalar(spec: dict, pages: dict):
+    """(page, key, value) for a LABELLED figure, or why not. Jake read the labels and their values
+    off the rendered pages (PDFs, 2026-10-01); the payload carries keys, not labels. A pinned
+    `key` is read directly. Otherwise the key is found BY VALUE: the one current figure on the
+    named pages within `within` of the label's value as read (a percentage may be served as 12.49
+    or 0.1249). Exactly one candidate, or nothing is stored and every candidate is named."""
+    cands = []
+    for page in spec["pages"]:
+        html = pages.get(page)
+        if html is None:
+            continue
+        keys = [spec["key"]] if spec.get("key") else sorted(fields(html))
+        for k in keys:
+            cur, _, _ = current_and_series(html, k)
+            if cur is None:
+                continue
+            for scale in ((1.0, 100.0) if spec.get("pct") else (1.0,)):
+                v = cur / scale
+                if spec.get("key") or abs(v / spec["anchor"] - 1) <= spec["within"]:
+                    cands.append((page, k, v))
+                    break
+    if len(cands) == 1:
+        return cands[0]
+    if not cands:
+        return (f"no current figure within {spec['within']:.0%} of {spec['anchor']:,} on "
+                f"{', '.join(spec['pages'])}")
+    return "ambiguous — " + ", ".join(f"{p} `{k}` {v:,.4f}" for p, k, v in cands)
+
+
+def resolve_series(spec: dict, pages: dict, resolved: dict):
+    """(page, key, points) for a LABELLED chart, or why not: the one dated series on the named
+    pages with the declared cadence, every value inside `value_range`, its key matching `name_re`
+    (when given), and — where declared — its sum since a date or its latest point agreeing with a
+    labelled figure already resolved. Exactly one, or nothing is stored."""
+    cands, notes = [], []
+    for page in spec["pages"]:
+        html = pages.get(page)
+        if html is None:
+            continue
+        for k in sorted(fields(html)):
+            if spec.get("name_re") and not re.search(spec["name_re"], k):
+                continue
+            if spec.get("not_name_re") and re.search(spec["not_name_re"], k):
+                continue
+            _, pts, _ = current_and_series(html, k)
+            if not pts or not _cadence_ok(pts, spec["granularity"]):
+                continue
+            lo, hi = spec["value_range"]
+            if not all(lo <= v <= hi for _, v in pts):
+                continue
+            if spec.get("first_on_or_after") and pts[0][0] < pd.Timestamp(spec["first_on_or_after"]):
+                continue
+            ok = True
+            for chk, how in (("sum_check", "sum"), ("latest_check", "latest")):
+                c = spec.get(chk)
+                if not c:
+                    continue
+                ref = resolved.get(c["against"])
+                if ref is None:
+                    notes.append(f"`{k}` not checked: {c['against']} was not resolved")
+                    ok = False
+                    break
+                got = (sum(v for d, v in pts if d >= pd.Timestamp(c["since"])) if how == "sum"
+                       else pts[-1][1])
+                notes.append(f"`{k}` {how} {got:,.0f} vs {c['against']} {ref[2]:,.0f} ({got / ref[2] - 1:+.1%})")
+                if abs(got / ref[2] - 1) > c["within"]:
+                    ok = False
+            if ok:
+                cands.append((page, k, pts))
+    if len(cands) == 1:
+        return cands[0]
+    detail = f" ({'; '.join(notes)})" if notes else ""
+    if not cands:
+        return f"no {spec['granularity']} series on {', '.join(spec['pages'])} fits{detail}"
+    return "ambiguous — " + ", ".join(f"{p} `{k}`" for p, k, _ in cands) + detail
 
 
 def context(html: str, key: str, width: int = 240, limit: int = 2) -> list[str]:
@@ -222,21 +362,14 @@ class AethirPages:
             if spec:
                 self._project(p["name"], spec, out)
 
-    def _project(self, name: str, spec: dict, out) -> None:
+    def _read_page(self, name: str, spec: dict, page: str, m: dict, day: str, out):
+        """The page's HTML, or None. A page whose address is not established lists `try` — the
+        first that answers is used and the Run Log names it, so it can be pinned."""
         from .scrape import robots_verdict
-        day = str(today().date())
-        read: dict = {}
-        for page, m in spec["pages"].items():
-            wanted = m.get("fields") or {}
-            flows = m.get("flows") or {}
-            report = m.get("report") or ()
-            if not (wanted or flows or report):
-                continue
-            url = spec["base"].rstrip("/") + "/" + page.lstrip("/")
+        for path in m.get("try") or (page,):
+            url = spec["base"].rstrip("/") + "/" + path.lstrip("/")
             if not self.daily.due(f"aethir_page:{url}", day):
-                for metric in list(wanted.values()) + [f["metric"] for f in flows.values()]:
-                    out.mark_current(SOURCE, name, metric, f"{metric}: {url} already read today", TIER)
-                continue
+                return "DONE"
             ok, why = robots_verdict(url)
             if not ok:
                 out.fail(SOURCE, name, f"robots.txt disallows {url} — {why}", TIER)
@@ -247,111 +380,187 @@ class AethirPages:
                 out.fail(SOURCE, name, f"{url}: {e}", TIER)
                 continue
             self.daily.done(f"aethir_page:{url}", day)
-            got = {k: reading(html, k) for k in set(wanted) | set(report) | set(flows)
-                   | {t for f in flows.values() for t in f.get("totals", ())}}
-            read[page] = got
-            for key, metric in wanted.items():
-                self._store(name, page, key, metric, got[key], out)
-            for key, f in flows.items():
-                self._flow(name, page, key, f, got, out)
-            for key in report:
-                r = got[key]
+            if m.get("try"):
+                out.skipped(SOURCE, name, f"{page}: served at {url}", TIER)
+            return html
+        return None
+
+    def _project(self, name: str, spec: dict, out) -> None:
+        day = str(today().date())
+        pages: dict = {}
+        for page, m in spec["pages"].items():
+            html = self._read_page(name, spec, page, m, day, out)
+            if html == "DONE":
+                for metric in (m.get("fields") or {}).values():
+                    out.mark_current(SOURCE, name, metric, f"{metric}: {page} already read today", TIER)
+                continue
+            if html is None:
+                continue
+            pages[page] = html
+            for key, metric in (m.get("fields") or {}).items():
+                self._store(name, page, key, metric, html, out,
+                            history=key not in (m.get("current_only") or ()))
+            for key, a in (m.get("arrays") or {}).items():
+                self._array(name, page, key, a, html, out)
+            for key in m.get("report") or ():
+                cur, pts, why = current_and_series(html, key)
                 out.skipped(SOURCE, name, f"{page} `{key}` = " + (
-                    f"{r[1]:,.2f} (scalar)" if isinstance(r, tuple) and r[0] == "scalar" else
-                    f"series of {len(r[1])}: {r[1][0][0].date()} {r[1][0][1]:,.2f} .. {r[1][-1][0].date()} "
-                    f"{r[1][-1][1]:,.2f}" if isinstance(r, tuple) else r) + " — REPORTED, not stored", TIER)
+                    f"{cur:,.2f}" if cur is not None else "no current figure")
+                    + (f"; chart of {len(pts)}: {pts[0][0].date()} {pts[0][1]:,.2f} .. {pts[-1][0].date()} "
+                       f"{pts[-1][1]:,.2f}" if pts else "") + (f"; {why}" if why else "")
+                    + " — REPORTED, not stored", TIER)
             comp = m.get("components")
             if comp:
-                self._components(name, page, comp, got, out)
-        self._cross_checks(name, spec, read, out)
+                self._components(name, page, comp, html, out)
+        resolved = self._labelled(name, spec, pages, out)
+        self._derived(name, spec, pages, resolved, out)
+        self._cross_checks(name, spec, pages, out)
 
-    def _store(self, name: str, page: str, key: str, metric: str, r, out) -> None:
+    def _store(self, name: str, page: str, key: str, metric: str, html: str, out,
+               history: bool = True) -> None:
+        """The tile's CURRENT figure dated today, and — unless the field is current-only — the chart's
+        dated points before today as its history. Same source: one measuring point."""
         src = f"{SOURCE}:{page}.{key}"
-        if isinstance(r, str):
-            out.fail(SOURCE, name, f"{metric}: {r} on {page}. NOTHING STORED"
+        cur, pts, why = current_and_series(html, key)
+        rows = [(d, v) for d, v in (pts or []) if d < today()] if history else []
+        if cur is not None:
+            rows.append((today(), cur))
+        if not rows:
+            out.fail(SOURCE, name, f"{metric}: {why or f'`{key}` has no current figure'} on {page}. NOTHING STORED"
                                    + ("; the manual row stays the fallback." if metric == "supply_units" else "."), TIER)
             return
-        if r[0] == "scalar":
-            out.add(point(name, metric, r[1], src, TIER, today()), SOURCE, name,
-                    f"{metric} = {page} `{key}` = {r[1]:,.2f} (server-rendered payload)", TIER)
-            return
-        pts = [(d, v) for d, v in r[1] if d <= today()]
-        frame = tidy(pts, name, metric, src, TIER)
-        out.add(frame, SOURCE, name, f"{metric} = {page} `{key}` series: {len(frame)} point(s) "
-                                     f"{pts[0][0].date()}..{pts[-1][0].date()}, latest {pts[-1][1]:,.2f}", TIER)
+        frame = tidy(rows, name, metric, src, TIER)
+        out.add(frame, SOURCE, name, f"{metric} = {page} `{key}`: "
+                                     + (f"current {cur:,.2f}" if cur is not None else "no current figure")
+                                     + (f"; history {len(rows) - (cur is not None)} point(s) "
+                                        f"{rows[0][0].date()}..{rows[-2 if cur is not None else -1][0].date()}"
+                                        if len(rows) > (cur is not None) else "")
+                                     + (f" ({why})" if why else ""), TIER)
 
-    def _flow(self, name: str, page: str, key: str, f: dict, got: dict, out) -> None:
-        metric, r = f["metric"], got[key]
-        if not (isinstance(r, tuple) and r[0] == "series"):
-            out.fail(SOURCE, name, f"{metric}: `{key}` on {page} is not a dated series "
-                                   f"({r if isinstance(r, str) else 'one value'}). NOTHING STORED.", TIER)
+    def _array(self, name: str, page: str, key: str, a: dict, html: str, out) -> None:
+        """A dated list under its own key (emissionStakeRewardSchedule). Kept: dates up to today
+        (the published schedule runs past it); a cumulative that falls is refused."""
+        objs = array_objects(html, key)
+        if isinstance(objs, str):
+            out.fail(SOURCE, name, f"{a['metric']}: {objs} on {page}. NOTHING STORED.", TIER)
             return
-        pts = [(d, v) for d, v in r[1] if d <= today()]
-        gaps = pd.Series([(b[0] - a[0]).days for a, b in zip(pts, pts[1:])])
-        cadence = {"monthly": (27, 32), "daily": (1, 1), "weekly": (7, 7)}[f["granularity"]]
-        if gaps.empty or not cadence[0] <= float(gaps.median()) <= cadence[1]:
-            out.fail(SOURCE, name, f"{metric}: `{key}` declared {f['granularity']}, but its points are a "
-                                   f"median {gaps.median() if not gaps.empty else 'n/a'} day(s) apart. "
-                                   f"NOTHING STORED.", TIER)
+        pts = sorted((d, float(o[a["value_key"]])) for o in objs
+                     if (d := _date_of(o)) is not None and isinstance(o.get(a["value_key"]), (int, float)))
+        if len(pts) < 2 or not _cadence_ok(pts, a["granularity"]):
+            out.fail(SOURCE, name, f"{a['metric']}: `{key}` on {page} is not a {a['granularity']} dated list "
+                                   f"({len(pts)} dated point(s) of {len(objs)}). NOTHING STORED.", TIER)
             return
-        totals, running = {}, 0.0
-        for t in f.get("totals", ()):
-            v = got.get(t)
-            if not (isinstance(v, tuple) and v[0] == "scalar"):
-                break
-            running += v[1]
-            totals["+".join(f["totals"][:len(totals) + 1])] = running
-        shape, ev = flow_shape(pts, totals, float(f["agree_within"]))
-        if shape is None:
-            out.fail(SOURCE, name, f"{metric}: whether `{key}` is cumulative or per-period is {ev}. "
-                                   f"NOTHING STORED; the schedule stays.", TIER)
+        if a.get("cumulative") and any(b[1] < x[1] for x, b in zip(pts, pts[1:])):
+            out.fail(SOURCE, name, f"{a['metric']}: `{key}` falls somewhere — not the cumulative it is "
+                                   f"declared to be. NOTHING STORED.", TIER)
             return
-        if shape == "cumulative":
-            rows = [(b[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])]
-            tag = f"{SOURCE}:{page}.{key}[cumulative, differenced]"
-        else:
-            rows, tag = pts, f"{SOURCE}:{page}.{key}[per {f['granularity'][:-2]}]"
-        frame = tidy(rows, name, metric, tag, TIER)
-        out.add(frame, SOURCE, name, f"{metric} = `{key}` is {shape.upper()} ({ev}); {len(frame)} "
-                                     f"{f['granularity']} row(s) {rows[0][0].date()}..{rows[-1][0].date()}, "
-                                     f"latest {rows[-1][1]:,.0f} — replaces the schedule's emissions rows", TIER)
+        past = [(d, v) for d, v in pts if d <= today()]
+        if not past:
+            out.skipped(SOURCE, name, f"{a['metric']}: every point of `{key}` is after today", TIER)
+            return
+        frame = tidy(past, name, a["metric"], f"{SOURCE}:{page}.{key}.{a['value_key']}", TIER)
+        out.add(frame, SOURCE, name, f"{a['metric']} = `{key}` ({a['label']}): {len(past)} point(s) "
+                                     f"{past[0][0].date()}..{past[-1][0].date()}, latest {past[-1][1]:,.0f}; "
+                                     f"{len(pts) - len(past)} published point(s) after today not stored "
+                                     f"(last {pts[-1][0].date()} {pts[-1][1]:,.0f})", TIER)
 
-    def _components(self, name: str, page: str, comp: dict, got: dict, out) -> None:
-        """The page's total beside the latest of its parts, both dated. LOGGED, never gating."""
-        def latest(r):
-            if isinstance(r, tuple) and r[0] == "scalar":
-                return None, r[1]
-            if isinstance(r, tuple):
-                return r[1][-1]
-            return None, None
-        td, tv = latest(got.get(comp["total"]))
-        parts = {k: latest(got.get(k)) for k in comp["parts"]}
-        if tv is None or any(v is None for _, v in parts.values()):
-            out.skipped(SOURCE, name, f"{comp['total']} vs its parts on {page}: not every figure was read", TIER)
+    def _components(self, name: str, page: str, comp: dict, html: str, out) -> None:
+        """The tile total beside the sum of its parts' CURRENT figures. LOGGED, never gating; a part
+        that was not read is named — never counted as zero (Jake's probes4: the probe's sum
+        dropped idcStaked and reported -47.69%)."""
+        tv, _, _ = current_and_series(html, comp["total"])
+        parts = {k: current_and_series(html, k)[0] for k in comp["parts"]}
+        missing = [k for k, v in parts.items() if v is None] + ([comp["total"]] if tv is None else [])
+        if missing:
+            out.skipped(SOURCE, name, f"{comp['total']} vs its parts on {page}: no current figure for "
+                                      f"{', '.join(missing)} — no sum reported", TIER)
             return
-        s = sum(v for _, v in parts.values())
-        out.skipped(SOURCE, name, f"{comp['total']} {tv:,.2f}{f' ({td.date()})' if td is not None else ''} vs "
-                                  f"the sum of its parts {s:,.2f} ({s / tv - 1:+.2%}): " + ", ".join(
-                                      f"{k} {v:,.2f}{f' ({d.date()})' if d is not None else ''}"
-                                      for k, (d, v) in parts.items()), TIER)
+        s = sum(parts.values())
+        out.skipped(SOURCE, name, f"{comp['total']} {tv:,.2f} vs the sum of its parts {s:,.2f} "
+                                  f"({s / tv - 1:+.2%}): " + ", ".join(f"{k} {v:,.2f}" for k, v in parts.items()), TIER)
 
-    def _cross_checks(self, name: str, spec: dict, read: dict, out) -> None:
+    def _labelled(self, name: str, spec: dict, pages: dict, out) -> dict:
+        """Figures Jake read off the rendered pages by LABEL (2026-10-01), matched to payload keys —
+        scalars first, then charts (a chart's check may cite a scalar). {id: (page, key, value)}."""
+        resolved: dict = {}
+        for fid, f in (spec.get("labelled") or {}).items():
+            if not any(pg in pages for pg in f["pages"]):
+                continue
+            if f.get("granularity"):
+                continue
+            r = resolve_scalar(f, pages)
+            if isinstance(r, str):
+                out.fail(SOURCE, name, f"\"{f['label']}\": {r}. NOTHING STORED.", TIER)
+                continue
+            resolved[fid] = r
+            page, key, v = r
+            how = "pinned" if f.get("key") else f"matched by value to {f['anchor']:,} as read {f['read_on']}"
+            if f.get("metric"):
+                out.add(point(name, f["metric"], v, f"{SOURCE}:{page}.{key}", TIER, today()), SOURCE, name,
+                        f"{f['metric']} = \"{f['label']}\" = {page} `{key}` {v:,.4f} ({how})", TIER)
+            else:
+                out.skipped(SOURCE, name, f"\"{f['label']}\" = {page} `{key}` {v:,.4f} ({how}) — REPORTED", TIER)
+        for fid, f in (spec.get("labelled") or {}).items():
+            if not f.get("granularity") or not any(pg in pages for pg in f["pages"]):
+                continue
+            r = resolve_series(f, pages, resolved)
+            if isinstance(r, str):
+                out.fail(SOURCE, name, f"\"{f['label']}\" ({f['granularity']} chart): {r}. NOTHING STORED.", TIER)
+                continue
+            page, key, pts = r
+            rows = [(d, v) for d, v in pts if d <= today()]
+            frame = tidy(rows, name, f["metric"], f"{SOURCE}:{page}.{key}", TIER)
+            out.add(frame, SOURCE, name, f"{f['metric']} = \"{f['label']}\" = {page} `{key}`: {len(rows)} "
+                                         f"{f['granularity']} point(s) {rows[0][0].date()}..{rows[-1][0].date()}, "
+                                         f"latest {rows[-1][1]:,.2f}", TIER)
+            resolved[fid] = (page, key, rows[-1][1])
+        return resolved
+
+    def _derived(self, name: str, spec: dict, pages: dict, resolved: dict, out) -> None:
+        """Sums and ratios of figures read this run, each from same-run readings only (config
+        `derived`). A missing input stores nothing and names it."""
+        def val(ref):
+            if ref in resolved:
+                return resolved[ref][2]
+            if "#" not in ref:
+                return None
+            page, key = ref.split("#")
+            return current_and_series(pages[page], key)[0] if page in pages else None
+        for d in spec.get("derived") or ():
+            vals = {ref: val(ref) for ref in d["inputs"]}
+            missing = [ref for ref, v in vals.items() if v is None]
+            if missing:
+                if any(r in resolved or r.split("#")[0] in pages for r in d["inputs"]):
+                    out.fail(SOURCE, name, f"{d.get('metric') or d['what']}: {', '.join(missing)} not read this "
+                                           f"run. NOTHING STORED.", TIER)
+                continue
+            v = list(vals.values())
+            got = (sum(v) if d["op"] == "sum" else v[0] - sum(v[1:]) if d["op"] == "minus"
+                   else v[0] / (v[1] * d.get("per", 1)))
+            text = f"{d['what']} = {got:,.4f} (" + ", ".join(f"{r} {x:,.2f}" for r, x in vals.items()) + ")"
+            if d.get("compare"):
+                ref = val(d["compare"]["against"])
+                if ref is not None:
+                    text += f"; vs {d['compare']['label']} {ref:,.4f} ({got / ref - 1:+.2%})"
+            if d.get("metric"):
+                out.add(point(name, d["metric"], got, d["source"], TIER, today()), SOURCE, name,
+                        f"{d['metric']}: {text}" + (f" — {d['label']}" if d.get("label") else ""), TIER)
+            else:
+                out.skipped(SOURCE, name, text + " — LOGGED", TIER)
+
+    def _cross_checks(self, name: str, spec: dict, pages: dict, out) -> None:
         """Declared same-quantity comparisons across pages (idcStaked on two pages), and the page's
         cumulative base reward against the declared Checker Node schedule. Logged only."""
         for chk in spec.get("cross_checks") or ():
-            vals = []
-            for page, key in chk["pair"]:
-                r = (read.get(page) or {}).get(key)
-                vals.append(r[1] if isinstance(r, tuple) and r[0] == "scalar" else
-                            r[1][-1][1] if isinstance(r, tuple) else None)
+            vals = [current_and_series(pages[pg], key)[0] if pg in pages else None for pg, key in chk["pair"]]
             if None not in vals and vals[1]:
                 out.skipped(SOURCE, name, f"{chk['what']}: " + " vs ".join(
                     f"{p} `{k}` {v:,.2f}" for (p, k), v in zip(chk["pair"], vals))
                     + f" ({vals[0] / vals[1] - 1:+.2%})", TIER)
         sc = spec.get("schedule_check")
-        r = (read.get(sc["page"]) or {}).get(sc["key"]) if sc else None
-        if isinstance(r, tuple) and r[0] == "scalar":
+        v = current_and_series(pages[sc["page"]], sc["key"])[0] if sc and sc["page"] in pages else None
+        if v is not None:
             days = (today() - pd.Timestamp(sc["from"])).days + 1
             want = days * float(sc["tokens_per_day"])
-            out.skipped(SOURCE, name, f"{sc['key']} {r[1]:,.0f} vs the declared schedule's cumulative "
-                                      f"{want:,.0f} ({days} days from {sc['from']}): {r[1] / want - 1:+.2%}", TIER)
+            out.skipped(SOURCE, name, f"{sc['key']} {v:,.0f} vs the declared schedule's cumulative "
+                                      f"{want:,.0f} ({days} days from {sc['from']}): {v / want - 1:+.2%}", TIER)

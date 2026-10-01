@@ -50,6 +50,7 @@ from .pendle_epochs import PendleEpochs
 from .ultrasound import UltrasoundHistory
 from .artemis import ArtemisCSV
 from .plume_settlement import PlumeSettlement
+from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
@@ -96,6 +97,9 @@ TIER_ORDER = [
     ("plume_staking", 2, lambda ctx: PlumeStaking()),
     # Plume's settlement volume rebuilt by Artemis's method — P2P transfers from Blockscout (2026-10-01).
     ("plume_settlement", 1, lambda ctx: PlumeSettlement()),
+    # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
+    # settlement rebuild once Jake approves its bytes (2026-10-01).
+    ("near_bigquery", 1, lambda ctx: NearBigQuery(stored_long=ctx["stored_long"])),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
@@ -1749,6 +1753,7 @@ TIER_BUDGET_S = {
     "hl_candles": 600,
     # daily top-up ~60 ERC-20 pages + the day's native pages; the adapter stops itself at 240s
     "plume_settlement": 300,
+    "near_bigquery": 300,
 }
 DEFAULT_BUDGET_S = 120
 HEARTBEAT_AFTER_S = 30.0

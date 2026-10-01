@@ -3727,6 +3727,8 @@ SELECT m.date
 --     it (a declared handover never overlaps, or the series is blanked), so only those rows move to
 --     locked_tokens_wrapper — the wrapper's own named series, read live from now on.
 -- ========================================================================================
+--     RESULT (Jake, 2026-10-01): BK2 and BK3 returned NO ROWS — the wrapper leg runs to 2026-09-29 and
+--     the dashboard leg starts 2026-09-30, so nothing moves and BK4 is not needed. The handover stands.
 -- BK1. THE TWO MEASURING POINTS, with their date spans.
 SELECT CASE WHEN source LIKE 'aethir_page%' THEN 'dashboard' ELSE 'wrapper' END AS point,
        COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
@@ -3757,4 +3759,33 @@ SELECT m.date
 --  WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE '%staking_wrapper%'
 --    AND date >= (SELECT MIN(date) FROM metrics
 --                  WHERE project = 'Aethir' AND metric = 'locked_tokens' AND source LIKE 'aethir_page%');
+-- COMMIT;
+
+
+-- ========================================================================================
+-- BL. AETHIR customer_revenue_usd: AETHIR'S OWN WEEKLY REVENUE IS PRIMARY; DEFILLAMA'S MOVES  2026-10-01
+--     Jake (2026-10-01): the demand-metric page's "Aethir Weekly Network Revenue" chart is
+--     customer_revenue_usd from now on (fetch/aethir_pages.py), and DefiLlama's AethirCore prepayment
+--     figure — stored until now as customer_revenue_usd with source 'derived:=fees_usd' — is the
+--     cross-check, customer_revenue_usd_defillama. Left where they are, those rows are a second
+--     measuring point inside customer_revenue_usd and the series is blanked. They MOVE; nothing is
+--     deleted. (The read-time view rebuilds customer_revenue_usd_defillama from fees_usd either way.)
+-- ========================================================================================
+-- BL1. WHAT customer_revenue_usd HOLDS FOR AETHIR, by source.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'customer_revenue_usd'
+ GROUP BY source;
+
+-- BL2. A MOVED ROW WOULD COLLIDE WITH ONE ALREADY UNDER customer_revenue_usd_defillama? (expect 0 rows)
+SELECT m.date
+  FROM metrics m
+  JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = 'customer_revenue_usd_defillama'
+ WHERE m.project = 'Aethir' AND m.metric = 'customer_revenue_usd' AND m.source = 'derived:=fees_usd';
+
+-- BL3. THE MOVE. Only after BL1-BL2. (A BL2 collision: the cross-check already holds that day —
+--      DELETE the customer_revenue_usd duplicate instead; ask first.)
+-- BEGIN;
+-- UPDATE metrics SET metric = 'customer_revenue_usd_defillama'
+--  WHERE project = 'Aethir' AND metric = 'customer_revenue_usd' AND source = 'derived:=fees_usd';
 -- COMMIT;

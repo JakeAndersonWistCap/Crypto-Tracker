@@ -2988,77 +2988,72 @@ def settlement_rebuild_coverage():
 
 
 def near_settlement_routes():
-    """Jake 2026-10-01 (C): NEAR settlement volume, three routes in order — report before building.
-    (a) BigQuery bigquery-public-data.crypto_near_mainnet_us: FIRST its freshness (NEAR Lake, its
-        only ingestion source in code, was deprecated 2026-03-24). Runs sql/near/bigquery_freshness.sql
-        when google-cloud-bigquery and a service-account key (GOOGLE_APPLICATION_CREDENTIALS) are
-        present, plus a DRY RUN of sql/near/bigquery_p2p_daily.sql for the bytes a year scans
-        (free: 1 TB/month); otherwise says what to paste into the BigQuery console.
-    (b) Dune near.ft_transfers: executes the saved query NEAR_DUNE_QUERY_ID once (Jake saves
-        sql/near/dune_ft_p2p_daily.sql) and reports rows and datapoints used.
-    (c) Flipside: its API and SDK were sunset 2025-07-31 — nothing to call (config.SETTLEMENT_REBUILD).
-    Keys are never printed."""
-    import time as _t                                      # noqa: PLC0415
+    """Jake 2026-10-01: NEAR from Google's public BigQuery dataset — LIVE (MAX(block_date) 2026-10-01).
+    Dune (paid plan to save a query) and Flipside (API shut 2025-07-31) are CLOSED.
+    With the service-account key (NEAR_BQ_KEY_PATH, RUNBOOK 11n): runs sql/near/bigquery_metadata.sql
+    (partitioning, clustering, a year's rows per month, the two schemas — ~30 MB billed, the 10 MB
+    INFORMATION_SCHEMA minimum x3) and DRY-RUNS every heavy query (free): the P2P year backfill and
+    one day's top-up, the token census, the buyback-wallet balances. Without the key: writes each
+    query with literal dates to data/near/console/ — paste into console.cloud.google.com/bigquery
+    (project near-data-510309) and the editor shows "This query will process N GB" before running
+    anything. Keys and key paths are never printed."""
+    import re as _re                                       # noqa: PLC0415
     from pathlib import Path                               # noqa: PLC0415
-    head("NEAR SETTLEMENT — route (a) BigQuery freshness, (b) Dune datapoints, (c) Flipside")
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery           # noqa: PLC0415
+    head("NEAR / BigQuery — layout, schemas and dry-run bytes (nothing heavy is run)")
+    spec = config.PROJECT_BY_NAME["Near"]["near_bigquery"]
     here = Path(__file__).resolve().parent / "sql" / "near"
-    # (a)
-    try:
-        from google.cloud import bigquery                  # noqa: PLC0415
-        if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip():
-            raise ImportError("GOOGLE_APPLICATION_CREDENTIALS not set")
-        bq = bigquery.Client()
-        sql = (here / "bigquery_freshness.sql").read_text()
-        for stmt in [x for x in sql.split(";") if "SELECT" in x]:
-            for row in bq.query(stmt).result():
-                print(f"  (a) {dict(row)}")
-        job = bq.query((here / "bigquery_p2p_daily.sql").read_text(),
-                       job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
-        print(f"  (a) a year of the P2P query would scan {job.total_bytes_processed / 1e12:,.3f} TB "
-              f"(free tier 1 TB/month)")
-    except Exception as e:  # noqa: BLE001
-        print(f"  (a) not run here ({str(e)[:120]}). Paste sql/near/bigquery_freshness.sql into "
-              f"console.cloud.google.com/bigquery (metadata + one date column: free) and PASTE BACK the "
-              f"last dates. If they stop near 2026-03-24 the dataset is FROZEN and route (a) is closed.")
-    # (b)
-    key = os.environ.get("DUNE_API_KEY", "").strip()
-    qid = os.environ.get("NEAR_DUNE_QUERY_ID", "").strip()
-    if not key or not qid:
-        print(f"  (b) {'no DUNE_API_KEY' if not key else 'no NEAR_DUNE_QUERY_ID'}: save "
-              f"sql/near/dune_ft_p2p_daily.sql as a Dune query (run `SELECT MAX(block_date) FROM "
-              f"near.ft_transfers` first), put its id in .env as NEAR_DUNE_QUERY_ID, and re-run this check.")
-    else:
-        hdr = {**_ua(), "X-Dune-API-Key": key}
-        api = "https://api.dune.com/api/v1"
-        try:
-            r = requests.post(f"{api}/query/{int(qid)}/execute", headers=hdr, timeout=TIMEOUT)
-            if not r.ok:
-                print(f"  (b) execute: HTTP {r.status_code} — {r.text[:200]}")
-            else:
-                eid = r.json().get("execution_id")
-                state = ""
-                for _ in range(60):
-                    st = requests.get(f"{api}/execution/{eid}/status", headers=hdr, timeout=TIMEOUT).json()
-                    state = st.get("state", "")
-                    if state in ("QUERY_STATE_COMPLETED", "QUERY_STATE_FAILED", "QUERY_STATE_CANCELLED"):
-                        break
-                    _t.sleep(5)
-                res = requests.get(f"{api}/execution/{eid}/results", headers=hdr, timeout=TIMEOUT).json()
-                meta = (res.get("result") or {}).get("metadata") or {}
-                rows = (res.get("result") or {}).get("rows") or []
-                days = sorted({str(x.get("day"))[:10] for x in rows})
-                print(f"  (b) {state}: {len(rows)} row(s), {len(days)} day(s) {days[:1]}..{days[-1:]}; "
-                      f"datapoints {meta.get('datapoint_count')}, columns {meta.get('column_names')}")
-                if res.get("error"):
-                    print(f"  (b) error: {str(res.get('error'))[:200]}")
-        except Exception as e:  # noqa: BLE001
-            print(f"  (b) Dune: {str(e).split('?')[0][:160]}")
-    # (c)
-    print("  (c) Flipside: API and SDK sunset 2025-07-31 (FlipsideCrypto/gitbook@8ef31d0a "
-          "2025-06-20-or-deprecating-studio-dashboards-api-sdk.md:11,29); the only route left is its free "
-          "core data on the Snowflake Marketplace (Snowflake compute is NOT free; a trial carries $400 credit).")
-    print("  PASTE BACK all lines. NEAR closes as ACCEPTED LIMIT only if all three fail.")
+    yday = (pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1))
+    year0 = yday - pd.Timedelta(days=int(spec["days"]) - 1)
+    toks = list(spec["seed_tokens"])
+    runs = {
+        "p2p_year": ("bigquery_p2p_daily.sql", {"d0": year0.date(), "d1": yday.date(), "tokens": toks}),
+        "p2p_one_day": ("bigquery_p2p_daily.sql", {"d0": yday.date(), "d1": yday.date(), "tokens": toks}),
+        "token_census_30d": ("bigquery_token_census.sql", {"d0": (yday - pd.Timedelta(days=29)).date(), "d1": yday.date()}),
+        "buyback_wallet_balances_year": ("bigquery_buyback_wallet_balances.sql", {"d0": year0.date(), "d1": yday.date()}),
+        "circulating_full_history": ("bigquery_circulating_supply.sql", {"since": "2000-01-01"}),
+    }
+    nb = NearBigQuery()
+    client, why = nb._client(spec)
+    if client is None:
+        out_dir = Path(__file__).resolve().parent / "data" / "near" / "console"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
+        def lit(v):
+            if isinstance(v, (list, tuple)):
+                return "[" + ", ".join(f"'{x}'" for x in v) + "]"
+            return f"DATE '{v}'"
+        for label, (fn, params) in runs.items():
+            sql = (here / fn).read_text()
+            for k, v in params.items():
+                sql = _re.sub(rf"@{k}\b", lit(v), sql)
+            (out_dir / f"{label}.sql").write_text(sql)
+        print(f"  not run here: {why}.")
+        print(f"  Console route: open each file in {out_dir} in console.cloud.google.com/bigquery (project\n"
+              f"  near-data-510309); the editor shows 'This query will process N' BEFORE you run — that figure\n"
+              f"  is the dry run, and costs nothing. Also paste sql/near/bigquery_metadata.sql and run it (~30 MB).\n"
+              f"  PASTE BACK: each file's bytes, and the metadata results.")
+        return
+    from google.cloud import bigquery                      # noqa: PLC0415
+    for stmt in [x for x in (here / "bigquery_metadata.sql").read_text().split(";") if "SELECT" in x]:
+        try:
+            for row in client.query(stmt, job_config=bigquery.QueryJobConfig(
+                    maximum_bytes_billed=100 * 1024 ** 2)).result():
+                print(f"  {dict(row.items())}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  metadata query refused: {type(e).__name__}: {str(e)[:200]}")
+        print("  --")
+    for label, (fn, params) in runs.items():
+        try:
+            b = nb._dry(client, (here / fn).read_text(), params)
+            print(f"  DRY RUN {label}: {b / 1e9:,.2f} GB ({b / 1e12:,.3f} TB) — free; nothing billed")
+        except Exception as e:  # noqa: BLE001
+            print(f"  DRY RUN {label}: {type(e).__name__}: {str(e)[:200]}")
+    print(f"  Budget in config: {int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB/month of the free 1 TB; per query "
+          f"<= {int(spec['max_bytes_per_query']) / 1e9:,.0f} GB. The FT leg's dry run ignores clustering (it bills less).")
+    print("  PASTE BACK all lines. Nothing heavy runs until config Near.near_bigquery.approved.p2p is True.")
 
 def plume_archive():
     """Jake's run 2026-09-30 17:21: does rpc.plume.org serve HISTORICAL state for the live staking
@@ -3206,8 +3201,9 @@ def aethir_pages():
              "numberDelegatedCheckers", "totalRunningHours", "totalOnlineHours", "totalMonthlyCapacity",
              "amount", "earning", "reward", "service")
     parts: dict = {}
+    pages: dict = {}
     for page in ("protocol/supply-metric", "protocol/demand-metric", "protocol/onchain-metric",
-                 "protocol/overview", "overview"):
+                 "protocol/overview", "overview", "protocol/ecosystem-metric", "protocol/ecosystem", "ecosystem"):
         url = f"https://dashboard.aethir.com/{page}"
         ok, why = robots_verdict(url)
         if not ok:
@@ -3221,6 +3217,13 @@ def aethir_pages():
         html = r.text
         f = ap.fields(html)
         print(f"\n  {page}: HTTP {r.status_code}, {len(f)} numeric field(s)")
+        if r.status_code == 200:
+            pages["ecosystem" if "ecosystem" in page else page] = html
+        for arr in ("stakeHistory", "emissionStakeRewardSchedule"):
+            got_a = ap.array_objects(html, arr)
+            if not isinstance(got_a, str):
+                print(f"    [{arr}] {len(got_a)} element(s); keys {sorted({k for o in got_a for k in o})}; "
+                      f"first {got_a[:2]}; last {got_a[-1:]}")
         for k, vals in sorted(f.items()):
             mark = "  <-- CANDIDATE" if any(h in k.lower() for h in hints) else ""
             print(f"    {k} = {vals[:4]}{' (+' + str(len(vals) - 4) + ' more)' if len(vals) > 4 else ''}{mark}")
@@ -3241,8 +3244,11 @@ def aethir_pages():
                          f"sum {sum(v for _, v in pts):,.2f}")
                 if len(pts) <= 40:
                     shape += "\n        all: " + ", ".join(f"{d.date()} {v:,.0f}" for d, v in pts)
-            if page.endswith("onchain-metric") and not isinstance(got, str):
-                parts[k] = got[1] if got[0] == "scalar" else got[1][-1][1]
+            cur_, pts_, why_ = ap.current_and_series(html, k)
+            print(f"       current (tile) {cur_ if cur_ is None else f'{cur_:,.2f}'}; chart "
+                  f"{len(pts_) if pts_ else 0} point(s){'; ' + why_ if why_ else ''}")
+            if page.endswith("onchain-metric") and cur_ is not None:
+                parts[k] = cur_
             print(f"    >> {k}: {shape}")
             print(f"       labels near it: {ap.labels_near(html, k) or '(none found)'}")
             if k == "emitted" or (isinstance(got, str) and "beside a date" in got):
@@ -3270,9 +3276,34 @@ def aethir_pages():
                 print(f"  page gamingStaked {g_:,.0f} vs Gaming pool supply() {sup['Gaming Pool'] / 1e18:,.0f}; "
                       f"page aiStaked {a_:,.0f} vs AI pool supply() {sup['AI Pool'] / 1e18:,.0f}")
         if "totalStaked" in parts:
-            s_ = sum(parts.get(k) or 0 for k in ("aiStaked", "gamingStaked", "edgeStaked", "idcStaked"))
-            print(f"  page totalStaked {parts['totalStaked']:,.0f} vs sum of the four parts {s_:,.0f} "
-                  f"({s_ / parts['totalStaked'] - 1:+.2%})")
+            four = ("idcStaked", "aiStaked", "gamingStaked", "edgeStaked")
+            missing = [k for k in four if parts.get(k) is None]
+            if missing:
+                # Jake's probes4: a part that was not read is NAMED, never summed as zero.
+                print(f"  page totalStaked {parts['totalStaked']:,.0f}: no sum — no current figure for "
+                      f"{', '.join(missing)}")
+            else:
+                s_ = sum(parts[k] for k in four)
+                print(f"  page totalStaked {parts['totalStaked']:,.0f} vs sum of the four parts {s_:,.0f} "
+                      f"({s_ / parts['totalStaked'] - 1:+.2%}): " + ", ".join(f"{k} {parts[k]:,.0f}" for k in four))
+    # LABELLED FIGURES (Jake's PDFs, 2026-10-01): which payload key each label resolves to, by value.
+    import config                                          # noqa: PLC0415
+    lab = config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["labelled"]
+    resolved = {}
+    print("\n  LABELLED FIGURES -> payload keys (pin these in config `labelled`):")
+    for fid, spec_ in lab.items():
+        if spec_.get("granularity"):
+            continue
+        got_ = ap.resolve_scalar(spec_, pages)
+        if not isinstance(got_, str):
+            resolved[fid] = got_
+        print(f"    {spec_['label']}: " + (got_ if isinstance(got_, str) else f"{got_[0]} `{got_[1]}` {got_[2]:,.4f}"))
+    for fid, spec_ in lab.items():
+        if not spec_.get("granularity"):
+            continue
+        got_ = ap.resolve_series(spec_, pages, resolved)
+        print(f"    {spec_['label']}: " + (got_ if isinstance(got_, str) else
+              f"{got_[0]} `{got_[1]}` {len(got_[2])} point(s) {got_[2][0][0].date()}..{got_[2][-1][0].date()}"))
     print("\n  PASTE BACK all lines. Utilisation and revenue are wired only from a label that says what the"
           "\n  figure is, its unit and whether it is cumulative.")
 
@@ -3360,8 +3391,10 @@ def maple_ssf_lp_test():
     df = df.assign(price=df["day"].map(price))
     print(f"  SSF: {len(df)} day(s) {df['day'].min().date()}..{df['day'].max().date()}; price from {where}, "
           f"{df['price'].notna().sum()} day(s) matched")
+    verdicts = {}
     for label, part in (("ALL DAYS", df), ("LAST 90 DAYS", df[df["day"] > df["day"].max() - pd.Timedelta(days=90)])):
         r = mt.lp_fit(part, rule)
+        verdicts[label] = r.get("verdict")
         if r.get("verdict") is None:
             print(f"  {label}: {r['why']}")
             continue
@@ -3375,9 +3408,17 @@ def maple_ssf_lp_test():
         print(f"    d(usd) on -price x d(syrup): slope {r['swap_slope']:.3f}, R2 {r['r2_swap']:.3f} (1 = every "
               f"SYRUP change swapped at market)")
         print(f"    VERDICT by the declared rule: {'LP CONFIRMED' if r['verdict'] else 'NOT CONFIRMED'} — {r['why']}")
-    print("  LP CONFIRMED on ALL DAYS = SSF holding changes are price-driven rebalancing, NOT release:\n"
-          "  Maple's SSF-based pool_release is retired (config Maple.pool_release_tokens_blocked says how).\n"
-          "  PASTE BACK all lines.")
+    # THE VERDICT ACTUALLY REACHED (Jake's probes4, 2026-10-01: the old closing lines printed "LP
+    # CONFIRMED on ALL DAYS" whatever the fit said — R2 0.11/0.05 all days, 0.39/0.43 last 90).
+    word = {True: "LP CONFIRMED", False: "NOT CONFIRMED", None: "NOT DECIDED (too few days)"}
+    print("\n  OVERALL: " + "; ".join(f"{k}: {word[v]}" for k, v in verdicts.items()))
+    if verdicts.get("ALL DAYS") is True:
+        print("  The SSF's holding changes fit price-driven rebalancing on all days.")
+    else:
+        print("  The constant-product LP hypothesis is NOT supported on all days. pool_release stays N/A on its\n"
+              "  own ground: no emission programme runs (MIP-019 sunset; Drips ended — config\n"
+              "  Maple.pool_release_tokens_blocked). See Maple.ssf_selling_question for the open question.")
+    print("  PASTE BACK all lines.")
 
 
 def maple_drips():

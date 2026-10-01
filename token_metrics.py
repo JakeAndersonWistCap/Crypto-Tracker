@@ -96,14 +96,16 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
-    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement"],
+    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement",
+                             "near_bigquery"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
                          "year of Plume P2P transfers from Blockscout (~21,755 pages, ~1.5h). hl_candles: a year "
                          "of daily candles for every Hyperliquid perp market (~1 call each, paced). plume_staking: the live diamond read at the first block of each past day "
                          "(locked_tokens, gross/net APR, commission); stops where rpc.plume.org "
-                         "serves no historical state.")
+                         "serves no historical state. near_bigquery: NEAR's P2P month chunks from "
+                         "BigQuery until the month's byte budget is spent (only once approved).")
     return ap.parse_args(argv)
 
 
@@ -210,6 +212,26 @@ def seed_geodnet(st, log) -> int:
     return 0
 
 
+def seed_near_bigquery(st, log) -> int:
+    """NEAR from BigQuery with no chunk limit (Jake, 2026-10-01): every month chunk the month's byte
+    budget allows, newest first — only reads config Near.near_bigquery.approved allows. Records no gaps."""
+    from fetch.near_bigquery import NearBigQuery
+    from fetch.validate import validate_frame
+    pl = [p for p in config.PROJECTS if p.get("near_bigquery")]
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    NearBigQuery(stored_long=st.load_long()).run(pl, None, out, unbounded=True)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed near_bigquery: %s — %s", e.status, e.message)
+    log.info("--seed near_bigquery: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0
+
+
 def seed_plume_settlement(st, log) -> int:
     """Plume's settlement-volume rebuild, the first year in one sitting (Jake, 2026-10-01): every
     ERC-20 transfer page back a year and each day's native transfers, no time budget, progress
@@ -217,7 +239,7 @@ def seed_plume_settlement(st, log) -> int:
     from fetch import Heartbeat
     from fetch.plume_settlement import PlumeSettlement
     from fetch.validate import validate_frame
-    pl = [p for p in config.PROJECTS if p.get("settlement_rebuild")]
+    pl = [p for p in config.PROJECTS if (p.get("settlement_rebuild") or {}).get("engine", "blockscout") == "blockscout"]
     run_id = fetch.new_run_id()
     out = fetch.FetchOutput()
     t0 = time.monotonic()
@@ -360,7 +382,7 @@ def main(argv=None) -> int:
     if args.seed:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
               "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles,
-              "plume_settlement": seed_plume_settlement}[args.seed](st, log)
+              "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery}[args.seed](st, log)
         st.close()
         return rc
 

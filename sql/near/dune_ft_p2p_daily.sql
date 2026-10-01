@@ -1,3 +1,5 @@
+-- CLOSED (Jake, 2026-10-01): Dune requires a paid plan to save queries, so route (b) is not used.
+-- Kept as a record of the query that would have run.
 -- NEAR settlement route (b) on Dune. Save as a Dune query, put its id in .env as NEAR_DUNE_QUERY_ID,
 -- then: python check_offline_items.py near_settlement_routes  (executes it once, reports datapoints).
 -- near.ft_transfers (spellbook sources/_base_sources/other/near_base_sources.yml:166-227): RAW

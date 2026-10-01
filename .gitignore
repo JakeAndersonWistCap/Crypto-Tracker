@@ -12,3 +12,9 @@ tests/_scratch/
 # Artemis's terms are read (config.SOURCE_REGISTER["artemis.xyz"]).
 *Settlement Volume*.csv
 *Settlement_Volume*.csv
+# NEAR BigQuery (2026-10-01): console CSV exports, and any service-account key that strays into the
+# repo — the key belongs OUTSIDE it (RUNBOOK 11n); these patterns are the guard if it does not.
+data/near/
+*service-account*.json
+*near-bq*.json
+near-data-510309-*.json

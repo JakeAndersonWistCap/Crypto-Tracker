@@ -483,10 +483,56 @@ forward-only from 2026-09-29.
 ```bash
 python token_metrics.py --seed hl_candles         # Hyperliquid perps volume: a year of daily candles, ~1 call per market
 python token_metrics.py --seed plume_settlement   # Plume P2P transfers (Artemis method, UNVALIDATED): ~21,755 pages, ~1.5h
-python check_offline_items.py near_settlement_routes   # NEAR: BigQuery freshness, Dune datapoints, Flipside status
+python check_offline_items.py near_settlement_routes   # NEAR: BigQuery layout + dry-run bytes (11n)
 ```
 
 Each seed caches its progress, so an interrupted run resumes; routine runs then add each new day.
+
+
+## 11n. NEAR from BigQuery — the service-account key (near-data-510309 only)
+
+Google's public NEAR dataset (`bigquery-public-data.crypto_near_mainnet_us`) is live. Queries run in
+Jake's sandbox project **near-data-510309**, which has no billing: it cannot be charged, and BigQuery
+refuses queries once the free 1 TB/month is used. fetch/near_bigquery.py keeps its own ledger under
+900 GB/month and runs only what `config Near.near_bigquery.approved` allows (circulating: yes;
+P2P: not until Jake approves the dry-run bytes).
+
+**Create the key — in near-data-510309, and nowhere else:**
+
+1. console.cloud.google.com → the project picker at the top → choose **near-data-510309**. Check the
+   picker shows that ID, not cbc-risk-regime-api, before every step below.
+2. IAM & Admin → Service Accounts → **Create service account**: name `token-metrics-bq`.
+3. Grant this project's roles: **BigQuery Job User** (runs queries, billed to this project's free
+   quota) and **BigQuery Data Viewer** (reads datasets; the public dataset needs no grant, so this is
+   belt and braces). Done; no user access needed.
+4. Open the new account → Keys → Add key → Create new key → **JSON**. Save it OUTSIDE the repo, e.g.
+   `~/.config/token-metrics/near-bq-key.json`, and `chmod 600` it.
+5. `.env`:
+   ```
+   NEAR_BQ_KEY_PATH=/home/<you>/.config/token-metrics/near-bq-key.json
+   NEAR_BQ_PROJECT=near-data-510309
+   ```
+6. `pip install google-cloud-bigquery`
+
+**Why it cannot touch cbc-risk-regime-api:** a service account has only the roles granted to it, and
+these are granted on near-data-510309 alone; it has no role in any other project unless someone adds
+it to that project's IAM. The adapter also refuses to start if NEAR_BQ_PROJECT names any project other
+than near-data-510309, so jobs are only ever created (and counted) there. If an organisation policy
+blocks key creation (`iam.disableServiceAccountKeyCreation`), use the fallback below.
+
+**Then:**
+```bash
+python check_offline_items.py near_settlement_routes   # layout + dry-run bytes (~30 MB; dry runs free)
+python token_metrics.py                                # NEAR circulating (10 MB/day) + daily dry-run line
+# after Jake sets config Near.near_bigquery.approved.p2p = True:
+python token_metrics.py --seed near_bigquery           # month chunks, newest first, until the month's budget
+```
+
+**Fallback without a key:** `check_offline_items.py near_settlement_routes` writes each query with
+literal dates to `data/near/console/`. Paste one into the BigQuery console (near-data-510309): the
+editor shows the bytes before running. Run the P2P query for a month and use Save results → CSV;
+save it as `data/near/p2p_<YYYY-MM>.csv` (columns day, token, amount, n). The next run reads it.
+`data/near/` is never committed. (The sandbox has no scheduled queries, so this step is by hand.)
 
 ## 11l. One-off: Plume's staking history from the live diamond
 

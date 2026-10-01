@@ -216,7 +216,7 @@ METRICS = {
     # settlement-volume ones. See TRADING_THROUGHPUT.
     "dex_volume_usd":             {"label": "DEX spot volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume")},
     "perps_volume_usd":           {"label": "Perps volume per day ($ ≈ Σ daily candle volume × close, Hyperliquid's own info API — an approximation of notional)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)},
-    "p2p_transfer_volume_usd":    {"label": "P2P transfer volume per day ($, Artemis method: ERC-20 + native between non-contract accounts, same-day prices) — UNVALIDATED", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Plume",)},
+    "p2p_transfer_volume_usd":    {"label": "P2P transfer volume per day ($, Artemis method: ERC-20 + native between non-contract accounts, same-day prices) — UNVALIDATED", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Plume", "Near")},
     "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
     "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
@@ -233,9 +233,9 @@ METRICS = {
     # circulating_supply_first_party: the protocol's own circulating figure where it publishes
     # one (Hyperliquid tokenDetails.circulatingSupply). circulating_supply_onchain: READ-TIME
     # (build_workbook._circulating_views) = on-chain total − the documented non-circulating set.
-    "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply; Aethir dashboard athCirculatingSupply)",
+    "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply; Aethir dashboard athCirculatingSupply; NEAR's circulating_supply table in BigQuery)",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 3],
-                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir")},
+                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir", "Near")},
     # ===== AETHIR'S STAKE, BY POOL, FROM ITS OWN DASHBOARD (Jake's probes3, 2026-09-30). =====
     # locked_tokens = the on-chain page's totalStaked; these are the parts it shows beside it, and
     # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
@@ -244,6 +244,30 @@ METRICS = {
     "locked_tokens_edge":    {"label": "Staked — Edge (Aethir dashboard edgeStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_idc":     {"label": "Staked — compute providers / Cloud Hosts (Aethir dashboard idcStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_wrapper": {"label": "ATH held by the Ethereum staking wrapper 0x3f69… (stAethir/veAethir, 1:1) — reference", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    # ===== AETHIR'S OWN DASHBOARD, BY LABEL (Jake's PDFs, 2026-10-01). fetch/aethir_pages.py. =====
+    # Each is matched to its payload key by value against the figure Jake read beside the label.
+    "arr_usd":               {"label": "Annual Recurring Revenue (ARR, 1d) — Aethir's own headline (demand-metric)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Aethir",)},
+    "customer_revenue_cumulative_usd": {"label": "Total Network Revenue since June 2024 — Aethir's own cumulative (demand-metric)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
+    "customer_revenue_usd_defillama": {"label": "DefiLlama aethir fees — AethirCore service-fee deposits net of withdrawals (PREPAYMENT, can be negative); cross-check of Aethir's own weekly revenue", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [1], "sanity_min": -1e11, "sanity_max": 1e11, "only_projects": ("Aethir",)},
+    "compute_purchases_cumulative_tokens": {"label": "Onchain Compute Purchases (ATH, cumulative) — demand-metric", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
+    "compute_hours_cumulative": {"label": "Total Compute Hours Delivered (cumulative) — demand-metric", "kind": "stock", "unit": "hours", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Aethir",)},
+    "compute_hours_last_week": {"label": "Total Compute Hours Delivered Last Week — demand-metric tile", "kind": "stock", "unit": "hours", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",)},
+    "compute_hours_weekly":  {"label": "Weekly Compute Hours Delivered — demand-metric chart (via the tenant portal)", "kind": "flow", "unit": "hours", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",)},
+    "staking_apr_ai":        {"label": "Average APR of AI Pool — Aethir's first-party protocol staking yield (fraction); the cross-check for any derived yield", "kind": "stock", "unit": "fraction", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 2.0, "only_projects": ("Aethir",)},
+    "staking_apr_gaming":    {"label": "Average APR of Gaming Pool — Aethir's first-party protocol staking yield (fraction); the cross-check for any derived yield", "kind": "stock", "unit": "fraction", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 2.0, "only_projects": ("Aethir",)},
+    "avg_lock_duration_days_ai":     {"label": "Average Stake Duration (days) — AI Pool, Aethir's daily chart", "kind": "stock", "unit": "days", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1830, "only_projects": ("Aethir",)},
+    "avg_lock_duration_days_gaming": {"label": "Average Stake Duration (days) — Gaming Pool, Aethir's daily chart", "kind": "stock", "unit": "days", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1830, "only_projects": ("Aethir",)},
+    "stath_sophon_pool_tokens": {"label": "stATH staked in the Sophon pool (ecosystem page) — a NAMED COMPONENT, never added to locked_tokens (whether it sits inside the native pools is not established)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "staker_rewards_emitted": {"label": "Staking Rewards Emission Schedule — cumulative ATH emitted to STAKERS (Aethir published schedule, dates up to today). NOT supplier emissions", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "checker_rewards_cumulative_tokens": {"label": "Total Rewards Distributed to Checker Nodes (base + bonus + airdrop, cumulative) — supplier emissions input", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "edge_earnings_cumulative_tokens": {"label": "Edge Total Earnings (cumulative ATH)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "edge_stipend_cumulative_tokens": {"label": "Edge Total Stipend Reward (cumulative ATH)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "edge_rewards_cumulative_tokens": {"label": "Edge rewards, cumulative (Total Earnings + Total Stipend Reward) — supplier emissions input", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "edge_daily_reward_pool_tokens": {"label": "Edge Daily Reward Pool (ATH/day)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aethir",)},
+    "edge_earnings_monthly_tokens": {"label": "Edge monthly earnings — Aethir's chart (history of the edge leg)", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",)},
+    "ecosystem_rewards_cumulative_tokens": {"label": "Total Rewards Distributed — ecosystem page, ALL programmes (cumulative)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "supply_units_edge":     {"label": "Staked edge devices — a named supply component (GPU containers stay supply_units)", "kind": "stock", "unit": "units", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Aethir",)},
+    "supply_units_checker_licences": {"label": "Delegated checker-node licences (numberDelegatedCheckers) — a named supply component", "kind": "stock", "unit": "units", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Aethir",)},
     "circulating_supply_onchain": {"label": "Circulating supply — on-chain total − the DOCUMENTED non-circulating set (CIRCULATING_ONCHAIN)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
@@ -277,7 +301,7 @@ METRICS = {
     # Aethir (Jake's probes2, 2026-09-30): the supply page's other figures, as the page states them.
     "supply_locations":           {"label": "Countries/locations with supply (dashboard `locations`)", "kind": "stock", "unit": "count", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 300, "only_projects": ("Aethir",)},
     "compute_power_total":        {"label": "Total compute power (dashboard `totalComputePower`, TFLOPs)", "kind": "stock", "unit": "TFLOPs", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
-    "capacity_monthly_total":     {"label": "Total monthly capacity (dashboard `totalMonthlyCapacity`; unit as the page states it — the utilisation denominator)", "kind": "stock", "unit": "capacity", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Aethir",)},
+    "capacity_monthly_total":     {"label": "Total Monthly Capacity of Players (dashboard `totalMonthlyCapacity`) — a gaming-players measure, NOT GPU-hours; never a utilisation denominator", "kind": "stock", "unit": "capacity", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Aethir",)},
     "future_emissions_tokens":    {"label": "Staking-reward reserve remaining (tokenDetails.futureEmissions)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "fdv_usd":                    {"label": "FDV",                             "kind": "stock", "unit": "usd",    "archetypes": [3],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
     # --- free API: DefiLlama
@@ -2852,6 +2876,46 @@ PROJECTS = [
         "name": "Near", "symbol": "NEAR",
         # Issuance = d(block-header total_supply) + burn (2026-09-28): see total_supply_protocol.
         "issuance_supply_metric": "total_supply_protocol",
+        # ===== GOOGLE'S PUBLIC NEAR DATASET — LIVE (Jake, 2026-10-01). fetch/near_bigquery.py. =====
+        # bigquery-public-data.crypto_near_mainnet_us: MAX(block_date) = 2026-10-01 on blocks,
+        # execution_outcomes and receipt_actions — NEAR Lake's deprecation did NOT freeze it (the
+        # 2026-10-01 assumption that it would was WRONG). Queried from Jake's sandbox project
+        # near-data-510309 (no billing: it cannot be charged; the free 1 TB/month is the hard limit).
+        # NOTHING HEAVY RUNS UNTIL JAKE APPROVES IT on the logged dry runs: `approved` gates each read.
+        #   circulating  10 MB a run (BigQuery's minimum; the table is ~1,400 rows) — approved
+        #   p2p          NOT approved: the year's backfill and one day's top-up are dry-run (free) and
+        #                logged every day; the native-NEAR leg must read receipt_actions.args (the
+        #                only place a TRANSFER's deposit is), estimated 1.5-3 TB a year, ~5-9 GB a day
+        #   balances     NOT wired — sql/near/bigquery_buyback_wallet_balances.sql (<= ~5 GB once)
+        "near_bigquery": {
+            "project": "near-data-510309", "project_env": "NEAR_BQ_PROJECT", "key_env": "NEAR_BQ_KEY_PATH",
+            "approved": {"circulating": True, "p2p": False, "balances": False},
+            "monthly_budget_bytes": 900 * 10 ** 9,        # of the free 1 TB, leaving room for console use
+            "max_bytes_per_query": 400 * 10 ** 9,
+            "days": 365, "chunk_days": 31, "max_chunks_per_run": 1, "census_every_days": 30,
+            "value_cover": 0.95,
+            # before the first census: the FT leg's dry run needs a token list to estimate against
+            "seed_tokens": ("usdt.tether-token.near", "wrap.near",
+                            "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"),
+            "seed_tokens_note": "Tether USDt, wNEAR, native USDC — dry-run placeholders only; the census "
+                                "replaces them with the measured >95%-of-value set",
+            "price_api": "https://coins.llama.fi",
+            "circulating_metric": "circulating_supply_first_party",
+            "p2p_metric": "p2p_transfer_volume_usd",
+            "verified": "Jake's freshness run, 2026-10-01",
+        },
+        # THE ARTEMIS METHOD REBUILT FOR NEAR (Jake, 2026-10-01): DEX (DefiLlama) + P2P (BigQuery,
+        # above) per day at read time (build_workbook._rebuilt_settlement_view); NFT ~0.
+        "settlement_rebuild": {
+            "engine": "bigquery", "days": 365,
+            "p2p_metric": "p2p_transfer_volume_usd", "dex_metric": "dex_volume_usd",
+            "label": "Artemis method (adapted to NEAR), UNVALIDATED",
+            "contract_rule": "an account is a CONTRACT on a day if it received a FUNCTION_CALL or "
+                             "DEPLOY_CONTRACT action that UTC day; eth-implicit 0x accounts (NEP-518 "
+                             "wallets) count as users",
+            "validation": "UNVALIDATED — the method cannot be checked against Artemis's Ethereum figure "
+                          "from free sources (SETTLEMENT_REBUILD.ethereum_validation)",
+        },
         # ===== CHAIN ACTIVITY — NearBlocks API v3, keyed. Wired 2026-09-24. =====
         # Field names READ FROM NEARBLOCKS' OWN SOURCE (its API is open source; the docs site was
         # unreachable from the build environment): the response is {"data": [...]} and the
@@ -3681,6 +3745,20 @@ PROJECTS = [
             # for a long time — stored as the cross-check (manual_overrides staking_apy_published);
             # the adapter turns the diamond's net APR into an APY (daily compounding) beside it.
             "app_net_apy": {"value": 0.045, "read": "staking.plume.org, Jake, 2026-09-30"},
+            # ===== RECONCILED (Jake's probes4, 2026-10-01). =====
+            # The LIVE diamond's gross APR is 4.9966% on every date back to 2025-10-01 (fixed), and the
+            # LIVE commission is 10%: 4.9966% x (1 - 0.10) = 4.497% = the app's 4.5% NET APY. CORRECTION:
+            # 4.9966% is NOT a test-diamond artefact — the test diamond 0xCF8B happens to carry the same
+            # rate; only its 0.50% commission was the test diamond's. Archive state serves 365 days;
+            # staked 67,656,232 PLUME (2025-10-01) -> 125-139M through 2026 -> 133,996,576 (2026-09-30).
+            "yield_reconciled": {"gross_apr": 0.049966, "commission": 0.10, "net": 0.049966 * 0.90,
+                                 "gross_fixed_since": "2025-10-01", "app_net_apy": 0.045,
+                                 "archive_days": 365,
+                                 "staked": {"2025-10-01": 67_656_232, "2026-09-30": 133_996_576},
+                                 "read": "Jake's probes4, 2026-10-01",
+                                 "corrects": "the 2026-09-30 record that discarded 4.9966% as the test "
+                                             "diamond's — the test diamond's 0.50% COMMISSION was the "
+                                             "artefact; the rate is the live one"},
             # THE RATE IS ADMIN-SET, NOT MARKET-DRIVEN: setRewardRates(tokens, rates) is
             # onlyRole(REWARD_MANAGER_ROLE) — one global per-second rate per token, checkpointed per
             # validator, capped by maxRewardRates or MAX_REWARD_RATE (RewardsFacet.sol@3ef710a:252-287);
@@ -3711,8 +3789,9 @@ PROJECTS = [
             # validators (id 1: 56.41; every commission 0.50%) — impossible for the live network.
             # NOTHING is stored until this address is confirmed as the contract staking.plume.org
             # uses; the stake additionally waits until it matches the app's own total (Jake reads
-            # it). The 4.9966% gross / 0.50% commission came from 0xCF8B — the TEST diamond — and are
-            # DISCARDED (Jake, 2026-09-30); the APR stored is the live diamond's own rate.
+            # it). The 0.50% commission came from 0xCF8B — the TEST diamond — and is DISCARDED. Its
+            # 4.9966% gross rate is ALSO the live diamond's (fixed since 2025-10-01; Jake's probes4,
+            # 2026-10-01 — see yield_reconciled); the APR stored is the live diamond's own rate.
             # RECONCILIATION TARGET (Jake, 2026-09-30): staking.plume.org shows 134.1M PLUME staked.
             # Every candidate is read; exactly one within ±0.5% of it is the live contract (the app
             # rounds to 0.1M = ±0.04%; the rest allows a few days of stake movement since the read).
@@ -3737,7 +3816,8 @@ PROJECTS = [
                                               "134.1M); myPLUME's plumeStaking() points to it",
                               "why": "0xCF8B's getValidatorsList() sums to 94.87 PLUME and its state matches "
                                      "Plume's deploy script (placeholder validators) — the TEST diamond; "
-                                     "its 4.9966% gross / 0.50% commission are DISCARDED",
+                                     "its 0.50% commission is DISCARDED (its 4.9966% gross equals the live "
+                                     "diamond's — yield_reconciled, 2026-10-01)",
                               "candidates": ("0x30c791E4654EdAc575FA1700eD8633CB2FEDE871",
                                              "0xCF8B97260F77c11d58542644c5fD1D5F93FdA57d",
                                              "0xA20bfe49969D4a0E9abfdb6a46FeD777304ba07f"),
@@ -7358,11 +7438,15 @@ PROJECTS = [
                        "label",
             "wired_on": "2026-09-24",
         },
-        # ===== customer_revenue_usd IS fees_usd, IN GEODNET'S SHAPE. 2026-09-24. =====
-        # Aethir is archetype 2 only, so fees_usd is fetched and has no column of its own — the
-        # Morpho case. Restated, not recomputed; the caveat travels on the label to the cell.
+        # ===== DEFILLAMA'S PREPAYMENT FIGURE IS NOW THE CROSS-CHECK. Jake, 2026-10-01. =====
+        # Aethir's own "Aethir Weekly Network Revenue" chart (demand-metric) is PRIMARY
+        # customer_revenue_usd (weekly, checked to sum to ~"Total Network Revenue (Since June 2024)"
+        # $192.2M), and its ARR tile is arr_usd, the headline. DefiLlama's restatement of fees_usd moves
+        # to customer_revenue_usd_defillama. Rows already stored as customer_revenue_usd from
+        # derived:=fees_usd move there by SQL BL (orphan_cleanup.sql).
+        # Was (2026-09-24): customer_revenue_usd IS fees_usd, in GEODNET's shape.
         "metric_restatement": {
-            "customer_revenue_usd": {
+            "customer_revenue_usd_defillama": {
                 "equals": "fees_usd",
                 "why": "DefiLlama's aethir adapter books developer service-fee deposits into "
                        "AethirCore, net of withdrawals, as Fees — the only published measure of "
@@ -7440,6 +7524,10 @@ PROJECTS = [
         # accumulating concurrent streams. Only ONE of the two can currently be placed on a
         # calendar, so only that one emits.
         #
+        # ** UPDATED 2026-10-01 (Jake's labels): stream (a) is Aethir's published "Staking Rewards
+        # Emission Schedule" (emissionStakeRewardSchedule, +2,000,000 ATH a week, running past
+        # today) — paid to STAKERS, stored as staker_rewards_emitted and kept OUT of supplier
+        # emissions. Whether gross_issuance_tokens should carry it is an open question (not added). **
         # (a) STAKING POOLS — 1,000,000 ATH/week per pool x 2 pools = 2,000,000/week
         #     = 285,714.29 ATH/day = 104,285,714 ATH/yr (the widely quoted "~104,000,000/yr"
         #     is 2,000,000 x 52 weeks; by 365 days it is 104,285,714). THE PROMO HAS ENDED and
@@ -7476,10 +7564,21 @@ PROJECTS = [
             # bonus are supplier buckets too, but neither has a declared schedule (see phase_2
             # and the staking-pool note), so emissions UNDERSTATES what suppliers receive.
             "also_emissions": True,
-            # probes3 (Jake, 2026-09-30): the dashboard's own `emitted` series REPLACES this
-            # schedule's emissions_tokens wherever it is stored (build_workbook._measured_emissions_views);
-            # gross_issuance_tokens stays on the schedule. No measured rows = the schedule stays.
-            "emissions_measured_by": "aethir_page:protocol/onchain-metric.emitted",
+            # ===== SUPPLIER EMISSIONS, MEASURED (Jake's labels, 2026-10-01). =====
+            # CORRECTED: `emitted` (emissionStakeRewardSchedule) is the "Staking Rewards Emission
+            # Schedule", paid to STAKERS — stored as staker_rewards_emitted, never as emissions_tokens,
+            # so supplier dilution and staker yield are not mixed. emissions_tokens (A2) = rewards to
+            # SUPPLIERS = the day-on-day rise of the checker-node cumulative ("Total Rewards Distributed
+            # to Checker Nodes", base + bonus + airdrop) PLUS the edge cumulative ("Total Earnings" +
+            # "Total Stipend Reward"), differenced at read time over days BOTH were read
+            # (build_workbook._measured_emissions_views). Cloud-host rewards are not shown separately:
+            # the ecosystem total's unlabelled remainder is logged, never used. From the first measured
+            # day the schedule's emissions rows give way (declared handover, series_handover below);
+            # before it they stand as the PARTIAL checker-base history. gross_issuance_tokens stays on
+            # the schedule. Forward-only: two runs on different days make the first measured row.
+            "emissions_measured_from": {"stocks": ("checker_rewards_cumulative_tokens",
+                                                   "edge_rewards_cumulative_tokens"),
+                                        "source": "aethir_page:supplier_rewards[checker + edge, day-on-day rise]"},
             "emissions_partial_reason": "Checker Node BASE rewards only. Compute-provider "
                                         "rewards and the Checker Node bonus are supplier "
                                         "buckets with no declared schedule, so this UNDERSTATES "
@@ -7646,58 +7745,169 @@ PROJECTS = [
         "dashboard_pages": {
             "base": "https://dashboard.aethir.com",
             "pages": {
+                # GPU containers (`nodes`, 433,704) are PRIMARY supply_units. totalMonthlyCapacity
+                # (638,256,960) is "Total Monthly Capacity of Players" (Jake's supply-page screenshot,
+                # 2026-10-01) — a gaming-players measure, NOT GPU-hours: stored under its own name,
+                # never a utilisation denominator. totalOnlineHours waits for its label (Jake).
                 "protocol/supply-metric": {"fields": {"nodes": "supply_units",
                                                       "locations": "supply_locations",
                                                       "totalComputePower": "compute_power_total",
                                                       "totalMonthlyCapacity": "capacity_monthly_total"},
-                                           # probes3: 866,896,004 here against the on-chain page's
-                                           # latest 902.9M — logged side by side (cross_checks)
                                            "report": ("idcStaked", "totalOnlineHours")},
-                # probes3 2d: `amount` and `earning` series are NOT wired — whether they are USD
-                # revenue or ATH purchases, monthly or cumulative, is not established from the page
-                # (probe aethir_pages prints the text beside each). A June 2026 third-party snapshot
-                # of this page reads "$179.43M total network revenue since June 2024" (USD,
-                # cumulative) and "8.69B ATH in on-chain compute purchases" — which key is which is
-                # unverified (chuhemiao/portfolio@08cc0b07, aethir-ath-gpu-cloud-depin-token-supply-risk.mdx:75-79).
-                "protocol/demand-metric": {"fields": {}},
-                # ===== FIRST-PARTY A2 DATA (Jake's probes3, 2026-09-30). =====
-                # totalStaked 1,789,329,560.63 -> locked_tokens (PRIMARY); aiStaked ~400.2M,
-                # gamingStaked ~287.6M, edgeStaked ~149.7M, idcStaked ~902.9M (latest of each
-                # series) stored beside it. THE PARTS DO NOT SUM TO THE TOTAL on Jake's figures:
-                # 1,740.4M vs 1,789.3M (-48.9M, -2.7%) — logged every run with each part's date.
-                # athCirculatingSupply 23,308,238,268 -> circulating_supply_first_party (PRIMARY,
-                # CIRCULATING_ONCHAIN "first_party"; CoinGecko the cross-check).
+                # Labelled figures on this page are matched by value (see `labelled`). The earlier
+                # unlabelled `amount` / `earning` charts are candidates for the weekly revenue chart
+                # and are used only if one of them fits it (range, cadence, sum ~ total revenue).
+                "protocol/demand-metric": {"fields": {}, "report": ("amount", "earning")},
+                # ===== FIRST-PARTY STAKE AND REWARDS (probes3 2026-09-30; probes4 + labels 2026-10-01). =====
+                # totalStaked "Total Staked ATH (veATH)" 1,789,329,561 = idcStaked 866,896,004 + aiStaked
+                # 416,297,029 + gamingStaked 369,439,890 + edgeStaked 136,696,638 EXACTLY (Jake, probes4).
+                # totalStaked is CURRENT-ONLY: locked_tokens hands over from the wrapper on 2026-09-30, and
+                # chart history would overlap that leg. The components keep their chart history (monthly
+                # aiStaked / gamingStaked 2025-10-01..2026-09-01, and any dated stakeHistory points).
+                # athCirculatingSupply: latest daily (24,053,550,151 on 2026-10-01) plus any dated history.
                 "protocol/onchain-metric": {
                     "fields": {"totalStaked": "locked_tokens", "aiStaked": "locked_tokens_ai",
                                "gamingStaked": "locked_tokens_gaming", "edgeStaked": "locked_tokens_edge",
                                "idcStaked": "locked_tokens_idc",
-                               "athCirculatingSupply": "circulating_supply_first_party"},
+                               "athCirculatingSupply": "circulating_supply_first_party",
+                               "numberDelegatedCheckers": "supply_units_checker_licences"},
+                    "current_only": ("totalStaked",),
                     "components": {"total": "totalStaked",
-                                   "parts": ("aiStaked", "gamingStaked", "edgeStaked", "idcStaked")},
-                    # `emitted` (614,412,275 -> …) is emissions_tokens when the page settles its shape:
-                    # CUMULATIVE if it never falls and its last point matches one of the page's own
-                    # cumulative totals below, PER-MONTH if its sum does. ±5%: the series is
-                    # month-end while the totals are live, and one month of base rewards is ~3.6%
-                    # of baseRewardDistributed. Neither: nothing stored, the schedule stays.
-                    "flows": {"emitted": {"metric": "emissions_tokens", "granularity": "monthly",
-                                          "totals": ("baseRewardDistributed", "bonusRewardDistributed",
-                                                     "airdropRewardDistributed"),
-                                          "agree_within": 0.05}},
-                    # baseRewardDistributed 2,418,496,407 vs the declared Checker Node schedule
-                    # (4.2bn / 1461 days from 2024-06-12): 841 days to 2026-09-30 = 2,417,659,140
-                    # (+0.03%) — the page's figure IS the cumulative base schedule. Logged each run.
+                                   "parts": ("idcStaked", "aiStaked", "gamingStaked", "edgeStaked")},
+                    # "Staking Rewards Emission Schedule" — paid to STAKERS, not A2's supplier emissions.
+                    # {"emitted":616412275,"date":"06-08-2026"} .. {"emitted":648412275,"date":"26-11-2026"},
+                    # +2,000,000 ATH a week; Total Emitted Rewards 630,412,275 at 24-09-2026.
+                    "arrays": {"emissionStakeRewardSchedule": {
+                        "value_key": "emitted", "metric": "staker_rewards_emitted", "granularity": "weekly",
+                        "cumulative": True, "label": "Aethir published schedule"}},
+                    # totalRunningHours is "Cumulative Runtime (Hours)" under Aethir Checker Nodes —
+                    # checker-node runtime, NOT GPU utilisation (Jake's labels, 2026-10-01).
                     "report": ("baseRewardDistributed", "bonusRewardDistributed", "airdropRewardDistributed",
-                               "numberDelegatedCheckers", "totalRunningHours"),
+                               "totalRunningHours"),
                 },
                 "protocol/overview": {"fields": {}},
+                # The ecosystem page's address is not established (Jake's PDF names the page, not the
+                # URL): the first of these that answers is used and the Run Log names it, to be pinned.
+                "ecosystem": {"fields": {}, "try": ("protocol/ecosystem-metric", "protocol/ecosystem", "ecosystem")},
             },
+            # ===== LABELLED FIGURES — Jake's PDFs of the rendered pages, 2026-10-01. =====
+            # anchor = the value as Jake read it beside its label; within = how far today's figure may
+            # sit from it and still be the same key (a 1-day ARR swings; a cumulative creeps). The key is
+            # matched BY VALUE among the named pages' current figures; ambiguity stores nothing.
+            # Pin each `key` from the Run Log's "matched by value" line.
+            "labelled": {
+                "arr": {"label": "Annual Recurring Revenue (ARR) (1d)", "metric": "arr_usd",
+                        "pages": ("protocol/demand-metric",), "key": None, "anchor": 62_490_000,
+                        "within": 0.30, "read_on": "2026-10-01"},
+                "revenue_total": {"label": "Total Network Revenue (Since June 2024)",
+                                  "metric": "customer_revenue_cumulative_usd", "pages": ("protocol/demand-metric",),
+                                  "key": None, "anchor": 192_220_803, "within": 0.05, "read_on": "2026-10-01"},
+                "purchases_total": {"label": "Onchain Compute Purchases (ATH)",
+                                    "metric": "compute_purchases_cumulative_tokens",
+                                    "pages": ("protocol/demand-metric",), "key": None,
+                                    "anchor": 11_182_170_271, "within": 0.05, "read_on": "2026-10-01"},
+                "hours_total": {"label": "Total Compute Hours Delivered", "metric": "compute_hours_cumulative",
+                                "pages": ("protocol/demand-metric",), "key": None, "anchor": 2_433_230_876,
+                                "within": 0.05, "read_on": "2026-10-01"},
+                "hours_last_week": {"label": "Total Compute Hours Delivered Last Week",
+                                    "metric": "compute_hours_last_week", "pages": ("protocol/demand-metric",),
+                                    "key": None, "anchor": 22_089_416, "within": 0.30, "read_on": "2026-10-01"},
+                "apr_ai": {"label": "Average APR of AI Pool", "metric": "staking_apr_ai", "pct": True,
+                           "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.1249,
+                           "within": 0.05, "read_on": "2026-10-01"},
+                "apr_gaming": {"label": "Average APR of Gaming Pool", "metric": "staking_apr_gaming", "pct": True,
+                               "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.1408,
+                               "within": 0.05, "read_on": "2026-10-01"},
+                "locked_ratio": {"label": "Total Locked ATH / Circulating Supply", "metric": None, "pct": True,
+                                 "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.0744,
+                                 "within": 0.05, "read_on": "2026-10-01"},
+                # INSIDE OR ON TOP? stATH is a staked-ATH receipt; 592.5M < the wrapper's 809.5M ATH,
+                # which already funds the AI/Gaming pools inside totalStaked — so it is LIKELY the same
+                # ATH counted once, but NOT ESTABLISHED (no stATH contract address on file, and the
+                # Sophon side is on Sophon's chain). Stored as a named component; never added.
+                "sophon_stath": {"label": "Total stATH staked in Sophon pool", "metric": "stath_sophon_pool_tokens",
+                                 "pages": ("ecosystem",), "key": None, "anchor": 592_517_997, "within": 0.05,
+                                 "read_on": "2026-10-01"},
+                "eco_rewards_total": {"label": "Total Rewards Distributed (ecosystem, all)",
+                                      "metric": "ecosystem_rewards_cumulative_tokens", "pages": ("ecosystem",),
+                                      "key": None, "anchor": 9_953_393_375, "within": 0.03, "read_on": "2026-10-01"},
+                # 1.5%: baseRewardDistributed (2.418bn) sits 2.3% away on the on-chain page.
+                "edge_earnings": {"label": "Edge Total Earnings", "metric": "edge_earnings_cumulative_tokens",
+                                  "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                  "anchor": 2_363_422_512, "within": 0.015, "read_on": "2026-10-01"},
+                "edge_stipend": {"label": "Edge Total Stipend Reward", "metric": "edge_stipend_cumulative_tokens",
+                                 "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                 "anchor": 44_917_651, "within": 0.05, "read_on": "2026-10-01"},
+                "edge_daily_pool": {"label": "Edge Daily Reward Pool", "metric": "edge_daily_reward_pool_tokens",
+                                    "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                    "anchor": 1_184_420, "within": 0.10, "read_on": "2026-10-01"},
+                "edge_devices": {"label": "Staked edge devices", "metric": "supply_units_edge",
+                                 "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                 "anchor": 64_869, "within": 0.10, "read_on": "2026-10-01"},
+                # CHARTS. The weekly revenue chart (axis to $2.4M) must sum, since June 2024, to within
+                # 10% of Total Network Revenue — Jake's check; ATH-denominated charts fall outside the range.
+                "revenue_weekly": {"label": "Aethir Weekly Network Revenue", "metric": "customer_revenue_usd",
+                                   "pages": ("protocol/demand-metric",), "granularity": "weekly",
+                                   "value_range": (0, 2_600_000),
+                                   "sum_check": {"against": "revenue_total", "since": "2024-06-01", "within": 0.10}},
+                "hours_weekly": {"label": "Weekly Compute Hours Delivered", "metric": "compute_hours_weekly",
+                                 "pages": ("protocol/demand-metric",), "granularity": "weekly",
+                                 "value_range": (0, 1e9),
+                                 "latest_check": {"against": "hours_last_week", "within": 0.15}},
+                # Daily, AI vs Gaming told apart by the key's name (camelCase Ai/AI, or gaming); values
+                # inside a 4-year maximum lock.
+                "duration_ai": {"label": "Average Stake Duration (Days) — AI Pool",
+                                "metric": "avg_lock_duration_days_ai", "pages": ("protocol/onchain-metric",),
+                                "granularity": "daily", "value_range": (1, 1461),
+                                "name_re": r"^ai|Ai|AI|_ai", "not_name_re": r"(?i)gaming"},
+                "duration_gaming": {"label": "Average Stake Duration (Days) — Gaming Pool",
+                                    "metric": "avg_lock_duration_days_gaming", "pages": ("protocol/onchain-metric",),
+                                    "granularity": "daily", "value_range": (1, 1461), "name_re": r"(?i)gaming"},
+                "edge_monthly": {"label": "Edge monthly earnings (03/26-09/26)", "metric": "edge_earnings_monthly_tokens",
+                                 "pages": ("protocol/onchain-metric", "ecosystem"), "granularity": "monthly",
+                                 "value_range": (1e6, 2e8), "first_on_or_after": "2026-03-01"},
+            },
+            # ===== SAME-RUN SUMS AND RATIOS. =====
+            "derived": (
+                # SUPPLIER EMISSIONS, part 1: "Total Rewards Distributed to Checker Nodes" 3,848,869,484 =
+                # base + bonus + airdrop. Differenced at read time (build_workbook._measured_emissions_views).
+                {"what": "checker-node rewards, cumulative (base + bonus + airdrop)", "op": "sum",
+                 "inputs": ("protocol/onchain-metric#baseRewardDistributed",
+                            "protocol/onchain-metric#bonusRewardDistributed",
+                            "protocol/onchain-metric#airdropRewardDistributed"),
+                 "metric": "checker_rewards_cumulative_tokens",
+                 "source": "aethir_page:protocol/onchain-metric.base+bonus+airdropRewardDistributed"},
+                # SUPPLIER EMISSIONS, part 2: Edge "Total Earnings" + "Total Stipend Reward".
+                {"what": "edge rewards, cumulative (earnings + stipend)", "op": "sum",
+                 "inputs": ("edge_earnings", "edge_stipend"), "metric": "edge_rewards_cumulative_tokens",
+                 "source": "aethir_page:edge.earnings+stipend"},
+                # Utilisation, DERIVED (Jake, 2026-10-01): weekly compute hours delivered / (GPU containers x
+                # 168h). If totalOnlineHours proves to be GPU online hours, the denominator changes to it.
+                {"what": "utilisation = compute hours delivered last week / (GPU containers x 168h)", "op": "ratio",
+                 "inputs": ("hours_last_week", "protocol/supply-metric#nodes"), "per": 168,
+                 "metric": "utilisation_pct",
+                 "source": "aethir_page:derived.compute_hours_last_week/nodes_x_168[assumes every container available 24/7]",
+                 "label": "derived: assumes every container available 24/7"},
+                {"what": "our locked / circulating (totalStaked / athCirculatingSupply)", "op": "ratio",
+                 "inputs": ("protocol/onchain-metric#totalStaked", "protocol/onchain-metric#athCirculatingSupply"),
+                 "compare": {"against": "locked_ratio", "label": "the page's Total Locked ATH / Circulating Supply"}},
+                {"what": "Total veATH Staked (native) = aiStaked + gamingStaked (785,736,919 on 2026-10-01)",
+                 "op": "sum", "inputs": ("protocol/onchain-metric#aiStaked", "protocol/onchain-metric#gamingStaked")},
+                # What the ecosystem total holds beyond checker + edge (cloud hosts? stakers? airdrops?) is
+                # NOT LABELLED — logged, never used as emissions.
+                {"what": "ecosystem rewards NOT accounted for by checker + edge (unlabelled remainder)",
+                 "op": "minus", "inputs": ("eco_rewards_total", "protocol/onchain-metric#baseRewardDistributed",
+                                           "protocol/onchain-metric#bonusRewardDistributed",
+                                           "protocol/onchain-metric#airdropRewardDistributed",
+                                           "edge_earnings", "edge_stipend")},
+            ),
             "cross_checks": (
                 {"what": "idcStaked on the two pages",
                  "pair": (("protocol/onchain-metric", "idcStaked"), ("protocol/supply-metric", "idcStaked"))},
             ),
             "schedule_check": {"page": "protocol/onchain-metric", "key": "baseRewardDistributed",
                                "from": "2024-06-12", "tokens_per_day": 4_200_000_000 / 1461},
-            "read_on": "2026-09-30",
+            "read_on": "2026-10-01",
         },
         "series_handover": {
             # THE BUG IN JAKE'S 2026-09-30 18:36 RUN: locked_tokens held two measuring points — the
@@ -7706,12 +7916,28 @@ PROJECTS = [
             # step on the handover day is a CHANGE OF DEFINITION (the dashboard adds the compute
             # providers' IDC stake), not a flow. The wrapper keeps being read as its own named series,
             # locked_tokens_wrapper. Overlapping wrapper rows move there by SQL BK (BJ is superseded).
+            # ANSWERED (Jake's probes4, 2026-10-01): the wrapper's ATH (809,467,328 = veAethir
+            # totalSupply) FUNDS the AI and Gaming pools (on-chain supply() 416,300,283 + 369,741,380 =
+            # 786,041,663, -2.9%), so it sits INSIDE totalStaked — a COMPONENT, never additive.
+            # totalStaked = idcStaked + aiStaked + gamingStaked + edgeStaked exactly (1,789,329,561).
+            # SQL BK: BK2 and BK3 returned no rows — the wrapper leg ends 2026-09-29 and the dashboard
+            # leg starts 2026-09-30, so nothing moves and this handover stands as declared.
             "locked_tokens": {"ordered_points": ("chain:ethereum:staking_wrapper",
                                                  "aethir_page:protocol/onchain-metric.totalStaked"),
+                              "wrapper_is_inside_total": True,
+                              "bk_result": "BK2/BK3 no rows (Jake, 2026-10-01): no overlap, nothing moved",
                               "why": "the Ethereum staking wrapper's ATH (stAethir/veAethir, 808.7M) until the "
                                      "dashboard was read, then Aethir's own totalStaked (1.789bn, which adds "
                                      "the IDC stake): a change of definition on the handover day, not a flow",
                               "declared_on": "2026-10-01"},
+            # emissions_tokens: the declared Checker Node BASE schedule (PARTIAL) until the first day
+            # supplier rewards are measured from the dashboard's cumulatives, then the measurement.
+            # A CHANGE OF DEFINITION on the handover day (it adds bonus, airdrop and edge rewards).
+            "emissions_tokens": {"ordered_points": ("schedule:config", "aethir_page:supplier_rewards"),
+                                 "why": "the declared Checker Node base schedule (2,874,743 ATH/day, PARTIAL) "
+                                        "until supplier rewards are measured, then checker (base + bonus + "
+                                        "airdrop) + edge rewards differenced from Aethir's own cumulatives",
+                                 "declared_on": "2026-10-01"},
             "supply_units": {"ordered_points": ("manual", "aethir_page:protocol/supply-metric.nodes"),
                              "why": "Jake's monthly manual row (2026-09-30), then the page's own "
                                     "server-rendered `nodes` read daily",
@@ -8377,6 +8603,23 @@ PROJECTS = [
                             "Maple's emissions from syrupDrip instead (probe maple_drips)",
             "one_week_check": "Jake 2026-09-30: -5.4% SYRUP / +10.5% USD for +20% price; implied "
                               "$0.105/SYRUP — not a clean single-pool fit",
+            # RESULT (Jake's probes4, 2026-10-01): NOT CONFIRMED — R2 0.11 / 0.05 on all days, 0.39 /
+            # 0.43 on the last 90. pool_release stays N/A on its own ground (no emission programme).
+            "result": {"verdict": "NOT CONFIRMED", "all_days_r2": (0.11, 0.05), "last_90_r2": (0.39, 0.43),
+                       "read": "Jake's probes4, 2026-10-01"},
+        },
+        # ===== AN OPEN QUESTION FOR THE METHODOLOGY WORK — NOT ESTABLISHED (Jake, 2026-10-01). =====
+        # In the last 90 days d(usd) on -price x d(syrup) has slope 0.979, R2 0.643: when SYRUP leaves
+        # the SSF, USD arrives at about the market price — the SSF appears to be SELLING SYRUP at market
+        # (e.g. 2026-09-24..29: 79.2M -> 74.9M SYRUP while liquid assets rose). If a buyback-funded fund
+        # sells the token it bought, the buyback's net absorption is overstated by what it sells.
+        "ssf_selling_question": {
+            "status": "OPEN — not established",
+            "evidence": "last 90 days: d(usd) on -price x d(syrup) slope 0.979, R2 0.643; 2026-09-24..29 "
+                        "syrupHoldings 79.2M -> 74.9M while liquidAssetsUsd rose",
+            "question": "is the buyback-funded SSF selling SYRUP at market? If so, net absorption = "
+                        "buybacks minus SSF sales, not buybacks alone",
+            "flagged": "Jake's probes4, 2026-10-01",
         },
         # ===== THE SSF RELEASE IS HELD UNTIL ITS OTHER INFLOWS ARE CLASSIFIED (Jake, 2026-09-30). =====
         "pool_release_tokens_blocked": {
@@ -16713,6 +16956,8 @@ SETTLEMENT_REBUILD = {
             "cost": "\"NEAR pays for the storage and doesn't charge you to use the public dataset\" — "
                     "queries are billed by Google, first 1 TB/month free (near/docs@c0686549 "
                     "data-infrastructure/big-query.mdx:62-64)",
+            "freshness_result": "LIVE (Jake, 2026-10-01): MAX(block_date) = 2026-10-01 on blocks, "
+                                "execution_outcomes and receipt_actions; the assumption below was WRONG",
             "freshness": "IN DOUBT: big-query.mdx:38-40 (added 2026-05-07) says NEAR Lake, the S3 source, was "
                          "deprecated 2026-03-24; the only ingestion code (near/near-public-lakehouse, last "
                          "commit 2025-03-21) still reads s3a://near-lake-data-mainnet/ — likely FROZEN at "
@@ -16744,6 +16989,9 @@ SETTLEMENT_REBUILD = {
                             "NEAR's ez_token_transfers/ez_native_transfers are not in Flipside's docs (unverified)",
         },
         "closes_as_accepted_limit_only_if": "all three fail",
+        "outcome": "2026-10-01 (Jake): (a) BigQuery is LIVE — MAX(block_date) 2026-10-01; BUILT as "
+                   "fetch/near_bigquery.py, p2p awaiting Jake's approval of the dry-run bytes. (b) Dune "
+                   "CLOSED — saving a query needs a paid plan. (c) Flipside CLOSED — API shut 2025-07-31.",
         "probe": "check_offline_items.py near_settlement_routes",
     },
     "near": {"route": "NearBlocks v3 /v3/fts/txns (100 per page, before_ts for days); per-contract "
@@ -16764,6 +17012,11 @@ METHODOLOGY_FLAGS = {
                        "which Artemis's definition (DEX + NFT + P2P transfers) excludes. Use the "
                        "trading-throughput NRR; decide in the methodology work whether A1 should rank on "
                        "it (Jake, 2026-09-30).",
+    "maple_ssf_selling": "QUESTION, NOT ESTABLISHED: Maple's buyback-funded SSF appears to SELL SYRUP at "
+                         "market — last 90 days d(usd) on -price x d(syrup) slope 0.979, R2 0.643; "
+                         "2026-09-24..29 holdings 79.2M -> 74.9M SYRUP while liquid assets rose. If so, "
+                         "net absorption is buybacks minus SSF sales (config Maple.ssf_selling_question; "
+                         "Jake, 2026-10-01).",
 }
 
 
@@ -17098,10 +17351,15 @@ def series_granularity(project_name: str, metric: str) -> str:
     held = p.get(f"{metric}_blocked") or {}
     if held.get("granularity"):
         return held["granularity"]
-    # A DASHBOARD FLOW, declared beside the read that produces it (Aethir's `emitted`, monthly —
-    # fetch/aethir_pages refuses the series if its points are not that far apart).
-    for pg in ((p.get("dashboard_pages") or {}).get("pages") or {}).values():
-        for f in (pg.get("flows") or {}).values():
+    # A DASHBOARD CHART OR LIST, declared beside the read that produces it (Aethir's weekly revenue
+    # and compute-hours charts, the weekly staker-reward schedule — fetch/aethir_pages refuses a
+    # series whose points are not that far apart).
+    dp = p.get("dashboard_pages") or {}
+    for f in (dp.get("labelled") or {}).values():
+        if f.get("metric") == metric and f.get("granularity"):
+            return f["granularity"]
+    for pg in (dp.get("pages") or {}).values():
+        for f in (pg.get("arrays") or {}).values():
             if f.get("metric") == metric and f.get("granularity"):
                 return f["granularity"]
     q = (p.get("dune_queries") or {}).get(metric) or {}
@@ -18354,9 +18612,16 @@ CIRCULATING_ONCHAIN = {
     "Plume": {"status": "not_established",
               "why": "PLUME is native gas on Plume with an Ethereum ERC-20, and no treasury, vesting "
                      "or foundation address is documented in config"},
-    "Near": {"status": "not_established",
-             "why": "NEAR's non-circulating supply sits in per-account lockup contracts and "
-                    "foundation accounts; no documented list exists in config"},
+    # Jake, 2026-10-01: NEAR's OWN daily circulating supply is in BigQuery (circulating_supply, 1,370
+    # rows): total − every *.lockup.near's locked amount − lockup.near − contributors.near, NEAR's
+    # official explorer method (near-public-lakehouse@76e0b2cd Aggregated Circulating Supply
+    # Pipeline.py:330-375). PRIMARY with its full history; CoinGecko the cross-check. One caveat in
+    # NEAR's code: a lockup whose amount read returned 'error' is left out of the locked sum that
+    # day, so such a day reads HIGH.
+    "Near": {"status": "first_party", "metric": "circulating_supply_first_party",
+             "why": "NEAR's own circulating_supply table (bigquery-public-data.crypto_near_mainnet_us), "
+                    "read by fetch/near_bigquery.py: total − lockups − lockup.near − contributors.near",
+             "was": "not_established — no documented non-circulating list in config"},
 }
 # ===== NON-CIRCULATING ADDRESSES NAMED IN EACH PROJECT'S OWN SOURCES (Jake, 2026-09-30). =====
 # Morpho, Aerodrome, Aethir, Plume, NEAR. A LIST, NOT WIRING: nothing here is subtracted until a

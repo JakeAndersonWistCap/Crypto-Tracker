@@ -24,7 +24,9 @@ READ FROM PLUME'S OWN SOURCE, plumenetwork/contracts @8248e78ce0c15ad3875fb2e693
 ** THE LIVE DIAMOND IS 0x30c791E4654EdAc575FA1700eD8633CB2FEDE871 (Jake's probes3, 2026-09-30). **
 Its totalAmountStaked() = 134,043,359.31 PLUME, -0.04% against staking.plume.org's 134.1M, and
 Mystic's myPLUME feed plumeStaking() points to it. 0xCF8B (94.87 PLUME) is the deploy script's test
-diamond; its 4.9966% rate is never stored. locked_tokens = totalAmountStaked() on the live diamond;
+diamond; its 0.50% commission is never stored (its 4.9966% gross rate equals the live diamond's,
+fixed since 2025-10-01; with the live 10% commission that is 4.497% net = the app's 4.5% — Jake's
+probes4, 2026-10-01). locked_tokens = totalAmountStaked() on the live diamond;
 the per-validator sum is logged beside it.
 
 THE ABI IS ALREADY v2. The staking facets at 8248e78 are byte-identical to 3ef710a ("[PDE-2650] v2

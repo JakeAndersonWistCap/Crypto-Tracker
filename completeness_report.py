@@ -88,12 +88,14 @@ DECISIONS = {
     # not covered by The Block) — config.UNAVAILABLE, with its evidence.
     # Jake 2026-09-30: Artemis carries neither. Hyperliquid is CLOSED (config.UNAVAILABLE — not
     # rebuildable). NEAR's rebuild waits on two things only Jake can decide on.
-    **{("Near", m): ("NEEDS JAKE", "Artemis doesn't carry NEAR. Three routes, in order (config."
-                                   "SETTLEMENT_REBUILD near_routes): (a) BigQuery's public NEAR dataset — "
-                                   "check it is not frozen at ~2026-03-24; (b) Dune near.ft_transfers — one "
-                                   "~365-row aggregate; (c) Flipside — API sunset 2025-07-31, Snowflake only. "
-                                   "Run `check_offline_items.py near_settlement_routes`; NEAR closes as an "
-                                   "ACCEPTED LIMIT only if all three fail. A1's throughput NRR covers it meanwhile")
+    # 2026-10-01 (Jake): BigQuery's public NEAR dataset is LIVE (MAX(block_date) 2026-10-01); Dune
+    # (paid plan to save a query) and Flipside (API shut) are closed. Built: fetch/near_bigquery.py.
+    **{("Near", m): ("NEEDS JAKE", "BUILDABLE — BigQuery's public NEAR dataset is live (Dune and Flipside "
+                                   "closed). fetch/near_bigquery.py rebuilds the P2P leg (Artemis method "
+                                   "adapted to NEAR, UNVALIDATED) once Jake sets up the service-account key "
+                                   "(RUNBOOK 11n) and approves the dry-run bytes (config Near.near_bigquery."
+                                   "approved.p2p); then `token_metrics.py --seed near_bigquery`. A1's "
+                                   "throughput NRR covers NEAR meanwhile")
        for m in ("settlement_volume_usd", "network_reserve_ratio")},
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
@@ -114,6 +116,14 @@ PENDING_SEED = {
                      "~21,755 pages, ~1.5h; Artemis method, UNVALIDATED) — routine runs then top it up"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
                  "settlement_volume_365d_usd")},
+    **{("Near", m): "NEAR's P2P leg from BigQuery (fetch/near_bigquery.py): set up the service-account key "
+                    "(RUNBOOK 11n), read the Run Log's DRY RUNS bytes, set config Near.near_bigquery."
+                    "approved.p2p = True, then python token_metrics.py --seed near_bigquery (month chunks "
+                    "within the 900 GB/month budget; Artemis method adapted to NEAR, UNVALIDATED)"
+       for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
+                 "settlement_volume_365d_usd")},
+    ("Near", "circulating_supply_first_party"): "NEAR's own circulating_supply from BigQuery: set up the "
+                                                "service-account key (RUNBOOK 11n); 10 MB a run, approved",
     ("Hyperliquid", "perps_volume_usd"): "python token_metrics.py --seed hl_candles (a year of daily candles, "
                                          "~1 call per perp market) — routine runs then add each day",
     **{("Hyperliquid", m): "python token_metrics.py --seed hl_candles — the throughput sum needs its perps leg"

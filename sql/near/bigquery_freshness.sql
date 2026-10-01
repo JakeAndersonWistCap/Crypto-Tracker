@@ -1,4 +1,6 @@
 -- NEAR settlement route (a): IS bigquery-public-data.crypto_near_mainnet_us STILL BEING UPDATED?
+-- ANSWERED (Jake, 2026-10-01, project near-data-510309): YES — MAX(block_date) = 2026-10-01 on blocks,
+-- execution_outcomes and receipt_actions. The NEAR Lake deprecation did NOT freeze the dataset.
 -- Run FIRST, in console.cloud.google.com/bigquery. Both queries are cheap: the first reads table
 -- metadata only (no bytes billed); the second scans one DATE column per table.
 -- Why it matters (near/docs@c0686549 data-infrastructure/big-query.mdx:38-40, added 2026-05-07):

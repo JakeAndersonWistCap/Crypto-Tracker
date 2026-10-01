@@ -96,7 +96,7 @@ class PlumeSettlement:
     def run(self, projects: list[dict], window_days, out, unbounded: bool = False):
         for p in projects:
             spec = p.get("settlement_rebuild")
-            if spec:
+            if spec and spec.get("engine", "blockscout") == "blockscout":   # NEAR's is fetch/near_bigquery
                 self._project(p["name"], spec, out, unbounded)
 
     def _over(self, t0, unbounded) -> bool:

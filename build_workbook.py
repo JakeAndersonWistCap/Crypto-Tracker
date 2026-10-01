@@ -850,19 +850,50 @@ def _monthly_leg_views(groups: dict) -> None:
 
 
 def _measured_emissions_views(groups: dict) -> None:
-    """A MEASURED emissions series replaces the declared schedule's (config issuance_schedule
-    `emissions_measured_by`). Aethir (Jake's probes3, 2026-09-30): the dashboard's own `emitted`
-    series. Where ANY measured row is stored, the schedule's emissions_tokens rows are dropped at
-    read time — never deleted — so the series has one measuring point; gross_issuance_tokens stays
-    on the schedule. No measured row: the schedule's rows stand."""
+    """SUPPLIER emissions measured from the project's own cumulatives (config issuance_schedule
+    `emissions_measured_from`). Aethir (Jake's labels, 2026-10-01): emissions_tokens = the day-on-day
+    rise of checker-node rewards (base + bonus + airdrop) PLUS edge rewards (earnings + stipend),
+    over consecutive days on which EVERY stock was read; the row is dated the later day and says its
+    span when it is longer than one. A stock that FALLS leaves that day out (a rebase is not a
+    negative emission). From the first measured day the schedule's emissions rows give way — never
+    deleted — so the series has the declared handover and no overlap; before it they stand.
+    gross_issuance_tokens stays on the schedule. No measured day: the schedule's rows stand."""
     for p in scoped_projects():
-        want = (p.get("issuance_schedule") or {}).get("emissions_measured_by")
-        g = groups.get((p["name"], "emissions_tokens"))
-        if not want or g is None or g.empty:
+        spec = (p.get("issuance_schedule") or {}).get("emissions_measured_from")
+        if not spec:
             continue
-        pts = g["source"].astype(str).map(_measuring_point)
-        if (pts == want).any():
-            groups[(p["name"], "emissions_tokens")] = g[pts == want]
+        name = p["name"]
+        stocks = []
+        for m in spec["stocks"]:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                stocks = []
+                break
+            stocks.append(g.sort_values("date").drop_duplicates("date", keep="last")
+                          .set_index("date")["value"].astype(float))
+        if not stocks:
+            continue
+        common = sorted(set.intersection(*(set(s_.index) for s_ in stocks)))
+        rows = []
+        for prev, day in zip(common, common[1:]):
+            deltas = [s_[day] - s_[prev] for s_ in stocks]
+            if any(d < 0 for d in deltas):
+                continue
+            span = (pd.Timestamp(day) - pd.Timestamp(prev)).days
+            src = spec["source"] + (f"[span={span}d]" if span > 1 else "")
+            rows.append({"date": day, "project": name, "metric": "emissions_tokens",
+                         "value": float(sum(deltas)), "source": src, "tier": 3})
+        if not rows:
+            continue
+        meas = pd.DataFrame(rows)
+        sched = groups.get((name, "emissions_tokens"))
+        if sched is not None and not sched.empty:
+            sched = sched[sched["date"] < meas["date"].min()]
+            cols = sched.columns
+            groups[(name, "emissions_tokens")] = pd.concat([sched, _as_stored(meas, cols)],
+                                                           ignore_index=True).sort_values("date")
+        else:
+            groups[(name, "emissions_tokens")] = _as_stored(meas, meas.columns)
 
 
 def _usd_history_views(groups: dict) -> None:
@@ -2834,7 +2865,15 @@ def _a2_headline(R: Refs) -> list[tuple]:
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     # OVER COVERED DAYS (2026-09-28): a young customer-revenue series is not divided as if it
     # were 90 days old — see _annualise.
-    arr = lambda r, p: _annualise(R, r, p, "customer_revenue_usd", R.D(r, "customer_revenue_usd", "q0"))  # noqa: E731
+    # THE PROJECT'S OWN ARR IS THE HEADLINE WHERE IT PUBLISHES ONE (Aethir's demand-metric tile,
+    # Jake 2026-10-01); annualised customer revenue otherwise, and where the ARR cell is empty.
+    def arr(r, p):
+        ann = _annualise(R, r, p, "customer_revenue_usd", R.D(r, "customer_revenue_usd", "q0"))
+        if not any(f.get("metric") == "arr_usd"
+                   for f in ((p.get("dashboard_pages") or {}).get("labelled") or {}).values()):
+            return ann
+        own = R.D(r, "arr_usd", "now")
+        return f"IF(ISNUMBER({own}),{own},{ann})"
     emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
     ff = lambda r, p: f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)})),{circ(r, p)}-{lock(r, p)},{NA})"  # noqa: E731
 
@@ -2852,7 +2891,7 @@ def _a2_headline(R: Refs) -> list[tuple]:
          {"metric": "locked_tokens", **partial, "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
         ("Free float market cap ($, spot)", cell(lambda r, p: f"({ff(r, p)})*{price(r)}"), FMT_USD, "calc", False,
          {"metric": "locked_tokens", **partial, "partial_fmt": '$#,##0" PARTIAL↑";($#,##0)" PARTIAL↑"'}),
-        ("FREE FLOAT ÷ ARR (x) = free float market cap ÷ customer revenue annualised — headline",
+        ("FREE FLOAT ÷ ARR (x) = free float market cap ÷ ARR (the project's own where published, else customer revenue annualised) — headline",
          cell(lambda r, p: f"({ff(r, p)})*{price(r)}/({arr(r, p)})"), FMT_X, "calc", True,
          {"metric": "customer_revenue_usd", **partial, "partial_fmt": '0.00"x PARTIAL↑";(0.00"x)" PARTIAL↑"'}),
         ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",

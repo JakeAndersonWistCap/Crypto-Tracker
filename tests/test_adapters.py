@@ -13653,7 +13653,8 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
 
 
 def test_aethir_customer_revenue_is_fees_restated_with_the_prepayment_caveat_on_the_cell():
-    """Wired 2026-09-24 on instruction: defillama_fees_slug 'aethir', customer_revenue_usd restated
+    """MOVED 2026-10-01 (Jake): DefiLlama's prepayment figure is now customer_revenue_usd_defillama,
+    the CROSS-CHECK of Aethir's own weekly revenue (customer_revenue_usd). Wired 2026-09-24 on instruction: defillama_fees_slug 'aethir', customer_revenue_usd restated
     from fees_usd in GEODNET's shape. The caveat is ON THE METRIC — the label is what reaches the
     cell — and the slug is recorded as unconfirmed until a live run answers.
 
@@ -13670,11 +13671,11 @@ def test_aethir_customer_revenue_is_fees_restated_with_the_prepayment_caveat_on_
     assert a["defillama_fees_slug"] == "aethir"
     assert "UNCONFIRMED" in a["customer_revenue_route"]["status"]
     assert "aethir:dailyFees" in a["customer_revenue_route"]["confirm_on_first_live_run"]
-    label = config.metric_label("Aethir", "customer_revenue_usd")
+    label = config.metric_label("Aethir", "customer_revenue_usd_defillama")
     for phrase in ("DepositServiceFee minus WithdrawServiceFee", "PREPAYMENT NET OF WITHDRAWALS",
                    "LEADS actual GPU usage", "CAN GO NEGATIVE"):
         assert phrase in label, phrase
-    assert config.metric_restatements("Aethir")["customer_revenue_usd"]["equals"] == "fees_usd"
+    assert config.metric_restatements("Aethir")["customer_revenue_usd_defillama"]["equals"] == "fees_usd"
     assert a["defillama_fees_evidence"]["allow_negative_value"] is True
 
     day = pd.Timestamp("2026-09-20")
@@ -13691,12 +13692,12 @@ def test_aethir_customer_revenue_is_fees_restated_with_the_prepayment_caveat_on_
     out2 = FetchOutput()
     out2.add(kept, "defillama", "Aethir", "fees", 1)
     _restate_metrics(out2, [a])
-    cr = out2.frame().query("metric == 'customer_revenue_usd'").sort_values("date")
+    cr = out2.frame().query("metric == 'customer_revenue_usd_defillama'").sort_values("date")
     assert list(cr.value) == [41_000.0, -12_500.0] and set(cr.source) == {"derived:=fees_usd"}
 
     # an empty fees_usd gaps the restated row AS a restatement, naming the slug
     from fetch.gaps import _tier_note
-    r, sug = _tier_note(a, "customer_revenue_usd", {})
+    r, sug = _tier_note(a, "customer_revenue_usd_defillama", {})
     assert r.startswith("SAME SERIES AS fees_usd") and "slug 'aethir'" in r and "no sources.yaml" not in r
     print("aethir customer revenue ok: restated, caveat on the cell, negative days kept")
 
@@ -18937,7 +18938,8 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
                     *_cr.PENDING_SEED}           # one-off seeds Jake runs (Plume rebuild, Hyperliquid candles)
     for m in ("settlement_volume_usd", "network_reserve_ratio"):
         assert got[("Hyperliquid", m)][0] == "ACCEPTED LIMIT", got[("Hyperliquid", m)]
-        assert "SETTLEMENT_REBUILD" in got[("Near", m)][1]
+        # 2026-10-01: BigQuery is live; the NEAR rebuild is built and waits on Jake's key and approval
+        assert "BUILDABLE" in got[("Near", m)][1] and "near_bigquery" in got[("Near", m)][1]
     # GEODNET locked_tokens: the manual row is in (3,000,000 GEOD, 2026-10-01) — no decision left
     assert ("GEODNET", "locked_tokens") not in cr.DECISIONS
     mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
@@ -19791,7 +19793,7 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
     assert all(e["address"] and e["source_url"] and e["verified"] for e in ex)
     assert config.circulating_onchain("Morpho")["status"] == "not_established"
     lines = "\n".join(C.report_lines())
-    assert "Uniswap: PARTIAL" in lines and "MISSING:" in lines and "Near: NOT_ESTABLISHED" in lines
+    assert "Uniswap: PARTIAL" in lines and "MISSING:" in lines and "Morpho: NOT_ESTABLISHED" in lines
     d0, d1 = pd.Timestamp("2026-09-01"), pd.Timestamp("2026-09-02")
     h = pd.DataFrame([
         dict(date=d0, project="Uniswap", metric="total_supply_gross", value=1_000.0, source="x"),
@@ -20143,8 +20145,9 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
     for name in ("Morpho", "Aerodrome", "Aethir", "Plume", "Near"):
         # Aerodrome is PARTIAL since Jake's decision (2026-09-30): the team's 95M permanent veNFTs
         # Aethir is FIRST_PARTY since Jake's probes3 (2026-09-30): the dashboard's athCirculatingSupply
-        assert config.circulating_onchain(name)["status"] == {"Aerodrome": "partial", "Aethir": "first_party"}.get(
-            name, "not_established")
+        # NEAR is FIRST_PARTY since 2026-10-01: its own circulating_supply table in BigQuery
+        assert config.circulating_onchain(name)["status"] == {"Aerodrome": "partial", "Aethir": "first_party",
+                                                               "Near": "first_party"}.get(name, "not_established")
         cand = config.NONCIRCULATING_CANDIDATES[name]
         assert cand["addresses"] and all(a["source"] and a["address"] for a in cand["addresses"])
     assert any(a["address"] == "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa"
@@ -20319,34 +20322,50 @@ def test_aethir_page_fields_come_from_the_nextjs_server_payload():
         ("manual", "aethir_page:protocol/supply-metric.nodes")
 
 
-def test_aethir_onchain_page_locked_circulating_components_and_emitted_shape():
-    """Jake's probes3 2 (2026-09-30): the on-chain page is first-party A2 data. totalStaked is
-    locked_tokens (the wrapper moves to locked_tokens_wrapper, SQL BJ renames its old rows); the
-    four parts are stored beside it with their history and their sum is LOGGED against the total;
-    athCirculatingSupply is the first-party circulating (primary); `emitted` becomes
-    emissions_tokens only when the page settles its shape — cumulative (last point = a page total)
-    or per-month (sum = a page total) — and then replaces the schedule's emissions rows."""
+def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components():
+    """Jake's probes4 + labels (2026-10-01). Tiles are CURRENT figures, charts are HISTORY
+    (current_and_series): totalStaked = idc + ai + gaming + edge exactly, and a part not read is
+    named, never summed as zero. `emitted` (emissionStakeRewardSchedule, DD-MM-YYYY, weekly, past
+    today) is staker_rewards_emitted — NOT emissions. Labelled figures resolve to keys BY VALUE;
+    ambiguity stores nothing. Supplier emissions = day-on-day rise of the checker + edge cumulatives,
+    handing over from the schedule. Utilisation = last week's hours / (containers x 168)."""
     import build_workbook as bw
-    from fetch.aethir_pages import AethirPages, flow_shape, reading
+    import pytest
+    from fetch.aethir_pages import AethirPages, array_objects, current_and_series, resolve_scalar
 
     def page(objs):
         chunk = json.dumps("1a:" + json.dumps(objs))[1:-1]
         return f'<html><script>self.__next_f.push([1,"{chunk}"])</script></html>'
     months = ["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01", "2026-09-01"]
-    emitted_cum = [3_400e6, 3_500e6, 3_600e6, 3_700e6, 3_820e6]
-    base, bonus, air = 2_418_496_407, 1_181_250_000, 249_123_076          # sum 3,848,869,483
-    series = [{"date": m, "aiStaked": 380.2e6 + i * 5e6, "gamingStaked": 287.6e6, "edgeStaked": 149.7e6,
-               "idcStaked": 900.1e6 + i * 0.7e6, "emitted": e} for i, (m, e) in enumerate(zip(months, emitted_cum))]
-    onchain = page([{"totalStaked": 1_789_329_560.63, "athCirculatingSupply": 23_308_238_268,
-                     "baseRewardDistributed": base, "bonusRewardDistributed": bonus,
-                     "airdropRewardDistributed": air, "numberDelegatedCheckers": 84_562,
-                     "totalRunningHours": 197_245_731}] + series)
-    supply = page([{"nodes": 433704, "locations": 94},
-                   {"totalComputePower": 38509113.66, "totalMonthlyCapacity": 638256960},
+    base, bonus, air = 2_418_496_407, 1_181_250_000, 249_123_076
+    sched = [{"emitted": 616_412_275 + 2_000_000 * i,
+              "date": (pd.Timestamp("2026-08-06") + pd.Timedelta(weeks=i)).strftime("%d-%m-%Y")} for i in range(17)]
+    onchain = page([{"totalStaked": 1_789_329_561, "idcStaked": 866_896_004, "aiStaked": 416_297_029,
+                     "gamingStaked": 369_439_890, "edgeStaked": 136_696_638,
+                     "athCirculatingSupply": 24_053_550_151, "baseRewardDistributed": base,
+                     "bonusRewardDistributed": bonus, "airdropRewardDistributed": air,
+                     "numberDelegatedCheckers": 84_562, "totalRunningHours": 197_245_731,
+                     "aprAi": 12.49, "aprGaming": 14.08, "lockedRatio": 7.44,
+                     "edgeTotalEarnings": 2_363_422_512, "edgeStipend": 44_917_651,
+                     "edgeDailyPool": 1_184_420, "edgeDevices": 64_869}]
+                   + [{"date": m, "aiStaked": 380.2e6 + i * 5e6, "gamingStaked": 287.6e6} for i, m in enumerate(months)]
+                   + [{"date": f"2026-09-{d:02d}", "avgAiDays": 300 + d, "avgGamingDays": 400 + d} for d in range(1, 6)]
+                   + [{"x": 1}]) .replace("</script>", "") + \
+        f'<script>self.__next_f.push([1,"{json.dumps(chr(34) + "emissionStakeRewardSchedule" + chr(34) + ":" + json.dumps(sched))[1:-1]}"])</script>'
+    weeks = pd.date_range("2024-06-03", "2026-09-21", freq="7D")
+    rev = [192_220_803 / len(weeks)] * len(weeks)
+    demand = page([{"arrUsd": 62_490_000, "totalRevenue": 192_220_803, "purchasesAth": 11_182_170_271,
+                    "computeHours": 2_433_230_876, "hoursLastWeek": 22_089_416}]
+                  + [{"date": str(w.date()), "earning": r, "amount": 93e6} for w, r in zip(weeks, rev)]
+                  + [{"date": str(w.date()), "hours": 22_089_416.0} for w in weeks[-6:]])
+    supply = page([{"nodes": 433704, "locations": 94}, {"totalComputePower": 38509113.66,
+                                                         "totalMonthlyCapacity": 638256960},
                    {"idcStaked": 866_896_004, "totalOnlineHours": 3_514_810_067}])
-    assert reading(onchain, "totalStaked") == ("scalar", 1_789_329_560.63)
-    kind, pts = reading(onchain, "aiStaked")
-    assert kind == "series" and len(pts) == 5 and pts[-1] == (pd.Timestamp("2026-09-01"), 400.2e6)
+
+    assert current_and_series(onchain, "aiStaked")[0] == 416_297_029
+    assert len(current_and_series(onchain, "aiStaked")[1]) == 5
+    arr = array_objects(onchain, "emissionStakeRewardSchedule")
+    assert len(arr) == 17 and arr[0] == {"emitted": 616_412_275, "date": "06-08-2026"}
 
     class Daily:
         def due(self, *a):
@@ -20357,62 +20376,84 @@ def test_aethir_onchain_page_locked_circulating_components_and_emitted_shape():
     import fetch.scrape as scrape
     orig = scrape.robots_verdict
     scrape.robots_verdict = lambda url: (True, "test")
+    import fetch.aethir_pages as apm
+    orig_ap_today = apm.today
+    apm.today = lambda: pd.Timestamp("2026-10-01")
     aeth = config.PROJECT_BY_NAME["Aethir"]
+
+    def get(url):
+        if "onchain" in url:
+            return onchain
+        if "supply" in url:
+            return supply
+        if "demand" in url:
+            return demand
+        raise RuntimeError("404")
     try:
         out = FetchOutput()
-        AethirPages(get=lambda url: onchain if "onchain" in url else supply if "supply" in url else "",
-                    daily=Daily()).run([aeth], None, out)
+        AethirPages(get=get, daily=Daily()).run([aeth], None, out)
     finally:
-        scrape.robots_verdict = orig
+        scrape.robots_verdict, apm.today = orig, orig_ap_today
     f = out.frame()
-    one = lambda m: f[f.metric == m]                                        # noqa: E731
-    assert float(one("locked_tokens").value.iloc[0]) == 1_789_329_560.63
-    assert one("locked_tokens").source.iloc[0] == "aethir_page:protocol/onchain-metric.totalStaked"
-    assert float(one("circulating_supply_first_party").value.iloc[0]) == 23_308_238_268
-    assert len(one("locked_tokens_ai")) == 5 and abs(float(one("locked_tokens_idc").value.max()) - 902.9e6) < 1
-    em = one("emissions_tokens").sort_values("date")
-    assert list(em.value) == [100e6, 100e6, 100e6, 120e6]                  # cumulative, differenced
-    assert em.source.iloc[0] == "aethir_page:protocol/onchain-metric.emitted[cumulative, differenced]"
+    one = lambda m: f[f.metric == m].sort_values("date")                     # noqa: E731
     msgs = " ".join(e.message for e in out.log)
-    assert "totalStaked 1,789,329,560.63 vs the sum of its parts 1,740,400,000.00 (-2.73%)" in msgs
-    assert "idcStaked on the two pages" in msgs and "baseRewardDistributed 2,418,496,407 vs the declared schedule" in msgs
-    assert "numberDelegatedCheckers` = 84,562.00 (scalar) — REPORTED, not stored" in msgs
-    assert "totalRunningHours" not in set(f.metric)
+    # tiles current, charts history; totalStaked current-only (the wrapper handover)
+    assert list(one("locked_tokens").value) == [1_789_329_561]
+    assert len(one("locked_tokens_ai")) == 6 and one("locked_tokens_ai").value.iloc[-1] == 416_297_029
+    assert "totalStaked 1,789,329,561.00 vs the sum of its parts 1,789,329,561.00 (+0.00%)" in msgs
+    assert float(one("circulating_supply_first_party").value.iloc[-1]) == 24_053_550_151
+    assert float(one("supply_units_checker_licences").value.iloc[0]) == 84_562
+    # staker rewards: dates up to today only, never emissions_tokens
+    st = one("staker_rewards_emitted")
+    # 06-08 .. 01-10 weekly = 9 points on 2026-10-01 (Jake's page read 630,412,275 "at 24-09-2026")
+    assert len(st) == 9 and st.value.iloc[-2] == 630_412_275 and "emissions_tokens" not in set(f.metric)
+    assert "8 published point(s) after today not stored" in msgs
+    # labelled, by value
+    assert float(one("arr_usd").value.iloc[0]) == 62_490_000
+    assert one("staking_apr_ai").value.iloc[0] == pytest.approx(0.1249)
+    assert one("staking_apr_gaming").value.iloc[0] == pytest.approx(0.1408)
+    assert len(one("customer_revenue_usd")) == len(weeks)                    # `earning`, not `amount`
+    assert one("customer_revenue_usd").source.iloc[0] == "aethir_page:protocol/demand-metric.earning"
+    assert len(one("compute_hours_weekly")) == 6
+    assert len(one("avg_lock_duration_days_ai")) == 5 and one("avg_lock_duration_days_gaming").value.iloc[-1] == 405
+    assert float(one("supply_units_edge").value.iloc[0]) == 64_869
+    # derived: supplier stocks, utilisation, the ratio check
+    assert float(one("checker_rewards_cumulative_tokens").value.iloc[0]) == base + bonus + air
+    assert float(one("edge_rewards_cumulative_tokens").value.iloc[0]) == 2_363_422_512 + 44_917_651
+    assert float(one("utilisation_pct").value.iloc[0]) == pytest.approx(22_089_416 / (433_704 * 168))
+    assert "assumes every container available 24/7" in one("utilisation_pct").source.iloc[0]
+    assert "vs the page's Total Locked ATH / Circulating Supply" in msgs
+    assert "ecosystem" in msgs                                               # the try-list failed loudly
+    # ambiguity stores nothing
+    two = page([{"a": 62_000_000, "b": 63_000_000}])
+    assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}).startswith("ambiguous")
 
-    # PER-MONTH when the SUM matches a page total; neither/both settles nothing
-    per = [(pd.Timestamp(m), v) for m, v in zip(months, [800e6, 700e6, 800e6, 800e6, 748.9e6])]
-    assert flow_shape(per, {"base+bonus+airdrop": base + bonus + air}, 0.05)[0] == "per_period"
-    assert flow_shape([(pd.Timestamp(m), 1e6) for m in months], {"base": base}, 0.05)[0] is None
-    # a series whose points are not a month apart is refused against the monthly declaration
-    daily = page([{"totalStaked": 1.0}, {"baseRewardDistributed": base}] + [
-        {"date": f"2026-09-0{i}", "emitted": 3.8e9 + i} for i in range(1, 6)])
-    scrape.robots_verdict = lambda url: (True, "test")
-    try:
-        out = FetchOutput()
-        AethirPages(get=lambda url: daily if "onchain" in url else "", daily=Daily()).run([aeth], None, out)
-    finally:
-        scrape.robots_verdict = orig
-    assert "emissions_tokens" not in set(out.frame().metric)
-    assert any("declared monthly, but its points are a median 1.0 day(s) apart" in e.message for e in out.log)
-
-    # config: the wrapper is its own series; circulating first-party; emitted monthly; SQL BJ
-    assert aeth["contracts"]["staking_wrapper"]["metric_override"] == "locked_tokens_wrapper"
-    assert config.circulating_onchain("Aethir")["status"] == "first_party"
-    assert config.series_granularity("Aethir", "emissions_tokens") == "monthly"
+    # READ TIME: supplier emissions from the stocks' day-on-day rise; the schedule gives way
+    d = pd.date_range("2026-09-25", "2026-10-03")
+    sch = pd.DataFrame({"date": d, "project": "Aethir", "metric": "emissions_tokens", "value": 2.87e6,
+                        "source": "schedule:config:PARTIAL", "tier": 1})
+    days = pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-04"])
+    ck = pd.DataFrame({"date": days, "project": "Aethir", "metric": "checker_rewards_cumulative_tokens",
+                       "value": [3.849e9, 3.852e9, 3.858e9], "source": "x", "tier": 3})
+    eg = ck.assign(metric="edge_rewards_cumulative_tokens", value=[2.408e9, 2.409e9, 2.4114e9])
+    groups = {("Aethir", "emissions_tokens"): sch, ("Aethir", "checker_rewards_cumulative_tokens"): ck,
+              ("Aethir", "edge_rewards_cumulative_tokens"): eg}
+    bw._measured_emissions_views(groups)
+    em = groups[("Aethir", "emissions_tokens")].sort_values("date")
+    meas = em[em.source.str.startswith("aethir_page:supplier_rewards")]
+    assert list(meas.value) == pytest.approx([4e6, 8.4e6])
+    assert meas.source.iloc[1].endswith("[span=2d]")
+    assert em[em.source.str.startswith("schedule")].date.max() == pd.Timestamp("2026-10-01")
+    assert config.declared_handover("Aethir", "emissions_tokens")["ordered_points"] == \
+        ("schedule:config", "aethir_page:supplier_rewards")
+    # config records: wrapper inside the total; BK nothing moved; DefiLlama is the cross-check
+    assert config.declared_handover("Aethir", "locked_tokens")["wrapper_is_inside_total"] is True
+    assert "customer_revenue_usd_defillama" in config.metric_restatements("Aethir")
+    assert "customer_revenue_usd" not in config.metric_restatements("Aethir")
+    assert config.series_granularity("Aethir", "customer_revenue_usd") == "weekly"
+    assert config.series_granularity("Aethir", "staker_rewards_emitted") == "weekly"
     sql = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "orphan_cleanup.sql")).read()
-    assert "-- BJ. AETHIR locked_tokens" in sql and "-- UPDATE metrics SET metric = 'locked_tokens_wrapper'" in sql
-
-    # READ TIME: measured rows replace the schedule's emissions rows; none measured, the schedule stays
-    d = pd.date_range("2026-08-01", "2026-09-29")
-    sched = pd.DataFrame({"date": d, "project": "Aethir", "metric": "emissions_tokens", "value": 2.87e6,
-                          "source": "schedule:config:PARTIAL", "tier": 1})
-    meas = em.assign(tier=3)[sched.columns]
-    groups = {("Aethir", "emissions_tokens"): pd.concat([sched, meas], ignore_index=True)}
-    bw._measured_emissions_views(groups)
-    assert set(groups[("Aethir", "emissions_tokens")]["source"]) == {meas.source.iloc[0]}
-    groups = {("Aethir", "emissions_tokens"): sched.copy()}
-    bw._measured_emissions_views(groups)
-    assert len(groups[("Aethir", "emissions_tokens")]) == len(sched)
+    assert "BK2 and BK3 returned NO ROWS" in sql and "-- BL. AETHIR customer_revenue_usd" in sql
 
 
 def test_maple_ssf_lp_test_fits_a_constant_product_position_and_rejects_noise():
@@ -20757,3 +20798,121 @@ def test_plume_reward_payouts_from_the_treasury_and_the_apy_reconciles_to_the_ap
     assert "RECONCILED to staking.plume.org" in net and "vs the app's 4.50% NET APY" in net
     mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
     assert "2026-09-30,Plume,staking_apy_published,0.045," in mo
+
+
+def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values_p2p(tmp_path):
+    """Jake 2026-10-01: BigQuery's NEAR dataset is live. Nothing heavy runs until approved: the
+    year/day/census dry runs are logged; circulating (10 MB) is approved and stored /1e24 as
+    NEAR's own circulating supply. Approved P2P: census -> >95% token set; month chunks newest first
+    under the monthly budget (refused past it); NEAR + wrap.near at the STORE's same-day price, other
+    tokens at DefiLlama's with its decimals. Labelled Artemis method (adapted to NEAR), UNVALIDATED."""
+    import copy
+    import pytest
+    from types import SimpleNamespace
+    from fetch import near_bigquery as nbq
+    from fetch.base import today
+
+    class Bq:
+        class QueryJobConfig:
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+                self.dry_run = kw.get("dry_run", False)
+        ScalarQueryParameter = staticmethod(lambda k, t, v: (k, t, v))
+        ArrayQueryParameter = staticmethod(lambda k, t, v: (k, t, tuple(v)))
+
+    yday = (today() - pd.Timedelta(days=1)).normalize()
+
+    class Client:
+        def __init__(self):
+            self.ran = []
+
+        def query(self, sql, job_config=None):
+            p = {k: v for k, _, v in job_config.query_parameters}
+            if "circulating_supply" in sql:
+                kind, est = "circ", 45_000
+            elif "LIMIT 500" in sql:
+                kind, est = "census", 70e9
+            else:
+                days = (pd.Timestamp(p["d1"]) - pd.Timestamp(p["d0"])).days + 1
+                kind, est = "p2p", days * 7e9
+            if job_config.dry_run:
+                return SimpleNamespace(total_bytes_processed=est)
+            self.ran.append(kind)
+            if kind == "circ":
+                rows = [{"block_date": pd.Timestamp("2026-09-29"), "computed_at_block_height": 1,
+                         "circulating_tokens_supply": 1.25e33, "total_tokens_supply": 1.30e33},
+                        {"block_date": pd.Timestamp("2026-09-30"), "computed_at_block_height": 2,
+                         "circulating_tokens_supply": 1.251e33, "total_tokens_supply": 1.301e33}]
+            elif kind == "census":
+                rows = [{"token": "usdt.tether-token.near", "amount": str(96 * 10 ** 6 * 10 ** 6), "n": 9},
+                        {"token": "junk.near", "amount": str(4 * 10 ** 18), "n": 99}]
+            else:
+                d1 = pd.Timestamp(p["d1"])
+                rows = [{"day": d1, "token": "NEAR", "amount": "1000", "n": 5},
+                        {"day": d1, "token": "wrap.near", "amount": str(500 * 10 ** 24), "n": 2},
+                        {"day": d1, "token": "usdt.tether-token.near", "amount": str(2_000 * 10 ** 6), "n": 3}]
+            return SimpleNamespace(result=lambda: rows, total_bytes_billed=max(est, 10 * 1024 ** 2))
+
+    spec = copy.deepcopy(config.PROJECT_BY_NAME["Near"]["near_bigquery"])
+    assert spec["approved"] == {"circulating": True, "p2p": False, "balances": False}
+    proj = {"name": "Near", "near_bigquery": spec}
+    px = pd.DataFrame({"date": pd.date_range(yday - pd.Timedelta(days=40), yday), "project": "Near",
+                       "metric": "price_usd", "value": 2.5, "source": "coingecko", "tier": 1})
+    cg = pd.DataFrame([{"date": yday, "project": "Near", "metric": "circulating_supply", "value": 1.24e9,
+                        "source": "coingecko", "tier": 1}])
+    stored = pd.concat([px, cg], ignore_index=True)
+    prices = {(str(d.date()), c): v for d in pd.date_range(yday - pd.Timedelta(days=40), yday)
+              for c, v in (("near:usdt.tether-token.near", (1.0, 6)), ("near:junk.near", (0.01, 18)))}
+
+    cl = Client()
+    a = nbq.NearBigQuery(client=cl, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "c.json",
+                         csv_dir=tmp_path / "none")
+    out = FetchOutput()
+    a.run([proj], None, out)
+    msgs = " ".join(e.message for e in out.log)
+    f = out.frame()
+    circ = f[f.metric == "circulating_supply_first_party"].sort_values("date")
+    assert list(circ.value) == pytest.approx([1.25e9, 1.251e9]) and circ.source.iloc[0] == "near_bigquery:circulating_supply"
+    assert "CoinGecko's latest 1,240,000,000 (+0.89% ours vs CoinGecko)" in msgs
+    assert "DRY RUNS (free): p2p year 2,555.0 GB; one day 7.0 GB; token census (30 days) 70.0 GB" in msgs
+    assert "p2p NOT APPROVED" in msgs and cl.ran == ["circ"] and "p2p_transfer_volume_usd" not in set(f.metric)
+    st = json.loads((tmp_path / "c.json").read_text())
+    assert st["ledger"][str(today().date())[:7]] == 10 * 1024 ** 2
+
+    # APPROVED: census, then ONE 31-day chunk a routine run (newest first), valued
+    spec["approved"]["p2p"] = True
+    out = FetchOutput()
+    nbq.NearBigQuery(client=cl, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "c.json",
+                     csv_dir=tmp_path / "none").run([proj], None, out)
+    msgs = " ".join(e.message for e in out.log)
+    assert cl.ran[1:] == ["census", "p2p"]
+    assert "token census: 2 token(s) carry 100.0% of 30 days' priced ft_transfer value" in msgs
+    p2p = out.frame().query("metric == 'p2p_transfer_volume_usd'")
+    assert len(p2p) == 31 and p2p.source.iloc[0] == "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]"
+    last = p2p.sort_values("date").value.iloc[-1]
+    assert last == pytest.approx(1000 * 2.5 + 500 * 2.5 + 2_000 * 1.0)      # store price for NEAR + wNEAR
+    assert p2p.sort_values("date").value.iloc[0] == 0.0                       # days in the chunk with no rows
+
+    # THE BUDGET: a chunk that would pass the month's budget is NOT RUN, and says so
+    spec["monthly_budget_bytes"] = 300e9
+    out = FetchOutput()
+    nbq.NearBigQuery(client=cl, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "c.json",
+                     csv_dir=tmp_path / "none").run([proj], None, out)
+    assert any("past the budget 300 GB — NOT RUN" in e.message for e in out.log) and cl.ran.count("p2p") == 1
+
+    # NO KEY: nothing read, said plainly; the CSV fallback still fills days
+    os.environ.pop("NEAR_BQ_KEY_PATH", None)
+    d = tmp_path / "csv"
+    d.mkdir()
+    (d / "p2p_2026-08.csv").write_text(f"day,token,amount,n\n{(yday - pd.Timedelta(days=35)).date()},NEAR,10,1\n")
+    out = FetchOutput()
+    nbq.NearBigQuery(stored_long=stored, prices=prices, cache_file=tmp_path / "c2.json", csv_dir=d).run([proj], None, out)
+    msgs = " ".join(e.message for e in out.log)
+    assert "NOT READ — NEAR_BQ_KEY_PATH is not set in .env" in msgs and "CSV fallback: 1 day(s)" in msgs
+    assert float(out.frame().query("metric == 'p2p_transfer_volume_usd'").value.iloc[0]) == 25.0
+
+    # config: NEAR's own circulating is primary; the rebuild is NEAR's, not Plume's Blockscout scan
+    assert config.circulating_onchain("Near")["status"] == "first_party"
+    assert config.PROJECT_BY_NAME["Near"]["settlement_rebuild"]["engine"] == "bigquery"
+    sql = (nbq.SQL_DIR / "bigquery_p2p_daily.sql").read_text()
+    assert "^0x[0-9a-f]{40}$" in sql and "'system'" in sql and "IN UNNEST(@tokens)" in sql
