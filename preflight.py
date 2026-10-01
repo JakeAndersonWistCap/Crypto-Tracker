@@ -59,9 +59,12 @@ def tier1_plan() -> list[tuple[str, str, str]]:
                 out.append((name, "rwa_defillama_usd", "DefiLlama RWA category, aggregated per chain"))
         sched = p.get("issuance_schedule") or {}
         if sched.get("steps"):
-            out.append((name, "gross_issuance_tokens", "schedule:config (no network)"))
-            if sched.get("also_emissions"):
+            if not sched.get("emissions_only"):
+                out.append((name, "gross_issuance_tokens", "schedule:config (no network)"))
+            if sched.get("also_emissions") or sched.get("emissions_only"):
                 out.append((name, "emissions_tokens", "schedule:config (no network)"))
+        for metric in (p.get("declared_zero") or {}):
+            out.append((name, metric, "schedule:config:declared (no network)"))
         # A RESTATED COLUMN FILLS FROM ITS SOURCE COLUMN, so it is planned wherever that is.
         planned = {m for n, m, _s in out if n == name}
         for metric, spec in config.metric_restatements(name).items():

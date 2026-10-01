@@ -9,6 +9,13 @@
 --                        reported 111,337,581 UNI burned in a month against a real 100-134k/day.
 --
 -- Run steps 1 and 2 first. They only LOOK. Read what they print, then run step 3.
+--
+-- ===== HOW EVERY LETTERED SECTION RUNS (Jake, 2026-10-01) — NOTHING IS EVER UNCOMMENTED BY HAND. =====
+--   python run_sql.py BL            runs the section's SELECTs only (refuses anything else)
+--   python run_sql.py --delete BL   finds the section's commented DELETE/UPDATE, shows every row it
+--                                   would touch, and runs it only after you type "DELETE BL"
+-- The write statements stay commented in this file ON PURPOSE: that is the form --delete reads, and
+-- it keeps the plain "look" command from ever writing. Every new section follows this shape.
 
 -- ---------------------------------------------------------------------------------------------
 -- STEP 1 — every distinct source in the store, with its span. LOOK ONLY.
@@ -3783,9 +3790,30 @@ SELECT m.date
   JOIN metrics c ON c.project = m.project AND c.date = m.date AND c.metric = 'customer_revenue_usd_defillama'
  WHERE m.project = 'Aethir' AND m.metric = 'customer_revenue_usd' AND m.source = 'derived:=fees_usd';
 
--- BL3. THE MOVE. Only after BL1-BL2. (A BL2 collision: the cross-check already holds that day —
---      DELETE the customer_revenue_usd duplicate instead; ask first.)
+-- BL3. THE MOVE: `python run_sql.py --delete BL` — it previews the rows and asks for "DELETE BL".
+--      Only after BL1-BL2. (A BL2 collision: the cross-check already holds that day — DELETE the
+--      customer_revenue_usd duplicate instead; ask first.)
 -- BEGIN;
 -- UPDATE metrics SET metric = 'customer_revenue_usd_defillama'
 --  WHERE project = 'Aethir' AND metric = 'customer_revenue_usd' AND source = 'derived:=fees_usd';
 -- COMMIT;
+
+
+-- ========================================================================================
+-- BM. AETHIR gross_issuance_tokens: NO MINTING — THE SCHEDULE'S ISSUANCE ROWS GO  2026-10-01
+--     Jake (2026-10-01): ATH is pre-minted, so gross_issuance_tokens is a DECLARED ZERO
+--     (source 'schedule:config:declared'); supplier and staker rewards are releases
+--     (pool_release_tokens). The Checker Node schedule now writes emissions_tokens only. The
+--     gross_issuance_tokens rows it wrote before (source exactly 'schedule:config', 2.87M ATH/day)
+--     are not issuance and are hidden at read time; this removes them from the store.
+--     Run: python run_sql.py BM, then python run_sql.py --delete BM (preview + typed "DELETE BM").
+-- ========================================================================================
+-- BM1. WHAT gross_issuance_tokens HOLDS FOR AETHIR, by source.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date, MIN(value), MAX(value)
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'gross_issuance_tokens'
+ GROUP BY source;
+
+-- BM2. THE DELETE: only the schedule's rows; the declared zero stays.
+-- DELETE FROM metrics
+--  WHERE project = 'Aethir' AND metric = 'gross_issuance_tokens' AND source = 'schedule:config';

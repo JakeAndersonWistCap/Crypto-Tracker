@@ -74,11 +74,13 @@ class Schedule:
             per_day = per_day.dropna()
             if per_day.empty:
                 continue
-            metrics = ["gross_issuance_tokens"]
+            # A SCHEDULE THAT IS EMISSIONS ONLY (Aethir, Jake 2026-10-01): the token is pre-minted, so
+            # nothing is issued — gross_issuance_tokens is a declared zero, not this schedule.
+            metrics = [] if sched.get("emissions_only") else ["gross_issuance_tokens"]
             # Where the schedule IS emissions to stakers (Aave's stkAAVE allowance top-ups), the same
             # figure feeds emissions_tokens as well, so net absorption nets it off rather than
             # counting the buyback alone and overstating the result.
-            if sched.get("also_emissions"):
+            if sched.get("also_emissions") or sched.get("emissions_only"):
                 metrics.append("emissions_tokens")
             for metric in metrics:
                 # A schedule that is only PART of the emissions says so on its rows (Aethir, B3).

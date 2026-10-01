@@ -14730,7 +14730,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'aethir' matches 5 checks" in out
+    assert "'aethir' matches 6 checks" in out
     for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
         assert name in out
     assert "Done." not in out, "a refusal must not claim anything ran"
@@ -17588,10 +17588,13 @@ def test_aethir_supplier_emissions_come_from_the_checker_node_bucket_marked_part
     df = out.frame()
     em = df[df.metric == "emissions_tokens"]
     gi = df[df.metric == "gross_issuance_tokens"]
-    assert not em.empty and len(em) == len(gi)
+    assert not em.empty
     assert abs(em["value"].iloc[-1] - 4_200_000_000 / 1461) < 1e-6
     assert (em["source"].astype(str).str.contains("PARTIAL")).all()
-    assert not gi["source"].astype(str).str.contains("PARTIAL").any()
+    # NO MINTING (Jake, 2026-10-01): the schedule writes emissions only; gross issuance is the
+    # declared zero, one row, said to be a declaration
+    assert list(gi["value"]) == [0.0] and list(gi["source"]) == ["schedule:config:declared"]
+    assert "pre-minted" in " ".join(e.message for e in out.log)
 
 
 def test_hyperliquid_rewards_and_core_burns_are_the_falls_in_its_own_two_stocks():
@@ -18907,8 +18910,12 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
     assert not any(n in scope[1] for n, _, _, _ in table), "a parked project has no rows"
     for k in (("GEODNET", "gross_issuance_tokens"), ("Maple", "emissions_tokens"),
               ("Near", "emissions_tokens"), ("Pendle", "emissions_tokens"), ("Chainlink", "pool_release_tokens"),
-              ("Hyperliquid", "pool_release_tokens"), ("Aethir", "pool_release_tokens")):
+              ("Hyperliquid", "pool_release_tokens")):
         assert got[k][0] == "N/A", (k, got[k])
+    # Aethir's release is WIRED (Jake, 2026-10-01): it waits on two days of the checker total, and its
+    # gross issuance is the declared zero
+    assert got[("Aethir", "pool_release_tokens")][0] == "WAITING ON A DATE"
+    assert got[("Aethir", "gross_issuance_tokens")][0] == "COMPLETE" and "pre-minted" in got[("Aethir", "gross_issuance_tokens")][1]
     assert "SUPERSEDED" in got[("Chainlink", "pool_release_tokens")][1]
     # SECOND PASS (2026-09-30): both ACCEPTED LIMITs reopened — Maple's SSF chart is the route
     # (NEEDS JAKE: run the probe), Plume's fees come from growthepie (no longer closed)
@@ -20423,7 +20430,7 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert float(one("utilisation_pct").value.iloc[0]) == pytest.approx(22_089_416 / (433_704 * 168))
     assert "assumes every container available 24/7" in one("utilisation_pct").source.iloc[0]
     assert "vs the page's Total Locked ATH / Circulating Supply" in msgs
-    assert "ecosystem" in msgs                                               # the try-list failed loudly
+    assert aeth["dashboard_pages"]["pages"]["protocol/ecosystem"] == {"fields": {}}   # pinned (Jake, 2026-10-01)
     # ambiguity stores nothing
     two = page([{"a": 62_000_000, "b": 63_000_000}])
     assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}).startswith("ambiguous")
@@ -20444,6 +20451,23 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert list(meas.value) == pytest.approx([4e6, 8.4e6])
     assert meas.source.iloc[1].endswith("[span=2d]")
     assert em[em.source.str.startswith("schedule")].date.max() == pd.Timestamp("2026-10-01")
+    # TOTAL RELEASE = supplier + the staker schedule's rise in the same span (both pre-minted releases)
+    stk = pd.DataFrame({"date": pd.to_datetime(["2026-09-24", "2026-10-01", "2026-10-03"]), "project": "Aethir",
+                        "metric": "staker_rewards_emitted", "value": [630.4e6, 632.4e6, 634.4e6],
+                        "source": "aethir_page:x", "tier": 3})
+    groups = {("Aethir", "emissions_tokens"): sch, ("Aethir", "checker_rewards_cumulative_tokens"): ck,
+              ("Aethir", "edge_rewards_cumulative_tokens"): eg, ("Aethir", "staker_rewards_emitted"): stk,
+              ("Aethir", "gross_issuance_tokens"): pd.DataFrame({
+                  "date": pd.to_datetime(["2026-09-30", "2026-10-01"]), "project": "Aethir",
+                  "metric": "gross_issuance_tokens", "value": [2.87e6, 0.0],
+                  "source": ["schedule:config", "schedule:config:declared"], "tier": 1})}
+    bw._measured_emissions_views(groups)
+    rel = groups[("Aethir", "pool_release_tokens")].sort_values("date")
+    assert list(rel.value) == pytest.approx([4e6, 8.4e6 + 2e6])            # the 10-03 step lands in (10-02, 10-04]
+    assert rel.source.iloc[0] == "aethir_page:release[supplier + staker rewards]"
+    assert rel.source.iloc[1].endswith("[span=2d]")
+    assert list(groups[("Aethir", "gross_issuance_tokens")].value) == [0.0]   # the schedule's old rows hidden
+    assert config.issuance_basis("Aethir") == "pool_release_tokens"
     assert config.declared_handover("Aethir", "emissions_tokens")["ordered_points"] == \
         ("schedule:config", "aethir_page:supplier_rewards")
     # config records: wrapper inside the total; BK nothing moved; DefiLlama is the cross-check
@@ -20854,7 +20878,9 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
             return SimpleNamespace(result=lambda: rows, total_bytes_billed=max(est, 10 * 1024 ** 2))
 
     spec = copy.deepcopy(config.PROJECT_BY_NAME["Near"]["near_bigquery"])
-    assert spec["approved"] == {"circulating": True, "p2p": False, "balances": False}
+    # APPROVED by Jake (2026-10-01); ft_balances_daily stays unwired
+    assert spec["approved"] == {"circulating": True, "p2p": True, "balances": False}
+    spec["approved"]["p2p"] = False                       # first: the unapproved behaviour
     proj = {"name": "Near", "near_bigquery": spec}
     px = pd.DataFrame({"date": pd.date_range(yday - pd.Timedelta(days=40), yday), "project": "Near",
                        "metric": "price_usd", "value": 2.5, "source": "coingecko", "tier": 1})
@@ -20876,19 +20902,23 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     assert "CoinGecko's latest 1,240,000,000 (+0.89% ours vs CoinGecko)" in msgs
     assert "DRY RUNS (free): p2p year 2,555.0 GB; one day 7.0 GB; token census (30 days) 70.0 GB" in msgs
     assert "p2p NOT APPROVED" in msgs and cl.ran == ["circ"] and "p2p_transfer_volume_usd" not in set(f.metric)
+    assert "BYTES THIS RUN: 0.01 GB billed" in msgs
     st = json.loads((tmp_path / "c.json").read_text())
     assert st["ledger"][str(today().date())[:7]] == 10 * 1024 ** 2
 
-    # APPROVED: census, then ONE 31-day chunk a routine run (newest first), valued
+    # APPROVED: census, then the DAILY TOP-UP FIRST (yesterday), then ONE 31-day backfill chunk
     spec["approved"]["p2p"] = True
     out = FetchOutput()
     nbq.NearBigQuery(client=cl, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "c.json",
                      csv_dir=tmp_path / "none").run([proj], None, out)
     msgs = " ".join(e.message for e in out.log)
-    assert cl.ran[1:] == ["census", "p2p"]
+    assert cl.ran[1:] == ["census", "p2p", "p2p"]
+    assert f"p2p top-up {yday.date()}..{yday.date()}" in msgs
+    assert f"p2p backfill {(yday - pd.Timedelta(days=31)).date()}..{(yday - pd.Timedelta(days=1)).date()}" in msgs
     assert "token census: 2 token(s) carry 100.0% of 30 days' priced ft_transfer value" in msgs
+    assert "BYTES THIS RUN: 294.00 GB billed" in msgs                         # census 70 + top-up 7 + 31 x 7 GB
     p2p = out.frame().query("metric == 'p2p_transfer_volume_usd'")
-    assert len(p2p) == 31 and p2p.source.iloc[0] == "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]"
+    assert len(p2p) == 32 and p2p.source.iloc[0] == "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]"
     last = p2p.sort_values("date").value.iloc[-1]
     assert last == pytest.approx(1000 * 2.5 + 500 * 2.5 + 2_000 * 1.0)      # store price for NEAR + wNEAR
     assert p2p.sort_values("date").value.iloc[0] == 0.0                       # days in the chunk with no rows
@@ -20898,17 +20928,58 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     out = FetchOutput()
     nbq.NearBigQuery(client=cl, bq=Bq, stored_long=stored, prices=prices, cache_file=tmp_path / "c.json",
                      csv_dir=tmp_path / "none").run([proj], None, out)
-    assert any("past the budget 300 GB — NOT RUN" in e.message for e in out.log) and cl.ran.count("p2p") == 1
+    assert any("past the budget 300 GB — NOT RUN" in e.message for e in out.log) and cl.ran.count("p2p") == 2
 
-    # NO KEY: nothing read, said plainly; the CSV fallback still fills days
-    os.environ.pop("NEAR_BQ_KEY_PATH", None)
+    # THE GUARD: a query naming a table outside the public NEAR dataset is refused before it is sent
+    with pytest.raises(PermissionError):
+        nbq.NearBigQuery._guard_sql("SELECT * FROM `cbc-risk-regime-api.x.y`", spec)
+    nbq.NearBigQuery._guard_sql((nbq.SQL_DIR / "bigquery_p2p_daily.sql").read_text(), spec)
+
+    # NO ADC: nothing read, the gap says what to run; the CSV fallback still fills days.
+    # Fake google modules: ADC absent, then present with the WRONG quota project (refused).
+    import sys
+    import types
+    fake = {n: types.ModuleType(n) for n in ("google", "google.auth", "google.auth.exceptions",
+                                              "google.cloud", "google.cloud.bigquery")}
+
+    class DefaultCredentialsError(Exception):
+        pass
+    fake["google.auth.exceptions"].DefaultCredentialsError = DefaultCredentialsError
+    fake["google"].auth, fake["google"].cloud = fake["google.auth"], fake["google.cloud"]
+    fake["google.cloud"].bigquery = fake["google.cloud.bigquery"]
+    fake["google.cloud.bigquery"].Client = lambda project, credentials: SimpleNamespace(project=project)
+
+    def no_adc(scopes=None):
+        raise DefaultCredentialsError("none")
+    fake["google.auth"].default = no_adc
+    saved = {n: sys.modules.get(n) for n in fake}
+    sys.modules.update(fake)
+    try:
+        client, why = nbq.NearBigQuery()._client(spec)
+        assert client is None and "gcloud auth application-default login" in why
+        fake["google.auth"].default = lambda scopes=None: (SimpleNamespace(quota_project_id="cbc-risk-regime-api"), None)
+        client, why = nbq.NearBigQuery()._client(spec)
+        assert client is None and "quota project is cbc-risk-regime-api" in why
+        fake["google.auth"].default = lambda scopes=None: (SimpleNamespace(quota_project_id="near-data-510309"), None)
+        client, why = nbq.NearBigQuery()._client(spec)
+        assert client is not None and client.project == "near-data-510309"
+        os.environ["NEAR_BQ_PROJECT"] = "cbc-risk-regime-api"
+        client, why = nbq.NearBigQuery()._client(spec)
+        assert client is None and "refused" in why
+    finally:
+        os.environ.pop("NEAR_BQ_PROJECT", None)
+        for n, m in saved.items():
+            if m is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = m
     d = tmp_path / "csv"
     d.mkdir()
     (d / "p2p_2026-08.csv").write_text(f"day,token,amount,n\n{(yday - pd.Timedelta(days=35)).date()},NEAR,10,1\n")
     out = FetchOutput()
     nbq.NearBigQuery(stored_long=stored, prices=prices, cache_file=tmp_path / "c2.json", csv_dir=d).run([proj], None, out)
     msgs = " ".join(e.message for e in out.log)
-    assert "NOT READ — NEAR_BQ_KEY_PATH is not set in .env" in msgs and "CSV fallback: 1 day(s)" in msgs
+    assert "NOT READ — " in msgs and "CSV fallback: 1 day(s)" in msgs
     assert float(out.frame().query("metric == 'p2p_transfer_volume_usd'").value.iloc[0]) == 25.0
 
     # config: NEAR's own circulating is primary; the rebuild is NEAR's, not Plume's Blockscout scan
@@ -20916,3 +20987,25 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     assert config.PROJECT_BY_NAME["Near"]["settlement_rebuild"]["engine"] == "bigquery"
     sql = (nbq.SQL_DIR / "bigquery_p2p_daily.sql").read_text()
     assert "^0x[0-9a-f]{40}$" in sql and "'system'" in sql and "IN UNNEST(@tokens)" in sql
+
+
+def test_every_section_write_runs_through_run_sql_delete_and_nothing_is_uncommented_by_hand():
+    """Jake 2026-10-01: never ask for an UPDATE to be uncommented — BL (and every section) runs via
+    `run_sql.py --delete <letter>`, which reads the commented statement, previews and confirms. So
+    every section that ships a commented DELETE/UPDATE must be found by that path, and no section's
+    text may tell anyone to uncomment it."""
+    import run_sql as R
+    text = R.SQL_FILE.read_text()
+    secs = R.parse_sections(text)
+    for label in ("BK", "BL", "BM"):
+        w = R.split_statements("\n".join(R.uncommented_write(secs[label]["text"])))
+        targets = [R.write_target(x) for x in w if R.write_target(x)]
+        assert targets and all(t[1] == "metrics" for t in targets), label
+    bl = [R.write_target(x) for x in R.split_statements("\n".join(R.uncommented_write(secs["BL"]["text"])))
+          if R.write_target(x)]
+    assert bl[0][0] == "UPDATE" and "derived:=fees_usd" in bl[0][2]
+    for label, sec in secs.items():
+        flush = re.findall(r"^--\s?(DELETE|UPDATE)\s", sec["text"], re.M)
+        if flush:
+            assert R.uncommented_write(sec["text"]), f"section {label} ships a write --delete cannot find"
+    assert "python run_sql.py --delete BL" in text and "python run_sql.py --delete BM" in text

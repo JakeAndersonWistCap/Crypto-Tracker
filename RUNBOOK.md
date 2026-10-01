@@ -489,49 +489,50 @@ python check_offline_items.py near_settlement_routes   # NEAR: BigQuery layout +
 Each seed caches its progress, so an interrupted run resumes; routine runs then add each new day.
 
 
-## 11n. NEAR from BigQuery — the service-account key (near-data-510309 only)
+## 11n. NEAR from BigQuery — Jake's own login (Application Default Credentials)
 
 Google's public NEAR dataset (`bigquery-public-data.crypto_near_mainnet_us`) is live. Queries run in
 Jake's sandbox project **near-data-510309**, which has no billing: it cannot be charged, and BigQuery
 refuses queries once the free 1 TB/month is used. fetch/near_bigquery.py keeps its own ledger under
-900 GB/month and runs only what `config Near.near_bigquery.approved` allows (circulating: yes;
-P2P: not until Jake approves the dry-run bytes).
+900 GB/month and logs `BYTES THIS RUN` on every run. Circulating supply and the P2P leg are both
+approved (Jake, 2026-10-01): each run tops up the newest days first, then backfills one month chunk,
+newest first.
 
-**Create the key — in near-data-510309, and nowhere else:**
+**Why a login, not a key.** The service-account key route is BLOCKED: Jake's Google organisation
+enforces `iam.disableServiceAccountKeyCreation` (secure by default — leave it on). So the adapter uses
+Application Default Credentials from Jake's own login, with no key file anywhere.
 
-1. console.cloud.google.com → the project picker at the top → choose **near-data-510309**. Check the
-   picker shows that ID, not cbc-risk-regime-api, before every step below.
-2. IAM & Admin → Service Accounts → **Create service account**: name `token-metrics-bq`.
-3. Grant this project's roles: **BigQuery Job User** (runs queries, billed to this project's free
-   quota) and **BigQuery Data Viewer** (reads datasets; the public dataset needs no grant, so this is
-   belt and braces). Done; no user access needed.
-4. Open the new account → Keys → Add key → Create new key → **JSON**. Save it OUTSIDE the repo, e.g.
-   `~/.config/token-metrics/near-bq-key.json`, and `chmod 600` it.
-5. `.env`:
-   ```
-   NEAR_BQ_KEY_PATH=/home/<you>/.config/token-metrics/near-bq-key.json
-   NEAR_BQ_PROJECT=near-data-510309
-   ```
-6. `pip install google-cloud-bigquery`
+**Set up once, on the machine that runs token_metrics.py:**
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project near-data-510309
+pip install google-cloud-bigquery
+```
+Optional in `.env`: `NEAR_BQ_PROJECT=near-data-510309` (the adapter defaults to it and refuses any
+other value).
 
-**Why it cannot touch cbc-risk-regime-api:** a service account has only the roles granted to it, and
-these are granted on near-data-510309 alone; it has no role in any other project unless someone adds
-it to that project's IAM. The adapter also refuses to start if NEAR_BQ_PROJECT names any project other
-than near-data-510309, so jobs are only ever created (and counted) there. If an organisation policy
-blocks key creation (`iam.disableServiceAccountKeyCreation`), use the fallback below.
+**THE GUARD, which matters more with a login than with a key:** these credentials carry Jake's user
+access, which also reaches cbc-risk-regime-api. So the adapter:
+- creates every job in near-data-510309 and refuses to start if the ADC quota project, the client's
+  project or NEAR_BQ_PROJECT is anything else;
+- refuses any query that names a table outside `bigquery-public-data.crypto_near_mainnet_us`, before
+  it is sent;
+- caps every job at its own dry run (maximum_bytes_billed), and stops at the monthly budget.
+
+Without credentials the run does not fail: NEAR's BigQuery figures gap with "run `gcloud auth
+application-default login`", and the CSV fallback below still works.
 
 **Then:**
 ```bash
 python check_offline_items.py near_settlement_routes   # layout + dry-run bytes (~30 MB; dry runs free)
-python token_metrics.py                                # NEAR circulating (10 MB/day) + daily dry-run line
-# after Jake sets config Near.near_bigquery.approved.p2p = True:
-python token_metrics.py --seed near_bigquery           # month chunks, newest first, until the month's budget
+python token_metrics.py --seed near_bigquery           # top-up, then month chunks until the month's budget
+python token_metrics.py                                # routine: circulating (10 MB) + top-up + one chunk
 ```
 
-**Fallback without a key:** `check_offline_items.py near_settlement_routes` writes each query with
-literal dates to `data/near/console/`. Paste one into the BigQuery console (near-data-510309): the
-editor shows the bytes before running. Run the P2P query for a month and use Save results → CSV;
-save it as `data/near/p2p_<YYYY-MM>.csv` (columns day, token, amount, n). The next run reads it.
+**Fallback without credentials:** `check_offline_items.py near_settlement_routes` writes each query
+with literal dates to `data/near/console/`. Paste one into the BigQuery console (near-data-510309): the
+editor shows the bytes before running. Run the P2P query for a month and use Save results → CSV; save
+it as `data/near/p2p_<YYYY-MM>.csv` (columns day, token, amount, n). The next run reads it.
 `data/near/` is never committed. (The sandbox has no scheduled queries, so this step is by hand.)
 
 ## 11l. One-off: Plume's staking history from the live diamond
@@ -681,7 +682,12 @@ cannot delete rows because somebody ran the "just look" command. Deleting takes 
 drift from what actually goes), and requires you to type `DELETE <letter>` exactly.
 
 `--delete` also covers section A, whose fix is an UPDATE rather than a DELETE — a re-attribution,
-because that reading was correct and only the column was wrong.
+because that reading was correct and only the column was wrong. The same holds for every later
+UPDATE (BK, BL): `--delete` reads the commented statement as the file ships it.
+
+**Nothing is ever uncommented by hand (Jake, 2026-10-01).** Every section's DELETE or UPDATE ships
+commented; `python run_sql.py --delete <letter>` is the only way it runs, with the preview and the
+typed `DELETE <letter>`. A section's own text says which `--delete` to run.
 
 **A section with no write is not a section with a missing one.** Section H is SELECT-only because
 which rows to remove depends on what its queries show, and under one of the two readings the

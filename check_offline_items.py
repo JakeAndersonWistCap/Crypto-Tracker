@@ -2169,6 +2169,64 @@ def _bal(token: str, holder: str, chain: str):
     return _uint(token, SEL_BALANCE_OF + holder.lower()[2:].rjust(64, "0"), chain)
 
 
+def _raw_code(addr: str, chain: str) -> str | None:
+    for url in _rpcs_for(chain):
+        try:
+            j = rpc(url, "eth_getCode", [addr, "latest"])
+            if "result" in j:
+                return j["result"]
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _slot(addr: str, slot: str, chain: str) -> str | None:
+    for url in _rpcs_for(chain):
+        try:
+            j = rpc(url, "eth_getStorageAt", [addr, slot, "latest"])
+            if "result" in j:
+                return j["result"]
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+# mint(address,uint256), mint(uint256), mintTo(address,uint256), issue(uint256) — the selectors a
+# mint path is usually reached by; PUSH4 <selector> (0x63…) in the dispatcher is how it shows.
+MINT_SELECTORS = {"40c10f19": "mint(address,uint256)", "a0712d68": "mint(uint256)",
+                  "449a52f8": "mintTo(address,uint256)", "cc872b66": "issue(uint256)"}
+EIP1967_IMPL = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+
+
+def aethir_mint_path():
+    """Jake 2026-10-01: Aethir's gross_issuance_tokens is a DECLARED ZERO (ATH pre-minted) unless the
+    token contract shows a mint path. For both ATH contracts: totalSupply now, whether the runtime
+    code dispatches a mint selector, and whether it is an EIP-1967 upgradeable proxy (then the
+    implementation's code is checked too — an upgradeable token can gain a mint path later)."""
+    head("AETHIR — does either ATH contract carry a mint path?")
+    for chain, addr in (("ethereum", "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"),
+                        ("arbitrum", "0xc87B37a581ec3257B734886d9d3a581F5A9d056c")):
+        ts = _uint(addr, "0x18160ddd", chain)
+        code = _raw_code(addr, chain)
+        if not code or code in ("0x", "0x0"):
+            print(f"  {chain} {addr}: code {'UNREACHABLE' if code is None else 'NONE'}")
+            continue
+        impl_word = _slot(addr, EIP1967_IMPL, chain)
+        impl = ("0x" + impl_word[-40:]) if impl_word and int(impl_word, 16) else None
+        codes = [("contract", code)]
+        if impl:
+            codes.append((f"implementation {impl}", _raw_code(impl, chain) or ""))
+        print(f"  {chain} {addr}: totalSupply {'n/a' if ts is None else f'{ts / 1e18:,.0f}'}; "
+              f"{'EIP-1967 PROXY -> ' + impl if impl else 'not an EIP-1967 proxy'}")
+        for what, c in codes:
+            found = [name for sel, name in MINT_SELECTORS.items() if ("63" + sel) in c.lower()]
+            print(f"    {what}: {len(c) // 2 - 1:,} bytes; mint selectors dispatched: {found or 'NONE'}")
+    print("  READ: no mint selector and no proxy on either = no mint path, the declared zero stands.\n"
+          "  A mint selector on Arbitrum may be the bridge's (Axelar ITS mint/burn for bridged supply), which\n"
+          "  moves supply between chains rather than creating it — paste back and it is classified.\n"
+          "  PASTE BACK all lines.")
+
+
 def aethir_staking_probe():
     head("AETHIR — the three staking pools: chain, ATH held, and what the vault counts")
     fmt = lambda v: "n/a" if v is None else f"{v / 1e18:,.2f}"
@@ -2990,13 +3048,13 @@ def settlement_rebuild_coverage():
 def near_settlement_routes():
     """Jake 2026-10-01: NEAR from Google's public BigQuery dataset — LIVE (MAX(block_date) 2026-10-01).
     Dune (paid plan to save a query) and Flipside (API shut 2025-07-31) are CLOSED.
-    With the service-account key (NEAR_BQ_KEY_PATH, RUNBOOK 11n): runs sql/near/bigquery_metadata.sql
+    With Jake's Application Default Credentials (RUNBOOK 11n): runs sql/near/bigquery_metadata.sql
     (partitioning, clustering, a year's rows per month, the two schemas — ~30 MB billed, the 10 MB
     INFORMATION_SCHEMA minimum x3) and DRY-RUNS every heavy query (free): the P2P year backfill and
-    one day's top-up, the token census, the buyback-wallet balances. Without the key: writes each
+    one day's top-up, the token census, the buyback-wallet balances. Without credentials: writes each
     query with literal dates to data/near/console/ — paste into console.cloud.google.com/bigquery
     (project near-data-510309) and the editor shows "This query will process N GB" before running
-    anything. Keys and key paths are never printed."""
+    anything. Credentials are never printed; every query is pinned to near-data-510309."""
     import re as _re                                       # noqa: PLC0415
     from pathlib import Path                               # noqa: PLC0415
     import pandas as pd                                    # noqa: PLC0415
@@ -3039,6 +3097,7 @@ def near_settlement_routes():
     from google.cloud import bigquery                      # noqa: PLC0415
     for stmt in [x for x in (here / "bigquery_metadata.sql").read_text().split(";") if "SELECT" in x]:
         try:
+            nb._guard_sql(stmt, spec)
             for row in client.query(stmt, job_config=bigquery.QueryJobConfig(
                     maximum_bytes_billed=100 * 1024 ** 2)).result():
                 print(f"  {dict(row.items())}")
@@ -3047,13 +3106,13 @@ def near_settlement_routes():
         print("  --")
     for label, (fn, params) in runs.items():
         try:
-            b = nb._dry(client, (here / fn).read_text(), params)
+            b = nb._dry(client, (here / fn).read_text(), params, spec)
             print(f"  DRY RUN {label}: {b / 1e9:,.2f} GB ({b / 1e12:,.3f} TB) — free; nothing billed")
         except Exception as e:  # noqa: BLE001
             print(f"  DRY RUN {label}: {type(e).__name__}: {str(e)[:200]}")
     print(f"  Budget in config: {int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB/month of the free 1 TB; per query "
           f"<= {int(spec['max_bytes_per_query']) / 1e9:,.0f} GB. The FT leg's dry run ignores clustering (it bills less).")
-    print("  PASTE BACK all lines. Nothing heavy runs until config Near.near_bigquery.approved.p2p is True.")
+    print("  PASTE BACK all lines. P2P is approved: routine runs top up first, then backfill under the budget.")
 
 def plume_archive():
     """Jake's run 2026-09-30 17:21: does rpc.plume.org serve HISTORICAL state for the live staking
@@ -3203,7 +3262,7 @@ def aethir_pages():
     parts: dict = {}
     pages: dict = {}
     for page in ("protocol/supply-metric", "protocol/demand-metric", "protocol/onchain-metric",
-                 "protocol/overview", "overview", "protocol/ecosystem-metric", "protocol/ecosystem", "ecosystem"):
+                 "protocol/overview", "overview", "protocol/ecosystem"):
         url = f"https://dashboard.aethir.com/{page}"
         ok, why = robots_verdict(url)
         if not ok:
@@ -3218,7 +3277,7 @@ def aethir_pages():
         f = ap.fields(html)
         print(f"\n  {page}: HTTP {r.status_code}, {len(f)} numeric field(s)")
         if r.status_code == 200:
-            pages["ecosystem" if "ecosystem" in page else page] = html
+            pages[page] = html
         for arr in ("stakeHistory", "emissionStakeRewardSchedule"):
             got_a = ap.array_objects(html, arr)
             if not isinstance(got_a, str):
@@ -3906,6 +3965,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
+    aethir_mint_path,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

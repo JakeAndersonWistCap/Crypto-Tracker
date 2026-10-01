@@ -2881,15 +2881,26 @@ PROJECTS = [
         # execution_outcomes and receipt_actions — NEAR Lake's deprecation did NOT freeze it (the
         # 2026-10-01 assumption that it would was WRONG). Queried from Jake's sandbox project
         # near-data-510309 (no billing: it cannot be charged; the free 1 TB/month is the hard limit).
-        # NOTHING HEAVY RUNS UNTIL JAKE APPROVES IT on the logged dry runs: `approved` gates each read.
+        # `approved` gates each read (Jake decides on the logged dry runs):
         #   circulating  10 MB a run (BigQuery's minimum; the table is ~1,400 rows) — approved
-        #   p2p          NOT approved: the year's backfill and one day's top-up are dry-run (free) and
-        #                logged every day; the native-NEAR leg must read receipt_actions.args (the
-        #                only place a TRANSFER's deposit is), estimated 1.5-3 TB a year, ~5-9 GB a day
-        #   balances     NOT wired — sql/near/bigquery_buyback_wallet_balances.sql (<= ~5 GB once)
+        #   p2p          APPROVED (Jake, 2026-10-01): daily top-up first, then month chunks newest first,
+        #                under 900 GB/month with the quota ledger; bytes billed are logged every run. The
+        #                native-NEAR leg reads receipt_actions.args (the only place a TRANSFER's deposit
+        #                is), estimated 1.5-3 TB a year, ~5-9 GB a day
+        #   balances     NOT WIRED — decided (Jake, 2026-10-01): ft_balances_daily holds native-NEAR
+        #                balances only, not the wNEAR or the inflow the buyback measures
+        # AUTH: Application Default Credentials from Jake's login — the service-account key route is
+        # BLOCKED by his organisation's iam.disableServiceAccountKeyCreation (secure-by-default; not to
+        # be disabled). ADC carries his USER access, which reaches cbc-risk-regime-api too, so the
+        # adapter pins every job to near-data-510309, refuses another quota project, and refuses any
+        # query naming a table outside bigquery-public-data.crypto_near_mainnet_us. RUNBOOK 11n.
         "near_bigquery": {
-            "project": "near-data-510309", "project_env": "NEAR_BQ_PROJECT", "key_env": "NEAR_BQ_KEY_PATH",
-            "approved": {"circulating": True, "p2p": False, "balances": False},
+            "project": "near-data-510309", "project_env": "NEAR_BQ_PROJECT",
+            "allowed_dataset": "bigquery-public-data.crypto_near_mainnet_us",
+            "auth": "Application Default Credentials (gcloud auth application-default login)",
+            "key_route_blocked": "iam.disableServiceAccountKeyCreation (Jake's organisation policy, "
+                                 "2026-10-01) — service-account keys cannot be created; ADC chosen instead",
+            "approved": {"circulating": True, "p2p": True, "balances": False},
             "monthly_budget_bytes": 900 * 10 ** 9,        # of the free 1 TB, leaving room for console use
             "max_bytes_per_query": 400 * 10 ** 9,
             "days": 365, "chunk_days": 31, "max_chunks_per_run": 1, "census_every_days": 30,
@@ -7160,6 +7171,19 @@ PROJECTS = [
             "note": "released from a pre-minted allocation.",
         },
         "name": "Aethir", "symbol": "ATH",
+        "extra_metrics": ("gross_issuance_tokens",),
+        # ===== NO MINTING: gross_issuance_tokens = 0 (Jake's decision, 2026-10-01). =====
+        # 42bn ATH are pre-minted; supplier and staker rewards are RELEASES (pool_release_tokens),
+        # not issuance. Unless the token contract shows a mint path — probe aethir_mint_path reads
+        # both ATH contracts' code for a mint selector and an upgradeable proxy.
+        "declared_zero": {
+            "gross_issuance_tokens": {
+                "why": "ATH is pre-minted (42,000,000,000); supplier and staker rewards are releases from "
+                       "pre-minted pools, measured as pool_release_tokens — nothing is minted",
+                "declared_by": "Jake, 2026-10-01", "sourced": False,
+                "still_needed": "probe aethir_mint_path: no mint selector or upgradeable proxy on either "
+                                "ATH contract (Ethereum 0xbe0Ed4…, Arbitrum 0xc87B37…)"},
+        },
         # ===== B7 (2026-09-28): AETHIR'S OWN REVENUE FIGURES, BESIDE DEFILLAMA'S. RECORDED BOTH. =====
         # DefiLlama's fees (~$4.5M/30d) are DepositServiceFee - WithdrawServiceFee on AethirCore
         # (Arbitrum) — prepayment net of withdrawals, a different quantity from the revenue Aethir
@@ -7578,7 +7602,19 @@ PROJECTS = [
             # the schedule. Forward-only: two runs on different days make the first measured row.
             "emissions_measured_from": {"stocks": ("checker_rewards_cumulative_tokens",
                                                    "edge_rewards_cumulative_tokens"),
-                                        "source": "aethir_page:supplier_rewards[checker + edge, day-on-day rise]"},
+                                        "source": "aethir_page:supplier_rewards[checker + edge, day-on-day rise]",
+                                        # TOTAL RELEASE (Jake, 2026-10-01): ATH is pre-minted, so neither
+                                        # supplier nor staker rewards are minting — both are releases from
+                                        # pools into circulation, diluting non-recipients. pool_release_tokens
+                                        # = supplier rewards + the staker schedule's rise over the same span,
+                                        # its own figure; emissions_tokens stays suppliers only.
+                                        "release_metric": "pool_release_tokens",
+                                        "release_adds": "staker_rewards_emitted",
+                                        "release_source": "aethir_page:release[supplier + staker rewards]"},
+            # ===== THE SCHEDULE NO LONGER ISSUES (Jake, 2026-10-01). =====
+            # No ATH is minted: the declared Checker Node schedule writes emissions_tokens only (its
+            # history leg), and gross_issuance_tokens is a DECLARED ZERO (declared_zero below).
+            "emissions_only": True,
             "emissions_partial_reason": "Checker Node BASE rewards only. Compute-provider "
                                         "rewards and the Checker Node bonus are supplier "
                                         "buckets with no declared schedule, so this UNDERSTATES "
@@ -7786,9 +7822,8 @@ PROJECTS = [
                                "totalRunningHours"),
                 },
                 "protocol/overview": {"fields": {}},
-                # The ecosystem page's address is not established (Jake's PDF names the page, not the
-                # URL): the first of these that answers is used and the Run Log names it, to be pinned.
-                "ecosystem": {"fields": {}, "try": ("protocol/ecosystem-metric", "protocol/ecosystem", "ecosystem")},
+                # https://dashboard.aethir.com/protocol/ecosystem — pinned from Jake's PDF (2026-10-01).
+                "protocol/ecosystem": {"fields": {}},
             },
             # ===== LABELLED FIGURES — Jake's PDFs of the rendered pages, 2026-10-01. =====
             # anchor = the value as Jake read it beside its label; within = how far today's figure may
@@ -7826,23 +7861,23 @@ PROJECTS = [
                 # ATH counted once, but NOT ESTABLISHED (no stATH contract address on file, and the
                 # Sophon side is on Sophon's chain). Stored as a named component; never added.
                 "sophon_stath": {"label": "Total stATH staked in Sophon pool", "metric": "stath_sophon_pool_tokens",
-                                 "pages": ("ecosystem",), "key": None, "anchor": 592_517_997, "within": 0.05,
+                                 "pages": ("protocol/ecosystem",), "key": None, "anchor": 592_517_997, "within": 0.05,
                                  "read_on": "2026-10-01"},
                 "eco_rewards_total": {"label": "Total Rewards Distributed (ecosystem, all)",
-                                      "metric": "ecosystem_rewards_cumulative_tokens", "pages": ("ecosystem",),
+                                      "metric": "ecosystem_rewards_cumulative_tokens", "pages": ("protocol/ecosystem",),
                                       "key": None, "anchor": 9_953_393_375, "within": 0.03, "read_on": "2026-10-01"},
                 # 1.5%: baseRewardDistributed (2.418bn) sits 2.3% away on the on-chain page.
                 "edge_earnings": {"label": "Edge Total Earnings", "metric": "edge_earnings_cumulative_tokens",
-                                  "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                  "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
                                   "anchor": 2_363_422_512, "within": 0.015, "read_on": "2026-10-01"},
                 "edge_stipend": {"label": "Edge Total Stipend Reward", "metric": "edge_stipend_cumulative_tokens",
-                                 "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                 "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
                                  "anchor": 44_917_651, "within": 0.05, "read_on": "2026-10-01"},
                 "edge_daily_pool": {"label": "Edge Daily Reward Pool", "metric": "edge_daily_reward_pool_tokens",
-                                    "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                    "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
                                     "anchor": 1_184_420, "within": 0.10, "read_on": "2026-10-01"},
                 "edge_devices": {"label": "Staked edge devices", "metric": "supply_units_edge",
-                                 "pages": ("protocol/onchain-metric", "ecosystem"), "key": None,
+                                 "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
                                  "anchor": 64_869, "within": 0.10, "read_on": "2026-10-01"},
                 # CHARTS. The weekly revenue chart (axis to $2.4M) must sum, since June 2024, to within
                 # 10% of Total Network Revenue — Jake's check; ATH-denominated charts fall outside the range.
@@ -7864,7 +7899,7 @@ PROJECTS = [
                                     "metric": "avg_lock_duration_days_gaming", "pages": ("protocol/onchain-metric",),
                                     "granularity": "daily", "value_range": (1, 1461), "name_re": r"(?i)gaming"},
                 "edge_monthly": {"label": "Edge monthly earnings (03/26-09/26)", "metric": "edge_earnings_monthly_tokens",
-                                 "pages": ("protocol/onchain-metric", "ecosystem"), "granularity": "monthly",
+                                 "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "granularity": "monthly",
                                  "value_range": (1e6, 2e8), "first_on_or_after": "2026-03-01"},
             },
             # ===== SAME-RUN SUMS AND RATIOS. =====
@@ -16483,6 +16518,22 @@ HISTORY_FORWARD_ONLY = {
     },
     # ETHEREUM — FORWARD-ONLY FROM 2026-09-29, FINAL (Jake, 2026-10-01): beaconcha.in, the one
     # history route left, was dropped entirely (zero allowance after the monthly reset).
+    # Aethir (Jake, 2026-10-01): supplier rewards are the day-on-day rise of the checker-node and edge
+    # reward totals on Aethir's dashboard, which serves them as current tiles only; pool_release_tokens
+    # (supplier + staker rewards) therefore starts at the first two readings.
+    "Aethir": {
+        "metrics": ("pool_release_tokens",),
+        "why": "the checker-node and edge reward totals are current tiles on dashboard.aethir.com with no "
+               "dated history; the release is measured from the first readings (2026-10-01) on",
+        "native_checked": [
+            {"source": "dashboard.aethir.com protocol/onchain-metric payload",
+             "finding": "baseRewardDistributed / bonusRewardDistributed / airdropRewardDistributed are "
+                        "undated tiles; the only dated reward series is the STAKER schedule"},
+            {"source": "dashboard.aethir.com protocol/ecosystem payload",
+             "finding": "edge totals as tiles; edge monthly earnings 03/26-09/26 (stored as its own history, "
+                        "edge leg only — not the checker leg)"},
+        ],
+    },
     "Ethereum": {
         "metrics": ("gross_issuance_tokens", "consensus_rewards_tokens"),
         "why": "forward-only from 2026-09-29 (issuance from 2026-09-30: the 09-29 row was a stale-"
@@ -16619,7 +16670,10 @@ def metrics_for_project(project: dict) -> list[str]:
         only = m.get("only_projects")
         if only and project["name"] not in only:
             continue
-        if not m["archetypes"] or arch & set(m["archetypes"]):
+        # A METRIC OUTSIDE THE ARCHETYPES THAT A DECISION PUTS ON THE PROJECT (Aethir, Jake
+        # 2026-10-01: gross_issuance_tokens = 0, declared — an archetype-2 project gets the row so
+        # the zero and its reason are on record rather than absent).
+        if not m["archetypes"] or arch & set(m["archetypes"]) or key in (project.get("extra_metrics") or ()):
             out.append(key)
     return out
 
@@ -16968,9 +17022,10 @@ SETTLEMENT_REBUILD = {
             "contracts_rule": "an account is a CONTRACT if it ever received DEPLOY_CONTRACT (it has code); "
                               "Artemis's own NEAR rule is a signer that never receives a FUNCTION_CALL",
             "sql": "sql/near/bigquery_freshness.sql, then sql/near/bigquery_p2p_daily.sql (dry-run for bytes)",
-            "delivery_options": ("a service-account key in .env (GOOGLE_APPLICATION_CREDENTIALS) — the "
-                                 "probe/import runs it", "a saved query Jake runs monthly, exporting a CSV "
-                                 "into data/near/ (never committed)"),
+            "delivery_options": ("Application Default Credentials from Jake's login (the service-account "
+                                 "key route is blocked by iam.disableServiceAccountKeyCreation) — the adapter "
+                                 "runs it", "a query Jake runs by hand in the console, saving a CSV into "
+                                 "data/near/ (never committed)"),
         },
         "b_dune": {
             "table": "near.ft_transfers — RAW delta_amount, no USD column; each transfer twice (+/-), mints and "

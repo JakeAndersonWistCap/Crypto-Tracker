@@ -98,7 +98,7 @@ TIER_ORDER = [
     # Plume's settlement volume rebuilt by Artemis's method — P2P transfers from Blockscout (2026-10-01).
     ("plume_settlement", 1, lambda ctx: PlumeSettlement()),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
-    # settlement rebuild once Jake approves its bytes (2026-10-01).
+    # settlement rebuild (approved 2026-10-01), via Jake's Application Default Credentials.
     ("near_bigquery", 1, lambda ctx: NearBigQuery(stored_long=ctx["stored_long"])),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),

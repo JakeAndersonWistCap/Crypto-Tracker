@@ -661,10 +661,9 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric == ((project.get("settlement_rebuild") or {}).get("p2p_metric")):
         if (project.get("settlement_rebuild") or {}).get("engine") == "bigquery":
             return ("NEAR's P2P aggregate (fetch/near_bigquery.py, Google's public BigQuery dataset) has no "
-                    "valued day yet — it runs only once Jake approves its bytes (dry runs are logged daily)",
-                    "Set up the service-account key (RUNBOOK 11n), read the Run Log's DRY RUNS line, then set "
-                    "config Near.near_bigquery.approved.p2p = True and run `python token_metrics.py --seed "
-                    "near_bigquery`.")
+                    "valued day yet — it needs Jake's Application Default Credentials on the machine that runs it",
+                    "Run `gcloud auth application-default login` and `gcloud auth application-default set-quota-project "
+                    "near-data-510309` (RUNBOOK 11n), then `python token_metrics.py --seed near_bigquery`.")
         return ("Plume's P2P transfer scan (fetch/plume_settlement.py) has no complete day stored yet",
                 "Run `python token_metrics.py --seed plume_settlement` once (~1.5h); routine runs top it up.")
     pay = (project.get("plume_staking") or {}).get("payouts") or {}

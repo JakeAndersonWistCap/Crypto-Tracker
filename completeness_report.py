@@ -69,9 +69,12 @@ DECISIONS = {
     ("Hyperliquid", "pool_release_tokens"): (
         "N/A", _SUPERSEDED + "HyperCore futureEmissions (future_emissions_tokens) supplies it; "
                             "CoinGecko circulating does not update"),
-    ("Aethir", "pool_release_tokens"): (
-        "N/A", _SUPERSEDED + "the declared emission schedule supplies emissions_tokens; CoinGecko "
-                            "circulating does not update"),
+    ("Aethir", "gross_issuance_tokens"): (
+        "COMPLETE", "0 — DECLARED (Jake, 2026-10-01): ATH is pre-minted (42bn); supplier and staker rewards "
+                    "are releases from pre-minted pools (pool_release_tokens), nothing is minted. Holds unless "
+                    "the token contract shows a mint path — probe aethir_mint_path"),
+    # Aethir pool_release_tokens: WIRED 2026-10-01 (Jake) — supplier + staker rewards, measured from
+    # the dashboard's cumulatives (build_workbook._measured_emissions_views); no decision left.
     # Maple pool_release_tokens: WIRED 2026-09-30 from Jake's probe 5 — the SSF chart's island
     # props on maple.finance/transparency (fetch/maple_transparency.ssf_series); no decision left.
     # GEODNET locked_tokens: the manual row (3,000,000 GEOD, Blockworks chart read by Jake 2026-09-30)
@@ -92,10 +95,10 @@ DECISIONS = {
     # (paid plan to save a query) and Flipside (API shut) are closed. Built: fetch/near_bigquery.py.
     **{("Near", m): ("NEEDS JAKE", "BUILDABLE — BigQuery's public NEAR dataset is live (Dune and Flipside "
                                    "closed). fetch/near_bigquery.py rebuilds the P2P leg (Artemis method "
-                                   "adapted to NEAR, UNVALIDATED) once Jake sets up the service-account key "
-                                   "(RUNBOOK 11n) and approves the dry-run bytes (config Near.near_bigquery."
-                                   "approved.p2p); then `token_metrics.py --seed near_bigquery`. A1's "
-                                   "throughput NRR covers NEAR meanwhile")
+                                   "adapted to NEAR, UNVALIDATED; approved 2026-10-01) once Jake's "
+                                   "Application Default Credentials are in place (`gcloud auth "
+                                   "application-default login`, RUNBOOK 11n); then `token_metrics.py --seed "
+                                   "near_bigquery`. A1's throughput NRR covers NEAR meanwhile")
        for m in ("settlement_volume_usd", "network_reserve_ratio")},
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
@@ -105,7 +108,13 @@ DECISIONS = {
 # Ethereum staking_yield_pct's week-long wait on Eth2Staking was lifted 2026-09-30: the
 # consensus part now has its declared history leg (ultrasound-derived issuance before the first
 # d(Eth2Staking) row) and ETH.Store is backfilled per day (A1/A2).
-WAIT_ON_SERIES: dict = {}
+WAIT_ON_SERIES: dict = {
+    # Aethir's release is a day-on-day rise: its first row needs two days of the checker total.
+    ("Aethir", "pool_release_tokens"): {
+        "series": "checker_rewards_cumulative_tokens", "days": 2,
+        "why": "supplier + staker rewards are the day-on-day rise of the dashboard's reward totals; the "
+               "first release row lands with the second day's reading"},
+}
 # WAITING ON A NAMED DATE, recorded (Jake's run 2026-09-30 17:21): a pending seed is not a bug.
 # While the cell is not yet ok and the date has not passed it reads WAITING ON A DATE; after the
 # date it is classified on its own status again, so a seed that never lands still surfaces.
@@ -116,14 +125,15 @@ PENDING_SEED = {
                      "~21,755 pages, ~1.5h; Artemis method, UNVALIDATED) — routine runs then top it up"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
                  "settlement_volume_365d_usd")},
-    **{("Near", m): "NEAR's P2P leg from BigQuery (fetch/near_bigquery.py): set up the service-account key "
-                    "(RUNBOOK 11n), read the Run Log's DRY RUNS bytes, set config Near.near_bigquery."
-                    "approved.p2p = True, then python token_metrics.py --seed near_bigquery (month chunks "
-                    "within the 900 GB/month budget; Artemis method adapted to NEAR, UNVALIDATED)"
+    **{("Near", m): "NEAR's P2P leg from BigQuery (fetch/near_bigquery.py, approved): run `gcloud auth "
+                    "application-default login` and `gcloud auth application-default set-quota-project "
+                    "near-data-510309` (RUNBOOK 11n), then python token_metrics.py --seed near_bigquery (top-up "
+                    "first, then month chunks within the 900 GB/month budget; Artemis method adapted to NEAR, "
+                    "UNVALIDATED)"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
                  "settlement_volume_365d_usd")},
-    ("Near", "circulating_supply_first_party"): "NEAR's own circulating_supply from BigQuery: set up the "
-                                                "service-account key (RUNBOOK 11n); 10 MB a run, approved",
+    ("Near", "circulating_supply_first_party"): "NEAR's own circulating_supply from BigQuery: run `gcloud auth "
+                                                "application-default login` (RUNBOOK 11n); 10 MB a run, approved",
     ("Hyperliquid", "perps_volume_usd"): "python token_metrics.py --seed hl_candles (a year of daily candles, "
                                          "~1 call per perp market) — routine runs then add each day",
     **{("Hyperliquid", m): "python token_metrics.py --seed hl_candles — the throughput sum needs its perps leg"

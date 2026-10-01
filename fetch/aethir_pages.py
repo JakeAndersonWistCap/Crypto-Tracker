@@ -362,34 +362,29 @@ class AethirPages:
             if spec:
                 self._project(p["name"], spec, out)
 
-    def _read_page(self, name: str, spec: dict, page: str, m: dict, day: str, out):
-        """The page's HTML, or None. A page whose address is not established lists `try` — the
-        first that answers is used and the Run Log names it, so it can be pinned."""
+    def _read_page(self, name: str, spec: dict, page: str, day: str, out):
+        """The page's HTML, "DONE" when it was already read today, or None."""
         from .scrape import robots_verdict
-        for path in m.get("try") or (page,):
-            url = spec["base"].rstrip("/") + "/" + path.lstrip("/")
-            if not self.daily.due(f"aethir_page:{url}", day):
-                return "DONE"
-            ok, why = robots_verdict(url)
-            if not ok:
-                out.fail(SOURCE, name, f"robots.txt disallows {url} — {why}", TIER)
-                continue
-            try:
-                html = self._fetch(url)
-            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-                out.fail(SOURCE, name, f"{url}: {e}", TIER)
-                continue
-            self.daily.done(f"aethir_page:{url}", day)
-            if m.get("try"):
-                out.skipped(SOURCE, name, f"{page}: served at {url}", TIER)
-            return html
-        return None
+        url = spec["base"].rstrip("/") + "/" + page.lstrip("/")
+        if not self.daily.due(f"aethir_page:{url}", day):
+            return "DONE"
+        ok, why = robots_verdict(url)
+        if not ok:
+            out.fail(SOURCE, name, f"robots.txt disallows {url} — {why}", TIER)
+            return None
+        try:
+            html = self._fetch(url)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{url}: {e}", TIER)
+            return None
+        self.daily.done(f"aethir_page:{url}", day)
+        return html
 
     def _project(self, name: str, spec: dict, out) -> None:
         day = str(today().date())
         pages: dict = {}
         for page, m in spec["pages"].items():
-            html = self._read_page(name, spec, page, m, day, out)
+            html = self._read_page(name, spec, page, day, out)
             if html == "DONE":
                 for metric in (m.get("fields") or {}).values():
                     out.mark_current(SOURCE, name, metric, f"{metric}: {page} already read today", TIER)

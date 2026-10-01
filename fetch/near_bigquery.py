@@ -29,8 +29,11 @@ month; a query whose dry run would take the month past `monthly_budget_bytes`, o
 `max_bytes_per_query`, is not run, and says so. maximum_bytes_billed is set on every job to its dry
 run, so BigQuery itself refuses anything larger.
 
-DELIVERY: a service-account key whose path is NEAR_BQ_KEY_PATH in .env (never committed, never
-logged), in the project NEAR_BQ_PROJECT (near-data-510309) — RUNBOOK 11n has the setup steps.
+AUTH: Application Default Credentials from Jake's own login (`gcloud auth application-default login`,
+quota project near-data-510309) — the service-account key route is blocked by his organisation's
+iam.disableServiceAccountKeyCreation (RUNBOOK 11n). Those credentials can reach his other projects, so
+the client is pinned to near-data-510309, a different quota project is refused, and every query is
+checked to name only bigquery-public-data.crypto_near_mainnet_us before it is sent.
 FALLBACK: CSVs of the P2P query's output (day, token, amount, n) saved by hand into data/near/ are
 read the same way, for days not already held.
 """
@@ -40,6 +43,7 @@ import csv
 import json
 import logging
 import os
+import re
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -95,27 +99,38 @@ class NearBigQuery:
 
     # --- BigQuery ------------------------------------------------------------------------------
     def _client(self, spec: dict):
-        """(client, bq module) or (None, why). The key's PATH comes from .env and is never logged."""
+        """(client, None) or (None, why). APPLICATION DEFAULT CREDENTIALS from Jake's own login
+        (`gcloud auth application-default login`) — the service-account key route is blocked by his
+        organisation's iam.disableServiceAccountKeyCreation. Those credentials carry Jake's USER
+        access, which reaches other projects (cbc-risk-regime-api), so the client is pinned to the
+        declared project and anything else is refused (and _guard_sql refuses any table outside the
+        public dataset)."""
         if self._client_obj is not None:
             return self._client_obj, None
-        path = os.environ.get(spec["key_env"])
-        if not path:
-            return None, f"{spec['key_env']} is not set in .env (RUNBOOK 11n: the service-account key)"
-        try:
-            from google.cloud import bigquery
-            from google.oauth2 import service_account
-        except ImportError:
-            return None, "google-cloud-bigquery is not installed (pip install google-cloud-bigquery)"
         project = os.environ.get(spec["project_env"]) or spec["project"]
         if project != spec["project"]:
             return None, (f"{spec['project_env']} names a different project than the declared "
                           f"{spec['project']} — refused, so no other project is ever billed or touched")
         try:
-            creds = service_account.Credentials.from_service_account_file(path)
-        except Exception as e:  # noqa: BLE001
-            return None, f"the service-account key could not be read ({type(e).__name__})"
+            import google.auth
+            from google.auth.exceptions import DefaultCredentialsError
+            from google.cloud import bigquery
+        except ImportError:
+            return None, "google-cloud-bigquery is not installed (pip install google-cloud-bigquery)"
+        try:
+            creds, _adc_project = google.auth.default(scopes=["https://www.googleapis.com/auth/bigquery"])
+        except DefaultCredentialsError:
+            return None, ("no Application Default Credentials — run `gcloud auth application-default login` "
+                          f"then `gcloud auth application-default set-quota-project {spec['project']}` (RUNBOOK 11n)")
+        quota = getattr(creds, "quota_project_id", None)
+        if quota and quota != spec["project"]:
+            return None, (f"the ADC quota project is {quota}, not {spec['project']} — refused; run "
+                          f"`gcloud auth application-default set-quota-project {spec['project']}`")
         self._bq = bigquery
-        self._client_obj = bigquery.Client(project=project, credentials=creds)
+        self._client_obj = bigquery.Client(project=spec["project"], credentials=creds)
+        if getattr(self._client_obj, "project", spec["project"]) != spec["project"]:
+            self._client_obj = None
+            return None, f"the BigQuery client resolved a project other than {spec['project']} — refused"
         return self._client_obj, None
 
     def _params(self, params: dict):
@@ -128,14 +143,25 @@ class NearBigQuery:
                 out.append(bq.ScalarQueryParameter(k, "DATE", str(v)))
         return out
 
-    def _dry(self, client, sql: str, params: dict) -> int:
+    @staticmethod
+    def _guard_sql(sql: str, spec: dict) -> None:
+        """Every table a query names must be in the public NEAR dataset: Jake's own credentials can
+        read other projects' data, and a query naming one is refused before it is sent."""
+        allowed = spec.get("allowed_dataset", "bigquery-public-data.crypto_near_mainnet_us")
+        code = "\n".join(line.split("--", 1)[0] for line in sql.splitlines())   # comments are prose
+        for ref in re.findall(r"`([^`]+\.[^`]+)`", code):
+            if not ref.startswith(allowed):
+                raise PermissionError(f"query names `{ref}`, outside {allowed} — refused")
+
+    def _dry(self, client, sql: str, params: dict, spec: dict | None = None) -> int:
+        self._guard_sql(sql, spec or {})
         cfg = self._bq.QueryJobConfig(dry_run=True, use_query_cache=False, query_parameters=self._params(params))
         return int(client.query(sql, job_config=cfg).total_bytes_processed or 0)
 
     def _run(self, client, what: str, sql: str, params: dict, spec: dict, st: dict, out, name: str):
         """Rows, or None with the reason logged. Dry run, budget, then the job capped at its dry run."""
         try:
-            est = self._dry(client, sql, params)
+            est = self._dry(client, sql, params, spec)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{what}: dry run failed — {type(e).__name__}: {str(e)[:200]}", TIER)
             return None
@@ -159,7 +185,11 @@ class NearBigQuery:
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{what}: {type(e).__name__}: {str(e)[:200]}", TIER)
             return None
+        if getattr(job, "project", spec["project"]) != spec["project"]:
+            out.fail(SOURCE, name, f"{what}: the job ran in a project other than {spec['project']} — stopped", TIER)
+            return None
         billed = int(getattr(job, "total_bytes_billed", None) or est)
+        self._run_bytes += billed
         st["ledger"][month] = used + billed
         self._save(st)
         out.skipped(SOURCE, name, f"{what}: {len(rows)} row(s); {billed / 1e9:,.2f} GB billed (dry run "
@@ -175,6 +205,7 @@ class NearBigQuery:
                 self._project(p["name"], spec, out, unbounded)
 
     def _project(self, name: str, spec: dict, out, unbounded: bool) -> None:
+        self._run_bytes = 0
         st = self._load()
         st.setdefault("ledger", {})
         st.setdefault("days", {})
@@ -194,6 +225,10 @@ class NearBigQuery:
             else:
                 out.skipped(SOURCE, name, "p2p NOT APPROVED — dry runs only (config Near.near_bigquery."
                                           "approved.p2p, Jake's decision on the logged estimates)", TIER)
+            month = str(today().date())[:7]
+            out.skipped(SOURCE, name, f"BYTES THIS RUN: {self._run_bytes / 1e9:,.2f} GB billed; {month} so far "
+                                      f"{int(st['ledger'].get(month, 0)) / 1e9:,.1f} GB of "
+                                      f"{int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB budget (free tier 1 TB)", TIER)
         self._save(st)
         self._value(spec, st, out, name)
 
@@ -237,10 +272,10 @@ class NearBigQuery:
         try:
             for label, d0 in (("year", yday - pd.Timedelta(days=int(spec["days"]) - 1)), ("one day", yday)):
                 b = self._dry(client, _sql("bigquery_p2p_daily.sql"),
-                              {"d0": d0.date(), "d1": yday.date(), "tokens": toks})
+                              {"d0": d0.date(), "d1": yday.date(), "tokens": toks}, spec)
                 parts.append(f"{label} {b / 1e9:,.1f} GB")
             b = self._dry(client, _sql("bigquery_token_census.sql"),
-                          {"d0": (yday - pd.Timedelta(days=29)).date(), "d1": yday.date()})
+                          {"d0": (yday - pd.Timedelta(days=29)).date(), "d1": yday.date()}, spec)
             parts.append(f"token census (30 days) {b / 1e9:,.1f} GB")
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"dry runs failed — {type(e).__name__}: {str(e)[:200]}", TIER)
@@ -286,19 +321,32 @@ class NearBigQuery:
         toks = st["tokens"]["list"]
         yday = (today() - pd.Timedelta(days=1)).normalize()
         floor = yday - pd.Timedelta(days=int(spec["days"]) - 1)
-        missing = [d for d in pd.date_range(yday, floor, freq="-1D") if str(d.date()) not in st["days"]]
-        chunks = []
+        held = sorted(st["days"])
+        newest = pd.Timestamp(held[-1]) if held else None
+        # 1. THE DAILY TOP-UP FIRST: every missing day newer than the newest held (just yesterday on a
+        #    first run), so the series stays current whatever the backfill has left to do.
+        top = [d for d in pd.date_range(yday, floor, freq="-1D")
+               if str(d.date()) not in st["days"] and (newest is None or d > newest)]
+        top = top[:1] if newest is None else top[:int(spec["chunk_days"])]
+        # 2. THEN THE BACKFILL: the remaining missing days in chunks of <= chunk_days, newest first.
+        missing = [d for d in pd.date_range(yday, floor, freq="-1D")
+                   if str(d.date()) not in st["days"] and d not in top]
+        chunks = [("top-up", top)] if top else []
         for d in missing:                                     # newest first, contiguous, <= chunk_days
-            if chunks and (chunks[-1][0] - d).days == 1 and len(chunks[-1][1]) < int(spec["chunk_days"]):
-                chunks[-1] = (d, chunks[-1][1] + [d])
+            if chunks and chunks[-1][0] == "backfill" and (min(chunks[-1][1]) - d).days == 1 \
+                    and len(chunks[-1][1]) < int(spec["chunk_days"]):
+                chunks[-1][1].append(d)
             else:
-                chunks.append((d, [d]))
+                chunks.append(("backfill", [d]))
         limit = None if unbounded else int(spec["max_chunks_per_run"])
-        for i, (_, days) in enumerate(chunks):
-            if limit is not None and i >= limit:
-                break
+        done_backfill = 0
+        for kind, days in chunks:
+            if kind == "backfill":
+                if limit is not None and done_backfill >= limit:
+                    break
+                done_backfill += 1
             d0, d1 = min(days), max(days)
-            rows = self._run(client, f"p2p {d0.date()}..{d1.date()}", _sql("bigquery_p2p_daily.sql"),
+            rows = self._run(client, f"p2p {kind} {d0.date()}..{d1.date()}", _sql("bigquery_p2p_daily.sql"),
                              {"d0": d0.date(), "d1": d1.date(), "tokens": toks}, spec, st, out, name)
             if rows is None:
                 break

@@ -859,10 +859,18 @@ def _measured_emissions_views(groups: dict) -> None:
     deleted — so the series has the declared handover and no overlap; before it they stand.
     gross_issuance_tokens stays on the schedule. No measured day: the schedule's rows stand."""
     for p in scoped_projects():
+        name = p["name"]
+        # A SCHEDULE THAT NO LONGER ISSUES (Aethir, Jake 2026-10-01): gross_issuance_tokens it wrote
+        # before is not shown beside the declared zero — the stored rows go by SQL BM.
+        if (p.get("issuance_schedule") or {}).get("emissions_only"):
+            g = groups.get((name, "gross_issuance_tokens"))
+            if g is not None and not g.empty:
+                src = g["source"].astype(str)
+                groups[(name, "gross_issuance_tokens")] = g[~(src.str.startswith("schedule:config")
+                                                            & ~src.str.endswith(":declared"))]
         spec = (p.get("issuance_schedule") or {}).get("emissions_measured_from")
         if not spec:
             continue
-        name = p["name"]
         stocks = []
         for m in spec["stocks"]:
             g = groups.get((name, m))
@@ -886,6 +894,7 @@ def _measured_emissions_views(groups: dict) -> None:
         if not rows:
             continue
         meas = pd.DataFrame(rows)
+        _release_view(groups, name, spec, meas, common)
         sched = groups.get((name, "emissions_tokens"))
         if sched is not None and not sched.empty:
             sched = sched[sched["date"] < meas["date"].min()]
@@ -894,6 +903,32 @@ def _measured_emissions_views(groups: dict) -> None:
                                                            ignore_index=True).sort_values("date")
         else:
             groups[(name, "emissions_tokens")] = _as_stored(meas, meas.columns)
+
+
+def _release_view(groups: dict, name: str, spec: dict, supplier: pd.DataFrame, common: list) -> None:
+    """pool_release_tokens = supplier rewards + the staker schedule's rise over the SAME span (Aethir,
+    Jake 2026-10-01: both are releases from pre-minted pools). The staker series is cumulative and
+    weekly; each of its steps is added to the supplier row whose span (previous reading, day] holds
+    it. Only days with a measured supplier row; no measured staker point at all: nothing."""
+    if not spec.get("release_metric"):
+        return
+    st = groups.get((name, spec["release_adds"]))
+    if st is None or st.empty:
+        return
+    cum = st.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+    steps = cum.diff().dropna()
+    steps = steps[steps > 0]
+    prev = dict(zip(common[1:], common[:-1]))
+    rows = []
+    for r in supplier.itertuples(index=False):
+        p0 = prev.get(r.date)
+        add = float(steps[(steps.index > p0) & (steps.index <= r.date)].sum()) if p0 is not None else 0.0
+        rows.append({"date": r.date, "project": name, "metric": spec["release_metric"],
+                     "value": float(r.value) + add,
+                     "source": spec["release_source"] + (r.source[len(spec["source"]):] if
+                                                         r.source.startswith(spec["source"]) else ""),
+                     "tier": 3})
+    groups[(name, spec["release_metric"])] = _as_stored(pd.DataFrame(rows), supplier.columns)
 
 
 def _usd_history_views(groups: dict) -> None:
