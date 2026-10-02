@@ -63,11 +63,11 @@ def parse_rsc(text: str) -> list:
     return out
 
 
-def capture(url: str, clicks=(), wait_ms: int = 4000, timeout_ms: int = 45000, browser=None) -> dict:
+def capture(url: str, clicks=(), wait_ms: int = 4000, timeout_ms: int = 45000, browser=None, toggles=()) -> dict:
     """{"responses": [(url, json)], "bodies": [(url, content-type, text)], "ws": [(url, text)],
-    "text": rendered text, "clicked": [labels]}."""
+    "text": rendered text, "clicked": [labels], "texts": {toggle: rendered text after clicking it}}."""
     from playwright.sync_api import sync_playwright
-    out = {"responses": [], "bodies": [], "ws": [], "text": "", "clicked": []}
+    out = {"responses": [], "bodies": [], "ws": [], "text": "", "clicked": [], "texts": {}}
     with sync_playwright() as pw:
         b = browser
         if b is None:
@@ -106,6 +106,17 @@ def capture(url: str, clicks=(), wait_ms: int = 4000, timeout_ms: int = 45000, b
             except Exception:  # noqa: BLE001 — a tab that is not there on this page
                 continue
         out["text"] = page.inner_text("body")
+        # TOGGLES (Aethir's "Average Stake Duration (Days)" tile, AI / Gaming — Jake's probes8): each clicked
+        # in turn and the page text read after it
+        for label in toggles:
+            loc = page.get_by_text(label, exact=True)
+            try:
+                if loc.count():
+                    loc.first.click(timeout=5000)
+                    page.wait_for_timeout(wait_ms)
+                    out["texts"][label] = page.inner_text("body")
+            except Exception:  # noqa: BLE001 — a toggle not on the page: its tiles say so
+                continue
         b.close()
     return out
 
@@ -366,8 +377,10 @@ class BrowserCapture:
         if not ok:
             out.fail(SOURCE, name, f"robots.txt disallows {url} — {why}", TIER)
             return
+        toggles = tuple(dict.fromkeys(t["toggle"] for t in pg.get("tiles") or () if t.get("toggle")))
         try:
-            got = self._capture(url, clicks=pg.get("clicks") or ())
+            got = (self._capture(url, clicks=pg.get("clicks") or (), toggles=toggles) if toggles
+                   else self._capture(url, clicks=pg.get("clicks") or ()))
         except Exception as e:  # noqa: BLE001 — a failed render must not kill the run
             out.fail(SOURCE, name, f"{url}: render failed — {type(e).__name__}: {str(e)[:160]}", TIER)
             return
@@ -390,7 +403,7 @@ class BrowserCapture:
         series = list(pg.get("series") or ())
         # 1. pins that need no unit verdict (some are the references a unit check reads)
         for pin in [x for x in series if not x.get("unit_leg")]:
-            self._series_pin(name, pin, got, out, held, None)
+            self._series_pin(name, pin, got, out, held, pin.get("units"))
         # 2. each leg's units, decided against stored or captured references (probes7: per leg)
         for uc in pg.get("unit_checks") or ():
             units[uc["leg"]] = self._leg_units(name, uc, got, held, units, out)
@@ -436,12 +449,19 @@ class BrowserCapture:
         for t in pg.get("tiles") or ():
             if t["metric"] in held:                      # the chart's series resolved: the tile is its fallback
                 continue
-            v = tile_from(got["text"], t["label"])
-            if v is None:
-                out.fail(SOURCE, name, f"{t['metric']}: \"{t['label']}\" not found in the rendered page. NOTHING "
+            text = got.get("texts", {}).get(t["toggle"]) if t.get("toggle") else got["text"]
+            if text is None:
+                out.fail(SOURCE, name, f"{t['metric']}: the \"{t['toggle']}\" toggle is not on the page. NOTHING "
                                        f"STORED.", TIER)
                 continue
-            out.add(point(name, t["metric"], v, f"{SOURCE}:{t['site']}.tile[{t['layer']}]", TIER, today()), SOURCE,
+            v = tile_from(text, t["label"])
+            if v is None:
+                out.fail(SOURCE, name, f"{t['metric']}: \"{t['label']}\" not found in the rendered page"
+                                       + (f" after the \"{t['toggle']}\" toggle" if t.get("toggle") else "")
+                                       + ". NOTHING STORED.", TIER)
+                continue
+            out.add(point(name, t["metric"], v, f"{SOURCE}:{t['site']}.tile[{t['layer']}"
+                          + (f", {t['toggle']} toggle" if t.get("toggle") else "") + "]", TIER, today()), SOURCE,
                     name, f"{t['metric']} = \"{t['label']}\" {v:,.4f} (rendered tile, FORWARD-ONLY, {t['layer']})", TIER)
 
     def _series_pin(self, name, pin, got, out, held, unit) -> None:

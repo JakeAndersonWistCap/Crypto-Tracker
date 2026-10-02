@@ -527,6 +527,27 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11t. probes8, 2026-10-02: ASXN units concluded, HyperEVM page, Aethir hours and utilisation
+
+```bash
+python check_offline_items.py browser_captures   # /hyperevm/fees pins, stake-duration toggles (dry)
+python run_sql.py BQ                              # Aethir utilisation_pct rows from containers x 168h (SELECT first)
+```
+- **ASXN.**
+  - All three buyback-page legs are USD: `total` = the sum of the legs on 561/561 days, and
+    HyperCore Buybacks is USD. They are stored as `*_usd`; total burn's history converts them at
+    the same-day price.
+  - The HyperEVM pins (tx_count, burn, fees) now sit on their own page entry,
+    `/hyperevm/fees`.
+  - Validated: ASXN's perps volume agrees with ours (median ratio 0.997).
+- **Aethir.**
+  - Weekly compute hours come from the demand page's server payload. The key is pinned by the
+    prefix `weeklyComputeHo*`, and the Run Log prints the full key.
+  - Utilisation = delivered / online hours. The weekly ratio is primary; the cumulative ratio
+    (~69%) sits beside it; containers x 168h is the lower bound.
+  - Stake duration is read from the "Average Stake Duration (Days)" tile after the AI and Gaming
+    toggles. If that fails, it is UNAVAILABLE.
+
 ## 11s. Plume native-PLUME seed: "day(s) held" stuck at 183 (2026-10-02)
 
 - **What happened.** The native leg walks newest first from yesterday. Day 183 back is

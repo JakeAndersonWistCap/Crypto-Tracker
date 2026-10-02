@@ -3955,3 +3955,29 @@ SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS
 --  WHERE project = 'Hyperliquid'
 --    AND metric IN ('burn_auction_tokens', 'burn_hyperevm_tokens', 'buyback_hypercore_asxn_tokens')
 --    AND source LIKE 'browser_capture:asxn.%[USD / same-day price]%';
+
+-- ========================================================================================
+-- BQ. AETHIR utilisation_pct: THE CONTAINERS x 168h ROWS BECOME THE LOWER BOUND  2026-10-02
+--     Jake's probes8: utilisation = compute hours delivered / GPU ONLINE hours (totalOnlineHours, supply
+--     page) — ~69% cumulative — is now PRIMARY, built at read time from the two cumulatives
+--     (build_workbook._utilisation_views). The rows stored so far under utilisation_pct came from
+--     "delivered last week / (containers x 168h)" (~30%), which assumes every container online all week:
+--     a LOWER BOUND, now its own metric utilisation_containers_pct. The workbook already shows them there;
+--     this moves them in the store so the series is clean.
+--     Run: python run_sql.py BQ, then python run_sql.py --delete BQ (preview + typed "DELETE BQ").
+-- ========================================================================================
+-- BQ1. THE ROWS TO MOVE.
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Aethir' AND metric = 'utilisation_pct'
+ GROUP BY metric, source;
+
+-- BQ2. THE MOVE (no lower-bound row exists on those dates yet; the NOT EXISTS keeps it safe if one does).
+-- UPDATE metrics
+--    SET metric = 'utilisation_containers_pct'
+--  WHERE project = 'Aethir' AND metric = 'utilisation_pct'
+--    AND source LIKE 'aethir_page:derived.compute_hours_last_week/nodes_x_168%'
+--    AND NOT EXISTS (SELECT 1 FROM metrics s
+--                     WHERE s.project = metrics.project AND s.metric = 'utilisation_containers_pct'
+--                       AND s.date = metrics.date);

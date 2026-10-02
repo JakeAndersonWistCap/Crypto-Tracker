@@ -4663,11 +4663,16 @@ def browser_captures():
                                                              "no sentence on scraping or automated access"))
             if not ok:
                 continue
+            toggles = tuple(dict.fromkeys(t["toggle"] for t in pg.get("tiles") or () if t.get("toggle")))
             try:
-                got = bc.capture(pg["url"], clicks=pg.get("clicks") or ())
+                got = bc.capture(pg["url"], clicks=pg.get("clicks") or (), toggles=toggles)
             except Exception as e:  # noqa: BLE001
                 print(f"  render failed: {type(e).__name__}: {str(e)[:200]}")
                 continue
+            for tg, txt in (got.get("texts") or {}).items():
+                i = txt.find("Average Stake Duration")
+                print(f"  after toggle \"{tg}\": " + (' '.join(txt[i:i + 160].split()) if i >= 0 else
+                                                    "no \"Average Stake Duration\" text"))
             bodies = got.get("bodies") or []
             kinds = {}
             for _, ct, _b in bodies:

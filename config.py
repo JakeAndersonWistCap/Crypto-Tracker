@@ -252,6 +252,9 @@ METRICS = {
     "compute_rewards_tokens": {"label": "Aethir compute rewards per week (ATH) — supply-metric weeklyData `reward`", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aethir",)},
     "burn_auction_tokens": {"label": "HYPE burned by deploy-gas AUCTIONS per day (ASXN hyperscreener, browser) — non-AF burn history", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
     "burn_hyperevm_tokens": {"label": "HYPE burned on HyperEVM per day (ASXN hyperscreener, browser) — non-AF burn history", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
+    "online_hours_cumulative": {"label": "GPU ONLINE hours, cumulative (Aethir supply-metric totalOnlineHours) — utilisation's denominator", "kind": "stock", "unit": "hours", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Aethir",)},
+    "utilisation_cumulative_pct": {"label": "Utilisation since launch = cumulative compute hours delivered / cumulative GPU online hours (Aethir)", "kind": "stock", "unit": "pct", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Aethir",), "view_only": True},
+    "utilisation_containers_pct": {"label": "Utilisation LOWER BOUND = compute hours delivered last week / (GPU containers x 168h) — assumes every container online all week", "kind": "stock", "unit": "pct", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Aethir",)},
     "burn_auction_usd": {"label": "Deploy-gas AUCTION burns per day ($ as served by ASXN — USD by the unit check) — non-AF burn history", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
     "burn_hyperevm_usd": {"label": "HyperEVM burn per day ($ as served by ASXN — USD by the unit check) — non-AF burn history", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
     "buyback_hypercore_asxn_usd": {"label": "HyperCore buybacks per day ($, ASXN — USD: median 0.938 of holders revenue over 558 days) — CROSS-CHECK of the Assistance Fund series", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
@@ -7962,49 +7965,37 @@ PROJECTS = [
         # the rendered figures as `tiles`, FORWARD-ONLY. Robots.txt is the same site aethir_pages reads,
         # checked again at every render.
         "browser_capture": {"pages": [
-            # PINNED BY KEY FROM THE SERVER-COMPONENT (RSC) PAYLOAD (Jake's probes7, 2026-10-02): 7 responses
-            # mention hours/duration (onchain-metric #rsc:0 and #rsc:5; demand-metric). The exact keys were not
-            # in the paste, so each pin takes the ONE dated list whose keys fit — DD/MM labels with no year
-            # (the axis 08/06..21/09), a value key named like hours / AI / Gaming — and the latest weekly hours
-            # must sit within 5% of the 22,510,837 Jake read. Several fitting lists, or none, store nothing; the
-            # probe prints the RSC lines and key paths so the keys can be pinned exactly.
-            {"url": "https://dashboard.aethir.com/protocol/demand-metric", "site": "aethir_demand", "clicks": ("7D", "1W", "30D", "1M", "3M", "90D", "6M", "1Y", "All", "ALL", "Max"),
-             "permitted": True, "tiles": (),
-             "series": (
-                 {"metric": "compute_hours_weekly", "url_contains": "#rsc:", "path": "auto", "date_key": "auto",
-                  "yearless": "weekly", "granularity": "weekly", "value_key": "auto", "value_key_regex": r"hour",
-                  "value_key_exclude": r"total|cumul|last",
-                  "anchor": {"value": 22_510_837, "within": 0.05, "read_on": "2026-10-02"},
-                  "site": "aethir_demand", "layer": "Aethir compute"},
-             ),
-             "wanted": ("compute_hours_weekly",)},
             # TILES, FORWARD-ONLY (probes6 3, Jake 2026-10-02): the stake-duration chart's data was not in any
             # captured JSON or websocket frame; the rendered figures are read once a day. The exact tile text
             # is not yet confirmed, so the label is a set of alternatives — none found = nothing stored, the
             # probe prints the text around "Average Stake Duration". (Compute hours LAST WEEK is already read
             # daily from the page payload — aethir_pages hours_last_week — and feeds utilisation; no tile.)
             {"url": "https://dashboard.aethir.com/protocol/onchain-metric", "site": "aethir_onchain", "clicks": ("7D", "1W", "30D", "1M", "3M", "90D", "6M", "1Y", "All", "ALL", "Max"),
-             "permitted": True,
-             # the stake-duration chart, by key (see the demand page's note); the tiles below stay as the
-             # fallback reading should the chart's keys not resolve
-             "series": (
-                 {"metric": "avg_lock_duration_days_ai", "url_contains": "#rsc:", "path": "auto", "date_key": "auto",
-                  "value_key": "auto", "value_key_regex": r"^ai(?-i:(?![a-z]))|ai_?pool|(^|_)ai(_|$)",
-                  "path_regex": r"durat|stake", "site": "aethir_onchain", "layer": "AI pool"},
-                 {"metric": "avg_lock_duration_days_gaming", "url_contains": "#rsc:", "path": "auto",
-                  "date_key": "auto", "value_key": "auto", "value_key_regex": r"gam", "path_regex": r"durat|stake",
-                  "site": "aethir_onchain", "layer": "Gaming pool"},
-             ),
+             "permitted": True, "series": (),
+             # STAKE DURATION: IN NO RSC PAYLOAD (Jake's probes8). The PDF's tile is "Average Stake Duration
+             # (Days)" with AI / Gaming TOGGLES: each toggle is clicked and the tile read after it. If it still
+             # fails, the durations are recorded UNAVAILABLE (Jake: then stop).
              "tiles": (
-                 {"metric": "avg_lock_duration_days_ai", "site": "aethir_onchain", "layer": "AI pool",
-                  "label": ("Average Stake Duration of AI Pool", "Average Stake Duration (AI Pool)",
-                            "AI Pool Average Stake Duration", "Avg. Stake Duration of AI Pool")},
+                 {"metric": "avg_lock_duration_days_ai", "site": "aethir_onchain", "layer": "AI pool", "toggle": "AI",
+                  "label": ("Average Stake Duration (Days)", "Average Stake Duration of AI Pool",
+                            "Average Stake Duration (AI Pool)")},
                  {"metric": "avg_lock_duration_days_gaming", "site": "aethir_onchain", "layer": "Gaming pool",
-                  "label": ("Average Stake Duration of Gaming Pool", "Average Stake Duration (Gaming Pool)",
-                            "Gaming Pool Average Stake Duration", "Avg. Stake Duration of Gaming Pool")},
+                  "toggle": "Gaming",
+                  "label": ("Average Stake Duration (Days)", "Average Stake Duration of Gaming Pool",
+                            "Average Stake Duration (Gaming Pool)")},
              ),
              "wanted": ("avg_lock_duration_days_ai", "avg_lock_duration_days_gaming")},
         ]},
+        # UTILISATION = COMPUTE HOURS DELIVERED / GPU ONLINE HOURS (Jake's probes8, 2026-10-02). Both are
+        # cumulative on the dashboard (totalComputeHoursDelivered 2,436,359,729 on demand-metric;
+        # totalOnlineHours 3,524,630,469 on supply-metric): cumulative ~69%. PRIMARY = the WEEKLY ratio, both
+        # cumulatives differenced over the same >=7-day span, forward from the daily reads
+        # (build_workbook._utilisation_views). The cumulative ratio is stored beside it; delivered /
+        # (containers x 168h), ~30%, is the labelled LOWER BOUND (utilisation_containers_pct).
+        "utilisation_view": {"delivered": "compute_hours_cumulative", "online": "online_hours_cumulative",
+                             "metric": "utilisation_pct", "cumulative_metric": "utilisation_cumulative_pct",
+                             "lower_bound_metric": "utilisation_containers_pct", "window_days": 7, "max_span_days": 14,
+                             "old_source": "aethir_page:derived.compute_hours_last_week/nodes_x_168"},
         "dashboard_pages": {
             "base": "https://dashboard.aethir.com",
             "pages": {
@@ -8030,7 +8021,10 @@ PROJECTS = [
                                                       "totalMonthlyCapacity": "capacity_monthly_total",
                                                       "totalRewards": "compute_rewards_cumulative_tokens",
                                                       "totalServiceFee": "compute_service_fee_cumulative_tokens",
-                                                      "totalLockedRewards": "compute_rewards_locked_tokens"},
+                                                      "totalLockedRewards": "compute_rewards_locked_tokens",
+                                                      # Jake's probes8 (2026-10-02): cumulative GPU ONLINE hours
+                                                      # (3,524,630,469) — utilisation's denominator
+                                                      "totalOnlineHours": "online_hours_cumulative"},
                                            # weekly `week` labels are DD/MM with no year (the year from the
                                            # sequence); whether a label is the week's start or end is not
                                            # established — the series stores it as served, finished weeks only
@@ -8040,7 +8034,7 @@ PROJECTS = [
                                                "granularity": "weekly", "date_key": "week", "yearless": True,
                                                "complete_only": True,
                                                "label": "supply-metric weeklyData (compute rewards / service fee)"}},
-                                           "report": ("idcStaked", "totalOnlineHours")},
+                                           "report": ("idcStaked",)},
                 # PINNED BY KEY NAME (Jake's probes5, 2026-10-01 — the value matcher found nothing; the
                 # keys are in the payload): weeklyNetworkRevenue [{"startDate":"08/06","amount":868693.77},
                 # ..] is DD/MM WITH NO YEAR, inferred from the sequence ending at the current week;
@@ -8058,6 +8052,14 @@ PROJECTS = [
                                                   "granularity": "monthly", "date_key": "month",
                                                   "complete_only": True,
                                                   "label": "Aethir Monthly Network Revenue (USD)"},
+                        # WEEKLY COMPUTE HOURS ARE IN THIS PAGE'S PAYLOAD (Jake's probes8, 2026-10-02): the block
+                        # {"totalComputeHoursDelivered":2436359729.13,"totalComputeHoursDeliveredLastWeek":
+                        # 22089416.05,"weeklyComputeHo...":[...]}. The key was truncated in the paste, so it is
+                        # pinned by PREFIX (one list key must match) with its DD/MM date key and value key found
+                        # the same way; the Run Log prints the full keys to pin.
+                        "weeklyComputeHo*": {"value_key": "auto", "date_key": "auto", "yearless": True,
+                                             "metric": "compute_hours_weekly", "granularity": "weekly",
+                                             "complete_only": True, "label": "Weekly Compute Hours Delivered"},
                     },
                 },
                 # ===== FIRST-PARTY STAKE AND REWARDS (probes3 2026-09-30; probes4 + labels 2026-10-01). =====
@@ -8122,11 +8124,13 @@ PROJECTS = [
                                     "pages": ("protocol/demand-metric",), "key": None,
                                     "anchor": 11_182_170_271, "within": 0.05, "read_on": "2026-10-01"},
                 "hours_total": {"label": "Total Compute Hours Delivered", "metric": "compute_hours_cumulative",
-                                "pages": ("protocol/demand-metric",), "key": None, "anchor": 2_433_230_876,
+                                "pages": ("protocol/demand-metric",), "key": "totalComputeHoursDelivered",
+                                "anchor": 2_433_230_876,
                                 "within": 0.05, "read_on": "2026-10-01"},
                 "hours_last_week": {"label": "Total Compute Hours Delivered Last Week",
                                     "metric": "compute_hours_last_week", "pages": ("protocol/demand-metric",),
-                                    "key": None, "anchor": 22_089_416, "within": 0.30, "read_on": "2026-10-01"},
+                                    "key": "totalComputeHoursDeliveredLastWeek", "anchor": 22_089_416, "within": 0.30,
+                                    "read_on": "2026-10-01"},
                 "apr_ai": {"label": "Average APR of AI Pool", "metric": "staking_apr_ai", "pct": True,
                            "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.1249,
                            "within": 0.05, "read_on": "2026-10-01"},
@@ -8180,11 +8184,12 @@ PROJECTS = [
                 {"what": "edge rewards, cumulative (earnings + stipend)", "op": "sum",
                  "inputs": ("edge_earnings", "edge_stipend"), "metric": "edge_rewards_cumulative_tokens",
                  "source": "aethir_page:edge.earnings+stipend"},
-                # Utilisation, DERIVED (Jake, 2026-10-01): weekly compute hours delivered / (GPU containers x
-                # 168h). If totalOnlineHours proves to be GPU online hours, the denominator changes to it.
-                {"what": "utilisation = compute hours delivered last week / (GPU containers x 168h)", "op": "ratio",
-                 "inputs": ("hours_last_week", "protocol/supply-metric#nodes"), "per": 168,
-                 "metric": "utilisation_pct",
+                # UTILISATION, LOWER BOUND (Jake's probes8, 2026-10-02): compute hours delivered last week /
+                # (GPU containers x 168h) assumes every container online all week, so it reads LOW (~30%). The
+                # PRIMARY utilisation is delivered / ONLINE hours (utilisation_view below, ~69% cumulative).
+                {"what": "utilisation lower bound = compute hours delivered last week / (GPU containers x 168h)",
+                 "op": "ratio", "inputs": ("hours_last_week", "protocol/supply-metric#nodes"), "per": 168,
+                 "metric": "utilisation_containers_pct",
                  "source": "aethir_page:derived.compute_hours_last_week/nodes_x_168[assumes every container available 24/7]",
                  "label": "derived: assumes every container available 24/7"},
                 {"what": "our locked / circulating (totalStaked / athCirculatingSupply)", "op": "ratio",
@@ -10136,67 +10141,29 @@ PROJECTS = [
                             "https://hyperscreener.asxn.xyz/hyperevm/users", "https://hyperscreener.asxn.xyz/hypercore/users",
                             "https://hyperscreener.asxn.xyz/users"),
              "terms": "read by Jake 2026-10-02: silent on automated access; ask ASXN before public use",
-             # probes7 (Jake, 2026-10-02): HyperCore Buybacks is USD (median leg/ref 0.938 over 558 days vs
-             # holders revenue). EVERY LEG'S UNITS ARE CHECKED THE SAME WAY and each is stored AS READ under
-             # the name its verdict gives (metric_by_unit) — never converted: HyperEVM Burn against ASXN's own
-             # token-metrics burned_hype / burned_usd; Auction Burn by `total` = the sum of the three legs.
-             # The HyperEVM responses come from a HyperEVM page: alt_urls are rendered (once a day each)
-             # only while a pinned response is still missing.
-             "alt_urls": ("https://hyperscreener.asxn.xyz/hyperevm", "https://hyperscreener.asxn.xyz/hyperevm/fees"),
-             "unit_checks": (
-                 {"leg": "HyperCore Buybacks", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
-                  "refs": {"tokens": ("stored:actual_buyback_tokens", "stored:holders_revenue_tokens"),
-                           "usd": ("stored:holders_revenue_usd",)}},
-                 {"leg": "HyperEVM Burn", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
-                  "refs": {"tokens": ("captured:hyperevm_burn_tokens_asxn",), "usd": ("captured:hyperevm_burn_usd_asxn",)}},
-                 {"leg": "Auction Burn", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
-                  "same_unit_as_total": {"total": "total",
-                                         "legs": ("Auction Burn", "HyperCore Buybacks", "HyperEVM Burn")}},
-             ),
+             # UNITS CONCLUDED (Jake's probes8, 2026-10-02): ALL THREE LEGS ARE USD. HyperCore Buybacks is
+             # USD — median 0.938 of DefiLlama holders revenue over 558 days. And `total` = the sum of the
+             # three legs on 561/561 days: a total that equals the sum of its legs on every day cannot mix
+             # units, so Auction Burn and HyperEVM Burn are USD too. Stored as read, under *_usd; total
+             # burn's history converts them at the same-day price (burn_total history_extra).
+             # METHODOLOGY_FLAGS hyperliquid_asxn_units.
              "series": (
-                 # c) ASXN's HyperEVM token metrics: burn and fees — cross-checks of the HyperEVM Burn leg
-                 {"metric": "hyperevm_burn_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
-                  "path": "chart_data", "date_key": "auto", "value_key": "burned_hype", "layer": "HyperEVM",
-                  "site": "asxn"},
-                 {"metric": "hyperevm_burn_usd_asxn", "url_contains": "/api/hyper-evm/token-metrics",
-                  "path": "chart_data", "date_key": "auto", "value_key": "burned_usd", "layer": "HyperEVM",
-                  "site": "asxn"},
-                 {"metric": "hyperevm_base_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
-                  "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"base",
-                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
-                 {"metric": "hyperevm_priority_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
-                  "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"priority",
-                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
-                 # b) HyperEVM daily transactions -> Hyperliquid tx_count, LABELLED HyperEVM (HyperCore's own
-                 # order flow is not in it). The field is the one transactions key (cumulative / average /
-                 # fee / address keys excluded), checked against the page's "Avg Daily Txns" tile (334K).
-                 {"metric": "tx_count", "url_contains": "/api/hyper-evm/network-metrics", "path": "chart_data",
-                  "date_key": "auto", "value_key": "auto",
-                  "value_key_regex": r"(^|_)(txns?|transactions?|tx_count|tx)($|_)",
-                  "value_key_exclude": r"cumul|total|avg|average|per_|fee|gas|address|user|size|value",
-                  "tile_check": {"label": "Avg Daily Txns", "within": 0.25}, "layer": "HyperEVM", "site": "asxn"},
-                 # a) the buyback-page legs, stored under the name their unit verdict gives
-                 {"unit_leg": "Auction Burn", "metric_by_unit": {"tokens": "burn_auction_tokens", "usd": "burn_auction_usd"},
-                  "metric": "burn_auction_tokens", "url_contains": "/api/buyback/revenues", "path": "data",
-                  "date_key": "date", "value_key": "Auction Burn", "layer": "HyperCore", "site": "asxn"},
-                 {"unit_leg": "HyperEVM Burn", "metric_by_unit": {"tokens": "burn_hyperevm_tokens", "usd": "burn_hyperevm_usd"},
-                  "metric": "burn_hyperevm_tokens", "url_contains": "/api/buyback/revenues", "path": "data",
-                  "date_key": "date", "value_key": "HyperEVM Burn", "layer": "HyperEVM", "site": "asxn",
-                  "crosscheck_by_unit": {"tokens": ("hyperevm_burn_tokens_asxn",), "usd": ("hyperevm_burn_usd_asxn",)}},
-                 {"unit_leg": "HyperCore Buybacks",
-                  "metric_by_unit": {"tokens": "buyback_hypercore_asxn_tokens", "usd": "buyback_hypercore_asxn_usd"},
-                  "metric": "buyback_hypercore_asxn_usd", "url_contains": "/api/buyback/revenues", "path": "data",
-                  "date_key": "date", "value_key": "HyperCore Buybacks", "layer": "HyperCore", "site": "asxn",
-                  "crosscheck_by_unit": {"tokens": ("actual_buyback_tokens", "holders_revenue_tokens"),
-                                         "usd": ("holders_revenue_usd", "actual_buyback_usd")}},
+                 {"metric": "burn_auction_usd", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
+                  "value_key": "Auction Burn", "units": "usd", "layer": "HyperCore", "site": "asxn"},
+                 {"metric": "burn_hyperevm_usd", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
+                  "value_key": "HyperEVM Burn", "units": "usd", "layer": "HyperEVM", "site": "asxn",
+                  "crosscheck": ("hyperevm_burn_usd_asxn",)},
+                 {"metric": "buyback_hypercore_asxn_usd", "url_contains": "/api/buyback/revenues", "path": "data",
+                  "date_key": "date", "value_key": "HyperCore Buybacks", "units": "usd", "layer": "HyperCore",
+                  "site": "asxn", "crosscheck": ("holders_revenue_usd", "actual_buyback_usd")},
+                 # VALIDATED (probes8): ASXN vs candleSnapshot perps_volume_usd median 0.997, 100% of days within
+                 # 10% over 366 days — METHODOLOGY_FLAGS hyperliquid_perps_volume_validated
                  {"metric": "perps_volume_usd_asxn", "url_contains": "/api/cloudfront/total_usd_volume",
                   "path": "chart_data", "date_key": "auto", "value_key": "auto", "layer": "HyperCore",
                   "crosscheck": ("perps_volume_usd",), "site": "asxn"},
                  {"metric": "open_interest_usd_asxn", "url_contains": "total_open_interest", "path": "auto",
                   "date_key": "auto", "value_key": "auto", "layer": "HyperCore", "site": "asxn"},
              ),
-             # the non-AF burns against the Core leg (HYPE): runs when both legs resolve to tokens
-             "crosschecks": ({"sum": ("burn_auction_tokens", "burn_hyperevm_tokens"), "ref": "core_burn_tokens"},),
              "scalars": (
                  # a) the 30-day annualised revenue, pinned by key (10 keys matched "annual")
                  {"metric": "revenue_annualised_usd_asxn", "url_contains": ("revenue-metrics", "revenue_metrics",
@@ -10208,6 +10175,36 @@ PROJECTS = [
                  {"metric": "hypercore_users_total", "url_contains": ("/api/",), "key": "total_users",
                   "tile_label": "Users", "anchor": {"value": 1_870_000, "within": 0.30, "read_on": "2026-10-02"},
                   "flow_metric": "hypercore_new_users", "site": "asxn", "layer": "HyperCore"},
+             ),
+             "tiles": ()},
+            # HYPEREVM, ON ITS OWN PAGE (Jake's probes8): /api/hyper-evm/token-metrics and /network-metrics are
+            # fetched by /hyperevm/fees (the probe's later page), not by the dashboard's first page — so the
+            # HyperEVM pins live on that page, rendered once a day like the other (same access rule).
+            {"url": "https://hyperscreener.asxn.xyz/hyperevm/fees", "site": "asxn",
+             "clicks": ("7D", "1W", "30D", "1M", "3M", "90D", "6M", "1Y", "All", "ALL", "Max"),
+             "permitted": True, "access": "browser page loads only, once a day — the API is session-gated",
+             "terms": "read by Jake 2026-10-02: silent on automated access; ask ASXN before public use",
+             "series": (
+                 # HyperEVM daily transactions -> Hyperliquid tx_count, LABELLED HyperEVM (HyperCore's order flow
+                 # is not in it): the one transactions key, checked against the "Avg Daily Txns" tile (334K)
+                 {"metric": "tx_count", "url_contains": "/api/hyper-evm/network-metrics", "path": "chart_data",
+                  "date_key": "auto", "value_key": "auto",
+                  "value_key_regex": r"(^|_)(txns?|transactions?|tx_count|tx)($|_)",
+                  "value_key_exclude": r"cumul|total|avg|average|per_|fee|gas|address|user|size|value",
+                  "tile_check": {"label": "Avg Daily Txns", "within": 0.25}, "layer": "HyperEVM", "site": "asxn"},
+                 # HyperEVM burn and fees — cross-checks of the buyback page's HyperEVM Burn leg
+                 {"metric": "hyperevm_burn_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "burned_hype", "layer": "HyperEVM",
+                  "site": "asxn"},
+                 {"metric": "hyperevm_burn_usd_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "burned_usd", "layer": "HyperEVM",
+                  "site": "asxn", "crosscheck": ("burn_hyperevm_usd",)},
+                 {"metric": "hyperevm_base_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"base",
+                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
+                 {"metric": "hyperevm_priority_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"priority",
+                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
              ),
              "tiles": ()},
         ]},
@@ -17605,6 +17602,27 @@ METHODOLOGY_FLAGS = {
                               "page's totalRewards (3,063,771,452 ATH) and weekly `reward` (~18.4M ATH/week) are the "
                               "third component of emissions_tokens with checker + edge. totalServiceFee is ATH "
                               "PAID FOR SERVICE (demand), stored apart.",
+    "aethir_utilisation": "DECIDED (Jake's probes8, 2026-10-02): utilisation = compute hours DELIVERED / GPU ONLINE "
+                          "hours. Cumulative: 2,436,359,729 / 3,524,630,469 = ~69% (utilisation_cumulative_pct). "
+                          "PRIMARY utilisation_pct = the weekly ratio, both cumulatives differenced over the same "
+                          ">=7-day span, forward from the daily reads. delivered last week / (GPU containers x "
+                          "168h), ~30%, assumes every container online all week: the LOWER BOUND "
+                          "(utilisation_containers_pct; its stored rows move there — orphan_cleanup BQ).",
+    "aethir_stake_duration": "PENDING ONE MORE TRY (Jake's probes8, 2026-10-02): the average stake duration is in no "
+                             "RSC payload. Read from the rendered \"Average Stake Duration (Days)\" tile after its AI "
+                             "/ Gaming toggle; if that fails too, record UNAVAILABLE and stop (Jake).",
+    "hyperliquid_asxn_units": "CONCLUDED (Jake's probes8, 2026-10-02): ASXN's /api/buyback/revenues legs are ALL USD. "
+                              "HyperCore Buybacks: median 0.938 of DefiLlama holders revenue over 558 days (67% of "
+                              "days within 10%) — USD. `total` = Auction Burn + HyperCore Buybacks + HyperEVM Burn "
+                              "on 561/561 days; a total equal to the sum of its legs on every day cannot mix units, "
+                              "so Auction Burn and HyperEVM Burn are USD too. Stored as read under burn_auction_usd, "
+                              "burn_hyperevm_usd, buyback_hypercore_asxn_usd; total burn's history converts them at "
+                              "the same-day price. orphan_cleanup BP (HYPE-converted rows): NO ROWS.",
+    "hyperliquid_perps_volume_validated": "VALIDATED (Jake's probes8, 2026-10-02): ASXN's total_usd_volume vs our "
+                                          "candleSnapshot perps_volume_usd (sum of v x close over every perp market, "
+                                          "HIP-3 included): median ratio 0.997, 100% of days within 10%, over 366 "
+                                          "days 2025-10-01..2026-10-01. So the v x close approximation of notional "
+                                          "holds, and ASXN's figure includes HIP-3.",
     "hyperliquid_active_addresses": "UNAVAILABLE FROM ASXN (Jake's probes7, 2026-10-02): no page carries daily active "
                                     "addresses. HyperCore's \"Users 1.87M\" is CUMULATIVE — stored as "
                                     "hypercore_users_total with its daily change as hypercore_new_users (new users, "

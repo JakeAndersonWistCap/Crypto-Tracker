@@ -240,6 +240,37 @@ def array_objects(html: str, key: str):
     return f"`{key}`: the array is not closed in the payload"
 
 
+def resolve_array_key(html: str, key: str):
+    """The full key for a pin ending in "*" (a PREFIX: Jake's probes8 saw "weeklyComputeHo..." truncated
+    in the paste) — the ONE key with that prefix serving a list — or the key itself; else why not."""
+    if not key.endswith("*"):
+        return key
+    names = sorted(set(re.findall(r'"(' + re.escape(key[:-1]) + r'[A-Za-z0-9_]*)"\s*:\s*\[', rsc_text(html))))
+    if len(names) != 1:
+        return (f"{len(names)} list key(s) start with `{key[:-1]}`" + (f": {names}" if names else "")
+                + " — pin the full key")
+    return names[0]
+
+
+def auto_keys(objs: list, a: dict):
+    """(date_key, value_key) — the declared ones, or for "auto" the ONE key that fits (a DD/MM label for
+    a yearless date; the one other numeric key for the value) — else why not, naming the keys."""
+    first = next((o for o in objs if isinstance(o, dict)), {})
+    dk, vk = a.get("date_key"), a.get("value_key")
+    if dk == "auto":
+        c = [k for k, v in first.items() if isinstance(v, str) and (
+            re.match(r"^\d{1,2}/\d{1,2}$", v.strip()) if a.get("yearless") else _as_day(v) is not None)]
+        if len(c) != 1:
+            return None, None, f"no single date key among {sorted(first)}"
+        dk = c[0]
+    if vk == "auto":
+        c = [k for k, v in first.items() if k != dk and isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if len(c) != 1:
+            return None, None, f"no single value key among {sorted(first)} — pin value_key"
+        vk = c[0]
+    return dk, vk, None
+
+
 def key_scalar(html: str, key: str):
     """(value, why) for `"key": <number>` ANYWHERE in the payload — inside nested objects and beside
     arrays, where rsc_objects() (flat objects only) cannot see it. Jake's probes5 (2026-10-01): the
@@ -550,7 +581,21 @@ class AethirPages:
         schedule, weeklyNetworkRevenue (DD/MM, year inferred), monthlyNetworkRevenue ("August, 2024"),
         stakeHistory (ISO startTime; one metric per component key). Kept: dates up to today, or only
         finished periods (`complete_only`); a cumulative that falls is refused."""
+        pinned = key
+        key = resolve_array_key(html, key)
+        if pinned != key and not key.startswith(pinned[:-1]):     # a prefix that did not resolve
+            for m in (a.get("values") or {"": a["metric"]}).values():
+                out.fail(SOURCE, name, f"{m}: {key} on {page}. NOTHING STORED.", TIER)
+            return
         objs = array_objects(html, key)
+        if not isinstance(objs, str) and "auto" in (a.get("date_key"), a.get("value_key")):
+            dk, vk, why = auto_keys(objs, a)
+            if why:
+                out.fail(SOURCE, name, f"{a.get('metric')}: `{key}` on {page}: {why}. NOTHING STORED.", TIER)
+                return
+            a = {**a, "date_key": dk, "value_key": vk}
+            out.skipped(SOURCE, name, f"{a.get('metric')}: `{key}` resolved — full key `{key}`, date `{dk}`, "
+                                      f"value `{vk}` (pin them in config)", TIER)
         values = a.get("values") or {a["value_key"]: a["metric"]}
         if isinstance(objs, str):
             for m in values.values():

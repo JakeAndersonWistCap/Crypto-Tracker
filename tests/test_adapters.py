@@ -20387,7 +20387,7 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     mo = [{"month": m.strftime("%B, %Y"), "earning": 868_693.77 * m.days_in_month / 7} for m in mons]
     blob = {"arr": 62_489_999.90221721, "weeklyNetworkRevenue": wk, "monthlyNetworkRevenue": mo}
     demand = page([{"totalRevenue": 192_220_803, "purchasesAth": 11_182_170_271,
-                    "computeHours": 2_433_230_876, "hoursLastWeek": 22_089_416}]) + \
+                    "totalComputeHoursDelivered": 2_433_230_876, "totalComputeHoursDeliveredLastWeek": 22_089_416}]) + \
         f'<script>self.__next_f.push([1,"{json.dumps("1b:" + json.dumps(blob))[1:-1]}"])</script>'
     supply = page([{"nodes": 433704, "locations": 94}, {"totalComputePower": 38509113.66,
                                                          "totalMonthlyCapacity": 638256960},
@@ -20474,8 +20474,9 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert not {"compute_hours_weekly", "avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"} & set(f.metric)
     assert config.unavailable_for("Aethir", "avg_lock_duration_days_ai") is None
     pages = config.PROJECT_BY_NAME["Aethir"]["browser_capture"]["pages"]
-    assert {m for pg in pages for m in pg["wanted"]} == {"compute_hours_weekly", "avg_lock_duration_days_ai",
-                                                         "avg_lock_duration_days_gaming"}
+    assert {m for pg in pages for m in pg["wanted"]} == {"avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"}
+    # probes8: weekly compute hours come from the demand page's server payload (by key prefix), not the browser
+    assert "weeklyComputeHo*" in config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["pages"]["protocol/demand-metric"]["arrays"]
     # COMPUTE REWARDS (Jake, 2026-10-02): stored, read by key beside the weeklyData array; service fee
     # (demand) and locked rewards apart; finished weeks only
     assert float(one("compute_rewards_cumulative_tokens").value.iloc[0]) == 3_063_771_452.71
@@ -20489,8 +20490,8 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     # derived: supplier stocks, utilisation, the ratio check
     assert float(one("checker_rewards_cumulative_tokens").value.iloc[0]) == base + bonus + air
     assert float(one("edge_rewards_cumulative_tokens").value.iloc[0]) == 2_363_422_512 + 44_917_651
-    assert float(one("utilisation_pct").value.iloc[0]) == pytest.approx(22_089_416 / (433_704 * 168))
-    assert "assumes every container available 24/7" in one("utilisation_pct").source.iloc[0]
+    assert float(one("utilisation_containers_pct").value.iloc[0]) == pytest.approx(22_089_416 / (433_704 * 168))
+    assert "assumes every container available 24/7" in one("utilisation_containers_pct").source.iloc[0]
     assert "vs the page's Total Locked ATH / Circulating Supply" in msgs
     assert aeth["dashboard_pages"]["pages"]["protocol/ecosystem"] == {"fields": {}}   # pinned (Jake, 2026-10-01)
     # ambiguity stores nothing
@@ -22268,13 +22269,13 @@ def test_research_round_records_plume_incentive_hl_inactive_and_browser_gate(tmp
 
 
 def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tiles(monkeypatch, caplog):
-    """probes6-7 (Jake, 2026-10-02): ASXN is rendered page loads only. EVERY buyback-page leg's units are
-    checked — HyperCore Buybacks against stored AF / holders-revenue figures, HyperEVM Burn against ASXN's
-    own token-metrics burned_hype / burned_usd, Auction Burn by `total` = the sum of the legs — and each is
-    stored AS READ under the name its verdict gives (USD legs: *_usd). Total burn's history reads a USD leg
-    at the same-day price. HyperEVM tx_count needs ONE transactions key and the "Avg Daily Txns" tile to
-    agree; the revenue key is pinned; cumulative users give a daily new-users change; RSC lines are parsed;
-    a tile is only the fallback for a series that did not resolve."""
+    """probes6-8 (Jake, 2026-10-02): ASXN is rendered page loads only. Units CONCLUDED: `total` = the sum of
+    the three legs on 561/561 days and HyperCore Buybacks is USD, so all three legs are USD — stored as read
+    under *_usd; total burn's history converts them at the same-day price. The HyperEVM pins live on
+    /hyperevm/fees (where the probe captured them): tx_count needs ONE transactions key and the "Avg Daily
+    Txns" tile to agree. The revenue key is pinned; cumulative users give a daily new-users change; RSC
+    lines are parsed. Aethir's stake durations are read from the "Average Stake Duration (Days)" tile after
+    each of its AI / Gaming toggles."""
     import logging
     import build_workbook as bw
     import fetch.browser_capture as bc
@@ -22282,35 +22283,40 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "allowed"))
     monkeypatch.setattr(bc, "today", lambda: pd.Timestamp("2026-10-02"))
     hl = config.PROJECT_BY_NAME["Hyperliquid"]
-    pg = hl["browser_capture"]["pages"][0]
-    assert pg["permitted"] is True and "session-gated" in pg["access"]
+    home, fees = hl["browser_capture"]["pages"]
+    assert fees["url"].endswith("/hyperevm/fees") and home["permitted"] is True and "session-gated" in home["access"]
+    assert {p["metric"] for p in home["series"]} >= {"burn_auction_usd", "burn_hyperevm_usd", "buyback_hypercore_asxn_usd"}
+    assert all(p.get("units") == "usd" for p in home["series"] if p["metric"].startswith(("burn_", "buyback_")))
+    assert "561/561" in config.METHODOLOGY_FLAGS["hyperliquid_asxn_units"]
+    assert "0.997" in config.METHODOLOGY_FLAGS["hyperliquid_perps_volume_validated"]
     reg = config.SOURCE_REGISTER["hyperscreener.asxn.xyz"]
     assert reg["browser_only"] and "ask ASXN" in reg["licence"] and "SILENT" in reg["terms"]["status"]
     days = pd.date_range("2026-09-01", periods=10)
-    # every leg in USD (HYPE at $40): buybacks $2.0M ~ holders revenue, HyperEVM burn $800 = 20 HYPE
     data = [{"date": str(d.date()), "Auction Burn": 4000.0, "HyperCore Buybacks": 1.9e6 * (1 + i / 100),
              "HyperEVM Burn": 800.0, "total": 4000.0 + 1.9e6 * (1 + i / 100) + 800.0} for i, d in enumerate(days)]
     rows = lambda m, v: pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": m, "value": v, "source": "x"})
     stored = pd.concat([rows("holders_revenue_usd", 2e6), rows("price_usd", 40.0), rows("perps_volume_usd", 5e9),
+                        rows("hyperevm_burn_usd_asxn", 800.0),
                         rows("hypercore_users_total", 1_860_000.0).iloc[[-1]].assign(date=pd.Timestamp("2026-10-01"))])
     rsc = '0:["$","div",null]\n1:{"chart_data":[' + ",".join(
         f'{{"time":"{d.date()}","volume":{5.1e9}}}' for d in days) + "]}\n"
+    home_got = {"responses": [("https://hyperscreener.asxn.xyz/api/buyback/revenues", {"data": data}),
+                              ("https://hyperscreener.asxn.xyz/api/stats", {"total_users": 1_870_000}),
+                              ("https://hyperscreener.asxn.xyz/api/cloudfront/total_open_interest",
+                               {"chart_data": [{"time": str(d.date()), "open_interest": 9e9} for d in days]})]
+                + [(f"https://hyperscreener.asxn.xyz/api/cloudfront/total_usd_volume#rsc:{k}", o)
+                   for k, o in bc.parse_rsc(rsc)]
+                + [("https://hyperscreener.asxn.xyz/api/revenue-metrics",
+                    {"fees": {"annualized_revenue_30d": 1.2e9, "annualized_revenue_7d": 1.3e9, "daily": 3e6}})],
+                "bodies": [], "ws": [], "text": "", "clicked": []}
     evm_tm = [{"date": str(d.date()), "burned_hype": 20.0, "burned_usd": 800.0, "base_fees_hype": 19.0,
                "priority_fees_hype": 3.0, "base_fees_usd": 760.0} for d in days]
     evm_nm = [{"date": str(d.date()), "daily_transactions": 330_000 + i * 1000, "cumulative_transactions": 9e7,
                "active_addresses": 10} for i, d in enumerate(days)]
-    got = {"responses": [("https://hyperscreener.asxn.xyz/api/buyback/revenues", {"data": data}),
-                         ("https://hyperscreener.asxn.xyz/api/hyper-evm/token-metrics", {"chart_data": evm_tm}),
-                         ("https://hyperscreener.asxn.xyz/api/hyper-evm/network-metrics?time_range=all",
-                          {"chart_data": evm_nm}),
-                         ("https://hyperscreener.asxn.xyz/api/stats", {"total_users": 1_870_000}),
-                         ("https://hyperscreener.asxn.xyz/api/cloudfront/total_open_interest",
-                          {"chart_data": [{"time": str(d.date()), "open_interest": 9e9} for d in days]})]
-           + [(f"https://hyperscreener.asxn.xyz/api/cloudfront/total_usd_volume#rsc:{k}", o)
-              for k, o in bc.parse_rsc(rsc)]
-           + [("https://hyperscreener.asxn.xyz/api/revenue-metrics",
-               {"fees": {"annualized_revenue_30d": 1.2e9, "annualized_revenue_7d": 1.3e9, "daily": 3e6}})],
-           "bodies": [], "ws": [], "text": "Avg Daily Txns 334K", "clicked": []}
+    fees_got = {"responses": [("https://hyperscreener.asxn.xyz/api/hyper-evm/token-metrics", {"chart_data": evm_tm}),
+                              ("https://hyperscreener.asxn.xyz/api/hyper-evm/network-metrics?time_range=all",
+                               {"chart_data": evm_nm})],
+                "bodies": [], "ws": [], "text": "Avg Daily Txns 334K", "clicked": []}
 
     class Daily:
         def due(self, *a):
@@ -22322,47 +22328,38 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
 
     def cap(url, **k):
         renders.append(url)
-        return got
+        return fees_got if url.endswith("/hyperevm/fees") else home_got
     out = FetchOutput()
     with caplog.at_level(logging.INFO, logger="token_metrics.fetch.browser_capture"):
         bc.BrowserCapture(capture_fn=cap, daily=Daily(), stored_long=stored).run([hl], None, out)
-    assert renders == ["https://hyperscreener.asxn.xyz"], "every pinned response on the first page: no alt render"
+    assert renders == ["https://hyperscreener.asxn.xyz", "https://hyperscreener.asxn.xyz/hyperevm/fees"]
     f = out.frame()
     assert set(f.metric) >= {"burn_auction_usd", "burn_hyperevm_usd", "buyback_hypercore_asxn_usd",
                              "hyperevm_burn_tokens_asxn", "hyperevm_burn_usd_asxn", "hyperevm_base_fees_tokens_asxn",
                              "hyperevm_priority_fees_tokens_asxn", "tx_count", "perps_volume_usd_asxn",
                              "revenue_annualised_usd_asxn", "hypercore_users_total", "hypercore_new_users"}
-    assert not {"burn_auction_tokens", "buyback_hypercore_asxn_tokens"} & set(f.metric), "USD legs keep USD names"
     a = f.query("metric == 'burn_auction_usd'")
     assert a.value.iloc[0] == 4000.0 and "USD as read" in a.source.iloc[0]
-    assert "unit check `HyperEVM Burn`" in caplog.text and "`total` = sum of the legs on 10/10" in caplog.text
     tx = f.query("metric == 'tx_count'")
     assert len(tx) == 10 and "asxn.daily_transactions[HyperEVM]" in tx.source.iloc[0]
-    r = f.query("metric == 'revenue_annualised_usd_asxn'")
-    assert r.value.iloc[0] == 1.2e9
+    assert f.query("metric == 'revenue_annualised_usd_asxn'").value.iloc[0] == 1.2e9
     nu = f.query("metric == 'hypercore_new_users'")
     assert nu.value.iloc[0] == 10_000 and "daily change" in nu.source.iloc[0]
     v = f.query("metric == 'perps_volume_usd_asxn'")
     assert len(v) == 10 and "asxn.volume[HyperCore]" in v.source.iloc[0], "auto keys from the RSC line"
     assert "CROSS-CHECK" in caplog.text and "median ratio 1.020" in caplog.text
+    assert "burn_hyperevm_usd vs hyperevm_burn_usd_asxn" in caplog.text
     # the tile disagrees -> tx_count refused; users off the anchor -> refused
-    got2 = {**got, "text": "Avg Daily Txns 50K"}
-    got2["responses"] = [x if "api/stats" not in x[0] else (x[0], {"total_users": 900_000}) for x in got["responses"]]
+    fees2 = {**fees_got, "text": "Avg Daily Txns 50K"}
+    home2 = {**home_got, "responses": [x if "api/stats" not in x[0] else (x[0], {"total_users": 900_000})
+                                       for x in home_got["responses"]]}
     out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda u, **k: got2, daily=Daily(), stored_long=stored).run([hl], None, out)
+    bc.BrowserCapture(capture_fn=lambda u, **k: fees2 if u.endswith("/fees") else home2, daily=Daily(),
+                      stored_long=stored).run([hl], None, out)
     f2 = out.frame()
     assert f2.query("metric == 'tx_count'").empty and f2.query("metric == 'hypercore_users_total'").empty
     msgs = " ".join(e.message for e in out.log)
     assert "Avg Daily Txns" in msgs and "from the anchor 1,870,000" in msgs
-    # a missing HyperEVM response -> the alt page is rendered; HyperEVM / Auction units then undecidable
-    got3 = {**got, "responses": [x for x in got["responses"] if "hyper-evm" not in x[0]]}
-    renders.clear()
-    out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda u, **k: (renders.append(u) or got3), daily=Daily(),
-                      stored_long=stored).run([hl], None, out)
-    assert renders == ["https://hyperscreener.asxn.xyz"] + list(pg["alt_urls"])
-    f3 = out.frame()
-    assert "buyback_hypercore_asxn_usd" in set(f3.metric) and "burn_auction_usd" not in set(f3.metric)
     # several candidate keys: nothing stored, named
     assert "pin one" in bc.scalar_from([("u/revenue-metrics", {"a_annual": 1, "b_annualised": 2})],
                                        {"url_contains": "revenue-metrics", "key_contains": "annual"})
@@ -22375,54 +22372,99 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
     groups = {("Hyperliquid", "gross_burn_tokens"): pd.concat([hist, live.assign(metric="gross_burn_tokens")]),
               ("Hyperliquid", "core_burn_tokens"): live.assign(metric="core_burn_tokens"),
               ("Hyperliquid", "burn_auction_usd"): hist.assign(metric="burn_auction_usd", value=4000.0),
-              ("Hyperliquid", "burn_hyperevm_tokens"): hist.assign(metric="burn_hyperevm_tokens", value=20.0),
+              ("Hyperliquid", "burn_hyperevm_usd"): hist.assign(metric="burn_hyperevm_usd", value=800.0),
               ("Hyperliquid", "price_usd"): hist.assign(metric="price_usd", value=40.0)}
     bw._burn_total_views(groups)
     tb = groups[("Hyperliquid", "total_burn_tokens")].sort_values("date")
     assert tb.value.iloc[0] == 50_000 + 100 + 20
-    assert "burn_auction_usd/price" in tb.source.iloc[0] and "burn_hyperevm_tokens" in tb.source.iloc[0]
+    assert "burn_auction_usd/price" in tb.source.iloc[0] and "burn_hyperevm_usd/price" in tb.source.iloc[0]
     from fetch.base import _measuring_point
     assert _measuring_point(tb.source.iloc[0]) == _measuring_point("defillama:holders_revenue_usd/price")
     assert tb.value.iloc[1] == 2.0
-    # AETHIR: the stake-duration series by key from RSC; the tiles only as the fallback
+    # AETHIR: "Average Stake Duration (Days)" read after each toggle
     ae = config.PROJECT_BY_NAME["Aethir"]
     on = next(x for x in ae["browser_capture"]["pages"] if x["site"] == "aethir_onchain")
-    text = "Average Stake Duration of AI Pool 212.5 Days Average Stake Duration of Gaming Pool 187 Days"
-    got4 = {"responses": [], "bodies": [], "ws": [], "text": text, "clicked": []}
+    asked = []
+
+    def cap_ae(url, **k):
+        asked.append(k.get("toggles"))
+        return {"responses": [], "bodies": [], "ws": [], "clicked": [], "text": "",
+                "texts": {"AI": "Average Stake Duration (Days) 212.5 AI Gaming",
+                          "Gaming": "Average Stake Duration (Days) 187 AI Gaming"}}
     out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda *a, **k: got4, daily=Daily()).run(
+    bc.BrowserCapture(capture_fn=cap_ae, daily=Daily()).run([{"name": "Aethir", "browser_capture": {"pages": [on]}}],
+                                                           None, out)
+    assert asked == [("AI", "Gaming")]
+    t = out.frame().set_index("metric")
+    assert t.loc["avg_lock_duration_days_ai", "value"] == 212.5 and t.loc["avg_lock_duration_days_gaming", "value"] == 187
+    assert "AI toggle" in t.loc["avg_lock_duration_days_ai", "source"]
+    out = FetchOutput()
+    bc.BrowserCapture(capture_fn=lambda u, **k: {"responses": [], "bodies": [], "ws": [], "clicked": [], "text": "",
+                                                 "texts": {}}, daily=Daily()).run(
         [{"name": "Aethir", "browser_capture": {"pages": [on]}}], None, out)
-    t = out.frame().set_index("metric")["value"]
-    assert t["avg_lock_duration_days_ai"] == 212.5 and t["avg_lock_duration_days_gaming"] == 187
-    dur = [{"date": str(d.date()), "aiPool": 200.0 + i, "gamingPool": 180.0} for i, d in enumerate(days)]
-    got5 = {**got4, "responses": [("https://dashboard.aethir.com/protocol/onchain-metric#rsc:5",
-                                   {"averageStakeDuration": dur, "other": [{"date": "2026-09-01", "x": 1}]})]}
-    out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda *a, **k: got5, daily=Daily()).run(
-        [{"name": "Aethir", "browser_capture": {"pages": [on]}}], None, out)
-    f5 = out.frame()
-    ai = f5.query("metric == 'avg_lock_duration_days_ai'")
-    assert len(ai) == 10 and ai.value.iloc[-1] == 209.0 and "aiPool" in ai.source.iloc[0], "series, not tile"
-    assert len(f5.query("metric == 'avg_lock_duration_days_gaming'")) == 10
-    # weekly compute hours: DD/MM labels with no year, the latest against Jake's 22,510,837
-    dem = next(x for x in ae["browser_capture"]["pages"] if x["site"] == "aethir_demand")
-    labels = [d.strftime("%d/%m") for d in pd.date_range("2026-06-08", "2026-09-21", freq="7D")]
-    weeks = [{"week": l, "hours": 20e6 + i * 1e5} for i, l in enumerate(labels)]
-    weeks[-1]["hours"] = 22_510_837
-    got6 = {**got4, "responses": [("https://dashboard.aethir.com/protocol/demand-metric#rsc:3",
-                                   {"weeklyComputeHours": weeks, "totalHours": 2_433_230_876})]}
-    out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda *a, **k: got6, daily=Daily()).run(
-        [{"name": "Aethir", "browser_capture": {"pages": [dem]}}], None, out)
-    h = out.frame().query("metric == 'compute_hours_weekly'").sort_values("date")
-    assert len(h) == 16 and h.date.iloc[0] == pd.Timestamp("2026-06-08") and h.value.iloc[-1] == 22_510_837
-    assert config.series_granularity("Aethir", "compute_hours_weekly") == "weekly"
-    weeks[-1]["hours"] = 30e6
-    out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda *a, **k: got6, daily=Daily()).run(
-        [{"name": "Aethir", "browser_capture": {"pages": [dem]}}], None, out)
-    assert out.frame().query("metric == 'compute_hours_weekly'").empty
+    assert out.frame().empty and "toggle is not on the page" in " ".join(e.message for e in out.log)
     assert bc.parse_rsc('a:{"x":1}\nb:I["chunk"]\nnot json\n') == [("a", {"x": 1})], "an I[...] module line is not data"
+
+
+def test_aethir_weekly_compute_hours_by_prefix_and_utilisation_over_online_hours(monkeypatch):
+    """probes8 (Jake, 2026-10-02): weekly compute hours are in the DEMAND page's payload beside
+    totalComputeHoursDelivered / ...LastWeek, under a key seen truncated ("weeklyComputeHo..."): pinned by
+    prefix, the date (DD/MM, year inferred) and value keys found, the full key printed. Utilisation =
+    delivered / ONLINE hours (supply page totalOnlineHours): weekly from both cumulatives' rises is PRIMARY,
+    the cumulative ratio beside it, containers x 168h the labelled lower bound."""
+    import build_workbook as bw
+    import fetch.aethir_pages as ap
+    monkeypatch.setattr(ap, "today", lambda: pd.Timestamp("2026-10-02"))
+    labels = [d.strftime("%d/%m") for d in pd.date_range("2026-06-08", "2026-09-28", freq="7D")]
+    weeks = [{"startDate": l, "hours": 20e6 + i * 1e5} for i, l in enumerate(labels)]
+    payload = {"totalComputeHoursDelivered": 2436359729.13, "totalComputeHoursDeliveredLastWeek": 22089416.05,
+               "weeklyComputeHoursDelivered": weeks}
+    html = "<script>self.__next_f.push([1," + json.dumps("5:" + json.dumps(payload)) + "])</script>"
+    assert ap.resolve_array_key(html, "weeklyComputeHo*") == "weeklyComputeHoursDelivered"
+    assert "pin the full key" in ap.resolve_array_key(html, "nothingHere*")
+    a = ap.AethirPages.__new__(ap.AethirPages)
+    a._series = {}
+    out = FetchOutput()
+    spec = config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["pages"]["protocol/demand-metric"]["arrays"]["weeklyComputeHo*"]
+    a._array("Aethir", "protocol/demand-metric", "weeklyComputeHo*", spec, html, out)
+    f = out.frame()
+    assert len(f) == 16 and f.date.min() == pd.Timestamp("2026-06-08"), "finished weeks only (09-28 in progress)"
+    assert "aethir_page:protocol/demand-metric.weeklyComputeHoursDelivered.hours" == f.source.iloc[0]
+    assert any("full key `weeklyComputeHoursDelivered`, date `startDate`, value `hours`" in e.message for e in out.log)
+    assert config.series_granularity("Aethir", "compute_hours_weekly") == "weekly"
+    lab = config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["labelled"]
+    assert lab["hours_total"]["key"] == "totalComputeHoursDelivered"
+    assert lab["hours_last_week"]["key"] == "totalComputeHoursDeliveredLastWeek"
+    assert config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["pages"]["protocol/supply-metric"]["fields"][
+        "totalOnlineHours"] == "online_hours_cumulative"
+    # UTILISATION at read time
+    days = pd.date_range("2026-09-20", "2026-10-01")
+    mk = lambda m, vals, src="x": pd.DataFrame({"date": days[:len(vals)], "project": "Aethir", "metric": m,   # noqa: E731
+                                                "value": vals, "source": src, "tier": 3})
+    deliv = [2.4e9 + 3e6 * i for i in range(len(days))]
+    online = [3.5e9 + 4e6 * i for i in range(len(days))]
+    old = mk("utilisation_pct", [0.3] * 3, "aethir_page:derived.compute_hours_last_week/nodes_x_168[assumes ...]")
+    groups = {("Aethir", "compute_hours_cumulative"): mk("compute_hours_cumulative", deliv),
+              ("Aethir", "online_hours_cumulative"): mk("online_hours_cumulative", online),
+              ("Aethir", "utilisation_pct"): old}
+    bw._VIEW_BLOCKS_PENDING.clear()
+    bw._utilisation_views(groups)
+    u = groups[("Aethir", "utilisation_pct")].sort_values("date")
+    assert u.date.min() == pd.Timestamp("2026-09-27") and u.value.iloc[-1] == pytest_approx_(0.75)
+    assert u.source.iloc[0].startswith("derived:utilisation[weekly")
+    c = groups[("Aethir", "utilisation_cumulative_pct")].sort_values("date")
+    assert c.value.iloc[0] == pytest_approx_(2.4e9 / 3.5e9)
+    lb = groups[("Aethir", "utilisation_containers_pct")]
+    assert len(lb) == 3 and set(lb.metric) == {"utilisation_containers_pct"}
+    # fewer than 7 days of both: WAITING, the cumulative and the lower bound stand
+    g2 = {("Aethir", "compute_hours_cumulative"): mk("compute_hours_cumulative", deliv[:3]),
+          ("Aethir", "online_hours_cumulative"): mk("online_hours_cumulative", online[:3])}
+    bw._VIEW_BLOCKS_PENDING.clear()
+    bw._utilisation_views(g2)
+    assert ("Aethir", "utilisation_pct") not in g2 and ("Aethir", "utilisation_cumulative_pct") in g2
+    assert bw._VIEW_BLOCKS_PENDING[("Aethir", "utilisation_pct")].startswith("WAITING")
+    sql = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "orphan_cleanup.sql")).read()
+    assert "-- BQ. AETHIR utilisation_pct" in sql and "-- UPDATE metrics" in sql
 
 
 def test_near_activity_cause_reads_the_receiver_column_runs_on_budget_and_ranks_the_drop(tmp_path, monkeypatch, capsys):

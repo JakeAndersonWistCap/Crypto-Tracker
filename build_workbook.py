@@ -1315,6 +1315,74 @@ _STORED_DEFAULTS = {"tier": None, "fetched_at": "", "is_manual": False, "entered
                     "source_note": ""}
 
 
+def _utilisation_views(groups: dict) -> None:
+    """UTILISATION = DELIVERED / ONLINE HOURS (Aethir, Jake's probes8 2026-10-02). From two cumulatives read
+    daily: utilisation_pct (PRIMARY) = their rises over the same span — the latest reading at least
+    `window_days` earlier, within `max_span_days` (span stated when not 7) — and utilisation_cumulative_pct
+    = the cumulative ratio. Rows stored under utilisation_pct by the old containers x 168h derivation are
+    shown as the lower bound (utilisation_containers_pct), never mixed into the primary."""
+    for p in config.PROJECTS:
+        uv = p.get("utilisation_view")
+        if not uv:
+            continue
+        name = p["name"]
+
+        def stock(metric):
+            g = groups.get((name, metric))
+            if g is None or g.empty:
+                return pd.Series(dtype=float)
+            g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            return g.set_index("date")["value"].astype(float).sort_index()
+        old = groups.get((name, uv["metric"]))
+        cols = old.columns if old is not None and not old.empty else None
+        if old is not None and not old.empty:                 # the old derivation's rows -> the lower bound
+            moved = old[old["source"].astype(str).str.startswith(uv["old_source"])]
+            if not moved.empty:
+                lb = groups.get((name, uv["lower_bound_metric"]))
+                lb = pd.concat([x for x in (lb, moved.assign(metric=uv["lower_bound_metric"])) if x is not None],
+                               ignore_index=True).drop_duplicates(["date"], keep="first")
+                groups[(name, uv["lower_bound_metric"])] = lb
+            rest = old.drop(moved.index)
+            if rest.empty:
+                groups.pop((name, uv["metric"]), None)
+            else:
+                groups[(name, uv["metric"])] = rest
+        d, o = stock(uv["delivered"]), stock(uv["online"])
+        both = d.index.intersection(o.index)
+        if both.empty:
+            continue
+        cum = pd.DataFrame({"date": both, "project": name, "metric": uv["cumulative_metric"],
+                            "value": (d[both] / o[both]).values, "tier": 3,
+                            "source": f"derived:utilisation[{uv['delivered']} / {uv['online']}, cumulative]"})
+        groups[(name, uv["cumulative_metric"])] = _as_stored(cum, cols if cols is not None else cum.columns)
+        rows = []
+        for day in both:
+            prior = [x for x in both if day - pd.Timedelta(days=int(uv["max_span_days"])) <= x
+                     <= day - pd.Timedelta(days=int(uv["window_days"]))]
+            if not prior:
+                continue
+            p0 = max(prior)
+            dd, do = d[day] - d[p0], o[day] - o[p0]
+            if do <= 0 or dd < 0:
+                continue
+            span = (day - p0).days
+            rows.append({"date": day, "project": name, "metric": uv["metric"], "value": dd / do, "tier": 3,
+                         "source": f"derived:utilisation[weekly: rise of {uv['delivered']} / rise of {uv['online']}"
+                                   + (f", span={span}d" if span != int(uv["window_days"]) else "") + "]"})
+        if rows:
+            v = pd.DataFrame(rows)
+            groups[(name, uv["metric"])] = _as_stored(v, cols if cols is not None else v.columns)
+        else:
+            _VIEW_BLOCKS_PENDING[(name, uv["metric"])] = (
+                f"WAITING — the weekly ratio needs both cumulatives read {uv['window_days']} days apart; held "
+                f"together on {len(both)} day(s) since {both.min().date()}. The cumulative ratio "
+                f"({uv['cumulative_metric']}) and the lower bound ({uv['lower_bound_metric']}) stand meanwhile")
+
+
+# set before _VIEW_BLOCKS is cleared; re-applied after (like _ONE_OFF_BLOCKS)
+_VIEW_BLOCKS_PENDING: dict = {}
+
+
 def _mev_estimate_views(groups: dict) -> None:
     """THE NON-RELAY LEG BY ESTIMATE (probes6 1c, Jake 2026-10-02). Where a day's execution reward holds the
     relay-delivered value only (PARTIAL — the per-block leg not read), add the day's total priority fees —
@@ -1652,8 +1720,11 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _buyback_tokens_from_usd_views(groups)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
+    _VIEW_BLOCKS_PENDING.clear()
+    _utilisation_views(groups)
     _VIEW_BLOCKS.clear()
     _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
+    _VIEW_BLOCKS.update(_VIEW_BLOCKS_PENDING)
     # THE HISTORY LEGS FIRST (2026-09-30): Ethereum's first-party issuance view keeps its
     # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
