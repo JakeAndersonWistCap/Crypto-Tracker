@@ -201,6 +201,15 @@ class MevRelays:
         days = [yday - pd.Timedelta(days=k) for k in range(int(self.days or spec.get("days", 365)))]
         retries = int(spec.get("relay_retries", 3))
 
+        # a relay since DROPPED from config (bloXroute Max Profit, probes7) is not "missing": its days are
+        # complete for the relays configured now, and are neither re-read nor marked PARTIAL for it
+        configured = {r["name"] for r in spec["relays"]}
+        for dd in st["days"].values():
+            if dd.get("missing"):
+                dd["missing"] = [m for m in dd["missing"] if m in configured]
+                if not dd["missing"]:
+                    dd.pop("missing")
+
         def due(d):
             dd = st["days"].get(str(d.date())) or {}
             return not dd.get("relay_done") or (dd.get("missing") and dd.get("attempts", 1) < retries)

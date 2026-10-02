@@ -22118,6 +22118,19 @@ def test_mev_relays_page_limit_failing_relay_estimate_leg_and_seed_cost(tmp_path
     st = json.loads((tmp_path / "m.json").read_text())["days"]["2026-10-01"]
     assert "missing" not in st and st["by_relay"] == {"a": 1800, "bx": 1800}
     assert 100 in limits and 200 in limits and max(limits) == 200
+    # a relay DROPPED from config is not missing: the day is complete for the relays configured now
+    fail.add("https://bx.relay")
+    MevRelays(http=H(), cache_file=tmp_path / "d.json", max_seconds=None, sleep=lambda s: None).run(
+        [{"name": "Ethereum", "mev_relays": spec}], None, FetchOutput(), unbounded=True)
+    assert json.loads((tmp_path / "d.json").read_text())["days"]["2026-10-01"]["missing"] == ["bx"]
+    limits.clear()
+    out = FetchOutput()
+    MevRelays(http=H(), cache_file=tmp_path / "d.json", max_seconds=None, sleep=lambda s: None).run(
+        [{"name": "Ethereum", "mev_relays": {**spec, "relays": spec["relays"][:1]}}], None, out, unbounded=True)
+    assert limits == [], "not re-read"
+    assert "missing" not in json.loads((tmp_path / "d.json").read_text())["days"]["2026-10-01"]
+    assert not out.frame().source.str.contains("relays not read").any()
+    fail.clear()
     # every relay failing = the network: the day is NOT stored
     fail.update({"https://a.relay", "https://bx.relay"})
     out = FetchOutput()
