@@ -527,6 +527,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11u. probes9, 2026-10-02: Aethir durations unavailable, HyperEVM tx_count, revenue cross-check
+
+- **Aethir stake duration is UNAVAILABLE (config UNAVAILABLE).** The tile "read" 2,024, which
+  is the year on the chart's axis. Aethir's browser route is removed.
+- **Tile guard (all sites).** A tile value is refused if it:
+  - is a bare year;
+  - is followed by a month name;
+  - or sits among evenly spaced axis labels.
+- **HyperEVM.**
+  - `tx_count` = `transaction_count` (HyperEVM only), still checked against "Avg Daily Txns
+    334K".
+  - `tx_count_successful` = `successful_transactions`.
+  - ASXN's HyperEVM series run ~10 days behind. Their staleness threshold is widened by 10
+    days, and a lag past 15 days is flagged "LAG GREW" (the data is still stored).
+- **Revenue cross-check.** ASXN `annualized_revenue_30d` ($724,957,544 on 2026-10-02) is
+  compared each run with our DefiLlama revenue / fees / holders revenue, each annualised over
+  its last 30 covered days. These are the CROSS-CHECK lines in the Run Log.
+
 ## 11t. probes8, 2026-10-02: ASXN units concluded, HyperEVM page, Aethir hours and utilisation
 
 ```bash

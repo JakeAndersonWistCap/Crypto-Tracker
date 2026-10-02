@@ -308,17 +308,43 @@ def agreement(a: dict, b: dict, tol: float = 0.10) -> str:
             f"{statistics.median(r):.3f}, {within:.0%} within ±{tol:.0%}")
 
 
-def tile_from(text: str, label):
-    """The first number printed after `label` (or the first of its alternatives found) in the rendered
-    text, or None."""
+_MONTH = re.compile(r"^\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", re.I)
+
+
+def tile_read(text: str, label):
+    """(value, why): the first number printed after `label` (or the first of its alternatives found), or
+    (None, why). A CHART IS NOT A TILE (Jake's probes9: Aethir's "Average Stake Duration (Days)" 'read'
+    2,024 — the year on the chart's axis, "2024 Sep 01 2025 Jan 18 ... 0 500 1000 1500"): a number that is
+    a bare year (1990-2100 with no separator, decimal or unit), one followed by a month name, or one inside
+    a run of evenly spaced numbers (axis ticks) is refused."""
     from .base import parse_number
     for lab in ((label,) if isinstance(label, str) else label):
         i = text.find(lab)
         if i < 0:
             continue
         m = _NUM.search(text, i + len(lab), i + len(lab) + 120)
-        return parse_number(m.group(0)) if m else None
-    return None
+        if not m:
+            return None, f"no number after \"{lab}\""
+        tok = m.group(0).strip()
+        v = parse_number(tok)
+        if v is None:
+            return None, f"no number after \"{lab}\""
+        after = text[m.end():m.end() + 60]
+        if re.fullmatch(r"(19|20)\d\d", tok) or _MONTH.match(after):
+            return None, f"\"{lab}\" is followed by {tok!r}{' ' + after[:12].strip() if after.strip() else ''} — a YEAR / date, not a figure (a chart, not a tile)"
+        nums = [parse_number(x.group(0)) for x in _NUM.finditer(text, i + len(lab), i + len(lab) + 240)]
+        nums = [x for x in nums if x is not None]
+        for j in range(len(nums) - 3):
+            a, b, c, d = nums[j:j + 4]
+            if b - a == c - b == d - c and b != a and v in (a, b, c, d):
+                return None, f"\"{lab}\" sits among evenly spaced axis labels ({a:g} {b:g} {c:g} {d:g}) — a chart, not a tile"
+        return v, ""
+    return None, "label not found"
+
+
+def tile_from(text: str, label):
+    """The first number printed after `label`, or None (refused: see tile_read)."""
+    return tile_read(text, label)[0]
 
 
 def shapes(captured: list) -> list[str]:
@@ -437,6 +463,17 @@ class BrowserCapture:
                 continue
             out.add(point(name, sp["metric"], v, f"{SOURCE}:{sp['site']}.{k}[{sp['layer']}]", TIER, today()), SOURCE,
                     name, f"{sp['metric']} = {sp['site']} `{k}` {v:,.2f} (FORWARD-ONLY, {sp['layer']})", TIER)
+            for cc in sp.get("crosscheck_annualised") or ():
+                ser = self._series(name, cc["metric"])
+                if not ser:
+                    log.info("CROSS-CHECK %s %s %s vs %s: not stored", name, sp["metric"], f"{v:,.0f}", cc["metric"])
+                    continue
+                last = max(ser)
+                win = {d: x for d, x in ser.items() if last - pd.Timedelta(days=int(cc["days"]) - 1) <= d <= last}
+                ours = sum(win.values()) * 365 / len(win)
+                log.info("CROSS-CHECK %s %s %s vs our %s annualised (%d covered day(s) to %s) %s: ratio %.3f",
+                         name, sp["metric"], f"{v:,.0f}", cc["metric"], len(win), last.date(), f"{ours:,.0f}",
+                         v / ours if ours else float("nan"))
             if sp.get("flow_metric"):                    # a cumulative figure's daily change (new users)
                 prev = {d: x for d, x in self._series(name, sp["metric"]).items() if d < today().normalize()}
                 if prev:
@@ -454,10 +491,10 @@ class BrowserCapture:
                 out.fail(SOURCE, name, f"{t['metric']}: the \"{t['toggle']}\" toggle is not on the page. NOTHING "
                                        f"STORED.", TIER)
                 continue
-            v = tile_from(text, t["label"])
+            v, why = tile_read(text, t["label"])
             if v is None:
-                out.fail(SOURCE, name, f"{t['metric']}: \"{t['label']}\" not found in the rendered page"
-                                       + (f" after the \"{t['toggle']}\" toggle" if t.get("toggle") else "")
+                out.fail(SOURCE, name, f"{t['metric']}: {why}"
+                                       + (f" (after the \"{t['toggle']}\" toggle)" if t.get("toggle") else "")
                                        + ". NOTHING STORED.", TIER)
                 continue
             out.add(point(name, t["metric"], v, f"{SOURCE}:{t['site']}.tile[{t['layer']}"
@@ -481,6 +518,12 @@ class BrowserCapture:
         vk = (pin.get("_keys") or (None, None, pin.get("value_key")))[2]
         src = f"{SOURCE}:{pin['site']}.{vk}[{pin['layer']}" + (f", {unit.upper()} as read" if unit else "") + "]"
         rows = [(d, v) for d, v in pts if d < today()]
+        if pin.get("expected_lag_days") and rows:        # a late publisher: say so if it gets later
+            lag = (today().normalize() - rows[-1][0]).days
+            if lag > int(pin["expected_lag_days"]) + int(pin.get("lag_slack_days", 5)):
+                out.fail(SOURCE, name, f"{pin['metric']}: LAG GREW — the latest point is {rows[-1][0].date()}, {lag} "
+                                       f"days behind (expected ~{pin['expected_lag_days']}); stored, but check the "
+                                       f"source", TIER)
         held[pin["metric"]] = dict(rows)
         if pin.get("store", True):
             out.add(tidy(rows, name, pin["metric"], src, TIER), SOURCE, name,

@@ -20472,9 +20472,8 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert "(+0.00%)" in wvm and "2024-08..2026-09" in wvm, wvm
     # client-loaded charts: nothing stored from the server payload; the browser route (Jake, 2026-10-02)
     assert not {"compute_hours_weekly", "avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"} & set(f.metric)
-    assert config.unavailable_for("Aethir", "avg_lock_duration_days_ai") is None
-    pages = config.PROJECT_BY_NAME["Aethir"]["browser_capture"]["pages"]
-    assert {m for pg in pages for m in pg["wanted"]} == {"avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"}
+    assert config.unavailable_for("Aethir", "avg_lock_duration_days_ai") is not None    # probes9: UNAVAILABLE
+    assert "browser_capture" not in config.PROJECT_BY_NAME["Aethir"], "removed: the durations are UNAVAILABLE"
     # probes8: weekly compute hours come from the demand page's server payload (by key prefix), not the browser
     assert "weeklyComputeHo*" in config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["pages"]["protocol/demand-metric"]["arrays"]
     # COMPUTE REWARDS (Jake, 2026-10-02): stored, read by key beside the weeklyData array; service fee
@@ -22296,7 +22295,7 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
              "HyperEVM Burn": 800.0, "total": 4000.0 + 1.9e6 * (1 + i / 100) + 800.0} for i, d in enumerate(days)]
     rows = lambda m, v: pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": m, "value": v, "source": "x"})
     stored = pd.concat([rows("holders_revenue_usd", 2e6), rows("price_usd", 40.0), rows("perps_volume_usd", 5e9),
-                        rows("hyperevm_burn_usd_asxn", 800.0),
+                        rows("hyperevm_burn_usd_asxn", 800.0), rows("revenue_usd", 2e6),
                         rows("hypercore_users_total", 1_860_000.0).iloc[[-1]].assign(date=pd.Timestamp("2026-10-01"))])
     rsc = '0:["$","div",null]\n1:{"chart_data":[' + ",".join(
         f'{{"time":"{d.date()}","volume":{5.1e9}}}' for d in days) + "]}\n"
@@ -22311,8 +22310,8 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
                 "bodies": [], "ws": [], "text": "", "clicked": []}
     evm_tm = [{"date": str(d.date()), "burned_hype": 20.0, "burned_usd": 800.0, "base_fees_hype": 19.0,
                "priority_fees_hype": 3.0, "base_fees_usd": 760.0} for d in days]
-    evm_nm = [{"date": str(d.date()), "daily_transactions": 330_000 + i * 1000, "cumulative_transactions": 9e7,
-               "active_addresses": 10} for i, d in enumerate(days)]
+    evm_nm = [{"date": str(d.date()), "transaction_count": 330_000 + i * 1000, "successful_transactions": 320_000,
+               "cumulative_transactions": 9e7, "active_addresses": 10} for i, d in enumerate(days)]
     fees_got = {"responses": [("https://hyperscreener.asxn.xyz/api/hyper-evm/token-metrics", {"chart_data": evm_tm}),
                               ("https://hyperscreener.asxn.xyz/api/hyper-evm/network-metrics?time_range=all",
                                {"chart_data": evm_nm})],
@@ -22341,7 +22340,14 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
     a = f.query("metric == 'burn_auction_usd'")
     assert a.value.iloc[0] == 4000.0 and "USD as read" in a.source.iloc[0]
     tx = f.query("metric == 'tx_count'")
-    assert len(tx) == 10 and "asxn.daily_transactions[HyperEVM]" in tx.source.iloc[0]
+    assert len(tx) == 10 and "asxn.transaction_count[HyperEVM]" in tx.source.iloc[0]
+    assert f.query("metric == 'tx_count_successful'").value.iloc[0] == 320_000
+    # the series ends 2026-09-10 here, 22 days behind: past the ~10-day lag + 5 -> flagged, still stored
+    assert "LAG GREW" in " ".join(e.message for e in out.log) and config.stale_after_days("Hyperliquid", "tx_count", 7) == 17
+    # the annualised revenue against our own (2e6 a day over 10 covered days x 365 = 730M)
+    assert ("revenue_annualised_usd_asxn 1,200,000,000 vs our revenue_usd annualised (10 covered day(s) to "
+            "2026-09-10) 730,000,000: ratio 1.644") in caplog.text
+    assert "$724,957,544" in config.METHODOLOGY_FLAGS["hyperliquid_revenue_crosscheck"]
     assert f.query("metric == 'revenue_annualised_usd_asxn'").value.iloc[0] == 1.2e9
     nu = f.query("metric == 'hypercore_new_users'")
     assert nu.value.iloc[0] == 10_000 and "daily change" in nu.source.iloc[0]
@@ -22381,28 +22387,18 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
     from fetch.base import _measuring_point
     assert _measuring_point(tb.source.iloc[0]) == _measuring_point("defillama:holders_revenue_usd/price")
     assert tb.value.iloc[1] == 2.0
-    # AETHIR: "Average Stake Duration (Days)" read after each toggle
-    ae = config.PROJECT_BY_NAME["Aethir"]
-    on = next(x for x in ae["browser_capture"]["pages"] if x["site"] == "aethir_onchain")
-    asked = []
-
-    def cap_ae(url, **k):
-        asked.append(k.get("toggles"))
-        return {"responses": [], "bodies": [], "ws": [], "clicked": [], "text": "",
-                "texts": {"AI": "Average Stake Duration (Days) 212.5 AI Gaming",
-                          "Gaming": "Average Stake Duration (Days) 187 AI Gaming"}}
-    out = FetchOutput()
-    bc.BrowserCapture(capture_fn=cap_ae, daily=Daily()).run([{"name": "Aethir", "browser_capture": {"pages": [on]}}],
-                                                           None, out)
-    assert asked == [("AI", "Gaming")]
-    t = out.frame().set_index("metric")
-    assert t.loc["avg_lock_duration_days_ai", "value"] == 212.5 and t.loc["avg_lock_duration_days_gaming", "value"] == 187
-    assert "AI toggle" in t.loc["avg_lock_duration_days_ai", "source"]
-    out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda u, **k: {"responses": [], "bodies": [], "ws": [], "clicked": [], "text": "",
-                                                 "texts": {}}, daily=Daily()).run(
-        [{"name": "Aethir", "browser_capture": {"pages": [on]}}], None, out)
-    assert out.frame().empty and "toggle is not on the page" in " ".join(e.message for e in out.log)
+    # AETHIR STAKE DURATION (probes9): the tile 'read' the chart axis's year -> UNAVAILABLE; the guard refuses
+    # a year, a date or evenly spaced axis labels, and keeps real tiles
+    assert "browser_capture" not in config.PROJECT_BY_NAME["Aethir"]
+    for m in ("avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"):
+        assert config.unavailable_for("Aethir", m)["closed_on"] == "2026-10-02"
+    assert config.METHODOLOGY_FLAGS["aethir_stake_duration"].startswith("UNAVAILABLE")
+    axis = "Average Stake Duration (Days) 2024 Sep 01 2025 Jan 18 2026 Sep 30 0 500 1000 1500"
+    v, why = bc.tile_read(axis, "Average Stake Duration (Days)")
+    assert v is None and "YEAR" in why
+    assert bc.tile_read("Ticks 0 500 1000 1500", "Ticks")[0] is None
+    assert bc.tile_read("Avg Daily Txns 334K", "Avg Daily Txns")[0] == 334_000
+    assert bc.tile_read("Average Stake Duration (Days) 212.5 Days", "Average Stake Duration (Days)")[0] == 212.5
     assert bc.parse_rsc('a:{"x":1}\nb:I["chunk"]\nnot json\n') == [("a", {"x": 1})], "an I[...] module line is not data"
 
 

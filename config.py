@@ -261,6 +261,7 @@ METRICS = {
     "hyperevm_burn_tokens_asxn": {"label": "HyperEVM HYPE burned per day (ASXN token-metrics burned_hype) — CROSS-CHECK of the HyperEVM Burn leg", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
     "hyperevm_burn_usd_asxn": {"label": "HyperEVM burn per day ($, ASXN token-metrics burned_usd) — CROSS-CHECK", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
     "hyperevm_base_fees_tokens_asxn": {"label": "HyperEVM base fees per day (HYPE, ASXN token-metrics) — CROSS-CHECK", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
+    "tx_count_successful": {"label": "SUCCESSFUL transactions per day — HyperEVM only (ASXN network-metrics successful_transactions); tx_count is all transactions", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "hyperevm_priority_fees_tokens_asxn": {"label": "HyperEVM priority fees per day (HYPE, ASXN token-metrics) — CROSS-CHECK", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
     "hypercore_users_total": {"label": "HyperCore users, CUMULATIVE (ASXN \"Users\") — read daily, forward-only", "kind": "stock", "unit": "count", "archetypes": [1], "tiers": [3], "sanity_min": 1e5, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "hypercore_new_users": {"label": "HyperCore NEW users per day — the daily change in the cumulative users figure (ASXN); NOT daily active addresses", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [3], "sanity_min": -1e6, "sanity_max": 1e7, "only_projects": ("Hyperliquid",)},
@@ -7964,28 +7965,9 @@ PROJECTS = [
         # `series` from probe browser_captures, or — if they arrive over a websocket or cannot be captured —
         # the rendered figures as `tiles`, FORWARD-ONLY. Robots.txt is the same site aethir_pages reads,
         # checked again at every render.
-        "browser_capture": {"pages": [
-            # TILES, FORWARD-ONLY (probes6 3, Jake 2026-10-02): the stake-duration chart's data was not in any
-            # captured JSON or websocket frame; the rendered figures are read once a day. The exact tile text
-            # is not yet confirmed, so the label is a set of alternatives — none found = nothing stored, the
-            # probe prints the text around "Average Stake Duration". (Compute hours LAST WEEK is already read
-            # daily from the page payload — aethir_pages hours_last_week — and feeds utilisation; no tile.)
-            {"url": "https://dashboard.aethir.com/protocol/onchain-metric", "site": "aethir_onchain", "clicks": ("7D", "1W", "30D", "1M", "3M", "90D", "6M", "1Y", "All", "ALL", "Max"),
-             "permitted": True, "series": (),
-             # STAKE DURATION: IN NO RSC PAYLOAD (Jake's probes8). The PDF's tile is "Average Stake Duration
-             # (Days)" with AI / Gaming TOGGLES: each toggle is clicked and the tile read after it. If it still
-             # fails, the durations are recorded UNAVAILABLE (Jake: then stop).
-             "tiles": (
-                 {"metric": "avg_lock_duration_days_ai", "site": "aethir_onchain", "layer": "AI pool", "toggle": "AI",
-                  "label": ("Average Stake Duration (Days)", "Average Stake Duration of AI Pool",
-                            "Average Stake Duration (AI Pool)")},
-                 {"metric": "avg_lock_duration_days_gaming", "site": "aethir_onchain", "layer": "Gaming pool",
-                  "toggle": "Gaming",
-                  "label": ("Average Stake Duration (Days)", "Average Stake Duration of Gaming Pool",
-                            "Average Stake Duration (Gaming Pool)")},
-             ),
-             "wanted": ("avg_lock_duration_days_ai", "avg_lock_duration_days_gaming")},
-        ]},
+        # browser_capture REMOVED (Jake's probes9, 2026-10-02): its only remaining use, the stake-duration tile,
+        # misread the chart axis's year; the durations are UNAVAILABLE (config UNAVAILABLE). Weekly compute hours
+        # come from the demand page's server payload (dashboard_pages).
         # UTILISATION = COMPUTE HOURS DELIVERED / GPU ONLINE HOURS (Jake's probes8, 2026-10-02). Both are
         # cumulative on the dashboard (totalComputeHoursDelivered 2,436,359,729 on demand-metric;
         # totalOnlineHours 3,524,630,469 on supply-metric): cumulative ~69%. PRIMARY = the WEEKLY ratio, both
@@ -10168,7 +10150,11 @@ PROJECTS = [
                  # a) the 30-day annualised revenue, pinned by key (10 keys matched "annual")
                  {"metric": "revenue_annualised_usd_asxn", "url_contains": ("revenue-metrics", "revenue_metrics",
                                                                             "revenueMetrics", "/api/"),
-                  "key": "annualized_revenue_30d", "site": "asxn", "layer": "HyperCore"},
+                  "key": "annualized_revenue_30d", "site": "asxn", "layer": "HyperCore",
+                  # probes9: $724,957,544 on 2026-10-02 — compared each run with our own DefiLlama figures,
+                  # annualised over their last 30 covered days (METHODOLOGY_FLAGS hyperliquid_revenue_crosscheck)
+                  "crosscheck_annualised": ({"metric": "revenue_usd", "days": 30}, {"metric": "fees_usd", "days": 30},
+                                            {"metric": "holders_revenue_usd", "days": 30})},
                  # d) HyperCore users, CUMULATIVE ("Users 1.87M"): the total daily, its daily change stored as
                  # new users. A JSON `total_users` if captured, else the rendered "Users" tile; either must sit
                  # within 30% of the 1.87M Jake read on 2026-10-02 (else the wrong figure: nothing stored).
@@ -10177,6 +10163,9 @@ PROJECTS = [
                   "flow_metric": "hypercore_new_users", "site": "asxn", "layer": "HyperCore"},
              ),
              "tiles": ()},
+            # ASXN'S HYPEREVM SERIES LAG ~10 DAYS (Jake's probes9: 582 points 2025-02-18..2026-09-22, read
+            # 2026-10-02). `expected_lag_days` widens each series' staleness threshold by that lag
+            # (config.stale_after_days) and the run FLAGS the lag if it grows past it by more than lag_slack_days.
             # HYPEREVM, ON ITS OWN PAGE (Jake's probes8): /api/hyper-evm/token-metrics and /network-metrics are
             # fetched by /hyperevm/fees (the probe's later page), not by the dashboard's first page — so the
             # HyperEVM pins live on that page, rendered once a day like the other (same access rule).
@@ -10187,24 +10176,26 @@ PROJECTS = [
              "series": (
                  # HyperEVM daily transactions -> Hyperliquid tx_count, LABELLED HyperEVM (HyperCore's order flow
                  # is not in it): the one transactions key, checked against the "Avg Daily Txns" tile (334K)
+                 # PINNED (Jake's probes9): candidates were successful_transactions and transaction_count
                  {"metric": "tx_count", "url_contains": "/api/hyper-evm/network-metrics", "path": "chart_data",
-                  "date_key": "auto", "value_key": "auto",
-                  "value_key_regex": r"(^|_)(txns?|transactions?|tx_count|tx)($|_)",
-                  "value_key_exclude": r"cumul|total|avg|average|per_|fee|gas|address|user|size|value",
+                  "date_key": "auto", "value_key": "transaction_count", "expected_lag_days": 10,
                   "tile_check": {"label": "Avg Daily Txns", "within": 0.25}, "layer": "HyperEVM", "site": "asxn"},
+                 {"metric": "tx_count_successful", "url_contains": "/api/hyper-evm/network-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "successful_transactions",
+                  "expected_lag_days": 10, "layer": "HyperEVM", "site": "asxn"},
                  # HyperEVM burn and fees — cross-checks of the buyback page's HyperEVM Burn leg
                  {"metric": "hyperevm_burn_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
-                  "path": "chart_data", "date_key": "auto", "value_key": "burned_hype", "layer": "HyperEVM",
+                  "path": "chart_data", "date_key": "auto", "value_key": "burned_hype", "expected_lag_days": 10, "layer": "HyperEVM",
                   "site": "asxn"},
                  {"metric": "hyperevm_burn_usd_asxn", "url_contains": "/api/hyper-evm/token-metrics",
-                  "path": "chart_data", "date_key": "auto", "value_key": "burned_usd", "layer": "HyperEVM",
+                  "path": "chart_data", "date_key": "auto", "value_key": "burned_usd", "expected_lag_days": 10, "layer": "HyperEVM",
                   "site": "asxn", "crosscheck": ("burn_hyperevm_usd",)},
                  {"metric": "hyperevm_base_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
                   "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"base",
-                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
+                  "value_key_exclude": r"usd", "expected_lag_days": 10, "layer": "HyperEVM", "site": "asxn"},
                  {"metric": "hyperevm_priority_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
                   "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"priority",
-                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
+                  "value_key_exclude": r"usd", "expected_lag_days": 10, "layer": "HyperEVM", "site": "asxn"},
              ),
              "tiles": ()},
         ]},
@@ -17608,9 +17599,15 @@ METHODOLOGY_FLAGS = {
                           ">=7-day span, forward from the daily reads. delivered last week / (GPU containers x "
                           "168h), ~30%, assumes every container online all week: the LOWER BOUND "
                           "(utilisation_containers_pct; its stored rows move there — orphan_cleanup BQ).",
-    "aethir_stake_duration": "PENDING ONE MORE TRY (Jake's probes8, 2026-10-02): the average stake duration is in no "
-                             "RSC payload. Read from the rendered \"Average Stake Duration (Days)\" tile after its AI "
-                             "/ Gaming toggle; if that fails too, record UNAVAILABLE and stop (Jake).",
+    "aethir_stake_duration": "UNAVAILABLE (Jake's probes9, 2026-10-02): the \"Average Stake Duration (Days)\" tile is a "
+                             "chart with no printed number; after the AI / Gaming toggle it 'read' 2,024 — the year "
+                             "on the chart's axis — and the series is in no captured payload. Closed in UNAVAILABLE; "
+                             "a general guard now refuses a tile value that is a year or part of an axis.",
+    "hyperliquid_revenue_crosscheck": "RECORDED (Jake's probes9, 2026-10-02): ASXN annualized_revenue_30d = "
+                                      "$724,957,544 for Hyperliquid (HyperCore). Stored daily as "
+                                      "revenue_annualised_usd_asxn and compared in the run's CROSS-CHECK lines with our "
+                                      "own DefiLlama revenue_usd / fees_usd / holders_revenue_usd, each summed over its "
+                                      "last 30 covered days x 365 / days.",
     "hyperliquid_asxn_units": "CONCLUDED (Jake's probes8, 2026-10-02): ASXN's /api/buyback/revenues legs are ALL USD. "
                               "HyperCore Buybacks: median 0.938 of DefiLlama holders revenue over 558 days (67% of "
                               "days within 10%) — USD. `total` = Auction Burn + HyperCore Buybacks + HyperEVM Burn "
@@ -17973,6 +17970,13 @@ def stale_after_days(project_name: str, metric: str, default: int) -> int:
     art = ARTEMIS_SETTLEMENT
     if metric == art["metric"] and project_name in art["chains"]:
         return int(art["stale_after_days"])
+    # A SOURCE THAT PUBLISHES LATE (ASXN's HyperEVM series, ~10 days behind — Jake's probes9): the threshold
+    # is widened by the lag declared on the read that produces the series.
+    for bpg in (PROJECT_BY_NAME.get(project_name) or {}).get("browser_capture", {}).get("pages") or ():
+        for pin in bpg.get("series") or ():
+            if pin.get("metric") == metric and pin.get("expected_lag_days"):
+                base = STALE_AFTER_DAYS_BY_GRANULARITY.get(series_granularity(project_name, metric)) or default
+                return int(base) + int(pin["expected_lag_days"])
     return STALE_AFTER_DAYS_BY_GRANULARITY.get(series_granularity(project_name, metric)) or default
 
 
@@ -18601,6 +18605,20 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
 # load-bearing field: it is what stops the next person repeating the work.
 # =======================================================================================
 UNAVAILABLE = [
+    # ---------------------------------------------------------------- Aethir (Jake's probes9, 2026-10-02)
+    # AVERAGE STAKE DURATION: chased through every route and NOT AVAILABLE (as agreed in probes8).
+    *({"project": "Aethir", "metric": m, "closed_on": "2026-10-02",
+       "summary": f"Average Stake Duration (Days) — {pool} Pool is a CHART with no printed figure, and its series is in "
+                  f"no payload this tool can read.",
+       "what_was_tried": ("probes5: the demand/onchain server payloads by key (absent); probes6-7: a headless "
+                          "browser capturing every JSON, websocket and text/x-component (RSC) response with the "
+                          "timeframe tabs clicked (absent); probes8-9: the rendered tile after its AI / Gaming toggle "
+                          "— it 'read' 2,024, the YEAR from the chart axis (\"2024 Sep 01 2025 Jan 18 ... 0 500 1000 "
+                          "1500\"), not a duration: refused."),
+       "impact": "No stake-duration figure for Aethir; staking is measured by stake (locked_tokens and its pool "
+                 "components) and APR only.",
+       "reopen_if": "Aethir prints the figure as a number, or the chart's series appears in a readable payload."}
+      for m, pool in (("avg_lock_duration_days_ai", "AI"), ("avg_lock_duration_days_gaming", "Gaming"))),
     # ===== WORLD MOBILE'S TWO BUYBACK CLOSURES WERE REMOVED 2026-09-17, NOT SOFTENED. =====
     # actual_buyback_tokens and actual_buyback_usd were closed here on the grounds that "the
     # destination is undocumented, so a token figure cannot be given a meaning". The MiCA filing

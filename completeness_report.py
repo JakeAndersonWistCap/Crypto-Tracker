@@ -129,9 +129,6 @@ PENDING_SEED = {
     # the browser route (Jake, 2026-10-02): rendered with the tabs clicked; its keys are pinned from the probe
     ("Aethir", "compute_hours_weekly"): "read from the demand page's server payload (`weeklyComputeHo*`, pinned by "
                                         "prefix — Jake's probes8); the Run Log's aethir_page line names the full key",
-    **{("Aethir", m): "read daily from the rendered \"Average Stake Duration (Days)\" tile after its AI / Gaming "
-                      "toggle (browser_capture), FORWARD-ONLY; in no RSC payload. If it fails again: UNAVAILABLE"
-       for m in ("avg_lock_duration_days_ai", "avg_lock_duration_days_gaming")},
     **{("Plume", m): "python token_metrics.py --seed plume_settlement (Plume's P2P transfers from Blockscout, "
                      "~21,755 pages, ~1.5h; Artemis method, UNVALIDATED) — routine runs then top it up"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",
