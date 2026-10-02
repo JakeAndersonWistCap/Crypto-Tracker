@@ -1142,10 +1142,24 @@ def _burn_total_views(groups: dict) -> None:
                 # THE NON-AF LEGS' HISTORY (probes6 2a): each declared extra leg held for the day is added,
                 # and the source says which; a day without them keeps the Fund-only label.
                 extra = {}
-                for m in spec.get("history_extra") or ():
-                    g = groups.get((name, m))
+                px = groups.get((name, "price_usd"))
+                px = (px.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+                      if px is not None and not px.empty else pd.Series(dtype=float))
+                for leg in spec.get("history_extra") or ():
+                    leg = leg if isinstance(leg, dict) else {"tokens": leg}
+                    ser, label = pd.Series(dtype=float), leg["tokens"]
+                    g = groups.get((name, leg.get("usd")))        # probes7: a USD leg, at the same-day price
                     if g is not None and not g.empty:
-                        extra[m] = g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+                        u = g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+                        both = u.index.intersection(px[px > 0].index)
+                        ser, label = u[both] / px[both], f"{leg['usd']}/price"
+                    g = groups.get((name, leg["tokens"]))         # HYPE as read wins on its days
+                    if g is not None and not g.empty:
+                        t = g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+                        ser = t.combine_first(ser) if not ser.empty else t
+                        label = leg["tokens"] if label == leg["tokens"] else f"{leg['tokens']} | {label}"
+                    if not ser.empty:
+                        extra[label] = ser
                 if extra:
                     vals, srcs = [], []
                     for d, v in zip(h["date"], h["value"].astype(float)):

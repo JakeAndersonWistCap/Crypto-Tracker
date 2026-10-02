@@ -4578,6 +4578,31 @@ def _near_cause_signers():
           "finding.")
 
 
+def _key_paths(obj, rx, path="", depth=0, out=None):
+    """[(path, value or list shape)] for every key matching rx (6 levels), for pinning by key."""
+    out = [] if out is None else out
+    if depth > 6 or len(out) > 40:
+        return out
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            p_ = f"{path}.{k}" if path else str(k)
+            if rx.search(str(k)):
+                if isinstance(v, list):
+                    first = v[0] if v else None
+                    out.append((p_, f"list[{len(v)}] first {json.dumps(first)[:200]} last {json.dumps(v[-1])[:120]}"
+                                if v else "list[0]"))
+                else:
+                    out.append((p_, json.dumps(v)[:200]))
+            _key_paths(v, rx, p_, depth + 1, out)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj[:50]):
+            if isinstance(v, (dict, list)):
+                _key_paths(v, rx, f"{path}.{i}", depth + 1, out)
+            elif isinstance(v, str) and rx.search(v) and len(v) < 120:
+                out.append((f"{path}.{i}", json.dumps(v) + f"  (string; siblings {json.dumps(obj[:6])[:200]})"))
+    return out
+
+
 def browser_captures():
     """Jake, 2026-10-02: the charts a dashboard draws in the browser — ASXN's Hyperliquid dashboard and
     Aethir's compute-hours and stake-duration charts. For each configured page: robots.txt (the verdict
@@ -4662,24 +4687,46 @@ def browser_captures():
             hits = [u for u, body in got["responses"] if rx.search(json.dumps(body)[:200_000])]
             print(f"  responses mentioning /{rx.pattern}/: {len(hits)}" + (f" — {'; '.join(h[:100] for h in hits[:8])}"
                                                                            if hits else ""))
-            # the pins, dry: what each would store (nothing is stored by the probe)
-            for pin in pg.get("series") or ():
-                pts = bc.series_from(got["responses"], dict(pin))
-                print(f"  PIN {pin['metric']}: " + (pts if isinstance(pts, str) else
-                                                    f"{len(pts)} point(s) {pts[0][0].date()}..{pts[-1][0].date()}, "
-                                                    f"last {pts[-1][1]:,.2f}"))
-            for sp in pg.get("scalars") or ():
-                r_ = bc.scalar_from(got["responses"], sp)
-                print(f"  SCALAR {sp['metric']}: {r_ if isinstance(r_, str) else f'{r_[0]} = {r_[1]:,.2f}'}")
-            for t in pg.get("tiles") or ():
-                print(f"  TILE {t['metric']}: {bc.tile_from(got['text'], t['label'])}")
-            if pg.get("unit_check"):
+            # probes7 4: the RSC lines / parsed objects around each hit, with their key paths and list shapes
+            for u, ct, b in bodies:
+                if "x-component" not in ct:
+                    continue
+                for m in list(rx.finditer(b))[:8]:
+                    print(f"    RSC {u[:80]} @{m.start():,}: {' '.join(b[max(m.start() - 200, 0):m.end() + 400].split())[:600]}")
+            for u, body in got["responses"]:
+                if "#rsc:" not in u:
+                    continue
+                for path_, val in _key_paths(body, rx):
+                    print(f"    RSC-KEY {u.split('#')[-1]} {path_}: {val}")
+            # the pins, DRY — the adapter's own page logic on this render (nothing is stored by the probe)
+            if pg.get("series") or pg.get("scalars") or pg.get("tiles"):
+                import logging as _lg                          # noqa: PLC0415
                 from fetch.base import FetchOutput             # noqa: PLC0415
+
+                class _Due:
+                    def due(self, *a):
+                        return True
+
+                    def done(self, *a):
+                        pass
+
+                class _Grab(_lg.Handler):
+                    def emit(self, rec):
+                        if "CROSS-CHECK" in rec.getMessage() or "unit check" in rec.getMessage():
+                            print(f"  {rec.getMessage()}")
+                h = _Grab()
+                _lg.getLogger("token_metrics.fetch.browser_capture").addHandler(h)
+                _lg.getLogger("token_metrics.fetch.browser_capture").setLevel(_lg.INFO)
                 o = FetchOutput()
-                bcx = bc.BrowserCapture(daily=object(), stored_long=stored)
-                v = bcx._unit_check(p["name"], pg, got, o)
-                print(f"  UNIT CHECK: {getattr(bcx, 'last_unit_report', '') or [e.message for e in o.log]}"
-                      + ("" if stored is not None else " (no metrics.db here: nothing to compare)"))
+                try:
+                    bc.BrowserCapture(capture_fn=lambda *a, **k: got, daily=_Due(), stored_long=stored)._page(
+                        p["name"], {**pg, "alt_urls": ()}, o)
+                finally:
+                    _lg.getLogger("token_metrics.fetch.browser_capture").removeHandler(h)
+                for e in o.log:
+                    print(f"  DRY {e.status:<7} {e.message[:300]}")
+                if stored is None:
+                    print("  (no metrics.db here: unit checks against stored figures cannot decide)")
             for lab in labels.get(p["name"], ()):
                 i = got["text"].find(lab)
                 if i >= 0:

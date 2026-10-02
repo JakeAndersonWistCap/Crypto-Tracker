@@ -527,6 +527,42 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11r. probes7, 2026-10-02: Kai-Ching, bloXroute, ASXN units, Aethir keys
+
+```bash
+python check_offline_items.py browser_captures      # dry run of every pin: unit checks, CROSS-CHECKs, RSC key paths
+python run_sql.py BP                                 # any ASXN legs 3b01a2a stored as HYPE from USD (SELECT first)
+```
+- **NEAR.**
+  - The drop is Kai-Ching: its signers account for ~98.8% of it (METHODOLOGY_FLAGS
+    near_activity_cause).
+  - `tx_count_ex_kaiching` is new, built from BigQuery with signers `*.kaiching` excluded; the
+    excluded part is stored as `tx_count_kaiching`. The first run reads yesterday, then the
+    rest of the year in one backfill query (~25 GB expected; the dry run decides). After that,
+    a daily top-up.
+  - Raw `tx_count` / `active_addresses` cells are caveated: before April 2026 they are ~70% one
+    app's payouts.
+- **MEV.** bloXroute Max Profit is dropped: its DNS fails and no replacement host is published
+  anywhere checked. Its past blocks now count as non-relay.
+- **ASXN.**
+  - Every buyback-page leg's units are checked:
+    - HyperCore Buybacks against the stored AF and holders-revenue figures (it is USD);
+    - HyperEVM Burn against ASXN's own burned_hype / burned_usd;
+    - Auction Burn by `total` = the sum of the legs.
+  - Each leg is stored as read, under the name its verdict gives (`*_usd` or `*_tokens`).
+    Total burn's history converts USD legs at the same-day price.
+  - Also new: the 30-day annualised revenue (`annualized_revenue_30d`); HyperEVM daily
+    transactions as `tx_count` (HyperEVM only), checked against the "Avg Daily Txns" tile;
+    HyperEVM burn and fees as cross-checks.
+  - HyperCore users (cumulative) are stored daily, with the daily change as `hypercore_new_users`.
+    Daily active addresses are UNAVAILABLE from ASXN.
+- **Aethir.**
+  - Weekly compute hours and the AI/Gaming stake durations are read by key from the
+    server-component payload.
+  - Weekly compute hours must match Jake's 22,510,837 within 5%.
+  - The tiles are only a fallback. When keys don't resolve, the probe prints the RSC lines and
+    key paths to pin.
+
 ## 11q. probes6 follow-up, 2026-10-02: MEV seed, ASXN, Aethir tiles, NEAR re-login
 
 ```bash

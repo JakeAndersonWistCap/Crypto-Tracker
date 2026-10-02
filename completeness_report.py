@@ -127,13 +127,10 @@ WAIT_ON_SERIES: dict = {
 # of it, the cell is NEEDS JAKE — run the seed — not a BUG; once rows exist it is classified as usual.
 PENDING_SEED = {
     # the browser route (Jake, 2026-10-02): rendered with the tabs clicked; its keys are pinned from the probe
-    ("Aethir", "compute_hours_weekly"): "the weekly chart's data is in no captured response (probes6: 0 JSON, 0 "
-                                        "websocket; text bodies now captured too) — python check_offline_items.py "
-                                        "browser_captures and paste back. Meanwhile last week's figure is read daily "
-                                        "from the page payload (compute_hours_last_week) and feeds utilisation",
-    **{("Aethir", m): "read daily from the rendered tile, FORWARD-ONLY (browser_capture); if the tile's label is "
-                      "not found, python check_offline_items.py browser_captures prints the text around it"
-       for m in ("avg_lock_duration_days_ai", "avg_lock_duration_days_gaming")},
+    **{("Aethir", m): "read by KEY from the page's server-component (RSC) payload in the browser (Jake's probes7) "
+                      "— the one dated list whose keys fit; none or several = nothing stored. If the Run Log says so, "
+                      "python check_offline_items.py browser_captures prints the RSC lines and key paths to pin"
+       for m in ("compute_hours_weekly", "avg_lock_duration_days_ai", "avg_lock_duration_days_gaming")},
     **{("Plume", m): "python token_metrics.py --seed plume_settlement (Plume's P2P transfers from Blockscout, "
                      "~21,755 pages, ~1.5h; Artemis method, UNVALIDATED) — routine runs then top it up"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",

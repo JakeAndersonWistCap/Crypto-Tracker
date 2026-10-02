@@ -3930,3 +3930,28 @@ SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS
 --                                        'plume_staking:0x30c791E4.getValidatorsList.commission[stake-weighted, active]:archive',
 --                                        'plume_staking:0x30c791E4.gross*active(1-commission)',
 --                                        'plume_staking:0x30c791E4.gross*active(1-commission):archive'));
+
+-- ========================================================================================
+-- BP. HYPERLIQUID ASXN LEGS STORED AS HYPE FROM USD — THE OLD NAMES  2026-10-02
+--     Jake's probes7: ASXN's "HyperCore Buybacks" is USD (median leg/ref 0.938 over 558 days vs
+--     holders revenue). Code 3b01a2a stored a USD leg as `<name>_tokens` divided by the stored
+--     same-day price (source suffix "[USD / same-day price]"). From now on each leg is stored AS
+--     READ under the name its own unit check gives (burn_auction_usd, burn_hyperevm_usd,
+--     buyback_hypercore_asxn_usd). The converted rows are not wrong in value, but they are a
+--     derived figure under a "read" name; the burn history view now reads USD / price itself.
+--     Run: python run_sql.py BP, then python run_sql.py --delete BP (preview + typed "DELETE BP").
+-- ========================================================================================
+-- BP1. THE CONVERTED ROWS, if any were stored (none unless a routine run used 3b01a2a's code).
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Hyperliquid'
+   AND metric IN ('burn_auction_tokens', 'burn_hyperevm_tokens', 'buyback_hypercore_asxn_tokens')
+   AND source LIKE 'browser_capture:asxn.%[USD / same-day price]%'
+ GROUP BY metric, source
+ ORDER BY metric;
+
+-- BP2. THE DELETE: only the converted rows (HYPE legs read as HYPE stay).
+-- DELETE FROM metrics
+--  WHERE project = 'Hyperliquid'
+--    AND metric IN ('burn_auction_tokens', 'burn_hyperevm_tokens', 'buyback_hypercore_asxn_tokens')
+--    AND source LIKE 'browser_capture:asxn.%[USD / same-day price]%';

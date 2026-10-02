@@ -324,6 +324,8 @@ class NearBigQuery:
                 if ok.get("circulating"):
                     self._circulating(client, spec, st, out, name)
                 self._dry_estimates(client, spec, st, out, name)
+                if ok.get("activity_ex") and spec.get("activity_ex"):
+                    self._activity_ex(client, spec, st, out, name)
                 if ok.get("p2p"):
                     self._p2p(client, spec, st, out, name, unbounded)
                 else:
@@ -490,6 +492,44 @@ class NearBigQuery:
             prog.tick()                                      # saves st and prints the line
         if prog.done:
             prog.flush(final=True)
+
+    def _activity_ex(self, client, spec, st, out, name) -> None:
+        """NEAR transactions per day with Kai-Ching's signers counted apart (Jake's probes7, 2026-10-02).
+        The daily top-up first (days newer than the newest held), then the rest of the year in ONE backfill
+        query (held behind the top-up reserve like any backfill). Every held day is stored each run:
+        tx_count_ex_kaiching = n - kaiching_n, tx_count_kaiching = kaiching_n."""
+        a = spec["activity_ex"]
+        held = st.setdefault("activity", {})
+        yday = (today() - pd.Timedelta(days=1)).normalize()
+        floor = yday - pd.Timedelta(days=int(spec["days"]) - 1)
+        newest = pd.Timestamp(max(held)) if held else None
+        top = [d for d in pd.date_range(floor, yday) if str(d.date()) not in held and (newest is None or d > newest)]
+        if newest is None:
+            top = top[-1:]                                   # first run: yesterday as the top-up
+        rest = [d for d in pd.date_range(floor, yday) if str(d.date()) not in held and d not in top]
+        for kind, days in (("top-up", top), ("backfill", rest)):
+            if not days:
+                continue
+            d0, d1 = min(days), max(days)
+            rows = self._run(client, f"activity ex-Kai-Ching {kind} {d0.date()}..{d1.date()}",
+                             _sql("bigquery_activity_ex_kaiching.sql"), {"d0": d0.date(), "d1": d1.date()},
+                             spec, st, out, name, backfill=(kind == "backfill"))
+            if rows is None:
+                break
+            for r in rows:
+                held[str(pd.Timestamp(r["day"]).date())] = [int(r["n"]), int(r["kaiching_n"])]
+            self._save(st)
+        if not held:
+            return
+        days = sorted(held)
+        ex = [(pd.Timestamp(d), held[d][0] - held[d][1]) for d in days if pd.Timestamp(d) < today()]
+        kc = [(pd.Timestamp(d), held[d][1]) for d in days if pd.Timestamp(d) < today()]
+        src = f"{SOURCE}:transactions[signer not *{a['signer_suffix']}]"
+        out.add(tidy(ex, name, a["metric"], src, TIER), SOURCE, name,
+                f"{a['metric']}: {len(ex)} day(s) {days[0]}..{days[-1]}; latest {ex[-1][1]:,} "
+                f"(Kai-Ching signed {kc[-1][1]:,} of {held[days[-1]][0]:,})", TIER)
+        out.add(tidy(kc, name, a["excluded_metric"], f"{SOURCE}:transactions[signer *{a['signer_suffix']}]", TIER),
+                SOURCE, name, f"{a['excluded_metric']}: {len(kc)} day(s)", TIER)
 
     def _import_csv(self, st, out, name) -> None:
         """FALLBACK: data/near/*.csv saved from the console (day, token, amount, n)."""

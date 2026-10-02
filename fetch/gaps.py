@@ -666,6 +666,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     "near-data-510309` (RUNBOOK 11n), then `python token_metrics.py --seed near_bigquery`.")
         return ("Plume's P2P transfer scan (fetch/plume_settlement.py) has no complete day stored yet",
                 "Run `python token_metrics.py --seed plume_settlement` once (~1.5h); routine runs top it up.")
+    # NEAR EX-KAI-CHING ACTIVITY (Jake's probes7, 2026-10-02): BigQuery, signers *.kaiching counted apart.
+    ax = (project.get("near_bigquery") or {}).get("activity_ex") or {}
+    if metric in (ax.get("metric"), ax.get("excluded_metric")):
+        return ("NEAR's ex-Kai-Ching activity (fetch/near_bigquery.py, transactions by signer) has no day yet — "
+                "it needs Jake's Application Default Credentials on the machine that runs it",
+                "Run `gcloud auth application-default login` (and set-quota-project near-data-510309 if reminded), "
+                "then a routine run: yesterday first, then the year in one backfill query (~25 GB expected).")
     # ETHEREUM'S EXECUTION REWARD WITH MEV (Jake, 2026-10-02): the relay data APIs + ETHEREUM_RPC_URL.
     if project.get("mev_relays") and metric in ("mev_relay_value_eth", "execution_rewards_eth", "mev_relay_block_share"):
         return ("the MEV-Boost relay scan (fetch/mev_relays.py) has no complete day stored yet",
@@ -673,7 +680,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "for the year); the non-relay leg is estimated from stored DefiLlama fees - burn. Routine runs "
                 "top it up. `python check_offline_items.py mev_relays` checks each relay and prices the seed.")
     # ASXN'S HYPERSCREENER, IN THE BROWSER (Jake, probes6 2026-10-02).
-    if any(metric == pin.get("metric") for pg in (project.get("browser_capture") or {}).get("pages") or ()
+    if any(metric in {pin.get("metric"), pin.get("flow_metric"), *(pin.get("metric_by_unit") or {}).values()}
+           for pg in (project.get("browser_capture") or {}).get("pages") or ()
            for pin in list(pg.get("series") or ()) + list(pg.get("scalars") or ()) + list(pg.get("tiles") or ())):
         return ("the browser route (fetch/browser_capture.py) stored nothing for it this run — one rendered page "
                 "load a day; the Run Log's browser_capture line says why (units not established, a pin not found)",

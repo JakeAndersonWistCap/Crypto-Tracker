@@ -20984,7 +20984,8 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
 
     spec = copy.deepcopy(config.PROJECT_BY_NAME["Near"]["near_bigquery"])
     # APPROVED by Jake (2026-10-01); ft_balances_daily stays unwired
-    assert spec["approved"] == {"circulating": True, "p2p": True, "balances": False}
+    assert spec["approved"] == {"circulating": True, "p2p": True, "balances": False, "activity_ex": True}
+    spec["approved"]["activity_ex"] = False               # its own test: test_near_ex_kaiching_activity...
     spec["approved"]["p2p"] = False                       # first: the unapproved behaviour
     proj = {"name": "Near", "near_bigquery": spec}
     px = pd.DataFrame({"date": pd.date_range(yday - pd.Timedelta(days=40), yday), "project": "Near",
@@ -22058,7 +22059,9 @@ def test_mev_relays_dedupe_by_slot_and_never_add_a_relay_blocks_priority_fees(tm
     ex = out.frame().query("metric == 'execution_rewards_eth'")
     assert len(ex) == 1 and ":PARTIAL[no ETHEREUM_RPC_URL" in ex.source.iloc[0]
     eth = config.PROJECT_BY_NAME["Ethereum"]["mev_relays"]
-    assert {r["name"] for r in eth["relays"]} >= {"flashbots", "ultrasound", "bloxroute_maxprofit", "aestus",
+    assert "bloxroute_maxprofit" not in {r["name"] for r in eth["relays"]}, "retired (probes7): DNS fails"
+    assert any("Max Profit" in x and "retired" in x for x in eth["not_covered"])
+    assert {r["name"] for r in eth["relays"]} >= {"flashbots", "ultrasound", "bloxroute_regulated", "aestus",
                                                  "agnostic", "titan"}
     assert config.VALIDATOR_YIELD["Ethereum"]["execution_metric"] == "execution_rewards_eth"
 
@@ -22165,7 +22168,8 @@ def test_research_round_records_plume_incentive_hl_inactive_and_browser_gate(tmp
            "source": "growthepie", "tier": 1}
     band, why = bw.confidence_for("Plume", "tx_count", row, pd.Timestamp("2026-10-01"))
     assert "INCENTIVE-INFLATED before 2026-04-01" in why and "Points Season 2" in why
-    assert config.incentive_caveat("Near", "tx_count") is None
+    assert config.incentive_caveat("Sky", "tx_count") is None
+    assert "Kai-Ching" in config.incentive_caveat("Near", "tx_count")       # probes7: one app's payouts
     assert config.METHODOLOGY_FLAGS["plume_march_2026_activity"].startswith("ANSWERED")
     for k in ("aethir_compute_rewards", "aethir_locked_rewards", "hyperliquid_reward_rate", "maple_ssf_liquidity",
               "hyperliquid_throughput", "geodnet_locked_tokens", "near_activity_cause"):
@@ -22204,11 +22208,13 @@ def test_research_round_records_plume_incentive_hl_inactive_and_browser_gate(tmp
 
 
 def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tiles(monkeypatch, caplog):
-    """probes6 2-3 (Jake, 2026-10-02): ASXN is permitted for rendered page loads only; its buyback legs'
-    UNITS are decided against stored figures (HYPE vs USD) — ambiguous stores nothing; USD legs are stored as
-    tokens at the stored price; the non-AF burn legs become total burn's history; volume and the buyback leg
-    are cross-checked; RSC (text/x-component) lines are parsed into captured JSON; "auto" keys need ONE
-    candidate; a scalar needs one key; Aethir's stake durations are read from the rendered tiles."""
+    """probes6-7 (Jake, 2026-10-02): ASXN is rendered page loads only. EVERY buyback-page leg's units are
+    checked — HyperCore Buybacks against stored AF / holders-revenue figures, HyperEVM Burn against ASXN's
+    own token-metrics burned_hype / burned_usd, Auction Burn by `total` = the sum of the legs — and each is
+    stored AS READ under the name its verdict gives (USD legs: *_usd). Total burn's history reads a USD leg
+    at the same-day price. HyperEVM tx_count needs ONE transactions key and the "Avg Daily Txns" tile to
+    agree; the revenue key is pinned; cumulative users give a daily new-users change; RSC lines are parsed;
+    a tile is only the fallback for a series that did not resolve."""
     import logging
     import build_workbook as bw
     import fetch.browser_capture as bc
@@ -22221,19 +22227,30 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
     reg = config.SOURCE_REGISTER["hyperscreener.asxn.xyz"]
     assert reg["browser_only"] and "ask ASXN" in reg["licence"] and "SILENT" in reg["terms"]["status"]
     days = pd.date_range("2026-09-01", periods=10)
-    # ASXN legs in HYPE: buybacks = the AF's ~50k HYPE a day; price $40, holders revenue $2M
-    data = [{"date": str(d.date()), "Auction Burn": 100.0, "HyperCore Buybacks": 50_000.0 * (1 + i / 100),
-             "HyperEVM Burn": 20.0, "total": 0} for i, d in enumerate(days)]
+    # every leg in USD (HYPE at $40): buybacks $2.0M ~ holders revenue, HyperEVM burn $800 = 20 HYPE
+    data = [{"date": str(d.date()), "Auction Burn": 4000.0, "HyperCore Buybacks": 1.9e6 * (1 + i / 100),
+             "HyperEVM Burn": 800.0, "total": 4000.0 + 1.9e6 * (1 + i / 100) + 800.0} for i, d in enumerate(days)]
     rows = lambda m, v: pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": m, "value": v, "source": "x"})
     stored = pd.concat([rows("holders_revenue_usd", 2e6), rows("price_usd", 40.0), rows("perps_volume_usd", 5e9),
-                        rows("core_burn_tokens", 125.0)])
+                        rows("hypercore_users_total", 1_860_000.0).iloc[[-1]].assign(date=pd.Timestamp("2026-10-01"))])
     rsc = '0:["$","div",null]\n1:{"chart_data":[' + ",".join(
         f'{{"time":"{d.date()}","volume":{5.1e9}}}' for d in days) + "]}\n"
-    got = {"responses": [("https://hyperscreener.asxn.xyz/api/buyback/revenues", {"data": data})]
+    evm_tm = [{"date": str(d.date()), "burned_hype": 20.0, "burned_usd": 800.0, "base_fees_hype": 19.0,
+               "priority_fees_hype": 3.0, "base_fees_usd": 760.0} for d in days]
+    evm_nm = [{"date": str(d.date()), "daily_transactions": 330_000 + i * 1000, "cumulative_transactions": 9e7,
+               "active_addresses": 10} for i, d in enumerate(days)]
+    got = {"responses": [("https://hyperscreener.asxn.xyz/api/buyback/revenues", {"data": data}),
+                         ("https://hyperscreener.asxn.xyz/api/hyper-evm/token-metrics", {"chart_data": evm_tm}),
+                         ("https://hyperscreener.asxn.xyz/api/hyper-evm/network-metrics?time_range=all",
+                          {"chart_data": evm_nm}),
+                         ("https://hyperscreener.asxn.xyz/api/stats", {"total_users": 1_870_000}),
+                         ("https://hyperscreener.asxn.xyz/api/cloudfront/total_open_interest",
+                          {"chart_data": [{"time": str(d.date()), "open_interest": 9e9} for d in days]})]
            + [(f"https://hyperscreener.asxn.xyz/api/cloudfront/total_usd_volume#rsc:{k}", o)
               for k, o in bc.parse_rsc(rsc)]
-           + [("https://hyperscreener.asxn.xyz/api/revenue-metrics", {"fees": {"annualised": 1.2e9, "daily": 3e6}})],
-           "bodies": [], "ws": [], "text": "", "clicked": []}
+           + [("https://hyperscreener.asxn.xyz/api/revenue-metrics",
+               {"fees": {"annualized_revenue_30d": 1.2e9, "annualized_revenue_7d": 1.3e9, "daily": 3e6}})],
+           "bodies": [], "ws": [], "text": "Avg Daily Txns 334K", "clicked": []}
 
     class Daily:
         def due(self, *a):
@@ -22241,36 +22258,55 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
 
         def done(self, *a):
             pass
+    renders = []
+
+    def cap(url, **k):
+        renders.append(url)
+        return got
     out = FetchOutput()
     with caplog.at_level(logging.INFO, logger="token_metrics.fetch.browser_capture"):
-        bc.BrowserCapture(capture_fn=lambda *a, **k: got, daily=Daily(), stored_long=stored).run([hl], None, out)
+        bc.BrowserCapture(capture_fn=cap, daily=Daily(), stored_long=stored).run([hl], None, out)
+    assert renders == ["https://hyperscreener.asxn.xyz"], "every pinned response on the first page: no alt render"
     f = out.frame()
-    assert set(f.metric) >= {"burn_auction_tokens", "burn_hyperevm_tokens", "buyback_hypercore_asxn_tokens",
-                             "perps_volume_usd_asxn", "revenue_annualised_usd_asxn"}
-    assert f.query("metric == 'burn_auction_tokens'").value.iloc[0] == 100.0, "HYPE legs stored as read"
+    assert set(f.metric) >= {"burn_auction_usd", "burn_hyperevm_usd", "buyback_hypercore_asxn_usd",
+                             "hyperevm_burn_tokens_asxn", "hyperevm_burn_usd_asxn", "hyperevm_base_fees_tokens_asxn",
+                             "hyperevm_priority_fees_tokens_asxn", "tx_count", "perps_volume_usd_asxn",
+                             "revenue_annualised_usd_asxn", "hypercore_users_total", "hypercore_new_users"}
+    assert not {"burn_auction_tokens", "buyback_hypercore_asxn_tokens"} & set(f.metric), "USD legs keep USD names"
+    a = f.query("metric == 'burn_auction_usd'")
+    assert a.value.iloc[0] == 4000.0 and "USD as read" in a.source.iloc[0]
+    assert "unit check `HyperEVM Burn`" in caplog.text and "`total` = sum of the legs on 10/10" in caplog.text
+    tx = f.query("metric == 'tx_count'")
+    assert len(tx) == 10 and "asxn.daily_transactions[HyperEVM]" in tx.source.iloc[0]
+    r = f.query("metric == 'revenue_annualised_usd_asxn'")
+    assert r.value.iloc[0] == 1.2e9
+    nu = f.query("metric == 'hypercore_new_users'")
+    assert nu.value.iloc[0] == 10_000 and "daily change" in nu.source.iloc[0]
     v = f.query("metric == 'perps_volume_usd_asxn'")
     assert len(v) == 10 and "asxn.volume[HyperCore]" in v.source.iloc[0], "auto keys from the RSC line"
     assert "CROSS-CHECK" in caplog.text and "median ratio 1.020" in caplog.text
-    assert "unit check `HyperCore Buybacks`" in caplog.text and "-> TOKENS" in caplog.text
-    assert "open_interest_usd_asxn" in " ".join(e.message for e in out.log if e.status != "ok")
-    # USD legs: converted at the stored price
-    usd = [{**r, "Auction Burn": 4000.0, "HyperCore Buybacks": 2e6} for r in data]
-    got2 = {**got, "responses": [("https://hyperscreener.asxn.xyz/api/buyback/revenues", {"data": usd})]}
+    # the tile disagrees -> tx_count refused; users off the anchor -> refused
+    got2 = {**got, "text": "Avg Daily Txns 50K"}
+    got2["responses"] = [x if "api/stats" not in x[0] else (x[0], {"total_users": 900_000}) for x in got["responses"]]
     out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda *a, **k: got2, daily=Daily(), stored_long=stored).run([hl], None, out)
-    a = out.frame().query("metric == 'burn_auction_tokens'")
-    assert a.value.iloc[0] == 100.0 and "[USD / same-day price]" in a.source.iloc[0]
-    # ambiguous (matches neither reference): nothing stored
-    odd = [{**r, "HyperCore Buybacks": 7.0} for r in data]
-    got3 = {**got, "responses": [("https://hyperscreener.asxn.xyz/api/buyback/revenues", {"data": odd})]}
+    bc.BrowserCapture(capture_fn=lambda u, **k: got2, daily=Daily(), stored_long=stored).run([hl], None, out)
+    f2 = out.frame()
+    assert f2.query("metric == 'tx_count'").empty and f2.query("metric == 'hypercore_users_total'").empty
+    msgs = " ".join(e.message for e in out.log)
+    assert "Avg Daily Txns" in msgs and "from the anchor 1,870,000" in msgs
+    # a missing HyperEVM response -> the alt page is rendered; HyperEVM / Auction units then undecidable
+    got3 = {**got, "responses": [x for x in got["responses"] if "hyper-evm" not in x[0]]}
+    renders.clear()
     out = FetchOutput()
-    bc.BrowserCapture(capture_fn=lambda *a, **k: got3, daily=Daily(), stored_long=stored).run([hl], None, out)
-    assert out.frame().query("metric == 'burn_auction_tokens'").empty
-    assert any("NOT ESTABLISHED" in e.message for e in out.log)
+    bc.BrowserCapture(capture_fn=lambda u, **k: (renders.append(u) or got3), daily=Daily(),
+                      stored_long=stored).run([hl], None, out)
+    assert renders == ["https://hyperscreener.asxn.xyz"] + list(pg["alt_urls"])
+    f3 = out.frame()
+    assert "buyback_hypercore_asxn_usd" in set(f3.metric) and "burn_auction_usd" not in set(f3.metric)
     # several candidate keys: nothing stored, named
     assert "pin one" in bc.scalar_from([("u/revenue-metrics", {"a_annual": 1, "b_annualised": 2})],
                                        {"url_contains": "revenue-metrics", "key_contains": "annual"})
-    # BURN HISTORY: before total burn's first complete day, AF history + the ASXN legs held
+    # BURN HISTORY: before total burn's first complete day, AF history + the ASXN legs (USD at the price)
     d0 = pd.Timestamp("2026-09-01")
     hist = pd.DataFrame({"date": [d0], "project": "Hyperliquid", "metric": "gross_burn_tokens", "value": [50_000.0],
                          "source": "defillama:holders_revenue_usd/price", "tier": 1})
@@ -22278,15 +22314,17 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
                          "source": "x", "tier": 1})
     groups = {("Hyperliquid", "gross_burn_tokens"): pd.concat([hist, live.assign(metric="gross_burn_tokens")]),
               ("Hyperliquid", "core_burn_tokens"): live.assign(metric="core_burn_tokens"),
-              ("Hyperliquid", "burn_auction_tokens"): hist.assign(metric="burn_auction_tokens", value=100.0),
-              ("Hyperliquid", "burn_hyperevm_tokens"): hist.assign(metric="burn_hyperevm_tokens", value=20.0)}
+              ("Hyperliquid", "burn_auction_usd"): hist.assign(metric="burn_auction_usd", value=4000.0),
+              ("Hyperliquid", "burn_hyperevm_tokens"): hist.assign(metric="burn_hyperevm_tokens", value=20.0),
+              ("Hyperliquid", "price_usd"): hist.assign(metric="price_usd", value=40.0)}
     bw._burn_total_views(groups)
     tb = groups[("Hyperliquid", "total_burn_tokens")].sort_values("date")
-    assert tb.value.iloc[0] == 50_120.0 and "burn_auction_tokens + burn_hyperevm_tokens (ASXN)" in tb.source.iloc[0]
+    assert tb.value.iloc[0] == 50_000 + 100 + 20
+    assert "burn_auction_usd/price" in tb.source.iloc[0] and "burn_hyperevm_tokens" in tb.source.iloc[0]
     from fetch.base import _measuring_point
     assert _measuring_point(tb.source.iloc[0]) == _measuring_point("defillama:holders_revenue_usd/price")
     assert tb.value.iloc[1] == 2.0
-    # AETHIR: stake durations from the rendered tiles, forward-only; RSC bodies parsed
+    # AETHIR: the stake-duration series by key from RSC; the tiles only as the fallback
     ae = config.PROJECT_BY_NAME["Aethir"]
     on = next(x for x in ae["browser_capture"]["pages"] if x["site"] == "aethir_onchain")
     text = "Average Stake Duration of AI Pool 212.5 Days Average Stake Duration of Gaming Pool 187 Days"
@@ -22296,6 +22334,34 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
         [{"name": "Aethir", "browser_capture": {"pages": [on]}}], None, out)
     t = out.frame().set_index("metric")["value"]
     assert t["avg_lock_duration_days_ai"] == 212.5 and t["avg_lock_duration_days_gaming"] == 187
+    dur = [{"date": str(d.date()), "aiPool": 200.0 + i, "gamingPool": 180.0} for i, d in enumerate(days)]
+    got5 = {**got4, "responses": [("https://dashboard.aethir.com/protocol/onchain-metric#rsc:5",
+                                   {"averageStakeDuration": dur, "other": [{"date": "2026-09-01", "x": 1}]})]}
+    out = FetchOutput()
+    bc.BrowserCapture(capture_fn=lambda *a, **k: got5, daily=Daily()).run(
+        [{"name": "Aethir", "browser_capture": {"pages": [on]}}], None, out)
+    f5 = out.frame()
+    ai = f5.query("metric == 'avg_lock_duration_days_ai'")
+    assert len(ai) == 10 and ai.value.iloc[-1] == 209.0 and "aiPool" in ai.source.iloc[0], "series, not tile"
+    assert len(f5.query("metric == 'avg_lock_duration_days_gaming'")) == 10
+    # weekly compute hours: DD/MM labels with no year, the latest against Jake's 22,510,837
+    dem = next(x for x in ae["browser_capture"]["pages"] if x["site"] == "aethir_demand")
+    labels = [d.strftime("%d/%m") for d in pd.date_range("2026-06-08", "2026-09-21", freq="7D")]
+    weeks = [{"week": l, "hours": 20e6 + i * 1e5} for i, l in enumerate(labels)]
+    weeks[-1]["hours"] = 22_510_837
+    got6 = {**got4, "responses": [("https://dashboard.aethir.com/protocol/demand-metric#rsc:3",
+                                   {"weeklyComputeHours": weeks, "totalHours": 2_433_230_876})]}
+    out = FetchOutput()
+    bc.BrowserCapture(capture_fn=lambda *a, **k: got6, daily=Daily()).run(
+        [{"name": "Aethir", "browser_capture": {"pages": [dem]}}], None, out)
+    h = out.frame().query("metric == 'compute_hours_weekly'").sort_values("date")
+    assert len(h) == 16 and h.date.iloc[0] == pd.Timestamp("2026-06-08") and h.value.iloc[-1] == 22_510_837
+    assert config.series_granularity("Aethir", "compute_hours_weekly") == "weekly"
+    weeks[-1]["hours"] = 30e6
+    out = FetchOutput()
+    bc.BrowserCapture(capture_fn=lambda *a, **k: got6, daily=Daily()).run(
+        [{"name": "Aethir", "browser_capture": {"pages": [dem]}}], None, out)
+    assert out.frame().query("metric == 'compute_hours_weekly'").empty
     assert bc.parse_rsc('a:{"x":1}\nb:I["chunk"]\nnot json\n') == [("a", {"x": 1})], "an I[...] module line is not data"
 
 
@@ -22426,6 +22492,60 @@ def test_near_second_pass_signers_types_verdict_and_reauth_fails_gracefully(tmp_
     client, why = nb2._client(spec)
     assert client is not None and nb2.quota_reminder == ("ADC has no quota project — run `gcloud auth "
                                                          "application-default set-quota-project near-data-510309`")
+
+
+def test_near_ex_kaiching_activity_and_the_one_app_caveat(tmp_path, monkeypatch):
+    """Jake's probes7 (2026-10-02): the drop is Kai-Ching (93.7% + 5.1% of it). Transactions per day with
+    signers *.kaiching counted apart — yesterday as the top-up, then the year in ONE backfill query — stored
+    as tx_count_ex_kaiching beside the raw series; raw NEAR activity before April 2026 is caveated as ~70%
+    one app's payouts."""
+    import types
+    import build_workbook as bw
+    import fetch.near_bigquery as nbq
+    from fetch.near_bigquery import NearBigQuery
+    monkeypatch.setattr(nbq, "today", lambda: pd.Timestamp("2026-10-02"))
+    calls = []
+
+    class Client:
+        def query(self, sql, job_config=None):
+            if getattr(job_config, "dry_run", False):
+                return types.SimpleNamespace(total_bytes_processed=25e9)
+            p = {k: v for k, _, v in job_config.query_parameters}
+            calls.append((p["d0"], p["d1"]))
+            assert "ENDS_WITH(signer_account_id, '.kaiching')" in sql
+            days = pd.date_range(p["d0"], p["d1"])
+            rows = [{"day": d, "n": 3_300_000 if d < pd.Timestamp("2026-04-01") else 970_000,
+                     "kaiching_n": 2_300_000 if d < pd.Timestamp("2026-04-01") else 0} for d in days]
+            return types.SimpleNamespace(result=lambda: rows, total_bytes_billed=25e9, project="near-data-510309")
+    bq = types.SimpleNamespace(QueryJobConfig=lambda **kw: types.SimpleNamespace(**kw),
+                               ScalarQueryParameter=lambda k, t, v: (k, t, v))
+    spec = config.PROJECT_BY_NAME["Near"]["near_bigquery"]
+    assert spec["approved"]["activity_ex"] is True
+    a = NearBigQuery(client=Client(), bq=bq, cache_file=tmp_path / "s.json", csv_dir=tmp_path)
+    a._run_bytes = a._backfill_bytes = 0
+    monkeypatch.setattr(NearBigQuery, "_reserve", lambda self, spec, st: (10e9, "test"))
+    out = FetchOutput()
+    st = {"ledger": {}, "days": {}}
+    a._activity_ex(Client(), spec, st, out, "Near")
+    assert calls[0] == ("2026-10-01", "2026-10-01"), "yesterday first"
+    assert calls[1] == ("2025-10-02", "2026-09-30"), "the rest of the 365 days in one query"
+    f = out.frame()
+    ex = f[f.metric == "tx_count_ex_kaiching"].set_index("date").value
+    assert ex[pd.Timestamp("2026-03-10")] == 1_000_000 and ex[pd.Timestamp("2026-04-10")] == 970_000
+    assert f[f.metric == "tx_count_kaiching"].set_index("date").value[pd.Timestamp("2026-03-10")] == 2_300_000
+    assert len(ex) == 365, "2025-10-02..2026-10-01"
+    # next run: nothing new to read
+    calls.clear()
+    a._activity_ex(Client(), spec, st, FetchOutput(), "Near")
+    assert calls == []
+    # the caveat and the record
+    row = {"status": "ok", "value": 1.0, "date": pd.Timestamp("2026-09-30"), "n_points": 300, "entered_on": "",
+           "source": "nearblocks", "tier": 1}
+    _band, why = bw.confidence_for("Near", "tx_count", row, pd.Timestamp("2026-10-01"))
+    assert "~70% ONE APP'S PAYOUTS before 2026-04-01" in why and "tx_count_ex_kaiching" in why
+    assert config.incentive_caveat("Near", "tx_count_ex_kaiching") is None
+    assert config.METHODOLOGY_FLAGS["near_activity_cause"].startswith("ANSWERED — THE DROP IS KAI-CHING")
+    assert "93.7%" in config.METHODOLOGY_FLAGS["near_activity_cause"]
 
 
 def test_plume_nrr_reads_the_organic_window_and_the_full_year_beside_it():

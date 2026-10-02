@@ -252,10 +252,21 @@ METRICS = {
     "compute_rewards_tokens": {"label": "Aethir compute rewards per week (ATH) — supply-metric weeklyData `reward`", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aethir",)},
     "burn_auction_tokens": {"label": "HYPE burned by deploy-gas AUCTIONS per day (ASXN hyperscreener, browser) — non-AF burn history", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
     "burn_hyperevm_tokens": {"label": "HYPE burned on HyperEVM per day (ASXN hyperscreener, browser) — non-AF burn history", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
+    "burn_auction_usd": {"label": "Deploy-gas AUCTION burns per day ($ as served by ASXN — USD by the unit check) — non-AF burn history", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "burn_hyperevm_usd": {"label": "HyperEVM burn per day ($ as served by ASXN — USD by the unit check) — non-AF burn history", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "buyback_hypercore_asxn_usd": {"label": "HyperCore buybacks per day ($, ASXN — USD: median 0.938 of holders revenue over 558 days) — CROSS-CHECK of the Assistance Fund series", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "hyperevm_burn_tokens_asxn": {"label": "HyperEVM HYPE burned per day (ASXN token-metrics burned_hype) — CROSS-CHECK of the HyperEVM Burn leg", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
+    "hyperevm_burn_usd_asxn": {"label": "HyperEVM burn per day ($, ASXN token-metrics burned_usd) — CROSS-CHECK", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "hyperevm_base_fees_tokens_asxn": {"label": "HyperEVM base fees per day (HYPE, ASXN token-metrics) — CROSS-CHECK", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
+    "hyperevm_priority_fees_tokens_asxn": {"label": "HyperEVM priority fees per day (HYPE, ASXN token-metrics) — CROSS-CHECK", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
+    "hypercore_users_total": {"label": "HyperCore users, CUMULATIVE (ASXN \"Users\") — read daily, forward-only", "kind": "stock", "unit": "count", "archetypes": [1], "tiers": [3], "sanity_min": 1e5, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    "hypercore_new_users": {"label": "HyperCore NEW users per day — the daily change in the cumulative users figure (ASXN); NOT daily active addresses", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [3], "sanity_min": -1e6, "sanity_max": 1e7, "only_projects": ("Hyperliquid",)},
     "buyback_hypercore_asxn_tokens": {"label": "HyperCore buybacks per day (ASXN) — CROSS-CHECK of the Assistance Fund series", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
     "perps_volume_usd_asxn": {"label": "Perps volume per day ($, ASXN total_usd_volume) — CROSS-CHECK of perps_volume_usd", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)},
     "open_interest_usd_asxn": {"label": "Total open interest ($, ASXN) — CROSS-CHECK", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)},
     "revenue_annualised_usd_asxn": {"label": "Revenue, annualised ($, ASXN revenue metrics) — CROSS-CHECK, forward-only", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Hyperliquid",)},
+    "tx_count_ex_kaiching": {"label": "Transactions per day EXCLUDING Kai-Ching's signers (*.kaiching) — NEAR's organic activity across the April 2026 break (BigQuery)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
+    "tx_count_kaiching": {"label": "Transactions per day SIGNED by Kai-Ching accounts (*.kaiching) — the payouts excluded above (BigQuery)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     "emissions_released_tokens": {"label": "Supplier emissions RELEASED to holders (ATH per day) — Aethir: checker + edge (no locked split: treated as released) + compute rewards net of locked; feeds supply trajectory", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "emissions_earned_tokens": {"label": "Supplier emissions EARNED (ATH per day) — accrued, still vesting: a COMMITMENT, not supply reaching holders", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "compute_rewards_locked_tokens": {"label": "Aethir compute rewards LOCKED (ATH) — supply-metric totalLockedRewards; whether vesting is not established", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
@@ -2508,7 +2519,13 @@ PROJECTS = [
                 # relayscan data-api-backfill.go "100 is max on bloxroute") — limit=200 is the probes6 HTTP 400.
                 # Host checked 2026-10-02 against relayscan config-mainnet.yaml (the same host); the max-profit
                 # ConnectionError in probes6 is NOT a wrong URL — a failing relay no longer stops the day.
-                {"name": "bloxroute_maxprofit", "url": "https://bloxroute.max-profit.blxrbdn.com", "page_limit": 100},
+                # bloXroute MAX PROFIT DROPPED (Jake's probes7, 2026-10-02): its host no longer resolves (DNS)
+                # — the relay appears retired. No replacement host is published anywhere checked (2026-10-02):
+                # flashbots/relayscan config-mainnet.yaml @b895ded (2026-06-09), eth-educators/ethstaker-guides
+                # MEV-relay-list.md @96b7b4d (2025-11-22), bloXroute-Labs/mev-relay @a4e836c and ~280 other
+                # repositories all still carry bloxroute.max-profit.blxrbdn.com; docs.bloxroute.com is not
+                # reachable from the sandbox. Its past deliveries now count as non-relay (understated) — see
+                # not_covered. Regulated answers (100 rows a page).
                 {"name": "bloxroute_regulated", "url": "https://bloxroute.regulated.blxrbdn.com", "page_limit": 100},
                 {"name": "aestus", "url": "https://aestus.live"},
                 {"name": "agnostic", "url": "https://agnostic-relay.net"},
@@ -2517,7 +2534,9 @@ PROJECTS = [
             ],
             "relay_list_source": "https://github.com/eth-educators/ethstaker-guides/blob/main/MEV-relay-list.md",
             "not_covered": ("Manifold (mainnet-relay.securerpc.com)", "Wenmerge (relay.wenmerge.com)",
-                            "Proof Relay (header-only)"),
+                            "Proof Relay (header-only)",
+                            "bloXroute Max Profit (bloxroute.max-profit.blxrbdn.com — DNS fails, appears retired; "
+                            "no replacement host published; dropped 2026-10-02)"),
             "relay_rate_per_s": 1, "days": 365, "relay_retries": 3, "disable_after": 3,
             # THE NON-RELAY LEG (probes6 1c, 2026-10-02): "estimate" = DefiLlama fees - burn (stored) over the
             # day's price x the non-relay share of slots, at read time, ~0 extra calls. Per-block receipts
@@ -2969,7 +2988,13 @@ PROJECTS = [
             "auth": "Application Default Credentials (gcloud auth application-default login)",
             "key_route_blocked": "iam.disableServiceAccountKeyCreation (Jake's organisation policy, "
                                  "2026-10-01) — service-account keys cannot be created; ADC chosen instead",
-            "approved": {"circulating": True, "p2p": True, "balances": False},
+            # activity_ex (Jake's probes7, 2026-10-02): transactions per day with Kai-Ching's signers
+            # (*.kaiching) counted apart — the ex-Kai-Ching series beside NearBlocks' raw tx_count. The year
+            # is one backfill query (block_date + signer_account_id; the probes' two weeks of two columns
+            # billed 0.99 GB, so ~25 GB is expected — the dry run decides), then a daily top-up (~0.07 GB).
+            "approved": {"circulating": True, "p2p": True, "balances": False, "activity_ex": True},
+            "activity_ex": {"metric": "tx_count_ex_kaiching", "excluded_metric": "tx_count_kaiching",
+                            "signer_suffix": ".kaiching"},
             "monthly_budget_bytes": 900 * 10 ** 9,        # of the free 1 TB, leaving room for console use
             # THE TOP-UP RESERVE (Jake, 2026-10-01): backfill spends only what is left after reserving
             # days-left-in-month x the latest measured one-day top-up dry run x this margin.
@@ -7929,8 +7954,21 @@ PROJECTS = [
         # the rendered figures as `tiles`, FORWARD-ONLY. Robots.txt is the same site aethir_pages reads,
         # checked again at every render.
         "browser_capture": {"pages": [
+            # PINNED BY KEY FROM THE SERVER-COMPONENT (RSC) PAYLOAD (Jake's probes7, 2026-10-02): 7 responses
+            # mention hours/duration (onchain-metric #rsc:0 and #rsc:5; demand-metric). The exact keys were not
+            # in the paste, so each pin takes the ONE dated list whose keys fit — DD/MM labels with no year
+            # (the axis 08/06..21/09), a value key named like hours / AI / Gaming — and the latest weekly hours
+            # must sit within 5% of the 22,510,837 Jake read. Several fitting lists, or none, store nothing; the
+            # probe prints the RSC lines and key paths so the keys can be pinned exactly.
             {"url": "https://dashboard.aethir.com/protocol/demand-metric", "site": "aethir_demand", "clicks": ("7D", "1W", "30D", "1M", "3M", "90D", "6M", "1Y", "All", "ALL", "Max"),
-             "permitted": True, "series": (), "tiles": (),
+             "permitted": True, "tiles": (),
+             "series": (
+                 {"metric": "compute_hours_weekly", "url_contains": "#rsc:", "path": "auto", "date_key": "auto",
+                  "yearless": "weekly", "granularity": "weekly", "value_key": "auto", "value_key_regex": r"hour",
+                  "value_key_exclude": r"total|cumul|last",
+                  "anchor": {"value": 22_510_837, "within": 0.05, "read_on": "2026-10-02"},
+                  "site": "aethir_demand", "layer": "Aethir compute"},
+             ),
              "wanted": ("compute_hours_weekly",)},
             # TILES, FORWARD-ONLY (probes6 3, Jake 2026-10-02): the stake-duration chart's data was not in any
             # captured JSON or websocket frame; the rendered figures are read once a day. The exact tile text
@@ -7938,7 +7976,17 @@ PROJECTS = [
             # probe prints the text around "Average Stake Duration". (Compute hours LAST WEEK is already read
             # daily from the page payload — aethir_pages hours_last_week — and feeds utilisation; no tile.)
             {"url": "https://dashboard.aethir.com/protocol/onchain-metric", "site": "aethir_onchain", "clicks": ("7D", "1W", "30D", "1M", "3M", "90D", "6M", "1Y", "All", "ALL", "Max"),
-             "permitted": True, "series": (),
+             "permitted": True,
+             # the stake-duration chart, by key (see the demand page's note); the tiles below stay as the
+             # fallback reading should the chart's keys not resolve
+             "series": (
+                 {"metric": "avg_lock_duration_days_ai", "url_contains": "#rsc:", "path": "auto", "date_key": "auto",
+                  "value_key": "auto", "value_key_regex": r"^ai(?-i:(?![a-z]))|ai_?pool|(^|_)ai(_|$)",
+                  "path_regex": r"durat|stake", "site": "aethir_onchain", "layer": "AI pool"},
+                 {"metric": "avg_lock_duration_days_gaming", "url_contains": "#rsc:", "path": "auto",
+                  "date_key": "auto", "value_key": "auto", "value_key_regex": r"gam", "path_regex": r"durat|stake",
+                  "site": "aethir_onchain", "layer": "Gaming pool"},
+             ),
              "tiles": (
                  {"metric": "avg_lock_duration_days_ai", "site": "aethir_onchain", "layer": "AI pool",
                   "label": ("Average Stake Duration of AI Pool", "Average Stake Duration (AI Pool)",
@@ -10080,29 +10128,78 @@ PROJECTS = [
                             "https://hyperscreener.asxn.xyz/hyperevm/users", "https://hyperscreener.asxn.xyz/hypercore/users",
                             "https://hyperscreener.asxn.xyz/users"),
              "terms": "read by Jake 2026-10-02: silent on automated access; ask ASXN before public use",
-             "unit_check": {"url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
-                            "leg": "HyperCore Buybacks", "tokens_ref": "actual_buyback_tokens",
-                            "usd_ref": "holders_revenue_usd", "band": (0.8, 1.25)},
+             # probes7 (Jake, 2026-10-02): HyperCore Buybacks is USD (median leg/ref 0.938 over 558 days vs
+             # holders revenue). EVERY LEG'S UNITS ARE CHECKED THE SAME WAY and each is stored AS READ under
+             # the name its verdict gives (metric_by_unit) — never converted: HyperEVM Burn against ASXN's own
+             # token-metrics burned_hype / burned_usd; Auction Burn by `total` = the sum of the three legs.
+             # The HyperEVM responses come from a HyperEVM page: alt_urls are rendered (once a day each)
+             # only while a pinned response is still missing.
+             "alt_urls": ("https://hyperscreener.asxn.xyz/hyperevm", "https://hyperscreener.asxn.xyz/hyperevm/fees"),
+             "unit_checks": (
+                 {"leg": "HyperCore Buybacks", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
+                  "refs": {"tokens": ("stored:actual_buyback_tokens", "stored:holders_revenue_tokens"),
+                           "usd": ("stored:holders_revenue_usd",)}},
+                 {"leg": "HyperEVM Burn", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
+                  "refs": {"tokens": ("captured:hyperevm_burn_tokens_asxn",), "usd": ("captured:hyperevm_burn_usd_asxn",)}},
+                 {"leg": "Auction Burn", "url_contains": "/api/buyback/revenues", "path": "data", "date_key": "date",
+                  "same_unit_as_total": {"total": "total",
+                                         "legs": ("Auction Burn", "HyperCore Buybacks", "HyperEVM Burn")}},
+             ),
              "series": (
-                 {"metric": "burn_auction_tokens", "url_contains": "/api/buyback/revenues", "path": "data",
-                  "date_key": "date", "value_key": "Auction Burn", "layer": "HyperCore", "units": "from_check", "site": "asxn"},
-                 {"metric": "burn_hyperevm_tokens", "url_contains": "/api/buyback/revenues", "path": "data",
-                  "date_key": "date", "value_key": "HyperEVM Burn", "layer": "HyperEVM", "units": "from_check", "site": "asxn"},
-                 {"metric": "buyback_hypercore_asxn_tokens", "url_contains": "/api/buyback/revenues",
-                  "path": "data", "date_key": "date", "value_key": "HyperCore Buybacks", "layer": "HyperCore",
-                  "units": "from_check", "crosscheck": ("actual_buyback_tokens", "holders_revenue_tokens"),
+                 # c) ASXN's HyperEVM token metrics: burn and fees — cross-checks of the HyperEVM Burn leg
+                 {"metric": "hyperevm_burn_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "burned_hype", "layer": "HyperEVM",
                   "site": "asxn"},
+                 {"metric": "hyperevm_burn_usd_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "burned_usd", "layer": "HyperEVM",
+                  "site": "asxn"},
+                 {"metric": "hyperevm_base_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"base",
+                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
+                 {"metric": "hyperevm_priority_fees_tokens_asxn", "url_contains": "/api/hyper-evm/token-metrics",
+                  "path": "chart_data", "date_key": "auto", "value_key": "auto", "value_key_regex": r"priority",
+                  "value_key_exclude": r"usd", "layer": "HyperEVM", "site": "asxn"},
+                 # b) HyperEVM daily transactions -> Hyperliquid tx_count, LABELLED HyperEVM (HyperCore's own
+                 # order flow is not in it). The field is the one transactions key (cumulative / average /
+                 # fee / address keys excluded), checked against the page's "Avg Daily Txns" tile (334K).
+                 {"metric": "tx_count", "url_contains": "/api/hyper-evm/network-metrics", "path": "chart_data",
+                  "date_key": "auto", "value_key": "auto",
+                  "value_key_regex": r"(^|_)(txns?|transactions?|tx_count|tx)($|_)",
+                  "value_key_exclude": r"cumul|total|avg|average|per_|fee|gas|address|user|size|value",
+                  "tile_check": {"label": "Avg Daily Txns", "within": 0.25}, "layer": "HyperEVM", "site": "asxn"},
+                 # a) the buyback-page legs, stored under the name their unit verdict gives
+                 {"unit_leg": "Auction Burn", "metric_by_unit": {"tokens": "burn_auction_tokens", "usd": "burn_auction_usd"},
+                  "metric": "burn_auction_tokens", "url_contains": "/api/buyback/revenues", "path": "data",
+                  "date_key": "date", "value_key": "Auction Burn", "layer": "HyperCore", "site": "asxn"},
+                 {"unit_leg": "HyperEVM Burn", "metric_by_unit": {"tokens": "burn_hyperevm_tokens", "usd": "burn_hyperevm_usd"},
+                  "metric": "burn_hyperevm_tokens", "url_contains": "/api/buyback/revenues", "path": "data",
+                  "date_key": "date", "value_key": "HyperEVM Burn", "layer": "HyperEVM", "site": "asxn",
+                  "crosscheck_by_unit": {"tokens": ("hyperevm_burn_tokens_asxn",), "usd": ("hyperevm_burn_usd_asxn",)}},
+                 {"unit_leg": "HyperCore Buybacks",
+                  "metric_by_unit": {"tokens": "buyback_hypercore_asxn_tokens", "usd": "buyback_hypercore_asxn_usd"},
+                  "metric": "buyback_hypercore_asxn_usd", "url_contains": "/api/buyback/revenues", "path": "data",
+                  "date_key": "date", "value_key": "HyperCore Buybacks", "layer": "HyperCore", "site": "asxn",
+                  "crosscheck_by_unit": {"tokens": ("actual_buyback_tokens", "holders_revenue_tokens"),
+                                         "usd": ("holders_revenue_usd", "actual_buyback_usd")}},
                  {"metric": "perps_volume_usd_asxn", "url_contains": "/api/cloudfront/total_usd_volume",
                   "path": "chart_data", "date_key": "auto", "value_key": "auto", "layer": "HyperCore",
                   "crosscheck": ("perps_volume_usd",), "site": "asxn"},
                  {"metric": "open_interest_usd_asxn", "url_contains": "total_open_interest", "path": "auto",
                   "date_key": "auto", "value_key": "auto", "layer": "HyperCore", "site": "asxn"},
              ),
+             # the non-AF burns against the Core leg (HYPE): runs when both legs resolve to tokens
              "crosschecks": ({"sum": ("burn_auction_tokens", "burn_hyperevm_tokens"), "ref": "core_burn_tokens"},),
              "scalars": (
+                 # a) the 30-day annualised revenue, pinned by key (10 keys matched "annual")
                  {"metric": "revenue_annualised_usd_asxn", "url_contains": ("revenue-metrics", "revenue_metrics",
-                                                                            "revenueMetrics"),
-                  "key_contains": "annual", "site": "asxn", "layer": "HyperCore"},
+                                                                            "revenueMetrics", "/api/"),
+                  "key": "annualized_revenue_30d", "site": "asxn", "layer": "HyperCore"},
+                 # d) HyperCore users, CUMULATIVE ("Users 1.87M"): the total daily, its daily change stored as
+                 # new users. A JSON `total_users` if captured, else the rendered "Users" tile; either must sit
+                 # within 30% of the 1.87M Jake read on 2026-10-02 (else the wrong figure: nothing stored).
+                 {"metric": "hypercore_users_total", "url_contains": ("/api/",), "key": "total_users",
+                  "tile_label": "Users", "anchor": {"value": 1_870_000, "within": 0.30, "read_on": "2026-10-02"},
+                  "flow_metric": "hypercore_new_users", "site": "asxn", "layer": "HyperCore"},
              ),
              "tiles": ()},
         ]},
@@ -10632,7 +10729,9 @@ PROJECTS = [
             # THE NON-AF LEGS' HISTORY (probes6 2a, Jake 2026-10-02): ASXN's daily Auction Burn and HyperEVM
             # Burn (browser_capture), added to those history days where held — so the total has history
             # outside the Fund too. Never after the first complete day (the Core leg covers them there).
-            "history_extra": ("burn_auction_tokens", "burn_hyperevm_tokens"),
+            # probes7: each leg as stored under its unit verdict — HYPE as read, or USD / same-day price.
+            "history_extra": ({"tokens": "burn_auction_tokens", "usd": "burn_auction_usd"},
+                              {"tokens": "burn_hyperevm_tokens", "usd": "burn_hyperevm_usd"}),
         },
         "a4_burn_metric": "total_burn_tokens",
         "destination_effect": "removed_from_supply",
@@ -17399,6 +17498,16 @@ INCENTIVE_PERIODS = {
                           "trading_throughput_usd", "trading_throughput_365d_usd", "network_reserve_ratio_throughput",
                           "fees_paid_usd"),
               "recorded": "Jake, 2026-10-02"},
+    # NEAR (Jake's probes7, 2026-10-02): not a points programme but ONE APP'S PAYOUTS — Kai-Ching's hot wallet
+    # signed ~70% of NEAR's transactions until it stopped in early April 2026 (METHODOLOGY_FLAGS
+    # near_activity_cause). The organic series is tx_count_ex_kaiching.
+    "Near": {"until": "2026-03-31", "organic_from": "2026-04-01",
+             "programme": "Kai-Ching (hotwallet.kaiching / users.kaiching) payouts, ~70% of transactions",
+             "caveat": "~70% ONE APP'S PAYOUTS before 2026-04-01 — Kai-Ching's hot wallet paid millions of "
+                       "separate accounts weekly until it stopped in early April 2026; the organic trend is "
+                       "tx_count_ex_kaiching (signers *.kaiching excluded), which fell only ~3% across the break",
+             "metrics": ("tx_count", "active_addresses"),
+             "recorded": "Jake, 2026-10-02"},
 }
 
 
@@ -17407,6 +17516,8 @@ def incentive_caveat(project_name: str, metric: str) -> str | None:
     p = INCENTIVE_PERIODS.get(project_name)
     if not p or metric not in p["metrics"]:
         return None
+    if p.get("caveat"):
+        return p["caveat"]
     return (f"INCENTIVE-INFLATED before {p['organic_from']} — {p['programme']}; any trend or ratio reads "
             f"{p['organic_from']} onward (the organic baseline)")
 
@@ -17486,6 +17597,14 @@ METHODOLOGY_FLAGS = {
                               "page's totalRewards (3,063,771,452 ATH) and weekly `reward` (~18.4M ATH/week) are the "
                               "third component of emissions_tokens with checker + edge. totalServiceFee is ATH "
                               "PAID FOR SERVICE (demand), stored apart.",
+    "hyperliquid_active_addresses": "UNAVAILABLE FROM ASXN (Jake's probes7, 2026-10-02): no page carries daily active "
+                                    "addresses. HyperCore's \"Users 1.87M\" is CUMULATIVE — stored as "
+                                    "hypercore_users_total with its daily change as hypercore_new_users (new users, "
+                                    "NOT actives). Hyperliquid's own stats feed died in April 2026 and HyperEVM "
+                                    "explorer stats are paid-only, so active_addresses stays empty.",
+    "hyperliquid_tx_count_layer": "Hyperliquid tx_count is HyperEVM ONLY (ASXN /api/hyper-evm/network-metrics, from "
+                                  "probes7 2026-10-02): HyperCore's order flow is not in it. Not comparable to an L1 "
+                                  "that counts every action as a transaction.",
     "aethir_released_vs_earned": "MEASURED FROM THE DASHBOARD (Jake, 2026-10-02): node rewards vest (Aethir node-sale "
                                  "terms, Feb 2024: 'accrued and earned upon a vesting logic'; the 50% Checkers & "
                                  "Compute Providers allocation vests linearly over ~5 years). Released compute rewards "
@@ -17518,7 +17637,17 @@ METHODOLOGY_FLAGS = {
     "hyperliquid_throughput": "Hyperliquid's trading throughput is LEVERAGED PERPS NOTIONAL, not settlement: a "
                               "position's notional is many times the margin that moves, so it is not comparable to "
                               "Artemis settlement volume or to a spot chain's throughput.",
-    "near_activity_cause": "PARTLY ANSWERED (Jake's first pass, 2026-10-02, BigQuery 0.99 GB): weekly transactions "
+    "near_activity_cause": "ANSWERED — THE DROP IS KAI-CHING (Jake's probes7, second pass, 2026-10-02). By SIGNER: "
+                           "hotwallet.kaiching 15,107,069 transactions (2026-03-09..15) -> 0 (2026-04-06..12), 93.7% "
+                           "of the 16,119,161 drop; users.kaiching 828,287 -> 0 (5.1%); Kai-Ching ~98.8% together. "
+                           "Distinct receivers 14,595,101 -> 575,303 (x0.04): the hot wallet paid millions of "
+                           "separate accounts every week. Excluding Kai-Ching signers, weekly transactions went "
+                           "~7.0M -> ~6.8M (~-3%): the organic trend barely moved. So raw NEAR activity before "
+                           "April 2026 is ~70% ONE APP'S PAYOUTS (caveated on tx_count / active_addresses, config "
+                           "INCENTIVE_PERIODS Near); tx_count_ex_kaiching (BigQuery, signers *.kaiching excluded) "
+                           "reads across the break. Receivers alone missed it — the payouts went to millions of "
+                           "different accounts, so no receiver ranked high. FIRST PASS, kept: "
+                           "weekly transactions "
                            "22,925,561 (2026-03-09..15) -> 6,806,400 (2026-04-06..12), x0.30, a drop of 16,119,161. "
                            "BY RECEIVER: wallet.kaiching 1,110,074 -> 0 (6.9% of the drop — Kai-Ching stopped); "
                            "game.hot.tg -245,399 (1.5%); the top 25 receivers explain only 9.7% — so NOT a few "
@@ -17527,7 +17656,7 @@ METHODOLOGY_FLAGS = {
                            "eth-implicit, *.tg, *.near, Aurora, other) for signers and receivers, distinct "
                            "accounts per week and the receiver = signer share — its VERDICT line (a few senders / "
                            "a class such as implicit-account farming / broad decline) is recorded here when Jake "
-                           "pastes it back. NOT YET RUN.",
+                           "pastes it back. (Run 2026-10-02: verdict above.)",
     "maple_ssf_selling": "QUESTION, NOT ESTABLISHED: Maple's buyback-funded SSF appears to SELL SYRUP at "
                          "market — last 90 days d(usd) on -price x d(syrup) slope 0.979, R2 0.643; "
                          "2026-09-24..29 holdings 79.2M -> 74.9M SYRUP while liquid assets rose. If so, "
@@ -17878,6 +18007,11 @@ def series_granularity(project_name: str, metric: str) -> str:
         for f in (pg.get("arrays") or {}).values():
             if f.get("granularity") and (f.get("metric") == metric or metric in (f.get("values") or {}).values()):
                 return f["granularity"]
+    # A CHART READ IN THE BROWSER, declared on its pin (Aethir's weekly compute hours, probes7).
+    for bpg in (p.get("browser_capture") or {}).get("pages") or ():
+        for pin in bpg.get("series") or ():
+            if pin.get("metric") == metric and pin.get("granularity"):
+                return pin["granularity"]
     q = (p.get("dune_queries") or {}).get(metric) or {}
     if str(q.get("date_col") or "").lower() == "month":
         return "monthly"
