@@ -33,8 +33,9 @@ THE TOKEN-SCOPED BACKFILL (Jake, 2026-10-01: the chain-wide seed ran 1h+ without
 tokens DefiLlama prices can ever count (the liquidity filter above), so the year's ERC-20 backfill can
 read THOSE TOKENS ONLY, through Blockscout's Etherscan-compatible API — `erc20_route: "tokentx"`:
 
-  scope     tokens seen so far + Blockscout's ERC-20 list (most holders first, `scope_pages` pages),
-            kept where DefiLlama has ever priced them (coins.llama.fi /prices/first). Fixed once chosen.
+  scope     tokens seen so far + EVERY page of Blockscout's ERC-20 list, kept where DefiLlama has ever
+            priced them (coins.llama.fi /prices/first). Fixed once chosen; a scope chosen from a partial
+            list is completed once, and route C gives any added token its own pass.
   read      GET {base}/api?module=account&action=tokentx&contractaddress=<token>&startblock&endblock
             &sort=asc&offset=10000 (Blockscout's cap: page x offset <= 10,000). A full answer drops its
             last block (it may be cut) and the next call starts there, so no row is read twice; each
@@ -359,16 +360,36 @@ class PlumeSettlement:
             raise RuntimeError(f"getblocknobytime {pd.Timestamp(ts)} ({closest}) answered {str(j)[:200]}") from None
 
     def _scope(self, spec, st) -> list[str]:
-        """The tokens DefiLlama has ever priced, among those seen so far and Blockscout's ERC-20 list.
-        Chosen ONCE and kept in the state, so a resumed seed reads the same set."""
+        """The tokens DefiLlama has ever priced, among every token seen in the held days and EVERY page
+        of Blockscout's ERC-20 list. Chosen once and kept in the state, so a resumed seed reads the same
+        set — but a scope chosen before the list was read to its end (a page cap, or the is_name_null
+        422 that stopped Jake's probe at page 1) is completed once: _scope_additions."""
         if (st.get("tokentx") or {}).get("scope") and not st.get("scope"):
             st["scope"] = st["tokentx"].pop("scope")           # chosen by an earlier token-route run
-        if st.get("scope"):
-            return st["scope"]["tokens"]
+        if not st.get("scope"):
+            priced, n, complete = self._priced_candidates(spec, st)
+            st["scope"] = {"tokens": priced, "candidates": n, "complete": complete,
+                           "chosen_on": str(today().date())}
+        return st["scope"]["tokens"]
+
+    def _scope_additions(self, spec, st) -> list[str]:
+        """Tokens a scope chosen from a PARTIAL list missed: the list read to its end, priced, and any
+        new ones appended (the caller gives them their own pass over the planned blocks)."""
+        sc = st["scope"]
+        if sc.get("complete"):
+            return []
+        priced, n, complete = self._priced_candidates(spec, st)
+        new = sorted(set(priced) - set(sc["tokens"]))
+        sc.update(tokens=sorted(set(sc["tokens"]) | set(priced)), candidates=max(sc.get("candidates", 0), n),
+                  complete=complete, completed_on=str(today().date()), added=new)
+        return new
+
+    def _priced_candidates(self, spec, st) -> tuple[list[str], int, bool]:
+        """(priced tokens, candidates, whether the token list was read to its end)."""
         cfg = spec.get("tokentx") or {}
         cands = {t for toks in st["erc20"]["days"].values() for t in toks}
-        params, seen_pages = {"type": "ERC-20"}, set()
-        for _ in range(int(cfg.get("scope_pages", 20))):
+        params, seen_pages, complete = {"type": "ERC-20"}, set(), False
+        for _ in range(int(cfg.get("scope_max_pages", 1000))):
             self._pace(spec["base"], self._v2_rate(spec)).wait()
             j = self._client().get(f"{spec['base'].rstrip('/')}/api/v2/tokens", params=params)
             for it in j.get("items") or []:
@@ -377,7 +398,10 @@ class PlumeSettlement:
                     cands.add(a)
             nxt = j.get("next_page_params")
             key = json.dumps(nxt, sort_keys=True)
-            if not nxt or key in seen_pages:                  # a repeated cursor would loop
+            if not nxt:
+                complete = True
+                break
+            if key in seen_pages:                             # a repeated cursor would loop
                 break
             seen_pages.add(key)
             params = {"type": "ERC-20", **query_params(nxt)}
@@ -392,8 +416,7 @@ class PlumeSettlement:
                 j = self._client().get(f"{spec['price_api'].rstrip('/')}/prices/first/{','.join(coins)}")
                 priced += [c.split(":", 1)[1].lower() for c in ((j or {}).get("coins") or {})]
             priced = sorted(set(priced))
-        st["scope"] = {"tokens": priced, "candidates": len(cands), "chosen_on": str(today().date())}
-        return priced
+        return priced, len(cands), complete
 
     def _plan(self, spec, st, floor) -> dict:
         """The block range the token route covers, and its cursors — fixed once (resumable)."""
@@ -498,6 +521,13 @@ class PlumeSettlement:
         self._state_codes = self._code_cache(st)
         plan = self._plan(spec, st, floor)
         e, cfg = st["erc20"], spec.get("tokentx") or {}
+        new = self._scope_additions(spec, st)                 # the same token set as route C
+        if new:
+            lo, hi, segs = plan["from_block"], plan["to_block"], plan["segments"]
+            bounds = [lo + (hi - lo + 1) * k // segs for k in range(segs + 1)]
+            tt["tasks"] += [{"token": t, "next": a, "end": b - 1, "done": False}
+                            for t in new for a, b in zip(bounds, bounds[1:]) if b > a]
+            self._save(st)
         tasks = [t for t in tt["tasks"] if not t["done"]]
         span = max(plan["to_block"] - plan["from_block"] + 1, 1) * max(len(st["scope"]["tokens"]), 1)
         kept = [0]
@@ -614,8 +644,8 @@ class PlumeSettlement:
         lg["plan"] = {"from_block": bounds[str(floor.date())], "to_block": hi, "floor": str(floor.date()),
                       "v2_days_kept_from": kept_from, "planned_on": str(today().date()),
                       "day_blocks": bounds, "decimals": self._decimals(spec, toks)}
-        lg["next"] = lg["plan"]["from_block"]
-        lg["range"] = int((spec.get("logs") or {}).get("max_range", 100_000))
+        lg["passes"] = [{"tokens": sorted(lg["plan"]["decimals"]), "next": lg["plan"]["from_block"],
+                         "range": int((spec.get("logs") or {}).get("max_range", 100_000))}]
         self._save(st)
         return lg["plan"]
 
@@ -641,63 +671,82 @@ class PlumeSettlement:
     def _logs(self, spec, st, floor, t0, unbounded, name) -> int:
         """ROUTE C: the in-scope tokens' Transfer logs over block ranges of up to `max_range`, halved
         whenever the node's 10,000-log cap refuses one and doubled back after a success; the cached
-        eth_getCode test; each log's day from the bisected day-boundary blocks. Returns calls made."""
+        eth_getCode test; each log's day from the bisected day-boundary blocks. A token added to the
+        scope after the scan began gets its OWN PASS over the planned blocks, so every route reads the
+        same token set. Returns calls made."""
         lg = st.setdefault("logs", {})
         self._state_codes = self._code_cache(st)
         plan = self._logs_plan(spec, st, floor)
         e, cfg = st["erc20"], spec.get("logs") or {}
-        toks, dec = sorted(plan["decimals"]), plan["decimals"]
+        top = int(cfg.get("max_range", 100_000))
+        if "passes" not in lg:                                 # a plan from defc39d: one cursor
+            lg["passes"] = [{"tokens": sorted(plan["decimals"]), "next": lg.pop("next"), "range": lg.pop("range")}]
+        new = self._scope_additions(spec, st)
+        if new:
+            plan["decimals"].update(self._decimals(spec, new))
+            lg["passes"].append({"tokens": new, "next": plan["from_block"], "range": top})
+            log.info("plume_settlement: %d token(s) added to the scope (the token list read to its end) — "
+                     "their own pass over blocks %s..%s", len(new), f"{plan['from_block']:,}", f"{plan['to_block']:,}")
+            self._save(st)
+        dec = plan["decimals"]
         bdays = sorted(plan["day_blocks"].items(), key=lambda kv: kv[1])
         bblocks = [b for _, b in bdays]
-        top = int(cfg.get("max_range", 100_000))
         span = max(plan["to_block"] - plan["from_block"] + 1, 1)
         kept, calls, halvings = [0], 0, [0]
-        prog = Progress(f"plume_settlement logs {name}", unit="calls",
-                        fraction=lambda: (lg["next"] - plan["from_block"]) / span,
+        cur = [lg["passes"][0]]
+
+        def frac():
+            return sum(min(p["next"] - plan["from_block"], span) for p in lg["passes"]) / (span * len(lg["passes"]))
+
+        prog = Progress(f"plume_settlement logs {name}", unit="calls", fraction=frac,
                         checkpoint=lambda: self._save(st),
-                        status=lambda: (f"{len(toks)} token(s); block {lg['next']:,} of {plan['from_block']:,}.."
-                                        f"{plan['to_block']:,} (range {lg['range']:,}, {halvings[0]} halving(s)); "
-                                        f"day {bdays[max(bisect.bisect_right(bblocks, lg['next']) - 1, 0)][0]}; "
+                        status=lambda: (f"pass {lg['passes'].index(cur[0]) + 1}/{len(lg['passes'])} "
+                                        f"({len(cur[0]['tokens'])} token(s)); block {cur[0]['next']:,} of "
+                                        f"{plan['from_block']:,}..{plan['to_block']:,} (range {cur[0]['range']:,}, "
+                                        f"{halvings[0]} halving(s)); day "
+                                        f"{bdays[max(bisect.bisect_right(bblocks, cur[0]['next']) - 1, 0)][0]}; "
                                         f"{kept[0]:,} P2P transfer(s) kept this run; "
                                         f"{len(self._state_codes):,} address(es) checked"))
-        while lg["next"] <= plan["to_block"] and not self._over(t0, unbounded):
-            a = lg["next"]
-            b = min(a + lg["range"] - 1, plan["to_block"])
-            res = self._logs_window(spec, toks, a, b)
-            calls += 1
-            if res is None:
-                if lg["range"] <= 1:
-                    raise RuntimeError(f"block {a:,} alone holds more Transfer logs than the node returns")
-                lg["range"] = max(lg["range"] // 2, 1)
-                halvings[0] += 1
+        for ps in lg["passes"]:
+            cur[0] = ps
+            while ps["next"] <= plan["to_block"] and not self._over(t0, unbounded):
+                a = ps["next"]
+                b = min(a + ps["range"] - 1, plan["to_block"])
+                res = self._logs_window(spec, ps["tokens"], a, b)
+                calls += 1
+                if res is None:
+                    if ps["range"] <= 1:
+                        raise RuntimeError(f"block {a:,} alone holds more Transfer logs than the node returns")
+                    ps["range"] = max(ps["range"] // 2, 1)
+                    halvings[0] += 1
+                    prog.tick()
+                    continue
+                rows = []
+                for r in res:
+                    t = r.get("topics") or []
+                    if r.get("removed") or len(t) != 3 or str(t[0]).lower() != TRANSFER:
+                        continue
+                    tok = str(r.get("address") or "").lower()
+                    if tok not in ps["tokens"] or tok not in dec:
+                        continue
+                    fa, ta = "0x" + str(t[1])[-40:].lower(), "0x" + str(t[2])[-40:].lower()
+                    if fa == ZERO or ta == ZERO or fa == ta:
+                        continue
+                    blk = int(r["blockNumber"], 16)
+                    i = bisect.bisect_right(bblocks, blk) - 1
+                    if i < 0:
+                        continue
+                    rows.append((bdays[i][0], tok, int(r.get("data") or "0x0", 16) / 10 ** dec[tok], fa, ta))
+                self._codes(spec, [x for row in rows for x in row[3:]])
+                for day, tok, amt, fa, ta in rows:              # applied with the cursor: one checkpoint
+                    if self._state_codes.get(fa) == 0 and self._state_codes.get(ta) == 0:
+                        dd = e["days"].setdefault(day, {})
+                        dd[tok] = dd.get(tok, 0.0) + amt
+                        kept[0] += 1
+                ps["next"] = b + 1
+                ps["range"] = min(ps["range"] * 2, top)
                 prog.tick()
-                continue
-            rows = []
-            for r in res:
-                t = r.get("topics") or []
-                if r.get("removed") or len(t) != 3 or str(t[0]).lower() != TRANSFER:
-                    continue
-                tok = str(r.get("address") or "").lower()
-                if tok not in dec:
-                    continue
-                fa, ta = "0x" + str(t[1])[-40:].lower(), "0x" + str(t[2])[-40:].lower()
-                if fa == ZERO or ta == ZERO or fa == ta:
-                    continue
-                blk = int(r["blockNumber"], 16)
-                i = bisect.bisect_right(bblocks, blk) - 1
-                if i < 0:
-                    continue
-                rows.append((bdays[i][0], tok, int(r.get("data") or "0x0", 16) / 10 ** dec[tok], fa, ta))
-            self._codes(spec, [x for row in rows for x in row[3:]])
-            for day, tok, amt, fa, ta in rows:                  # applied with the cursor: one checkpoint
-                if self._state_codes.get(fa) == 0 and self._state_codes.get(ta) == 0:
-                    dd = e["days"].setdefault(day, {})
-                    dd[tok] = dd.get(tok, 0.0) + amt
-                    kept[0] += 1
-            lg["next"] = b + 1
-            lg["range"] = min(lg["range"] * 2, top)
-            prog.tick()
-        done = lg["next"] > plan["to_block"]
+        done = all(p["next"] > plan["to_block"] for p in lg["passes"])
         if done:
             e["oldest"], e["done_back"], e["cursor"] = str(floor), True, None
             lg["completed_on"] = str(today().date())

@@ -21784,7 +21784,7 @@ def test_plume_logs_route_gives_the_v2_answer_halving_on_the_cap_and_resuming(tm
     h2 = Http(log_cap=5)
     got = run("logs", h2, "cut.json").frame().set_index("date")["value"].sort_index()
     assert got.round(9).to_dict() == ref.round(9).to_dict()
-    nxt = json.loads((tmp_path / "cut.json").read_text())["logs"]["next"]
+    nxt = json.loads((tmp_path / "cut.json").read_text())["logs"]["passes"][0]["next"]
     assert min(a for a, _ in h2.logs) >= 501 and not any(b < min(a for a, _ in h2.logs) for _, b in h1.logs[4:])
     # A v2 SCAN UNDER WAY (cut on its 4th page), then route C takes over
     try:
@@ -21901,3 +21901,41 @@ def test_plume_routes_probe_counts_each_endpoints_own_limit(monkeypatch, capsys)
     assert "C eth_getLogs (THE ROUTE)" in out and "route is 'logs'" in out
     page2 = [p for u, p in sent if u.endswith("/api/v2/tokens") and "is_name_null" in p]
     assert page2 and page2[0]["is_name_null"] == "false" and page2[0]["name"] == "null"
+
+
+def test_plume_scope_is_the_whole_token_list_and_a_late_token_gets_its_own_pass(tmp_path, monkeypatch):
+    """Jake, 2026-10-02: route C read 79 in-scope tokens where the probe counted 46. The probe stopped
+    at page 1 of the token list (the is_name_null 422) and sampled 250 transfers; the seed reads every
+    token seen in its held days and the list to its end. The P2P filter is one set whatever the route:
+    a token counts on a day only if DefiLlama prices it that day. A scope chosen from a PARTIAL list
+    (an earlier page cap) is completed once, and any token it missed gets its own pass over the
+    planned blocks — the answer is still the v2 route's."""
+    import copy
+    from fetch.plume_settlement import PlumeSettlement
+    Http, Cut, prices = _plume_chain_fixture()
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    spec = plume["settlement_rebuild"]
+    spec.update(days=4)
+    spec["logs"] = {"max_range": 400, "log_cap": 5}
+    nosleep = lambda s: None                                                  # noqa: E731
+
+    def run(route, f, st=None):
+        monkeypatch.setenv("PLUME_SETTLEMENT_ROUTE", route)
+        if st is not None:
+            (tmp_path / f).write_text(json.dumps(st))
+        out = FetchOutput()
+        PlumeSettlement(http=Http(log_cap=5), prices=prices, cache_file=tmp_path / f, max_seconds=None,
+                        sleep=nosleep).run([plume], None, out)
+        return out.frame().set_index("date")["value"].sort_index()
+
+    ref = run("v2", "v2.json")
+    # a state whose scope was chosen from a partial list: only 0xusd, not complete
+    partial = {"erc20": {"newest": None, "oldest": None, "cursor": None, "done_back": False, "days": {}},
+               "native": {"days": {}}, "scope": {"tokens": ["0xusd"], "candidates": 1, "complete": False}}
+    got = run("logs", "late.json", partial)
+    assert got.round(9).to_dict() == ref.round(9).to_dict()
+    st = json.loads((tmp_path / "late.json").read_text())
+    assert st["scope"]["complete"] and st["scope"]["added"] == ["0xeth"] and st["scope"]["tokens"] == ["0xeth", "0xusd"]
+    assert [p["tokens"] for p in st["logs"]["passes"]] == [["0xusd"], ["0xeth"]]
+    # a complete scope is never re-read
+    assert PlumeSettlement(http=Http(), prices=prices)._scope_additions(spec, st) == []

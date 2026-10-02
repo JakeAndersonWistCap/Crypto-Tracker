@@ -3777,7 +3777,9 @@ PROJECTS = [
             "v2_rate_per_s": 2.9,                     # under 180/min, shared by every thread
             "rpc": "https://rpc.plume.org", "rpc_rate_per_s": 10, "rpc_batch": 100,
             "logs": {"max_range": 100_000, "log_cap": 10_000},
-            "tokentx": {"offset": 10_000, "segments": 8, "workers": 4, "scope_pages": 20, "rate_per_s": 4},
+            "tokentx": {"offset": 10_000, "segments": 8, "workers": 4, "rate_per_s": 4,
+                        # the token list is read TO ITS END (50 a page) for the scope; this only stops a runaway
+                        "scope_max_pages": 1000},
             # native PLUME has no Transfer event: advanced-filters, days side by side within the v2 rate
             "native_workers": 4,
             "label": "Artemis method, UNVALIDATED",

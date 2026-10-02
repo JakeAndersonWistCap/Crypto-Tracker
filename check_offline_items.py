@@ -4215,7 +4215,7 @@ def plume_settlement_routes():
         nxt = rr.json().get("next_page_params")
     # --- scope: tokens DefiLlama has ever priced ----------------------------------------------
     toks, params = [], {"type": "ERC-20"}
-    for _ in range(int(cfg.get("scope_pages", 20))):
+    for _ in range(int(cfg.get("scope_max_pages", 1000))):
         rr, _ = call("v2", f"{base}/api/v2/tokens", params)
         if not rr.ok:
             print(f"  token list: HTTP {rr.status_code}")
