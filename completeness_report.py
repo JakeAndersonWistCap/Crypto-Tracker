@@ -79,7 +79,8 @@ DECISIONS = {
     # Maple pool_release_tokens: WIRED 2026-09-30 from Jake's probe 5 — the SSF chart's island
     # props on maple.finance/transparency (fetch/maple_transparency.ssf_series); no decision left.
     # GEODNET locked_tokens: the manual row (3,000,000 GEOD, Blockworks chart read by Jake 2026-09-30)
-    # is in manual_overrides.csv since 2026-10-01 — no decision left; geod_stake_recipient may replace it.
+    # is in manual_overrides.csv since 2026-10-01 — THE ACCEPTED SOURCE (Jake, 2026-10-02): the staking contract
+    # was never found (METHODOLOGY_FLAGS geodnet_locked_tokens). No decision left.
     # Maple pool_release_tokens (Jake, 2026-10-01): no release programme runs, so N/A — not HELD.
     ("Maple", "pool_release_tokens"): (
         "N/A", "no release or emission programme runs: staking rewards were sunset by MIP-019 "
@@ -125,6 +126,11 @@ WAIT_ON_SERIES: dict = {
 # A SERIES WHOSE FIRST YEAR COMES FROM A ONE-OFF SEED (Jake, 2026-10-01): while the store holds none
 # of it, the cell is NEEDS JAKE — run the seed — not a BUG; once rows exist it is classified as usual.
 PENDING_SEED = {
+    # the browser route (Jake, 2026-10-02): rendered with the tabs clicked; its keys are pinned from the probe
+    **{("Aethir", m): "python check_offline_items.py browser_captures and paste back — these charts load in the "
+                      "browser; the responses behind them are pinned from the probe's output (config Aethir."
+                      "browser_capture), or the rendered figures read daily, forward-only"
+       for m in ("compute_hours_weekly", "avg_lock_duration_days_ai", "avg_lock_duration_days_gaming")},
     **{("Plume", m): "python token_metrics.py --seed plume_settlement (Plume's P2P transfers from Blockscout, "
                      "~21,755 pages, ~1.5h; Artemis method, UNVALIDATED) — routine runs then top it up"
        for m in ("p2p_transfer_volume_usd", "settlement_volume_usd", "network_reserve_ratio",

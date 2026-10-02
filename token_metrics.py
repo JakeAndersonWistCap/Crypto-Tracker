@@ -96,7 +96,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                             f"(the default when that file exists)")
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
-    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement",
+    ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
                              "near_bigquery"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
@@ -257,6 +257,29 @@ def seed_plume_settlement(st, log) -> int:
     return 0
 
 
+def seed_mev_relays(st, log) -> int:
+    """Ethereum's MEV year in one sitting (Jake, 2026-10-02): every covered relay's delivered payloads
+    back a year (~16k pages, 1/s per relay, relays side by side) and the non-relay blocks' priority fees
+    on ETHEREUM_RPC_URL; per-day aggregates checkpointed, so an interrupted seed resumes."""
+    from fetch import Heartbeat
+    from fetch.mev_relays import MevRelays
+    from fetch.validate import validate_frame
+    pl = [p for p in config.PROJECTS if p.get("mev_relays")]
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        MevRelays(max_seconds=None).run(pl, None, out, unbounded=True)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed mev_relays: %s — %s", e.status, e.message)
+    log.info("--seed mev_relays: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0
+
+
 def seed_hl_candles(st, log) -> int:
     """Hyperliquid's perps volume, the first year in one sitting (Jake, 2026-10-01): one 1d
     candleSnapshot per perp market (main dex + HIP-3), paced to the published weight limit, with
@@ -393,7 +416,8 @@ def main(argv=None) -> int:
     if args.seed:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
               "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles,
-              "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery}[args.seed](st, log)
+              "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
+              "mev_relays": seed_mev_relays}[args.seed](st, log)
         st.close()
         return rc
 

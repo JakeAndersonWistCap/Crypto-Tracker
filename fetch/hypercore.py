@@ -194,6 +194,7 @@ class HyperCoreInfo:
         if not isinstance(rows, list):
             return None, {}, f"expected a list of validators, got {type(rows).__name__}"
         raw, active_raw, n, n_active, missing = 0.0, 0.0, 0, 0, 0
+        idle_raw, n_idle = 0.0, 0
         for entry in rows:
             if not isinstance(entry, dict):
                 continue
@@ -207,6 +208,11 @@ class HyperCoreInfo:
             if not jailed:
                 active_raw += v
                 n_active += 1
+            # OUTSIDE THE ACTIVE SET OR JAILED (Jake, 2026-10-02): stake that earns nothing — the
+            # candidate for the gap between the documented 1/sqrt(stake) rate and the measured one
+            if jailed or entry.get(read.get("active_key", "isActive"), True) is False:
+                idle_raw += v
+                n_idle += 1
         if not n:
             return None, {}, (f"no validator carried a numeric {field!r} "
                               f"({len(rows)} entries, {missing} without it)")
@@ -216,7 +222,8 @@ class HyperCoreInfo:
                               f"scaling has no source: {dec_detail}")
         value, detail = self._apply_scale(raw, decimals, supply)
         extra = {"validators": n, "active": n_active, "missing_field": missing,
-                 "raw": raw, "active_raw": active_raw, "decimals": decimals}
+                 "raw": raw, "active_raw": active_raw, "decimals": decimals,
+                 "idle_raw": idle_raw, "idle": n_idle}
         return value, extra, (f"{field} summed across {n} validator(s), {n_active} not jailed; "
                               f"{dec_detail}; {detail}")
 
@@ -472,6 +479,14 @@ class HyperCoreInfo:
         # metric: it answers a different question (how much stake is securing the chain now) and
         # nothing in the book has chosen it for anything. Staging is exactly the third option
         # between discarding it and letting it silently drive a column.
+        if extra.get("decimals") is not None and extra.get("idle_raw") is not None and read.get("idle_metric"):
+            idle = extra["idle_raw"] / (10 ** extra["decimals"])
+            share = idle / value if value else 0.0
+            out.add(point(name, read["idle_metric"], idle, f"{src}[isActive false or isJailed]", TIER, when),
+                    SOURCE, name, f"{read['idle_metric']} = {idle:,.0f} HYPE on {extra['idle']} of "
+                                  f"{extra['validators']} validator(s) outside the active set or jailed — "
+                                  f"{share:.2%} of staked HYPE earning nothing; a rate paid on active stake "
+                                  f"reads x{1 - share:.4f} over all stake", TIER)
         if extra.get("decimals") is not None and extra.get("active_raw") is not None:
             active = extra["active_raw"] / (10 ** extra["decimals"])
             out.stage(name, f"{metric}_active_validators_only", active, date=when, source=src,

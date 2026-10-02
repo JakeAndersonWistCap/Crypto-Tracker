@@ -464,6 +464,8 @@ class AethirPages:
                 self._array(name, page, key, a, html, out)
             for key in m.get("report") or ():
                 cur, pts, why = current_and_series(html, key)
+                if cur is None and not pts:
+                    cur, why = key_scalar(html, key)
                 out.skipped(SOURCE, name, f"{page} `{key}` = " + (
                     f"{cur:,.2f}" if cur is not None else "no current figure")
                     + (f"; chart of {len(pts)}: {pts[0][0].date()} {pts[0][1]:,.2f} .. {pts[-1][0].date()} "
@@ -483,6 +485,11 @@ class AethirPages:
         dated points before today as its history. Same source: one measuring point."""
         src = f"{SOURCE}:{page}.{key}"
         cur, pts, why = current_and_series(html, key)
+        if cur is None and not pts:
+            # A KEY BESIDE AN ARRAY (Jake's probes5: "arr"; the supply page's totalRewards sits with
+            # weeklyData) is invisible to the flat-object reader: read by key name anywhere, ONE value.
+            cur, why2 = key_scalar(html, key)
+            why = why2 if cur is None else ""
         rows = [(d, v) for d, v in (pts or []) if d < today()] if history else []
         if cur is not None:
             rows.append((today(), cur))

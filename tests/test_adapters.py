@@ -18395,8 +18395,11 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     cons, exe, legs = bw._eth_yield_parts(R(), 5, eth, spec)
     assert "D[consensus_rewards_tokens:q0]" in cons and "/D[beacon_chain_eth:now]" in cons
     assert "gross_issuance_tokens" not in cons, "the consensus part is d(Eth2Staking), not issuance"
-    assert "EXCLUDING MEV" in spec["note"]
+    # MEV INCLUDED where held (Jake, 2026-10-02); the fee-based estimate (excluding MEV) otherwise
+    assert "MEV INCLUDED" in spec["note"] and "excluding MEV" in spec["note"]
     assert "(D[fees_usd:q0]-D[revenue_usd:q0])" in exe and "D[price_usd:q0]" in exe
+    assert exe.startswith("IF(ISNUMBER(D[execution_rewards_eth:q0]),") and \
+        ("execution rewards (MEV included)", "execution_rewards_eth", "q0") in legs
     cols = {c[0]: c for c in bw._eth_yield_columns(R())}
     ceil = cols["Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)"][1](5, eth)
     # ultrasound.money's staked-ETH series is frozen at 2024-06-22 (Jake's probe, 2026-09-30): the
@@ -18404,7 +18407,7 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     assert "166.32*SQRT(D[beacon_chain_eth:now])" in ceil
     assert "beacon_validators_eth" not in ceil
     assert cols["Consensus part (d Eth2Staking ÷ ETH on the beacon chain)"][1](5, config.PROJECT_BY_NAME["Near"]) == ""
-    assert any("EXCLUDING MEV" in k for k in cols) and not any("beaconcha" in k for k in cols)
+    assert any("MEV INCLUDED where held" in k for k in cols) and not any("beaconcha" in k for k in cols)
     # 64 x sqrt(B gwei) per epoch x 82,181.25 epochs/yr / 1e9 = 166.32 x sqrt(B ETH)
     assert abs(64 * (1e9) ** 0.5 * 365.25 * 86_400 / (32 * 12) / 1e9 - 166.32) < 0.01
     assert config.PROJECT_BY_NAME["Ethereum"]["coinmetrics_community"]["available"] is False
@@ -20388,9 +20391,15 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
         f'<script>self.__next_f.push([1,"{json.dumps("1b:" + json.dumps(blob))[1:-1]}"])</script>'
     supply = page([{"nodes": 433704, "locations": 94}, {"totalComputePower": 38509113.66,
                                                          "totalMonthlyCapacity": 638256960},
-                   {"idcStaked": 866_896_004, "totalOnlineHours": 3_514_810_067},
-                   {"totalRewards": 3_063_771_452.71, "totalServiceFee": 8_841_927_451.05,
-                    "totalLockedRewards": 2_040_911_539.99}])
+                   {"idcStaked": 866_896_004, "totalOnlineHours": 3_514_810_067}])
+    # the compute-reward block (probes5): keys BESIDE the weeklyData array, weeks DD/MM with no year
+    cweeks = pd.date_range("2026-07-26", "2026-09-27", freq="7D")             # the last is in progress
+    cblock = {"totalRewards": 3_063_771_452.71, "totalServiceFee": 8_841_927_451.05,
+              "totalLockedRewards": 2_040_911_539.99,
+              "weeklyData": [{"week": w.strftime("%d/%m"), "reward": 18_364_931.51, "service": 149_152_120.69}
+                             for w in cweeks]}
+    supply += f'<script>self.__next_f.push([1,"{json.dumps("1c:" + json.dumps(cblock))[1:-1]}"])</script>'
+
 
     assert current_and_series(onchain, "aiStaked")[0] == 416_297_029
     assert len(current_and_series(onchain, "aiStaked")[1]) == 5
@@ -20461,12 +20470,21 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert "the monthly list starts Aug 2024" in msgs
     wvm = next(e.message for e in out.log if e.message.startswith("weeklyNetworkRevenue (pro rata by day) vs"))
     assert "(+0.00%)" in wvm and "2024-08..2026-09" in wvm, wvm
-    # client-loaded charts: nothing stored, closed in config with why
+    # client-loaded charts: nothing stored from the server payload; the browser route (Jake, 2026-10-02)
     assert not {"compute_hours_weekly", "avg_lock_duration_days_ai", "avg_lock_duration_days_gaming"} & set(f.metric)
-    assert "CLIENT-LOADED" in config.unavailable_for("Aethir", "avg_lock_duration_days_ai")["summary"]
-    # supply page: possible cloud-host rewards REPORTED, never stored (waits on Jake's PDF)
-    assert "protocol/supply-metric `totalRewards` = 3,063,771,452.71" in msgs and "REPORTED, not stored" in msgs
-    assert not any("reward" in m.lower() for m in set(one("supply_units").metric))
+    assert config.unavailable_for("Aethir", "avg_lock_duration_days_ai") is None
+    pages = config.PROJECT_BY_NAME["Aethir"]["browser_capture"]["pages"]
+    assert {m for pg in pages for m in pg["wanted"]} == {"compute_hours_weekly", "avg_lock_duration_days_ai",
+                                                         "avg_lock_duration_days_gaming"}
+    # COMPUTE REWARDS (Jake, 2026-10-02): stored, read by key beside the weeklyData array; service fee
+    # (demand) and locked rewards apart; finished weeks only
+    assert float(one("compute_rewards_cumulative_tokens").value.iloc[0]) == 3_063_771_452.71
+    assert float(one("compute_service_fee_cumulative_tokens").value.iloc[0]) == 8_841_927_451.05
+    assert float(one("compute_rewards_locked_tokens").value.iloc[0]) == 2_040_911_539.99
+    cr = one("compute_rewards_tokens")
+    assert len(cr) == len(cweeks) - 1 and cr.date.iloc[0] == pd.Timestamp("2026-07-26") and cr.value.iloc[0] == 18_364_931.51
+    assert len(one("compute_service_fee_tokens")) == len(cweeks) - 1
+    assert config.series_granularity("Aethir", "compute_rewards_tokens") == "weekly"
     assert float(one("supply_units_edge").value.iloc[0]) == 64_869
     # derived: supplier stocks, utilisation, the ratio check
     assert float(one("checker_rewards_cumulative_tokens").value.iloc[0]) == base + bonus + air
@@ -20495,8 +20513,26 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     bw._measured_emissions_views(groups)
     em = groups[("Aethir", "emissions_tokens")].sort_values("date")
     meas = em[em.source.str.startswith("aethir_page:supplier_rewards")]
+    # no compute-reward reading at all: checker + edge, marked PARTIAL with what is missing
     assert list(meas.value) == pytest.approx([4e6, 8.4e6])
-    assert meas.source.iloc[1].endswith("[span=2d]")
+    assert "[span=2d]" in meas.source.iloc[1] and ":PARTIAL" in meas.source.iloc[0]
+    assert meas.source.iloc[0].endswith("[compute rewards (PoRW + PoC) not covered]")
+    # COMPUTE REWARDS ADDED (Jake, 2026-10-02): the stock's rise where both ends are read (10-01 -> 10-02),
+    # else the week's `reward` spread over its days (10-03, 10-04 from the week labelled 09-28)
+    cstock = ck.assign(metric="compute_rewards_cumulative_tokens", value=[3.06e9, 3.0626e9, 3.0626e9])
+    cstock = cstock.iloc[:2]
+    cweek = pd.DataFrame({"date": pd.to_datetime(["2026-09-28"]), "project": "Aethir", "metric": "compute_rewards_tokens",
+                          "value": [18.2e6], "source": "x", "tier": 3})
+    g2 = {**groups, ("Aethir", "emissions_tokens"): sch, ("Aethir", "compute_rewards_cumulative_tokens"): cstock,
+          ("Aethir", "compute_rewards_tokens"): cweek}
+    bw._measured_emissions_views(g2)
+    m2 = g2[("Aethir", "emissions_tokens")]
+    m2 = m2[m2.source.str.startswith("aethir_page:supplier_rewards")].sort_values("date")
+    assert list(m2.value) == pytest.approx([4e6 + 2.6e6, 8.4e6 + 2 * 2.6e6])
+    assert not m2.source.str.contains("PARTIAL").any()
+    from fetch.base import _measuring_point
+    assert {_measuring_point(x) for x in m2.source} | {_measuring_point(x) for x in meas.source} == \
+        {"aethir_page:supplier_rewards"}, "the declared handover's measuring point is unchanged"
     assert em[em.source.str.startswith("schedule")].date.max() == pd.Timestamp("2026-10-01")
     # TOTAL RELEASE = supplier + the staker schedule's rise in the same span (both pre-minted releases)
     stk = pd.DataFrame({"date": pd.to_datetime(["2026-09-24", "2026-10-01", "2026-10-03"]), "project": "Aethir",
@@ -20511,8 +20547,8 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     bw._measured_emissions_views(groups)
     rel = groups[("Aethir", "pool_release_tokens")].sort_values("date")
     assert list(rel.value) == pytest.approx([4e6, 8.4e6 + 2e6])            # the 10-03 step lands in (10-02, 10-04]
-    assert rel.source.iloc[0] == "aethir_page:release[supplier + staker rewards]"
-    assert rel.source.iloc[1].endswith("[span=2d]")
+    assert rel.source.iloc[0].startswith("aethir_page:release[supplier + staker rewards]:PARTIAL")
+    assert "[span=2d]" in rel.source.iloc[1]
     assert list(groups[("Aethir", "gross_issuance_tokens")].value) == [0.0]   # the schedule's old rows hidden
     assert config.issuance_basis("Aethir") == "pool_release_tokens"
     assert config.declared_handover("Aethir", "emissions_tokens")["ordered_points"] == \
@@ -21939,3 +21975,168 @@ def test_plume_scope_is_the_whole_token_list_and_a_late_token_gets_its_own_pass(
     assert [p["tokens"] for p in st["logs"]["passes"]] == [["0xusd"], ["0xeth"]]
     # a complete scope is never re-read
     assert PlumeSettlement(http=Http(), prices=prices)._scope_additions(spec, st) == []
+
+
+def test_mev_relays_dedupe_by_slot_and_never_add_a_relay_blocks_priority_fees(tmp_path, monkeypatch):
+    """Jake, 2026-10-02: Ethereum's execution reward = relay-delivered value for relay blocks + priority
+    fees of NON-relay blocks only (a relay payment already holds its block's priority fees). Relays are
+    paged by cursor (slot <=), 200 a page; a slot on two relays counts once; the day's block range comes
+    from the RPC. No RPC: the relay leg is stored and execution_rewards_eth is PARTIAL, saying why."""
+    import fetch.mev_relays as mr
+    from fetch.mev_relays import MevRelays, day_slots
+    monkeypatch.setattr(mr, "today", lambda: pd.Timestamp("2026-10-02"))
+    d = pd.Timestamp("2026-10-01")
+    s0, s1 = day_slots(d)
+    assert s1 - s0 + 1 == 7200 and mr.GENESIS + 12 * s0 >= int(d.timestamp()) > mr.GENESIS + 12 * (s0 - 1)
+    # 7200 slots; blocks = slot - s0 + 1000; relay A delivers even slots, relay B every 3rd (overlap at 6k)
+    A = {s: (10 ** 16, s - s0 + 1000) for s in range(s0, s1 + 1) if (s - s0) % 2 == 0}
+    B = {s: (10 ** 16, s - s0 + 1000) for s in range(s0, s1 + 1) if (s - s0) % 3 == 0}
+    data = {"https://a.relay": A, "https://b.relay": B}
+    pages = []
+
+    class H:
+        last_headers = {}
+
+        def get(self, url, params=None):
+            base = url.split("/relay/")[0]
+            assert url.endswith("/relay/v1/data/bidtraces/proposer_payload_delivered") and params["limit"] == 200
+            pages.append(base)
+            rows = sorted(((s, v) for s, v in data[base].items() if s <= params["cursor"]), reverse=True)[:200]
+            return [{"slot": str(s), "value": str(v), "block_number": str(b)} for s, (v, b) in rows]
+    spec = {"relays": [{"name": "a", "url": "https://a.relay"}, {"name": "b", "url": "https://b.relay"}], "days": 1}
+    blocks_ts = {b: int(d.timestamp()) + 12 * (b - 1000) for b in range(0, 1000 + 7200 + 10)}
+
+    def rpc(body):
+        if isinstance(body, dict):
+            return {"result": hex(max(blocks_ts))}
+        out = []
+        for q in body:
+            b = int(q["params"][0], 16)
+            if q["method"] == "eth_getBlockByNumber":
+                out.append({"id": q["id"], "result": {"timestamp": hex(blocks_ts[b]), "baseFeePerGas": hex(10)}
+                            if b in blocks_ts else None})
+            else:
+                # one receipt: 21,000 gas at base 10 + tip 2 gwei = 42e12 wei priority fee per block
+                out.append({"id": q["id"], "result": [{"gasUsed": hex(21000), "effectiveGasPrice": hex(10 + 2 * 10 ** 9)}]})
+        return out
+    out = FetchOutput()
+    MevRelays(http=H(), rpc=rpc, cache_file=tmp_path / "m.json", max_seconds=None, sleep=lambda s: None).run(
+        [{"name": "Ethereum", "mev_relays": spec}], None, out, unbounded=True)
+    f = out.frame().set_index(["metric", "date"])["value"]
+    relay_slots = set(A) | set(B)
+    assert f[("mev_relay_value_eth", d)] == pytest_approx_(len(relay_slots) * 0.01)
+    local = 7200 - len(relay_slots)
+    assert f[("execution_rewards_eth", d)] == pytest_approx_(len(relay_slots) * 0.01 + local * 42e12 / 1e18)
+    assert f[("mev_relay_block_share", d)] == pytest_approx_(len(relay_slots) / 7200)
+    st = json.loads((tmp_path / "m.json").read_text())["days"]["2026-10-01"]
+    assert st["by_relay"] == {"a": 3600, "b": 2400} and st["relay_blocks"] == 4800 and st["nonrelay_blocks"] == 2400
+    assert "relay_block_numbers" not in st, "aggregates only once the day is complete"
+    # NO RPC: relay leg stored, execution PARTIAL with the reason
+    monkeypatch.delenv("ETHEREUM_RPC_URL", raising=False)
+    out = FetchOutput()
+    MevRelays(http=H(), cache_file=tmp_path / "n.json", max_seconds=None, sleep=lambda s: None).run(
+        [{"name": "Ethereum", "mev_relays": spec}], None, out, unbounded=True)
+    ex = out.frame().query("metric == 'execution_rewards_eth'")
+    assert len(ex) == 1 and ":PARTIAL[no ETHEREUM_RPC_URL" in ex.source.iloc[0]
+    eth = config.PROJECT_BY_NAME["Ethereum"]["mev_relays"]
+    assert {r["name"] for r in eth["relays"]} >= {"flashbots", "ultrasound", "bloxroute_maxprofit", "aestus",
+                                                 "agnostic", "titan"}
+    assert config.VALIDATOR_YIELD["Ethereum"]["execution_metric"] == "execution_rewards_eth"
+
+
+def pytest_approx_(v):
+    import pytest
+    return pytest.approx(v)
+
+
+def test_research_round_records_plume_incentive_hl_inactive_and_browser_gate(tmp_path):
+    """Jake, 2026-10-02: Plume's pre-April activity is Points Season 2 farming (cells say so; settlement
+    windows read 2026-04-01 on); Hyperliquid stake outside the active set is stored apart; the browser route
+    renders nothing until a page is permitted and pinned; the methodology records are on file."""
+    import build_workbook as bw
+    from fetch.browser_capture import BrowserCapture, series_from, tile_from
+    from fetch.hypercore import HyperCoreInfo as HyperCore
+    # Plume
+    assert config.series_break("Plume", "settlement_volume_usd")["clean_from"] == "2026-04-01"
+    row = {"status": "ok", "value": 1.0, "date": pd.Timestamp("2026-09-30"), "n_points": 300, "entered_on": "",
+           "source": "growthepie", "tier": 1}
+    band, why = bw.confidence_for("Plume", "tx_count", row, pd.Timestamp("2026-10-01"))
+    assert "INCENTIVE-INFLATED before 2026-04-01" in why and "Points Season 2" in why
+    assert config.incentive_caveat("Near", "tx_count") is None
+    assert config.METHODOLOGY_FLAGS["plume_march_2026_activity"].startswith("ANSWERED")
+    for k in ("aethir_compute_rewards", "aethir_locked_rewards", "hyperliquid_reward_rate", "maple_ssf_liquidity",
+              "hyperliquid_throughput", "geodnet_locked_tokens", "near_activity_cause"):
+        assert k in config.METHODOLOGY_FLAGS, k
+    # Hyperliquid inactive stake: isActive false or jailed
+    hc = HyperCore.__new__(HyperCore)
+    hc._token_decimals = lambda api, read: (8, "x")
+    hc._apply_scale = lambda raw, dec, sup: (raw / 10 ** dec, "ok")
+    rows = [{"stake": 300e8, "isActive": True, "isJailed": False}, {"stake": 100e8, "isActive": False, "isJailed": False},
+            {"stake": 41e8, "isActive": True, "isJailed": True}]
+    v, extra, _ = hc._sum_field(rows, {}, {"sum_field": "stake", "jailed_key": "isJailed", "active_key": "isActive"}, 1e9)
+    assert v == 441 and extra["idle_raw"] / 1e8 == 141 and extra["idle"] == 2
+    read = next(r for r in config.PROJECT_BY_NAME["Hyperliquid"]["node_api"]["extra_reads"] if r["metric"] == "locked_tokens")
+    assert read["idle_metric"] == "locked_tokens_inactive"
+    # the browser gate
+    out = FetchOutput()
+
+    class Daily:
+        def due(self, *a):
+            return True
+
+        def done(self, *a):
+            pass
+    called = []
+    BrowserCapture(capture_fn=lambda *a, **k: called.append(a), daily=Daily()).run(
+        [config.PROJECT_BY_NAME["Hyperliquid"], config.PROJECT_BY_NAME["Aethir"]], None, out)
+    assert not called, "nothing rendered: ASXN not permitted, Aethir not pinned"
+    msgs = " ".join(e.message for e in out.log)
+    assert "robots.txt and terms not yet confirmed" in msgs and "no series or tile is pinned yet" in msgs
+    got = [("https://x/api/hours?range=all", {"data": {"rows": [{"date": "2026-09-01", "hours": 5.0},
+                                                                {"date": "2026-09-08", "hours": 7.0}]}})]
+    assert series_from(got, {"url_contains": "/api/hours", "path": "data.rows", "date_key": "date",
+                             "value_key": "hours"}) == [(pd.Timestamp("2026-09-01"), 5.0), (pd.Timestamp("2026-09-08"), 7.0)]
+    assert tile_from("Weekly Compute Hours Delivered 22,089,416 hours", "Weekly Compute Hours Delivered") == 22_089_416
+
+
+def test_near_activity_cause_reads_the_receiver_column_runs_on_budget_and_ranks_the_drop(tmp_path, monkeypatch, capsys):
+    """Jake, 2026-10-02: which apps NEAR's drop came from — the receiver column from INFORMATION_SCHEMA,
+    the query dry-run and run through the adapter's ledger (as backfill: the month's top-up reserve holds),
+    each receiver's share of the drop printed."""
+    import sys as _sys
+    import types
+    import check_offline_items as coi
+    from fetch.near_bigquery import NearBigQuery
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    fake = types.ModuleType("google.cloud.bigquery")
+    fake.QueryJobConfig = lambda **kw: types.SimpleNamespace(**kw)
+    g, gc = types.ModuleType("google"), types.ModuleType("google.cloud")
+    g.cloud, gc.bigquery = gc, fake
+    for k, v in (("google", g), ("google.cloud", gc), ("google.cloud.bigquery", fake)):
+        monkeypatch.setitem(_sys.modules, k, v)
+    ran = []
+
+    class Client:
+        def query(self, sql, job_config=None):
+            if "INFORMATION_SCHEMA.COLUMNS" in sql:
+                rows = [{"column_name": c} for c in ("block_date", "transaction_hash", "signer_account_id",
+                                                     "receiver_account_id")]
+                return types.SimpleNamespace(result=lambda: rows)
+            assert "receiver_account_id AS receiver" in sql
+            if getattr(job_config, "dry_run", False):
+                return types.SimpleNamespace(total_bytes_processed=16e9)
+            ran.append(job_config.maximum_bytes_billed)
+            rows = [{"receiver": "game.hot.tg", "before_n": 9_000_000, "after_n": 1_000_000},
+                    {"receiver": "sweat", "before_n": 2_000_000, "after_n": 1_500_000},
+                    {"receiver": "__TOTAL__", "before_n": 14_000_000, "after_n": 3_640_000}]
+            return types.SimpleNamespace(result=lambda: rows, total_bytes_billed=16e9, project="near-data-510309")
+    fake.ScalarQueryParameter = lambda k, t, v: (k, t, v)
+    fake.ArrayQueryParameter = lambda k, t, v: (k, t, tuple(v))
+    monkeypatch.setattr(NearBigQuery, "_client", lambda self, spec: (setattr(self, "_bq", fake) or (Client(), None)))
+    monkeypatch.setattr(NearBigQuery, "_reserve", lambda self, spec, st: (100e9, "test reserve"))
+    coi.near_activity_cause()
+    out = capsys.readouterr().out
+    assert "dry run (free): 16.00 GB" in out and len(ran) == 1
+    assert "14,000,000 -> 3,640,000" in out and "(x0.26)" in out
+    hot = next(line for line in out.splitlines() if "game.hot.tg" in line)
+    assert "77.2%" in hot, hot                               # 8,000,000 of the 10,360,000 lost

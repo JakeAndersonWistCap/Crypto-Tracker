@@ -742,6 +742,9 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     sus = config.break_suspect(project, metric, row.get("source"))
     if sus:
         why.append(sus)
+    inc = config.incentive_caveat(project, metric)
+    if inc:
+        why.append(inc)
     nc = config.is_non_comparable(project, metric, row.get("source"))
     if nc:
         why.append(f"NOT COMPARABLE: {nc['why']} Use {nc['use_instead']}")
@@ -925,6 +928,7 @@ def _measured_emissions_views(groups: dict) -> None:
         if not stocks:
             continue
         common = sorted(set.intersection(*(set(s_.index) for s_ in stocks)))
+        adds = [_added_component(groups, name, a) for a in spec.get("adds") or ()]
         rows = []
         for prev, day in zip(common, common[1:]):
             deltas = [s_[day] - s_[prev] for s_ in stocks]
@@ -932,8 +936,17 @@ def _measured_emissions_views(groups: dict) -> None:
                 continue
             span = (pd.Timestamp(day) - pd.Timestamp(prev)).days
             src = spec["source"] + (f"[span={span}d]" if span > 1 else "")
+            extra, missing = 0.0, []
+            for a, (stock, daily) in zip(spec.get("adds") or (), adds):
+                v = _component_over(stock, daily, prev, day)
+                if v is None:
+                    missing.append(a["what"])
+                else:
+                    extra += v
+            if missing:
+                src = config.mark_source(src, "PARTIAL") + f"[{', '.join(missing)} not covered]"
             rows.append({"date": day, "project": name, "metric": "emissions_tokens",
-                         "value": float(sum(deltas)), "source": src, "tier": 3})
+                         "value": float(sum(deltas)) + extra, "source": src, "tier": 3})
         if not rows:
             continue
         meas = pd.DataFrame(rows)
@@ -946,6 +959,33 @@ def _measured_emissions_views(groups: dict) -> None:
                                                            ignore_index=True).sort_values("date")
         else:
             groups[(name, "emissions_tokens")] = _as_stored(meas, meas.columns)
+
+
+def _added_component(groups: dict, name: str, a: dict):
+    """(cumulative stock by day, daily rate by day) for a supplier component added to measured
+    emissions (Aethir compute rewards, Jake 2026-10-02): the stock as read, and each weekly figure
+    spread evenly over the seven days from its label."""
+    g = groups.get((name, a["stock"]))
+    stock = (g.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+             if g is not None and not g.empty else pd.Series(dtype=float))
+    w = groups.get((name, a.get("weekly_flow")))
+    daily = {}
+    if w is not None and not w.empty:
+        for d, v in w.drop_duplicates("date", keep="last")[["date", "value"]].itertuples(index=False):
+            for k in range(7):
+                daily[pd.Timestamp(d) + pd.Timedelta(days=k)] = float(v) / 7
+    return stock, daily
+
+
+def _component_over(stock, daily: dict, prev, day) -> float | None:
+    """The component's amount over (prev, day]: the stock's rise when both ends were read (a fall
+    is no measurement), else the weekly figures' days, else None (not covered)."""
+    if prev in stock.index and day in stock.index and stock[day] >= stock[prev]:
+        return float(stock[day] - stock[prev])
+    days = pd.date_range(pd.Timestamp(prev) + pd.Timedelta(days=1), day)
+    if len(days) and all(d in daily for d in days):
+        return float(sum(daily[d] for d in days))
+    return None
 
 
 def _release_view(groups: dict, name: str, spec: dict, supplier: pd.DataFrame, common: list) -> None:
@@ -2991,7 +3031,16 @@ def _eth_yield_parts(R: Refs, r: int, p: dict, spec: dict) -> tuple[str, str, li
     cons = f"{_annualise(R, r, p, cm, R.D(r, cm, 'q0'))}/{stake}"
     prio = f"({R.D(r, fm, 'q0')}-{R.D(r, bm, 'q0')})"
     exe = f"{_annualise(R, r, p, fm, prio)}/{R.D(r, 'price_usd', 'q0')}/{stake}"
-    return cons, exe, [("consensus rewards", cm, "q0"), ("fees", fm, "q0"), ("burned fees", bm, "q0")]
+    legs = [("consensus rewards", cm, "q0"), ("fees", fm, "q0"), ("burned fees", bm, "q0")]
+    em = spec.get("execution_metric")
+    if em:
+        # MEV INCLUDED (Jake, 2026-10-02): relay-delivered value + non-relay priority fees, in ETH, where
+        # the series is held; the fee-based estimate (excluding MEV) otherwise. A PARTIAL execution row
+        # (no non-relay leg) carries its marker to the cell's caveat like any other.
+        mev = f"{_annualise(R, r, p, em, R.D(r, em, 'q0'))}/{stake}"
+        exe = f"IF(ISNUMBER({R.D(r, em, 'q0')}),{mev},{exe})"
+        legs.append(("execution rewards (MEV included)", em, "q0"))
+    return cons, exe, legs
 
 
 def _eth_yield_columns(R: Refs) -> list[tuple]:
@@ -3025,7 +3074,7 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
                                f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/({f['coefficient']}*SQRT({stake}))")
     return [
         ("Consensus part (d Eth2Staking ÷ ETH on the beacon chain)", part(0), FMT_PCT, "calc"),
-        ("Execution part (priority fees ÷ the same; EXCLUDING MEV — no free source)", part(1), FMT_PCT, "calc"),
+        ("Execution part (relay-delivered value + non-relay priority fees ÷ the same; MEV INCLUDED where held)", part(1), FMT_PCT, "calc"),
         ("Issuance ÷ protocol maximum 166.32·√staked (consensus-specs; <1 = missed duties)", ceiling, FMT_X, "calc"),
     ]
 

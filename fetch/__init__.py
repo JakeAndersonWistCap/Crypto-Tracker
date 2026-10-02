@@ -50,6 +50,8 @@ from .pendle_epochs import PendleEpochs
 from .ultrasound import UltrasoundHistory
 from .artemis import ArtemisCSV
 from .plume_settlement import PlumeSettlement
+from .mev_relays import MevRelays
+from .browser_capture import BrowserCapture
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
@@ -97,6 +99,10 @@ TIER_ORDER = [
     ("plume_staking", 2, lambda ctx: PlumeStaking()),
     # Plume's settlement volume rebuilt by Artemis's method — P2P transfers from Blockscout (2026-10-01).
     ("plume_settlement", 1, lambda ctx: PlumeSettlement()),
+    # Ethereum's execution reward with MEV: relay-delivered value + non-relay priority fees (2026-10-02).
+    ("mev_relays", 1, lambda ctx: MevRelays()),
+    # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
+    ("browser_capture", 3, lambda ctx: BrowserCapture()),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
     # settlement rebuild (approved 2026-10-01), via Jake's Application Default Credentials.
     ("near_bigquery", 1, lambda ctx: NearBigQuery(stored_long=ctx["stored_long"])),
@@ -1754,6 +1760,9 @@ TIER_BUDGET_S = {
     # daily top-up ~60 ERC-20 pages + the day's native pages; the adapter stops itself at 240s
     "plume_settlement": 300,
     "near_bigquery": 300,
+    # ~45 relay pages + ~700 non-relay blocks' receipts a day; the adapter stops itself at 240s
+    "mev_relays": 300,
+    "browser_capture": 180,
 }
 DEFAULT_BUDGET_S = 120
 HEARTBEAT_AFTER_S = 30.0

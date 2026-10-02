@@ -4360,6 +4360,161 @@ def plume_settlement_routes():
     print(f"  PASTE BACK all lines. The seed's ERC-20 route is {spec['erc20_route']!r} (config erc20_route).")
 
 
+def near_activity_cause():
+    """Jake, 2026-10-02: NEAR's activity fell ~74% from March to April 2026 in BigQuery AND NearBlocks.
+    Which apps? Top RECEIVER accounts by transaction count, 2026-03-09..15 against 2026-04-06..12, from the
+    transactions table — the receiver column is read from INFORMATION_SCHEMA first (metadata, free), the
+    query is dry-run (free), and run through the adapter's own path: capped at its dry run, counted in the
+    monthly ledger, and held if it would eat the month's top-up reserve (~16 GB expected). Prints each
+    receiver whose activity disappeared and its share of the drop."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.base import FetchOutput                     # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery           # noqa: PLC0415
+    head("NEAR — what disappeared between 2026-03-09..15 and 2026-04-06..12 (top receivers by transactions)")
+    spec = config.PROJECT_BY_NAME["Near"]["near_bigquery"]
+    nb = NearBigQuery()
+    client, why = nb._client(spec)
+    ds = spec.get("allowed_dataset", "bigquery-public-data.crypto_near_mainnet_us")
+    meta = (f"SELECT column_name FROM `{ds}`.INFORMATION_SCHEMA.COLUMNS WHERE table_name = 'transactions' "
+            f"ORDER BY ordinal_position")
+    if client is None:
+        print(f"  not run here: {why}. In the console (near-data-510309) run first:\n  {meta}")
+        return
+    from google.cloud import bigquery                      # noqa: PLC0415
+    nb._guard_sql(meta, spec)
+    cols = [r["column_name"] for r in client.query(meta, job_config=bigquery.QueryJobConfig(
+        maximum_bytes_billed=200 * 1024 ** 2)).result()]
+    recv = next((c for c in cols if c in ("receiver_account_id", "transaction_receiver_account_id")), None) or \
+        next((c for c in cols if "receiver" in c), None)
+    print(f"  transactions columns: {', '.join(cols)}")
+    if recv is None:
+        print("  NO receiver column — paste back the column list")
+        return
+    sql = (f"WITH tx AS (SELECT block_date, {recv} AS receiver FROM `{ds}.transactions` "
+           f"WHERE block_date BETWEEN @a0 AND @a1 OR block_date BETWEEN @b0 AND @b1), "
+           f"agg AS (SELECT receiver, COUNTIF(block_date BETWEEN @a0 AND @a1) AS before_n, "
+           f"COUNTIF(block_date BETWEEN @b0 AND @b1) AS after_n FROM tx GROUP BY receiver) "
+           f"SELECT * FROM (SELECT receiver, before_n, after_n FROM agg ORDER BY before_n - after_n DESC LIMIT 40) "
+           f"UNION ALL SELECT '__TOTAL__', SUM(before_n), SUM(after_n) FROM agg")
+    params = {"a0": pd.Timestamp("2026-03-09").date(), "a1": pd.Timestamp("2026-03-15").date(),
+              "b0": pd.Timestamp("2026-04-06").date(), "b1": pd.Timestamp("2026-04-12").date()}
+    st = nb._load()
+    nb._run_bytes = nb._backfill_bytes = 0                 # the adapter's per-run counters (set in run())
+    out = FetchOutput()
+    est = nb._dry(client, sql, params, spec)
+    print(f"  dry run (free): {est / 1e9:,.2f} GB")
+    rows = nb._run(client, "near_activity_cause", sql, params, spec, st, out, "Near", backfill=True)
+    for e in out.log:
+        print(f"  {e.status}: {e.message}")
+    if not rows:
+        return
+    tot = next(r for r in rows if r["receiver"] == "__TOTAL__")
+    drop = int(tot["before_n"]) - int(tot["after_n"])
+    print(f"\n  all receivers: {int(tot['before_n']):,} -> {int(tot['after_n']):,} transactions a week "
+          f"(x{int(tot['after_n']) / max(int(tot['before_n']), 1):.2f}); the drop {drop:,}")
+    print(f"  {'receiver':<48} {'Mar 9-15':>12} {'Apr 6-12':>12} {'lost':>12} {'share of drop':>14} {'cumulative':>11}")
+    cum = 0
+    for r in [r for r in rows if r["receiver"] != "__TOTAL__"][:25]:
+        lost = int(r["before_n"]) - int(r["after_n"])
+        cum += lost
+        print(f"  {str(r['receiver'])[:48]:<48} {int(r['before_n']):>12,} {int(r['after_n']):>12,} {lost:>12,} "
+              f"{lost / drop if drop else 0:>13.1%} {cum / drop if drop else 0:>10.1%}")
+    print("  PASTE BACK all lines: the receivers explaining most of the drop name the programme that ended.")
+
+
+def browser_captures():
+    """Jake, 2026-10-02: the charts a dashboard draws in the browser — ASXN's Hyperliquid dashboard and
+    Aethir's compute-hours and stake-duration charts. For each configured page: robots.txt (the verdict
+    the adapter applies), the site's terms (an excerpt of any sentence about scraping, automated access or
+    commercial use, from the usual terms paths), then ONE render with the timeframe tabs clicked: every JSON
+    response (URL, keys, lists with their item keys), websocket frames, and the rendered text around the
+    wanted labels. Paste back: the series are pinned from these lines; nothing is stored before."""
+    import config                                          # noqa: PLC0415
+    from fetch import browser_capture as bc                # noqa: PLC0415
+    from fetch.base import USER_AGENT                      # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    import re                                              # noqa: PLC0415
+    import urllib.parse                                    # noqa: PLC0415
+    labels = {"Hyperliquid": ("Transactions", "Active Addresses", "Daily Active", "HyperEVM", "HyperCore"),
+              "Aethir": ("Weekly Compute Hours", "Average Stake Duration", "AI Pool", "Gaming Pool")}
+    for p in config.PROJECTS:
+        for pg in (p.get("browser_capture") or {}).get("pages") or ():
+            head(f"{p['name']} — {pg['url']}")
+            ok, why = robots_verdict(pg["url"])
+            print(f"  robots.txt: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+            base = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(pg["url"]))
+            for path in ("/terms", "/terms-of-service", "/terms-of-use", "/tos", "/legal"):
+                try:
+                    r = requests.get(base + path, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  terms {path}: {type(e).__name__}")
+                    continue
+                if r.status_code != 200:
+                    continue
+                txt = re.sub(r"<[^>]+>", " ", r.text)
+                hits = [s.strip() for s in re.split(r"(?<=[.!?])\s+", txt)
+                        if re.search(r"scrap|crawl|automated|robot|bot\b|commercial|reproduc", s, re.I)][:6]
+                print(f"  terms {base + path}: HTTP 200; " + (" | ".join(h[:220] for h in hits) or
+                                                             "no sentence on scraping or automated access"))
+            if not ok:
+                continue
+            try:
+                got = bc.capture(pg["url"], clicks=pg.get("clicks") or ())
+            except Exception as e:  # noqa: BLE001
+                print(f"  render failed: {type(e).__name__}: {str(e)[:200]}")
+                continue
+            print(f"  tabs clicked: {got['clicked'] or 'none found'}; {len(got['responses'])} JSON response(s); "
+                  f"{len(got['ws'])} websocket frame(s)")
+            for line in bc.shapes(got["responses"])[:40]:
+                print(f"    {line}")
+            for u, frame in got["ws"][:5]:
+                print(f"    WS {u[:100]}: {frame[:200]}")
+            for lab in labels.get(p["name"], ()):
+                i = got["text"].find(lab)
+                if i >= 0:
+                    print(f"  text near \"{lab}\": {' '.join(got['text'][i:i + 200].split())}")
+            print(f"  configured: permitted={pg.get('permitted')}, wanted {pg.get('wanted') or '(activity series)'}")
+    print("\n  PASTE BACK all lines. Each series is pinned with its response URL, list path, date and value keys and "
+          "its layer (HyperCore / HyperEVM for ASXN).")
+
+
+def mev_relays():
+    """Jake, 2026-10-02: the relays behind Ethereum's MEV leg — for each configured relay ONE data-API call:
+    HTTP status, any rate-limit headers, rows, the newest slot; then the share of the last 200 slots that
+    the covered relays delivered together (de-duplicated by slot). Terms are not published at the API; each
+    relay's site is listed for Jake to read."""
+    import config                                          # noqa: PLC0415
+    from fetch.base import USER_AGENT                      # noqa: PLC0415
+    from fetch.mev_relays import PATH                      # noqa: PLC0415
+    spec = config.PROJECT_BY_NAME["Ethereum"]["mev_relays"]
+    head("Ethereum — MEV-Boost relays: data API, limits, coverage")
+    slots, newest = {}, 0
+    for r in spec["relays"]:
+        try:
+            resp = requests.get(r["url"] + PATH, params={"limit": 200}, headers={"User-Agent": USER_AGENT},
+                                timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {r['name']:<22} {type(e).__name__}")
+            continue
+        lim = {k: v for k, v in resp.headers.items() if "ratelimit" in k.lower() or k.lower() == "retry-after"}
+        rows = resp.json() if resp.ok else []
+        s = [int(x["slot"]) for x in rows] if isinstance(rows, list) else []
+        newest = max([newest] + s)
+        for x in s:
+            slots.setdefault(x, []).append(r["name"])
+        print(f"  {r['name']:<22} HTTP {resp.status_code}; {len(s)} row(s), newest slot {max(s) if s else '-'}; "
+              f"limit headers {lim or 'none'}; site {r['url']}")
+        time.sleep(1)
+    if newest:
+        window = range(newest - 199, newest + 1)
+        hit = sum(1 for x in window if x in slots)
+        multi = sum(1 for x in window if len(slots.get(x, [])) > 1)
+        print(f"\n  last 200 slots ({window.start}..{newest}): {hit} delivered by a covered relay ({hit / 200:.0%}, "
+              f"missed slots included in the 200); {multi} slot(s) on more than one relay (counted once)")
+    print(f"  not covered: {', '.join(spec['not_covered'])}")
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -4380,6 +4535,9 @@ CHECKS = (
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,
+    near_activity_cause,
+    browser_captures,
+    mev_relays,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

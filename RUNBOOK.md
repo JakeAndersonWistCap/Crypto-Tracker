@@ -527,6 +527,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11p. Research round, 2026-10-02: MEV, browser charts, NEAR's drop
+
+```bash
+python check_offline_items.py mev_relays          # each relay: status, limit headers, share of recent slots
+python token_metrics.py --seed mev_relays         # a year of relay deliveries (+ ETHEREUM_RPC_URL for non-relay blocks)
+python check_offline_items.py browser_captures    # ASXN + Aethir charts: robots, terms excerpt, every captured response
+python check_offline_items.py near_activity_cause # NEAR's top receivers, Mar 9-15 vs Apr 6-12 (~16 GB, on the ledger)
+```
+- **Ethereum yield, MEV included.** Execution = relay-delivered value + priority fees of non-relay
+  blocks, in ETH. Without `ETHEREUM_RPC_URL` the relay leg is stored and the execution figure is
+  PARTIAL. The relays covered are listed in config `Ethereum.mev_relays`; the stored share of blocks
+  they delivered shows how much the covered relays account for.
+- **Browser charts.** Nothing renders until a page is `permitted: True` (ASXN waits on its robots.txt
+  and terms), and nothing is stored until its series or tiles are pinned from the probe's output.
+- **Aethir compute rewards** are the third supplier component of `emissions_tokens`, alongside
+  checker and edge rewards. `totalLockedRewards` is stored separately, because whether it's vesting
+  isn't known yet.
+
 ## 11o. history_audit.py reads what completeness_report.py reads (2026-10-01)
 
 `python history_audit.py --short-only` lists only REAL gaps. It works on the series the workbook

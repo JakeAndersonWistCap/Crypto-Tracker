@@ -666,6 +666,11 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                     "near-data-510309` (RUNBOOK 11n), then `python token_metrics.py --seed near_bigquery`.")
         return ("Plume's P2P transfer scan (fetch/plume_settlement.py) has no complete day stored yet",
                 "Run `python token_metrics.py --seed plume_settlement` once (~1.5h); routine runs top it up.")
+    # ETHEREUM'S EXECUTION REWARD WITH MEV (Jake, 2026-10-02): the relay data APIs + ETHEREUM_RPC_URL.
+    if project.get("mev_relays") and metric in ("mev_relay_value_eth", "execution_rewards_eth", "mev_relay_block_share"):
+        return ("the MEV-Boost relay scan (fetch/mev_relays.py) has no complete day stored yet",
+                "Run `python token_metrics.py --seed mev_relays` once for the year (set ETHEREUM_RPC_URL for the "
+                "non-relay leg); routine runs top it up. `python check_offline_items.py mev_relays` checks each relay.")
     pay = (project.get("plume_staking") or {}).get("payouts") or {}
     if metric == pay.get("metric"):
         return ("the staking treasury's RewardDistributed scan (fetch/plume_staking.py) stored nothing this run",
