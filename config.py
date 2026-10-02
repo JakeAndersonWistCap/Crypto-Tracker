@@ -3746,35 +3746,39 @@ PROJECTS = [
         # ===== SETTLEMENT VOLUME REBUILT BY ARTEMIS'S METHOD — UNVALIDATED (Jake, 2026-10-01). =====
         # fetch/plume_settlement.py: P2P (ERC-20 + native, both sides non-contract) at same-day
         # DefiLlama prices + DefiLlama DEX volume; NFT ~0. Jake's measure: ~2,980 ERC-20 transfers a
-        # day, 25 of 250 sampled EOA-to-EOA — a year is ~21,755 pages once on the v2 route (~1.5h at a
-        # steady 4/s; Jake's sequential run went 1h+ unfinished, latency-bound), then daily top-ups.
-        # `--seed plume_settlement` for the year; probe plume_settlement_routes times each route.
+        # day, 25 of 250 sampled EOA-to-EOA — a year is ~21,755 pages once on the v2 route (Jake's
+        # sequential run went 1h+ unfinished), then daily top-ups. `--seed plume_settlement` reads the
+        # year by eth_getLogs (route C, below); probe plume_settlement_routes times each route.
         "settlement_rebuild": {
             "base": "https://explorer.plume.org", "days": 365,
             "p2p_metric": "p2p_transfer_volume_usd", "dex_metric": "dex_volume_usd",
             "price_api": "https://coins.llama.fi", "chain_key": "plume_mainnet", "native_coin": "coingecko:plume",
             # a day with more native transfers than this many 50-row pages is not stored (and says so)
             "native_max_pages_per_day": 400,
-            # ===== FASTER SEED (Jake, 2026-10-01: the chain-wide seed ran 1h+ unfinished). =====
-            # "v2" = the chain-wide token-transfers list (every token, 50 a page, ~21,755 pages a year).
-            # "tokentx" = the TOKEN-SCOPED backfill (fetch/plume_settlement docstring): only tokens
-            # DefiLlama has ever priced, via the Etherscan-compatible tokentx at 10,000 rows a call, with
-            # eth_getCode on rpc.plume.org for the non-contract test (cached). STAYS "v2" UNTIL probe
-            # plume_settlement_routes has measured both on Jake's machine (Jake: report expected run
-            # times before switching). One run on the token route without a config change:
-            # PLUME_SETTLEMENT_ROUTE=tokentx python token_metrics.py --seed plume_settlement
-            "erc20_route": "v2",
-            "tokentx": {"offset": 10_000, "segments": 8, "workers": 4, "scope_pages": 20,
-                        # Blockscout's DEFAULT per-IP limit is 300/min = 5/s for both /api and /api/v2
-                        # (blockscout/blockscout master: config/runtime.exs API_RATE_LIMIT_BY_IP 300 per
-                        # 1m; apps/block_scout_web/priv/rate_limit_config.json "default" and "api/v2/*",
-                        # read 2026-10-01). explorer.plume.org's own setting is NOT KNOWN until the probe
-                        # reads its x-ratelimit-limit header: 4/s shared by every worker stays under the
-                        # default. Raise only on the probe's measured figure.
-                        "rate_per_s": 4,
-                        "rpc": "https://rpc.plume.org", "rpc_rate_per_s": 10, "code_batch": 100},
-            # native PLUME days read side by side, within the same shared 4/s (each day is its own chain
-            # of advanced-filters pages, so days are independent)
+            # ===== THE SEED'S ERC-20 ROUTE (Jake, 2026-10-01/02). =====
+            # "logs" (ROUTE C, the route) = eth_getLogs on rpc.plume.org for the in-scope tokens' Transfer
+            #   events: measured 100,000 blocks -> 1,771 logs in 2.0s; 1,000,000 refused ("logs count
+            #   limit exceeded (10000)"). Ranges of `max_range`, halved on the cap, doubled back after a
+            #   success (late March 2026 is far denser). eth_getCode cached; day boundaries bisected on
+            #   the RPC. Resumes a v2 scan under way (its whole days kept, the partial oldest re-read).
+            # "tokentx" (route B) = the Etherscan-compatible /api — RATE-LIMITED, NOT FAST: 10 calls per
+            #   window of at least 40 minutes on explorer.plume.org (x-ratelimit-limit 10, reset
+            #   2,381,653 ms), so its ~467 calls take 31-47 hours. Opt-in only; it waits out the limit.
+            # "v2" (route A) = the chain-wide list, every token, 50 a page; daily top-ups stay on v2.
+            # One run on another route: PLUME_SETTLEMENT_ROUTE=v2|tokentx python token_metrics.py --seed ...
+            "erc20_route": "logs",
+            # MEASURED LIMITS (Jake's probe plume_settlement_routes, 2026-10-01). x-ratelimit-reset is in
+            # MILLISECONDS to the end of a fixed window (blockscout plug/rate_limit.ex). BLOCKSCOUT_API_KEY
+            # is NOT an account key on this instance and does not change the limit.
+            "limits": {"explorer.plume.org /api/v2": "180 requests per minute per IP (reset ~56,739 ms)",
+                       "explorer.plume.org /api": "10 requests per window of >= 40 min (reset 2,381,653 ms)",
+                       "BLOCKSCOUT_API_KEY": "not an account key on explorer.plume.org — no effect",
+                       "rpc.plume.org": "not published; its x-ratelimit-* headers, if sent, are honoured"},
+            "v2_rate_per_s": 2.9,                     # under 180/min, shared by every thread
+            "rpc": "https://rpc.plume.org", "rpc_rate_per_s": 10, "rpc_batch": 100,
+            "logs": {"max_range": 100_000, "log_cap": 10_000},
+            "tokentx": {"offset": 10_000, "segments": 8, "workers": 4, "scope_pages": 20, "rate_per_s": 4},
+            # native PLUME has no Transfer event: advanced-filters, days side by side within the v2 rate
             "native_workers": 4,
             "label": "Artemis method, UNVALIDATED",
             "validation": "UNVALIDATED until the method reproduces Artemis's Ethereum figure "
@@ -17241,6 +17245,12 @@ METHODOLOGY_FLAGS = {
                            "was deprecated 2026-03-24 inside the window. NEAR settlement windows and the "
                            "365-day NRR may span the boundary; a NEAR figure across it reflects the real drop. "
                            "The cause (a campaign or programme ending) is not established.",
+    "plume_march_2026_activity": "QUESTION, NOT ESTABLISHED (Jake's v2 seed, 2026-10-02): Plume's CHAIN-WIDE "
+                                 "ERC-20 transfer count around late March 2026 ran ~50x September's per day "
+                                 "(~1,000 v2 pages/day vs ~20) — mostly OUTSIDE the priced-token P2P measure "
+                                 "(route C's in-scope logs are far sparser). Explain it before reading Plume's "
+                                 "activity trend: an airdrop, a points or incentive campaign, or spam tokens. "
+                                 "tx_count / active_addresses (growthepie) over the same weeks would show it.",
     "maple_ssf_selling": "QUESTION, NOT ESTABLISHED: Maple's buyback-funded SSF appears to SELL SYRUP at "
                          "market — last 90 days d(usd) on -price x d(syrup) slope 0.979, R2 0.643; "
                          "2026-09-24..29 holdings 79.2M -> 74.9M SYRUP while liquid assets rose. If so, "
@@ -20688,12 +20698,14 @@ SOURCE_REGISTER = {
                   "allow / and disallow only /auth/*, /login, /chakra, /sprite, /account/* — the API "
                   "is not disallowed; Plume's own deployment NOT CHECKED FROM HERE",
         "terms": {"url": "https://explorer.plume.org/", "status": "REACHABLE (Jake's probe 2026-09-30) — NOT YET READ: Jake to read"},
-        "licence": "Blockscout default API rate limit 300/min per IP (blockscout/blockscout "
-                   "config/runtime.exs:157-199)",
+        "licence": "MEASURED (Jake's probe 2026-10-01): /api/v2 180 requests/min per IP; the "
+                   "Etherscan-compatible /api 10 per window of >= 40 min; BLOCKSCOUT_API_KEY has no effect "
+                   "here (Blockscout's default is 300/min, config/runtime.exs:157-199)",
         "key": None,
     },
     "rpc.plume.org": {
-        "used_for": "Plume staking diamond reads (plume_staking)",
+        "used_for": "Plume staking diamond reads (plume_staking); the settlement seed's eth_getLogs, "
+                    "eth_getCode and day-boundary block reads (plume_settlement route C)",
         "paths": ["/"],
         "robots": "JSON-RPC endpoint; not a crawlable site",
         "terms": {"url": "https://plume.org/", "status": "REACHABLE (Jake's probe 2026-09-30) — NOT YET READ: Jake to read"},

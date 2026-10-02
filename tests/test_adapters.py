@@ -20724,6 +20724,7 @@ def test_plume_settlement_rebuild_by_artemis_method_is_unvalidated_and_stores_on
     from fetch.base import today
     from fetch.plume_settlement import PlumeSettlement
     plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    plume["settlement_rebuild"]["erc20_route"] = "v2"                 # this test is the v2 route
     spec = plume["settlement_rebuild"]
     assert spec["label"] == "Artemis method, UNVALIDATED" and spec["chain_key"] == "plume_mainnet"
     assert config.unavailable_for("Plume", "settlement_volume_usd") is None, "reopened: Jake decided to build it"
@@ -21254,6 +21255,7 @@ def test_plume_settlement_first_run_cut_short_resumes_from_its_checkpoint(tmp_pa
     from fetch.plume_settlement import PlumeSettlement
     monkeypatch.setattr(fb, "PROGRESS_EVERY_UNITS", 1)
     plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    plume["settlement_rebuild"]["erc20_route"] = "v2"                 # this test is the v2 route
     plume["settlement_rebuild"]["days"] = 4
     d = [(today() - pd.Timedelta(days=k)).normalize() for k in range(0, 7)]
     eoa = lambda h: {"hash": h, "is_contract": False}                         # noqa: E731
@@ -21420,36 +21422,76 @@ def test_aethir_yearless_week_labels_take_their_year_from_the_sequence():
 
 
 def _plume_chain_fixture():
-    """A small fake Plume: day k (k days ago) holds blocks 901-100k .. 1000-100k. Serves the v2
-    chain-wide list, the Etherscan-compatible tokentx / getblocknobytime, the token list, eth_getCode
-    batches and native advanced-filters — the SAME transfers through every route."""
+    """A small fake Plume: day k (k days ago) holds blocks 901-100k .. 1000-100k, 600s apart from the
+    day's start. Serves the v2 chain-wide list, the Etherscan-compatible tokentx / getblocknobytime,
+    the token list (with Blockscout's real keyset next_page_params), and the RPC — eth_blockNumber,
+    eth_getBlockByNumber, decimals(), eth_getCode, eth_getLogs with a log cap — the SAME transfers
+    through every route."""
     from fetch.base import today
-    from fetch.plume_settlement import ZERO
+    from fetch.plume_settlement import TRANSFER, ZERO
     t0 = today().normalize()
-    contracts = {"0xpool", "0xrouter"}
+    A, Bb, C, D = ("0x" + c * 40 for c in "abcd")
+    POOL, ROUTER = "0x" + "e" * 40, "0x" + "f" * 40
+    contracts = {POOL, ROUTER}
     tx = []                                            # (block, idx, token, from, to, units)
-    plan = [("0xusd", "0xa", "0xb", 7), ("0xusd", "0xa", "0xpool", 50), ("0xeth", "0xc", "0xd", 3),
-            ("0xjunk", "0xc", "0xd", 9), ("0xusd", ZERO, "0xd", 11), ("0xeth", "0xd", "0xd", 4),
-            ("0xusd", "0xc", "0xa", 2), ("0xeth", "0xrouter", "0xb", 6)]
+    plan = [("0xusd", A, Bb, 7), ("0xusd", A, POOL, 50), ("0xeth", C, D, 3),
+            ("0xjunk", C, D, 9), ("0xusd", ZERO, D, 11), ("0xeth", D, D, 4),
+            ("0xusd", C, A, 2), ("0xeth", ROUTER, Bb, 6)]
     for k in range(0, 7):
         for i, (tok, a, b, u) in enumerate(plan):
             tx.append((1000 - 100 * k - 10 * i, 0, tok, a, b, u + k))
     tx.sort(key=lambda r: (r[0], r[1]), reverse=True)
     day_of = lambda blk: t0 - pd.Timedelta(days=(1000 - blk) // 100)               # noqa: E731
+    first_of = lambda blk: 901 - 100 * ((1000 - blk) // 100)                         # noqa: E731
+    ts_of = lambda blk: int(day_of(blk).timestamp()) + 600 * (blk - first_of(blk))   # noqa: E731
+    HEAD = 1000
 
     class Cut(KeyboardInterrupt):
         pass
 
     class Http:
-        def __init__(self, cut_tokentx_at=None, cut_v2_at=None):
-            self.calls, self.windows, self.v2 = [], [], 0
-            self.cut_tokentx_at, self.cut_v2_at = cut_tokentx_at, cut_v2_at
+        def __init__(self, cut_tokentx_at=None, cut_v2_at=None, cut_logs_at=None, log_cap=10_000):
+            self.calls, self.windows, self.v2, self.logs, self.token_pages = [], [], 0, [], []
+            self.cut_tokentx_at, self.cut_v2_at, self.cut_logs_at, self.log_cap = \
+                cut_tokentx_at, cut_v2_at, cut_logs_at, log_cap
+            self.last_headers = {}
+
+        def _one(self, q):
+            m, p = q["method"], q["params"]
+            if m == "eth_blockNumber":
+                return hex(HEAD)
+            if m == "eth_getBlockByNumber":
+                b = int(p[0], 16)
+                return None if b > HEAD else {"number": p[0], "timestamp": hex(ts_of(b))}
+            if m == "eth_call":
+                assert p[0]["data"] == "0x313ce567"
+                return "0x" + "0" * 63 + "6"
+            if m == "eth_getCode":
+                return "0x6080" if p[0] in contracts else "0x"
+            raise AssertionError(m)
 
         def post(self, url, json_body=None):
             assert url == "https://rpc.plume.org"
-            self.calls.append(("rpc", len(json_body)))
-            return [{"jsonrpc": "2.0", "id": q["id"],
-                     "result": "0x6080" if q["params"][0] in contracts else "0x"} for q in json_body]
+            if isinstance(json_body, list):
+                self.calls.append(("rpc", len(json_body)))
+                return [{"jsonrpc": "2.0", "id": q["id"], "result": self._one(q)} for q in json_body]
+            q = json_body
+            if q["method"] != "eth_getLogs":
+                return {"jsonrpc": "2.0", "id": q["id"], "result": self._one(q)}
+            f = q["params"][0]
+            a, b = int(f["fromBlock"], 16), int(f["toBlock"], 16)
+            assert f["topics"] == [TRANSFER] and isinstance(f["address"], list)
+            self.logs.append((a, b))
+            if self.cut_logs_at and len(self.logs) == self.cut_logs_at:
+                raise Cut()
+            rows = sorted(r for r in tx if r[2] in f["address"] and a <= r[0] <= b)
+            if len(rows) > self.log_cap:
+                return {"jsonrpc": "2.0", "id": 1, "error": {"code": -32005,
+                                                            "message": f"logs count limit exceeded ({self.log_cap})"}}
+            pad = lambda x: "0x" + "0" * 24 + x[2:]                               # noqa: E731
+            return {"jsonrpc": "2.0", "id": 1, "result": [
+                {"address": r[2], "blockNumber": hex(r[0]), "topics": [TRANSFER, pad(r[3]), pad(r[4])],
+                 "data": hex(r[5] * 10 ** 6), "removed": False} for r in rows]}
 
         def get(self, url, params=None):
             p = dict(params or {})
@@ -21468,7 +21510,18 @@ def _plume_chain_fixture():
                 nxt = {"block_number": page[-1][0], "index": page[-1][1]} if len(rows) > 3 else None
                 return {"items": items, "next_page_params": nxt}
             if url.endswith("/api/v2/tokens"):
-                return {"items": [{"address_hash": t} for t in ("0xusd", "0xeth", "0xjunk")], "next_page_params": None}
+                self.token_pages.append(p)
+                # Blockscout's own keyset (chain.ex paging_params): a JSON boolean and nulls. Its
+                # validator answers 422 to anything but true/false for is_name_null.
+                if "is_name_null" in p and p["is_name_null"] not in ("true", "false"):
+                    raise RuntimeError("HTTP 422 from https://explorer.plume.org/api/v2/tokens — Invalid value, "
+                                       "pointer /is_name_null, detail: Invalid boolean. Got: string")
+                if "is_name_null" not in p:
+                    return {"items": [{"address_hash": "0xusd"}, {"address_hash": "0xjunk"}],
+                            "next_page_params": {"contract_address_hash": "0xjunk", "fiat_value": None,
+                                                 "holders_count": "5", "is_name_null": False, "items_count": 50,
+                                                 "market_cap": None, "name": "Junk"}}
+                return {"items": [{"address_hash": "0xeth"}], "next_page_params": None}
             if url.endswith("/api/v2/advanced-filters"):
                 day = p["age_from"][:10]
                 return {"items": [{"type": "coin_transfer", "from": {"hash": "0xx", "is_contract": False},
@@ -21509,8 +21562,8 @@ def test_plume_token_route_gives_the_v2_answer_resumes_and_continues_a_v2_scan(t
     Http, Cut, prices = _plume_chain_fixture()
     plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
     spec = plume["settlement_rebuild"]
-    assert spec["erc20_route"] == "v2", "stays v2 until probe plume_settlement_routes has timed both"
-    assert spec["tokentx"]["rate_per_s"] == 4 and spec["tokentx"]["rpc"] == "https://rpc.plume.org"
+    assert spec["erc20_route"] == "logs", "route C is the route (Jake, 2026-10-02)"
+    assert spec["rpc"] == "https://rpc.plume.org" and spec["v2_rate_per_s"] * 60 < 180
     spec.update(days=4)
     spec["tokentx"].update(offset=2, segments=3)
     nosleep = lambda s: None                                                  # noqa: E731
@@ -21532,9 +21585,9 @@ def test_plume_token_route_gives_the_v2_answer_resumes_and_continues_a_v2_scan(t
     assert h.v2 == 1 and {w[0] for w in h.windows} == {"0xusd", "0xeth"}, "0xjunk is unpriced: never read"
     assert len(h.windows) == len(set(h.windows)), "no window read twice"
     st = json.loads((tmp_path / "t.json").read_text())
-    assert st["tokentx"]["scope"]["tokens"] == ["0xeth", "0xusd"] and st["erc20"]["done_back"] is True
-    assert st["tokentx"]["code"]["0xpool"] == 1 and st["tokentx"]["code"]["0xa"] == 0
-    assert sum(n for kind, n in h.calls if kind == "rpc") == len(st["tokentx"]["code"]), "each address once"
+    assert st["scope"]["tokens"] == ["0xeth", "0xusd"] and st["erc20"]["done_back"] is True
+    assert st["code"]["0x" + "e" * 40] == 1 and st["code"]["0x" + "a" * 40] == 0
+    assert sum(n for kind, n in h.calls if kind == "rpc") == len(st["code"]), "each address once"
 
     # CUT on the 4th tokentx call (one worker: deterministic), then resumed
     monkeypatch.setattr(fb, "PROGRESS_EVERY_UNITS", 1)
@@ -21684,3 +21737,167 @@ def test_history_audit_reads_coingecko_total_supply_as_by_design(tmp_path, monke
     assert v == "BY DESIGN" and why.startswith("BY DESIGN") and "total_supply_gross" in why
     assert ("Chainlink", "total_supply") not in {(r[0], r[1]) for r in ha.rows(db, short_only=True, classify=False)}
     assert "archive_backfill" not in ha.why_short(config.PROJECT_BY_NAME["Chainlink"], "total_supply", None)
+
+
+def test_plume_logs_route_gives_the_v2_answer_halving_on_the_cap_and_resuming(tmp_path, monkeypatch):
+    """Jake, 2026-10-02: ROUTE C is the route — eth_getLogs on rpc.plume.org for the in-scope tokens and
+    the Transfer topic, ranges halved whenever the node's log cap refuses one (late March 2026 is far
+    denser), the cached eth_getCode test, day boundaries bisected on the RPC. The answer must be the v2
+    route's to the cent: fresh, cut and resumed (no range read twice), and taking over a v2 scan already
+    under way (its whole days kept, its partial oldest day re-read)."""
+    import copy
+    import fetch.base as fb
+    from fetch.plume_settlement import PlumeSettlement
+    Http, Cut, prices = _plume_chain_fixture()
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    spec = plume["settlement_rebuild"]
+    assert spec["erc20_route"] == "logs" and spec["logs"] == {"max_range": 100_000, "log_cap": 10_000}
+    spec.update(days=4)
+    spec["logs"] = {"max_range": 400, "log_cap": 5}            # 7 in-scope transfers a day: must halve
+    nosleep = lambda s: None                                                  # noqa: E731
+
+    def run(route, http, f):
+        monkeypatch.setenv("PLUME_SETTLEMENT_ROUTE", route)
+        out = FetchOutput()
+        PlumeSettlement(http=http, prices=prices, cache_file=tmp_path / f, max_seconds=None, sleep=nosleep).run(
+            [plume], None, out)
+        return out
+
+    ref = run("v2", Http(), "v2.json").frame().set_index("date")["value"].sort_index()
+    h = Http(log_cap=5)
+    got = run("logs", h, "c.json").frame().set_index("date")["value"].sort_index()
+    assert got.round(9).to_dict() == ref.round(9).to_dict() and len(ref) == 4
+    st = json.loads((tmp_path / "c.json").read_text())
+    assert st["erc20"]["done_back"] and st["logs"]["plan"]["decimals"] == {"0xeth": 6, "0xusd": 6}
+    assert st["logs"]["plan"]["from_block"] == 501, "the floor day's first block, bisected on the RPC"
+    assert h.v2 == 1 and h.windows == [], "one v2 page for the newest block; the /api never touched"
+    covered = sorted(h.logs)
+    assert all(b - a + 1 <= 400 for a, b in covered) and any(b - a + 1 < 400 for a, b in covered), "halved"
+    # CUT on the 5th getLogs, then resumed: no range read twice once applied
+    monkeypatch.setattr(fb, "PROGRESS_EVERY_UNITS", 1)
+    h1 = Http(log_cap=5, cut_logs_at=5)
+    try:
+        run("logs", h1, "cut.json")
+        raise AssertionError("not cut")
+    except Cut:
+        pass
+    h2 = Http(log_cap=5)
+    got = run("logs", h2, "cut.json").frame().set_index("date")["value"].sort_index()
+    assert got.round(9).to_dict() == ref.round(9).to_dict()
+    nxt = json.loads((tmp_path / "cut.json").read_text())["logs"]["next"]
+    assert min(a for a, _ in h2.logs) >= 501 and not any(b < min(a for a, _ in h2.logs) for _, b in h1.logs[4:])
+    # A v2 SCAN UNDER WAY (cut on its 4th page), then route C takes over
+    try:
+        run("v2", Http(cut_v2_at=4), "mix.json")
+        raise AssertionError("not cut")
+    except Cut:
+        pass
+    before = json.loads((tmp_path / "mix.json").read_text())["erc20"]
+    got = run("logs", Http(log_cap=5), "mix.json").frame().set_index("date")["value"].sort_index()
+    assert got.round(9).to_dict() == ref.round(9).to_dict()
+    plan = json.loads((tmp_path / "mix.json").read_text())["logs"]["plan"]
+    kept = str((pd.Timestamp(before["oldest"]).normalize() + pd.Timedelta(days=1)).date())
+    assert plan["v2_days_kept_from"] == kept and plan["to_block"] == plan["day_blocks"][kept] - 1
+    assert nxt > 1000
+
+
+def test_blockscout_paging_params_are_sent_as_the_api_expects_and_limits_are_honoured(tmp_path):
+    """Jake's tokentx run (2026-10-01): HTTP 422 from explorer.plume.org/api/v2/tokens, "pointer
+    /is_name_null, Invalid boolean. Got: string" — next_page_params were spread into the query, and
+    requests sends False as "False" and DROPS None. The exact second request is pinned. And a server's
+    x-ratelimit-* headers (reset in MILLISECONDS on Blockscout) are waited out at remaining 0."""
+    import copy
+    from fetch.base import limit_wait, query_params
+    from fetch.plume_settlement import PlumeSettlement
+    assert query_params({"is_name_null": False, "name": None, "holders_count": "5", "x": True}) == \
+        {"is_name_null": "false", "name": "null", "holders_count": "5", "x": "true"}
+    Http, Cut, prices = _plume_chain_fixture()
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    h = Http()
+    a = PlumeSettlement(http=h, prices=prices, cache_file=tmp_path / "s.json", max_seconds=None, sleep=lambda s: None)
+    st = a._load()
+    assert a._scope(plume["settlement_rebuild"], st) == ["0xeth", "0xusd"]
+    assert h.token_pages == [{"type": "ERC-20"},
+                             {"type": "ERC-20", "contract_address_hash": "0xjunk", "fiat_value": "null",
+                              "holders_count": "5", "is_name_null": "false", "items_count": 50,
+                              "market_cap": "null", "name": "Junk"}]
+    # limits: Blockscout's reset is ms to the window's end; an epoch reset is seconds
+    assert limit_wait({"x-ratelimit-limit": "10", "x-ratelimit-remaining": "7", "x-ratelimit-reset": "2381653"}) == 0
+    assert limit_wait({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2381653"}) == 2381.653
+    assert limit_wait({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000000100"}, now=2_000_000_000) == 100
+    assert limit_wait({"x-ratelimit-remaining": "-1", "x-ratelimit-reset": "-1"}) == 0       # unlimited
+    naps = []
+    b = PlumeSettlement(http=h, prices=prices, cache_file=tmp_path / "t.json", sleep=naps.append)
+    h.last_headers = {"x-ratelimit-limit": "10", "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1500"}
+    b._honour("explorer.plume.org/api", h)
+    assert naps == [1.5] and b._limits_seen["explorer.plume.org/api"]["x-ratelimit-limit"] == "10"
+
+
+def test_plume_routes_probe_counts_each_endpoints_own_limit(monkeypatch, capsys):
+    """Jake's probe (2026-10-01): the tokentx answer carried x-ratelimit-limit 10, reset 2,381,653 —
+    MILLISECONDS to the end of a fixed window (v2's 56,739 fits a 60 s window). The probe's "~0.36 h"
+    for route B ignored it; B is 10 calls per window of >= 40 min, i.e. a day or more. The token list's
+    keyset is sent as true/false/null."""
+    import types
+    import check_offline_items as coi
+    sent = []
+
+    class R:
+        def __init__(self, body, headers=None, status=200):
+            self._b, self.headers, self.status_code = body, headers or {}, status
+            self.ok, self.content, self.text = status < 400, b"x" * 100, json.dumps(body)
+
+        def json(self):
+            return self._b
+
+    v2h = {"x-ratelimit-limit": "180", "x-ratelimit-remaining": "170", "x-ratelimit-reset": "56739"}
+    apih = {"x-ratelimit-limit": "10", "x-ratelimit-remaining": "7", "x-ratelimit-reset": "2381653"}
+    tok = "0x" + "1" * 40
+    items = [{"token": {"address_hash": tok}}] * 50
+
+    class S:
+        headers: dict = {}
+
+        def get(self, url, params=None, timeout=None):
+            sent.append((url, dict(params or {})))
+            if url.endswith("/api/v2/token-transfers"):
+                return R({"items": items, "next_page_params": {"block_number": 9, "index": 1}}, v2h)
+            if url.endswith("/api/v2/tokens"):
+                if params.get("is_name_null") not in (None, "true", "false"):
+                    return R({"message": "Invalid boolean"}, v2h, 422)
+                nxt = None if "is_name_null" in params else {"is_name_null": False, "name": None, "holders_count": "5",
+                                                             "market_cap": None, "contract_address_hash": tok}
+                return R({"items": [{"address_hash": tok}], "next_page_params": nxt}, v2h)
+            if "/prices/first/" in url:
+                return R({"coins": {f"plume_mainnet:{tok}": {"price": 1}}})
+            if url.endswith("/counters"):
+                return R({"transfers_count": "1000", "token_holders_count": "50"}, v2h)
+            if url.endswith("/api/v2/advanced-filters"):
+                return R({"items": [], "next_page_params": None}, v2h)
+            if url.endswith("/api"):
+                if params["action"] == "getblocknobytime":
+                    return R({"result": {"blockNumber": "1000" if params["timestamp"] > 1.7e9 + 3e7 else "100"}}, apih)
+                return R({"result": [{"from": "0xa", "to": "0xb"}] * 500}, apih)
+            raise AssertionError(url)
+
+        def post(self, url, json=None, timeout=None):
+            if isinstance(json, list):
+                return R([{"id": q["id"], "result": "0x"} for q in json])
+            if json["method"] == "eth_blockNumber":
+                return R({"result": hex(31_536_000)})
+            return R({"result": [{}] * 1771})
+
+    monkeypatch.setattr(coi, "requests", types.SimpleNamespace(Session=S, RequestException=Exception))
+    monkeypatch.setattr(coi.time, "sleep", lambda s: None)
+    coi.plume_settlement_routes()
+    out = capsys.readouterr().out
+    assert "limit tokentx:" in out and "-> 10 per window of >= 2,382s (likely 3,600s)" in out
+    assert "-> 180 per window of >= 57s (likely 60s)" in out
+    b = next(line for line in out.splitlines() if line.strip().startswith("B tokentx:"))
+    assert "THE /api LIMIT makes it" in b and "RATE-LIMITED, not the default" in b
+    # one token here: 1,087,700 / 9,999 + 8 segments = 117 calls (+2 boundary calls) / 10 per window
+    # x 2,382 s .. 3,600 s. Jake's 46 tokens give ~467 calls: 31-47 h.
+    assert "~117 calls" in b and "THE /api LIMIT makes it 7.9-11.9 h" in b, b
+    assert "C eth_getLogs (THE ROUTE)" in out and "route is 'logs'" in out
+    page2 = [p for u, p in sent if u.endswith("/api/v2/tokens") and "is_name_null" in p]
+    assert page2 and page2[0]["is_name_null"] == "false" and page2[0]["name"] == "null"

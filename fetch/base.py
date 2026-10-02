@@ -455,6 +455,36 @@ if getattr(requests.adapters.HTTPAdapter.send, "__name__", "") != "_instrumented
     requests.adapters.HTTPAdapter.send = _instrumented_send
 
 
+def query_params(params: dict | None) -> dict:
+    """Keyset paging params as a QUERY STRING carries them (Jake's tokentx run 2026-10-01: HTTP 422 from
+    explorer.plume.org/api/v2/tokens, "pointer /is_name_null, Invalid boolean. Got: string"). A
+    Blockscout next_page_params object is JSON — booleans and nulls — and requests sends a Python
+    True as "True" and DROPS a None, so is_name_null was refused and a null name / market_cap would
+    have reset paging to page 1. Serialised as Blockscout's own frontend does: true/false, null."""
+    out = {}
+    for k, v in (params or {}).items():
+        out[k] = "true" if v is True else "false" if v is False else "null" if v is None else v
+    return out
+
+
+def limit_wait(headers: dict | None, now: float | None = None) -> float:
+    """Seconds to wait before the next call, from a server's x-ratelimit-* headers: 0 while calls
+    remain. x-ratelimit-reset is MILLISECONDS to the end of the current fixed window on Blockscout
+    (blockscout/blockscout plug/rate_limit.ex: `expires_at - now` from System.system_time(:millisecond));
+    a value above 1e9 is read as an epoch time in seconds (the other common convention)."""
+    h = {str(k).lower(): v for k, v in (headers or {}).items()}
+    try:
+        remaining = int(float(h.get("x-ratelimit-remaining")))
+        reset = float(h.get("x-ratelimit-reset"))
+    except (TypeError, ValueError):
+        return 0.0
+    if remaining > 0 or reset < 0:
+        return 0.0
+    if reset > 1e9:
+        return max(reset - (time.time() if now is None else now), 0.0)
+    return reset / 1000.0
+
+
 class Http:
     """Retry with exponential backoff on 429/5xx. Never disables TLS verification."""
 

@@ -4173,7 +4173,8 @@ def plume_settlement_routes():
     base, cfg = spec["base"].rstrip("/"), spec["tokentx"]
     S = requests.Session()
     S.headers["User-Agent"] = USER_AGENT
-    lat = {}
+    lat, seen_limits = {}, {}
+    from fetch.base import query_params                    # noqa: PLC0415 — true/false/null, as Blockscout expects
 
     def call(kind, url, params=None, post=None, timeout=90):
         time.sleep(0.3)
@@ -4182,6 +4183,9 @@ def plume_settlement_routes():
              else S.get(url, params=params, timeout=timeout))
         dt = time.monotonic() - t
         lat.setdefault(kind, []).append(dt)
+        hs = {k.lower(): v for k, v in r.headers.items() if k.lower().startswith("x-ratelimit")}
+        if hs:
+            seen_limits[kind] = hs                       # the LAST answer's counters per endpoint
         return r, dt
 
     def limits(r):
@@ -4204,7 +4208,7 @@ def plume_settlement_routes():
     for _ in range(4):                                      # 250 transfers: the in-scope share
         if not nxt:
             break
-        rr, _ = call("v2", f"{base}/api/v2/token-transfers", {"type": "ERC-20", **nxt})
+        rr, _ = call("v2", f"{base}/api/v2/token-transfers", {"type": "ERC-20", **query_params(nxt)})
         if not rr.ok:
             break
         sample += rr.json().get("items") or []
@@ -4217,7 +4221,7 @@ def plume_settlement_routes():
             print(f"  token list: HTTP {rr.status_code}")
             break
         toks += [str(i.get("address_hash") or "").lower() for i in rr.json().get("items") or []]
-        params = {"type": "ERC-20", **(rr.json().get("next_page_params") or {})}
+        params = {"type": "ERC-20", **query_params(rr.json().get("next_page_params"))}
         if not rr.json().get("next_page_params"):
             break
     toks = sorted(set(t for t in toks if t) | {str((i.get("token") or {}).get("address_hash") or "").lower()
@@ -4255,19 +4259,20 @@ def plume_settlement_routes():
         print(f"  B tokentx {busiest} last day: HTTP {rr.status_code}, {len(tt_rows):,} rows in {dt:.1f}s, "
               f"{len(rr.content) / 1e6:.1f} MB; {len(addrs):,} distinct addresses; limits {limits(rr)}")
     # --- getCode batch ------------------------------------------------------------------------
-    batch = sorted(addrs)[:int(cfg["code_batch"])] or ["0x" + "0" * 40]
-    rr, dt = call("rpc", cfg["rpc"], post=[{"jsonrpc": "2.0", "id": k, "method": "eth_getCode", "params": [a, "latest"]}
+    rpc_url = spec["rpc"]
+    batch = sorted(addrs)[:int(spec["rpc_batch"])] or ["0x" + "0" * 40]
+    rr, dt = call("rpc", rpc_url, post=[{"jsonrpc": "2.0", "id": k, "method": "eth_getCode", "params": [a, "latest"]}
                                             for k, a in enumerate(batch)])
     ok_batch = rr.ok and isinstance(rr.json(), list) and all("result" in x for x in rr.json())
-    print(f"  eth_getCode batch of {len(batch)} on {cfg['rpc'].split('//')[1]}: HTTP {rr.status_code}, {dt:.2f}s, "
+    print(f"  eth_getCode batch of {len(batch)} on {rpc_url.split('//')[1]}: HTTP {rr.status_code}, {dt:.2f}s, "
           f"{'ANSWERED' if ok_batch else 'REFUSED: ' + rr.text[:160]}")
     # --- C: eth_getLogs max range -------------------------------------------------------------
-    rr, _ = call("rpc", cfg["rpc"], post={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []})
+    rr, _ = call("rpc", rpc_url, post={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []})
     headb = int(rr.json()["result"], 16) if rr.ok and "result" in rr.json() else 0
     max_range, logs_per_block = None, None
     TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
     for span in (1_000_000, 100_000, 10_000, 1_000):
-        rr, dt = call("rpc", cfg["rpc"], post={"jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [{
+        rr, dt = call("rpc", rpc_url, post={"jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [{
             "fromBlock": hex(max(headb - span, 0)), "toBlock": hex(headb), "address": sorted(priced)[:50],
             "topics": [TRANSFER]}]}, timeout=120)
         j = rr.json() if rr.ok else {}
@@ -4287,36 +4292,72 @@ def plume_settlement_routes():
         npages += 1
         if not rr.json().get("next_page_params"):
             break
-        params = {**params, **rr.json()["next_page_params"]}
+        params = {**params, **query_params(rr.json()["next_page_params"])}
     print(f"  N native PLUME {yday}: {npages}{'+' if npages >= 60 else ''} advanced-filters page(s)")
     # --- THE ESTIMATES -----------------------------------------------------------------------
+    # PER-ENDPOINT LIMITS (Jake's run 2026-10-01: the "~0.36 h" for B ignored /api's 10 calls a window).
+    # Blockscout's x-ratelimit-reset is MILLISECONDS to the end of a FIXED window (plug/rate_limit.ex),
+    # so a reset is a LOWER BOUND on the window; its likely length is the next of 1 s / 1 min / 1 h / 1 d.
+    def window_s(kind):
+        hs = seen_limits.get(kind) or {}
+        try:
+            lim_, reset_ = int(hs["x-ratelimit-limit"]), float(hs["x-ratelimit-reset"]) / 1000
+        except (KeyError, ValueError):
+            return None, None, None
+        if lim_ <= 0:
+            return None, None, None                            # -1: unlimited
+        likely = next(w for w in (1, 60, 3600, 86400, 10 ** 9) if w >= reset_)
+        return lim_, reset_, likely
+
+    def floor_h(kind, calls):
+        """(hours at least, hours likely) that `calls` take under the endpoint's own limit."""
+        lim_, low, likely = window_s(kind)
+        if lim_ is None:
+            return None
+        return calls / lim_ * low / 3600, calls / lim_ * likely / 3600
+
+    for kind in sorted(seen_limits):
+        lim_, low, likely = window_s(kind)
+        print(f"  limit {kind}: {seen_limits[kind]}" + (f" -> {lim_} per window of >= {low:,.0f}s (likely "
+                                                        f"{likely:,}s)" if lim_ else ""))
     m = {k: statistics.median(v) for k, v in lat.items()}
-    rate = float(cfg["rate_per_s"])
+    rate = float(spec["v2_rate_per_s"])
     lim = limits(r).get("x-ratelimit-limit")
     print(f"\n  median latency: " + ", ".join(f"{k} {v:.2f}s" for k, v in m.items()))
     print(f"  explorer limit header: {lim} (Blockscout's default is 300 per minute per IP = 5/s); pacing {rate}/s shared")
     year_v2 = per_day * 365 / 50
     a_h = year_v2 * m.get("v2", 1.0) / 3600
-    print(f"  A v2 chain-wide: {year_v2:,.0f} pages x {m.get('v2', 1):.2f}s, ONE cursor (sequential) = ~{a_h:.1f} h")
+    fa = floor_h("v2", year_v2)
+    a_h = max(a_h, fa[1]) if fa else a_h
+    print(f"  A v2 chain-wide: {year_v2:,.0f} pages x {m.get('v2', 1):.2f}s, ONE cursor (sequential)"
+          + (f", and the v2 limit allows them in >= {fa[0]:.1f} h" if fa else "") + f" = ~{a_h:.1f} h"
+          + " (late March ran ~50x denser than this per-day rate)")
     blocks_year = headb - b_year if headb and b_year else None
     in_year = per_day * 365 * (share or 0)
     uniq = (len(addrs) / max(len(tt_rows), 1)) * in_year if tt_rows else None
-    codes = (uniq or 0) / int(cfg["code_batch"])
+    codes = (uniq or 0) / int(spec["rpc_batch"])
     if share is not None and "tokentx" in m:
         calls = in_year / (int(cfg["offset"]) - 1) + len(priced) * int(cfg["segments"])
         b_h = (calls * m["tokentx"] / int(cfg["workers"]) + codes * m.get("rpc", 0.5)) / 3600
+        fb_ = floor_h("tokentx", calls + 2)            # + the two getblocknobytime calls, same /api
         print(f"  B tokentx: ~{in_year:,.0f} in-scope transfers/yr -> ~{calls:,.0f} calls x {m['tokentx']:.1f}s over "
-              f"{cfg['workers']} workers + ~{codes:,.0f} getCode batches (<= {uniq or 0:,.0f} addresses, an upper bound) "
-              f"= ~{b_h:.2f} h")
+              f"{cfg['workers']} workers + ~{codes:,.0f} getCode batches = ~{b_h:.2f} h of requests"
+              + (f"; THE /api LIMIT makes it {fb_[0]:.1f}-{fb_[1]:.1f} h — RATE-LIMITED, not the default"
+                 if fb_ else "; /api sent no limit headers"))
     if max_range and blocks_year:
         c_calls = blocks_year / max_range * max(1.0, (logs_per_block or 0) * max_range / 10_000)
-        c_h = (c_calls * m.get("rpc", 0.5) + codes * m.get("rpc", 0.5) + 366 * m.get("api", 0.5)) / 3600
-        print(f"  C eth_getLogs: {blocks_year:,} blocks a year / {max_range:,} per call -> ~{c_calls:,.0f} calls "
-              f"+ the same getCode + 366 day-boundary lookups = ~{c_h:.2f} h (one RPC; limit not published)")
+        bis = 25 * -(-366 // int(spec["rpc_batch"]))     # day boundaries bisected in batches on the RPC
+        c_h = (c_calls * m.get("rpc", 0.5) + codes * m.get("rpc", 0.5) + bis * m.get("rpc", 0.5)) / 3600
+        fc = floor_h("rpc", c_calls + codes + bis)
+        c_h = max(c_h, fc[1]) if fc else c_h
+        print(f"  C eth_getLogs (THE ROUTE): {blocks_year:,} blocks a year / {max_range:,} per call -> ~{c_calls:,.0f} "
+              f"calls (+ halvings in dense weeks) + ~{codes:,.0f} getCode batches + ~{bis} boundary batches = "
+              f"~{c_h:.2f} h" + (f" (RPC limit headers {seen_limits['rpc']})" if "rpc" in seen_limits
+                                  else " (the RPC sent no limit headers)"))
     n_h = npages * 365 * m.get("v2", 1.0) / 3600
     print(f"  N native: ~{npages * 365:,} pages a year: sequential ~{n_h:.1f} h; {spec['native_workers']} days side "
           f"by side at {rate}/s ~{max(npages * 365 / rate, npages * 365 * m.get('v2', 1) / spec['native_workers']) / 3600:.1f} h")
-    print("  PASTE BACK all lines. The seed's ERC-20 route stays v2 (config erc20_route) until Jake chooses.")
+    print(f"  PASTE BACK all lines. The seed's ERC-20 route is {spec['erc20_route']!r} (config erc20_route).")
 
 
 CHECKS = (

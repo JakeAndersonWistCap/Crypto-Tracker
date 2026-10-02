@@ -500,25 +500,28 @@ A stalled call times out (60 s read timeout) and is retried. Each retry is logge
 `RETRY <host>: ReadTimeout after 60s (attempt 1 of 4)`, with the host only and never the URL or key.
 Change the intervals with `TOKEN_METRICS_PROGRESS_EVERY` (units) and `TOKEN_METRICS_PROGRESS_SECONDS`.
 
-**Plume settlement: a faster seed (Jake, 2026-10-01).** The chain-wide v2 route reads every
-ERC-20 transfer, about 21,755 pages of 50 a year, through one sequential cursor. Two faster
-paths now exist:
-- **Token route.** It reads only the tokens DefiLlama has ever priced, the only ones that can
-  count, through Blockscout's Etherscan-compatible `tokentx` at 10,000 rows a call. It runs 8
-  segments per token, 4 at a time, sharing one 4 requests/s pace. Each address gets one
-  `eth_getCode` check on rpc.plume.org, which is cached.
-- **Native PLUME** is still read from advanced-filters, but now 4 days at a time.
+**Plume settlement: the seed reads the year from `eth_getLogs` (route C, Jake 2026-10-02).**
+`config Plume.settlement_rebuild.erc20_route` is `"logs"`. The seed asks rpc.plume.org for the Transfer
+events of the 46 in-scope tokens (those DefiLlama prices) over ranges of up to 100,000 blocks. When
+the node's 10,000-log cap refuses a range, the range is halved and retried, and it doubles back after
+a success, so the dense weeks of late March 2026 just take more calls. Each address gets one cached
+`eth_getCode` check. Day boundaries are found on the RPC (bisected, in batches), not on the explorer.
+It resumes from whatever is saved, including a v2 seed that's partway through: that seed's full days
+are kept and its partial oldest day is read again. Stop the overnight v2 seed before starting this
+one, because both write `.cache/logscan/plume-settlement.json`.
+```bash
+python token_metrics.py --seed plume_settlement
+```
+Measured limits:
+- explorer.plume.org /api/v2: 180 requests a minute per IP.
+- The Etherscan-compatible /api: 10 requests per window of at least 40 minutes. `x-ratelimit-reset`
+  is in milliseconds, so the tokentx route (B) would take 31–47 hours. It's opt-in only, with
+  `PLUME_SETTLEMENT_ROUTE=tokentx`.
+- `BLOCKSCOUT_API_KEY` has no effect on this instance.
 
-It resumes from whatever is already saved, including a v2 scan that's partway through: that
-scan's full days are kept, and its partial oldest day is read again. Measure first:
-```bash
-python check_offline_items.py plume_settlement_routes   # ~50 calls; timings, scope, limits, estimates
-```
-then, to try the token route for one run without a config change:
-```bash
-PLUME_SETTLEMENT_ROUTE=tokentx python token_metrics.py --seed plume_settlement
-```
-`config Plume.settlement_rebuild.erc20_route` stays `"v2"` until the probe's numbers are in.
+Every Plume host's `x-ratelimit-*` headers are honoured: when nothing remains, the run waits out the
+reset and logs it. `python check_offline_items.py plume_settlement_routes` re-measures everything,
+with each endpoint's own limit counted.
 
 A Plume seed started on code older than 2026-10-01 saved its state only at the end. Let it finish,
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
