@@ -12,7 +12,9 @@ Never both for one block.
 THE RELAY DATA API (flashbots/mev-boost-relay services/api/service.go, the common data API every listed
 relay implements): GET {relay}/relay/v1/data/bidtraces/proposer_payload_delivered?cursor=<slot>&limit=200
 returns delivered payloads with slot <= cursor, newest first (database.go: "slot <= :cursor", ORDER BY slot
-DESC); 200 is the maximum limit. Each row: slot, block_number, block_hash, value (wei, string), ...
+DESC); 200 is the maximum limit — 100 on bloXroute's fork (bloXroute-Labs/mev-relay server/service.go
+`Limit: 100`, "maximum limit is %d"; flashbots/relayscan cmd/core/data-api-backfill.go `pageLimit = 100 //
+100 is max on bloxroute`), so each relay carries its own `page_limit`. Each row: slot, block_number, block_hash, value (wei, string), ...
 A slot can appear on SEVERAL relays (the same payload delivered through more than one): rows are
 DE-DUPLICATED BY SLOT, one value per slot; when two relays report different values for one slot the
 larger is kept and the day says how many conflicts there were.
@@ -22,6 +24,18 @@ A block delivered by a relay NOT in the list is indistinguishable here from a lo
 counted by its priority fees — which UNDERSTATES that block (the proposer was paid the builder's bid). The
 day records blocks, relay blocks per relay and the covered share; execution_rewards_eth is PARTIAL when the
 non-relay leg is not read (no ETHEREUM_RPC_URL, or the run's block budget spent).
+
+A RELAY THAT FAILS does not stop the day (probes6, 2026-10-02): the day is kept with the relays that
+answered, the missing ones NAMED and the day PARTIAL; it is re-read whole on the next runs (up to
+`relay_retries`). A relay that fails on `disable_after` days running in one run is skipped for the rest of it.
+
+THE NON-RELAY LEG has two routes (config `nonrelay_leg`):
+  estimate   (default; ~0 extra calls) the day's total priority fees — DefiLlama fees - burn (fees_usd -
+             revenue_usd), already stored, over the day's price — times the NON-RELAY share of the day's
+             SLOTS (1 - relay blocks / slots; the missed-slot rate is not read, so the share is slightly
+             high). Done at READ TIME in build_workbook (_mev_estimate_views); labelled `estimate`.
+  per-block  receipts of every non-relay block on ETHEREUM_RPC_URL (~2 calls a block) — only for the
+             newest `per_block_days` days (the forward top-up), 0 = never.
 
 DAYS: UTC days; a slot's time is genesis 1606824023 + 12 x slot. The day's block range comes from the
 execution RPC (first block at or after 00:00, bisected). State: <logcache>/mev-relays.json — per-day
@@ -63,7 +77,8 @@ class MevRelays:
     TIER = TIER
 
     def __init__(self, http=None, rpc=None, cache_file: Path | None = None, max_seconds: float | None = 240,
-                 clock=time.monotonic, sleep=time.sleep, **_ignored):
+                 clock=time.monotonic, sleep=time.sleep, days: int | None = None, **_ignored):
+        self.days = days                  # --seed-days: a shorter first seed (Jake: offer 90 first)
         self._http = http                 # tests inject one fake for every relay
         self._rpc = rpc                   # tests inject callable(body) -> json
         self.cache_file, self.max_seconds, self.clock, self.sleep = cache_file, max_seconds, clock, sleep
@@ -101,9 +116,9 @@ class MevRelays:
     def _relay_day(self, spec, relay: dict, first: int, last: int) -> dict:
         """{slot: (value_wei, block_number)} delivered by ONE relay in [first, last], newest first."""
         c = self._client(relay["name"], spec)
-        got, cursor = {}, last
+        got, cursor, lim = {}, last, int(relay.get("page_limit", 200))
         while cursor >= first:
-            rows = c.get(relay["url"].rstrip("/") + PATH, params={"cursor": cursor, "limit": 200})
+            rows = c.get(relay["url"].rstrip("/") + PATH, params={"cursor": cursor, "limit": lim})
             w = limit_wait(getattr(c, "last_headers", None))
             if w > 0:
                 log.warning("RATE LIMIT %s: waiting %.0fs", relay["name"], w)
@@ -118,7 +133,7 @@ class MevRelays:
                 low = s if low is None else min(low, s)
                 if first <= s <= last:
                     got[s] = (int(r["value"]), int(r["block_number"]))
-            if len(rows) < 200 or low is None or low < first:
+            if len(rows) < lim or low is None or low < first:
                 break
             cursor = low - 1
         return got
@@ -183,10 +198,16 @@ class MevRelays:
         t0 = self.clock()
         st = self._load()
         yday = (today() - pd.Timedelta(days=1)).normalize()
-        days = [yday - pd.Timedelta(days=k) for k in range(int(spec.get("days", 365)))]
-        todo = [d for d in days if not (st["days"].get(str(d.date())) or {}).get("relay_done")]
+        days = [yday - pd.Timedelta(days=k) for k in range(int(self.days or spec.get("days", 365)))]
+        retries = int(spec.get("relay_retries", 3))
+
+        def due(d):
+            dd = st["days"].get(str(d.date())) or {}
+            return not dd.get("relay_done") or (dd.get("missing") and dd.get("attempts", 1) < retries)
+        todo = [d for d in days if due(d)]
         have_rpc = self._rpc is not None or bool(self._rpc_url(spec))
         relays = spec["relays"]
+        streak, disabled = {}, set()
         prog = Progress(f"mev_relays {name}", total=len(todo) or None, unit="days", every_units=5,
                         checkpoint=lambda: self._save(st),
                         status=lambda: f"{sum(1 for v in st['days'].values() if v.get('relay_done'))} day(s) of relay "
@@ -197,23 +218,45 @@ class MevRelays:
             if self._over(t0, unbounded):
                 break
             first, last = day_slots(d)
-            try:
-                with ThreadPoolExecutor(max_workers=len(relays)) as ex:
-                    per = list(ex.map(lambda r: self._relay_day(spec, r, first, last), relays))
-            except Exception as e:  # noqa: BLE001 — the day is retried next run
-                notes.append(f"{d.date()}: {str(e).split('?')[0][:160]}")
+            live = [r for r in relays if r["name"] not in disabled]
+
+            def one(r):
+                try:
+                    return self._relay_day(spec, r, first, last)
+                except Exception as e:  # noqa: BLE001 — this relay is named missing; the day goes on
+                    return e
+            with ThreadPoolExecutor(max_workers=max(len(live), 1)) as ex:
+                per = list(ex.map(one, live))
+            failed = {r["name"]: f"{type(g).__name__}: {str(g).split('?')[0][:120]}"
+                      for r, g in zip(live, per) if isinstance(g, Exception)}
+            if live and len(failed) == len(live):        # nothing answered: the network, not a relay
+                notes.append(f"{d.date()}: every relay failed — {'; '.join(f'{k} {v}' for k, v in failed.items())[:240]}")
                 break
+            for r in live:
+                streak[r["name"]] = streak.get(r["name"], 0) + 1 if r["name"] in failed else 0
+                if streak[r["name"]] >= int(spec.get("disable_after", 3)) and r["name"] not in disabled:
+                    disabled.add(r["name"])
+                    notes.append(f"{r['name']} failed {streak[r['name']]} day(s) running ({failed[r['name']]}) — "
+                                 f"skipped for the rest of this run; its days are PARTIAL and re-read next run")
+            missing = sorted(set(failed) | disabled)
+            for k, v in failed.items():
+                log.warning("mev_relays %s %s: %s — the day is kept without it (PARTIAL)", d.date(), k, v)
             slots, conflicts, by_relay = {}, 0, {}
-            for r, got in zip(relays, per):
+            for r, got in zip(live, per):
+                if isinstance(got, Exception):
+                    continue
                 by_relay[r["name"]] = len(got)
                 for s, (v, b) in got.items():
                     if s in slots and slots[s][0] != v:
                         conflicts += 1
                     if s not in slots or v > slots[s][0]:
                         slots[s] = (v, b)
+            prev = st["days"].get(str(d.date())) or {}
             day = {"relay_done": True, "relay_value_eth": sum(v for v, _ in slots.values()) / 1e18,
-                   "relay_blocks": len(slots), "by_relay": by_relay, "conflicts": conflicts,
-                   "relay_block_numbers": sorted(b for _, b in slots.values())}
+                   "relay_blocks": len(slots), "slots": last - first + 1, "by_relay": by_relay,
+                   "conflicts": conflicts, "relay_block_numbers": sorted(b for _, b in slots.values())}
+            if missing:
+                day.update(missing=missing, attempts=int(prev.get("attempts", 0)) + 1)
             st["days"][str(d.date())] = day
             prog.tick()
         prog.flush(final=not notes)
@@ -226,10 +269,14 @@ class MevRelays:
             except Exception as e:  # noqa: BLE001
                 notes.append(f"RPC: {str(e).split('?')[0][:160]}")
                 have_rpc = False
+        pb_days = int(spec.get("per_block_days", 0)) if spec.get("nonrelay_leg", "estimate") == "estimate" else None
+        pb_from = str((yday - pd.Timedelta(days=pb_days - 1)).date()) if pb_days else None
         for key in sorted(st["days"], reverse=True):
             dd = st["days"][key]
             if not have_rpc or dd.get("nonrelay_done") or not dd.get("relay_done") or self._over(t0, unbounded):
                 continue
+            if pb_days is not None and (not pb_days or key < pb_from):
+                continue                                  # the estimate covers it (read time)
             ts0 = int(pd.Timestamp(key).timestamp())
             try:
                 b0 = self._first_block_at(spec, ts0, head, tcache)
@@ -257,34 +304,81 @@ class MevRelays:
                 continue
             day = pd.Timestamp(key)
             relay_rows.append((day, dd["relay_value_eth"]))
+            miss = tuple(dd.get("missing") or ())
             if dd.get("nonrelay_done"):
-                exe_rows.append((day, dd["relay_value_eth"] + dd["nonrelay_eth"], False))
+                exe_rows.append((day, dd["relay_value_eth"] + dd["nonrelay_eth"], False, miss))
                 if dd.get("blocks"):
-                    share_rows.append((day, dd["relay_blocks"] / dd["blocks"]))
+                    share_rows.append((day, dd["relay_blocks"] / dd["blocks"], False, miss))
             else:
-                exe_rows.append((day, dd["relay_value_eth"], True))
+                exe_rows.append((day, dd["relay_value_eth"], True, miss))
                 partial += 1
+                if dd.get("slots"):                       # the estimate's basis: share of SLOTS
+                    share_rows.append((day, dd["relay_blocks"] / dd["slots"], True, miss))
         if not relay_rows:
             out.skipped(SOURCE, name, "no relay day complete yet" + (f"; {'; '.join(notes[:2])}" if notes else ""), TIER)
             return
         names = "+".join(r["name"] for r in spec["relays"])
-        out.add(tidy(relay_rows, name, "mev_relay_value_eth", f"{SOURCE}:delivered[{names}]", TIER), SOURCE, name,
-                f"mev_relay_value_eth: {len(relay_rows)} day(s), relays {names}, de-duplicated by slot", TIER)
-        full = [(d, v) for d, v, p in exe_rows if not p]
-        part = [(d, v) for d, v, p in exe_rows if p]
-        if full:
-            out.add(tidy(full, name, "execution_rewards_eth", f"{SOURCE}:relay_value+nonrelay_priority_fees", TIER),
-                    SOURCE, name, f"execution_rewards_eth = relay-delivered value + non-relay priority fees: "
-                                  f"{len(full)} day(s)", TIER)
-        if part:
-            why = ("no ETHEREUM_RPC_URL — the non-relay blocks' priority fees are not read" if not have_rpc
-                   else "the non-relay leg is not read yet (block budget)")
-            src = config.mark_source(f"{SOURCE}:relay_value+nonrelay_priority_fees", "PARTIAL") + f"[{why}]"
-            out.add(tidy(part, name, "execution_rewards_eth", src, TIER), SOURCE, name,
-                    f"execution_rewards_eth PARTIAL on {len(part)} day(s): {why}", TIER)
-        if share_rows:
-            out.add(tidy(share_rows, name, "mev_relay_block_share", f"{SOURCE}:relay_blocks/blocks[{names}]", TIER),
-                    SOURCE, name, f"relay share of blocks: latest {share_rows[-1][1]:.1%} ({names}); the rest is "
-                                  f"counted by priority fees — a block from a relay NOT covered is understated", TIER)
+        by_miss: dict = {}
+        for d, v in relay_rows:
+            by_miss.setdefault(tuple(st["days"][str(d.date())].get("missing") or ()), []).append((d, v))
+        for miss, rows in sorted(by_miss.items()):
+            src = f"{SOURCE}:delivered[{names}]" + (_missing_tag(miss) if miss else "")
+            out.add(tidy(rows, name, "mev_relay_value_eth", src, TIER), SOURCE, name,
+                    f"mev_relay_value_eth: {len(rows)} day(s), de-duplicated by slot"
+                    + (f"; relays NOT read: {', '.join(miss)}" if miss else f", relays {names}"), TIER)
+        leg = spec.get("nonrelay_leg", "estimate")
+        groups_e: dict = {}
+        for d, v, p, miss in exe_rows:
+            groups_e.setdefault((p, miss), []).append((d, v))
+        for (p, miss), rows in sorted(groups_e.items()):
+            src = f"{SOURCE}:relay_value+nonrelay_priority_fees"
+            if p:
+                why = ("non-relay leg by ESTIMATE at read time (DefiLlama fees - burn x non-relay share of slots); "
+                       "relay value only as stored" if leg == "estimate" else
+                       "no ETHEREUM_RPC_URL — the non-relay blocks' priority fees are not read" if not have_rpc
+                       else "the non-relay leg is not read yet (block budget)")
+                src = config.mark_source(src, "PARTIAL") + f"[{why}]"
+            if miss:
+                src = (src if p else config.mark_source(src, "PARTIAL")) + _missing_tag(miss)
+            out.add(tidy(rows, name, "execution_rewards_eth", src, TIER), SOURCE, name,
+                    f"execution_rewards_eth{' PARTIAL' if p or miss else ''} on {len(rows)} day(s)"
+                    + (" — relay value only, the non-relay leg is estimated at read time" if p and leg == "estimate"
+                       else "") + (f"; relays NOT read: {', '.join(miss)}" if miss else ""), TIER)
+        shares: dict = {}
+        for d, v, est, miss in share_rows:
+            shares.setdefault((est, miss), []).append((d, v))
+        for (est, miss), rows in sorted(shares.items()):
+            src = f"{SOURCE}:relay_blocks/blocks[{names}]"
+            if est:
+                src = config.mark_source(src, "estimate") + "[of SLOTS: the day's block count is not read]"
+            if miss:
+                src += _missing_tag(miss)
+            out.add(tidy(rows, name, "mev_relay_block_share", src, TIER), SOURCE, name,
+                    f"relay share of {'slots' if est else 'blocks'}: {len(rows)} day(s), latest "
+                    f"{rows[-1][1]:.1%}; the rest is counted by priority fees — a block from a relay NOT covered "
+                    f"is understated", TIER)
         if notes:
             out.skipped(SOURCE, name, "; ".join(notes[:3]) + " — resumes next run", TIER)
+
+
+def _missing_tag(miss) -> str:
+    return f"[relays not read: {', '.join(miss)} — their blocks count as non-relay (understated)]"
+
+
+def seed_cost(spec: dict, relay_share: dict, days: int, covered: float, rpc: bool = False) -> dict:
+    """What a seed of `days` costs (probes6 1b): relay pages from each relay's measured share of recent
+    slots and its page limit (relays run side by side at relay_rate_per_s, so wall time is the busiest
+    relay's), and the per-block non-relay leg's RPC calls (a block header + its receipts per non-relay block,
+    batched rpc_batch to a request) against the estimate's ~0."""
+    spd = 7200
+    pages = {r["name"]: int(-(-relay_share.get(r["name"], 0.0) * spd // int(r.get("page_limit", 200))) + 1)
+             for r in spec["relays"]}
+    rate = float(spec.get("relay_rate_per_s", 1))
+    nonrelay = round(spd * (1 - covered))
+    calls_pb = 2 * nonrelay + 2 * 25                     # header + receipts per block, + the day's two bisections
+    return {"days": days, "relay_calls_per_day": sum(pages.values()), "relay_calls": sum(pages.values()) * days,
+            "busiest": max(pages, key=pages.get), "wall_s_per_day": max(pages.values()) / rate,
+            "wall_h": max(pages.values()) / rate * days / 3600, "nonrelay_blocks_per_day": nonrelay,
+            "per_block_rpc_calls_per_day": calls_pb, "per_block_rpc_calls": calls_pb * days,
+            "per_block_http_requests": -(-calls_pb // int(spec.get("rpc_batch", 20))) * days,
+            "estimate_extra_calls": 0}

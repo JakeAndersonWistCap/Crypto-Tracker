@@ -16,6 +16,7 @@ figure suppressed · orange fill = stale (last good fetch in comment).
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -745,6 +746,9 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     inc = config.incentive_caveat(project, metric)
     if inc:
         why.append(inc)
+    m_org = re.search(r"\[(organic window \(post-Points-Season-2\)[^\]]*)\]", str(row.get("source") or ""))
+    if m_org:
+        why.append(f"{m_org.group(1)} — the full year, incentive period included, is network_reserve_ratio_incl_incentive")
     nc = config.is_non_comparable(project, metric, row.get("source"))
     if nc:
         why.append(f"NOT COMPARABLE: {nc['why']} Use {nc['use_instead']}")
@@ -773,6 +777,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append(f"DOES NOT RECONCILE WITH THE PUBLISHED PERIOD TOTAL — {bits}. {rec.get('why', '')}")
     if ":PARTIAL" in str(row.get("source") or ""):
         why.append("PARTIAL — summed over known components only, so it understates")
+    if ":estimate" in str(row.get("source") or ""):
+        why.append("ESTIMATE — part of it is estimated from other stored series, not read (see the source)")
     # THE CAP IN THE SUPPLY COLUMN. The number is right and answers a different question, which
     # is failure mode 4 in a form no PARTIAL marker catches: nothing about 2,000,000,000 looks
     # incomplete. Scoped to total_supply itself — the project's other metrics are unaffected.
@@ -929,27 +935,51 @@ def _measured_emissions_views(groups: dict) -> None:
             continue
         common = sorted(set.intersection(*(set(s_.index) for s_ in stocks)))
         adds = [_added_component(groups, name, a) for a in spec.get("adds") or ()]
-        rows = []
+        released = [_released_component(groups, name, a) for a in spec.get("adds") or ()]
+        rows, earned_rows = [], []
         for prev, day in zip(common, common[1:]):
             deltas = [s_[day] - s_[prev] for s_ in stocks]
             if any(d < 0 for d in deltas):
                 continue
             span = (pd.Timestamp(day) - pd.Timestamp(prev)).days
             src = spec["source"] + (f"[span={span}d]" if span > 1 else "")
-            extra, missing = 0.0, []
-            for a, (stock, daily) in zip(spec.get("adds") or (), adds):
+            extra, missing, rel_extra, rel_missing = 0.0, [], 0.0, []
+            for a, (stock, daily), rel in zip(spec.get("adds") or (), adds, released):
                 v = _component_over(stock, daily, prev, day)
                 if v is None:
                     missing.append(a["what"])
                 else:
                     extra += v
-            if missing:
-                src = config.mark_source(src, "PARTIAL") + f"[{', '.join(missing)} not covered]"
-            rows.append({"date": day, "project": name, "metric": "emissions_tokens",
-                         "value": float(sum(deltas)) + extra, "source": src, "tier": 3})
+                if rel is None:                          # no locked split: released = earned
+                    rv = v
+                else:
+                    rv = _component_over(rel, {}, prev, day)
+                if rv is None:
+                    rel_missing.append(a["what"] + (" released (total - locked)" if v is not None else ""))
+                else:
+                    rel_extra += rv
+            esrc = src + (config.mark_source("", "PARTIAL") + f"[{', '.join(missing)} not covered]" if missing else "")
+            earned_rows.append({"date": day, "project": name, "metric": "emissions_earned_tokens",
+                                "value": float(sum(deltas)) + extra, "source": esrc + "[EARNED: accrued, vesting — a "
+                                                                                       "commitment]", "tier": 3})
+            if spec.get("released"):
+                rsrc = src + f"[{spec['released']}]"
+                if rel_missing:
+                    rsrc = config.mark_source(rsrc, "PARTIAL") + f"[{', '.join(rel_missing)} not covered]"
+                rows.append({"date": day, "project": name, "metric": "emissions_tokens",
+                             "value": float(sum(deltas)) + rel_extra, "source": rsrc, "tier": 3})
+            else:
+                rows.append({"date": day, "project": name, "metric": "emissions_tokens",
+                             "value": float(sum(deltas)) + extra, "source": esrc, "tier": 3})
         if not rows:
             continue
         meas = pd.DataFrame(rows)
+        if spec.get("released"):
+            # RELEASED vs EARNED (Jake, 2026-10-02): emissions_tokens — supply trajectory and free-float
+            # dilution — is what REACHED holders; the earned figure is a commitment, kept beside it
+            groups[(name, "emissions_released_tokens")] = _as_stored(meas.assign(metric="emissions_released_tokens"),
+                                                                     meas.columns)
+            groups[(name, "emissions_earned_tokens")] = _as_stored(pd.DataFrame(earned_rows), meas.columns)
         _release_view(groups, name, spec, meas, common)
         sched = groups.get((name, "emissions_tokens"))
         if sched is not None and not sched.empty:
@@ -975,6 +1005,20 @@ def _added_component(groups: dict, name: str, a: dict):
             for k in range(7):
                 daily[pd.Timestamp(d) + pd.Timedelta(days=k)] = float(v) / 7
     return stock, daily
+
+
+def _released_component(groups: dict, name: str, a: dict):
+    """(total - locked) by day for a component with a LOCKED split (Aethir compute rewards: totalRewards -
+    totalLockedRewards), or None when the component has no locked stock declared."""
+    if not a.get("locked_stock"):
+        return None
+    g, lk = groups.get((name, a["stock"])), groups.get((name, a["locked_stock"]))
+    if g is None or g.empty or lk is None or lk.empty:
+        return pd.Series(dtype=float)
+    tot = g.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+    lock = lk.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+    both = tot.index.intersection(lock.index)
+    return (tot[both] - lock[both]).sort_index()
 
 
 def _component_over(stock, daily: dict, prev, day) -> float | None:
@@ -1095,6 +1139,23 @@ def _burn_total_views(groups: dict) -> None:
                     project=name, metric=spec["metric"], tier=2,
                     source=f"{hl['source']}[{hl['component']} leg only: the other legs are unmeasured "
                            f"before {min(days).date()}]")
+                # THE NON-AF LEGS' HISTORY (probes6 2a): each declared extra leg held for the day is added,
+                # and the source says which; a day without them keeps the Fund-only label.
+                extra = {}
+                for m in spec.get("history_extra") or ():
+                    g = groups.get((name, m))
+                    if g is not None and not g.empty:
+                        extra[m] = g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+                if extra:
+                    vals, srcs = [], []
+                    for d, v in zip(h["date"], h["value"].astype(float)):
+                        got = [m for m in extra if d in extra[m].index]
+                        vals.append(v + sum(float(extra[m][d]) for m in got))
+                        srcs.append(f"{hl['source']}[{hl['component']} + {' + '.join(got)} (ASXN): the Core "
+                                    f"leg's own read starts {min(days).date()}]" if got else
+                                    f"{hl['source']}[{hl['component']} leg only: the other legs are unmeasured "
+                                    f"before {min(days).date()}]")
+                    h = h.assign(value=vals, source=srcs)
                 view = pd.concat([h[view.columns], view], ignore_index=True).sort_values("date")
         first = groups.get((name, spec["components"][0]))
         groups[(name, spec["metric"])] = _as_stored(view, first.columns if first is not None else view.columns)
@@ -1238,6 +1299,47 @@ def _relabel_views(groups: dict) -> None:
 # source_note), whatever else is or is not in the store.
 _STORED_DEFAULTS = {"tier": None, "fetched_at": "", "is_manual": False, "entered_on": "",
                     "source_note": ""}
+
+
+def _mev_estimate_views(groups: dict) -> None:
+    """THE NON-RELAY LEG BY ESTIMATE (probes6 1c, Jake 2026-10-02). Where a day's execution reward holds the
+    relay-delivered value only (PARTIAL — the per-block leg not read), add the day's total priority fees —
+    (fees - burn) in USD, DefiLlama, over the day's price — times the NON-RELAY share of its slots
+    (1 - mev_relay_block_share as stored for that day). Marked `estimate`; a day without fees, burn, price
+    or share stays as stored (PARTIAL)."""
+    for p in config.PROJECTS:
+        spec, ys = p.get("mev_relays"), config.VALIDATOR_YIELD.get(p["name"]) or {}
+        if not spec or spec.get("nonrelay_leg", "estimate") != "estimate" or not ys.get("fees_metric"):
+            continue
+        name = p["name"]
+        exe = groups.get((name, "execution_rewards_eth"))
+        if exe is None or exe.empty:
+            continue
+
+        def daily(metric):
+            g = groups.get((name, metric))
+            if g is None or g.empty:
+                return {}
+            g = g.sort_values("date").drop_duplicates("date", keep="last")
+            return dict(zip(pd.to_datetime(g["date"]).dt.normalize(), g["value"].astype(float)))
+        fees, burn, px, share = (daily(ys["fees_metric"]), daily(ys["burned_metric"]), daily("price_usd"),
+                                 daily("mev_relay_block_share"))
+        tag = "[non-relay leg ESTIMATED: (DefiLlama fees - burn) / price x non-relay share of slots]"
+        out = []
+        for r in exe.to_dict("records"):
+            src = str(r["source"])
+            d = pd.Timestamp(r["date"]).normalize()
+            if ":PARTIAL[non-relay leg by ESTIMATE" not in src or any(d not in m for m in (fees, burn, px, share)) \
+                    or px[d] <= 0:
+                out.append(r)
+                continue
+            prio = max(fees[d] - burn[d], 0.0) / px[d]
+            rest = src.split("]", 1)[1] if "]" in src else ""       # a [relays not read: ...] tag is kept
+            base = config.mark_source(src.split(":PARTIAL")[0], "estimate") + tag
+            if rest:
+                base = config.mark_source(base, "PARTIAL") + rest
+            out.append({**r, "value": float(r["value"]) + prio * max(1.0 - share[d], 0.0), "source": base})
+        groups[(name, "execution_rewards_eth")] = _as_stored(pd.DataFrame(out), exe.columns)
 
 
 def _as_stored(view: pd.DataFrame, columns) -> pd.DataFrame:
@@ -1535,6 +1637,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
     _native_fee_usd_views(groups)
+    _mev_estimate_views(groups)
     _VIEW_BLOCKS.clear()
     _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
     # THE HISTORY LEGS FIRST (2026-09-30): Ethereum's first-party issuance view keeps its
@@ -3148,6 +3251,12 @@ def _a1_headline(R: Refs) -> list[tuple]:
          "DEX + NFT + P2P), same end date",
          lambda r, p: pull(R.D(r, "network_reserve_ratio", "now")) if "network_reserve_ratio"
          in config.metrics_for_project(p) else "", FMT_PCT, "pull", True, {"metric": "network_reserve_ratio"}),
+        # AN INCENTIVE PERIOD (Plume, Jake 2026-10-02): the column above reads the ORGANIC window; the
+        # full-year figure, incentive period included, sits here — blank for every other project.
+        ("NRR ON SETTLEMENT VOLUME — FULL YEAR, incentive-inflated (includes the incentive period; Plume: "
+         "Points Season 2 farming to 2026-03-31)",
+         lambda r, p: pull(R.D(r, "network_reserve_ratio_incl_incentive", "now")) if "network_reserve_ratio_incl_incentive"
+         in config.metrics_for_project(p) else "", FMT_PCT, "pull", False, {"metric": "network_reserve_ratio_incl_incentive"}),
         # TRADING THROUGHPUT (Jake, 2026-09-30): DefiLlama DEX + perps by chain, one source for all
         # four chains. A DIFFERENT DEFINITION, so its own columns — never mixed with the above.
         ("Trading throughput, trailing 365d ($) — DefiLlama DEX + perps; NOT settlement volume",
@@ -3449,9 +3558,37 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
     last = daily.index.max()
     full = daily.reindex(pd.date_range(daily.index.min(), last, freq="D"))
     sums = full.rolling(n, min_periods=n).sum().dropna()
+    src = str(sv.sort_values("date").iloc[-1]["source"])
+    brk = config.series_break(name, vol_metric)
+    if brk and brk.get("status") == "INCENTIVE":
+        # AN INCENTIVE PERIOD IS NOT A DEFECT (Plume, Jake 2026-10-02): the PRIMARY ratio reads the organic
+        # window — clean_from onward, annualised over the covered days until a full window exists — and the
+        # FULL-YEAR ratio is stored beside it under its own metrics, labelled incentive-inflated.
+        inc = brk["incentive"]
+        if not sums.empty:
+            _nrr_rows(groups, name, sv, sums, inc["sum_metric"], inc["nrr_metric"], n, src,
+                      f"[{inc['full_label']}]")
+        clean = pd.Timestamp(brk["clean_from"])
+        org = full[full.index >= clean]
+        rows = {}
+        for d in org.index:
+            win = org[(org.index > d - pd.Timedelta(days=n)) & (org.index <= d)]
+            cov = int(win.notna().sum())
+            if cov >= int(inc.get("min_days", 30)):
+                rows[d] = (float(win.sum()) * n / cov, cov)
+        if not rows:
+            for m in blocked:
+                _VIEW_BLOCKS[(name, m)] = (f"the organic window ({inc['organic_label']}) from {clean.date()} has "
+                                           f"fewer than {inc.get('min_days', 30)} covered days")
+            return
+        osums = pd.Series({d: v for d, (v, _) in rows.items()})
+        covd = {d: c for d, (_, c) in rows.items()}
+        _nrr_rows(groups, name, sv, osums, sum_metric, nrr_metric, n, src,
+                  lambda d: f"[{inc['organic_label']}" + (f": annualised over {covd[d]} covered day(s)]"
+                                                         if covd[d] < n else "]"))
+        return
     # AN UNEXPLAINED BREAK IS NEVER SPANNED (NEAR, Jake 2026-10-01): only windows starting on or after
     # its clean date are kept; with none, the sum and the ratio are blocked with the break's reason.
-    brk = config.series_break(name, vol_metric)
     if brk:
         sums = sums[sums.index - pd.Timedelta(days=n - 1) >= pd.Timestamp(brk["clean_from"])]
         if sums.empty:
@@ -3464,10 +3601,17 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
         for m in blocked:
             _VIEW_BLOCKS[(name, m)] = short_why.format(have=have, n=n, last=last.date())
         return
-    src = str(sv.sort_values("date").iloc[-1]["source"])
+    _nrr_rows(groups, name, sv, sums, sum_metric, nrr_metric, n, src, "")
+
+
+def _nrr_rows(groups: dict, name: str, sv, sums, sum_metric: str, nrr_metric: str, n: int, src: str, tag) -> None:
+    """The trailing-n sum and market cap / sum, per day, under the given metrics; `tag` (text, or a
+    function of the day) is appended to every row's source."""
+    lab = tag if callable(tag) else (lambda d: tag)
     tot = pd.DataFrame({"date": sums.index, "project": name, "metric": sum_metric, "value": sums.values,
-                        "source": f"derived:sum{n}({src})"})
+                        "source": [f"derived:sum{n}({src}){lab(d)}" for d in sums.index]})
     groups[(name, sum_metric)] = _as_stored(tot, sv.columns)
+    last = sums.index.max()
     mc = groups.get((name, "market_cap_usd"))
     if mc is None or mc.empty:
         return
@@ -3487,7 +3631,8 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
     base = f"derived:market_cap/{sum_metric.replace('_volume', '').replace('_usd', '')}"
     nrr = pd.DataFrame({"date": both["date"].values, "project": name, "metric": nrr_metric,
                         "value": (both["cap"] / both["vol"]).values,
-                        "source": [base + (f"[market cap {d} day(s) earlier]" if d else "") for d in lag]})
+                        "source": [base + (f"[market cap {d} day(s) earlier]" if d else "") + lab(pd.Timestamp(day))
+                                   for d, day in zip(lag, both["date"])]})
     groups[(name, nrr_metric)] = _as_stored(nrr, sv.columns)
 
 

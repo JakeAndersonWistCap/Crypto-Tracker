@@ -11,6 +11,17 @@ and every websocket frame. Two ways to read a figure, pinned per page in config 
   tiles    a figure printed beside its `label` in the rendered text — the fallback when the chart's data
            arrives in a form that cannot be captured. Today only: FORWARD-ONLY.
 
+EVERY RESPONSE, NOT ONLY JSON (probes6, 2026-10-02): Aethir's charts arrived as 0 JSON and 0 websocket
+frames, so text bodies are kept too — text/x-component (Next.js React Server Components / server actions),
+text/plain, application/octet-stream — and an RSC body's `id:{json}` lines are parsed into the captured
+JSON as `<url>#rsc:<id>`, so a pin can read them like any response. Static assets are skipped.
+
+PINS can name `date_key: "auto"` / `value_key: "auto"` / `path: "auto"` — taken only when exactly one
+candidate fits, else NOTHING is stored and the candidates are named. `units: "from_check"` takes the page's
+`unit_check` verdict (HYPE or USD, decided against stored figures; ambiguous = nothing stored); USD legs
+are stored as tokens at the stored same-day price. `crosscheck` logs agreement with a stored series.
+A tile's `label` may be a tuple of alternatives.
+
 NOTHING RUNS until the page is `permitted: True` in config — set once robots.txt (checked again at every run)
 and the site's terms have been read (probe browser_captures prints both). Nothing is stored for a page whose
 `series` / `tiles` are not pinned: the probe prints every captured response's URL, keys and list shapes so
@@ -34,10 +45,29 @@ TIER = 3
 _NUM = re.compile(r"[-+]?\$?\s*\d[\d,]*(?:\.\d+)?\s*[KMB%]?", re.I)
 
 
+_SKIP_TYPES = ("image/", "font/", "text/css", "javascript", "video/", "audio/", "text/html")
+
+
+def parse_rsc(text: str) -> list:
+    """[(id, obj)] from a React Server Components body: lines `id:<json>` (an `I`/`HL`/`T` prefix or
+    non-JSON payload is skipped)."""
+    out = []
+    for line in str(text or "").splitlines():
+        k, sep, rest = line.partition(":")
+        if not sep or not k or len(k) > 8 or not rest[:1] in "[{":
+            continue
+        try:
+            out.append((k, json.loads(rest)))
+        except ValueError:
+            continue
+    return out
+
+
 def capture(url: str, clicks=(), wait_ms: int = 4000, timeout_ms: int = 45000, browser=None) -> dict:
-    """{"responses": [(url, json)], "ws": [(url, text)], "text": rendered text, "clicked": [labels]}."""
+    """{"responses": [(url, json)], "bodies": [(url, content-type, text)], "ws": [(url, text)],
+    "text": rendered text, "clicked": [labels]}."""
     from playwright.sync_api import sync_playwright
-    out = {"responses": [], "ws": [], "text": "", "clicked": []}
+    out = {"responses": [], "bodies": [], "ws": [], "text": "", "clicked": []}
     with sync_playwright() as pw:
         b = browser
         if b is None:
@@ -48,10 +78,16 @@ def capture(url: str, clicks=(), wait_ms: int = 4000, timeout_ms: int = 45000, b
         page = b.new_page(user_agent=USER_AGENT)
 
         def on_response(r):
+            ct = (r.headers.get("content-type") or "").lower()
             try:
-                if "json" in (r.headers.get("content-type") or ""):
+                if "json" in ct:
                     out["responses"].append((r.url, r.json()))
-            except Exception:  # noqa: BLE001 — a body that is not JSON after all
+                elif not any(t in ct for t in _SKIP_TYPES) and r.request.resource_type in ("fetch", "xhr", "other"):
+                    body = r.text()[:2_000_000]
+                    out["bodies"].append((r.url, ct or "(none)", body))
+                    for k, obj in parse_rsc(body):
+                        out["responses"].append((f"{r.url}#rsc:{k}", obj))
+            except Exception:  # noqa: BLE001 — a body that cannot be read (redirect, aborted)
                 pass
 
         def on_ws(ws):
@@ -85,42 +121,149 @@ def path_get(obj, path: str):
     return obj
 
 
-def series_from(captured: list, pin: dict):
-    """[(day, value)] from the first response matching the pin, or why not."""
+def _matches(u: str, want) -> bool:
+    return any(w in u for w in ((want,) if isinstance(want, str) else want))
+
+
+def _num(v):
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dated_lists(body, depth=0, path=""):
+    """[(path, list)] of lists of dicts anywhere in the body (3 levels)."""
+    found = []
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        found.append((path, body))
+    elif isinstance(body, dict) and depth < 3:
+        for k, v in body.items():
+            found += _dated_lists(v, depth + 1, f"{path}.{k}" if path else k)
+    return found
+
+
+def _auto_keys(arr: list, pin: dict):
+    """(date_key, value_key) — the pinned ones, or the single candidate when "auto"; else why not."""
     from .aethir_pages import _as_day
-    seen = []
+    first = next((it for it in arr if isinstance(it, dict)), {})
+    dk, vk = pin.get("date_key", "auto"), pin.get("value_key", "auto")
+    if dk == "auto":
+        cands = [k for k, v in first.items() if _as_day(v) is not None and _num(v) is None or
+                 k.lower() in ("date", "day", "time", "timestamp", "ts", "t")]
+        if len(cands) != 1:
+            return None, None, f"date key not unique among {sorted(first)[:10]}"
+        dk = cands[0]
+    if vk == "auto":
+        cands = [k for k, v in first.items() if k != dk and _num(v) is not None]
+        if len(cands) != 1:
+            return None, None, f"value key not unique — numeric keys {sorted(cands)[:10]}: pin one"
+        vk = cands[0]
+    return dk, vk, None
+
+
+def series_from(captured: list, pin: dict):
+    """[(day, value)] from the first response matching the pin, or why not. Sets pin["_keys"] to the
+    (path, date_key, value_key) actually read."""
+    from .aethir_pages import _as_day
+    seen, why = [], []
     for u, body in captured:
-        if pin["url_contains"] not in u:
+        if not _matches(u, pin["url_contains"]):
             continue
-        arr = path_get(body, pin.get("path", ""))
         seen.append(u[:100])
+        if pin.get("path") == "auto":
+            lists = [(p_, a) for p_, a in _dated_lists(body) if _auto_keys(a, {**pin, "value_key": "x"})[2] is None]
+            if len(lists) != 1:
+                why.append(f"{len(lists)} dated list(s) in {u[:80]}" + (f": {[p_ for p_, _ in lists][:5]}" if lists else ""))
+                continue
+            path, arr = lists[0]
+        else:
+            path, arr = pin.get("path", ""), path_get(body, pin.get("path", ""))
         if not isinstance(arr, list):
+            continue
+        dk, vk, err = _auto_keys(arr, pin)
+        if err:
+            why.append(err)
             continue
         pts = {}
         for it in arr:
             if not isinstance(it, dict):
                 continue
-            d = _as_day(it.get(pin["date_key"]))
-            v = it.get(pin["value_key"])
-            if d is not None and isinstance(v, (int, float, str)):
-                try:
-                    pts[d] = float(v)
-                except ValueError:
-                    continue
+            d, v = _as_day(it.get(dk)), _num(it.get(vk))
+            if d is not None and v is not None:
+                pts[d] = v
         if pts:
+            pin["_keys"] = (path, dk, vk)
             return sorted(pts.items())
     return (f"no captured response for {pin['url_contains']!r} held a dated list at {pin.get('path') or '(body)'}"
-            + (f" (matching: {', '.join(seen[:3])})" if seen else ""))
+            + (f" ({'; '.join(why[:3])})" if why else "") + (f" (matching: {', '.join(seen[:3])})" if seen else ""))
 
 
-def tile_from(text: str, label: str):
-    """The first number printed after `label` in the rendered text, or None."""
+def scalar_from(captured: list, pin: dict):
+    """(key, value) — the ONE numeric key whose name contains `key_contains` in the responses matching
+    the pin (or the pinned `key`), or why not: several candidates store nothing and are named."""
+    cands = {}
+    for u, body in captured:
+        if not _matches(u, pin["url_contains"]):
+            continue
+
+        def walk(o, path, depth):
+            if isinstance(o, dict) and depth < 4:
+                for k, v in o.items():
+                    p_ = f"{path}.{k}" if path else k
+                    if _num(v) is not None and ((pin.get("key") and p_ == pin["key"]) or
+                                                (not pin.get("key") and pin["key_contains"].lower() in k.lower())):
+                        cands[p_] = _num(v)
+                    walk(v, p_, depth + 1)
+        walk(body, "", 0)
+    if len(cands) == 1:
+        return next(iter(cands.items()))
+    return (f"{len(cands)} candidate key(s) for {pin.get('key') or pin.get('key_contains')!r} in responses "
+            f"matching {pin['url_contains']!r}" + (f": {sorted(cands)[:8]} — pin one (`key`)" if cands else ""))
+
+
+def units_verdict(leg: dict, refs: dict, band=(0.8, 1.25)):
+    """('tokens'|'usd', report) — which stored reference the leg agrees with (median of leg/ref on shared
+    days inside `band`), or (None, report) when neither or both do."""
+    import statistics
+    rep, hits = [], []
+    for unit, ref in refs.items():
+        both = [d for d in leg if d in ref and ref[d]]
+        if len(both) < 5:
+            rep.append(f"{unit}: {len(both)} shared day(s) — too few")
+            continue
+        med = statistics.median(leg[d] / ref[d] for d in both)
+        rep.append(f"{unit}: median leg/ref {med:.3f} over {len(both)} day(s)")
+        if band[0] <= med <= band[1]:
+            hits.append(unit)
+    return (hits[0] if len(hits) == 1 else None), "; ".join(rep)
+
+
+def agreement(a: dict, b: dict, tol: float = 0.10) -> str:
+    """Shared days, median a/b, share of days within ±tol."""
+    import statistics
+    both = [d for d in a if d in b and b[d]]
+    if not both:
+        return "no shared day"
+    r = [a[d] / b[d] for d in both]
+    within = sum(1 for x in r if abs(x - 1) <= tol) / len(r)
+    return (f"{len(both)} shared day(s) {min(both).date()}..{max(both).date()}: median ratio "
+            f"{statistics.median(r):.3f}, {within:.0%} within ±{tol:.0%}")
+
+
+def tile_from(text: str, label):
+    """The first number printed after `label` (or the first of its alternatives found) in the rendered
+    text, or None."""
     from .base import parse_number
-    i = text.find(label)
-    if i < 0:
-        return None
-    m = _NUM.search(text, i + len(label), i + len(label) + 120)
-    return parse_number(m.group(0)) if m else None
+    for lab in ((label,) if isinstance(label, str) else label):
+        i = text.find(lab)
+        if i < 0:
+            continue
+        m = _NUM.search(text, i + len(lab), i + len(lab) + 120)
+        return parse_number(m.group(0)) if m else None
+    return None
 
 
 def shapes(captured: list) -> list[str]:
@@ -147,8 +290,9 @@ class BrowserCapture:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, capture_fn=None, daily=None, **_ignored):
+    def __init__(self, capture_fn=None, daily=None, stored_long=None, **_ignored):
         self._capture = capture_fn or capture
+        self.stored = stored_long
         if daily is None:
             from .logcache import DailyChecks
             daily = DailyChecks()
@@ -184,16 +328,45 @@ class BrowserCapture:
             out.fail(SOURCE, name, f"{url}: render failed — {type(e).__name__}: {str(e)[:160]}", TIER)
             return
         self.daily.done(f"{SOURCE}:{url}", day)
+        units, held = self._unit_check(name, pg, got, out), {}
         for pin in pg.get("series") or ():
             pts = series_from(got["responses"], pin)
             if isinstance(pts, str):
                 out.fail(SOURCE, name, f"{pin['metric']}: {pts}. NOTHING STORED.", TIER)
                 continue
+            vk = (pin.get("_keys") or (None, None, pin.get("value_key")))[2]
+            src = f"{SOURCE}:{pin['site']}.{vk}[{pin['layer']}]"
             rows = [(d, v) for d, v in pts if d < today()]
-            src = f"{SOURCE}:{pin['site']}.{pin['value_key']}[{pin['layer']}]"
+            if pin.get("units") == "from_check":
+                if units is None:
+                    out.fail(SOURCE, name, f"{pin['metric']}: units (HYPE or USD) not established — see the unit "
+                                           f"check. NOTHING STORED.", TIER)
+                    continue
+                if units == "usd":                       # stored as tokens at the stored same-day price
+                    px = self._series(name, "price_usd")
+                    rows = [(d, v / px[d]) for d, v in rows if px.get(d)]
+                    src += "[USD / same-day price]"
+            held[pin["metric"]] = dict(rows)
             out.add(tidy(rows, name, pin["metric"], src, TIER), SOURCE, name,
-                    f"{pin['metric']} = {pin['site']} `{pin['value_key']}` ({pin['layer']}): {len(rows)} point(s) "
+                    f"{pin['metric']} = {pin['site']} `{vk}` ({pin['layer']}): {len(rows)} point(s) "
                     f"{rows[0][0].date()}..{rows[-1][0].date()}" if rows else f"{pin['metric']}: no past point", TIER)
+            for ref in (pin.get("crosscheck") or ()):
+                log.info("CROSS-CHECK %s %s vs stored %s: %s", name, pin["metric"], ref,
+                         agreement(dict(rows), self._ref(name, ref)))
+        for cc in pg.get("crosschecks") or ():           # a sum of captured legs against a stored series
+            legs = [held.get(m) or {} for m in cc["sum"]]
+            days = set.intersection(*(set(x) for x in legs)) if legs else set()
+            tot = {d: sum(x[d] for x in legs) for d in days}
+            log.info("CROSS-CHECK %s %s vs stored %s: %s", name, "+".join(cc["sum"]), cc["ref"],
+                     agreement(tot, self._ref(name, cc["ref"])))
+        for sp in pg.get("scalars") or ():
+            got_ = scalar_from(got["responses"], sp)
+            if isinstance(got_, str):
+                out.fail(SOURCE, name, f"{sp['metric']}: {got_}. NOTHING STORED.", TIER)
+                continue
+            k, v = got_
+            out.add(point(name, sp["metric"], v, f"{SOURCE}:{sp['site']}.{k}[{sp['layer']}]", TIER, today()), SOURCE,
+                    name, f"{sp['metric']} = {sp['site']} `{k}` {v:,.2f} (FORWARD-ONLY cross-check, {sp['layer']})", TIER)
         for t in pg.get("tiles") or ():
             v = tile_from(got["text"], t["label"])
             if v is None:
@@ -202,3 +375,44 @@ class BrowserCapture:
                 continue
             out.add(point(name, t["metric"], v, f"{SOURCE}:{t['site']}.tile[{t['layer']}]", TIER, today()), SOURCE,
                     name, f"{t['metric']} = \"{t['label']}\" {v:,.4f} (rendered tile, FORWARD-ONLY, {t['layer']})", TIER)
+
+    # --- stored references ------------------------------------------------------------------------
+    def _series(self, name: str, metric: str) -> dict:
+        s = self.stored
+        if s is None or getattr(s, "empty", True):
+            return {}
+        g = s[(s["project"] == name) & (s["metric"] == metric)]
+        if g.empty:
+            return {}
+        g = g.sort_values("date").drop_duplicates("date", keep="last")
+        return dict(zip(pd.to_datetime(g["date"]).dt.normalize(), g["value"].astype(float)))
+
+    def _ref(self, name: str, ref: str) -> dict:
+        """A stored series, or `holders_revenue_tokens` = DefiLlama holders revenue / same-day price."""
+        if ref == "holders_revenue_tokens":
+            usd, px = self._series(name, "holders_revenue_usd"), self._series(name, "price_usd")
+            return {d: v / px[d] for d, v in usd.items() if px.get(d)}
+        return self._series(name, ref)
+
+    def _unit_check(self, name: str, pg: dict, got: dict, out):
+        """HYPE or USD for a page's `units: from_check` legs (probes6 2a): its `leg` against the stored
+        tokens references (the Assistance Fund's buyback in HYPE; holders revenue / price) and the USD one
+        (DefiLlama holders revenue). One agreeing = the verdict; none or both = None, nothing stored."""
+        uc = pg.get("unit_check")
+        if not uc:
+            return None
+        pts = series_from(got["responses"], {"url_contains": uc["url_contains"], "path": uc["path"],
+                                             "date_key": uc["date_key"], "value_key": uc["leg"]})
+        if isinstance(pts, str):
+            out.fail(SOURCE, name, f"unit check: {pts}", TIER)
+            return None
+        leg = dict(pts)
+        tokens = {**self._ref(name, "holders_revenue_tokens"), **self._ref(name, uc["tokens_ref"])}
+        verdict, rep_ = units_verdict(leg, {"tokens": tokens, "usd": self._ref(name, uc["usd_ref"])},
+                                      tuple(uc.get("band", (0.8, 1.25))))
+        msg = (f"unit check `{uc['leg']}`: {rep_} -> " + (f"{verdict.upper()}" if verdict else "NOT ESTABLISHED"))
+        self.last_unit_report = msg
+        (log.info if verdict else log.warning)("%s %s", name, msg)
+        if not verdict:
+            out.fail(SOURCE, name, msg + ". The legs that need it are NOT stored.", TIER)
+        return verdict

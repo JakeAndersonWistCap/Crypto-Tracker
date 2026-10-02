@@ -2802,7 +2802,9 @@ def robots_and_terms():
             except Exception as ex:  # noqa: BLE001
                 print(f"  {host}{path:<45} robots: UNREADABLE — {ex}")
         t = (e.get("terms") or {}).get("url")
-        if t:
+        if t and e.get("browser_only"):
+            print(f"      terms: not fetched — browser-only source ({e.get('access', '')[:80]})")
+        elif t:
             try:
                 r = requests.get(t, headers=_ua(), timeout=TIMEOUT)
                 print(f"      terms {t}: HTTP {r.status_code}, {len(r.text):,} chars")
@@ -4367,27 +4369,58 @@ def near_activity_cause():
     query is dry-run (free), and run through the adapter's own path: capped at its dry run, counted in the
     monthly ledger, and held if it would eat the month's top-up reserve (~16 GB expected). Prints each
     receiver whose activity disappeared and its share of the drop."""
-    import pandas as pd                                    # noqa: PLC0415
-    import config                                          # noqa: PLC0415
-    from fetch.base import FetchOutput                     # noqa: PLC0415
-    from fetch.near_bigquery import NearBigQuery           # noqa: PLC0415
     head("NEAR — what disappeared between 2026-03-09..15 and 2026-04-06..12 (top receivers by transactions)")
+    try:
+        _near_cause_receivers()
+    except Exception as e:  # noqa: BLE001
+        _near_reauth_or_raise(e)
+
+
+def _near_reauth_or_raise(e: BaseException) -> None:
+    """probes6 4: an expired Google login fails gracefully with the command to run."""
+    from fetch.near_bigquery import REAUTH_ACTION, is_reauth   # noqa: PLC0415
+    if not is_reauth(e):
+        raise e
+    print(f"  NOT RUN — Application Default Credentials need re-authentication (\"Reauthentication is needed\"): "
+          f"{REAUTH_ACTION}, then `gcloud auth application-default set-quota-project near-data-510309` if ADC has "
+          f"no quota project. Nothing was billed.")
+
+
+def _near_cause_setup():
+    """(nb, spec, client, dataset, columns) for the NEAR cause probes, or None (printed why)."""
+    import config                                          # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery           # noqa: PLC0415
     spec = config.PROJECT_BY_NAME["Near"]["near_bigquery"]
     nb = NearBigQuery()
     client, why = nb._client(spec)
+    if getattr(nb, "quota_reminder", None):
+        print(f"  REMINDER: {nb.quota_reminder}")
     ds = spec.get("allowed_dataset", "bigquery-public-data.crypto_near_mainnet_us")
     meta = (f"SELECT column_name FROM `{ds}`.INFORMATION_SCHEMA.COLUMNS WHERE table_name = 'transactions' "
             f"ORDER BY ordinal_position")
     if client is None:
         print(f"  not run here: {why}. In the console (near-data-510309) run first:\n  {meta}")
-        return
+        return None
     from google.cloud import bigquery                      # noqa: PLC0415
     nb._guard_sql(meta, spec)
     cols = [r["column_name"] for r in client.query(meta, job_config=bigquery.QueryJobConfig(
         maximum_bytes_billed=200 * 1024 ** 2)).result()]
+    print(f"  transactions columns: {', '.join(cols)}")
+    return nb, spec, client, ds, cols
+
+
+_NEAR_CAUSE_WEEKS = {"a0": "2026-03-09", "a1": "2026-03-15", "b0": "2026-04-06", "b1": "2026-04-12"}
+
+
+def _near_cause_receivers():
+    import pandas as pd                                    # noqa: PLC0415
+    from fetch.base import FetchOutput                     # noqa: PLC0415
+    got = _near_cause_setup()
+    if got is None:
+        return
+    nb, spec, client, ds, cols = got
     recv = next((c for c in cols if c in ("receiver_account_id", "transaction_receiver_account_id")), None) or \
         next((c for c in cols if "receiver" in c), None)
-    print(f"  transactions columns: {', '.join(cols)}")
     if recv is None:
         print("  NO receiver column — paste back the column list")
         return
@@ -4397,8 +4430,7 @@ def near_activity_cause():
            f"COUNTIF(block_date BETWEEN @b0 AND @b1) AS after_n FROM tx GROUP BY receiver) "
            f"SELECT * FROM (SELECT receiver, before_n, after_n FROM agg ORDER BY before_n - after_n DESC LIMIT 40) "
            f"UNION ALL SELECT '__TOTAL__', SUM(before_n), SUM(after_n) FROM agg")
-    params = {"a0": pd.Timestamp("2026-03-09").date(), "a1": pd.Timestamp("2026-03-15").date(),
-              "b0": pd.Timestamp("2026-04-06").date(), "b1": pd.Timestamp("2026-04-12").date()}
+    params = {k: pd.Timestamp(v).date() for k, v in _NEAR_CAUSE_WEEKS.items()}
     st = nb._load()
     nb._run_bytes = nb._backfill_bytes = 0                 # the adapter's per-run counters (set in run())
     out = FetchOutput()
@@ -4423,6 +4455,129 @@ def near_activity_cause():
     print("  PASTE BACK all lines: the receivers explaining most of the drop name the programme that ended.")
 
 
+def near_activity_signers():
+    """Jake, 2026-10-02 — NEAR's drop, SECOND PASS (the first: top 25 receivers explain only 9.7%; Kai-Ching
+    wallet.kaiching 1,110,074 -> 0 = 6.9%, game.hot.tg 1.5%). Same weeks, same budget path (dry run, capped,
+    ledgered, held behind the top-up reserve; ~2 GB expected — three columns over two weeks): (1) top SIGNERS
+    by transactions lost, with share of the drop; (2) the drop split by account TYPE for signers and receivers
+    — implicit (64-hex), eth-implicit (0x + 40 hex), *.tg, *.near, Aurora (aurora / *.aurora), other; (3) distinct
+    signers and receivers per week and the share of transactions where receiver = signer. Says which it is: a
+    few senders, a class (e.g. implicit-account farming) or a broad decline."""
+    head("NEAR — the drop by SIGNER, by account type, distinct accounts and self-transactions (second pass)")
+    try:
+        _near_cause_signers()
+    except Exception as e:  # noqa: BLE001
+        _near_reauth_or_raise(e)
+
+
+def near_account_class_sql(col: str) -> str:
+    return (f"CASE WHEN REGEXP_CONTAINS({col}, r'^[0-9a-f]{{64}}$') THEN 'implicit (64-hex)' "
+            f"WHEN REGEXP_CONTAINS({col}, r'^0x[0-9a-f]{{40}}$') THEN 'eth-implicit (0x+40-hex)' "
+            f"WHEN ENDS_WITH({col}, '.tg') THEN '*.tg' "
+            f"WHEN {col} = 'aurora' OR ENDS_WITH({col}, '.aurora') THEN 'Aurora (aurora / *.aurora)' "
+            f"WHEN ENDS_WITH({col}, '.near') THEN '*.near' ELSE 'other' END")
+
+
+def near_cause_verdict(rows: list[dict]) -> str:
+    """Which of the three it is, from the second pass's rows: A FEW SENDERS (top 10 signers >= 50% of the
+    drop), A CLASS (one signer type >= 50% of the drop and it fell >= 1.5x as hard, in %, as everything else),
+    else BROAD. The thresholds are stated in the verdict so Jake can judge the call."""
+    tot = next(r for r in rows if r["section"] == "total")
+    drop = int(tot["before_n"]) - int(tot["after_n"])
+    if drop <= 0:
+        return "NO DROP between the two weeks"
+    top = sorted((r for r in rows if r["section"] == "signer"), key=lambda r: -(int(r["before_n"]) - int(r["after_n"])))
+    top10 = sum(int(r["before_n"]) - int(r["after_n"]) for r in top[:10]) / drop
+    types = [r for r in rows if r["section"] == "signer_type"]
+    best = max(types, key=lambda r: int(r["before_n"]) - int(r["after_n"])) if types else None
+    if top10 >= 0.5:
+        return f"A FEW SENDERS: the top 10 signers explain {top10:.0%} of the drop"
+    if best:
+        lost = int(best["before_n"]) - int(best["after_n"])
+        fall = 1 - int(best["after_n"]) / max(int(best["before_n"]), 1)
+        rest_b = int(tot["before_n"]) - int(best["before_n"])
+        rest_fall = 1 - (int(tot["after_n"]) - int(best["after_n"])) / max(rest_b, 1)
+        if lost / drop >= 0.5 and fall >= 1.5 * max(rest_fall, 0.0001):
+            return (f"A CLASS: {best['key']} signers carry {lost / drop:.0%} of the drop (they fell {fall:.0%}; "
+                    f"everything else fell {rest_fall:.0%}); the top 10 signers explain only {top10:.0%} "
+                    f"[rule: >= 50% of the drop and >= 1.5x the rest's fall]")
+    return f"BROAD DECLINE: no few senders (top 10 signers = {top10:.0%}) and no single account type dominates"
+
+
+def _near_cause_signers():
+    import pandas as pd                                    # noqa: PLC0415
+    from fetch.base import FetchOutput                     # noqa: PLC0415
+    got = _near_cause_setup()
+    if got is None:
+        return
+    nb, spec, client, ds, cols = got
+    recv = next((c for c in cols if c in ("receiver_account_id", "transaction_receiver_account_id")), None) or \
+        next((c for c in cols if "receiver" in c), None)
+    sign = next((c for c in cols if c in ("signer_account_id", "transaction_signer_account_id")), None) or \
+        next((c for c in cols if "signer" in c), None)
+    if recv is None or sign is None:
+        print(f"  NO {'receiver' if recv is None else 'signer'} column — paste back the column list")
+        return
+    sc, rc = near_account_class_sql("signer"), near_account_class_sql("receiver")
+    sql = (f"WITH tx AS (SELECT block_date <= @a1 AS wk_a, {sign} AS signer, {recv} AS receiver "
+           f"FROM `{ds}.transactions` WHERE block_date BETWEEN @a0 AND @a1 OR block_date BETWEEN @b0 AND @b1), "
+           f"s AS (SELECT signer AS key, COUNTIF(wk_a) AS before_n, COUNTIF(NOT wk_a) AS after_n FROM tx GROUP BY signer) "
+           f"SELECT * FROM (SELECT 'signer' AS section, key, before_n, after_n FROM s "
+           f"ORDER BY before_n - after_n DESC LIMIT 40) "
+           f"UNION ALL SELECT 'signer_type', {sc}, COUNTIF(wk_a), COUNTIF(NOT wk_a) FROM tx GROUP BY 2 "
+           f"UNION ALL SELECT 'receiver_type', {rc}, COUNTIF(wk_a), COUNTIF(NOT wk_a) FROM tx GROUP BY 2 "
+           f"UNION ALL SELECT 'distinct_signers', '', COUNT(DISTINCT IF(wk_a, signer, NULL)), "
+           f"COUNT(DISTINCT IF(NOT wk_a, signer, NULL)) FROM tx "
+           f"UNION ALL SELECT 'distinct_receivers', '', COUNT(DISTINCT IF(wk_a, receiver, NULL)), "
+           f"COUNT(DISTINCT IF(NOT wk_a, receiver, NULL)) FROM tx "
+           f"UNION ALL SELECT 'self', '', COUNTIF(wk_a AND signer = receiver), COUNTIF(NOT wk_a AND signer = receiver) "
+           f"FROM tx "
+           f"UNION ALL SELECT 'total', '', COUNTIF(wk_a), COUNTIF(NOT wk_a) FROM tx")
+    params = {k: pd.Timestamp(v).date() for k, v in _NEAR_CAUSE_WEEKS.items()}
+    st = nb._load()
+    nb._run_bytes = nb._backfill_bytes = 0
+    out = FetchOutput()
+    est = nb._dry(client, sql, params, spec)
+    print(f"  dry run (free): {est / 1e9:,.2f} GB — the run below spends that from the month's 900 GB budget "
+          f"(held if it would eat the top-up reserve)")
+    rows = nb._run(client, "near_activity_signers", sql, params, spec, st, out, "Near", backfill=True)
+    for e in out.log:
+        print(f"  {e.status}: {e.message}")
+    if not rows:
+        return
+    sec = lambda name: [r for r in rows if r["section"] == name]   # noqa: E731
+    tot = sec("total")[0]
+    b, a = int(tot["before_n"]), int(tot["after_n"])
+    drop = b - a
+    print(f"\n  all transactions: {b:,} -> {a:,} a week (x{a / max(b, 1):.2f}); the drop {drop:,}")
+    print(f"\n  (1) TOP SIGNERS by transactions lost\n  {'signer':<66} {'Mar 9-15':>11} {'Apr 6-12':>11} "
+          f"{'lost':>11} {'share':>7} {'cum':>7}")
+    cum = 0
+    for r in sorted(sec("signer"), key=lambda r: -(int(r["before_n"]) - int(r["after_n"])))[:25]:
+        lost = int(r["before_n"]) - int(r["after_n"])
+        cum += lost
+        print(f"  {str(r['key'])[:66]:<66} {int(r['before_n']):>11,} {int(r['after_n']):>11,} {lost:>11,} "
+              f"{lost / drop if drop else 0:>6.1%} {cum / drop if drop else 0:>6.1%}")
+    for name, title in (("signer_type", "(2a) SIGNERS by account type"), ("receiver_type", "(2b) RECEIVERS by account type")):
+        print(f"\n  {title}\n  {'type':<30} {'Mar 9-15':>11} {'Apr 6-12':>11} {'fell':>7} {'lost':>11} {'share of drop':>14}")
+        for r in sorted(sec(name), key=lambda r: -(int(r["before_n"]) - int(r["after_n"]))):
+            lost = int(r["before_n"]) - int(r["after_n"])
+            print(f"  {str(r['key']):<30} {int(r['before_n']):>11,} {int(r['after_n']):>11,} "
+                  f"{1 - int(r['after_n']) / max(int(r['before_n']), 1):>6.0%} {lost:>11,} "
+                  f"{lost / drop if drop else 0:>13.1%}")
+    print("\n  (3) DISTINCT ACCOUNTS and SELF-TRANSACTIONS")
+    for name, label in (("distinct_signers", "distinct signers"), ("distinct_receivers", "distinct receivers")):
+        r = sec(name)[0]
+        print(f"  {label:<22} {int(r['before_n']):>11,} -> {int(r['after_n']):>11,} "
+              f"(x{int(r['after_n']) / max(int(r['before_n']), 1):.2f})")
+    r = sec("self")[0]
+    print(f"  receiver = signer      {int(r['before_n']) / max(b, 1):>10.1%} -> {int(r['after_n']) / max(a, 1):>10.1%} "
+          f"of transactions ({int(r['before_n']):,} -> {int(r['after_n']):,})")
+    print(f"\n  VERDICT: {near_cause_verdict(rows)}")
+    print("  PASTE BACK all lines; the verdict goes to METHODOLOGY_FLAGS near_activity_cause beside the Kai-Ching "
+          "finding.")
+
+
 def browser_captures():
     """Jake, 2026-10-02: the charts a dashboard draws in the browser — ASXN's Hyperliquid dashboard and
     Aethir's compute-hours and stake-duration charts. For each configured page: robots.txt (the verdict
@@ -4436,15 +4591,39 @@ def browser_captures():
     from fetch.scrape import robots_verdict                # noqa: PLC0415
     import re                                              # noqa: PLC0415
     import urllib.parse                                    # noqa: PLC0415
-    labels = {"Hyperliquid": ("Transactions", "Active Addresses", "Daily Active", "HyperEVM", "HyperCore"),
-              "Aethir": ("Weekly Compute Hours", "Average Stake Duration", "AI Pool", "Gaming Pool")}
+    labels = {"Hyperliquid": ("Transactions", "Active Addresses", "Daily Active", "HyperEVM", "HyperCore", "Users"),
+              "Aethir": ("Weekly Compute Hours", "Total Compute Hours Delivered Last Week", "Average Stake Duration",
+                         "AI Pool", "Gaming Pool")}
+    # probes6: what each project's figures look like inside ANY body (JSON, RSC, text)
+    wanted_re = {"Hyperliquid": r"transaction|txn|tx_count|active|users|addresses",
+                 "Aethir": r"hour|duration"}
+    stored = None
+    try:                                                   # the unit check needs the stored figures
+        import store as store_mod                          # noqa: PLC0415
+        if os.path.exists(store_mod.DB_PATH):
+            stored = store_mod.Store(store_mod.DB_PATH).load_long()
+    except Exception as e:  # noqa: BLE001
+        print(f"  (stored figures not loaded: {type(e).__name__})")
+    pages = []
     for p in config.PROJECTS:
         for pg in (p.get("browser_capture") or {}).get("pages") or ():
-            head(f"{p['name']} — {pg['url']}")
+            pages.append((p, pg))
+            # probes6 2d: HyperEVM / HyperCore activity pages — rendered page loads, like the dashboard
+            for u in pg.get("probe_urls") or ():
+                pages.append((p, {**pg, "url": u, "series": (), "scalars": (), "tiles": (), "unit_check": None,
+                                  "probe_only": True}))
+    for p, pg in pages:
+        if pg:
+            head(f"{p['name']} — {pg['url']}" + ("  (probe only: is there activity data?)" if pg.get("probe_only") else ""))
             ok, why = robots_verdict(pg["url"])
             print(f"  robots.txt: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
             base = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(pg["url"]))
-            for path in ("/terms", "/terms-of-service", "/terms-of-use", "/tos", "/legal"):
+            host = urllib.parse.urlsplit(pg["url"]).netloc
+            browser_only = (config.SOURCE_REGISTER.get(host) or {}).get("browser_only")
+            if browser_only:
+                print("  terms: not fetched — browser-only source, terms read by Jake (SOURCE_REGISTER)")
+            for path in (() if browser_only or pg.get("probe_only") else
+                         ("/terms", "/terms-of-service", "/terms-of-use", "/tos", "/legal")):
                 try:
                     r = requests.get(base + path, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
                 except Exception as e:  # noqa: BLE001
@@ -4464,12 +4643,43 @@ def browser_captures():
             except Exception as e:  # noqa: BLE001
                 print(f"  render failed: {type(e).__name__}: {str(e)[:200]}")
                 continue
-            print(f"  tabs clicked: {got['clicked'] or 'none found'}; {len(got['responses'])} JSON response(s); "
-                  f"{len(got['ws'])} websocket frame(s)")
+            bodies = got.get("bodies") or []
+            kinds = {}
+            for _, ct, _b in bodies:
+                kinds[ct.split(";")[0]] = kinds.get(ct.split(";")[0], 0) + 1
+            print(f"  tabs clicked: {got['clicked'] or 'none found'}; {len(got['responses'])} JSON response(s) "
+                  f"(RSC lines included); {len(bodies)} other body(ies) {kinds or ''}; {len(got['ws'])} websocket frame(s)")
             for line in bc.shapes(got["responses"])[:40]:
                 print(f"    {line}")
             for u, frame in got["ws"][:5]:
                 print(f"    WS {u[:100]}: {frame[:200]}")
+            rx = re.compile(wanted_re.get(p["name"], r"$^"), re.I)
+            for u, ct, b in bodies[:60]:
+                m = rx.search(b)
+                print(f"    BODY {ct.split(';')[0]:<22} {len(b):>9,} chars {u[:110]}"
+                      + (f"  <- '{m.group(0)}': {' '.join(b[max(m.start() - 80, 0):m.end() + 160].split())[:260]}"
+                         if m else ""))
+            hits = [u for u, body in got["responses"] if rx.search(json.dumps(body)[:200_000])]
+            print(f"  responses mentioning /{rx.pattern}/: {len(hits)}" + (f" — {'; '.join(h[:100] for h in hits[:8])}"
+                                                                           if hits else ""))
+            # the pins, dry: what each would store (nothing is stored by the probe)
+            for pin in pg.get("series") or ():
+                pts = bc.series_from(got["responses"], dict(pin))
+                print(f"  PIN {pin['metric']}: " + (pts if isinstance(pts, str) else
+                                                    f"{len(pts)} point(s) {pts[0][0].date()}..{pts[-1][0].date()}, "
+                                                    f"last {pts[-1][1]:,.2f}"))
+            for sp in pg.get("scalars") or ():
+                r_ = bc.scalar_from(got["responses"], sp)
+                print(f"  SCALAR {sp['metric']}: {r_ if isinstance(r_, str) else f'{r_[0]} = {r_[1]:,.2f}'}")
+            for t in pg.get("tiles") or ():
+                print(f"  TILE {t['metric']}: {bc.tile_from(got['text'], t['label'])}")
+            if pg.get("unit_check"):
+                from fetch.base import FetchOutput             # noqa: PLC0415
+                o = FetchOutput()
+                bcx = bc.BrowserCapture(daily=object(), stored_long=stored)
+                v = bcx._unit_check(p["name"], pg, got, o)
+                print(f"  UNIT CHECK: {getattr(bcx, 'last_unit_report', '') or [e.message for e in o.log]}"
+                      + ("" if stored is not None else " (no metrics.db here: nothing to compare)"))
             for lab in labels.get(p["name"], ()):
                 i = got["text"].find(lab)
                 if i >= 0:
@@ -4486,16 +4696,24 @@ def mev_relays():
     relay's site is listed for Jake to read."""
     import config                                          # noqa: PLC0415
     from fetch.base import USER_AGENT                      # noqa: PLC0415
-    from fetch.mev_relays import PATH                      # noqa: PLC0415
+    from fetch.mev_relays import PATH, seed_cost           # noqa: PLC0415
+    import socket                                          # noqa: PLC0415
+    from urllib.parse import urlparse                      # noqa: PLC0415
     spec = config.PROJECT_BY_NAME["Ethereum"]["mev_relays"]
     head("Ethereum — MEV-Boost relays: data API, limits, coverage")
     slots, newest = {}, 0
     for r in spec["relays"]:
         try:
-            resp = requests.get(r["url"] + PATH, params={"limit": 200}, headers={"User-Agent": USER_AGENT},
-                                timeout=TIMEOUT)
+            resp = requests.get(r["url"] + PATH, params={"limit": int(r.get("page_limit", 200))},
+                                headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
         except Exception as e:  # noqa: BLE001
-            print(f"  {r['name']:<22} {type(e).__name__}")
+            # probes6: say WHICH failure — the name not resolving, or the host not answering
+            host = urlparse(r["url"]).hostname
+            try:
+                dns = f"DNS {host} -> {socket.gethostbyname(host)}"
+            except OSError as de:
+                dns = f"DNS {host} does NOT resolve ({de})"
+            print(f"  {r['name']:<22} {type(e).__name__}: {str(e)[:160]}; {dns}")
             continue
         lim = {k: v for k, v in resp.headers.items() if "ratelimit" in k.lower() or k.lower() == "retry-after"}
         rows = resp.json() if resp.ok else []
@@ -4512,6 +4730,16 @@ def mev_relays():
         multi = sum(1 for x in window if len(slots.get(x, [])) > 1)
         print(f"\n  last 200 slots ({window.start}..{newest}): {hit} delivered by a covered relay ({hit / 200:.0%}, "
               f"missed slots included in the 200); {multi} slot(s) on more than one relay (counted once)")
+        # probes6 1b: what a seed costs, from each relay's share of those 200 slots
+        share = {r["name"]: sum(1 for x in window if r["name"] in slots.get(x, [])) / 200 for r in spec["relays"]}
+        for days in (90, 365):
+            c = seed_cost(spec, share, days, hit / 200)
+            print(f"  SEED {days}d: ~{c['relay_calls']:,} relay calls ({c['relay_calls_per_day']}/day), ~{c['wall_h']:.1f} h "
+                  f"wall (busiest {c['busiest']}, {c['wall_s_per_day']:.0f} s/day at "
+                  f"{spec.get('relay_rate_per_s', 1)}/s per relay, side by side). Non-relay leg: ESTIMATE 0 extra "
+                  f"calls; PER-BLOCK ~{c['nonrelay_blocks_per_day']:,} blocks/day = ~{c['per_block_rpc_calls']:,} RPC "
+                  f"calls ({c['per_block_http_requests']:,} batched requests)")
+        print("  offer: `python token_metrics.py --seed mev_relays --seed-days 90` first; a later full seed resumes")
     print(f"  not covered: {', '.join(spec['not_covered'])}")
 
 
@@ -4535,7 +4763,7 @@ CHECKS = (
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,
-    near_activity_cause,
+    near_activity_cause, near_activity_signers,
     browser_captures,
     mev_relays,
 )

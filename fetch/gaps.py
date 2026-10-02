@@ -669,8 +669,15 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # ETHEREUM'S EXECUTION REWARD WITH MEV (Jake, 2026-10-02): the relay data APIs + ETHEREUM_RPC_URL.
     if project.get("mev_relays") and metric in ("mev_relay_value_eth", "execution_rewards_eth", "mev_relay_block_share"):
         return ("the MEV-Boost relay scan (fetch/mev_relays.py) has no complete day stored yet",
-                "Run `python token_metrics.py --seed mev_relays` once for the year (set ETHEREUM_RPC_URL for the "
-                "non-relay leg); routine runs top it up. `python check_offline_items.py mev_relays` checks each relay.")
+                "Run `python token_metrics.py --seed mev_relays --seed-days 90` first (then without --seed-days "
+                "for the year); the non-relay leg is estimated from stored DefiLlama fees - burn. Routine runs "
+                "top it up. `python check_offline_items.py mev_relays` checks each relay and prices the seed.")
+    # ASXN'S HYPERSCREENER, IN THE BROWSER (Jake, probes6 2026-10-02).
+    if any(metric == pin.get("metric") for pg in (project.get("browser_capture") or {}).get("pages") or ()
+           for pin in list(pg.get("series") or ()) + list(pg.get("scalars") or ()) + list(pg.get("tiles") or ())):
+        return ("the browser route (fetch/browser_capture.py) stored nothing for it this run — one rendered page "
+                "load a day; the Run Log's browser_capture line says why (units not established, a pin not found)",
+                "Run `python check_offline_items.py browser_captures` and paste back the lines for this page.")
     pay = (project.get("plume_staking") or {}).get("payouts") or {}
     if metric == pay.get("metric"):
         return ("the staking treasury's RewardDistributed scan (fetch/plume_staking.py) stored nothing this run",

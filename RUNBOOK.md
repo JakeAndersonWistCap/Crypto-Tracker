@@ -527,6 +527,55 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11q. probes6 follow-up, 2026-10-02: MEV seed, ASXN, Aethir tiles, NEAR re-login
+
+```bash
+python check_offline_items.py mev_relays                    # each relay + what a 90- and 365-day seed costs
+python token_metrics.py --seed mev_relays --seed-days 90    # 90 days first; a later full seed resumes
+python check_offline_items.py browser_captures              # ASXN pins dry-run + unit check; Aethir tiles; HyperEVM pages
+python check_offline_items.py near_activity_signers         # NEAR drop, 2nd pass: signers, account types (~2 GB)
+```
+- **Plume NRR.** The primary figure is the organic window from 2026-04-01 onward, annualised
+  over its covered days. The full-year, incentive-inflated figure (it includes the Points
+  Season 2 farming) sits beside it as `network_reserve_ratio_incl_incentive`.
+- **Aethir emissions.**
+  - `emissions_tokens` is what was RELEASED: checker + edge + compute rewards net of locked,
+    i.e. the rise of totalRewards − totalLockedRewards. It feeds the supply trajectory and
+    free-float dilution.
+  - `emissions_earned_tokens` is what was EARNED, a commitment (accrued, still vesting).
+  - Checker and edge carry no locked split, so they count as released.
+- **MEV.**
+  - bloXroute pages at most 100 rows. Its HTTP 400 was limit=200; relayscan's
+    data-api-backfill.go also caps bloXroute at 100.
+  - The max-profit host is right: it is the same host as in relayscan's mainnet config, so its
+    ConnectionError was network-side.
+  - A relay that fails no longer stops the day. The day is kept PARTIAL with the relay named,
+    and it is re-read on up to 3 later runs.
+  - The non-relay leg defaults to an ESTIMATE: (DefiLlama fees − burn) ÷ price × the non-relay
+    share of slots. It is computed when the workbook is built, adds no extra calls, and its
+    cells are caveated as ESTIMATE.
+  - Per-block reads are off (`per_block_days: 0`). At 78% relay coverage they cost about 3,200
+    RPC calls a day. Set it to 1 for the forward daily top-up.
+- **ASXN.**
+  - Access is rendered page loads only, once a day. The API is session-gated: never call it
+    directly, never reproduce the check, and ask ASXN before any public use (SOURCE_REGISTER).
+  - Each run decides whether the buyback legs are HYPE or USD by comparing them with the stored
+    Assistance Fund and holders-revenue figures. If neither matches, or both do, nothing is stored.
+  - Auction Burn and HyperEVM Burn become total burn's history before the Core leg's own read
+    begins.
+  - Volume, buybacks and the non-AF burns are logged as `CROSS-CHECK` lines against the stored
+    series.
+- **Aethir.**
+  - Text bodies are captured now, including text/x-component (React Server Components).
+  - The AI and Gaming stake durations are read from the rendered tiles, forward-only.
+  - Last week's compute hours already come from the page payload.
+- **NEAR.**
+  - When the login has expired ("Reauthentication is needed"), every NEAR BigQuery read stops.
+    The end of the run prints `ACTION NEEDED — run gcloud auth application-default login`, and
+    the count of days it has happened is kept.
+  - If ADC has no quota project, the run reminds you to run
+    `gcloud auth application-default set-quota-project near-data-510309`.
+
 ## 11p. Research round, 2026-10-02: MEV, browser charts, NEAR's drop
 
 ```bash

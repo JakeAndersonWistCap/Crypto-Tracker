@@ -107,6 +107,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "serves no historical state. near_bigquery: NEAR's daily top-up, then P2P month "
                          "chunks from BigQuery until only the reserve for the rest of the month's "
                          "top-ups is left of the 900 GB budget.")
+    ap.add_argument("--seed-days", type=int, default=None,
+                    help="--seed mev_relays only: seed this many days back instead of the configured year "
+                         "(e.g. 90 first; a later full seed resumes from the days already held)")
     return ap.parse_args(argv)
 
 
@@ -257,10 +260,11 @@ def seed_plume_settlement(st, log) -> int:
     return 0
 
 
-def seed_mev_relays(st, log) -> int:
+def seed_mev_relays(st, log, days: int | None = None) -> int:
     """Ethereum's MEV year in one sitting (Jake, 2026-10-02): every covered relay's delivered payloads
     back a year (~16k pages, 1/s per relay, relays side by side) and the non-relay blocks' priority fees
-    on ETHEREUM_RPC_URL; per-day aggregates checkpointed, so an interrupted seed resumes."""
+    on ETHEREUM_RPC_URL; per-day aggregates checkpointed, so an interrupted seed resumes. `days` (--seed-days)
+    seeds fewer days first (Jake, probes6: offer 90)."""
     from fetch import Heartbeat
     from fetch.mev_relays import MevRelays
     from fetch.validate import validate_frame
@@ -269,7 +273,7 @@ def seed_mev_relays(st, log) -> int:
     out = fetch.FetchOutput()
     t0 = time.monotonic()
     with Heartbeat():
-        MevRelays(max_seconds=None).run(pl, None, out, unbounded=True)
+        MevRelays(max_seconds=None, days=days).run(pl, None, out, unbounded=True)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
     written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
@@ -417,7 +421,7 @@ def main(argv=None) -> int:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
               "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles,
               "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
-              "mev_relays": seed_mev_relays}[args.seed](st, log)
+              "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()
         return rc
 
@@ -547,6 +551,12 @@ def main(argv=None) -> int:
              written, len(failures), len(skips), n_review, n_gaps, n_manual, n_staged)
     if failures:
         log.warning("%d fetch failures — see the Run Log tab", len(failures))
+    # ACTION NEEDED (probes6 4, Jake 2026-10-02): an expired Google login stops every NEAR BigQuery read;
+    # say what to run at the end of the run, not only in the Run Log.
+    for e in out.log:
+        if e.source == "near_bigquery" and ("gcloud auth application-default login" in e.message
+                                            or e.message.startswith("REMINDER:")):
+            log.warning("ACTION NEEDED — %s: %s", e.project, e.message)
     # A skip is not a success. It produces no error, no failure and no gap, so without this it
     # reads exactly like a source that ran and had nothing to add — which is how a backfill that
     # never executed gets reported as one that worked.

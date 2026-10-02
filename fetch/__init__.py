@@ -102,7 +102,7 @@ TIER_ORDER = [
     # Ethereum's execution reward with MEV: relay-delivered value + non-relay priority fees (2026-10-02).
     ("mev_relays", 1, lambda ctx: MevRelays()),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
-    ("browser_capture", 3, lambda ctx: BrowserCapture()),
+    ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
     # settlement rebuild (approved 2026-10-01), via Jake's Application Default Credentials.
     ("near_bigquery", 1, lambda ctx: NearBigQuery(stored_long=ctx["stored_long"])),

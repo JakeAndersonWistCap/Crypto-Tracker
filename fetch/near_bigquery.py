@@ -62,6 +62,24 @@ log = logging.getLogger("token_metrics.fetch.near_bigquery")
 
 SOURCE = "near_bigquery"
 TIER = 1
+REAUTH_ACTION = "run `gcloud auth application-default login`"
+QUOTA_REMINDER = "ADC has no quota project — run `gcloud auth application-default set-quota-project {project}`"
+
+
+class ReauthNeeded(Exception):
+    """Jake's Application Default Credentials expired (google.auth RefreshError, "Reauthentication is
+    needed"). Every BigQuery read stops for the run, gracefully, with the action in the run summary."""
+
+
+def is_reauth(e: BaseException) -> bool:
+    try:
+        from google.auth.exceptions import RefreshError
+        if isinstance(e, RefreshError):
+            return True
+    except ImportError:
+        pass
+    t = str(e)
+    return "Reauthentication is needed" in t or "invalid_grant" in t or "reauth" in t.lower()
 LABEL = "Artemis method (adapted to NEAR), UNVALIDATED"
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql" / "near"
 NATIVE = "NEAR"
@@ -129,6 +147,10 @@ class NearBigQuery:
             return None, ("no Application Default Credentials — run `gcloud auth application-default login` "
                           f"then `gcloud auth application-default set-quota-project {spec['project']}` (RUNBOOK 11n)")
         quota = getattr(creds, "quota_project_id", None)
+        if not quota:
+            # Jake, 2026-10-02: a re-login drops the ADC quota project — say so every time it is missing
+            self.quota_reminder = QUOTA_REMINDER.format(project=spec["project"])
+            log.warning("NEAR BigQuery: %s", self.quota_reminder)
         if quota and quota != spec["project"]:
             return None, (f"the ADC quota project is {quota}, not {spec['project']} — refused; run "
                           f"`gcloud auth application-default set-quota-project {spec['project']}`")
@@ -181,6 +203,8 @@ class NearBigQuery:
         try:
             est = self._dry(client, sql, params, spec)
         except Exception as e:  # noqa: BLE001
+            if is_reauth(e):
+                raise ReauthNeeded(str(e)) from e
             out.fail(SOURCE, name, f"{what}: dry run failed — {type(e).__name__}: {str(e)[:200]}", TIER)
             return None
         if topup_days:                                    # a measured top-up size, per day
@@ -215,6 +239,8 @@ class NearBigQuery:
             job = client.query(sql, job_config=cfg)
             rows = [dict(r.items()) if hasattr(r, "items") else dict(r) for r in job.result()]
         except Exception as e:  # noqa: BLE001
+            if is_reauth(e):
+                raise ReauthNeeded(str(e)) from e
             out.fail(SOURCE, name, f"{what}: {type(e).__name__}: {str(e)[:200]}", TIER)
             return None
         if getattr(job, "project", spec["project"]) != spec["project"]:
@@ -282,23 +308,50 @@ class NearBigQuery:
         st.setdefault("days", {})
         st.setdefault("prices", {})
         self._import_csv(st, out, name)
-        client, why = self._client(spec)
-        if client is None:
+        try:
+            client, why = self._client(spec)
+        except Exception as e:  # noqa: BLE001 — credentials that fail on first use
+            if not is_reauth(e):
+                raise
+            client, why = None, None
+            self._reauth(spec, st, out, name, e)
+        if client is None and why:
             out.skipped(SOURCE, name, f"NOT READ — {why}. "
                                       + ("CSV fallback days are valued below." if st["days"] else ""), TIER)
-        else:
-            ok = spec.get("approved") or {}
-            if ok.get("circulating"):
-                self._circulating(client, spec, st, out, name)
-            self._dry_estimates(client, spec, st, out, name)
-            if ok.get("p2p"):
-                self._p2p(client, spec, st, out, name, unbounded)
-            else:
-                out.skipped(SOURCE, name, "p2p NOT APPROVED — dry runs only (config Near.near_bigquery."
-                                          "approved.p2p, Jake's decision on the logged estimates)", TIER)
+        elif client is not None:
+            try:
+                ok = spec.get("approved") or {}
+                if ok.get("circulating"):
+                    self._circulating(client, spec, st, out, name)
+                self._dry_estimates(client, spec, st, out, name)
+                if ok.get("p2p"):
+                    self._p2p(client, spec, st, out, name, unbounded)
+                else:
+                    out.skipped(SOURCE, name, "p2p NOT APPROVED — dry runs only (config Near.near_bigquery."
+                                              "approved.p2p, Jake's decision on the logged estimates)", TIER)
+            except ReauthNeeded as e:
+                self._reauth(spec, st, out, name, e)
             out.skipped(SOURCE, name, self._quota_line(spec, st), TIER)
+        if getattr(self, "quota_reminder", None):
+            out.skipped(SOURCE, name, f"REMINDER: {self.quota_reminder}", TIER)
         self._save(st)
         self._value(spec, st, out, name)
+
+    def _reauth(self, spec, st, out, name, e) -> None:
+        """Expired ADC (probes6 4, Jake 2026-10-02): every BigQuery read stops for this run, the action goes
+        to the run summary, and how often it has happened is kept (state `reauth`)."""
+        day = str(today().date())
+        r = st.setdefault("reauth", {"count": 0, "dates": []})
+        if day not in r["dates"]:
+            r["count"] = int(r.get("count", 0)) + 1
+            r["dates"] = (r["dates"] + [day])[-30:]
+        prev = [d for d in r["dates"] if d != day]
+        out.fail(SOURCE, name, f"NOT READ — Application Default Credentials need re-authentication "
+                               f"(\"Reauthentication is needed\"): {REAUTH_ACTION} (then `gcloud auth "
+                               f"application-default set-quota-project {spec['project']}` if the reminder says so). "
+                               f"Seen on {r['count']} day(s)" + (f"; before today: {', '.join(prev[-5:])}" if prev
+                                                                 else " (first time)")
+                               + ". Every NEAR BigQuery read stopped for this run; nothing stored from it.", TIER)
 
     def _circulating(self, client, spec, st, out, name) -> None:
         if st.get("circulating_on") == str(today().date()):       # once a day: the table is daily
@@ -348,6 +401,8 @@ class NearBigQuery:
             parts.append(f"token census (30 days) {b / 1e9:,.1f} GB")
             st["census_bytes"] = {"bytes": b, "on": day}
         except Exception as e:  # noqa: BLE001
+            if is_reauth(e):
+                raise ReauthNeeded(str(e)) from e
             out.fail(SOURCE, name, f"dry runs failed — {type(e).__name__}: {str(e)[:200]}", TIER)
             return
         st["dry_on"] = day
