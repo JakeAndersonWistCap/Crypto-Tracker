@@ -3838,8 +3838,16 @@ PROJECTS = [
             "base": "https://explorer.plume.org", "days": 365,
             "p2p_metric": "p2p_transfer_volume_usd", "dex_metric": "dex_volume_usd",
             "price_api": "https://coins.llama.fi", "chain_key": "plume_mainnet", "native_coin": "coingecko:plume",
-            # a day with more native transfers than this many 50-row pages is not stored (and says so)
+            # a day with more native transfers than this many 50-row pages is not stored (and says so);
+            # the refusal is remembered (state native.capped) and retried only if this is raised
             "native_max_pages_per_day": 400,
+            # THE NATIVE LEG STARTS AT THE ORGANIC WINDOW (Jake's seed, 2026-10-02): the 183 days 2026-04-01 ..
+            # 2026-10-01 averaged ~96 pages (~4,800 native transfers) a day; EVERY day read before 2026-04-01
+            # (2026-03-31 back to 2026-02-12, 48 days) hit the 400-page cap — more than 20,000 native transfers
+            # a day: Points Season 2 farming. Those days only feed the INCENTIVE-INFLATED full-year NRR, which
+            # needs all 365 days, so any refused day leaves it empty anyway. To build it: set this to None AND
+            # raise native_max_pages_per_day (pages a farmed day needs: unmeasured, over 400 each).
+            "native_from": "2026-04-01",
             # ===== THE SEED'S ERC-20 ROUTE (Jake, 2026-10-01/02). =====
             # "logs" (ROUTE C, the route) = eth_getLogs on rpc.plume.org for the in-scope tokens' Transfer
             #   events: measured 100,000 blocks -> 1,771 logs in 2.0s; 1,000,000 refused ("logs count

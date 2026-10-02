@@ -813,17 +813,30 @@ class PlumeSettlement:
         hi = min(hi, yday) if hi is not None else None
         stored, native_pages, notes = [], 0, []
         nw = int(spec.get("native_workers", 1))
+        # A DAY REFUSED OVER THE CAP IS REMEMBERED (Jake's seed, 2026-10-02: "day(s) held" stuck at 183 while
+        # 48 more days were read — every day before 2026-04-01 had more than 400 pages of native transfers
+        # and was refused, but nothing recorded it, so every later run would read each one again). It is
+        # retried only if native_max_pages_per_day is raised above the pages it was refused at.
+        capped = st["native"].setdefault("capped", {})
+        cap = int(spec["native_max_pages_per_day"])
+        n_from = pd.Timestamp(spec["native_from"]) if spec.get("native_from") else None
+
+        def native_due(d) -> bool:
+            k = str(d.date())
+            return (k not in st["native"]["days"] and int(capped.get(k, 0)) < cap
+                    and (n_from is None or d >= n_from))
         if nw > 1:
             # side by side, the native leg covers the WHOLE window (yesterday back to the floor) without
             # waiting for the ERC-20 leg to reach a day — a day is still stored only when both cover it
             n_hi = min(hi, yday) if hi is not None else yday
-            todo_native = [d for d in pd.date_range(n_hi, floor, freq="-1D") if str(d.date()) not in st["native"]["days"]]
+            todo_native = [d for d in pd.date_range(n_hi, floor, freq="-1D") if native_due(d)]
         else:
-            todo_native = ([d for d in pd.date_range(hi, lo, freq="-1D") if str(d.date()) not in st["native"]["days"]]
+            todo_native = ([d for d in pd.date_range(hi, lo, freq="-1D") if native_due(d)]
                            if lo is not None and hi is not None and lo <= hi else [])
         nprog = Progress(f"plume_settlement native PLUME {name}", total=len(todo_native) or None, unit="days",
                          every_units=25, checkpoint=lambda: self._save(st),
-                         status=lambda: f"{native_pages:,} page(s) read; {len(st['native']['days'])} day(s) held")
+                         status=lambda: f"{native_pages:,} page(s) read; {len(st['native']['days'])} day(s) held; "
+                                        f"{len(capped)} refused over the {cap}-page cap")
         if nw > 1 and todo_native:
             # NATIVE DAYS SIDE BY SIDE (Jake, 2026-10-01): each day is its own call chain, so `nw` run at
             # once within the shared request rate; results are applied here, one thread, newest first
@@ -847,14 +860,14 @@ class PlumeSettlement:
                         native_pages += n
                         nprog.tick()
                         if amt is None:
-                            notes.append(why)
+                            capped[str(d.date())] = n
                         else:
                             st["native"]["days"][str(d.date())] = amt
         elif lo is not None and hi is not None and lo <= hi:
             for day in pd.date_range(hi, lo, freq="-1D"):           # newest first
                 key = str(day.date())
                 nd = st["native"]["days"].get(key)
-                if nd is None:
+                if nd is None and native_due(day):
                     nprog.tick()
                     if self._over(t0, unbounded):
                         break
@@ -865,11 +878,17 @@ class PlumeSettlement:
                         break
                     native_pages += n
                     if amt is None:
-                        notes.append(why)
+                        capped[key] = n
                         continue
                     st["native"]["days"][key] = nd = amt
         if nprog.done:
             nprog.flush(final=True)
+        if capped:
+            ks = sorted(capped)
+            notes.insert(0, f"{len(ks)} day(s) {ks[0]}..{ks[-1]} REFUSED: more than {cap * 50:,} native transfers "
+                            f"(the {cap}-page cap) — not stored, not re-read unless the cap is raised")
+        if n_from is not None and floor < n_from:
+            notes.insert(0, f"native PLUME read from {n_from.date()} (native_from): earlier days are not read")
         self._save(st)
         # value every day both legs cover
         days = sorted(d for d in st["native"]["days"] if lo is not None and hi is not None

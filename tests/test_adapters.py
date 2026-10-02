@@ -21958,6 +21958,53 @@ def test_plume_routes_probe_counts_each_endpoints_own_limit(monkeypatch, capsys)
     assert page2 and page2[0]["is_name_null"] == "false" and page2[0]["name"] == "null"
 
 
+def test_plume_native_days_refused_over_the_cap_are_remembered_and_native_from_skips_the_farmed_period(
+        tmp_path, monkeypatch):
+    """Jake's seed (2026-10-02): "day(s) held" stuck at 183 while days 184-231 were read — each day before
+    2026-04-01 had more native transfers than the 400-page cap and was refused, and nothing recorded it, so
+    every later run would read every such day again. A refused day is now remembered (and retried only if
+    the cap is raised); native_from (2026-04-01 for Plume) skips the farmed period, whose days only feed
+    the incentive-inflated full-year NRR."""
+    import copy
+    import fetch.plume_settlement as ps
+    from fetch.plume_settlement import PlumeSettlement
+    monkeypatch.setattr(ps, "today", lambda: pd.Timestamp("2026-04-05"))
+    plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
+    spec = plume["settlement_rebuild"]
+    assert spec["native_from"] == "2026-04-01" and spec["native_max_pages_per_day"] == 400
+    spec.update(days=10, native_from=None, native_workers=1)
+    calls = []
+
+    def native_day(self, spec_, day):
+        calls.append(str(day.date()))
+        if day < pd.Timestamp("2026-04-01"):
+            return None, int(spec_["native_max_pages_per_day"]), "over the cap"
+        return 5.0, 3, ""
+
+    def erc20(self, spec_, st, floor, t0, unbounded, out, name):
+        st["erc20"].update(oldest=str(floor.date()), done_back=True, newest_ts="2026-04-05 00:00:00")
+        return 0
+    monkeypatch.setattr(PlumeSettlement, "_native_day", native_day)
+    monkeypatch.setattr(PlumeSettlement, "_erc20", erc20)
+    run = lambda: PlumeSettlement(cache_file=tmp_path / "s.json", prices={}, max_seconds=None).run(  # noqa: E731
+        [plume], None, FetchOutput())
+    run()
+    st = json.loads((tmp_path / "s.json").read_text())["native"]
+    assert sorted(st["days"]) == ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04"]
+    assert sorted(st["capped"]) == [str(d.date()) for d in pd.date_range("2026-03-26", "2026-03-31")]
+    assert len(calls) == 10
+    calls.clear()
+    run()
+    assert calls == [], "held and refused days are not read again"
+    spec["native_max_pages_per_day"] = 800                                    # the cap raised: retried
+    run()
+    assert len(calls) == 6
+    calls.clear()
+    spec.update(native_max_pages_per_day=1600, native_from="2026-04-01")      # the farmed period skipped
+    run()
+    assert calls == []
+
+
 def test_plume_scope_is_the_whole_token_list_and_a_late_token_gets_its_own_pass(tmp_path, monkeypatch):
     """Jake, 2026-10-02: route C read 79 in-scope tokens where the probe counted 46. The probe stopped
     at page 1 of the token list (the is_name_null 422) and sampled 250 transfers; the seed reads every

@@ -3582,6 +3582,11 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
         if not sums.empty:
             _nrr_rows(groups, name, sv, sums, inc["sum_metric"], inc["nrr_metric"], n, src,
                       f"[{inc['full_label']}]")
+        else:
+            _VIEW_BLOCKS[(name, inc["nrr_metric"])] = (
+                f"NOT AVAILABLE — the full year needs {n} days of {vol_metric} and {int(full.notna().sum())} are "
+                f"held ({daily.index.min().date()}..{last.date()}); the incentive period's native transfers are "
+                f"not read (config {name}.settlement_rebuild native_from / native_max_pages_per_day)")
         clean = pd.Timestamp(brk["clean_from"])
         org = full[full.index >= clean]
         rows = {}

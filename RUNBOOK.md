@@ -527,6 +527,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11s. Plume native-PLUME seed: "day(s) held" stuck at 183 (2026-10-02)
+
+- **What happened.** The native leg walks newest first from yesterday. Day 183 back is
+  2026-04-01. Every day read before that (2026-03-31 back to 2026-02-12 when this was noticed)
+  had more than 400 pages, i.e. more than 20,000 native transfers: Points Season 2 farming.
+  Each one was refused by `native_max_pages_per_day`. The refusals went to the end-of-run notes
+  only, so the progress line never showed them.
+- **What changed.**
+  - A refused day is remembered (state `native.capped`), so no run reads it again unless the
+    cap is raised.
+  - The progress line now prints "N refused over the 400-page cap".
+  - `native_from: "2026-04-01"` skips the farmed period. Those days only feed the
+    incentive-inflated full-year NRR, which needs all 365 days, so that figure reads NOT
+    AVAILABLE and says why. To build it, set `native_from` to None and raise the cap.
+- **A seed already running on older code** stores its 183 organic days only at its end. If it
+  is stopped, rerun `python token_metrics.py --seed plume_settlement` on this code: the held days
+  are kept and the farmed days are not read.
+
 ## 11r. probes7, 2026-10-02: Kai-Ching, bloXroute, ASXN units, Aethir keys
 
 ```bash
