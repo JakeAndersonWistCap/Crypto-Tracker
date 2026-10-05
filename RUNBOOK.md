@@ -527,6 +527,28 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11w. Jake's run 2026-10-05 14:35: Chainlink fee lines become a seed; spot checks
+
+```bash
+python token_metrics.py --seed chainlink_fees     # a year of fee-line logs, no time budget, resumable
+python check_offline_items.py spot_checks         # our figure vs an independent live reference, per item
+```
+- **Chainlink fee lines.**
+  - What the seed reads, on each of the 5 chains:
+    - the Router's OnRampSet history;
+    - every OnRamp's CCIP 1.2/1.5 and 2.0 events;
+    - the VRF v2.5 coordinator;
+    - the Automation v2.3 registry.
+  - It reads in 120s passes and saves `.cache/logscan/chainlink-fees.json` after each pass. A
+    PROGRESS line per pass shows the share of blocks covered and the time remaining.
+  - Interrupt it at any time; the next `--seed` resumes from the saved position.
+  - Until the seed finishes, routine runs skip `chainlink_fees` with "seed not complete — run
+    --seed chainlink_fees". After it, each routine run reads a day or two of logs per stream.
+- **Explorer pacing.** Every explorer call in a run waits on ONE pacer per host, at 4 requests/s:
+  - for Etherscan, that is one pacer for the key across every chain id;
+  - for Blockscout, one pacer per chain host, e.g. base.blockscout.com.
+  This fixes the 429s that came from several adapters reading the same host.
+
 ## 11v. Jake's run 2026-10-05 09:19: network blip, cache race, Aethir, Plume issuance
 
 ```bash

@@ -40,7 +40,7 @@ from collections import defaultdict
 import pandas as pd
 
 import config
-from .base import Http, tidy, today
+from .base import Http, Progress, tidy, today
 from .explorer import ExplorerLogs, ExplorerRefused, ExplorerTimeout
 from .logcache import LogCache, atomic_write_text, file_lock
 
@@ -65,7 +65,9 @@ METRIC = {
     "ccip_v2": "ccip_v2_fees_usd",
     "ccip_v2_premium": "ccip_v2_premium_usd",
 }
-STREAM_BUDGET_S = 120
+STREAM_BUDGET_S = 120         # routine runs (after the seed): one stream's day or two of logs
+SEED_PASS_S = 120             # --seed: each pass of a stream, then the state is saved and it continues
+SEED_MAX_STALLS = 3           # --seed: passes in a row that read nothing new before a stream is stopped
 
 
 def _words(data: str) -> list[int]:
@@ -139,6 +141,7 @@ class ChainlinkFees:
         self._prices_injected = prices          # tests: {(day, coin): (price, decimals)}
         self.http = http or Http(min_interval=0.25)
         self.cache_file = cache_file
+        self._targets: dict = {}                # seed progress: {stream key: (first block, last block)}
 
     # ---------------------------------------------------------------- state
     def _path(self, name: str):
@@ -160,19 +163,35 @@ class ChainlinkFees:
         with file_lock(p):
             atomic_write_text(p, json.dumps(state))
 
+    def seed_complete(self) -> dict | None:
+        """The seed's completion record, or None while the year is not yet scanned on every chain."""
+        return self._load("chainlink-fees.json").get("seed_complete")
+
     # ---------------------------------------------------------------- run
-    def run(self, projects: list[dict], window_days, out):
+    def run(self, projects: list[dict], window_days, out, unbounded: bool = False):
+        """unbounded=True is `--seed chainlink_fees`: no time budget, every stream read to the head in
+        SEED_PASS_S passes with the state saved after each. A routine run (unbounded=False) reads only
+        once the seed is complete — then a day or two of logs per stream."""
         for p in projects:
             spec = p.get("chainlink_fee_lines")
             if spec:
-                self._project(p["name"], spec, out)
+                self._project(p["name"], spec, out, unbounded)
 
-    def _project(self, name: str, spec: dict, out) -> None:
+    def _project(self, name: str, spec: dict, out, unbounded: bool = False) -> None:
         state = self._load("chainlink-fees.json")
+        if not unbounded and not state.get("seed_complete"):
+            out.skipped(SOURCE, name, "seed not complete — run `python token_metrics.py --seed chainlink_fees` "
+                                      "(no time budget, resumable); routine runs read only the days after it", TIER)
+            return
         streams = state.setdefault("streams", {})
         start_day = (today().normalize() - pd.Timedelta(days=int(spec.get("days", 365))))
         complete: dict = {k: True for k in ("ccip_legacy", "ccip_v2", "vrf", "automation")}
         why: dict = defaultdict(list)
+        prog = None
+        if unbounded:
+            prog = Progress(f"--seed chainlink_fees {name}", unit="passes", every_units=1,
+                            checkpoint=lambda: self._save("chainlink-fees.json", state),
+                            fraction=self._fraction, status=lambda: self._status(streams))
         for chain, c in spec["chains"].items():
             cid = int(c["chain_id"])
             if not self.explorer.configured(cid):
@@ -182,6 +201,7 @@ class ChainlinkFees:
                 continue
             try:
                 wstart = self._window_block(state, chain, cid, start_day)
+                head = self._head_block(cid) if unbounded else None
             except ExplorerRefused as e:
                 for k in complete:
                     complete[k] = False
@@ -190,13 +210,13 @@ class ChainlinkFees:
             # single-address lines
             for kind, addr_key in (("vrf", "vrf_v2_5"), ("automation", "automation_registry")):
                 ok = self._stream(streams, f"{chain}:{kind}:{c[addr_key].lower()}", kind, cid,
-                                  c[addr_key], wstart, None, out, name)
+                                  c[addr_key], wstart, None, out, name, prog, head)
                 if not ok:
                     complete[kind] = False
                     why[kind].append(f"{chain} {kind} scan incomplete")
             # CCIP: every OnRamp the Router ever pointed at
             try:
-                spans = self._onramps(state, chain, cid, c["ccip_router"])
+                spans = self._onramps(state, chain, cid, c["ccip_router"], unbounded)
             except (ExplorerRefused, ExplorerTimeout) as e:
                 for k in ("ccip_legacy", "ccip_v2"):
                     complete[k] = False
@@ -207,12 +227,23 @@ class ChainlinkFees:
                     continue                        # retired before the window opened
                 for kind in ("ccip_legacy", "ccip_v2"):
                     ok = self._stream(streams, f"{chain}:{kind}:{ramp}", kind, cid, ramp,
-                                      max(wstart, b0), b1, out, name)
+                                      max(wstart, b0), b1, out, name, prog, head)
                     if not ok:
                         complete[kind] = False
                         why[kind].append(f"{chain} OnRamp {ramp[:10]}… {kind} scan incomplete")
             self._save("chainlink-fees.json", state)
+        self._prune(streams, start_day)
+        if unbounded and all(complete.values()):
+            state["seed_complete"] = {"window_start": str(start_day.date()),
+                                      "completed_at": pd.Timestamp.now("UTC").isoformat(timespec="seconds"),
+                                      "chains": list(spec["chains"])}
         self._save("chainlink-fees.json", state)
+        if prog is not None:
+            prog.flush(final=True)
+            out.add(None, SOURCE, name, "seed " + ("COMPLETE — routine runs now read incrementally"
+                                                  if state.get("seed_complete") else
+                                                  "NOT complete: " + "; ".join(sum(why.values(), [])[:6])
+                                                  + " — run the seed again; it resumes"), TIER)
         self._emit(name, spec, streams, complete, why, start_day, out)
 
     def _window_block(self, state: dict, chain: str, cid: int, start_day: pd.Timestamp) -> int:
@@ -220,11 +251,20 @@ class ChainlinkFees:
         cache = state.setdefault("window_blocks", {})
         if key not in cache:
             cache[key] = self.explorer.block_at(cid, int(start_day.timestamp()))
+            for k in [k for k in cache if k.startswith(chain + ":") and k != key]:
+                del cache[k]                        # yesterday's window start is never read again
         return int(cache[key])
 
-    def _onramps(self, state: dict, chain: str, cid: int, router: str) -> dict:
+    def _head_block(self, cid: int) -> int | None:
+        """The block about two minutes ago — the seed's progress denominator only."""
+        try:
+            return self.explorer.block_at(cid, int(pd.Timestamp.now("UTC").timestamp()) - 120)
+        except ExplorerRefused:
+            return None
+
+    def _onramps(self, state: dict, chain: str, cid: int, router: str, unbounded: bool = False) -> dict:
         r = state.setdefault("routers", {}).setdefault(chain, {"next": 0, "sets": []})
-        self.explorer.start_budget(STREAM_BUDGET_S)
+        self.explorer.start_budget(SEED_PASS_S if unbounded else STREAM_BUDGET_S)
         try:
             logs, _meta = self.explorer.get_logs(cid, router, [TOPICS["onramp_set"]], r["next"], "latest")
         finally:
@@ -238,57 +278,126 @@ class ChainlinkFees:
         r["sets"] = sorted([list(s) for s in uniq])
         return onramp_spans([tuple(s) for s in r["sets"]])
 
+    # ---------------------------------------------------------------- streams
+    @staticmethod
+    def _migrate(s: dict) -> None:
+        """Caches written before 2026-10-05 15:00 kept every decoded event ("ev"); fold them into the
+        per-day sums ("agg") the stream keeps now."""
+        for ev in s.pop("ev", None) or []:
+            day, tok = ev[0], ev[1]
+            cell = s.setdefault("agg", {}).setdefault(day, {}).setdefault(tok, ["0", "0"])
+            if tok == "usd":
+                cell[0] = repr(float(cell[0]) + float(ev[2]))
+            else:
+                cell[0] = str(int(cell[0]) + int(ev[2]))
+                if len(ev) > 4:
+                    cell[1] = str(int(cell[1]) + int(ev[3]))
+
     def _stream(self, streams: dict, key: str, kind: str, cid: int, address: str, start: int,
-                end: int | None, out, name: str) -> bool:
-        """Read one (address, event) stream forward from its cursor. True when it is complete
-        through the head (or its end block); the decoded events accumulate in the cache."""
-        s = streams.setdefault(key, {"next": int(start), "ev": [], "done": False})
+                end: int | None, out, name: str, prog=None, head: int | None = None) -> bool:
+        """Read one (address, event) stream forward from its cursor. True when it is complete through
+        the head (or its end block). Decoded fees accumulate as per-day sums in the cache. With `prog`
+        (the seed) the stream is read in SEED_PASS_S passes until done, the state saved after each."""
+        s = streams.setdefault(key, {"next": int(start), "agg": {}, "done": False})
+        self._migrate(s)
+        if not s.get("agg") and not s["done"]:
+            s["next"] = max(int(s["next"]), int(start))
+        self._targets[key] = (int(start), end if end is not None else head)
         if s["done"]:
             return True
-        if not s["ev"]:
-            s["next"] = max(int(s["next"]), int(start))
-        seen = {ev[-1] for ev in s["ev"]}
+        stalls = 0
+        while True:
+            before = (s["next"], json.dumps(s.get("agg"), sort_keys=True) if prog else None)
+            finished = self._pass(s, key, kind, cid, address, end, out, name,
+                                  SEED_PASS_S if prog else STREAM_BUDGET_S)
+            if finished is None:
+                return False                        # refused or undecodable: already reported
+            if finished or prog is None:
+                return finished
+            prog.tick()
+            after = (s["next"], json.dumps(s.get("agg"), sort_keys=True))
+            stalls = stalls + 1 if after == before else 0
+            if stalls >= SEED_MAX_STALLS:
+                out.fail(SOURCE, name, f"{key}: {SEED_MAX_STALLS} passes of {SEED_PASS_S}s read nothing new "
+                                       f"(cursor block {s['next']:,}) — stopped; the seed resumes here", TIER)
+                return False
+
+    def _pass(self, s: dict, key: str, kind: str, cid: int, address: str, end: int | None, out, name: str,
+              budget_s: float) -> bool | None:
+        """One budgeted get_logs from the stream's cursor. True = read to the end; False = out of time
+        (the whole blocks read are kept and the cursor moved past them); None = refused."""
         to = end if end is not None else "latest"
-        self.explorer.start_budget(STREAM_BUDGET_S)
+        resume = None
+        self.explorer.start_budget(budget_s)
         try:
-            logs, meta = self.explorer.get_logs(cid, address, [TOPICS[kind]], s["next"], to)
+            logs, _meta = self.explorer.get_logs(cid, address, [TOPICS[kind]], s["next"], to)
             finished = True
         except ExplorerTimeout as e:
-            logs, finished = (e.partial or []), False
-            if e.resume_from:
-                s["next"] = int(e.resume_from)
+            logs, finished, resume = (e.partial or []), False, e.resume_from
         except ExplorerRefused as e:
             out.fail(SOURCE, name, f"{key}: {e}", TIER)
-            return False
+            return None
         finally:
             self.explorer.clear_budget()
+        agg = s.setdefault("agg", {})
         for e in logs:
-            uid = f"{e['transactionHash']}:{e['logIndex']}"
-            if uid in seen:
-                continue                            # a re-read block: each log counts once
-            seen.add(uid)
+            if int(e["blockNumber"]) < int(s["next"]):
+                continue                            # already counted: the cursor is past this block
             if not e.get("timeStamp"):
                 out.fail(SOURCE, name, f"{key}: a log without a timestamp (block {e['blockNumber']}) — "
                                        f"refused; the day cannot be assigned", TIER)
-                return False
+                return None
             day = str(pd.Timestamp(int(e["timeStamp"]), unit="s").normalize().date())
+            if kind == "automation":
+                cell = agg.setdefault(day, {}).setdefault("usd", ["0", "0"])
+                cell[0] = repr(float(cell[0]) + decode_automation(e))
+                continue
             if kind == "ccip_legacy":
                 tok, amt = decode_ccip_legacy(e)
-                s["ev"].append([day, tok, str(amt), uid])
+                prem = 0
             elif kind == "ccip_v2":
-                tok, gross, prem = decode_ccip_v2(e)
-                s["ev"].append([day, tok, str(gross), str(prem), uid])
-            elif kind == "vrf":
-                pay, native = decode_vrf(e)
-                s["ev"].append([day, "native" if native else "link", str(pay), uid])
-            elif kind == "automation":
-                s["ev"].append([day, "usd", repr(decode_automation(e)), uid])
+                tok, amt, prem = decode_ccip_v2(e)
+            else:                                   # vrf
+                amt, native = decode_vrf(e)
+                tok, prem = ("native" if native else "link"), 0
+            cell = agg.setdefault(day, {}).setdefault(tok, ["0", "0"])
+            cell[0], cell[1] = str(int(cell[0]) + int(amt)), str(int(cell[1]) + int(prem))
         if finished:
             if logs:
-                s["next"] = max(e["blockNumber"] for e in logs) + 1
+                s["next"] = max(int(s["next"]), max(int(e["blockNumber"]) for e in logs) + 1)
             if end is not None:
                 s["done"] = True
+        else:
+            # ExplorerTimeout.partial holds every log in the WHOLE blocks below its resume point
+            if logs:
+                s["next"] = max(int(s["next"]), max(int(e["blockNumber"]) for e in logs) + 1)
+            if resume:
+                s["next"] = max(int(s["next"]), int(resume))
         return finished
+
+    @staticmethod
+    def _prune(streams: dict, start_day: pd.Timestamp) -> None:
+        """Days before the window are never emitted again; drop them so the cache stays a year."""
+        cut = str(start_day.date())
+        for s in streams.values():
+            for d in [d for d in (s.get("agg") or {}) if d < cut]:
+                del s["agg"][d]
+
+    def _fraction(self) -> float | None:
+        streams = self._load("chainlink-fees.json").get("streams") or {}
+        tot = got = 0
+        for key, (b0, b1) in self._targets.items():
+            if b1 is None or b1 <= b0:
+                continue
+            s = streams.get(key) or {}
+            tot += b1 - b0
+            got += (b1 - b0) if s.get("done") else max(0, min(int(s.get("next", b0)), b1) - b0)
+        return got / tot if tot else None
+
+    def _status(self, streams: dict) -> str:
+        done = sum(1 for k in self._targets if (streams.get(k) or {}).get("done"))
+        days = {d for k in self._targets for d in ((streams.get(k) or {}).get("agg") or {})}
+        return f"{len(self._targets)} stream(s) found, {done} retired OnRamp(s) finished, {len(days)} day(s) with fees"
 
     # ---------------------------------------------------------------- pricing
     def _price_map(self, needs: dict[str, set]) -> dict:
@@ -331,9 +440,11 @@ class ChainlinkFees:
             chain, kind = key.split(":")[:2]
             if chain not in spec["chains"]:
                 continue
-            for ev in s["ev"]:
-                if ev[1] != "usd":
-                    needs[ev[0]].add(self._coin(spec, chain, ev[1]))
+            self._migrate(s)
+            for day, toks in (s.get("agg") or {}).items():
+                for tok in toks:
+                    if tok != "usd":
+                        needs[day].add(self._coin(spec, chain, tok))
         prices = self._price_map(needs) if needs else {}
         totals: dict = {k: defaultdict(float) for k in METRIC}
         unpriced: dict = defaultdict(set)
@@ -341,20 +452,19 @@ class ChainlinkFees:
             chain, kind = key.split(":")[:2]
             if chain not in spec["chains"]:
                 continue
-            for ev in s["ev"]:
-                day = ev[0]
-                if ev[1] == "usd":
-                    totals[kind][day] += float(ev[2])
-                    continue
-                coin = self._coin(spec, chain, ev[1])
-                pr = prices.get((day, coin))
-                if pr is None:
-                    unpriced[kind].add(day)
-                    continue
-                px, dec = pr
-                totals[kind][day] += int(ev[2]) / 10 ** dec * px
-                if kind == "ccip_v2":
-                    totals["ccip_v2_premium"][day] += int(ev[3]) / 10 ** dec * px
+            for day, toks in (s.get("agg") or {}).items():
+                for tok, (amt, prem) in toks.items():
+                    if tok == "usd":
+                        totals[kind][day] += float(amt)
+                        continue
+                    pr = prices.get((day, self._coin(spec, chain, tok)))
+                    if pr is None:
+                        unpriced[kind].add(day)
+                        continue
+                    px, dec = pr
+                    totals[kind][day] += int(amt) / 10 ** dec * px
+                    if kind == "ccip_v2":
+                        totals["ccip_v2_premium"][day] += int(prem) / 10 ** dec * px
         chains = ",".join(spec["chains"])
         for kind, metric in METRIC.items():
             base = "ccip_v2" if kind == "ccip_v2_premium" else kind

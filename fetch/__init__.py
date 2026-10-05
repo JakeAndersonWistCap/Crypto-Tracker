@@ -1757,7 +1757,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 600,
+    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);

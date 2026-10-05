@@ -97,7 +97,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
-                             "near_bigquery"],
+                             "near_bigquery", "chainlink_fees"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -106,7 +106,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "(locked_tokens, gross/net APR, commission); stops where rpc.plume.org "
                          "serves no historical state. near_bigquery: NEAR's daily top-up, then P2P month "
                          "chunks from BigQuery until only the reserve for the rest of the month's "
-                         "top-ups is left of the 900 GB budget.")
+                         "top-ups is left of the 900 GB budget. chainlink_fees: a year of Chainlink's "
+                         "fee-line event logs (CCIP 1.2/1.5 and 2.0 OnRamps, VRF v2.5, Automation v2.3) on "
+                         "Ethereum, Arbitrum, Polygon, Base and OP; routine runs skip it until it is complete.")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays only: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held)")
@@ -284,6 +286,31 @@ def seed_mev_relays(st, log, days: int | None = None) -> int:
     return 0
 
 
+def seed_chainlink_fees(st, log) -> int:
+    """Chainlink's fee lines that bypass the aggregator, the first year in one sitting (Jake,
+    2026-10-05): every stream (Router OnRampSet history, each OnRamp, the VRF v2.5 coordinator, the
+    Automation v2.3 registry, per chain) read to the head with NO time budget, in passes of
+    SEED_PASS_S with the cache saved after each, so an interrupted seed resumes. Routine runs skip
+    the source until this completes. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.chainlink_fees import ChainlinkFees
+    from fetch.validate import validate_frame
+    pl = [p for p in config.PROJECTS if p.get("chainlink_fee_lines")]
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        ChainlinkFees().run(pl, None, out, unbounded=True)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed chainlink_fees: %s — %s", e.status, e.message)
+    log.info("--seed chainlink_fees: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0
+
+
 def seed_hl_candles(st, log) -> int:
     """Hyperliquid's perps volume, the first year in one sitting (Jake, 2026-10-01): one 1d
     candleSnapshot per perp market (main dex + HIP-3), paced to the published weight limit, with
@@ -421,6 +448,7 @@ def main(argv=None) -> int:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
               "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles,
               "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
+              "chainlink_fees": seed_chainlink_fees,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()
         return rc

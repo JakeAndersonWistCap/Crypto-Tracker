@@ -31,7 +31,7 @@ import os
 import time
 
 import config
-from .base import BudgetExhausted, Http, sleep
+from .base import BudgetExhausted, Http, host_pace, sleep
 
 log = logging.getLogger("token_metrics.fetch.explorer")
 
@@ -87,9 +87,15 @@ def normalise(entry: dict) -> dict:
 class ExplorerLogs:
     """getLogs against the explorers configured for a chain, paging by record count."""
 
-    def __init__(self, http: Http | None = None):
+    def __init__(self, http: Http | None = None, pace_sleep=None):
         # 5 req/s is the free-tier ceiling on both; 0.25s keeps a margin under it.
         self.http = http or Http(min_interval=float(config.EXPLORER_MIN_INTERVAL_S), retries=2)
+        # ONE PACER PER HOST FOR THE WHOLE RUN (Jake, 2026-10-05): each adapter used to hold its own
+        # ExplorerLogs and its own spacing, so chainlink_fees, logscan and balance_flow together drew
+        # HTTP 429 from base.blockscout.com. Every call now waits on fetch.base.host_pace for its host —
+        # api.etherscan.io is ONE host (one key, one limit) across every chain id. A test that injects
+        # its own http paces on its own clock (pace_sleep), or not at all.
+        self._pace_sleep = pace_sleep or (time.sleep if http is None else (lambda _s: None))
         self.requests: dict[str, int] = {}
         self._deadline: float | None = None
         self._budget_s: float | None = None
@@ -143,8 +149,11 @@ class ExplorerLogs:
             raise ExplorerRefused(f"{name}: no {config.EXPLORERS[name]['key_env']} in .env")
         url, base = self._endpoint(name, chain_id)
         query = {**base, **params, "apikey": key}
+        pace = host_pace(url, float(config.EXPLORERS[name].get("rate_per_s") or 1.0 / config.EXPLORER_MIN_INTERVAL_S),
+                         sleep=self._pace_sleep)
         for attempt in (1, 2):
             self._check_budget()
+            pace.wait()
             try:
                 body = (self.http.get(url, params=query, deadline=self._deadline)
                         if self._deadline is not None else self.http.get(url, params=query))

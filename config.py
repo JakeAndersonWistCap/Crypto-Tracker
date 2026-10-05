@@ -2135,6 +2135,8 @@ EXPLORERS = {
         "key_env": "ETHERSCAN_API_KEY",
         "max_records": 1000,           # free tier since July 2026 — researched, confirm live
         "limits": "5 req/s, 100,000 req/day (free)",
+        # ONE limit for the key across every chain id: one run-wide pacer for api.etherscan.io
+        "rate_per_s": 4.0,
     },
     "blockscout": {
         # One host per chain, Etherscan-compatible /api. BSC has no Blockscout instance on file.
@@ -2148,6 +2150,9 @@ EXPLORERS = {
         "key_env": "BLOCKSCOUT_API_KEY",
         "max_records": 1000,
         "limits": "5 req/s (keyed)",
+        # one run-wide pacer PER HOST (base.blockscout.com answered 429 to chainlink_fees on 2026-10-05
+        # 14:35 while other adapters read the same host on their own spacing)
+        "rate_per_s": 4.0,
     },
 }
 

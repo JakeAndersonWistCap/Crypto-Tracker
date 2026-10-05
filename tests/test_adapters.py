@@ -23279,8 +23279,15 @@ def test_chainlink_fee_lines_store_complete_priced_days_and_refuse_an_incomplete
     prices = {(d1, "ethereum:0x514910771af9ca656af840dff83e8264ecf986ca"): (15.0, 18),
               (d1, "coingecko:ethereum"): (4000.0, 18)}
     c = cf.ChainlinkFees(explorer=Ex(), prices=prices, cache_file=tmp_path / "clf.json")
+    # A ROUTINE RUN BEFORE THE SEED reads nothing and says why (Jake, run 2026-10-05 14:35)
+    out0 = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out0)
+    assert out0.frame().empty and c.seed_complete() is None
+    assert any(e.status == "skipped" and "seed not complete" in e.message
+               and "--seed chainlink_fees" in e.message for e in out0.log)
     out = FetchOutput()
-    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out)
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out, unbounded=True)       # the seed
+    assert c.seed_complete() and any("seed COMPLETE" in e.message for e in out.log)
     f = out.frame()
     leg = f[f.metric == "customer_revenue_ccip_legacy_usd"].set_index("date")["value"]
     assert leg[pd.Timestamp(d1)] == 30.0 and len(leg) == int(spec["days"]) and (leg.drop(pd.Timestamp(d1)) == 0).all()
@@ -23288,7 +23295,7 @@ def test_chainlink_fee_lines_store_complete_priced_days_and_refuse_an_incomplete
     assert vrf[pd.Timestamp(d1)] == 4000.0, "a native-paid VRF fulfilment priced at the native coin"
     auto = f[f.metric == "customer_revenue_automation_premium_usd"].set_index("date")["value"]
     assert auto[pd.Timestamp(d1)] == 15.0
-    # a second run re-reads nothing new and counts each log once
+    # a routine run after the seed re-reads nothing new and counts each log once
     out2 = FetchOutput()
     c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out2)
     f2 = out2.frame()
@@ -23296,9 +23303,77 @@ def test_chainlink_fee_lines_store_complete_priced_days_and_refuse_an_incomplete
     # one chain failing: the line is not stored at all
     c3 = cf.ChainlinkFees(explorer=Ex(fail_chain=8453), prices=prices, cache_file=tmp_path / "clf3.json")
     out3 = FetchOutput()
-    c3.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out3)
+    c3.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out3, unbounded=True)
     assert "customer_revenue_vrf_usd" not in set(out3.frame().get("metric", pd.Series(dtype=str)))
     assert any("NOT STORED" in e.message for e in out3.log)
+    assert c3.seed_complete() is None, "a seed with a chain unread is not complete; routine runs keep skipping"
+
+
+def test_chainlink_fee_seed_reads_in_passes_saving_after_each_and_resumes(tmp_path):
+    """--seed chainlink_fees has no overall budget: a stream that runs out of a pass's time keeps the
+    whole blocks it read, moves its cursor to the explorer's resume point, saves, and continues — so
+    an interrupted seed resumes there and no log is counted twice."""
+    import fetch.chainlink_fees as cf
+    from fetch.base import today
+    from fetch.explorer import ExplorerTimeout
+    d1 = str((today() - pd.Timedelta(days=3)).date())
+    link = 0x514910771AF9Ca656af840dff83E8264EcF986CA
+    vrf_addr = config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["chains"]["ethereum"]["vrf_v2_5"].lower()
+    vrf_logs = [_clf_log([1, 10 ** 18, 0, 1, 0], ts=d1, block=b, idx=0, tx=f"0x{b:x}") for b in (1100, 1200, 1300)]
+
+    class Ex:
+        calls: list = []
+
+        def configured(self, cid):
+            return ["etherscan"]
+
+        def start_budget(self, s):
+            pass
+
+        def clear_budget(self):
+            pass
+
+        def block_at(self, cid, ts):
+            return 1000
+
+        def get_logs(self, cid, address, topics, frm, to):
+            if cid == 1 and address.lower() == vrf_addr and topics[0] == cf.TOPICS["vrf"]:
+                Ex.calls.append(frm)
+                rows = [x for x in vrf_logs if x["blockNumber"] >= frm]
+                if len(Ex.calls) == 1:              # the first pass runs out of time after block 1100
+                    e = ExplorerTimeout("budget")
+                    e.partial, e.resume_from = rows[:1], 1200
+                    raise e
+                return rows, {}
+            return [], {}
+    prices = {(d1, "coingecko:chainlink"): (20.0, 18)}
+    c = cf.ChainlinkFees(explorer=Ex(), prices=prices, cache_file=tmp_path / "clf.json")
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out, unbounded=True)
+    assert Ex.calls == [1000, 1200], "the second pass starts at the resume point, not the window start"
+    vrf = out.frame()
+    vrf = vrf[vrf.metric == "customer_revenue_vrf_usd"].set_index("date")["value"]
+    assert vrf[pd.Timestamp(d1)] == 60.0, "three 1-LINK payments at $20, each counted once"
+    import json as _json
+    st = _json.loads((tmp_path / "clf.json").read_text())
+    assert st["streams"][f"ethereum:vrf:{vrf_addr}"]["next"] == 1301 and st["seed_complete"]
+
+
+def test_explorer_calls_share_one_pacer_per_host_across_instances(monkeypatch):
+    """c) Jake, run 2026-10-05 14:35: base.blockscout.com answered 429 to chainlink_fees while other
+    adapters read it too. Every ExplorerLogs in the run now waits on ONE pacer per host."""
+    from fetch.explorer import ExplorerLogs
+    monkeypatch.setenv("BLOCKSCOUT_API_KEY", "k")
+    waits = []
+
+    def nap(sec):
+        waits.append(sec)
+    a = ExplorerLogs(http=_ExplorerHttp({}), pace_sleep=nap)
+    b = ExplorerLogs(http=_ExplorerHttp({}), pace_sleep=nap)
+    a.get_logs(8453, "0x" + "11" * 20, ["0x" + "22" * 32], 0, "latest")
+    b.get_logs(8453, "0x" + "33" * 20, ["0x" + "22" * 32], 0, "latest")
+    assert waits and waits[-1] > 0.2, "the second adapter waits on the first one's call to the same host"
+    assert config.EXPLORERS["blockscout"]["rate_per_s"] <= 5 and config.EXPLORERS["etherscan"]["rate_per_s"] <= 5
 
 
 def test_chainlink_customer_revenue_is_the_aggregator_core_plus_the_lines_that_bypass_it():
