@@ -17722,6 +17722,12 @@ METHODOLOGY_FLAGS = {
     "hyperliquid_tx_count_layer": "Hyperliquid tx_count is HyperEVM ONLY (ASXN /api/hyper-evm/network-metrics, from "
                                   "probes7 2026-10-02): HyperCore's order flow is not in it. Not comparable to an L1 "
                                   "that counts every action as a transaction.",
+    "chainlink_reserve_validated": "VALIDATED (Jake, 2026-10-05): Chainlink announced on X (2026-09-25) that the "
+                                   "Reserve added 373,791 LINK in September for $4.3M+, total 6,047,498 LINK. Our "
+                                   "reserve_inflow measured 373,791 LINK over the same 30 days and 6,047,475.54 "
+                                   "cumulative (a 22.46-LINK difference, 0.0004%, consistent with rounding and the "
+                                   "announcement's cut-off). The Reserve inflow (LINK from the Payment Abstraction "
+                                   "layer into 0x9A709B7B...) is Chainlink's A3 buyback-and-hold figure.",
     "aethir_released_vs_earned": "MEASURED FROM THE DASHBOARD (Jake, 2026-10-02): node rewards vest (Aethir node-sale "
                                  "terms, Feb 2024: 'accrued and earned upon a vesting logic'; the 50% Checkers & "
                                  "Compute Providers allocation vests linearly over ~5 years). Released compute rewards "
