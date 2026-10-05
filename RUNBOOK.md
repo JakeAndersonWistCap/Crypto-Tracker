@@ -527,6 +527,98 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11z. Jake's run 2026-10-05 21:00: staked ETH, Sky minting, Chainlink prices, Ether.fi, Polygon, HL
+
+**1. Ethereum staked ETH: the 88,441,790 was never stake, and ~36M is out of date.**
+- The old formula was deposit-contract balance + ethsupply2 `Eth2Staking` − `WithdrawnTotal`. The deposit
+  contract keeps every deposit ever made (~91.6M ETH by Oct 2026), because withdrawals are minted on the
+  execution layer and never leave it. `WithdrawnTotal` is ~7.6M against ~47–55M actually withdrawn, so
+  the sum double-counts everything exited and re-staked. None of these fields can be repaired into staked ETH.
+- **New source:** `fetch/staked_eth.py` reads beaconcha.in's finalized-epoch `votedether` (the active
+  stake that attested) as validatorqueue.com commits it to GitHub:
+  `raw.githubusercontent.com/etheralpha/validatorqueue-com/main/historical_data.json`. The repo is MIT
+  licensed and has one row per day since 2023-05-21. No key, one request a day, and the first read
+  stores a year.
+- **Verified 2026-10-05:** 43,657,647 ETH (35.76% of 122,080,989). Published reports for early October
+  2026 say ~43.5–43.6M (cryptoticker, validatorqueue.com). Each row's staked / supply must match its own
+  `staked_percent`, or the read is refused.
+- **Effect:**
+  - The staking-yield denominator was 2.03× too high, so the yield would have read about half its value
+    (not 2.5×, because the real stake is 43.7M, not 36M).
+  - The curve 166.32·√staked is now **~3,011 ETH/day**, not 4,285.
+- **Cleanup:** SQL **CB** removes the old deposit-contract rows (`python run_sql.py CB`, then
+  `--delete CB`).
+- **Issuance is not above the maximum.** ~2,975–2,983 ETH/day is ~99% of the 3,011 maximum at 43.7M
+  staked. The 2,734 figure only applies at 36M.
+  - `EthSupply` is genesis plus proof-of-work issuance and has not moved since the Merge, so
+    d(EthSupply + Eth2Staking) = d(Eth2Staking).
+  - `Eth2Staking` is cumulative consensus-layer issuance (net of penalties is likely but undocumented).
+    It includes nothing from the execution layer: no MEV, no fees, no deposits.
+- **The scatter is snapshot timing.** Eth2Staking moves in **daily steps** of ~2,975–2,983 ETH, so one
+  snapshot-to-snapshot delta holds 0, 1 or 2 steps:
+  - 11,932.6 over 98.2 h is 4 steps.
+  - 2,973.8 over 20 h and 2,980.8 over 21.6 h are 1 step each.
+  - Scaling by hours turns a 1-step window into 3,570/day.
+  - **CB3** lists each reading in steps. Q0 sums still telescope correctly; only per-day rates over short
+    windows mislead.
+
+**2. Sky: nothing is minted, and the burn is real.**
+- **The −2.1e-06 reference is d(totalSupply) + the Stage 2 burn.** So d(supply) = −2,860,943.76 to float
+  precision: **the burn did lower totalSupply, and nothing was minted.**
+- **Code behind it:**
+  - In Sky.sol, `transfer` to address(0) reverts (L96–97), and `burn` lowers totalSupply (L156–176). Any
+    `Transfer(x, 0x0)` is therefore a real burn, never an unrecoverable transfer.
+  - The Stage 2 burn is `Sky.burn(pauseProxy, 2,860,943.76)` in the 2026-09-10 spell (executed
+    2026-09-13).
+- **Where the rewards come from:** the LSSKY→SKY farm is funded through **MCD_VEST_SKY_TREASURY
+  0x67eaDb32…**, a DssVestTransferrable that runs `transferFrom(czar = Pause Proxy, …)`. That is SKY the
+  treasury already holds, bought by the flapper (its receiver is the Pause Proxy).
+  - Source: spells-mainnet 2025-10-30 L163–200 @c1ce7e14; dss-vest DssVest.sol L475–498.
+  - The mintable vest stopped in mid-2025, and the 2025-06-26 spell burned 426.29M SKY to offset what it
+    had minted.
+- **Reclassified:**
+  - The schedule is **emissions_only**: rewards released from existing supply, which dilute free float
+    but are not inflation.
+  - `gross_issuance_tokens` is a sourced declared zero (A4 renders burn-only, and a measured positive
+    blocks that).
+  - The Credibility issuance row compares the zero with d(supply) + burn. A delta now drops float noise
+    below 0.01 token, so −2.1e-06 reads 0.
+- **The stream was stale.** The same spell replaced 96,903,706 / 90 days with **143,208,393 SKY / 90
+  days** (vestBgn = execution, 2026-09-13 to 2026-12-11; L159–168 @8a4c4b23).
+- **Cleanup:** SQL **CA** removes the schedule's old `gross_issuance_tokens` rows, which Q0 still sums
+  until they are deleted.
+
+**3. Chainlink buyback USD: 2 of 431 valued.** The write-time valuation read only this run's prices,
+which is a day or two of them since the incremental fetch. It now reads stored prices plus this run's,
+with this run winning. The same fix applies to the chain-burn derivation. The full-history valuation
+compares sources by measuring point and now says why whenever it stands down (it was silent before).
+Only days before the price history should stay unvalued.
+
+**4. Ether.fi.**
+- The Stake-child read now ends its run-log line with
+  `[REPORT ether.fi Stake since 2026-09-03: $… over N non-zero day(s) … ; DefiLlama says: …]`, quoting
+  DefiLlama's own methodology text for where the buying happens.
+- The 600K Safe 0x01e42ad3… has no public label. `python check_offline_items.py etherfi_safe_owners` reads
+  its `getOwners()` and the buyback Safe's on chain and prints any owners they share.
+
+**5. Chainlink seed, Polygon.**
+- Polygon now routes to Etherscan only. Blockscout answers 402 "Featured chain 137 requires
+  Builder/Business/Pro".
+- "Server too busy" is retried with backoff (2/4/8/16 s) before the call is refused. It used to fall
+  straight through to the paid Blockscout fallback.
+- Base stays the PARTIAL gap (Blockscout paid plan).
+
+**6. Hyperliquid emissions: 190,482 vs active 162,861 vs full 245,143.**
+- Today's snapshot has **33.6% of stake inactive**: 162,861 / 245,143 = 66.4% active.
+- Ours is 77.7% of the full curve, implying a time-averaged active share of ~78%. That fits a rise in
+  inactive stake during Q0.
+- The active-curve row now averages the curve over each stored day of the split instead of using today's
+  snapshot, and reports the min / mean / latest inactive share. Where the split covers only part of Q0, it
+  says so.
+- **Commission explains nothing:** our emissions are the fall in futureEmissions, which pays validators'
+  commission and delegators alike.
+- **Epoch timing is unlikely to matter:** rewards are distributed daily and Q0 is covered-days based.
+
 ## 11y. Credibility results, 2026-10-05 17:00: Chainlink seed, seven disagreements, checker fixes
 
 **A. Chainlink seed (Base/OP 429, 0 rows).**

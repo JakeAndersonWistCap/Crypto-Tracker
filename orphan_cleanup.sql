@@ -4252,3 +4252,59 @@ SELECT date, ROUND(value, 0) AS beacon_chain_eth, ROUND(166.32 * sqrt(value) / 3
  WHERE project = 'Ethereum' AND metric = 'beacon_chain_eth'
  ORDER BY date DESC
  LIMIT 20;
+
+
+-- ========================================================================================
+-- CA. SKY gross_issuance_tokens: THE STREAM WAS NEVER MINTING  2026-10-05
+--     Jake's run 2026-10-05 21:00: d(SKY totalSupply) + the Stage 2 burn over Q0 = -2.1e-06 SKY — nothing
+--     was minted, while the declared LSSKY->SKY stream wrote 1,076,707.84 SKY/day of gross issuance. The
+--     rewards are SKY the Pause Proxy already holds, released through MCD_VEST_SKY_TREASURY (a
+--     DssVestTransferrable; spells-mainnet 2025-10-30 L163-200, 2026-09-10 L159-168). The schedule now
+--     writes emissions_tokens only, and gross_issuance_tokens is a declared zero (schedule:config:declared).
+--     The schedule's OLD gross_issuance_tokens rows stay in the store until removed, and Q0 sums them.
+--     CA1 shows them; CA2 removes ONLY those (source exactly 'schedule:config'), never the declared zero.
+--     Run: python run_sql.py CA, then python run_sql.py --delete CA.
+-- ========================================================================================
+-- CA1. WHAT GOES: the schedule-written gross issuance rows.
+SELECT date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Sky' AND metric = 'gross_issuance_tokens' AND source = 'schedule:config'
+ ORDER BY date;
+
+-- CA2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'Sky' AND metric = 'gross_issuance_tokens' AND source = 'schedule:config';
+
+
+-- ========================================================================================
+-- CB. ETHEREUM beacon_chain_eth: 88,441,790 "STAKED" WAS NEVER STAKE  2026-10-05
+--     Deposit-contract balance + ethsupply2 Eth2Staking - WithdrawnTotal. The deposit contract holds every
+--     deposit EVER made (~91.6M ETH by Oct 2026; ETH never leaves it) and WithdrawnTotal (~7.6M) is a
+--     fraction of real withdrawals (~47-55M), so the figure double-counts everything exited and re-staked.
+--     beacon_chain_eth now comes from beaconcha.in's finalized votedether via validatorqueue.com
+--     (fetch/staked_eth.py; 43,657,647 on 2026-10-05). CB1 shows the old rows; CB2 removes ONLY them (their
+--     source names the deposit contract). CB3 (SELECT only) shows Eth2Staking moving in DAILY STEPS of
+--     ~2,975-2,983 ETH: a snapshot-to-snapshot delta holds 0, 1 or 2 steps, which is the 2,915-3,570
+--     ETH/day scatter BZ1 showed when it scaled by hours. Count steps, not hours.
+--     Run: python run_sql.py CB, then python run_sql.py --delete CB.
+-- ========================================================================================
+-- CB1. WHAT GOES: beacon_chain_eth from the deposit-contract identity.
+SELECT date, ROUND(value, 0) AS value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'beacon_chain_eth' AND source LIKE '%deposit_contract%'
+ ORDER BY date;
+
+-- CB3. Eth2Staking (consensus_rewards_cumulative) per reading and its change: whole ~2,980-ETH steps.
+SELECT s.date, s.fetched_at, ROUND(s.value, 1) AS eth2staking,
+       ROUND(s.value - (SELECT p.value FROM metrics p WHERE p.project = s.project AND p.metric = s.metric
+                         AND p.date < s.date ORDER BY p.date DESC LIMIT 1), 1) AS change_since_previous,
+       ROUND((s.value - (SELECT p.value FROM metrics p WHERE p.project = s.project AND p.metric = s.metric
+                          AND p.date < s.date ORDER BY p.date DESC LIMIT 1)) / 2980.0, 2) AS in_daily_steps
+  FROM metrics s
+ WHERE s.project = 'Ethereum' AND s.metric = 'consensus_rewards_cumulative'
+ ORDER BY s.date DESC
+ LIMIT 30;
+
+-- CB2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric = 'beacon_chain_eth' AND source LIKE '%deposit_contract%';

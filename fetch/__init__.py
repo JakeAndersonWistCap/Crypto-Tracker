@@ -54,6 +54,7 @@ from .mev_relays import MevRelays
 from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
+from .staked_eth import StakedEth
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
@@ -107,6 +108,8 @@ TIER_ORDER = [
     # Chainlink's customer-fee lines that bypass the fee aggregator, from each contract's events (2026-10-05).
     ("chainlink_fees", 2, lambda ctx: ChainlinkFees()),
     ("xref", 1, lambda ctx: CrossRefs()),
+    # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
+    ("validatorqueue", 1, lambda ctx: StakedEth()),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
@@ -654,7 +657,22 @@ def _derive_lock_duration(out: FetchOutput, projects: list[dict]) -> None:
                 f"read off it.", 2)
 
 
-def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
+def _stored_prices(stored_long, frame) -> dict:
+    """{(project, 'YYYY-MM-DD'): price_usd} over the STORED history plus this run (this run wins).
+    Jake's run 2026-10-05 21:00: the write-time valuations read this run's frame only, which since the
+    incremental fetch holds a day or two of prices — Chainlink valued 2 of 431 buyback rows with 389
+    prices stored."""
+    parts = [f[f.metric == "price_usd"][["project", "date", "value"]]
+             for f in (stored_long, frame) if f is not None and not getattr(f, "empty", True)]
+    out = {}
+    for f in parts:
+        for r in f.itertuples(index=False):
+            if r.value is not None and not pd.isna(r.value):
+                out[(r.project, str(pd.Timestamp(r.date).date()))] = float(r.value)
+    return out
+
+
+def _derive_buyback(out: FetchOutput, projects: list[dict], stored_long=None) -> None:
     """actual_buyback_tokens where the destination makes it a re-labelling, and its USD twin.
 
     TWO DERIVATIONS, BOTH OF WHICH WERE BEING ASKED FOR AS SOURCES.
@@ -683,8 +701,7 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
     if frame.empty:
         return
     have = set(map(tuple, frame[["project", "metric"]].drop_duplicates().to_numpy()))
-    price_on = {(r.project, str(r.date)[:10]): r.value
-                for r in frame[frame.metric == "price_usd"].itertuples(index=False)}
+    price_on = _stored_prices(stored_long, frame)
     latest_price = {}
     for r in frame[frame.metric == "price_usd"].sort_values("date").itertuples(index=False):
         latest_price[r.project] = (r.value, str(r.date)[:10])
@@ -782,7 +799,7 @@ def _derive_buyback(out: FetchOutput, projects: list[dict]) -> None:
             continue
         priced, unpriced = [], []
         for r in toks.itertuples(index=False):
-            day = str(r.date)[:10]
+            day = str(pd.Timestamp(r.date).date())
             px = price_on.get((name, day))
             if px is None:
                 unpriced.append(day)
@@ -1081,7 +1098,7 @@ def _derive_curve_issuance(out: FetchOutput, projects: list[dict]) -> None:
                                 "comes down — do NOT adjust S0 to close a gap."))
 
 
-def _derive_chain_burn(out: FetchOutput, projects: list[dict]) -> None:
+def _derive_chain_burn(out: FetchOutput, projects: list[dict], stored_long=None) -> None:
     """gross_burn_tokens for a chain whose DefiLlama Revenue IS its burned fees.
 
     ** THE FIGURE WAS ALREADY IN THE STORE UNDER ANOTHER NAME. ** Ethereum and Near both gapped
@@ -1107,8 +1124,7 @@ def _derive_chain_burn(out: FetchOutput, projects: list[dict]) -> None:
         return
     have = {(r.project, r.metric) for r in frame[["project", "metric"]]
             .drop_duplicates().itertuples(index=False)}
-    price_on = {(r.project, str(r.date)[:10]): float(r.value)
-                for r in frame[frame.metric == "price_usd"].itertuples(index=False)}
+    price_on = _stored_prices(stored_long, frame)
 
     for p in projects:
         name = p["name"]
@@ -1683,7 +1699,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # BEFORE the issuance derivation, not after. Both chains burn at the protocol level, so
     # issuance is d(total_supply) + burn — and without the burn in the frame first, _derive_issuance
     # gaps them for want of a figure that is one division away.
-    _derive_chain_burn(out, projects)
+    _derive_chain_burn(out, projects, ctx.get("stored_long"))
     _derive_curve_issuance(out, projects)
     # PRIOR VALUE AND PRIOR DATE FROM THE SAME QUERY (2026-09-29): prior_values is the newest
     # row of ANY date, today's included, while prior_dates is the last EARLIER day — so a second
@@ -1702,7 +1718,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
                          ctx.get("prior_dates") or {})
     # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
     # rather than a figure that is about to be superseded.
-    _derive_buyback(out, projects)
+    _derive_buyback(out, projects, ctx.get("stored_long"))
     # AFTER every write-time derivation: the same formulas over the FULL span of the stored
     # inputs, so a backfilled input (a year of prices, of header supply) reaches the series
     # derived from it. See fetch/history_derive.py.
@@ -1759,7 +1775,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90,
+    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);

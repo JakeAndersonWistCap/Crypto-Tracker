@@ -473,14 +473,17 @@ METRICS = {
     # 2026-09-29 (Jake): Hyperliquid's TOTAL burn = Assistance Fund + Core burns, summed at READ
     # time (build_workbook._burn_total_views). A4's burn and A3's buyback view read it.
     # Chainlink staking v0.2 (2026-09-29): the RewardVault's active emission rate, and claims.
-    # Ethereum (2026-09-29): ETH held on the beacon chain = deposit-contract balance (ETH sent
-    # there can never leave — deposit_contract.sol has no transfer) + Eth2Staking (cumulative CL
-    # rewards) - WithdrawnTotal (ethsupply2). Counts every validator balance: active, pending,
-    # exited-not-withdrawn — so a little ABOVE active stake. The free denominator for the yield.
+    # Ethereum: ETH STAKED — the staking yield's denominator and the issuance curve's input.
+    # REPLACED 2026-10-05 (Jake's run 21:00): it was deposit-contract balance + Eth2Staking - WithdrawnTotal,
+    # which read 88,441,790 — the deposit contract holds every deposit EVER made and WithdrawnTotal (~7.6M)
+    # is a fraction of real withdrawals (~47-55M), so no repair of that identity exists in those fields.
+    # Now beaconcha.in's finalized-epoch votedether, via validatorqueue.com's GitHub history
+    # (fetch/staked_eth.py): 43,657,647 on 2026-10-05, the published early-October figure. Bounds tightened
+    # to what is possible: never more than ETH's whole supply share a validator set can hold today.
     "beacon_chain_eth": {
-        "label": "ETH on the beacon chain (deposit contract + Eth2Staking - WithdrawnTotal)",
+        "label": "ETH staked — active stake that attested (beaconcha.in finalized votedether, via validatorqueue.com)",
         "kind": "stock", "unit": "tokens", "archetypes": [1],
-        "tiers": [1], "sanity_min": 1e6, "sanity_max": 1.2e8, "only_projects": ("Ethereum",)},
+        "tiers": [1], "sanity_min": 1e7, "sanity_max": 7e7, "only_projects": ("Ethereum",)},
     "reward_emission_rate_annual": {
         "label": "Staking reward emission rate (LINK/yr) — RewardVault getRewardBuckets(), active buckets",
         "kind": "stock", "unit": "tokens", "archetypes": [1, 3],
@@ -2188,7 +2191,10 @@ EXPLORERS = {
 EXPLORER_LOG_ROUTES = {
     1: ["etherscan", "blockscout"],
     42161: ["etherscan", "blockscout"],
-    137: ["etherscan", "blockscout"],
+    # POLYGON: ETHERSCAN ONLY (Jake's seed, 2026-10-05). Blockscout answers HTTP 402 "Featured chain 137
+    # requires Builder/Business/Pro" on the PRO API — a paid plan, like Base. Etherscan V2 serves Polygon
+    # logs on the free key; its "server too busy" is retried with backoff (fetch/explorer.BUSY_TRIES).
+    137: ["etherscan"],
     8453: ["blockscout"],       # Etherscan free: no logs on Base since Nov 2025
     10: ["blockscout"],         # ... nor on Optimism
     56: [],                     # ... nor on BSC, and no Blockscout host is on file for BSC
@@ -2478,9 +2484,8 @@ PROJECTS = [
         "etherscan_supply": {
             "key_env": "ETHERSCAN_API_KEY", "chainid": 1,
             "burn_metric": "burn_cumulative_tokens", "supply_metric": "total_supply_protocol",
-            # 2026-09-29: + the deposit contract's balance -> beacon_chain_eth (the yield's base).
-            # Address: ethereum/consensus-specs @e321975f configs/mainnet.yaml L163 DEPOSIT_CONTRACT_ADDRESS.
-            "stake_metric": "beacon_chain_eth",
+            # (stake_metric REMOVED 2026-10-05: deposit contract + Eth2Staking - WithdrawnTotal read 88.4M ETH
+            # staked — impossible. beacon_chain_eth now comes from `staked_eth` below.)
             # 2026-09-29 (Jake): Eth2Staking itself, and its daily change — the yield's consensus part.
             "consensus_metric": "consensus_rewards_cumulative", "consensus_flow": "consensus_rewards_tokens",
             "deposit_contract": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
@@ -2490,6 +2495,14 @@ PROJECTS = [
                          "(check_offline_items etherscan_ethsupply2)",
         },
         "issuance_supply_metric": "total_supply_protocol",
+        # ===== ETH STAKED (Jake's run 2026-10-05 21:00). fetch/staked_eth.py. =====
+        # beaconcha.in /api/v1/epoch/finalized votedether (validatorqueue-com build.py L139), committed daily
+        # to github.com/etheralpha/validatorqueue-com (MIT) — keyless, a row per day since 2023-05-21.
+        # VERIFIED 2026-10-05: 43,657,647 ETH (35.76% of supply) against the ~43.5-43.6M published for early
+        # October 2026 (cryptoticker.io, validatorqueue.com). The first read stores a year.
+        "staked_eth": {"metric": "beacon_chain_eth", "first_days": 365,
+                       "source_url": "https://github.com/etheralpha/validatorqueue-com/blob/main/historical_data.json",
+                       "verified": "2026-10-05"},
         # ===== ROUTE (a) REJECTED AND REMOVED. 2026-09-30 (Jake). =====
         # Issuance history as d(CoinGecko supply = market cap / price) between update days + the
         # burn. Jake's run 2026-09-30T09:23:34Z: mean 3,063.1/day over 382 days, but a daily range
@@ -13007,26 +13020,56 @@ PROJECTS = [
                                "22.5 goes to LSSKY stakers as SKY and 5.0 is burned. Never net "
                                "staking rewards against burn — the first is buy pressure without "
                                "supply reduction, the second removes supply."},
-        # THE SAME 13 AUGUST 2026 PROPOSAL that set the 55/45 split also normalised LSSKY-to-SKY
-        # rewards: a 96,903,706 SKY stream vesting over 90 DAYS. That is 1,076,707.84 SKY/day, and
-        # it is EMISSIONS — SKY newly distributed to stakers — so also_emissions is set and the same
-        # figure feeds both gross issuance and emissions rather than counting the buyback alone.
+        # ===== SKY STAKING REWARDS ARE NOT MINTED. Jake's run 2026-10-05 21:00 + the spells' code. =====
+        # SKY totalSupply (on-chain, 365 days) moved by exactly minus the Stage 2 burn over Q0: d(supply) +
+        # burn = -2.1e-06 SKY, i.e. NOTHING was minted while the declared stream read 58.1M SKY. The code
+        # says why (sky-ecosystem/spells-mainnet, read 2026-10-05):
+        #   * The LSSKY->SKY farm (REWARDS_LSSKY_SKY 0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc, distributor
+        #     REWARDS_DIST_LSSKY_SKY 0x675671A8756dDb69F7254AFB030865388Ef699Ee) is set up with
+        #     TreasuryFundedFarmingInit and vest MCD_VEST_SKY_TREASURY 0x67eaDb3288cceDe034cE95b0511DCc65cf630bB6 —
+        #     a DssVestTransferrable: gem.transferFrom(czar = Pause Proxy, ...). SKY the treasury ALREADY HOLDS
+        #     (bought by the flapper, whose receiver is the Pause Proxy) is RELEASED to stakers. 2025-10-30 spell
+        #     L163-200 @c1ce7e14; dss-vest src/DssVest.sol L475-498.
+        #   * The mintable vest (MCD_VEST_SKY) funded the USDS->SKY farm until mid-2025; no spell since creates
+        #     a stream on it, and the 2025-06-26 spell burned 426,292,860.23 SKY to offset what it had minted.
+        #   * MKR->SKY conversion (MkrSky) transfers from a pre-minted balance — no mint.
+        # So: gross_issuance_tokens = actual minting = a DECLARED ZERO (checked, not trusted: the Credibility
+        # row compares it with d(totalSupply) + burn). The stream is EMISSIONS ONLY — staking rewards released
+        # from the treasury's existing SKY: free-float dilution, never inflation.
         #
-        # THE EXPIRY IS SET NOW, NOT LATER. 2026-08-13 + 90 days inclusive ends 2026-11-10. Without
-        # `until` the final step would carry 1.08m SKY/day forward for ever, reporting a finished
-        # 90-day stream as a permanent emission — exactly the failure the Render schedule was fixed
-        # for. Past the expiry the schedule goes silent and the Gap Report says SCHEDULE EXPIRED.
+        # THE STREAM WAS REPLACED. The 2026-09-10 spell (executed 2026-09-13 — the date this file already
+        # records for its hop change) called TreasuryFundedFarmingInit.updateFarmVest with vestTot
+        # 143,208,393 SKY, vestBgn block.timestamp, vestTau 90 days (L159-168 @8a4c4b23), in the same
+        # transaction as the 2,860,943.76 SKY burn. The 2026-08-13 stream (96,903,706 / 90 days) ran
+        # 2026-08-13..2026-09-12; the new one 2026-09-13..2026-12-11 (90 days inclusive). Past the expiry
+        # the schedule goes silent and the Gap Report says SCHEDULE EXPIRED.
         "issuance_schedule": {
             "steps": [
-                {"from": "2026-08-13", "tokens_per_day": 96_903_706 / 90, "until": "2026-11-10"},
+                {"from": "2026-08-13", "tokens_per_day": 96_903_706 / 90, "until": "2026-09-12"},
+                {"from": "2026-09-13", "tokens_per_day": 143_208_393 / 90, "until": "2026-12-11"},
             ],
-            "source_url": "https://messari.io/", "source_date": "2026-08-13", "status": "active",
-            "also_emissions": True,
-            "note": "LSSKY-to-SKY reward normalisation from the 2026-08-13 Executive Proposal: 96,903,706 "
-                    "SKY vesting over 90 days = 1,076,707.84 SKY/day, expiring 2026-11-10. This is the "
-                    "ONLY declared SKY issuance — it is a governance-directed stream, not a perpetual "
-                    "inflation schedule, so nothing is projected past the expiry.",
+            "source_url": "https://github.com/sky-ecosystem/spells-mainnet/blob/8a4c4b23406cd078dfdc8b7b252a6d9287510b3b/"
+                          "archive/2026-09-10-DssSpell/DssSpell.sol",
+            "source_date": "2026-09-13", "status": "active",
+            "emissions_only": True,
+            "note": "LSSKY->SKY staking rewards RELEASED from treasury SKY (DssVestTransferrable "
+                    "MCD_VEST_SKY_TREASURY, czar = Pause Proxy) — NOT minted: 96,903,706 SKY / 90 days from "
+                    "2026-08-13, replaced on 2026-09-13 by 143,208,393 SKY / 90 days (2026-09-10 spell, "
+                    "updateFarmVest) to 2026-12-11. Emissions only; gross issuance is a declared zero.",
         },
+        "declared_zero": {
+            "gross_issuance_tokens": {
+                "why": "SKY staking rewards are paid from SKY the Pause Proxy already holds (DssVestTransferrable "
+                       "MCD_VEST_SKY_TREASURY); no active mint path (MkrSky transfers pre-minted SKY)",
+                "declared_by": "Jake, 2026-10-05 (from the on-chain supply), sourced to Sky's spells",
+                "sourced": True,
+                "source": "sky-ecosystem/spells-mainnet: 2025-10-30 spell L163-200 @c1ce7e14 (TreasuryFundedFarmingInit, "
+                          "vest MCD_VEST_SKY_TREASURY); 2026-09-10 spell L159-168 @8a4c4b23; dss-vest DssVest.sol "
+                          "L475-498 (transferFrom czar). Observed: d(SKY totalSupply) + Stage 2 burn over Q0 = "
+                          "-2.1e-06 SKY (Jake's run 2026-10-05 21:00)"},
+        },
+        "issuance_declared_zero": {"decided_by": "Jake", "decided_on": "2026-10-05",
+                                   "check_metric": "gross_issuance_tokens"},
         "contracts": {
             "token": _contract(
                 "0x56072C95FAA701256059aa122697B133aDEd9279", "ethereum", "erc20_total_supply", "SKY",
@@ -15946,7 +15989,11 @@ PROJECTS = [
              "why": "holders revenue lives in the ether.fi Stake child only since DefiLlama's 2026-08-04 split",
              "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/c9ff7c2da3f3cf8a2189826333013078f7fbcbb6/"
                            "fees/ether-fi-stake/index.ts",
-             "read_on": "2026-10-05"},
+             "read_on": "2026-10-05",
+             # Jake, 2026-10-05 21:00: the old CoW route is genuinely silent after 2026-04-01; the run log
+             # says what the Stake child books since the new programme (2026-09-03) and where DefiLlama
+             # says the buying happens (its own methodology text).
+             "report_since": "2026-09-03"},
         ),
         "archetypes": [3], "archetypes_held": [],
         # ===== CIRCULATING INCLUDES LOCKED — VERDICT B. =====
@@ -21395,6 +21442,16 @@ SOURCE_REGISTER = {
                    "from it reaches a headline",
         "key": "none (public market data)",
     },
+    "raw.githubusercontent.com/etheralpha/validatorqueue-com": {
+        "used_for": "beacon_chain_eth — ETH staked per day (beaconcha.in finalized votedether, as validatorqueue.com "
+                    "commits it), Ethereum's staking-yield denominator and issuance-curve input (fetch/staked_eth.py)",
+        "paths": ["/etheralpha/validatorqueue-com/main/historical_data.json"],
+        "robots": "a raw file from GitHub's public CDN, one request a day",
+        "terms": {"url": "https://github.com/etheralpha/validatorqueue-com/blob/main/LICENSE",
+                  "status": "MIT licence (read 2026-10-05); the figure is beaconcha.in's — attribute both"},
+        "licence": "MIT (the repo); the underlying figure is beaconcha.in's",
+        "key": "none",
+    },
     "eth-api.lido.fi": {
         "used_for": "staking_apr_lido — Lido's stETH APR (7-day SMA), the Credibility reference for Ethereum's "
                     "staking yield, labelled as Lido's (fetch/xref.py)",
@@ -21931,12 +21988,14 @@ CREDIBILITY: dict = {
     # ---------------------------------------------------------------- Sky
     "Sky": {
         "a4_gross_burn": _c_chk(
-            "Stage 2 burns began 2026-09-14 (Pause Proxy -> 0x0); Sky's own monthly burn figure for September is not "
-            "on file.", "Sky's September settlement report: burned SKY, compared month to month"),
+            "Stage 2 burns began with the 2026-09-10 spell, executed 2026-09-13: Sky.burn(pauseProxy, 2,860,943.76) — a "
+            "REAL burn (totalSupply falls; a transfer to 0x0 reverts in Sky.sol L96-97, so Transfer(x, 0x0) is only "
+            "ever a burn). Sky's own monthly burn figure for September is not on file.", "Sky's September settlement report: burned SKY, compared month to month"),
         "a4_gross_issuance": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
                                                               "plus": "sky_stage2_burn_tokens"},
-                              "tol": 20.0, "source": "observed: d(total_supply) + Stage 2 burn across Q0 — ours is the "
-                                                    "DECLARED schedule (96.9M SKY / 90 days, Messari)"},
+                              "tol": 20.0, "source": "observed: d(SKY totalSupply) + Stage 2 burn across Q0 = minting — "
+                                                    "ours is the DECLARED ZERO (rewards are released from treasury "
+                                                    "SKY, not minted; 2026-10-05)"},
         "a4_net_change": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol"}, "tol": 20.0,
                           "source": "d(SKY totalSupply on-chain, archive-backfilled) across Q0"},
         "a3_protocol_yield": _c_chk(
@@ -21955,10 +22014,13 @@ CREDIBILITY: dict = {
         "in_nps": _c_in("Net Protocol Surplus (manual monthly)", "net_protocol_surplus_usd", "q0", _c_unv(
             "The manual NPS rows ARE Sky's own figures (insights.skyeco.com / financial.skyeco.com); there is no "
             "second publisher of NPS."), fmt=_C_USD),
-        "in_emissions": _c_in("Emissions Q0 (declared schedule, Messari)", "emissions_tokens", "q0",
-                              {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
-                                                               "plus": "sky_stage2_burn_tokens"},
-                               "tol": 20.0, "source": "observed: d(total_supply) + Stage 2 burn across Q0 — the chain"}),
+        "in_emissions": _c_in("Emissions Q0 — staking rewards RELEASED from treasury SKY (declared vest streams)",
+                              "emissions_tokens", "q0", _c_chk(
+            "NOT minting (2026-10-05): the rewards are SKY the Pause Proxy already holds, released through "
+            "MCD_VEST_SKY_TREASURY, so d(totalSupply) says nothing about them. The release itself is on-chain "
+            "but not yet read.",
+            "scan SKY Transfer logs from REWARDS_DIST_LSSKY_SKY 0x675671A8… to REWARDS_LSSKY_SKY 0xB44C2Fb4… (chainlog "
+            "addresses, spells-mainnet addresses_mainnet.sol) and sum them over Q0")),
     },
     # ---------------------------------------------------------------- Uniswap
     "Uniswap": {

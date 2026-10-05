@@ -14986,6 +14986,11 @@ def test_a4_headline_reads_the_stage2_flow_for_sky_and_gross_burn_for_everyone_e
     for head, fn, *rest in specs:
         if head.startswith(("PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE")):
             s, u = fn(5, sky), fn(5, uni)
+            if head.startswith("BURN ÷ ISSUANCE"):
+                # Sky issues nothing since 2026-10-05 (rewards are released treasury SKY): burn-only,
+                # checked against its measured issuance like Uniswap's
+                assert "no issuance — burn only" in s and "BLOCKED" in s, (head, s)
+                continue
             assert '|sky_stage2_burn_tokens"' in s and '|gross_burn_tokens"' not in s, (head, s)
             assert '|gross_burn_tokens"' in u and "sky_stage2" not in u, (head, u)
     yield_meta = specs[0][5]
@@ -15066,12 +15071,26 @@ def test_an_as_buyback_row_is_judged_against_the_series_it_was_copied_from():
     print("relabel ok: :as-buyback rows judged by their origin; unmarked rows still guarded")
 
 
-def test_a4_window_caveat_says_why_the_crossover_is_not_yet_a_rate():
+def _pin_sky_2026_08_stream(monkeypatch):
+    """The two caveat tests below test their MECHANISM on Sky's August 2026 stream as it was declared then
+    (96,903,706 SKY / 90 days as gross issuance, to 2026-11-10). Since 2026-10-05 Sky's stream is
+    emissions-only and its issuance a declared zero; the mechanism is unchanged, so the old shape is pinned."""
+    sky = config.PROJECT_BY_NAME["Sky"]
+    monkeypatch.setitem(sky, "issuance_schedule", {
+        "steps": [{"from": "2026-08-13", "tokens_per_day": 96_903_706 / 90, "until": "2026-11-10"}],
+        "source_url": "https://messari.io/", "source_date": "2026-08-13", "status": "active",
+        "also_emissions": True, "note": "the August 2026 stream, pinned for the test"})
+    monkeypatch.delitem(sky, "declared_zero", raising=False)
+    monkeypatch.delitem(sky, "issuance_declared_zero", raising=False)
+
+
+def test_a4_window_caveat_says_why_the_crossover_is_not_yet_a_rate(monkeypatch):
     """Issuance (a continuous schedule) is short in proportion to the days of Q0 it has existed;
     a discrete monthly burn is simply in the window or not. Their ratio is what happened in the
     window, not a rate, until the window is full and holds >= 3 burns — and the sheet says so
     beside the two figures, with numbers. Sky, 2026-09-24: 42 of 90 days of 1,076,707.84/day,
     one Stage 2 burn of 2,860,943.76."""
+    _pin_sky_2026_08_stream(monkeypatch)
     import build_workbook as bw
     asof = pd.Timestamp("2026-09-24")
     rows = [dict(date=d, project="Sky", metric="sky_stage2_burn_tokens",
@@ -15105,11 +15124,12 @@ def test_a4_window_caveat_says_why_the_crossover_is_not_yet_a_rate():
     print("caveat ok: 42/90-day issuance and a single burn are called what they are")
 
 
-def test_issuance_stream_expiry_caveat_fires_after_the_declared_end_and_clears_90_days_later():
+def test_issuance_stream_expiry_caveat_fires_after_the_declared_end_and_clears_90_days_later(monkeypatch):
     """The mirror of the part-filled window: once a schedule's declared end has passed, Q0 keeps
     summing its last days while the true rate is zero, so the annualised figure OVERSTATES. Sky's
     LSSKY stream: 1,076,707.84/day from 2026-08-13, last issuing day 2026-11-10 (until is
     inclusive). The end date is the schedule's own; the day count is computed."""
+    _pin_sky_2026_08_stream(monkeypatch)
     import build_workbook as bw
     assert config.issuance_schedule_end("Sky") == "2026-11-10"
     assert config.issuance_schedule_end("Uniswap") is None
@@ -18390,7 +18410,9 @@ def test_ethereum_yield_without_beaconchain_is_consensus_plus_priority_fees_over
     finally:
         os.environ.pop("ETHERSCAN_API_KEY", None)
     got = out.frame().set_index("metric")["value"]
-    assert got["beacon_chain_eth"] == 74_000_000 + 1_160_000 - 40_000_000
+    # RETIRED 2026-10-05: deposit contract + Eth2Staking - WithdrawnTotal read 88.4M "staked"; ethsupply2
+    # no longer writes beacon_chain_eth (fetch/staked_eth.py does, from validatorqueue's history)
+    assert "beacon_chain_eth" not in got.index
     # Jake's decision 2026-09-29: the consensus part is d(Eth2Staking), stored as its own series
     assert got["consensus_rewards_cumulative"] == 1_160_000
     es.prior_delta = {("Ethereum", "consensus_rewards_cumulative"): 1_157_300.0}
@@ -19269,10 +19291,12 @@ def test_completeness_counts_mechanism_starts_complete_and_names_every_forward_o
     asof = pd.Timestamp("2026-09-29")
     sky = config.PROJECT_BY_NAME["Sky"]
     ok = {"status": "ok", "q0_basis": "trailing 90 days"}
+    # Sky's gross issuance is a DECLARED ZERO since 2026-10-05 (rewards released, not minted); the
+    # stream's mechanism start now lives on emissions_tokens.
     v, d = cr.classify(sky, "gross_issuance_tokens", ok, "2026-08-13", asof)
-    assert v == "COMPLETE" and d.startswith("COMPLETE FROM MECHANISM START 2026-08-13") and "young" in d
+    assert v == "COMPLETE" and d.startswith("0 — DECLARED") and "not minted" in d
     v, d = cr.classify(sky, "emissions_tokens", ok, "2026-08-13", asof)
-    assert v == "COMPLETE"
+    assert v == "COMPLETE" and d.startswith("COMPLETE FROM MECHANISM START 2026-08-13") and "young" in d
     v, d = cr.classify(sky, "sky_stage2_burn_tokens", ok, "2026-09-14", asof)
     assert v == "COMPLETE" and "2026-09-13" in d
     v, d = cr.classify(config.PROJECT_BY_NAME["Near"], "locked_tokens", {"status": "ok"}, "2026-09-11", asof)
@@ -23971,3 +23995,192 @@ def test_aerodrome_implied_buyback_is_a_structural_zero(tmp_path):
         assert ws.cell(r, col).value == "=0", (head, ws.cell(r, col).value)
     col = next(v for k, v in hdr.items() if k and str(k).startswith("BUYBACK AS % OF SUPPLY"))
     assert "no buyback" in ws.cell(r, col).number_format
+
+
+# ===================================================================================
+# Jake's run 2026-10-05 21:00
+# ===================================================================================
+def test_staked_eth_is_beaconchain_votedether_from_validatorqueue_history(tmp_path, monkeypatch):
+    """1: beacon_chain_eth read 88,441,790 (deposit contract + Eth2Staking - WithdrawnTotal). It is now
+    validatorqueue.com's daily staked_amount (beaconcha.in finalized votedether): a year on the first read,
+    a week after; a row whose staked / supply disagrees with its own staked_percent is refused."""
+    from fetch.base import FetchOutput
+    from fetch.logcache import DailyChecks
+    from fetch.staked_eth import StakedEth
+    import fetch.base as fb
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    days = pd.date_range("2025-09-01", "2026-10-05")
+    body = [{"date": str(d.date()), "staked_amount": 43_000_000 + i, "supply": 122_000_000,
+             "staked_percent": round((43_000_000 + i) / 122_000_000 * 100, 2)} for i, d in enumerate(days)]
+
+    class H:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, params=None):
+            self.calls += 1
+            assert url.startswith("https://raw.githubusercontent.com/etheralpha/validatorqueue-com/")
+            return body
+    real = fb.today
+    import fetch.staked_eth as se
+    se.today = lambda: pd.Timestamp("2026-10-05")
+    try:
+        h = H()
+        x = StakedEth(http=h, daily=DailyChecks(tmp_path))
+        out = FetchOutput()
+        x.run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+        f = out.frame()
+        assert set(f.metric) == {"beacon_chain_eth"} and len(f) == 365 and f["value"].iloc[-1] == 43_000_000 + len(days) - 1
+        assert f["source"].iloc[0] == "validatorqueue:staked_amount"
+        out2 = FetchOutput()
+        x.run([config.PROJECT_BY_NAME["Ethereum"]], None, out2)
+        assert h.calls == 1 and "read today already" in out2.log[-1].message
+    finally:
+        se.today = real
+    bad = [dict(body[-1], staked_percent=99.0)]
+    assert "units changed" in StakedEth.parse(bad)
+    m = config.METRICS["beacon_chain_eth"]
+    assert m["sanity_max"] < 88e6, "88.4M staked is impossible and is refused by the bound"
+    assert "stake_metric" not in config.PROJECT_BY_NAME["Ethereum"]["etherscan_supply"]
+    assert "raw.githubusercontent.com/etheralpha/validatorqueue-com" in config.SOURCE_REGISTER
+
+
+def test_write_time_buyback_valuation_reads_stored_prices():
+    """3: Chainlink valued 2 of 431 buyback rows — the write-time valuation read this run's prices only
+    (a day or two, since the incremental fetch). Stored prices count; this run's win."""
+    from fetch import _derive_buyback
+    from fetch.base import FetchOutput, point
+    out = FetchOutput()
+    rows = [point("Chainlink", "actual_buyback_tokens", 10.0, "explorer:reserve_inflow", 2, pd.Timestamp(d))
+            for d in ("2026-09-01", "2026-10-04")]
+    rows.append(point("Chainlink", "price_usd", 20.0, "coingecko", 1, pd.Timestamp("2026-10-04")))
+    out.add(pd.concat(rows, ignore_index=True), "test", "Chainlink", "fixture", 2)
+    stored = pd.DataFrame([{"date": pd.Timestamp("2026-09-01"), "project": "Chainlink", "metric": "price_usd",
+                            "value": 15.0, "source": "coingecko", "tier": 1},
+                           {"date": pd.Timestamp("2026-10-04"), "project": "Chainlink", "metric": "price_usd",
+                            "value": 99.0, "source": "coingecko", "tier": 1}])
+    _derive_buyback(out, [config.PROJECT_BY_NAME["Chainlink"]], stored)
+    usd = out.frame()
+    usd = usd[usd.metric == "actual_buyback_usd"].set_index("date")["value"]
+    assert usd[pd.Timestamp("2026-09-01")] == 150.0 and usd[pd.Timestamp("2026-10-04")] == 200.0
+
+
+def test_history_usd_stand_down_is_said_and_markers_do_not_trip_it():
+    """3: the full-history valuation compares by measuring point (a marked derived row is ours) and,
+    when a real measurement stands it down, says which source did."""
+    from fetch.base import FetchOutput
+    from fetch.history_derive import derive_from_history
+    days = pd.date_range("2026-09-01", "2026-09-10")
+    rows = [(d, "Chainlink", "actual_buyback_tokens", 10.0, "explorer:reserve_inflow") for d in days]
+    rows += [(d, "Chainlink", "price_usd", 20.0, "coingecko") for d in days]
+    rows += [(days[0], "Chainlink", "actual_buyback_usd", 1.0, "derived:tokens*price:PARTIAL")]
+    st = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source"])
+    out = FetchOutput()
+    assert derive_from_history(out, [config.PROJECT_BY_NAME["Chainlink"]], st)[("Chainlink", "actual_buyback_usd")] == 10
+    st2 = pd.concat([st, pd.DataFrame([(days[1], "Chainlink", "actual_buyback_usd", 5.0, "manual:jake")],
+                                      columns=st.columns)], ignore_index=True)
+    out2 = FetchOutput()
+    assert ("Chainlink", "actual_buyback_usd") not in derive_from_history(out2, [config.PROJECT_BY_NAME["Chainlink"]], st2)
+    assert any("NOT re-valued" in e.message and "manual:jake" in e.message for e in out2.log)
+
+
+def test_explorer_retries_too_busy_with_backoff_and_polygon_is_etherscan_only(monkeypatch):
+    """5: Etherscan's "server too busy" went straight to the fallback, and Blockscout's Polygon is a paid
+    plan (HTTP 402). Busy is retried 2/4/8/16 s; Polygon routes to Etherscan only; Base stays Blockscout."""
+    import fetch.explorer as fx
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    naps = []
+    monkeypatch.setattr(fx, "sleep", lambda s, why="": naps.append(s))
+
+    class H:
+        def __init__(self, busy):
+            self.busy = busy
+
+        def get(self, url, params=None, headers=None, deadline=None):
+            if self.busy:
+                self.busy -= 1
+                return {"status": "0", "message": "NOTOK", "result": "Error! The server is too busy, try again"}
+            return {"status": "1", "message": "OK", "result": ["ok"]}
+    ex = fx.ExplorerLogs(http=H(2), pace_sleep=lambda s: None)
+    assert ex._call("etherscan", 137, {"module": "logs"}) == ["ok"] and naps == [2.0, 4.0]
+    naps.clear()
+    ex2 = fx.ExplorerLogs(http=H(99), pace_sleep=lambda s: None)
+    with _pytest.raises(fx.ExplorerRefused):
+        ex2._call("etherscan", 137, {"module": "logs"})
+    assert naps == [2.0, 4.0, 8.0, 16.0]
+    assert config.explorer_order(137) == ["etherscan"] and config.explorer_order(8453) == ["blockscout"]
+
+
+def test_defillama_report_since_says_what_the_child_books_and_where():
+    """4: Ether.fi's Stake child — holders revenue since 2026-09-03 and DefiLlama's methodology text."""
+    from fetch.llama import DefiLlama
+    spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["defillama_sum_slugs"]
+                if s["metric"] == "holders_revenue_usd")
+    assert spec["report_since"] == "2026-09-03"
+    ll = DefiLlama.__new__(DefiLlama)
+    ll._summary = lambda slug, dt: {"methodology": {"HoldersRevenue": "aggregator trades by the buyback wallet"}}
+    per = {"ether.fi Stake": {pd.Timestamp("2026-09-01"): 50.0, pd.Timestamp("2026-09-05"): 100.0,
+                              pd.Timestamp("2026-09-06"): 0.0}}
+    txt = ll._since_report(spec, per, {"ether.fi Stake": "ether.fi-stake"}, "dailyHoldersRevenue")
+    assert "since 2026-09-03: $100 over 1 non-zero day(s) of 2, last 2026-09-05" in txt
+    assert "aggregator trades by the buyback wallet" in txt
+
+
+def test_sky_rewards_are_released_not_minted():
+    """2: d(SKY totalSupply) + the Stage 2 burn over Q0 = -2.1e-06 SKY: nothing minted. The LSSKY->SKY stream
+    is EMISSIONS ONLY (treasury SKY via a DssVestTransferrable), gross issuance a sourced declared zero, the
+    stream replaced on 2026-09-13 by 143,208,393 / 90 days; a float-noise delta reads 0."""
+    import credibility as cred
+    from fetch.base import FetchOutput
+    from fetch.schedule import Schedule
+    sky = config.PROJECT_BY_NAME["Sky"]
+    sch = sky["issuance_schedule"]
+    assert sch["emissions_only"] and not sch.get("also_emissions")
+    assert sch["steps"][-1] == {"from": "2026-09-13", "tokens_per_day": 143_208_393 / 90, "until": "2026-12-11"}
+    assert sky["declared_zero"]["gross_issuance_tokens"]["sourced"]
+    assert config.issuance_declared_zero("Sky")["check_metric"] == "gross_issuance_tokens"
+    out = FetchOutput()
+    Schedule().run([sky], 90, out)
+    f = out.frame()
+    gi = f[f.metric == "gross_issuance_tokens"]
+    assert len(gi) == 1 and gi["value"].iloc[0] == 0.0 and gi["source"].iloc[0] == "schedule:config:declared"
+    em = f[f.metric == "emissions_tokens"].set_index("date")["value"]
+    assert em[pd.Timestamp("2026-09-12")] == _pytest.approx(96_903_706 / 90)
+    if pd.Timestamp("2026-09-13") in em.index:
+        assert em[pd.Timestamp("2026-09-13")] == _pytest.approx(143_208_393 / 90)
+    long = pd.DataFrame([(pd.Timestamp("2026-07-01"), "Sky", "total_supply_protocol", 23_462_400_000.123456),
+                         (pd.Timestamp("2026-10-04"), "Sky", "total_supply_protocol", 23_459_539_056.363454),
+                         (pd.Timestamp("2026-09-13"), "Sky", "sky_stage2_burn_tokens", 2_860_943.76)],
+                        columns=["date", "project", "metric", "value"])
+    v, _, _ = cred._delta_q0("Sky", {}, long, pd.Timestamp("2026-10-05"), metric="total_supply_protocol",
+                             plus="sky_stage2_burn_tokens")
+    assert v == 0.0
+    assert "UNVERIFIABLE" not in str(config.CREDIBILITY["Sky"]["in_emissions"]) and \
+        "REWARDS_DIST_LSSKY_SKY" in str(config.CREDIBILITY["Sky"]["in_emissions"])
+
+
+def test_hyperliquid_active_curve_is_time_weighted_over_the_stored_split():
+    """6: the active-stake curve averages the stored days of the split, not today's snapshot alone."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-10-05")
+    days = pd.date_range("2026-07-08", "2026-10-05")
+    rows = []
+    for i, d in enumerate(days):
+        rows += [(d, "Hyperliquid", "locked_tokens", 400e6),
+                 (d, "Hyperliquid", "locked_tokens_inactive", 400e6 * (0.1 if i < 60 else 0.3))]
+    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value"])
+    meta = {"Hyperliquid|emissions_tokens": {"q0_covered_days": 90}}
+    v, _, how = cred._hl_reward_active("Hyperliquid", meta, long, asof)
+    full = 0.0237 * 400e6 / 365 * 90
+    assert v == _pytest.approx(full * (1 - (60 * 0.1 + 30 * 0.3) / 90))
+    assert "inactive share 10.0%..30.0%" in how and "latest 30.0%" in how
+    v2, _, how2 = cred._hl_reward_active("Hyperliquid", {**meta, "Hyperliquid|locked_tokens": {"now": 400e6},
+                                                         "Hyperliquid|locked_tokens_inactive": {"now": 120e6}},
+                                         None, asof)
+    assert v2 == _pytest.approx(full * 0.7) and "TODAY's snapshot only" in how2
+
+
+def test_etherfi_safe_owner_probe_is_registered():
+    """4: the 600K-ETHFI Safe's owners are read on Jake's machine (getOwners) and cross-matched."""
+    import check_offline_items as coi
+    assert coi._resolve_check("etherfi_safe_owners")[0] is coi.etherfi_safe_owners

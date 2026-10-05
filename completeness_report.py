@@ -74,6 +74,11 @@ DECISIONS = {
                     "are releases from pre-minted pools (pool_release_tokens), nothing is minted. SOURCED (probes5, "
                     "2026-10-01): Ethereum totalSupply 42bn = hard cap, so mint() cannot add supply; "
                     "Arbitrum is Axelar ITS, whose mint/burn moves supply between chains"),
+    ("Sky", "gross_issuance_tokens"): (
+        "COMPLETE", "0 — DECLARED (Jake's run 2026-10-05): SKY staking rewards are RELEASED from treasury SKY "
+                    "(DssVestTransferrable MCD_VEST_SKY_TREASURY, czar = Pause Proxy), not minted; observed "
+                    "d(totalSupply) + Stage 2 burn over Q0 = 0. SOURCED: spells-mainnet 2025-10-30 L163-200, "
+                    "2026-09-10 L159-168; the stream is emissions_tokens"),
     # Aethir pool_release_tokens: WIRED 2026-10-01 (Jake) — supplier + staker rewards, measured from
     # the dashboard's cumulatives (build_workbook._measured_emissions_views); no decision left.
     # Maple pool_release_tokens: WIRED 2026-09-30 from Jake's probe 5 — the SSF chart's island
@@ -172,7 +177,8 @@ def mechanism_start(p: dict, metric: str, asof: pd.Timestamp) -> dict | None:
         return got
     sched = p.get("issuance_schedule") or {}
     if sched.get("steps") and (metric == "gross_issuance_tokens"
-                               or (metric == "emissions_tokens" and sched.get("also_emissions"))):
+                               or (metric == "emissions_tokens"
+                                   and (sched.get("also_emissions") or sched.get("emissions_only")))):
         first = min(s0["from"] for s0 in sched["steps"])
         if first > year_ago:
             return {"from": first, "why": f"the declared schedule begins {first}: "

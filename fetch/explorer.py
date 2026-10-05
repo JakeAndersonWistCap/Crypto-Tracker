@@ -84,6 +84,10 @@ def normalise(entry: dict) -> dict:
     }
 
 
+# Tries for a "server too busy" answer (2+4+8+16 s of backoff) before the fallback explorer is asked.
+BUSY_TRIES = 5
+
+
 class ExplorerLogs:
     """getLogs against the explorers configured for a chain, paging by record count."""
 
@@ -155,7 +159,7 @@ class ExplorerLogs:
         query = {**base, **params, "apikey": key}
         pace = host_pace(url, float(config.EXPLORERS[name].get("rate_per_s") or 1.0 / config.EXPLORER_MIN_INTERVAL_S),
                          sleep=self._pace_sleep)
-        for attempt in (1, 2):
+        for attempt in range(1, BUSY_TRIES + 1):
             self._check_budget()
             pace.wait()
             try:
@@ -182,16 +186,23 @@ class ExplorerLogs:
             # "No records found" is an ANSWER, not a refusal: the range holds nothing.
             if "no records found" in f"{msg} {text}".lower() or (status == "0" and res == []):
                 return []
-            # THE ONE DOCUMENTED TRANSIENT, retried once after a second. Anything else is the
-            # explorer's definite answer and goes to the fallback, not round the loop again.
-            if attempt == 1 and "rate limit" in str(text).lower():
-                if self._deadline is not None and time.monotonic() + 1.1 >= self._deadline:
-                    self._errors.append(f"{name}: rate limited")
+            # THE DOCUMENTED TRANSIENTS. A rate limit is retried once after a second. "Server too busy"
+            # (Etherscan on Polygon, Jake's seed 2026-10-05) is retried with backoff 2/4/8/16 s — it went
+            # to the fallback at once, and Blockscout's fallback for Polygon is a paid plan (HTTP 402).
+            # Anything else is the explorer's definite answer and goes to the fallback.
+            said = f"{msg} {text}".lower()
+            wait = (1.1 if attempt == 1 and "rate limit" in said else
+                    float(2 ** attempt) if "busy" in said and attempt < BUSY_TRIES else None)
+            if wait is not None:
+                if self._deadline is not None and time.monotonic() + wait >= self._deadline:
+                    self._errors.append(f"{name}: {'busy' if 'busy' in said else 'rate limited'}")
                     raise self._timed_out()
-                sleep(1.1, f"{name} explorer rate-limit pause")
+                log.info("explorer: %s answered %r — retry %d in %.1fs", name, self._scrub(text)[:80],
+                         attempt, wait)
+                sleep(wait, f"{name} explorer {'busy' if 'busy' in said else 'rate-limit'} pause")
                 continue
             raise ExplorerRefused(f"{name}: {self._scrub(msg)} — {self._scrub(text)[:200]}")
-        raise ExplorerRefused(f"{name}: rate limited twice")
+        raise ExplorerRefused(f"{name}: still rate limited / too busy after {BUSY_TRIES} tries")
 
     # ------------------------------------------------------------------ the scan
     def _paged(self, name: str, chain_id: int, address: str, topics: list, from_block: int,

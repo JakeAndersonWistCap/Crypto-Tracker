@@ -109,6 +109,10 @@ def _delta_q0(p, rows, long, asof, metric="total_supply", plus=None, **_):
         f = f[(f.index > a.index[-1]) & (f.index <= b.index[-1])]
         v += float(f.sum())
         how += f" + {plus} over the same days"
+    # Float noise, not a tolerance: a difference of two ~1e10 float64 stocks carries ~1e-6 of rounding
+    # (Sky's d(supply) + burn read -2.1e-06 SKY for an exact zero), which the gap formula would turn into a
+    # 100% miss against a declared 0. Hundredths of a token are below any figure the tab shows.
+    v = round(v, 2) + 0.0
     return v, str(b.index[-1].date()), how
 
 
@@ -220,16 +224,37 @@ def _months_match(p, rows, long, asof, daily="gross_burn_tokens", monthly="gross
 
 def _hl_reward_active(p, rows, long, asof, **_):
     """The documented curve paid on ACTIVE stake only: 2.37% x sqrt(400M / S_total) x S_active, over our
-    emissions' Q0 covered days — if this meets the observed emissions, inactive stake explains the gap."""
+    emissions' Q0 covered days — if this meets the observed emissions, inactive stake explains the gap.
+    TIME-WEIGHTED where the split is stored (Jake's run 2026-10-05 21:00: ours 190,482 sat between the
+    snapshot active curve 162,861 and the full 245,143 — 77.7% of full against a 66.4% active share TODAY):
+    the curve is taken per stored day of the split and averaged, so a share that moved during Q0 is not
+    read as today's. Commission is no part of it: emissions are the fall in futureEmissions, which pays
+    validators' commission and delegators alike."""
+    cov = _num((rows.get(f"{p}|emissions_tokens") or {}).get("q0_covered_days")) or 90.0
+    lo, hi = _q0(asof)
+    tot, off = _series(long, p, "locked_tokens"), _series(long, p, "locked_tokens_inactive")
+    days = sorted(d for d in set(tot.index) & set(off.index) if lo < d <= hi) if len(tot) and len(off) else []
+    if days:
+        per_day = [0.0237 * math.sqrt(400e6 / float(tot.loc[d])) * (float(tot.loc[d]) - float(off.loc[d])) / 365.0
+                   for d in days if float(tot.loc[d]) > 0]
+        shares = [float(off.loc[d]) / float(tot.loc[d]) for d in days if float(tot.loc[d]) > 0]
+        if per_day:
+            v = sum(per_day) / len(per_day) * cov
+            return v, str(days[-1].date()), (
+                f"2.37% x sqrt(400M / S_total) x S_active per day, averaged over the {len(per_day)} day(s) "
+                f"{days[0].date()}..{days[-1].date()} the split is stored, x {cov:.0f} covered day(s); inactive "
+                f"share {min(shares):.1%}..{max(shares):.1%} (mean {sum(shares) / len(shares):.1%}, latest "
+                f"{shares[-1]:.1%})" + ("" if len(per_day) >= cov * 0.8 else
+                                       f" — the split covers {len(per_day)} of {cov:.0f} days, so the earlier "
+                                       f"days are assumed to look like these"))
     s_tot = _num((rows.get(f"{p}|locked_tokens") or {}).get("now"))
     s_off = _num((rows.get(f"{p}|locked_tokens_inactive") or {}).get("now"))
-    cov = _num((rows.get(f"{p}|emissions_tokens") or {}).get("q0_covered_days")) or 90.0
     if not s_tot or s_off is None:
         return None, None, "no locked_tokens / locked_tokens_inactive stored"
     v = 0.0237 * math.sqrt(400e6 / s_tot) * (s_tot - s_off) / 365.0 * cov
     return v, (rows.get(f"{p}|locked_tokens") or {}).get("latest_date"), (
         f"2.37% x sqrt(400M / {s_tot / 1e6:,.1f}M) x ACTIVE {(s_tot - s_off) / 1e6:,.1f}M "
-        f"({s_off / s_tot:.1%} of stake inactive) / 365 x {cov:.0f} day(s)")
+        f"({s_off / s_tot:.1%} of stake inactive, TODAY's snapshot only) / 365 x {cov:.0f} day(s)")
 
 
 def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):

@@ -1092,6 +1092,54 @@ def etherscan_ethsupply2():
           "and BurntFees in the millions.")
 
 
+def etherfi_safe_owners():
+    """Ether.fi (Jake, 2026-10-05 21:00): WHO OWNS the Safe that sent 600,000 ETHFI into the buyback wallet
+    (0x01e42ad3…, last 2026-05-20)? Read-only: getOwners() / getThreshold() / VERSION() on it and on the
+    buyback Safe 0x2f5301a3…, and each owner's code size (EOA or contract). An owner shared with the
+    buyback Safe, or the ether.fi deployer EOA, makes it an ether.fi-controlled wallet — an internal
+    transfer, never a purchase. No address is wired from this; it prints what the chain says."""
+    head("ETHER.FI — owners of the 600K-ETHFI Safe vs the buyback Safe")
+    from fetch.base import redact
+    from fetch.chain import ChainReader
+    abi = [{"name": "getOwners", "type": "function", "stateMutability": "view", "inputs": [],
+            "outputs": [{"type": "address[]"}]},
+           {"name": "getThreshold", "type": "function", "stateMutability": "view", "inputs": [],
+            "outputs": [{"type": "uint256"}]},
+           {"name": "VERSION", "type": "function", "stateMutability": "view", "inputs": [],
+            "outputs": [{"type": "string"}]}]
+    known = {"0x9eac7114d1a1eabc4732a886795cfd9e6e35843f": "ether.fi deployer EOA"}
+    try:
+        r = ChainReader()
+        w3 = r.web3("ethereum")
+    except Exception as e:  # noqa: BLE001
+        print(f"  no Ethereum RPC — {redact(str(e))}")
+        return
+    got = {}
+    for label, addr in (("600K sender", "0x01e42ad3acd58584ffc1d1982ecbbe758996d601"),
+                        ("buyback Safe", "0x2f5301a3D59388c509C65f8698f521377D41Fd0F")):
+        c = w3.eth.contract(address=r.checksum(addr), abi=abi)
+        try:
+            owners = [o.lower() for o in c.functions.getOwners().call()]
+            thr = c.functions.getThreshold().call()
+        except Exception as e:  # noqa: BLE001
+            print(f"  {label} {addr}: not a Safe, or unreadable — {redact(str(e))[:160]}")
+            continue
+        try:
+            ver = c.functions.VERSION().call()
+        except Exception:  # noqa: BLE001
+            ver = "?"
+        got[label] = set(owners)
+        print(f"  {label} {addr}: Safe v{ver}, {thr}-of-{len(owners)}")
+        for o in owners:
+            code = len(w3.eth.get_code(r.checksum(o)))
+            print(f"      {o}  {'contract' if code else 'EOA'}  {known.get(o, '')}")
+    if len(got) == 2:
+        shared = got["600K sender"] & got["buyback Safe"]
+        print(f"  OWNERS SHARED WITH THE BUYBACK SAFE: {', '.join(sorted(shared)) or 'none'}")
+        print("  PASTE BACK. Shared owners or the deployer EOA = ether.fi-controlled (internal transfer); "
+              "none = still unidentified (label stays 'owner unidentified').")
+
+
 GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
 GEOD_MINING_WALLETS = ("0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F",
                        "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478")
@@ -5460,7 +5508,7 @@ CHECKS = (
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
-    hl_af_fills_depth,
+    hl_af_fills_depth, etherfi_safe_owners,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,

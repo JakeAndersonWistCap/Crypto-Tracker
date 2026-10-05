@@ -498,6 +498,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
                 f"Etherscan's message (a rate limit, the key, or a plan); or run "
                 f"check_offline_items.py etherscan_ethsupply2.")
+    se = project.get("staked_eth") or {}
+    if metric == se.get("metric"):
+        return ("ETH staked (beaconcha.in finalized votedether, via validatorqueue.com's GitHub history) is "
+                "configured but stored nothing this run",
+                f"Read the validatorqueue line in the Run Log for {name}: 'stopped updating' means the "
+                f"repo's newest row has aged; 'units changed' means a row's staked / supply disagreed with "
+                f"its own staked_percent.")
     if metric in (es.get("consensus_metric"), es.get("consensus_flow")):
         return ("Etherscan stats/ethsupply2 Eth2Staking (cumulative consensus rewards) is configured "
                 "but stored nothing this run; the flow needs an earlier-dated reading as well",
@@ -996,6 +1003,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m = ({es["burn_metric"], es["supply_metric"], "gross_burn_tokens"}
              | ({es["stake_metric"]} if es.get("stake_metric") else set())
              | {es[k] for k in ("consensus_metric", "consensus_flow") if es.get(k)}) if es else set()
+    elif source == "validatorqueue":
+        m = {(project.get("staked_eth") or {}).get("metric")} - {None}
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
     elif source == "blockscout_stats":

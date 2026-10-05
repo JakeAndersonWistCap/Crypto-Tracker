@@ -82,7 +82,15 @@ def _usd(out, h, p) -> int:
     if config.dune_query_declared(name, "actual_buyback_usd"):
         return 0
     usd = _series(h, name, "actual_buyback_usd")
-    if len(usd) and (usd["source"].astype(str) != USD_SOURCE).any():
+    # COMPARED BY MEASURING POINT (Jake's run 2026-10-05 21:00: Chainlink valued 2 of 431 rows though
+    # 389 prices were stored): a marker on our own derived rows is not a measurement, and a stand-down
+    # is SAID, with the source that caused it — it used to be silent.
+    other = usd[usd["source"].astype(str).map(_measuring_point) != USD_SOURCE] if len(usd) else usd
+    if len(other):
+        out.skipped(SOURCE, name, f"actual_buyback_usd: NOT re-valued from stored prices — {len(other)} stored "
+                                  f"row(s) come from another source ({str(other['source'].iloc[0])[:80]}, "
+                                  f"{other['date'].min().date()}..{other['date'].max().date()}); a measurement "
+                                  f"is never re-valued", 2)
         return 0                   # sourced, restated or manual: a measurement is never re-valued
     tok = _series(h, name, "actual_buyback_tokens")
     px = _series(h, name, "price_usd").set_index("date")["value"].astype(float)

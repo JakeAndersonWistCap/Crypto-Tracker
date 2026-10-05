@@ -463,6 +463,7 @@ class DefiLlama:
             rows.append((d, sum(v.get(d, 0.0) for v in per.values())))
         head = (f"{metric} = sum of {dt} over {len(per)} service(s): "
                 + ", ".join(f"{k}={v}" for k, v in resolved.items())
+                + self._since_report(spec, per, resolved, dt)
                 + (f"; RETIRED (0 after): " + ", ".join(f"{k} last reported {e.date()}" for k, e in retired.items())
                    if retired else ""))
         if refused:
@@ -496,6 +497,35 @@ class DefiLlama:
                 + (f"; {len(bad) - len(repair)} earlier partial day(s) still missing a service"
                    if len(bad) > len(repair) else "")
                 + " — " + spec.get("why", ""), TIER)
+
+    def _since_report(self, spec: dict, per: dict, resolved: dict, dt: str) -> str:
+        """`report_since` (Ether.fi, Jake 2026-10-05): per child, what it shows since that date — total,
+        non-zero days, last non-zero day — and DefiLlama's own methodology text for the series (WHERE it
+        says the money goes), so a run log answers it without opening the adapter."""
+        since = spec.get("report_since")
+        if not since:
+            return ""
+        t0, parts = pd.Timestamp(since), []
+        for label, pts in per.items():
+            sel = {d: v for d, v in pts.items() if d >= t0}
+            nz = sorted(d for d, v in sel.items() if v)
+            meth = ""
+            try:
+                body = self._summary(resolved[label], dt)
+                m = body.get("methodology") if isinstance(body, dict) else None
+                key = {"dailyHoldersRevenue": "HoldersRevenue", "dailyRevenue": "Revenue",
+                       "dailyFees": "Fees"}.get(dt, "")
+                if isinstance(m, dict):
+                    meth = str(m.get(key) or "")
+                bm = body.get("breakdownMethodology") if isinstance(body, dict) else None
+                if isinstance(bm, dict) and isinstance(bm.get(key), dict):
+                    meth += " | by component: " + "; ".join(f"{k}: {v}" for k, v in bm[key].items())
+            except Exception as e:  # noqa: BLE001
+                meth = f"(methodology unreadable: {e})"
+            parts.append(f"{label} since {t0.date()}: ${sum(sel.values()):,.0f} over {len(nz)} non-zero day(s) "
+                         f"of {len(sel)}" + (f", last {nz[-1].date()}" if nz else "")
+                         + (f"; DefiLlama says: {meth[:400]}" if meth else "; no methodology text published"))
+        return " [REPORT " + " || ".join(parts) + "]"
 
     def _partial_days(self, name: str, metric: str) -> set:
         """Stored days of this summed metric whose source says a service was missing."""
