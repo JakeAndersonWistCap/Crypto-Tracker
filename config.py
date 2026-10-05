@@ -4428,23 +4428,18 @@ PROJECTS = [
         # dailyRevenue, LINK sent to the Reserve. The two are separate by design.
         # Replaces customer_revenue_usd = fees_usd (the floor restated 2026-09-28); its stored rows
         # are orphan_cleanup.sql section BB.
-        # SLUGS RESOLVED EACH RUN from the `chainlink` parent's childProtocols (listing names as
-        # DefiLlama serves them), then fallbacks — Jake's run 2026-09-30 14:54 had
-        # "chainlink-keepers not found" (renamed Chainlink Automation). Adapter modules as in
-        # DefiLlama/dimension-adapters @f16ec99 fees/: chainlink-requests, chainlink-keepers,
-        # chainlink-vrf-v1, chainlink-vrf-v2, chainlink-ccip. Whatever reports is summed; a
-        # retired service counts 0 after its last day (logged); a missing active one is flagged.
+        # SERVICES = DEFILLAMA'S OWN LISTING (Jake, 2026-10-05). Matching keywords against the parent's
+        # childProtocols and trying fallback slugs resolved chainlink-requests only — automation,
+        # vrf-v1, vrf-v2 and ccip answered HTTP 400 "Fees for ... not found" on every run. Now the
+        # services are every /overview/fees entry whose parentProtocol is parent#chainlink, by the
+        # slug DefiLlama serves (logged each read), less the parent's fee aggregator `chainlink`
+        # (fees_usd; whether it overlaps the services is NOT ESTABLISHED). A service retired for
+        # more than retired_after_days counts 0 after its last day; a day an active one misses is
+        # refused (never stored partial).
         "defillama_sum_slugs": (
             {"metric": "customer_revenue_usd", "data_type": "dailyFees", "parent": "chainlink",
+             "parent_id": "parent#chainlink", "exclude_slugs": ("chainlink",),
              "retired_after_days": 30,
-             "services": (
-                 {"service": "requests", "match": ("requests",), "fallback_slugs": ("chainlink-requests",)},
-                 {"service": "automation", "match": ("automation", "keepers"),
-                  "fallback_slugs": ("chainlink-automation", "chainlink-keepers")},
-                 {"service": "vrf-v1", "match": ("vrf v1", "vrf-v1"), "fallback_slugs": ("chainlink-vrf-v1",)},
-                 {"service": "vrf-v2", "match": ("vrf v2", "vrf-v2"), "fallback_slugs": ("chainlink-vrf-v2",)},
-                 {"service": "ccip", "match": ("ccip",), "fallback_slugs": ("chainlink-ccip",)},
-             ),
              "why": "every Chainlink service customers pay for, all chains (Jake, 2026-09-30); "
                     "Data Streams and Functions have no adapter, so this reads LOW by them",
              "source_url": "https://github.com/DefiLlama/dimension-adapters/tree/master/fees",

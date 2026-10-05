@@ -1006,6 +1006,27 @@ def _measured_emissions_views(groups: dict) -> None:
             groups[(name, "emissions_tokens")] = _as_stored(meas, meas.columns)
 
 
+def _emissions_basis(p: dict, data_by_key: dict) -> str:
+    """Which series feeds emissions_tokens now, for a project that measures it from components
+    (Jake, 2026-10-05: Aethir's breakdown read n/a while A2 read 4.71% — that 4.71% was the declared
+    schedule, 2,874,743 ATH/day of checker BASE rewards, 258.7M per 90 days). Empty elsewhere."""
+    sched = p.get("issuance_schedule") or {}
+    if not sched.get("emissions_measured_from"):
+        return ""
+    name = p["name"]
+    parts = [(lab, (data_by_key.get(f"{name}|{m}") or {}).get("first_date")) for m, lab in _EMISSION_PARTS]
+    have = [(lab, str(d)[:10]) for lab, d in parts if d is not None and not pd.isna(d) and str(d)]
+    rate = next((st["tokens_per_day"] for st in sorted(sched.get("steps") or [], key=lambda x: x["from"])[-1:]), None)
+    decl = (f"DECLARED SCHEDULE until then: {rate:,.0f} {p['symbol']}/day of checker BASE rewards only "
+            f"({rate * 90:,.0f} per 90 days)" if rate else "the declared schedule until then")
+    if not have:
+        return ("NOT YET MEASURED — the component series start with the SECOND consecutive day on which every "
+                "dashboard cumulative (checker, edge, compute) is read; " + decl)
+    first = min(d for _, d in have)
+    return (f"MEASURED from {first} (checker + edge + compute released); {decl} before it. Components from: "
+            + "; ".join(f"{lab} {d}" for lab, d in have))
+
+
 _EMISSION_PARTS = (("emissions_checker_tokens", "checker-node rewards"),
                    ("emissions_edge_tokens", "edge rewards"),
                    ("emissions_compute_released_tokens", "compute rewards RELEASED (total - locked)"),
@@ -4548,6 +4569,8 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         # THE BREAKDOWN (Jake, 2026-10-05, E): what the figure to the left is made of, where the
         # project measures emissions from its components (Aethir). Each is Q0 tokens over its own
         # covered days; "% of circulating, annualised" puts released and earned side by side.
+        ("  Emissions basis — what feeds the figure to the left",
+         lambda r, p: _emissions_basis(p, data_by_key), FMT_TEXT, "text"),
         *[(f"  of which {lab} Q0 (tokens)", (lambda m: lambda r, p: pull(R.D(r, m, "q0")))(m), FMT_NUM, "pull",
            False, {"metric": m}) for m, lab in _EMISSION_PARTS],
         ("  Emissions RELEASED, % of circulating (annualised over covered days)",

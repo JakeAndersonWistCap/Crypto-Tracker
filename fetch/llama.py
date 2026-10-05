@@ -92,6 +92,19 @@ class DefiLlama:
             self._memo[key] = self.http.get(f"{API}/protocol/{slug}")
         return self._memo[key]
 
+    def _fees_listing(self) -> list:
+        """/overview/fees — every protocol DefiLlama lists with fees, with its `slug` and
+        `parentProtocol`. Memoised for the run; charts excluded (the listing only)."""
+        key = ("overview", "fees")
+        if key not in self._memo:
+            j = self.http.get(f"{API}/overview/fees", params={"excludeTotalDataChart": "true",
+                                                             "excludeTotalDataChartBreakdown": "true"})
+            rows = j.get("protocols") if isinstance(j, dict) else None
+            if not isinstance(rows, list):
+                raise ValueError(f"no `protocols` list (keys {sorted(j)[:10] if isinstance(j, dict) else type(j).__name__})")
+            self._memo[key] = rows
+        return self._memo[key]
+
     def _summary_chart(self, slug: str, data_type: str):
         return self._chart(self._summary(slug, data_type))
 
@@ -286,13 +299,23 @@ class DefiLlama:
             return
         if self._absent(name, f"summary/fees/{slug}", out):
             return
-        if (f"{SOURCE}:fees", name) in self.known_absent:
-            d = next((d for d in project.get("known_absent_calls") or []
-                      if d.get("source") == SOURCE and d.get("key") == "fees"), {})
+        d = next((d for d in project.get("known_absent_calls") or []
+                  if d.get("source") == SOURCE and d.get("key") == "fees"), None)
+        # THE ADAPTER REMEMBERS ITS OWN REFUSALS (Jake, 2026-10-05: Plume's "Fees for plume not
+        # found" still came back every run — the store-side check reads the Run Log by message
+        # prefix, which another line can satisfy). A declared known-absent call that fails records
+        # the day here; it is not called again until recheck_days have passed, and a success clears it.
+        absent_key = f"defillama:absent:{name}:fees"
+        failed_on = (self.daily.get(absent_key) or "") if d else ""
+        self_absent = bool(failed_on) and (pd.Timestamp(self._today) - pd.Timestamp(failed_on)).days < int(d.get("recheck_days", 7))
+        if (f"{SOURCE}:fees", name) in self.known_absent or self_absent:
+            d = d or {}
             out.skipped(SOURCE, name, f"summary/fees/{slug}: KNOWN ABSENT (declared) — "
                                       f"{d.get('evidence', 'failed on every run')}. Not called; "
                                       f"re-checked {d.get('recheck_days', 7)} days after the "
-                                      f"last failed attempt, and any success ends the skip.", TIER)
+                                      f"last failed attempt"
+                                      + (f" ({failed_on})" if failed_on else "")
+                                      + ", and any success ends the skip.", TIER)
             return
 
         # ===== A CONFIRMED, UNRESOLVED RESTRUCTURE ROUTES fees_usd DIFFERENTLY. Added 2026-09-23.
@@ -310,10 +333,15 @@ class DefiLlama:
         else:
             try:
                 rows = self._summary_chart(slug, "dailyFees")
+                if d:
+                    self.daily.set(absent_key, "")
                 out.add(window(tidy(rows, name, "fees_usd", SOURCE, TIER), window_days), SOURCE,
                         name, f"{slug}:dailyFees", TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{slug}:dailyFees: {e}", TIER)
+                if d:                       # declared absent: remembered, and its revenue legs not tried
+                    self.daily.set(absent_key, self._today)
+                    return
 
         # A PROJECT'S OWN FIGURE IS PRIMARY WHERE IT PUBLISHES ONE (Maple, Jake 2026-09-30): the
         # project then declares `defillama_metric_as`, and DefiLlama's series is stored under that
@@ -350,40 +378,49 @@ class DefiLlama:
         and the missing service(s), and the stored value (if any) is left alone. Days stored
         partial by the old rule are RE-STORED by the next complete run, whatever the window."""
         name, metric, dt = project["name"], spec["metric"], spec.get("data_type", "dailyFees")
-        kids = []
+        # THE SERVICES ARE DEFILLAMA'S OWN LISTING, NOT GUESSED SLUGS (Jake, 2026-10-05: only
+        # chainlink-requests ever resolved; "chainlink-automation", "-keepers", "-vrf-v1/v2", "-ccip"
+        # all answered HTTP 400 "not found"). /overview/fees lists every protocol with fees and its
+        # `parentProtocol`; the services summed are exactly the entries whose parent is
+        # spec["parent_id"], each by the `slug` DefiLlama serves — minus exclude_slugs (the
+        # parent's own fee aggregator, kept as fees_usd). Logged in full on every read.
         try:
-            parent = self._summary(spec["parent"], dt)
-            kids = [k for k in (parent.get("childProtocols") or []) if self._child_slug(k)]
+            listing = self._fees_listing()
         except Exception as e:  # noqa: BLE001
-            out.fail(SOURCE, name, f"{metric}: parent {spec['parent']}:{dt} unreadable ({e}); "
-                                   f"services resolved from fallback slugs only", TIER)
+            out.fail(SOURCE, name, f"{metric}: /overview/fees listing unreadable ({e}) — NOTHING STORED; "
+                                   f"no slug is guessed", TIER)
+            return
+        pid = str(spec["parent_id"]).lower()
+        excluded = {x.lower() for x in spec.get("exclude_slugs", ())}
+        kids = [k for k in listing if str(k.get("parentProtocol") or "").lower() == pid]
+        listed = "; ".join(f"{k.get('name')} = {k.get('slug') or '(no slug)'}"
+                           + (" [EXCLUDED]" if str(k.get("slug") or "").lower() in excluded else "")
+                           for k in kids)
+        log.info("%s: /overview/fees children of %s: %s", name, spec["parent_id"], listed or "none")
         per, unresolved, resolved = {}, [], {}
-        for svc in spec["services"]:
-            label = svc["service"]
-            cands = []
-            for k in kids:
-                nm = str(k.get("name") if isinstance(k, dict) else k).lower()
-                if any(w in nm for w in svc["match"]) and not any(w in nm for w in svc.get("exclude", ())):
-                    cands.append(self._child_slug(k))
-            cands += [c for c in svc.get("fallback_slugs", ()) if c not in cands]
-            got, tried = None, []
-            for slug in cands:
-                try:
-                    chart = self._summary_chart(slug, dt)
-                    got = slug
-                    break
-                except Exception as e:  # noqa: BLE001
-                    tried.append(f"{slug}: {e}")
-            if got is None:
-                unresolved.append(f"{label} (tried {'; '.join(tried) or 'no candidate'})")
+        for k in kids:
+            slug, label = str(k.get("slug") or ""), str(k.get("name") or k.get("slug"))
+            if not slug:
+                unresolved.append(f"{label} (listed with no slug)")
                 continue
-            resolved[label] = got
+            if slug.lower() in excluded:
+                continue
+            try:
+                chart = self._summary_chart(slug, dt)
+            except Exception as e:  # noqa: BLE001
+                unresolved.append(f"{label} (listed slug {slug}: {e})")
+                continue
+            resolved[label] = slug
             seen: dict = {}
             for d, v in chart:
                 day = pd.Timestamp(d.date())
                 if day not in seen:          # a repeated date: the first kept, never added
                     seen[day] = float(v)
             per[label] = seen
+        if not kids:
+            out.fail(SOURCE, name, f"{metric}: /overview/fees lists no protocol whose parentProtocol is "
+                                   f"{spec['parent_id']} — NOTHING STORED", TIER)
+            return
         if not per:
             out.fail(SOURCE, name, f"{metric}: no service adapter answered — " + "; ".join(unresolved), TIER)
             return

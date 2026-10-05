@@ -3994,6 +3994,9 @@ SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS
 --     handover to declare: the old leg is superseded. Nothing writes derived:d_supply for Plume any more.
 --     Run: python run_sql.py BR (check BR2 covers BR1's dates), then python run_sql.py --delete BR
 --     (preview + typed "DELETE BR").
+--     2026-10-05 (Jake's run 10:49, still BUG): the pattern is EXACT now — 'derived:d_supply' and its
+--     [span]/:suffix forms only. The earlier LIKE 'derived:d_supply%' would also have matched
+--     derived:d_supply_gross. If BR1 shows any THIRD source, stop and paste BR1 back.
 -- ========================================================================================
 -- BR1. EVERY SOURCE IN PLUME'S gross_issuance_tokens, with its span.
 SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
@@ -4009,13 +4012,14 @@ SELECT o.date, o.value AS coingecko_derived, n.value AS erc20_derived, n.source
   LEFT JOIN metrics n
     ON n.project = o.project AND n.metric = o.metric AND n.date = o.date
    AND n.source LIKE 'derived:d_total_supply_protocol%'
- WHERE o.project = 'Plume' AND o.metric = 'gross_issuance_tokens' AND o.source LIKE 'derived:d_supply%'
+ WHERE o.project = 'Plume' AND o.metric = 'gross_issuance_tokens'
+   AND (o.source = 'derived:d_supply' OR o.source LIKE 'derived:d_supply[%' OR o.source LIKE 'derived:d_supply:%')
  ORDER BY o.date;
 
 -- BR3. THE DELETE: the superseded CoinGecko derivation only.
 -- DELETE FROM metrics
 --  WHERE project = 'Plume' AND metric = 'gross_issuance_tokens'
---    AND source LIKE 'derived:d_supply%';
+--    AND (source = 'derived:d_supply' OR source LIKE 'derived:d_supply[%' OR source LIKE 'derived:d_supply:%');
 
 
 -- ========================================================================================
@@ -4047,3 +4051,53 @@ SELECT metric, reason, COUNT(*) AS n_items, MIN(date) AS first_date, MAX(date) A
 --  WHERE project = 'Ethereum' AND metric IN ('total_supply_ultrasound', 'beacon_validators_eth');
 -- DELETE FROM review_queue
 --  WHERE project = 'Ethereum' AND metric IN ('total_supply_ultrasound', 'beacon_validators_eth');
+
+
+-- ========================================================================================
+-- BT. PLUME tx_count: THE ONE-PER-BLOCK SYSTEM TRANSACTION GOES — newTxns ROWS SUPERSEDED  2026-10-05
+--     tx_count moved from Blockscout's newTxns (every block's ArbitrumInternalTx counted, ~395K/day)
+--     to newOperationalTxns (= newTxns - newBlocks; or that difference computed from the two charts,
+--     source 'blockscout_stats:newTxns-newBlocks'). The re-read covered 365 days back from
+--     2026-10-05; the first read (2026-09-30) reached five days further, so those oldest newTxns rows
+--     remain under a second definition and blank the whole series (measuring_point_changed, n/a).
+--     They are a different quantity, not a leg of the same series: removed, not declared a handover.
+--     Run: python run_sql.py BT (BT1 confirms the re-read and gives the new daily average), then
+--     python run_sql.py --delete BT (preview + typed "DELETE BT").
+-- ========================================================================================
+-- BT1. EVERY SOURCE IN PLUME'S tx_count, its span, and its average day over the last 90 days held.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(AVG(value), 0) AS avg_per_day,
+       ROUND(AVG(CASE WHEN date >= date('2026-10-05', '-90 days') THEN value END), 0) AS avg_per_day_last_90
+  FROM metrics
+ WHERE project = 'Plume' AND metric = 'tx_count'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BT2. THE OLD-DEFINITION ROWS ON DAYS THE NEW ONE ALSO HOLDS (expect none: the upsert replaced them).
+SELECT COUNT(*) AS old_rows_on_new_days
+  FROM metrics o
+ WHERE o.project = 'Plume' AND o.metric = 'tx_count' AND o.source = 'blockscout_stats:newTxns'
+   AND o.date >= (SELECT MIN(date) FROM metrics WHERE project = 'Plume' AND metric = 'tx_count'
+                   AND source IN ('blockscout_stats:newOperationalTxns', 'blockscout_stats:newTxns-newBlocks'));
+
+-- BT3. THE DELETE: the superseded newTxns rows only.
+-- DELETE FROM metrics
+--  WHERE project = 'Plume' AND metric = 'tx_count' AND source = 'blockscout_stats:newTxns';
+
+
+-- ========================================================================================
+-- BU. CHAINLINK customer_revenue_usd: WHERE DID THE ~$15.26M Q0 COME FROM?  2026-10-05
+--     Jake's run 10:49: only chainlink-requests ever resolved (automation, vrf-v1, vrf-v2, ccip all
+--     HTTP 400), so no five-service sum was ever stored. Requests alone is ~$7.7K/day (the $692,288
+--     Q0). ~$15.26M over 90 days is ~$170K/day — the scale of the `chainlink` fee aggregator's
+--     dailyFees, i.e. the pre-2026-09-30 restated floor (source 'derived:=fees_usd', section BB).
+--     BU1 settles it from the store. SELECT only — nothing here deletes.
+-- ========================================================================================
+-- BU1. customer_revenue_usd by source over the Q0 window ending 2026-10-04, against fees_usd.
+SELECT metric, source, COUNT(*) AS n_days, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(SUM(value), 0) AS q0_total_usd, ROUND(AVG(value), 0) AS avg_per_day
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric IN ('customer_revenue_usd', 'fees_usd')
+   AND date BETWEEN date('2026-10-04', '-89 days') AND '2026-10-04'
+ GROUP BY metric, source
+ ORDER BY metric, first_date;

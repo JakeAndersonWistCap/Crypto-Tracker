@@ -123,8 +123,11 @@ WAIT_ON_SERIES: dict = {
 # of it, the cell is NEEDS JAKE — run the seed — not a BUG; once rows exist it is classified as usual.
 # A TRAILING-YEAR SERIES (settlement volume and the NRR built on it) is MATURING until its input
 # holds a full year — dated from the input's first stored day. Jake, 2026-10-05.
-FULL_YEAR_FROM = {("Near", "settlement_volume_usd"): "settlement_volume_usd",
-                  ("Near", "network_reserve_ratio"): "settlement_volume_usd"}
+# The INPUT that is stored: NEAR's settlement volume and NRR are read-time views built from the
+# P2P leg (near_bigquery p2p_transfer_volume_usd), so the first stored day is that leg's (Jake's
+# run 10:49: keyed on the view itself, which the store never holds, it fell through to NEEDS JAKE).
+FULL_YEAR_FROM = {("Near", "settlement_volume_usd"): "p2p_transfer_volume_usd",
+                  ("Near", "network_reserve_ratio"): "p2p_transfer_volume_usd"}
 PENDING_SEED = {
     **{("Near", m): "BigQuery's public NEAR dataset (fetch/near_bigquery.py, approved 2026-10-01) with "
                     "Jake's Application Default Credentials (`gcloud auth application-default login`, "

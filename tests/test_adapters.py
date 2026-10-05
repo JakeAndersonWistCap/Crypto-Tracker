@@ -14574,12 +14574,10 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     # the Reserve inflow stays A3's narrower buyback base (revenue_usd)
     assert "customer_revenue_usd" not in config.metric_restatements("Chainlink")
     spec = c["defillama_sum_slugs"][0]
-    # ADDENDUM 10 (2026-09-30): five SERVICES resolved from the parent's childProtocols each run
-    # (Keepers was renamed Automation), with fallback slugs — not five hard-coded slugs
-    assert spec["metric"] == "customer_revenue_usd" and len(spec["services"]) == 5
-    assert spec["parent"] == "chainlink"
-    auto = next(sv for sv in spec["services"] if sv["service"] == "automation")
-    assert "chainlink-automation" in auto["fallback_slugs"] and "keepers" in auto["match"]
+    # 2026-10-05: the services are DefiLlama's /overview/fees children of parent#chainlink, by the
+    # slugs it serves — no keyword matching, no fallback slugs
+    assert spec["metric"] == "customer_revenue_usd" and "services" not in spec
+    assert spec["parent_id"] == "parent#chainlink" and spec["exclude_slugs"] == ("chainlink",)
     assert "EVERY SERVICE, ALL CHAINS" in config.metric_label("Chainlink", "customer_revenue_usd")
     assert config.not_applicable_reason("Chainlink", "utilisation_pct")
     assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
@@ -18953,8 +18951,9 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
         # ... and once rows are held, MATURING with the full-year date — never NEEDS JAKE again
         v, d = cr.classify(config.PROJECT_BY_NAME["Near"], m, {"status": "gap", "note": "backfill"},
                            "2026-04-01", pd.Timestamp("2026-10-05"),
-                           {("Near", "settlement_volume_usd"): "2026-04-01"})
+                           {("Near", "p2p_transfer_volume_usd"): "2026-04-01"})
         assert v == "MATURING" and "188 of 365 days" in d and "2027-03-31" in d, (v, d)
+        assert "p2p_transfer_volume_usd" in d, "keyed on the STORED input, not the read-time view"
     # GEODNET locked_tokens: the manual row is in (3,000,000 GEOD, 2026-10-01) — no decision left
     assert ("GEODNET", "locked_tokens") not in cr.DECISIONS
     mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
@@ -19485,20 +19484,28 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
 
 
 def test_chainlink_customer_revenue_sums_complete_days_only_and_repairs_earlier_partial_days():
-    """Addendum 10 (2026-09-30: "Fees for chainlink-keepers not found") + C (Jake 2026-10-05: Q0
-    customer revenue $692,288 vs ~$15.26M after DefiLlama timeouts). Services resolve from the
-    PARENT's childProtocols with fallback slugs; a service silent longer than retired_after_days is
-    RETIRED (0 after its last day). A day an ACTIVE service misses — or any day while a service is
-    UNRESOLVED — is REFUSED with a gap, never stored partial; days stored partial earlier are
-    re-stored by the next complete run whatever the window. A3's base stays revenue_usd."""
+    """Addendum 10 + C (2026-10-05) + Jake's run 10:49 (only chainlink-requests ever resolved). The
+    services are /overview/fees entries whose parentProtocol is parent#chainlink, by DefiLlama's own
+    slug — never a guessed one — less the `chainlink` fee aggregator. A service silent longer than
+    retired_after_days is RETIRED (0 after its last day). A day an ACTIVE service misses — or any day
+    while a listed service fails — is REFUSED with a gap, never stored partial; days stored partial
+    earlier are re-stored by the next complete run whatever the window. A3's base stays revenue_usd."""
     from fetch.llama import DefiLlama
     spec = config.PROJECT_BY_NAME["Chainlink"]["defillama_sum_slugs"][0]
     d = lambda n: pd.Timestamp("2026-08-01") + pd.Timedelta(days=n)  # noqa: E731
     charts = {"chainlink-requests": [(d(i), 100.0) for i in range(50)],
-              "chainlink-automation": [(d(i), 200.0) for i in range(50)],
+              "chainlink-automation-v2": [(d(i), 200.0) for i in range(50)],
               "chainlink-vrf-v1": [(d(i), 300.0) for i in range(6)],          # retired after day 5
-              "chainlink-vrf-v2": [(d(i), 400.0) for i in range(50)],
-              "chainlink-ccip": [(d(i), 500.0) for i in range(49) if i != 20]}  # misses day 20, lags day 49
+              "chainlink-vrf-v2-x": [(d(i), 400.0) for i in range(50)],
+              "chainlink-ccip": [(d(i), 500.0) for i in range(49) if i != 20],  # misses day 20, lags day 49
+              "chainlink": [(d(i), 99_999.0) for i in range(50)]}
+    listing = [{"name": "Chainlink Requests", "slug": "chainlink-requests", "parentProtocol": "parent#chainlink"},
+               {"name": "Chainlink Automation", "slug": "chainlink-automation-v2", "parentProtocol": "parent#chainlink"},
+               {"name": "Chainlink VRF V1", "slug": "chainlink-vrf-v1", "parentProtocol": "parent#chainlink"},
+               {"name": "Chainlink VRF V2", "slug": "chainlink-vrf-v2-x", "parentProtocol": "parent#chainlink"},
+               {"name": "Chainlink CCIP", "slug": "chainlink-ccip", "parentProtocol": "parent#chainlink"},
+               {"name": "Chainlink", "slug": "chainlink", "parentProtocol": "parent#chainlink"},
+               {"name": "Uniswap V3", "slug": "uniswap-v3", "parentProtocol": "parent#uniswap"}]
     tried = []
 
     def chart(slug, dt):
@@ -19508,24 +19515,24 @@ def test_chainlink_customer_revenue_sums_complete_days_only_and_repairs_earlier_
         return charts[slug]
     ll = DefiLlama.__new__(DefiLlama)
     ll.stored_long = None
-    ll._summary = lambda slug, dt: {"childProtocols": [
-        {"name": "Chainlink Requests"}, {"name": "Chainlink Automation"}, {"name": "Chainlink VRF V1"},
-        {"name": "Chainlink VRF V2"}, {"name": "Chainlink CCIP"}]}
+    ll._fees_listing = lambda: listing
     ll._summary_chart = chart
     out = FetchOutput()
     ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out)
     f = out.frame().set_index("date")
-    assert "chainlink-keepers" not in tried, "the renamed service resolves through the parent's list"
+    assert sorted(tried) == sorted(["chainlink-requests", "chainlink-automation-v2", "chainlink-vrf-v1",
+                                    "chainlink-vrf-v2-x", "chainlink-ccip"]), \
+        "exactly the listed slugs of parent#chainlink's children, the aggregator excluded, nothing guessed"
     assert len(f) == 48, "day 20 (ccip missing) and day 49 (ccip lagging) are refused, not stored"
     assert d(20) not in f.index and d(49) not in f.index
     assert f.loc[d(0), "value"] == 1500.0 and f.loc[d(10), "value"] == 1200.0, "VRF v1 is 0 after retiring"
     assert not any("[missing" in s_ for s_ in f["source"])
     msg = next(e.message for e in out.log if e.status == "ok")
-    assert "RETIRED (0 after): vrf-v1 last reported 2026-08-06" in msg and "automation=chainlink-automation" in msg
-    assert "2 of 50 day(s) REFUSED as partial" in msg
+    assert "RETIRED (0 after): Chainlink VRF V1 last reported 2026-08-06" in msg
+    assert "Chainlink Automation=chainlink-automation-v2" in msg and "2 of 50 day(s) REFUSED as partial" in msg
     gap = out.gaps[0]
     assert gap["metric"] == "customer_revenue_usd" and "PARTIAL SUM REFUSED on 2 day(s)" in gap["reason"]
-    assert "ccip" in gap["reason"]
+    assert "Chainlink CCIP" in gap["reason"]
     # REPAIR: a complete run re-stores days stored partial earlier, even outside its window
     charts["chainlink-ccip"] = [(d(i), 500.0) for i in range(50)]
     ll.stored_long = pd.DataFrame([{"date": d(3), "project": "Chainlink", "metric": "customer_revenue_usd",
@@ -19542,13 +19549,17 @@ def test_chainlink_customer_revenue_sums_complete_days_only_and_repairs_earlier_
     assert d(3) in f3.index and f3.loc[d(3), "value"] == 1500.0, "the partial day is repaired"
     assert d(30) not in f3.index, "other days outside the window are not re-stored"
     assert "REPAIRED 1 day(s)" in next(e.message for e in out3.log if e.status == "ok")
-    # a service nobody answers for: every day is refused and nothing is stored
+    # a listed service that does not answer: every day is refused and nothing is stored
     del charts["chainlink-ccip"]
     ll.stored_long = None
-    ll._summary = lambda slug, dt: {"childProtocols": []}
     out2 = FetchOutput()
     ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out2)
     assert out2.frame().empty and "NOTHING STORED" in out2.log[-1].message
+    # no listing, no guessing
+    ll._fees_listing = lambda: (_ for _ in ()).throw(RuntimeError("HTTP 500"))
+    out4 = FetchOutput()
+    ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out4)
+    assert out4.frame().empty and "no slug is guessed" in out4.log[-1].message
     assert config.revenue_base_metric("Chainlink") == "revenue_usd"
 
 
@@ -22872,7 +22883,9 @@ def test_plume_issuance_cleanup_br_is_select_first_and_deletes_only_the_coingeck
     text = secs["BR"]["text"]
     w = [R.write_target(x) for x in R.split_statements("\n".join(R.uncommented_write(text)))]
     assert len(w) == 1 and w[0][0] == "DELETE"
-    assert "source LIKE 'derived:d_supply%'" in text and "derived:d_total_supply_protocol" in text
+    # EXACT (2026-10-05): 'derived:d_supply' and its [span]/:suffix forms — never d_supply_gross
+    assert "source = 'derived:d_supply'" in text and "derived:d_total_supply_protocol" in text
+    assert "source LIKE 'derived:d_supply%'" not in text
     sel = [s for s in R.split_statements(text) if R.classify(s) == "select"]
     assert len(sel) == 2
     import config
@@ -23078,3 +23091,42 @@ def test_geod_stake_wallet_verdict_and_blockworks_dates_in_every_unit():
     assert ver[0]["peak_wallet"] == nov == ver[0]["peak_series"]
     assert c.GEOD_STAKE_CANDIDATES == config.PROJECT_BY_NAME["GEODNET"]["staking_wallet_candidates_2026_10_05"]["addresses"]
     assert "locked_tokens" in config.PROJECT_BY_NAME["GEODNET"]["manual_quarterly"], "manual stands until a wallet tracks"
+
+
+def test_a_declared_absent_defillama_call_is_remembered_by_the_adapter(monkeypatch):
+    """Jake's run 10:49: Plume's "Fees for plume not found" (HTTP 400) came back every run. The
+    adapter records the failure day itself; the call is skipped until recheck_days pass, its
+    revenue legs are not tried after the refusal, and a success clears it."""
+    from fetch.llama import DefiLlama
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    plume = config.PROJECT_BY_NAME["Plume"]
+    calls = []
+    ll = DefiLlama()
+
+    def chart(slug, dt):
+        calls.append((slug, dt))
+        raise RuntimeError("HTTP 400 — Fees for plume not found")
+    ll._summary_chart = chart
+    out = FetchOutput()
+    ll.fees(plume, 30, out)
+    assert calls == [("plume", "dailyFees")], "refused once; the revenue legs are not tried"
+    out2 = FetchOutput()
+    ll.fees(plume, 30, out2)
+    assert len(calls) == 1 and any("KNOWN ABSENT (declared)" in e.message for e in out2.log)
+    ll._today = str((pd.Timestamp(ll._today) + pd.Timedelta(days=7)).date())
+    ll.fees(plume, 30, FetchOutput())
+    assert len(calls) == 2, "re-checked after recheck_days"
+
+
+def test_aethir_emissions_basis_says_what_feeds_a2():
+    """Jake's run 10:49: A2 read 4.71% with every component n/a. That figure is the declared
+    schedule — 2,874,743 ATH/day of checker BASE rewards, 258.7M per 90 days — until the measured
+    components exist; the basis column says which, and from when."""
+    import build_workbook as bw
+    p = config.PROJECT_BY_NAME["Aethir"]
+    t = bw._emissions_basis(p, {})
+    assert t.startswith("NOT YET MEASURED") and "2,874,743" in t and "258,726,899" in t
+    t2 = bw._emissions_basis(p, {"Aethir|emissions_checker_tokens": {"first_date": "2026-10-06"},
+                                 "Aethir|emissions_edge_tokens": {"first_date": "2026-10-06"}})
+    assert t2.startswith("MEASURED from 2026-10-06") and "checker-node rewards 2026-10-06" in t2
+    assert bw._emissions_basis(config.PROJECT_BY_NAME["Plume"], {}) == ""
