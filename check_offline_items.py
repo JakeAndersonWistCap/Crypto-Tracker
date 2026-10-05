@@ -3886,22 +3886,60 @@ def _blockworks_rows() -> list[dict]:
 def _bw_days(values) -> "pd.Series":
     """Blockworks' date column as UTC days. ** Jake's probes3 run (2026-09-30): every date parsed as
     1970-01-01 ** — the column is a UNIX timestamp, and pd.to_datetime reads a bare number as
-    NANOSECONDS. A numeric column is read as seconds, or as milliseconds when its values are
-    beyond 1e11 (year 5138 in seconds); anything else is parsed as a date string. A column that
-    still lands before 2015 is refused rather than used."""
+    NANOSECONDS. FIXED AGAIN 2026-10-05 (Jake: "fix its timestamp parsing"): the unit is decided PER
+    VALUE by magnitude — seconds (< 1e11), milliseconds (< 1e14), microseconds (< 1e17), else
+    nanoseconds — numbers that arrive as strings or floats ("1761955200.0") included; text dates of
+    any common shape (ISO with or without a zone, "2025-11-01 00:00:00.000 UTC") are parsed per
+    value. Values that parse before 2015 or after tomorrow are refused rather than used."""
     import pandas as pd                                    # noqa: PLC0415
-    raw = pd.Series(list(values))
-    num = pd.to_numeric(raw, errors="coerce")
-    if num.notna().all() and len(num):
-        unit = "ms" if num.abs().median() > 1e11 else "s"
-        days = pd.to_datetime(num, unit=unit, utc=True)
-    else:
-        days = pd.to_datetime(raw, errors="coerce", utc=True)
-    days = days.dt.tz_localize(None).dt.normalize()
-    if days.notna().any() and days.dropna().min() < pd.Timestamp("2015-01-01"):
-        raise ValueError(f"dates parse to {days.dropna().min().date()} — unit not recognised "
-                         f"(sample {raw.head(3).tolist()})")
+    raw = pd.Series(list(values), dtype=object)
+    num = pd.to_numeric(raw.map(lambda v: str(v).strip() if v is not None else v), errors="coerce")
+    out = []
+    for v, n in zip(raw, num):
+        try:
+            if pd.notna(n):
+                a = abs(float(n))
+                unit = "s" if a < 1e11 else "ms" if a < 1e14 else "us" if a < 1e17 else "ns"
+                d = pd.to_datetime(float(n), unit=unit, utc=True)
+            else:
+                txt = str(v).strip().replace(" UTC", "+00:00")
+                d = pd.to_datetime(txt, utc=True, format="mixed")
+            out.append(d.tz_localize(None).normalize())
+        except (ValueError, TypeError, OverflowError):
+            out.append(pd.NaT)
+    days = pd.Series(out, dtype="datetime64[ns]")
+    good = days.dropna()
+    if len(good):
+        lo, hi = good.min(), good.max()
+        if lo < pd.Timestamp("2015-01-01") or hi > pd.Timestamp.now().normalize() + pd.Timedelta(days=1):
+            raise ValueError(f"dates parse to {lo.date()}..{hi.date()} — unit not recognised "
+                             f"(sample {raw.head(3).tolist()})")
     return days
+
+
+def _bw_frame(rows: list[dict]):
+    """(DataFrame with a `day` column and numeric columns, date column used, why-not). The date
+    column is the one that PARSES to plausible days for most rows — name-like candidates first —
+    never simply the first key containing "time" (an "updated_time" or a duration would win)."""
+    import pandas as pd                                    # noqa: PLC0415
+    df = pd.DataFrame(rows)
+    named = [k for k in df.columns if any(w in k.lower() for w in ("date", "day", "time", "block_time", "ts"))]
+    best, best_n, errs = None, 0, []
+    for k in named + [k for k in df.columns if k not in named]:
+        try:
+            d = _bw_days(df[k])
+        except ValueError as e:
+            errs.append(f"{k}: {e}")
+            continue
+        if d.notna().sum() > best_n and d.dropna().nunique() > 1:
+            best, best_n, days = k, int(d.notna().sum()), d
+    if best is None:
+        return None, None, "no column parses to dates: " + "; ".join(errs[:4])
+    df["day"] = days.values
+    for c in df.columns:
+        if c not in (best, "day"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.dropna(subset=["day"]).sort_values("day"), best, ""
 
 
 _POLY_BLOCKS: dict = {}
@@ -4002,20 +4040,10 @@ def geod_stake_recipient():
         print(f"  no Blockworks rows: run `check_offline_items.py blockworks_geodnet` first (saves to "
               f"{_blockworks_dir()}), or set GEODNET_BLOCKWORKS_CSV to an export of query 1243")
         return
-    dkey = next((k for k in rows[0] if any(w in k.lower() for w in ("date", "day", "time", "block_time"))), None)
-    if dkey is None:
-        print(f"  no date column among {sorted(rows[0])}")
+    df, dkey, why = _bw_frame(rows)
+    if df is None:
+        print(f"  {why} (columns {sorted(rows[0])})")
         return
-    df = pd.DataFrame(rows)
-    try:
-        df["day"] = _bw_days(df[dkey]).values
-    except ValueError as e:
-        print(f"  {dkey}: {e}")
-        return
-    for c in df.columns:
-        if c not in (dkey, "day"):
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["day"]).sort_values("day")
     print(f"  {len(df)} row(s) {df['day'].min().date()}..{df['day'].max().date()} (date column {dkey!r}, "
           f"sample {rows[0][dkey]!r}); columns {sorted(df.columns)[:20]}")
     stake = df.dropna(subset=["geod_stake"])
@@ -4111,6 +4139,111 @@ def geod_stake_recipient():
         print(f"  cross-check skipped — {e}")
     print("  PASTE BACK all lines. A recipient is wired as locked_tokens only after its balance is "
           "verified to track geod_total_stake.")
+
+
+# Candidates from Jake's GEOD holder export (2026-10-05), with the balance it showed. NOT WIRED: the
+# one whose balance tracks Blockworks' geod_total_stake (~12M Nov 2025 -> ~3.0M now) is wired as
+# locked_tokens only after geod_stake_wallets shows it, month by month.
+GEOD_STAKE_CANDIDATES = {
+    "0x82146cf0f350c241757660fd803c73313b06d75c": 3_911_186,
+    "0x0d0707963952f2fba59dd06f2b425ace40b492fe": 3_514_051,
+    "0xe3b49ad54ca4ee65070f94324cf880ce9a045ccd": 3_122_500,
+    "0x4da4f52a0f4212a881f3c03e4b1998f560ec17df": 3_061_102,
+    "0x682ba846eed9934cc89ed89a350ea98781256b6f": 2_995_000,
+    "0x237ae888ccb6c43628fd6a24ba48dd1bf65cbff0": 2_938_025,
+    "0xe92e65049b3c2ca12806e9567b08895118c5a03f": 2_806_841,
+}
+# A wallet TRACKS the series when, on the months both exist, its balance is within TRACK_TOL of
+# geod_total_stake on at least TRACK_SHARE of them, over at least TRACK_MIN_MONTHS months, and the
+# series' peak month is within one month of the wallet's.
+TRACK_TOL, TRACK_SHARE, TRACK_MIN_MONTHS = 0.10, 0.80, 10
+
+
+def stake_wallet_verdict(balances: dict, series: dict) -> list[dict]:
+    """balances {label: {month: GEOD}}, series {month: geod_total_stake} -> one row per label, best
+    first: months compared, share within TRACK_TOL, median |ratio - 1|, both peak months, tracks?"""
+    out = []
+    for label, b in balances.items():
+        common = sorted(m for m in b if m in series and b[m] is not None and series[m])
+        if not common:
+            out.append({"label": label, "months": 0, "within": 0.0, "median_err": None, "tracks": False,
+                        "peak_wallet": None, "peak_series": None})
+            continue
+        errs = [abs(b[m] / series[m] - 1) for m in common]
+        within = sum(e <= TRACK_TOL for e in errs) / len(errs)
+        pw, ps = max(common, key=lambda m: b[m]), max(common, key=lambda m: series[m])
+        months_apart = abs((pw.year - ps.year) * 12 + pw.month - ps.month)
+        out.append({"label": label, "months": len(common), "within": within,
+                    "median_err": sorted(errs)[len(errs) // 2], "peak_wallet": pw, "peak_series": ps,
+                    "tracks": (len(common) >= TRACK_MIN_MONTHS and within >= TRACK_SHARE and months_apart <= 1)})
+    return sorted(out, key=lambda r: (not r["tracks"], -r["within"], r["median_err"] if r["median_err"] is not None else 9))
+
+
+def geod_stake_wallets():
+    """Jake, 2026-10-05: seven candidates from his GEOD holder export (2.8-3.9M each). Each one's GEOD
+    balance on Polygon at the first block of the 1st of every month, 2025-06 -> 2026-10 (ARCHIVE reads
+    — POLYGON_RPC_URL, e.g. Alchemy; public RPCs serve recent state only), against Blockworks query
+    1243's geod_total_stake on that day (the last value on or before it). Also the sum of all seven,
+    in case staking is spread over several wallets. Reads only; keys never printed. Needs the saved
+    Blockworks rows (blockworks_geodnet) or GEODNET_BLOCKWORKS_CSV."""
+    import pandas as pd                                    # noqa: PLC0415
+    head("GEODNET — staking-wallet candidates: monthly GEOD balance vs Blockworks geod_total_stake")
+    rows = _blockworks_rows()
+    if not rows:
+        print(f"  no Blockworks rows: run `check_offline_items.py blockworks_geodnet` first (saves to "
+              f"{_blockworks_dir()}), or set GEODNET_BLOCKWORKS_CSV to an export of query 1243")
+        return
+    df, dkey, why = _bw_frame(rows)
+    if df is None:
+        print(f"  {why}")
+        return
+    if "geod_total_stake" not in df:
+        print(f"  no geod_total_stake column among {sorted(df.columns)[:20]}")
+        return
+    st = df.dropna(subset=["geod_total_stake"]).drop_duplicates("day", keep="last").set_index("day")["geod_total_stake"]
+    print(f"  Blockworks: {len(st)} day(s) {st.index.min().date()}..{st.index.max().date()} (date column "
+          f"{dkey!r}, sample {rows[0][dkey]!r}); peak {st.max():,.0f} on {st.idxmax().date()}, latest "
+          f"{st.iloc[-1]:,.0f} on {st.index.max().date()}")
+    months = list(pd.date_range("2025-06-01", "2026-10-01", freq="MS"))
+    series = {}
+    for m in months:
+        before = st[st.index <= m]
+        if len(before) and (m - before.index.max()).days <= 7:
+            series[m] = float(before.iloc[-1])
+    geod = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+    bal = {a: {} for a in GEOD_STAKE_CANDIDATES}
+    for m in months:
+        blk = _polygon_block_at(int(m.tz_localize("UTC").timestamp()))
+        if blk is None:
+            print(f"  {m.date()}: no Polygon endpoint answered the block lookup")
+            continue
+        for a in GEOD_STAKE_CANDIDATES:
+            w, where = eth_call(geod, "0x70a08231" + a[2:].lower().rjust(64, "0"), block=hex(blk), chain="polygon")
+            bal[a][m] = int(w, 16) / 1e18 if w and w != "0x" else None
+            if w is None:
+                print(f"  {m.date()} {a[:10]}: UNREADABLE at block {blk:,} — {str(where)[:160]} "
+                      f"(an archive endpoint is needed: POLYGON_RPC_URL)")
+    bal["SUM of all seven"] = {m: sum(bal[a][m] for a in GEOD_STAKE_CANDIDATES)
+                               for m in months if all(bal[a].get(m) is not None for a in GEOD_STAKE_CANDIDATES)}
+    short = {a: a[:10] for a in GEOD_STAKE_CANDIDATES}
+    print(f"\n  {'month':<10} {'Blockworks':>13} " + " ".join(f"{short.get(k, 'SUM'):>12}" for k in bal))
+    for m in months:
+        print(f"  {str(m.date()):<10} {series.get(m, float('nan')):>13,.0f} "
+              + " ".join(f"{(bal[k].get(m) if bal[k].get(m) is not None else float('nan')):>12,.0f}" for k in bal))
+    print(f"\n  verdict (tracks = within {TRACK_TOL:.0%} on >= {TRACK_SHARE:.0%} of >= {TRACK_MIN_MONTHS} months "
+          f"and the same peak month +-1):")
+    ver = stake_wallet_verdict(bal, series)
+    for r in ver:
+        err = "n/a" if r["median_err"] is None else f"{r['median_err']:.1%}"
+        pw = r["peak_wallet"].date() if r["peak_wallet"] is not None else "n/a"
+        ps = r["peak_series"].date() if r["peak_series"] is not None else "n/a"
+        print(f"  {'TRACKS ' if r['tracks'] else '       '} {r['label']}: {r['months']} month(s), "
+              f"{r['within']:.0%} within {TRACK_TOL:.0%}, median error {err}, peak {pw} vs series {ps}")
+    hits = [r["label"] for r in ver if r["tracks"]]
+    print("\n  RESULT: " + (f"{', '.join(hits)} tracks geod_total_stake — paste these lines back; it is wired "
+                            f"as locked_tokens with a 365-day archive backfill, replacing the manual 3,000,000."
+                            if hits else "NO candidate (nor their sum) tracks geod_total_stake — the manual "
+                                         "3,000,000 stays. Paste these lines back."))
 
 
 def morpho_incentives():
@@ -4810,7 +4943,7 @@ CHECKS = (
     robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
-    geod_stake_recipient, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
+    geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     aethir_mint_path,
     near_activity_break,

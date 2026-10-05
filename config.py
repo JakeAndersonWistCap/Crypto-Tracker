@@ -6117,6 +6117,26 @@ PROJECTS = [
         # reported figures). A maturation signal, not a confidence problem — and a mechanism that
         # may never have had one central contract. The behavioural transfer scan came back empty
         # and is NOT to be extended. Research history kept below.
+        # ===== STAKING-WALLET CANDIDATES, NOT WIRED (Jake, 2026-10-05). =====
+        # Seven holders from Jake's GEOD holder export (2.8-3.9M each). The one whose Polygon balance
+        # tracks Blockworks query 1243's geod_total_stake month by month (~12M Nov 2025 -> ~3.0M now)
+        # is the staking wallet: check_offline_items.py geod_stake_wallets decides (archive balance on
+        # the 1st of each month 2025-06..2026-10; tracks = within 10% on >= 80% of >= 10 months and
+        # the same peak month +-1; the sum of all seven is tested too). Until it says so, nothing is
+        # wired and the manual 3,000,000 stands.
+        "staking_wallet_candidates_2026_10_05": {
+            "source": "Jake's GEOD holder export, 2026-10-05 (balances as exported)",
+            "addresses": {"0x82146cf0f350c241757660fd803c73313b06d75c": 3_911_186,
+                          "0x0d0707963952f2fba59dd06f2b425ace40b492fe": 3_514_051,
+                          "0xe3b49ad54ca4ee65070f94324cf880ce9a045ccd": 3_122_500,
+                          "0x4da4f52a0f4212a881f3c03e4b1998f560ec17df": 3_061_102,
+                          "0x682ba846eed9934cc89ed89a350ea98781256b6f": 2_995_000,
+                          "0x237ae888ccb6c43628fd6a24ba48dd1bf65cbff0": 2_938_025,
+                          "0xe92e65049b3c2ca12806e9567b08895118c5a03f": 2_806_841},
+            "test": "check_offline_items.py geod_stake_wallets",
+            "status": "PENDING — the probe needs Polygon archive reads (POLYGON_RPC_URL) and the saved "
+                      "Blockworks rows; not runnable from the sandbox",
+        },
         "locked_tokens_blocked": {
             "answered": True,
             "status": "BOOTSTRAPPING MECHANISM, STRUCTURALLY WINDING DOWN — not missing data",

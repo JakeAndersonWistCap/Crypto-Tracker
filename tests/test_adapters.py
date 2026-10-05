@@ -23055,3 +23055,26 @@ def test_routine_fetches_ask_only_for_days_since_the_last_stored_one(monkeypatch
     out2 = FetchOutput()
     ll.run([u], 30, out2)
     assert calls == ["Uniswap"] and ("Uniswap", "fees_usd") in out2.current
+
+
+def test_geod_stake_wallet_verdict_and_blockworks_dates_in_every_unit():
+    """Jake, 2026-10-05: seven holder-export candidates against Blockworks' geod_total_stake. Dates
+    parse in s/ms/us/ns, as numbers or numeric strings or text; the date column is chosen by what
+    parses, not by its name; a wallet tracks only within 10% on >= 80% of >= 10 months with the
+    same peak month; the candidates in the probe are the ones in config, unwired."""
+    import check_offline_items as c
+    nov = pd.Timestamp("2025-11-01")
+    assert c._bw_days([1_761_955_200, "1761955200.0", 1_761_955_200_000_000, 1_761_955_200_000_000_000,
+                       "2025-11-01 00:00:00.000 UTC"]).tolist() == [nov] * 5
+    df, col, _ = c._bw_frame([{"updated_time": 5, "day_ts": "1761955200000", "geod_total_stake": "12000000"},
+                              {"updated_time": 6, "day_ts": "1762041600000", "geod_total_stake": "11900000"}])
+    assert col == "day_ts" and df["geod_total_stake"].tolist() == [12_000_000.0, 11_900_000.0]
+    months = list(pd.date_range("2025-06-01", "2026-10-01", freq="MS"))
+    series = {m: 12e6 - abs((m - nov).days) * 20_000 for m in months}
+    good = {m: v * 1.03 for m, v in series.items()}
+    flat = {m: 3.0e6 for m in months}
+    ver = c.stake_wallet_verdict({"a": good, "b": flat}, series)
+    assert ver[0]["label"] == "a" and ver[0]["tracks"] and not ver[1]["tracks"]
+    assert ver[0]["peak_wallet"] == nov == ver[0]["peak_series"]
+    assert c.GEOD_STAKE_CANDIDATES == config.PROJECT_BY_NAME["GEODNET"]["staking_wallet_candidates_2026_10_05"]["addresses"]
+    assert "locked_tokens" in config.PROJECT_BY_NAME["GEODNET"]["manual_quarterly"], "manual stands until a wallet tracks"
