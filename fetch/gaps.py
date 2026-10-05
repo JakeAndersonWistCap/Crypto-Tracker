@@ -679,6 +679,20 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Run `python token_metrics.py --seed mev_relays --seed-days 90` first (then without --seed-days "
                 "for the year); the non-relay leg is estimated from stored DefiLlama fees - burn. Routine runs "
                 "top it up. `python check_offline_items.py mev_relays` checks each relay and prices the seed.")
+    # CHAINLINK'S FEE LINES THAT BYPASS THE AGGREGATOR (Jake, 2026-10-05): explorer log scans.
+    if project.get("chainlink_fee_lines") and metric in (
+            "customer_revenue_ccip_legacy_usd", "customer_revenue_vrf_usd",
+            "customer_revenue_automation_premium_usd", "ccip_v2_fees_usd", "ccip_v2_premium_usd"):
+        return ("the fee-line scan (fetch/chainlink_fees.py) has not finished every routed chain yet — a line is "
+                "stored only when Ethereum, Arbitrum, Polygon, Base and OP are all read to yesterday and every "
+                "event is priced",
+                "Routine runs resume from the cached cursor (.cache/logscan/chainlink-fees.json) within a 600s budget; the "
+                "Run Log's chainlink_fees lines name the chain and line still open.")
+    comp = (project.get("customer_revenue_components") or {})
+    if metric == comp.get("metric") or metric in [c.get("metric") for c in project.get("defillama_component_slugs") or ()]:
+        return ("customer revenue is summed only on days the aggregator core and every line that bypasses it hold "
+                "a row; at least one leg has none stored yet",
+                "See the legs' own Gap Report rows (fees_usd, customer_revenue_requests_usd and the fee-line scan).")
     # ASXN'S HYPERSCREENER, IN THE BROWSER (Jake, probes6 2026-10-02).
     if any(metric in {pin.get("metric"), pin.get("flow_metric"), *(pin.get("metric_by_unit") or {}).values()}
            for pg in (project.get("browser_capture") or {}).get("pages") or ()

@@ -368,6 +368,12 @@ METRICS = {
     "active_addresses":           {"label": "Active addresses (low weight)",   "kind": "stock", "unit": "count",  "archetypes": [1],          "tiers": [3, 4], "sanity_min": 0,    "sanity_max": 1e9},
     "gross_issuance_tokens":      {"label": "Gross issuance",                  "kind": "flow",  "unit": "tokens", "archetypes": [1, 4],       "tiers": [1, 2, 3, 4], "sanity_min": 0, "sanity_max": 1e12},
     "gross_burn_tokens":          {"label": "Gross burn",                      "kind": "flow",  "unit": "tokens", "archetypes": [1, 4],       "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
+    "customer_revenue_requests_usd": {"label": "Chainlink Direct Request payments per day ($, DefiLlama chainlink-requests: OracleRequest.payment) — a customer-revenue line that bypasses the fee aggregator", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "customer_revenue_ccip_legacy_usd": {"label": "CCIP 1.2/1.5 fees per day ($, gross: CCIPSendRequested feeTokenAmount x same-day price; paid to node operators, not the aggregator) — Ethereum, Arbitrum, Base, Polygon, Optimism", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "customer_revenue_vrf_usd": {"label": "VRF v2.5 payments per day ($, gross: RandomWordsFulfilled.payment in LINK or native x same-day price) — 5 chains", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "customer_revenue_automation_premium_usd": {"label": "Automation v2.3 PREMIUM per day ($: UpkeepCharged premiumInJuels x the registry's LINK/USD) — 5 chains; winding down (v2.1 ended 2026-07-31)", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "ccip_v2_fees_usd": {"label": "CCIP 2.0 fees per day ($, all receipts) — CROSS-CHECK only: the network-fee part is already in the aggregator core; verifier/executor/pool receipts are paid out to their issuers", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "ccip_v2_premium_usd": {"label": "CCIP 2.0 network fee (premium) per day ($, the last receipt) — CROSS-CHECK: the part that stays in the OnRamp and reaches the fee aggregator", "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
     "gross_burn_tokens_dune_monthly": {"label": "Gross burn per MONTH as Dune 8683175 reports it (Polygon + Solana) — CROSS-CHECK of the daily series for the months it covers; never summed with it", "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [4], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("GEODNET",)},
     # THE SPLIT SERIES. Where a cumulative burn is mostly a one-off supply event, the cumulative
     # and the recurring programme are two different figures and only the second is a demand
@@ -4446,15 +4452,74 @@ PROJECTS = [
         # (fees_usd; whether it overlaps the services is NOT ESTABLISHED). A service retired for
         # more than retired_after_days counts 0 after its last day; a day an active one misses is
         # refused (never stored partial).
-        "defillama_sum_slugs": (
-            {"metric": "customer_revenue_usd", "data_type": "dailyFees", "parent": "chainlink",
-             "parent_id": "parent#chainlink", "exclude_slugs": ("chainlink",),
-             "retired_after_days": 30,
-             "why": "every Chainlink service customers pay for, all chains (Jake, 2026-09-30); "
-                    "Data Streams and Functions have no adapter, so this reads LOW by them",
-             "source_url": "https://github.com/DefiLlama/dimension-adapters/tree/master/fees",
-             "read_on": "2026-09-30"},
+        # ===== REBUILT AROUND THE FEE AGGREGATOR (Jake, 2026-10-05). The DefiLlama listing sum ENDS. =====
+        # Its "Chainlink Staking" child is DefiLlama's `chainlink` module — the fee aggregator — so it
+        # re-added fees_usd under another slug (SQL BW). customer_revenue_usd is now a read-time sum
+        # (build_workbook._customer_revenue_views):
+        #   CORE  fees_usd — payments collected at the fee aggregator 0xd6e39d42... (CCIP 1.6 fees, CCIP
+        #         2.0 network fees, Payment Abstraction invoices: data feeds, enterprise)
+        #   PLUS  chainlink-requests (DefiLlama, below), CCIP 1.2/1.5 fees (node operators), VRF v2.5,
+        #         Automation v2.3 premium (fetch/chainlink_fees.py) — the lines that bypass the aggregator
+        #   NEVER CCIP 1.6/2.0 as a separate line: already in the core.
+        "defillama_component_slugs": (
+            {"metric": "customer_revenue_requests_usd", "slug": "chainlink-requests", "data_type": "dailyFees",
+             "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/cba11af0499577116edc354f2664e0e542754087/fees/chainlink-requests.ts",
+             "read_on": "2026-10-05"},
         ),
+        "customer_revenue_components": {
+            "metric": "customer_revenue_usd",
+            "core": "fees_usd",
+            "plus": ("customer_revenue_requests_usd", "customer_revenue_ccip_legacy_usd",
+                     "customer_revenue_vrf_usd", "customer_revenue_automation_premium_usd"),
+            "not_measured": "Data Streams (billed off-chain since ~2026-01), SVR (Chainlink's share of "
+                            "recaptured OEV: no public on-chain trail), Data Feeds outside Payment "
+                            "Abstraction, Functions (shut down 2026-06-30), off-chain enterprise revenue; "
+                            "the PLUS lines cover Ethereum, Arbitrum, Base, Polygon and Optimism only "
+                            "(BNB and Avalanche are not routed)",
+        },
+        # ===== THE PLUS LINES, ON CHAIN (fetch/chainlink_fees.py). Addresses from Chainlink's own docs,
+        # smartcontractkit/documentation @2c185d06 (2026-10-02), read 2026-10-05: CCIP Routers from
+        # src/config/data/ccip/v1_2_0/mainnet/chains.json; VRF v2.5 coordinators from
+        # src/content/vrf/v2-5/supported-networks.mdx; Automation registries from
+        # src/content/chainlink-automation/overview/supported-networks.mdx. Each was checked under its
+        # chain's heading. OnRamps are discovered from each Router's OnRampSet history, not listed.
+        "chainlink_fee_lines": {
+            "days": 365,
+            "price_api": "https://coins.llama.fi",
+            "link_coin": "coingecko:chainlink",
+            "chains": {
+                "ethereum": {"chain_id": 1, "llama_chain": "ethereum", "native_coin": "coingecko:ethereum",
+                             "ccip_router": "0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D",
+                             "vrf_v2_5": "0xD7f86b4b8Cae7D942340FF628F82735b7a20893a",
+                             "automation_registry": "0x6593c7De001fC8542bB1703532EE1E5aA0D458fD"},
+                "arbitrum": {"chain_id": 42161, "llama_chain": "arbitrum", "native_coin": "coingecko:ethereum",
+                             "ccip_router": "0x141fa059441E0ca23ce184B6A78bafD2A517DdE8",
+                             "vrf_v2_5": "0x3C0Ca683b403E37668AE3DC4FB62F4B29B6f7a3e",
+                             "automation_registry": "0x37D9dC70bfcd8BC77Ec2858836B923c560E891D1"},
+                "base": {"chain_id": 8453, "llama_chain": "base", "native_coin": "coingecko:ethereum",
+                         "ccip_router": "0x881e3A65B4d4a04dD529061dd0071cf975F58bCD",
+                         "vrf_v2_5": "0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634",
+                         "automation_registry": "0xf4bAb6A129164aBa9B113cB96BA4266dF49f8743"},
+                "polygon": {"chain_id": 137, "llama_chain": "polygon", "native_coin": "coingecko:polygon-ecosystem-token",
+                            "ccip_router": "0x849c5ED5a80F5B408Dd4969b78c2C8fdf0565Bfe",
+                            "vrf_v2_5": "0xec0Ed46f36576541C75739E915ADbCb3DE24bD77",
+                            "automation_registry": "0x08a8eea76D2395807Ce7D1FC942382515469cCA1"},
+                "optimism": {"chain_id": 10, "llama_chain": "optimism", "native_coin": "coingecko:ethereum",
+                             "ccip_router": "0x3206695CaE29952f4b0c22a169725a865bc8Ce0f",
+                             "vrf_v2_5": "0x5FE58960F730153eb5A84a47C51BD4E58302E1c8",
+                             "automation_registry": "0x4F70c323b8B72AeffAF633Aa4D5e8B6Be5df4AEf"},
+            },
+            "not_routed": {
+                "bnb": "Etherscan V2's free tier serves no BSC logs and no Blockscout host is on file for BSC: "
+                       "needs a paid Etherscan plan, or an RPC that allows wide eth_getLogs ranges. Router "
+                       "0x34B03Cb9086d7D758AC55af71584F81A598759FE (docs chains.json)",
+                "avalanche": "chain 43114 has no explorer route on file: needs an Etherscan-compatible Avalanche "
+                             "explorer route (e.g. Routescan/Snowtrace), not verified from here. Router "
+                             "0xF4c7E640EdA248ef95972845a62bdC74237805dB (docs chains.json)",
+            },
+            "sources": {"ccip_router": 'https://github.com/smartcontractkit/documentation/blob/2c185d063e24e62e13e2827dfd5e5d7257466078/src/config/data/ccip/v1_2_0/mainnet/chains.json', "vrf_v2_5": 'https://github.com/smartcontractkit/documentation/blob/2c185d063e24e62e13e2827dfd5e5d7257466078/src/content/vrf/v2-5/supported-networks.mdx', "automation_registry": 'https://github.com/smartcontractkit/documentation/blob/2c185d063e24e62e13e2827dfd5e5d7257466078/src/content/chainlink-automation/overview/supported-networks.mdx'},
+            "read_on": "2026-10-05",
+        },
         # The record it replaces, kept (renamed so fetch/gaps.py no longer reads it as a gap).
         "customer_revenue_usd_resolved": {
             "was": "NOT ESTABLISHED — whether DefiLlama's chainlink fees are consumer payments or "
@@ -4816,10 +4881,11 @@ PROJECTS = [
             },
         ],
         "metric_labels": {
-            "customer_revenue_usd": "Customer revenue — EVERY SERVICE, ALL CHAINS: the sum of DefiLlama's "
-                                    "chainlink-requests, -keepers, -vrf-v1, -vrf-v2 and -ccip daily fees. "
-                                    "Reads LOW by Data Streams and Functions (no adapter). NOT the A3 "
-                                    "buyback base, which is the Reserve inflow alone.",
+            "customer_revenue_usd": "Customer revenue = payments collected at the fee aggregator (CCIP 1.6/2.0, "
+                                    "Payment Abstraction invoices) + the lines that bypass it: requests, CCIP "
+                                    "1.2/1.5 fees, VRF v2.5, Automation v2.3 premium (5 chains). NOT measured: "
+                                    "Data Streams, SVR, off-chain enterprise. NOT the A3 buyback base (the "
+                                    "Reserve inflow).",
             "actual_buyback_tokens": "LINK inflow to Reserve (Payment Abstraction) — EXCLUDES the "
                                      "staking-reward leg, which is a separate route from source",
         },
@@ -17740,6 +17806,30 @@ METHODOLOGY_FLAGS = {
     "hyperliquid_tx_count_layer": "Hyperliquid tx_count is HyperEVM ONLY (ASXN /api/hyper-evm/network-metrics, from "
                                   "probes7 2026-10-02): HyperCore's order flow is not in it. Not comparable to an L1 "
                                   "that counts every action as a transaction.",
+    "chainlink_customer_revenue_structure": "BUILT AROUND THE FEE AGGREGATOR (Jake, 2026-10-05). CORE = fees_usd, the "
+                                            "payments collected at 0xd6e39d42... (CCIP 1.6/2.0 fees, Payment Abstraction "
+                                            "invoices). PLUS the lines that bypass it: chainlink-requests (DefiLlama), CCIP "
+                                            "1.2/1.5 fees (gross, paid to node operators), VRF v2.5, Automation v2.3 premium "
+                                            "(Ethereum, Arbitrum, Base, Polygon, Optimism). CCIP 1.6/2.0 are NEVER added "
+                                            "separately. CCIP 2.0 caveat (OnRamp.sol 2.0.0 _distributeFees): only the "
+                                            "network-fee receipt stays in the OnRamp and reaches the aggregator; verifier, "
+                                            "executor and token-pool receipts are paid straight to their issuers — so 2.0's "
+                                            "non-network receipts are in NEITHER leg (ccip_v2_fees_usd - ccip_v2_premium_usd "
+                                            "shows their size).",
+    "chainlink_aggregator_corroboration": "CORROBORATION (Jake, 2026-10-05): the Reserve's ~$4.3M/month (~$52M/yr) LINK "
+                                          "inflow is ~85% of the aggregator's ~$61M/yr intake (fees_usd ~$168K/day) — "
+                                          "consistent with the aggregator being where customer payments converge before "
+                                          "conversion to LINK.",
+    "chainlink_svr_context": "CONTEXT ONLY, NOT REVENUE (Chainlink Q1 2026 review): SVR recaptured $8.3M in Q1 2026, $18.3M "
+                             "cumulative — TOTAL recaptured OEV, split with Aave and others at an undisclosed 'standard "
+                             "rate' (60/40 in the docs until 2025-04-24, since removed). Chainlink's share has no public "
+                             "on-chain trail (Flashbots refunds are plain ETH transfers to an unpublished address; Atlas "
+                             "recipients are not public). A named gap in customer revenue.",
+    "chainlink_data_streams": "NOT MEASURABLE ON CHAIN SINCE ~2026-01: Data Streams moved to subscription billing, invoiced "
+                              "off-chain (docs billing.mdx, commit 226ef89, 2026-01-16; per-verification fees "
+                              "deprecated). A named gap in customer revenue.",
+    "chainlink_functions_shutdown": "Chainlink Functions mainnet shut down 2026-06-30 (docs shutdown callout); Automation "
+                                    "v1.x ended 2026-06-30 and v2.1 2026-07-31 (migration to CRE). Not a measured line.",
     "chainlink_reserve_validated": "VALIDATED (Jake, 2026-10-05): Chainlink announced on X (2026-09-25) that the "
                                    "Reserve added 373,791 LINK in September for $4.3M+, total 6,047,498 LINK. Our "
                                    "reserve_inflow measured 373,791 LINK over the same 30 days and 6,047,475.54 "
@@ -21211,6 +21301,19 @@ SOURCE_REGISTER = {
                    "REPUBLISHING of Artemis's series (or of Flipside's underlying data) is a separate "
                    "question the terms must answer before any figure built on it leaves the firm",
         "key": "ARTEMIS_API_KEY (not set; only the CSV route is used)",
+    },
+    "defillama:chainlink-ccip": {
+        "used_for": "NOTHING — NOT USED (Jake, 2026-10-05). DefiLlama's fees/chainlink-ccip.ts "
+                    "(dimension-adapters @cba11af0) reads only the 1.2-1.5 CCIPSendRequested event from 52 "
+                    "hard-coded OnRamps, none of which is still in Chainlink's docs lanes, and misses the 1.6 and "
+                    "2.0 events: it tends to zero as lanes migrate. CCIP 1.2/1.5 is read on chain instead "
+                    "(fetch/chainlink_fees.py, OnRamps discovered from each Router's OnRampSet history); 1.6/2.0 "
+                    "are in the fee aggregator core.",
+        "paths": [],
+        "robots": "not applicable — not called",
+        "terms": {"url": "https://github.com/DefiLlama/dimension-adapters", "status": "open-source adapter code"},
+        "licence": "not applicable — not used",
+        "key": "none",
     },
     "ultrasound.money": {
         "used_for": "Ethereum daily supply and staked ETH (ultrasound_history)",

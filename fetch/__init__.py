@@ -52,6 +52,7 @@ from .artemis import ArtemisCSV
 from .plume_settlement import PlumeSettlement
 from .mev_relays import MevRelays
 from .browser_capture import BrowserCapture
+from .chainlink_fees import ChainlinkFees
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
@@ -102,6 +103,8 @@ TIER_ORDER = [
     ("plume_settlement", 1, lambda ctx: PlumeSettlement()),
     # Ethereum's execution reward with MEV: relay-delivered value + non-relay priority fees (2026-10-02).
     ("mev_relays", 1, lambda ctx: MevRelays()),
+    # Chainlink's customer-fee lines that bypass the fee aggregator, from each contract's events (2026-10-05).
+    ("chainlink_fees", 2, lambda ctx: ChainlinkFees()),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
@@ -1754,7 +1757,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60,
+    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 600,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);

@@ -4194,3 +4194,26 @@ SELECT strftime('%Y-%m', d.date) AS month, COUNT(*) AS daily_rows,
 --    AND date >= (SELECT date(MIN(d.date), '-1 day') FROM metrics d
 --                  WHERE d.project = 'GEODNET' AND d.metric = 'gross_burn_tokens'
 --                    AND d.source NOT LIKE 'dune:%');
+
+
+-- ========================================================================================
+-- BY. CHAINLINK customer_revenue_usd: THE DEFILLAMA LISTING SUM IS RETIRED  2026-10-05
+--     customer_revenue_usd is now a READ-TIME sum (build_workbook._customer_revenue_views): fees_usd (the
+--     fee aggregator core) + chainlink-requests + CCIP 1.2/1.5 + VRF v2.5 + Automation v2.3 premium, each
+--     stored under its own metric. The stored rows of the old DefiLlama listing sum
+--     ('defillama:sum(chainlink services)...') are no longer read — "Chainlink Staking" in it was the
+--     aggregator again (BW). Run: python run_sql.py BY, then python run_sql.py --delete BY
+--     (preview + typed "DELETE BY"). The new component metrics are NOT touched.
+-- ========================================================================================
+-- BY1. EVERY STORED customer_revenue_usd ROW FOR CHAINLINK, by source.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(SUM(value), 0) AS total_usd
+  FROM metrics
+ WHERE project = 'Chainlink' AND metric = 'customer_revenue_usd'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BY2. THE DELETE: the retired listing sum's rows only.
+-- DELETE FROM metrics
+--  WHERE project = 'Chainlink' AND metric = 'customer_revenue_usd'
+--    AND source LIKE 'defillama:sum(%';

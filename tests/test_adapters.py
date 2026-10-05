@@ -14576,12 +14576,11 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     # F (2026-09-30): every service, all chains — the five DefiLlama service adapters summed;
     # the Reserve inflow stays A3's narrower buyback base (revenue_usd)
     assert "customer_revenue_usd" not in config.metric_restatements("Chainlink")
-    spec = c["defillama_sum_slugs"][0]
-    # 2026-10-05: the services are DefiLlama's /overview/fees children of parent#chainlink, by the
-    # slugs it serves — no keyword matching, no fallback slugs
-    assert spec["metric"] == "customer_revenue_usd" and "services" not in spec
-    assert spec["parent_id"] == "parent#chainlink" and spec["exclude_slugs"] == ("chainlink",)
-    assert "EVERY SERVICE, ALL CHAINS" in config.metric_label("Chainlink", "customer_revenue_usd")
+    # 2026-10-05 (Jake): rebuilt around the fee aggregator — the DefiLlama listing sum is retired
+    assert "defillama_sum_slugs" not in c
+    comp = c["customer_revenue_components"]
+    assert comp["core"] == "fees_usd" and "customer_revenue_ccip_legacy_usd" in comp["plus"]
+    assert "fee aggregator" in config.metric_label("Chainlink", "customer_revenue_usd")
     assert config.not_applicable_reason("Chainlink", "utilisation_pct")
     assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
     # SETTLEMENT VOLUME (2026-09-30): Artemis's daily series from CSV exports replaces The Block's
@@ -19508,7 +19507,11 @@ def test_chainlink_customer_revenue_sums_complete_days_only_and_repairs_earlier_
     while a listed service fails — is REFUSED with a gap, never stored partial; days stored partial
     earlier are re-stored by the next complete run whatever the window. A3's base stays revenue_usd."""
     from fetch.llama import DefiLlama
-    spec = config.PROJECT_BY_NAME["Chainlink"]["defillama_sum_slugs"][0]
+    # the listing-sum mechanism stays generic; Chainlink no longer uses it (2026-10-05), so the spec it
+    # had is the fixture
+    spec = {"metric": "customer_revenue_usd", "data_type": "dailyFees", "parent": "chainlink",
+            "parent_id": "parent#chainlink", "exclude_slugs": ("chainlink",), "retired_after_days": 30,
+            "why": "test"}
     d = lambda n: pd.Timestamp("2026-08-01") + pd.Timedelta(days=n)  # noqa: E731
     charts = {"chainlink-requests": [(d(i), 100.0) for i in range(50)],
               "chainlink-automation-v2": [(d(i), 200.0) for i in range(50)],
@@ -19580,9 +19583,13 @@ def test_chainlink_customer_revenue_sums_complete_days_only_and_repairs_earlier_
     assert config.revenue_base_metric("Chainlink") == "revenue_usd"
 
 
-def test_partial_summed_days_stored_earlier_are_not_read():
-    """C: rows stored "[missing: …]" by the old rule are dropped at read time until repaired."""
+def test_partial_summed_days_stored_earlier_are_not_read(monkeypatch):
+    """C: rows stored "[missing: …]" by the old rule are dropped at read time until repaired. Chainlink
+    no longer sums DefiLlama listings (customer_revenue_components, 2026-10-05), so the rule is shown on
+    an inline spec."""
     import build_workbook as bw
+    monkeypatch.setitem(config.PROJECT_BY_NAME["Chainlink"], "defillama_sum_slugs",
+                        [{"metric": "customer_revenue_usd", "slugs": ["chainlink-requests"]}])
     g = _grp([("2026-10-01", "Chainlink", "customer_revenue_usd", 7000.0, "defillama:sum(chainlink services)[missing: ccip]"),
               ("2026-10-02", "Chainlink", "customer_revenue_usd", 170000.0, "defillama:sum(chainlink services)")])
     bw._partial_sum_views(g)
@@ -23194,3 +23201,123 @@ def test_monthly_dune_rows_never_occupy_dates_the_daily_burn_series_covers():
     assert set(oct_["source"]) == {SUM}, "October is the daily series only, never Dune's month beside it"
     assert set(g[("GEODNET", "gross_burn_tokens_dune_monthly")]["value"]) == {2_763_001.0}
     assert config.monthly_crosscheck_metric("GEODNET", "actual_buyback_tokens") is None
+
+
+def _clf_log(data_words=None, data_hex=None, ts="2026-10-03", block=100, idx=0, topics=None, tx="0xaa"):
+    data = data_hex or "0x" + "".join(f"{w:064x}" for w in data_words)
+    return {"address": "0x0", "topics": topics or ["0x0"], "data": data, "blockNumber": block,
+            "timeStamp": int(pd.Timestamp(ts).timestamp()) + 3600, "transactionHash": tx, "logIndex": idx}
+
+
+def test_chainlink_fee_line_decoders_read_each_events_own_layout():
+    """Jake, 2026-10-05: the lines that bypass the fee aggregator, decoded from each contract's event
+    layout (sources pinned in fetch/chainlink_fees.py): CCIP 1.2/1.5 feeToken/feeTokenAmount (words 8/9),
+    CCIP 2.0 receipts (gross = all, premium = the last, network-fee receipt), VRF v2.5 payment + native
+    flag, Automation v2.3 premiumInJuels x linkUSD (8 decimals)."""
+    import fetch.chainlink_fees as cf
+    from eth_abi import encode
+    link = 0x514910771AF9Ca656af840dff83E8264EcF986CA
+    w = [0x20, 1, 2, 3, 4, 5, 0, 7, link, 12 * 10 ** 17] + [0] * 6
+    tok, amt = cf.decode_ccip_legacy(_clf_log(w))
+    assert tok == "0x514910771af9ca656af840dff83e8264ecf986ca" and amt == 12 * 10 ** 17
+    receipts = [("0x" + "11" * 20, 1, 2, 3 * 10 ** 17, b""), ("0x" + "22" * 20, 1, 2, 5 * 10 ** 17, b""),
+                ("0x" + "33" * 20, 0, 0, 2 * 10 ** 17, b"")]
+    raw = encode(["address", "uint256", "bytes", "(address,uint32,uint32,uint256,bytes)[]", "bytes[]"],
+                 ["0x" + "44" * 20, 0, b"msg", receipts, []])
+    tok2, gross, prem = cf.decode_ccip_v2(_clf_log(data_hex="0x" + raw.hex()))
+    assert tok2 == "0x" + "44" * 20 and gross == 10 ** 18 and prem == 2 * 10 ** 17
+    pay, native = cf.decode_vrf(_clf_log([123, 25 * 10 ** 16, 1, 1, 0]))
+    assert pay == 25 * 10 ** 16 and native is True
+    usd = cf.decode_automation(_clf_log([0, 0, 0, 2 * 10 ** 18, link, 15 * 10 ** 8, 0, 0]))
+    assert abs(usd - 30.0) < 1e-9, "2 LINK of premium at $15.00 (8-decimal feed) = $30"
+    # OnRamps from the Router's OnRampSet history: live until a lane's next set
+    spans = cf.onramp_spans([(10, 1, "0xA"), (50, 1, "0xB"), (20, 2, "0xA"), (60, 2, "0xC")])
+    assert spans == {"0xa": (10, 60), "0xb": (50, None), "0xc": (60, None)}
+
+
+def test_chainlink_fee_lines_store_complete_priced_days_and_refuse_an_incomplete_chain(tmp_path, monkeypatch):
+    """The adapter scans each chain's VRF coordinator, Automation registry and every OnRamp its Router
+    ever set, and stores a line's day only when every chain is scanned and every event is priced;
+    days with no events are measured zeros. A chain whose scan fails stores nothing for that line."""
+    import fetch.chainlink_fees as cf
+    from fetch.base import today
+    spec = config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]
+    d1 = str((today() - pd.Timedelta(days=2)).date())
+    link = 0x514910771AF9Ca656af840dff83E8264EcF986CA
+
+    class Ex:
+        def __init__(self, fail_chain=None):
+            self.fail_chain = fail_chain
+
+        def configured(self, cid):
+            return ["etherscan"]
+
+        def start_budget(self, s):
+            pass
+
+        def clear_budget(self):
+            pass
+
+        def block_at(self, cid, ts):
+            return 1000
+
+        def get_logs(self, cid, address, topics, frm, to):
+            from fetch.explorer import ExplorerRefused
+            if cid == self.fail_chain:
+                raise ExplorerRefused("etherscan: down")
+            t = topics[0]
+            if t == cf.TOPICS["onramp_set"]:
+                ramp = "0x" + "0" * 24 + "ab" * 20
+                return [_clf_log(data_hex=ramp, topics=[t, "0x" + "0" * 63 + "1"], block=900)], {}
+            if t == cf.TOPICS["ccip_legacy"] and cid == 1:
+                return [_clf_log([0x20, 1, 2, 3, 4, 5, 0, 7, link, 2 * 10 ** 18] + [0] * 6, ts=d1, block=1100)], {}
+            if t == cf.TOPICS["vrf"] and cid == 1:
+                return [_clf_log([1, 10 ** 18, 1, 1, 0], ts=d1, block=1200, idx=1)], {}
+            if t == cf.TOPICS["automation"] and cid == 42161:
+                return [_clf_log([0, 0, 0, 10 ** 18, link, 15 * 10 ** 8, 0, 0], ts=d1, block=1300, idx=2)], {}
+            return [], {}
+    prices = {(d1, "ethereum:0x514910771af9ca656af840dff83e8264ecf986ca"): (15.0, 18),
+              (d1, "coingecko:ethereum"): (4000.0, 18)}
+    c = cf.ChainlinkFees(explorer=Ex(), prices=prices, cache_file=tmp_path / "clf.json")
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out)
+    f = out.frame()
+    leg = f[f.metric == "customer_revenue_ccip_legacy_usd"].set_index("date")["value"]
+    assert leg[pd.Timestamp(d1)] == 30.0 and len(leg) == int(spec["days"]) and (leg.drop(pd.Timestamp(d1)) == 0).all()
+    vrf = f[f.metric == "customer_revenue_vrf_usd"].set_index("date")["value"]
+    assert vrf[pd.Timestamp(d1)] == 4000.0, "a native-paid VRF fulfilment priced at the native coin"
+    auto = f[f.metric == "customer_revenue_automation_premium_usd"].set_index("date")["value"]
+    assert auto[pd.Timestamp(d1)] == 15.0
+    # a second run re-reads nothing new and counts each log once
+    out2 = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out2)
+    f2 = out2.frame()
+    assert f2[f2.metric == "customer_revenue_ccip_legacy_usd"].set_index("date")["value"][pd.Timestamp(d1)] == 30.0
+    # one chain failing: the line is not stored at all
+    c3 = cf.ChainlinkFees(explorer=Ex(fail_chain=8453), prices=prices, cache_file=tmp_path / "clf3.json")
+    out3 = FetchOutput()
+    c3.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out3)
+    assert "customer_revenue_vrf_usd" not in set(out3.frame().get("metric", pd.Series(dtype=str)))
+    assert any("NOT STORED" in e.message for e in out3.log)
+
+
+def test_chainlink_customer_revenue_is_the_aggregator_core_plus_the_lines_that_bypass_it():
+    """Jake, 2026-10-05: customer_revenue_usd = fees_usd (aggregator core) + requests + CCIP 1.2/1.5 + VRF
+    v2.5 + Automation v2.3 premium, summed only on days every leg holds; the stored DefiLlama listing
+    sum is not read; CCIP 2.0 fees are never a leg."""
+    import build_workbook as bw
+    legs = ["fees_usd", "customer_revenue_requests_usd", "customer_revenue_ccip_legacy_usd",
+            "customer_revenue_vrf_usd", "customer_revenue_automation_premium_usd"]
+    rows = []
+    for d in ("2026-10-02", "2026-10-03"):
+        for i, m in enumerate(legs):
+            rows.append((d, "Chainlink", m, 100.0 * (i + 1), "x"))
+    rows.append(("2026-10-04", "Chainlink", "fees_usd", 999.0, "x"))           # other legs missing
+    rows.append(("2026-10-03", "Chainlink", "ccip_v2_fees_usd", 7_777.0, "x"))
+    rows.append(("2026-10-03", "Chainlink", "customer_revenue_usd", 123.0, "defillama:sum(chainlink services)"))
+    g = _grp(rows)
+    bw._customer_revenue_views(g)
+    s = g[("Chainlink", "customer_revenue_usd")].set_index("date")["value"]
+    assert list(s.index) == [pd.Timestamp("2026-10-02"), pd.Timestamp("2026-10-03")]
+    assert (s == 1500.0).all(), "core + four lines, never ccip_v2, never the retired listing sum"
+    assert "ccip_v2" not in str(config.PROJECT_BY_NAME["Chainlink"]["customer_revenue_components"]["plus"])

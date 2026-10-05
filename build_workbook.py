@@ -1046,6 +1046,16 @@ def _emissions_basis(p: dict, data_by_key: dict) -> str:
             + "; ".join(f"{lab} {d}" for lab, d in have))
 
 
+_REVENUE_LEG_LABELS = ("payments collected at the fee aggregator (core)", "Direct Requests",
+                       "CCIP 1.2/1.5 fees (gross)", "VRF v2.5 payments", "Automation v2.3 premium")
+
+
+def _revenue_legs(p: dict) -> list:
+    """[core, *plus] metrics of a project's customer_revenue_components, in _REVENUE_LEG_LABELS order."""
+    spec = p.get("customer_revenue_components") or {}
+    return [spec["core"], *spec["plus"]] if spec else []
+
+
 _EMISSION_PARTS = (("emissions_checker_tokens", "checker-node rewards"),
                    ("emissions_edge_tokens", "edge rewards"),
                    ("emissions_compute_released_tokens", "compute rewards RELEASED (total - locked)"),
@@ -1644,6 +1654,41 @@ def _partial_sum_views(groups: dict) -> None:
                 groups[key] = g[~bad]
 
 
+def _customer_revenue_views(groups: dict) -> None:
+    """CUSTOMER REVENUE = THE AGGREGATOR CORE + THE LINES THAT BYPASS IT (Chainlink, Jake 2026-10-05;
+    config customer_revenue_components). A day is summed only when the core and EVERY plus line hold a
+    row for it — a missing line refuses the day, never a partial sum. Replaces whatever the store holds
+    under the metric (the retired DefiLlama listing sum: orphan_cleanup.sql BY)."""
+    for p in scoped_projects():
+        spec = p.get("customer_revenue_components")
+        if not spec:
+            continue
+        name, legs = p["name"], (spec["core"], *spec["plus"])
+        series = []
+        for m in legs:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                series = None
+                break
+            series.append(g.assign(date=pd.to_datetime(g["date"]).dt.normalize())
+                          .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        if series is None:
+            groups.pop((name, spec["metric"]), None)
+            _VIEW_BLOCKS_PENDING[(name, spec["metric"])] = (
+                "NOT YET SUMMED — a component has no rows yet: " + ", ".join(
+                    m for m in legs if groups.get((name, m)) is None or groups[(name, m)].empty)
+                + ". Not measured at all: " + spec.get("not_measured", ""))
+            continue
+        days = sorted(set.intersection(*(set(s_.index) for s_ in series)))
+        if not days:
+            continue
+        total = sum(s_.reindex(days) for s_ in series)
+        cols = groups[(name, spec["core"])].columns
+        view = pd.DataFrame({"date": days, "project": name, "metric": spec["metric"], "value": total.values,
+                             "source": f"derived:sum({' + '.join(legs)})", "tier": 2})
+        groups[(name, spec["metric"])] = _as_stored(view, cols)
+
+
 def chosen_circulating_metric(p: dict) -> str:
     """The circulating series every token ratio uses (_circ): the first-party / on-chain one where the
     set is established, else CoinGecko's circulating_supply."""
@@ -1857,6 +1902,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
     _VIEW_BLOCKS_PENDING.clear()
+    _customer_revenue_views(groups)   # the aggregator core + the lines that bypass it (Chainlink)
     _utilisation_views(groups)
     _VIEW_BLOCKS.clear()
     _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
@@ -4584,6 +4630,18 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Supply units (nodes / hotspots / GPUs), latest", lambda r, p: pull(R.D(r, "supply_units", "now")), FMT_NUM, "pull", False, {"metric": "supply_units"}),
         ("Capacity utilisation (latest)", lambda r, p: pull(R.D(r, "utilisation_pct", "now")), FMT_PCT, "pull", False, {"metric": "utilisation_pct"}),
         ("Customer revenue Q0 ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull", True, {"metric": "customer_revenue_usd"}),
+        # WHAT CUSTOMER REVENUE IS MADE OF (Chainlink, Jake 2026-10-05): the aggregator core and each
+        # line that bypasses it, Q0 each; blank where a project declares no components.
+        *[(f"  of which {lab} Q0 ($)", (lambda i: lambda r, p: (
+            pull(R.D(r, _revenue_legs(p)[i], "q0")) if len(_revenue_legs(p)) > i else ""))(i),
+           FMT_USD, "pull", False, {"metric_fn": (lambda i: lambda n: (_revenue_legs(config.PROJECT_BY_NAME[n]) + [None] * 9)[i])(i)})
+          for i, lab in enumerate(_REVENUE_LEG_LABELS)],
+        ("  Customer revenue — not measured",
+         lambda r, p: (p.get("customer_revenue_components") or {}).get("not_measured", ""), FMT_TEXT, "text"),
+        ("  Reserve inflow ÷ payments collected at the aggregator (Q0, $) — share converted to LINK",
+         lambda r, p: _coverage_guard(R, r, [("reserve inflow", "actual_buyback_usd", "q0"), ("aggregator", "fees_usd", "q0")],
+                                      f"{_flow_rate(R, r, 'actual_buyback_usd')}/{_flow_rate(R, r, 'fees_usd')}")
+         if p.get("customer_revenue_components") else "", FMT_PCT, "calc"),
         ("Emissions to suppliers Q0 (tokens)", lambda r, p: pull(emi(r)), FMT_NUM, "pull", True, {"metric": "emissions_tokens"}),
         # THE BREAKDOWN (Jake, 2026-10-05, E): what the figure to the left is made of, where the
         # project measures emissions from its components (Aethir). Each is Q0 tokens over its own

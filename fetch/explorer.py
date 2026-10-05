@@ -226,6 +226,25 @@ class ExplorerLogs:
         out.sort(key=lambda e: (e["blockNumber"], e["logIndex"]))
         return out, n
 
+    def block_at(self, chain_id: int, timestamp: int) -> int:
+        """The first block at or after `timestamp`, from the chain's explorer (getblocknobytime).
+        Etherscan answers the number as a string; Blockscout as {"blockNumber": ...}."""
+        refused = []
+        for name in config.explorer_order(chain_id):
+            try:
+                res = self._call(name, chain_id, {"module": "block", "action": "getblocknobytime",
+                                                  "timestamp": int(timestamp), "closest": "after"})
+            except ExplorerRefused as e:
+                refused.append(str(e))
+                continue
+            if isinstance(res, dict):
+                res = res.get("blockNumber")
+            try:
+                return int(str(res))
+            except (TypeError, ValueError):
+                refused.append(f"{name}: not a block number: {str(res)[:80]}")
+        raise ExplorerRefused("; ".join(refused) or f"no explorer is routed for chain {chain_id}")
+
     def get_logs(self, chain_id: int, address: str, topics: list, from_block: int = 0,
                  to_block="latest") -> tuple[list[dict], dict]:
         """Every log matching (address, topics) in [from_block, to_block].

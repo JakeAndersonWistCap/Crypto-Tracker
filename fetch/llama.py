@@ -358,6 +358,15 @@ class DefiLlama:
                 out.fail(SOURCE, name, f"{slug}:{data_type}: {e}", TIER)
         for spec in project.get("defillama_sum_slugs") or ():
             self._sum_slugs(project, spec, window_days, out)
+        # ONE SLUG, ONE COMPONENT METRIC (Chainlink requests, 2026-10-05): a line of a read-time sum,
+        # stored under its own name so the sum can refuse a day it is missing.
+        for c in project.get("defillama_component_slugs") or ():
+            try:
+                rows = self._summary_chart(c["slug"], c.get("data_type", "dailyFees"))
+                out.add(window(tidy(rows, name, c["metric"], f"{SOURCE}:{c['slug']}", TIER), window_days),
+                        SOURCE, name, f"{c['metric']} = {c['slug']}:{c.get('data_type', 'dailyFees')}", TIER)
+            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(SOURCE, name, f"{c['metric']}: {c['slug']}: {e}", TIER)
 
     def _sum_slugs(self, project: dict, spec: dict, window_days, out) -> None:
         """One metric = the SUM of a parent's service adapters (Chainlink's customer revenue,
