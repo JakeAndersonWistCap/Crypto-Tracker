@@ -6096,12 +6096,12 @@ PROJECTS = [
                     "outflow history.",
         },
         "name": "GEODNET", "symbol": "GEOD",
-        # ===== locked_tokens BY HAND, QUARTERLY. Added 2026-09-28 (Jake). =====
-        # SuperHex staked GEOD is reported down to ~3M (vs ~462M circulating), and no contract
-        # reads it (see locked_tokens_blocked). A manual_overrides.csv row — dated, with its source
-        # in source_note — unblocks free float, free float/ARR and the trajectory. Nothing is
-        # entered here: the figure is Jake's to enter, and is reviewed quarterly like the others.
-        "manual_quarterly": ["locked_tokens"],
+        # ===== locked_tokens FROM THE STAKING WALLET'S BALANCE (Jake, 2026-10-05). =====
+        # Was by hand, quarterly (2026-09-28): 3,000,000 GEOD read off Blockworks' chart. Now read on
+        # chain — contracts.staking_wallet_polygon, GEOD.balanceOf(0x682ba846...) on Polygon, with a
+        # 365-day archive backfill (archive_backfill.py --run --project GEODNET). The manual row is
+        # retired in manual_overrides.csv; orphan_cleanup.sql BV is the review.
+        "manual_quarterly": [],
         # ===== locked_tokens — A BOOTSTRAPPING MECHANISM WINDING DOWN, NOT MISSING DATA. =====
         # DECIDED BY JAKE 2026-09-24: left as a gap, and the reason is the mechanism, not the
         # search. SuperHex staking exists to fill COVERAGE GAPS: the Foundation designates a gap
@@ -6129,12 +6129,26 @@ PROJECTS = [
                           "0x237ae888ccb6c43628fd6a24ba48dd1bf65cbff0": 2_938_025,
                           "0xe92e65049b3c2ca12806e9567b08895118c5a03f": 2_806_841},
             "test": "check_offline_items.py geod_stake_wallets",
-            "status": "PENDING — the probe needs Polygon archive reads (POLYGON_RPC_URL) and the saved "
-                      "Blockworks rows; not runnable from the sandbox",
+            "status": "RESOLVED 2026-10-05 — 0x682ba846eed9934cc89ed89a350ea98781256b6f tracks geod_total_stake "
+                      "(17/17 months within 10%, median 0.1%); wired as contracts.staking_wallet_polygon",
         },
-        "locked_tokens_blocked": {
+        # ===== RESOLVED 2026-10-05: THE STAKING WALLET IS 0x682ba846 (Jake's geod_stake_wallets run). =====
+        # Kept, renamed from locked_tokens_blocked, as the record of how it was found.
+        "locked_tokens_resolved": {
+            "resolved_on": "2026-10-05",
+            "resolved_by": "check_offline_items.py geod_stake_wallets, run by Jake: of seven holder-export "
+                           "candidates, 0x682ba846eed9934cc89ed89a350ea98781256b6f's Polygon GEOD balance on "
+                           "the 1st of every month 2025-06..2026-10 was within 10% of Blockworks query 1243's "
+                           "geod_total_stake on 17 of 17 months (median error 0.1%), peak 2025-09-01 on both. "
+                           "The next best (0xe92e6504) was within 10% on 35%; the sum of all seven on 0%. "
+                           "Blockworks: 1,636 days 2022-04-13..2026-10-04, peak 11,966,000 on 2025-08-06, "
+                           "latest 2,993,000 on 2026-10-04",
+            "cross_check": "Blockworks query 1243 geod_total_stake (app.blockworks.com/projects/geodnet/"
+                           "analytics/geodnet) — the series that IDENTIFIED the wallet; a cross-check, not a "
+                           "feed (its terms are unread, licensing register)",
             "answered": True,
-            "status": "BOOTSTRAPPING MECHANISM, STRUCTURALLY WINDING DOWN — not missing data",
+            "status": "RESOLVED — read on chain from the staking wallet (was: BOOTSTRAPPING MECHANISM, "
+                      "STRUCTURALLY WINDING DOWN — not missing data)",
             "wanted": "GEOD staked into SuperHex positions on Polygon",
             "why": "Jake, 2026-09-24: leave it. SuperHex staking is a coverage-gap bootstrap "
                        "(lock GEOD to draw a miner into a Foundation-designated gap; stake back "
@@ -7017,6 +7031,25 @@ PROJECTS = [
             # measured figure against a modelled one. It needs a flow read (transfers out), not the
             # balance read declared here — balance is what this adapter can do today, and a
             # distribution wallet's balance is a float, not a cumulative.
+            # ===== THE STAKING WALLET (Jake, 2026-10-05). locked_tokens = its GEOD balance. =====
+            # Identified by behaviour, not by a published name: its balance tracked Blockworks'
+            # geod_total_stake within 10% on 17 of 17 monthly reads (locked_tokens_resolved).
+            "staking_wallet_polygon": _contract(
+                "0x682BA846eed9934CC89ed89a350EA98781256B6F", "polygon", "treasury_holding", "GEOD",
+                "https://polygonscan.com/address/0x682BA846eed9934CC89ed89a350EA98781256B6F",
+                verified="2026-10-05",
+                provenance="Jake's GEOD holder export (2026-10-05), confirmed by check_offline_items.py "
+                           "geod_stake_wallets: monthly archive balance vs Blockworks query 1243 "
+                           "geod_total_stake, 17/17 months within 10%, median error 0.1%",
+                purpose="GEODNET SuperHex staking wallet (Polygon) — its GEOD balance IS staked GEOD.",
+                underlying="token_polygon", token_standard="erc20", metric_override="locked_tokens",
+                # NOT an assertion that it is an EOA: the existence check is waived because the address
+                # is established by 17 months of its balance matching the stake series, which a
+                # bytecode check could not add to — and a wrong default would refuse a verified read.
+                holder_has_code=False,
+                note="Identified 2026-10-05 by behaviour (geod_stake_wallets). Blockworks' geod_total_stake "
+                     "is the cross-check that identified it, not a feed. Replaces the manual 3,000,000 "
+                     "row (manual_overrides.csv, retired; orphan_cleanup.sql BV)."),
             "mining_polygon": _contract(
                 "0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F", "polygon", "treasury_holding", "GEOD",
                 "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",

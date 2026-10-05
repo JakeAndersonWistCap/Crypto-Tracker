@@ -5615,12 +5615,15 @@ def test_geodnet_sql_addresses_match_config_exactly():
     # All three 2026-09-15 additions are UNVERIFIED, so the adapter refuses them and they appear in
     # the Gap Report by name. That is the point of recording them.
     added_2026_09_15 = {"mining_polygon", "mining_distribution_polygon", "ecosystem_polygon"}
+    #   staking_wallet_polygon             2026-10-05, Jake's holder export + geod_stake_wallets: its
+    #                                      balance tracked Blockworks' geod_total_stake 17/17 months
+    added_2026_10_05 = {"staking_wallet_polygon"}
     # buyback_wallet_polygon_historical RETIRED 2026-09-23: unverified, model-knowledge, and it
     # served buyback_fund_balance on a project whose buyback burns. It lives on in
     # retired_contracts; any rows it wrote are section AD's. Listed here as the tripwire's record.
     retired = config.PROJECT_BY_NAME["GEODNET"]["retired_contracts"]
     assert set(retired) == {"buyback_wallet_polygon_historical"}
-    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15, \
+    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15 | added_2026_10_05, \
         f"unexpected contract keys on GEODNET: {sorted(contracts)}"
     for key in added_2026_09_15:
         c = contracts[key]
@@ -13224,7 +13227,7 @@ def test_the_research_round_records_answers_with_sources_and_never_wires_an_unve
         assert u and u["summary"].startswith("PROGRAMME HALTED 2026-05-11"), u
     # 4c / 4e — GEODNET: not found, then DECIDED 2026-09-24 (Jake) — a bootstrapping mechanism
     # winding down, answered rather than open. Aethir's pools were FOUND on 2026-09-24.
-    b = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]
+    b = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_resolved"]      # RESOLVED 2026-10-05
     assert "BOOTSTRAPPING" in b["status"] and b["answered"] is True
     assert "not extended" in b["why"] and b["source_url"].startswith("https://")
     assert not any(c.get("kind") == "ve_total_supply" for c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].values())
@@ -13647,7 +13650,7 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
     assert set(a["contracts"]) == {"token_arbitrum", "token_ethereum", "staking_gaming_pool",
                                     "staking_ai_pool", "staking_wrapper"}
     assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
-    g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["docs_pages_2026_09_23"]
+    g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_resolved"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
     print("2026-09-23 round ok: closures, blocked rows and research records all land, nothing wired unverified")
 
@@ -14119,7 +14122,7 @@ def test_the_four_projects_of_2026_09_24_land_as_found():
     q = next(o for o in config.OPEN_QUESTIONS if o["project"] == "Sky" and "lssky" in o["topic"])
     assert q["status"] == "closed" and "1:1 RECEIPT" in q["resolution"]
 
-    g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_blocked"]["premise_test_2026_09_24"]
+    g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_resolved"]["premise_test_2026_09_24"]
     assert "two mechanisms" in g["finding"]
     import check_offline_items as coi
     names = {fn.__name__ for fn in coi.CHECKS}
@@ -16136,16 +16139,32 @@ def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plu
     assert config.PROTOCOL_YIELD["Pendle"]["lock_add"] == "locked_tokens_virtual"
 
 
-def test_geodnet_locked_tokens_has_a_manual_quarterly_path_and_jakes_figure_is_entered():
-    """Jake (2026-10-01): enter 3,000,000 GEOD from the Blockworks Staking Flow chart, read by him
-    2026-09-30 — the ONE manual row, sourced and marked as entered on his instruction."""
-    assert config.is_manual_quarterly("GEODNET", "locked_tokens")
+def test_geodnet_locked_tokens_is_the_staking_wallets_balance_and_the_manual_row_is_retired():
+    """Jake (2026-10-05): geod_stake_wallets found 0x682BA846's Polygon GEOD balance within 10% of
+    Blockworks' geod_total_stake on 17 of 17 months. locked_tokens is read from it (archivable for
+    the 365-day backfill), it is off the manual-quarterly list, the 3,000,000 row is retired in the
+    CSV (kept as a comment), SQL BV is the review, and Blockworks is recorded as the cross-check."""
+    from fetch.archive import archivable
+    g = config.PROJECT_BY_NAME["GEODNET"]
+    c = g["contracts"]["staking_wallet_polygon"]
+    assert c["address"] == "0x682BA846eed9934CC89ed89a350EA98781256B6F" and c["chain"] == "polygon"
+    assert c["kind"] == "treasury_holding" and c["metric_override"] == "locked_tokens"
+    assert c["underlying"] == "token_polygon" and c["verified"] == "2026-10-05"
+    assert archivable(g, "locked_tokens", {"polygon"}, set())[0]
+    assert not config.is_manual_quarterly("GEODNET", "locked_tokens")
     import csv
     live = [r for r in csv.reader(l for l in open("manual_overrides.csv") if not l.startswith("#"))
-            if r and r[:3] and r[1:3] == ["GEODNET", "locked_tokens"]]
-    assert len(live) == 1 and live[0][0] == "2026-09-30" and float(live[0][3]) == 3_000_000
-    assert "app.blockworks.com/projects/geodnet/analytics/geodnet" in live[0][4] and "read by Jake 2026-09-30" in live[0][4]
-    assert "Entered by Claude Code on Jake's instruction" in live[0][4] and live[0][5] == "2026-10-01"
+            if r and r[1:3] == ["GEODNET", "locked_tokens"]]
+    assert live == [], "the manual row is retired"
+    assert "# 2026-09-30,GEODNET,locked_tokens,3000000," in open("manual_overrides.csv").read(), "kept as a comment"
+    r = g["locked_tokens_resolved"]
+    assert "Blockworks query 1243" in r["cross_check"] and "17 of 17" in r["resolved_by"]
+    import run_sql as R
+    secs = R.parse_sections(R.SQL_FILE.read_text())
+    w = "\n".join(R.uncommented_write(secs["BV"]["text"]))
+    assert "DELETE FROM manual_overrides" in w and "metric = 'locked_tokens'" in w and "FROM metrics" not in w
+    assert "\nDELETE" not in secs["BV"]["text"], "the write ships commented"
+
 
 
 def test_defillama_reuses_the_days_responses_and_runs_its_checks_once_a_day(monkeypatch):
@@ -18954,10 +18973,8 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
                            {("Near", "p2p_transfer_volume_usd"): "2026-04-01"})
         assert v == "MATURING" and "188 of 365 days" in d and "2027-03-31" in d, (v, d)
         assert "p2p_transfer_volume_usd" in d, "keyed on the STORED input, not the read-time view"
-    # GEODNET locked_tokens: the manual row is in (3,000,000 GEOD, 2026-10-01) — no decision left
+    # GEODNET locked_tokens: read on chain from the staking wallet since 2026-10-05 — no decision left
     assert ("GEODNET", "locked_tokens") not in cr.DECISIONS
-    mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
-    assert "2026-09-30,GEODNET,locked_tokens,3000000," in mo and "Entered by Claude Code on Jake's instruction" in mo
     # a Review Queue flag is informational, never NEEDS JAKE
     v, d = cr.classify(config.PROJECT_BY_NAME["Uniswap"], "fees_usd", {"status": "review", "note": "x"},
                        "2025-01-01", asof)
@@ -21262,8 +21279,10 @@ def test_jake_run_2026_10_01_1434_fixes():
     bw._VIEW_BLOCKS.clear()
     config.SERIES_BREAKS.clear()
     config.SERIES_BREAKS.update(_orig_breaks)
-    # 3 — manual rows
-    g = config.PROJECT_BY_NAME["GEODNET"]
+    # 3 — manual rows (GEODNET's locked_tokens was the example until it went on chain, 2026-10-05;
+    # World Mobile's is the same quarterly manual path)
+    g = config.PROJECT_BY_NAME["World Mobile"]
+    assert config.is_manual_quarterly("World Mobile", "locked_tokens")
     asof = pd.Timestamp("2026-10-01")
     row = {"status": "manual", "note": "Blockworks Staking Flow chart, read by Jake 2026-09-30",
            "latest_date": "2026-09-30", "entered_on": "2026-10-01"}
@@ -23090,7 +23109,7 @@ def test_geod_stake_wallet_verdict_and_blockworks_dates_in_every_unit():
     assert ver[0]["label"] == "a" and ver[0]["tracks"] and not ver[1]["tracks"]
     assert ver[0]["peak_wallet"] == nov == ver[0]["peak_series"]
     assert c.GEOD_STAKE_CANDIDATES == config.PROJECT_BY_NAME["GEODNET"]["staking_wallet_candidates_2026_10_05"]["addresses"]
-    assert "locked_tokens" in config.PROJECT_BY_NAME["GEODNET"]["manual_quarterly"], "manual stands until a wallet tracks"
+    assert "staking_wallet_polygon" in config.PROJECT_BY_NAME["GEODNET"]["contracts"], "the tracking wallet is wired"
 
 
 def test_a_declared_absent_defillama_call_is_remembered_by_the_adapter(monkeypatch):

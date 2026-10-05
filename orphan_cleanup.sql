@@ -4101,3 +4101,34 @@ SELECT metric, source, COUNT(*) AS n_days, MIN(date) AS first_date, MAX(date) AS
    AND date BETWEEN date('2026-10-04', '-89 days') AND '2026-10-04'
  GROUP BY metric, source
  ORDER BY metric, first_date;
+
+
+-- ========================================================================================
+-- BV. GEODNET locked_tokens: THE MANUAL 3,000,000 GIVES WAY TO THE STAKING WALLET  2026-10-05
+--     Jake's geod_stake_wallets run: 0x682BA846eed9934CC89ed89a350EA98781256B6F's Polygon GEOD
+--     balance tracked Blockworks' geod_total_stake within 10% on 17 of 17 months (median error 0.1%).
+--     locked_tokens is now read from it (contracts.staking_wallet_polygon) with a 365-day archive
+--     backfill: python archive_backfill.py --run --project GEODNET.
+--     THE MANUAL ROW LIVES IN manual_overrides.csv, which REPLACES the manual_overrides table on every
+--     run — so the CSV line is retired (commented, kept for the record) and that is what removes it.
+--     BV1/BV2 are the review; BV3 clears the table copy at once (for a build before the next load).
+--     Run: python run_sql.py BV, then python run_sql.py --delete BV (preview + typed "DELETE BV").
+-- ========================================================================================
+-- BV1. THE MANUAL ROW STILL IN THE TABLE (expect the 2026-09-30 3,000,000 row until the next run).
+SELECT date, project, metric, value, entered_on, substr(source_note, 1, 120) AS note
+  FROM manual_overrides
+ WHERE project = 'GEODNET' AND metric = 'locked_tokens';
+
+-- BV2. THE ON-CHAIN SERIES THAT REPLACES IT: rows by source, span, and the latest value
+--      (expect ~2,993,000 on 2026-10-04 against Blockworks).
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       ROUND(MIN(value), 0) AS min_value, ROUND(MAX(value), 0) AS max_value,
+       (SELECT ROUND(value, 0) FROM metrics m2 WHERE m2.project = 'GEODNET' AND m2.metric = 'locked_tokens'
+         ORDER BY date DESC LIMIT 1) AS latest_value
+  FROM metrics
+ WHERE project = 'GEODNET' AND metric = 'locked_tokens'
+ GROUP BY source;
+
+-- BV3. THE DELETE: the table copy of the retired manual row.
+-- DELETE FROM manual_overrides
+--  WHERE project = 'GEODNET' AND metric = 'locked_tokens' AND date = '2026-09-30';
