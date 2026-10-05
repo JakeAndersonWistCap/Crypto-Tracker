@@ -16,6 +16,16 @@ One definition per chart, the explorer's own:
     (nativeCoinSupply was configured too, and answered HTTP 404 on Plume's instance, 2026-10-01 —
     removed; Plume's supply is read from the Ethereum ERC-20 instead.)
 
+TRANSACTIONS EXCLUDE THE ONE-PER-BLOCK SYSTEM TRANSACTION (Jake, 2026-10-05). Plume is an Arbitrum
+Orbit chain: every block carries one ArbitrumInternalTx, and newTxns counts it — Q0 read 35,511,343
+(~395K/day) where growthepie reads ~200K/day. Blockscout's own definition (blockscout/blockscout-rs
+@bfc3771, stats/stats/src/charts/lines/blockscout_instance/transactions/arbitrum_new_operational_txns.rs:
+"transactions excluding a one-per-block system transaction ... the difference between number of
+transactions and number of blocks") is the chart newOperationalTxns. A line spec may name it with a
+`minus` fallback: where the instance does not serve that chart, newTxns - newBlocks per day, the same
+arithmetic. A chart read for the first time reads its full `days` of history, so a changed
+definition never leaves older days on the old one.
+
 A value that is not a number refuses that chart; an `is_approximate` point (the running day) is
 left out. The value is a STRING in the response and is always cast.
 POLITE: once a day per chart (DailyChecks), the first run reads `days` of history, later runs
@@ -75,30 +85,53 @@ class BlockscoutStats:
     def _project(self, name: str, spec: dict, out) -> None:
         day = str(today().date())
         base = spec["base"].rstrip("/")
-        for metric, chart in spec["lines"].items():
-            if not self.daily.due(f"blockscout_stats:{base}:{chart}", day):
+        for metric, line in spec["lines"].items():
+            chart, minus = (line, None) if isinstance(line, str) else (line["chart"], line.get("minus"))
+            key = f"blockscout_stats:{base}:{chart}"
+            if not self.daily.due(key, day):
                 out.mark_current(SOURCE, name, metric, f"{metric}: {chart} already read today ({day})", TIER)
                 continue
             have = self.last_dates.get((name, metric))
-            days = 30 if have is not None else int(spec.get("days", 365))
+            ever = getattr(self.daily, "ever", lambda k: True)(key)
+            days = 30 if (have is not None and ever) else int(spec.get("days", 365))
             start = (today() - pd.Timedelta(days=days)).date()
-            url = f"{base}/api/v1/lines/{chart}"
+            params = {"from": str(start), "to": day, "resolution": "DAY"}
+            label = chart
             try:
-                body = self.http.get(url, params={"from": str(start), "to": day, "resolution": "DAY"})
+                pts = self.parse(self.http.get(f"{base}/api/v1/lines/{chart}", params=params))
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-                out.fail(SOURCE, name, f"{metric}: {chart}: {e}", TIER)
-                continue
-            self.daily.done(f"blockscout_stats:{base}:{chart}", day)
-            pts = self.parse(body)
+                pts = f"{e}"
+                if minus and "404" in str(e):
+                    pts = self._difference(base, minus, params)
+                    label = f"{minus[0]}-{minus[1]}"
             if isinstance(pts, str):
                 out.fail(SOURCE, name, f"{metric}: {chart}: {pts}. NOTHING STORED.", TIER)
                 continue
+            self.daily.done(key, day)
             pts = [(d, v) for d, v in pts if d.normalize() < today()]
             if not pts:
-                out.fail(SOURCE, name, f"{metric}: {chart} returned no complete day from {start}", TIER)
+                out.fail(SOURCE, name, f"{metric}: {label} returned no complete day from {start}", TIER)
                 continue
-            frame = tidy(pts, name, metric, f"{SOURCE}:{chart}", TIER)
-            out.add(frame, SOURCE, name, f"{metric} = {chart} ({spec.get('unit_note', {}).get(metric, '')}"
+            frame = tidy(pts, name, metric, f"{SOURCE}:{label}", TIER)
+            out.add(frame, SOURCE, name, f"{metric} = {label} ({spec.get('unit_note', {}).get(metric, '')}"
                                          f"{'' if metric not in spec.get('unit_note', {}) else '; '}"
                                          f"{len(frame)} day(s) {frame['date'].min().date()}.."
                                          f"{frame['date'].max().date()})", TIER)
+
+    def _difference(self, base: str, charts: tuple, params: dict) -> list[tuple] | str:
+        """a - b per day (newTxns - newBlocks), only on days both charts serve; else why not."""
+        series = []
+        for c in charts:
+            try:
+                pts = self.parse(self.http.get(f"{base}/api/v1/lines/{c}", params=params))
+            except Exception as e:  # noqa: BLE001
+                return f"{c} (for the {charts[0]}-{charts[1]} fallback): {e}"
+            if isinstance(pts, str):
+                return f"{c}: {pts}"
+            series.append(dict(pts))
+        a, b = series
+        out = [(d, a[d] - b[d]) for d in sorted(set(a) & set(b))]
+        bad = [d for d, v in out if v < 0]
+        if bad:
+            return f"{charts[0]} < {charts[1]} on {len(bad)} day(s) (first {bad[0].date()}) — not one system tx per block"
+        return out

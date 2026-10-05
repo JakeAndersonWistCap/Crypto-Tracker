@@ -180,6 +180,19 @@ class DailyChecks:
             return True
         return self._read().get(key) != today
 
+    def get(self, key: str) -> str | None:
+        """The value stored under `key` (a date for a check; any short string set())."""
+        v = self._read().get(key)
+        return None if v is None else str(v)
+
+    def set(self, key: str, value: str) -> None:
+        """Store a short string beside the checks (e.g. which metrics a once-a-day read stored)."""
+        self.done(key, value)
+
+    def ever(self, key: str) -> bool:
+        """True once the check has completed on any day — a series' history has been read."""
+        return key in self._read()
+
     def done(self, key: str, today: str) -> None:
         with file_lock(self.f):                          # read-modify-write under one lock: no lost key
             state = self._read()

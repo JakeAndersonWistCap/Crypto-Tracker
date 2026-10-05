@@ -42,8 +42,11 @@ PRO_ONLY = {
 
 
 class DefiLlama:
-    def __init__(self, known_absent: set | None = None):
+    def __init__(self, known_absent: set | None = None, stored_long=None):
         self.http = Http(min_interval=0.25)
+        # The store as of the run's start — read only to find summed days stored PARTIAL before
+        # 2026-10-05 (source "[missing: …]"), which the next complete run re-stores (_sum_slugs).
+        self.stored_long = stored_long
         self._rwa_by_chain: pd.DataFrame | None = None
         self._memo: dict = {}
         self.daily = DailyChecks()
@@ -80,6 +83,14 @@ class DefiLlama:
     def _chart(j: dict):
         return [(datetime.fromtimestamp(ts, tz=timezone.utc), v)
                 for ts, v in (j.get("totalDataChart") or [])]
+
+    def _protocol(self, slug: str) -> dict:
+        """/protocol/{slug}, MEMOISED FOR THE RUN (A, 2026-10-05): protocol_tvl and lending_supply
+        each downloaded the same multi-MB payload."""
+        key = ("protocol", slug)
+        if key not in self._memo:
+            self._memo[key] = self.http.get(f"{API}/protocol/{slug}")
+        return self._memo[key]
 
     def _summary_chart(self, slug: str, data_type: str):
         return self._chart(self._summary(slug, data_type))
@@ -328,10 +339,16 @@ class DefiLlama:
         chainlink-keepers not found" — Keepers was renamed Chainlink Automation and the whole sum
         went empty). Each service is matched by its keywords against the PARENT's own
         childProtocols (the listing names DefiLlama serves today), then its fallback slugs.
-        WHATEVER REPORTS IS SUMMED: a service with no data for `retired_after_days` before the
-        newest day is RETIRED — counted as 0 after its last reported day, which is logged — and a
-        day on which an ACTIVE service has no point is stored and flagged in its source
-        ("[missing: …]"), never dropped and never silently low."""
+        A service with no data for `retired_after_days` before the newest day is RETIRED — counted
+        as 0 after its last reported day, which is logged.
+
+        A PARTIAL SUM IS NEVER STORED (Jake, 2026-10-05). It used to be stored and flagged
+        ("[missing: …]"); a run whose DefiLlama calls timed out left services UNRESOLVED, every day
+        in the window was stored as the one or two services that answered, and Q0 customer revenue
+        fell from ~$15.26M to $692,288 (A2 free float / ARR 3,562x). Now a day on which any ACTIVE
+        service has no point — or any service is unresolved — is refused: a gap naming the day(s)
+        and the missing service(s), and the stored value (if any) is left alone. Days stored
+        partial by the old rule are RE-STORED by the next complete run, whatever the window."""
         name, metric, dt = project["name"], spec["metric"], spec.get("data_type", "dailyFees")
         kids = []
         try:
@@ -375,23 +392,63 @@ class DefiLlama:
         span = {k: (min(v), max(v)) for k, v in per.items() if v}
         retired = {k: e for k, (_, e) in span.items() if newest - e > retire_after}
         days = sorted(set().union(*(set(v) for v in per.values())))
-        rows, flagged = [], 0
+        src = f"{SOURCE}:sum({spec['parent']} services)"
+        rows, refused = [], {}
         for d in days:
-            total = sum(v.get(d, 0.0) for v in per.values())
-            missing = [k for k, (b0, e0) in span.items() if b0 <= d <= e0 and d not in per[k]]
+            # An ACTIVE service is due on every day from its first point on — including days after
+            # its own newest one (a lagging adapter is missing, not zero). Only a RETIRED service
+            # counts 0 after its last day.
+            missing = [k for k, (b0, e0) in span.items()
+                       if d not in per[k] and b0 <= d and (k not in retired or d <= e0)]
             missing += [u.split(" (")[0] for u in unresolved]
-            src = f"{SOURCE}:sum({spec['parent']} services)" + (f"[missing: {', '.join(missing)}]" if missing else "")
-            flagged += bool(missing)
-            rows.append((d, total, src))
-        frame = pd.concat([tidy([(d, v)], name, metric, src, TIER) for d, v, src in rows], ignore_index=True)
-        out.add(window(frame, window_days), SOURCE, name,
-                f"{metric} = sum of {dt} over {len(per)} service(s): "
+            if missing:
+                refused[d] = missing
+                continue
+            rows.append((d, sum(v.get(d, 0.0) for v in per.values())))
+        head = (f"{metric} = sum of {dt} over {len(per)} service(s): "
                 + ", ".join(f"{k}={v}" for k, v in resolved.items())
                 + (f"; RETIRED (0 after): " + ", ".join(f"{k} last reported {e.date()}" for k, e in retired.items())
-                   if retired else "")
-                + (f"; UNRESOLVED (flagged on every day): " + "; ".join(unresolved) if unresolved else "")
-                + f"; {flagged} of {len(rows)} day(s) flagged with a missing active service — "
-                + spec.get("why", ""), TIER)
+                   if retired else ""))
+        if refused:
+            cut = window(pd.DataFrame({"date": list(refused)}), window_days)
+            recent = sorted(cut["date"]) if not cut.empty else []
+            why = ("; ".join(sorted({", ".join(m) for m in refused.values()})))
+            if unresolved:
+                why += " — UNRESOLVED this run: " + "; ".join(unresolved)
+            if recent:
+                out.gap(name, metric,
+                        f"PARTIAL SUM REFUSED on {len(recent)} day(s) in the window "
+                        f"({recent[0].date()}..{recent[-1].date()}): an active service had no point "
+                        f"({why}). Nothing stored for those days — a partial sum reads low and is "
+                        f"never stored; the stored value, if any, stands until a complete run.",
+                        tiers_attempted=str(TIER))
+        if not rows:
+            out.fail(SOURCE, name, f"{head}; NOTHING STORED — every day is missing a service", TIER)
+            return
+        frame = pd.concat([tidy([(d, v)], name, metric, src, TIER) for d, v in rows], ignore_index=True)
+        keep = window(frame, window_days)
+        # REPAIR: days stored partial by the pre-2026-10-05 rule, now complete — re-stored
+        # wherever they fall, not only inside this run's window.
+        bad = self._partial_days(name, metric)
+        repair = frame[frame["date"].isin(bad) & ~frame["date"].isin(keep["date"])]
+        if not repair.empty:
+            keep = pd.concat([keep, repair], ignore_index=True)
+        out.add(keep, SOURCE, name,
+                head + f"; {len(refused)} of {len(days)} day(s) REFUSED as partial"
+                + (f"; REPAIRED {len(repair)} day(s) stored partial earlier "
+                   f"({repair['date'].min().date()}..{repair['date'].max().date()})" if not repair.empty else "")
+                + (f"; {len(bad) - len(repair)} earlier partial day(s) still missing a service"
+                   if len(bad) > len(repair) else "")
+                + " — " + spec.get("why", ""), TIER)
+
+    def _partial_days(self, name: str, metric: str) -> set:
+        """Stored days of this summed metric whose source says a service was missing."""
+        st = self.stored_long
+        if st is None or getattr(st, "empty", True) or "source" not in st.columns:
+            return set()
+        s = st[(st["project"] == name) & (st["metric"] == metric)
+               & st["source"].astype(str).str.contains("[missing:", regex=False)]
+        return set(pd.to_datetime(s["date"]).dt.normalize())
 
     def _fees_with_restructure_guard(self, project: dict, slug: str, restructure: dict,
                                      window_days, out) -> None:
@@ -640,7 +697,7 @@ class DefiLlama:
         if not slug:
             return
         try:
-            j = self.http.get(f"{API}/protocol/{slug}")
+            j = self._protocol(slug)
             rows = [(datetime.fromtimestamp(p["date"], tz=timezone.utc), p["totalLiquidityUSD"]) for p in j.get("tvl", [])]
             out.add(window(tidy(rows, name, "protocol_tvl_usd", SOURCE, TIER), window_days), SOURCE, name, f"{slug}:tvl", TIER)
         except Exception as e:  # noqa: BLE001
@@ -687,7 +744,7 @@ class DefiLlama:
                         TIER)
             return
         try:
-            j = self.http.get(f"{API}/protocol/{slug}")
+            j = self._protocol(slug)
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             out.fail(SOURCE, name, f"{slug}:lending supply: {e}", TIER)
             return
@@ -824,19 +881,46 @@ class DefiLlama:
                     SOURCE, name, f"{chain}:rwa category", TIER)
 
     def run(self, projects: list[dict], window_days, out):
+        # ===== HISTORY ONCE, THEN ONCE A DAY (Jake, 2026-10-05, A). =====
+        # DefiLlama's fees/protocol/chain/stablecoin endpoints take NO date parameter — every call
+        # downloads the series since inception (a /protocol payload runs to MBs), and two of Jake's
+        # runs hit the 150s budget doing it. The request cannot be narrowed, so it is made at most
+        # once a day per project: a project whose read today stored a complete day for yesterday
+        # with no failure is not called again until tomorrow (its metrics are marked current, not
+        # gaps). Storing is unchanged: the window (30 days, 365 for a backfill pair) of what came.
+        yday = today().normalize() - pd.Timedelta(days=1)
         for p in projects:
-            self.fees(p, window_days, out)
-            # AFTER the fetch, so the check costs nothing when the fetch already failed — and
-            # runs on every project with a slug rather than only where somebody suspects one.
-            # Morpho's restructure sat unnoticed for eleven days precisely because nothing looked
-            # unless a human went looking.
-            self.check_restructure(p, out)
-            self.protocol_tvl(p, window_days, out)
-            self.lending_supply(p, window_days, out)
-            self.chain_tvl(p, window_days, out)
-            self.stablecoins(p, window_days, out)
-            self.trading_volume(p, out)
+            name, key = p["name"], f"defillama:project:{p['name']}"
+            if not self.daily.due(key, self._today):
+                done = (self.daily.get(key + ":metrics") or "").split(",")
+                for m in (m for m in done if m):
+                    out.mark_current(SOURCE, name, m, f"{m}: DefiLlama read complete through {yday.date()} "
+                                                      f"earlier today ({self._today}) — its endpoints serve "
+                                                      f"full history only, so not re-downloaded until tomorrow",
+                                     TIER)
+                continue
+            n_log, n_frames = len(out.log), len(out.frames)
+            self._project(p, window_days, out)
+            mine = [e for e in out.log[n_log:] if e.source == SOURCE and e.project == name]
+            frames = [f for f in out.frames[n_frames:] if not f.empty and (f["project"] == name).all()]
+            complete = frames and max(pd.Timestamp(f["date"].max()) for f in frames) >= yday
+            if complete and not any(e.status == "failed" for e in mine):
+                self.daily.set(key + ":metrics", ",".join(sorted({m for f in frames for m in f["metric"].unique()})))
+                self.daily.done(key, self._today)
         self.rwa(projects, window_days, out)
+
+    def _project(self, p: dict, window_days, out) -> None:
+        self.fees(p, window_days, out)
+        # AFTER the fetch, so the check costs nothing when the fetch already failed — and
+        # runs on every project with a slug rather than only where somebody suspects one.
+        # Morpho's restructure sat unnoticed for eleven days precisely because nothing looked
+        # unless a human went looking.
+        self.check_restructure(p, out)
+        self.protocol_tvl(p, window_days, out)
+        self.lending_supply(p, window_days, out)
+        self.chain_tvl(p, window_days, out)
+        self.stablecoins(p, window_days, out)
+        self.trading_volume(p, out)
 
     def trading_volume(self, project: dict, out) -> None:
         """DEX and perps volume BY CHAIN (config.TRADING_THROUGHPUT; Jake, 2026-09-30) — the whole

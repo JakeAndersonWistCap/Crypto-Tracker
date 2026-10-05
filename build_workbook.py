@@ -937,12 +937,23 @@ def _measured_emissions_views(groups: dict) -> None:
         adds = [_added_component(groups, name, a) for a in spec.get("adds") or ()]
         released = [_released_component(groups, name, a) for a in spec.get("adds") or ()]
         rows, earned_rows = [], []
+        # THE BREAKDOWN (Jake, 2026-10-05, E): each component's own daily series beside the sum, so
+        # A2's emissions can be reconciled — checker, edge, compute earned, compute released.
+        part_of = spec.get("component_metrics") or {}
+        parts: dict = {}
+
+        def part(metric, day, v, src_):
+            if metric and v is not None:
+                parts.setdefault(metric, []).append({"date": day, "project": name, "metric": metric,
+                                                     "value": float(v), "source": src_, "tier": 3})
         for prev, day in zip(common, common[1:]):
             deltas = [s_[day] - s_[prev] for s_ in stocks]
             if any(d < 0 for d in deltas):
                 continue
             span = (pd.Timestamp(day) - pd.Timestamp(prev)).days
             src = spec["source"] + (f"[span={span}d]" if span > 1 else "")
+            for m, dv in zip(spec["stocks"], deltas):
+                part(part_of.get(m), day, dv, src)
             extra, missing, rel_extra, rel_missing = 0.0, [], 0.0, []
             for a, (stock, daily), rel in zip(spec.get("adds") or (), adds, released):
                 v = _component_over(stock, daily, prev, day)
@@ -954,6 +965,8 @@ def _measured_emissions_views(groups: dict) -> None:
                     rv = v
                 else:
                     rv = _component_over(rel, {}, prev, day)
+                part(a.get("earned_metric"), day, v, src)
+                part(a.get("released_metric"), day, rv, src)
                 if rv is None:
                     rel_missing.append(a["what"] + (" released (total - locked)" if v is not None else ""))
                 else:
@@ -980,6 +993,8 @@ def _measured_emissions_views(groups: dict) -> None:
             groups[(name, "emissions_released_tokens")] = _as_stored(meas.assign(metric="emissions_released_tokens"),
                                                                      meas.columns)
             groups[(name, "emissions_earned_tokens")] = _as_stored(pd.DataFrame(earned_rows), meas.columns)
+        for m, prt in parts.items():
+            groups[(name, m)] = _as_stored(pd.DataFrame(prt), meas.columns)
         _release_view(groups, name, spec, meas, common)
         sched = groups.get((name, "emissions_tokens"))
         if sched is not None and not sched.empty:
@@ -989,6 +1004,12 @@ def _measured_emissions_views(groups: dict) -> None:
                                                            ignore_index=True).sort_values("date")
         else:
             groups[(name, "emissions_tokens")] = _as_stored(meas, meas.columns)
+
+
+_EMISSION_PARTS = (("emissions_checker_tokens", "checker-node rewards"),
+                   ("emissions_edge_tokens", "edge rewards"),
+                   ("emissions_compute_released_tokens", "compute rewards RELEASED (total - locked)"),
+                   ("emissions_compute_earned_tokens", "compute rewards EARNED (incl. vesting)"))
 
 
 def _added_component(groups: dict, name: str, a: dict):
@@ -1566,6 +1587,80 @@ def _circulating_views(groups: dict) -> None:
         groups[(name, "circulating_supply_onchain")] = _as_stored(view, parts[0].columns)
 
 
+def _partial_sum_views(groups: dict) -> None:
+    """A SUMMED METRIC NEVER READS A PARTIAL DAY (Jake, 2026-10-05). Before that date
+    fetch/llama.py _sum_slugs stored a day on which an active service had no point, flagged
+    "[missing: …]" in its source — Chainlink's Q0 customer revenue read $692,288 instead of ~$15.26M
+    after DefiLlama timeouts. Such rows are dropped at read time, so the day is uncovered (the
+    coverage caveats say so) until the next complete run re-stores it."""
+    for p in scoped_projects():
+        for spec in p.get("defillama_sum_slugs") or ():
+            key = (p["name"], spec["metric"])
+            g = groups.get(key)
+            if g is None or g.empty:
+                continue
+            bad = g["source"].astype(str).str.contains("[missing:", regex=False)
+            if bad.any():
+                groups[key] = g[~bad]
+
+
+def chosen_circulating_metric(p: dict) -> str:
+    """The circulating series every token ratio uses (_circ): the first-party / on-chain one where the
+    set is established, else CoinGecko's circulating_supply."""
+    spec = config.circulating_onchain(p["name"]) or {}
+    if spec.get("status") in ("established", "first_party"):
+        return spec.get("metric") or "circulating_supply_onchain"
+    return "circulating_supply"
+
+
+def _market_cap_views(groups: dict) -> None:
+    """MARKET CAP = PRICE x THE CIRCULATING THE TOKEN RATIOS USE (Jake, 2026-10-05). It was CoinGecko's
+    market cap — price x CoinGecko's circulating — while every token ratio used our chosen circulating,
+    so Aethir's free-float market cap ($166.6M, price x (24.05bn first-party - locked)) exceeded its
+    market cap ($150.6M, CoinGecko's ~20.1bn), and Hyperliquid's market cap ($20.77bn) was price x
+    ~222.6M where we use 298.67M. Per day: price x the chosen circulating (first-party / on-chain where
+    established, CoinGecko's on days it has none — the same fallback as _circ), net of GEODNET's
+    un-netted Solana burn as _circ nets it. CoinGecko's own market cap stays beside it as
+    market_cap_usd_coingecko, the cross-check."""
+    for p in scoped_projects():
+        name = p["name"]
+        cg = groups.get((name, "market_cap_usd"))
+        px = groups.get((name, "price_usd"))
+        if px is None or px.empty:
+            continue
+
+        def daily(metric):
+            g = groups.get((name, metric))
+            if g is None or g.empty:
+                return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+            g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+            return g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        price = daily("price_usd")
+        chosen = chosen_circulating_metric(p)
+        own, fallback = daily(chosen), daily("circulating_supply")
+        circ = own.combine_first(fallback) if chosen != "circulating_supply" else fallback
+        if config.supply_unnetted_burn(name):
+            tot, gross, burned = daily("total_supply"), daily("total_supply_gross"), daily("burn_address_balance")
+            idx = circ.index
+            adj = (tot.reindex(idx, method="ffill") - (gross.reindex(idx, method="ffill")
+                                                       - burned.reindex(idx, method="ffill"))).round(2)
+            circ = (circ - adj).where(adj >= 0)
+        both = price.index.intersection(circ.dropna().index)
+        if both.empty:
+            continue
+        basis = {d: (chosen if (chosen != "circulating_supply" and d in own.index) else "circulating_supply")
+                 for d in both}
+        view = pd.DataFrame({"date": both, "project": name, "metric": "market_cap_usd",
+                             "value": (price[both] * circ[both]).values, "tier": 1,
+                             "source": [f"derived:price_x_circulating[{basis[d]}"
+                                        + (", net of the un-netted burn" if config.supply_unnetted_burn(name) else "")
+                                        + "]" for d in both]})
+        cols = cg.columns if cg is not None and not cg.empty else px.columns
+        if cg is not None and not cg.empty:
+            groups[(name, "market_cap_usd_coingecko")] = _as_stored(cg.assign(metric="market_cap_usd_coingecko"), cols)
+        groups[(name, "market_cap_usd")] = _as_stored(view, cols)
+
+
 def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
     """The PRIMARY issuance series, for every consumer. See config.ISSUANCE_PRIMARY.
 
@@ -1710,6 +1805,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _monthly_leg_views(groups)
     _measured_emissions_views(groups)
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
@@ -1732,6 +1828,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _issuance_views(groups, asof)
     _reward_end_views(groups, asof)
     _circulating_views(groups)
+    _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _settlement_views(groups)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
@@ -2438,7 +2535,23 @@ def _period_windows(asof: pd.Timestamp) -> list[tuple[str, pd.Timestamp, pd.Time
     return out
 
 
-def write_config(ws, asof: pd.Timestamp):
+def buyback_silence(data: pd.DataFrame | None) -> dict:
+    """{project: last non-zero buyback date} where the PROGRAM SILENCE flag is up on its buyback
+    series (aggregate's silence_flag, PROGRAM_CADENCE). Ether.fi, Jake 2026-10-05: "active" for a
+    buyback silent since 2026-04-01 (CoW-only) read as if it were running."""
+    out = {}
+    if data is None or data.empty or "silence_flag" not in data.columns:
+        return out
+    for r in data.to_dict("records"):
+        cad = config.program_cadence(r["project"], r["metric"])
+        if (cad and str(r["metric"]).startswith("actual_buyback") and r.get("silence_flag")
+                and isinstance(r.get("last_nonzero_date"), str) and r["last_nonzero_date"]):
+            out[r["project"]] = r["last_nonzero_date"]
+    return out
+
+
+def write_config(ws, asof: pd.Timestamp, silence: dict | None = None):
+    silence = silence or {}
     _title(ws, "Config & Sources", "Every fee-split / burn-split / issuance parameter with its source URL and date. Blue cells are levers: change them here and every formula follows. "
                                     "status = active | paused | unconfirmed | n/a. Unconfirmed splits are greyed on the archetype tabs and their derived figures suppressed.")
     ws["A2"].alignment = Alignment(wrap_text=False)
@@ -2483,6 +2596,10 @@ def write_config(ws, asof: pd.Timestamp):
         for _, start, end in windows:
             applied = config.split_for_window(p["name"], start.date().isoformat(), end.date().isoformat())
             sh, stat = applied["share_to_buyback"], applied["status"]
+            # SILENT THROUGH THE WHOLE WINDOW: no buyback since before it opened (Jake, 2026-10-05).
+            quiet = silence.get(p["name"])
+            if stat == "active" and quiet and pd.Timestamp(quiet) < start:
+                stat = f"SILENT — no buyback since {quiet}"
             window_cells.append("per-product" if isinstance(sh, dict) else (sh if sh is not None else "n/a"))
             window_cells.append(stat)
 
@@ -2509,7 +2626,9 @@ def write_config(ws, asof: pd.Timestamp):
             ", ".join(str(a) for a in p.get("archetypes_held", [])) or "", p["materiality"],
             p.get("coingecko_id") or "", p.get("defillama_fees_slug") or "", p.get("defillama_protocol") or "", p.get("defillama_chain") or "",
             share_cell, fs.get("source_url") or "", fs.get("source_date") or "",
-            _programmed_label(fs.get("programmed")), fs.get("status", "n/a"),
+            _programmed_label(fs.get("programmed")),
+            (f"SILENT since {silence[p['name']]} (declared {fs.get('status')}; program cadence broken)"
+             if p["name"] in silence and fs.get("status") == "active" else fs.get("status", "n/a")),
             p.get("buyback_destination", ""), p.get("destination_effect", ""),
             p.get("destination_split"), p.get("burn_execution", ""),
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
@@ -2535,7 +2654,8 @@ def write_config(ws, asof: pd.Timestamp):
                 _style(c, "text", FMT_TEXT)
             if (head in ("Buyback status", "Burn status") or head.startswith("Status Q")) and v == "unconfirmed":
                 c.fill = FILL_UNCONFIRMED
-            if head in ("Buyback status", "Burn status") and v in ("paused",):
+            if (head in ("Buyback status", "Burn status") or head.startswith("Status Q")) and (
+                    v in ("paused",) or str(v).startswith("SILENT")):
                 c.fill = FILL_PAUSED
             if head == "Programmed (contract-enforced)" and v == "sources conflict":
                 c.fill = FILL_UNCONFIRMED
@@ -2829,6 +2949,21 @@ def _flow_rate(R: Refs, r: int, metric: str, w: str = "q0", total: str | None = 
         return (f"IF(AND(ISNUMBER({ev}),{ev}>0),({t})/{ev}*{per_year:g}/{G('days_per_year')},"
                 f"(({t})/IF(ISNUMBER({cov}),{cov},{_nominal(w)})))")
     return f"(({t})/IF(ISNUMBER({cov}),{cov},{_nominal(w)}))"
+
+
+def _fee_per_tx(R: Refs, r: int, p: dict, avg_price: str) -> str:
+    """Fees ÷ transactions, Q0 per covered day — of the SAME layer (D, Jake 2026-10-05: Hyperliquid
+    read HyperCore fees ÷ HyperEVM transactions, $6.944). A project declaring fee_per_tx divides the
+    declared fee legs (tokens priced at the 90-day average) by its transactions instead."""
+    spec = config.fee_per_tx(p["name"])
+    if not spec:
+        return _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("transactions", "tx_count", "q0")],
+                               f"{_flow_rate(R, r, 'fees_usd')}/{_flow_rate(R, r, 'tx_count')}")
+    legs = [(m, m, "q0") for m in spec["fee_metrics"]] + [("transactions", "tx_count", "q0")]
+    fee = "+".join(_flow_rate(R, r, m) for m in spec["fee_metrics"])
+    if spec.get("unit") == "tokens":
+        fee = f"({fee})*{avg_price}"
+    return _coverage_guard(R, r, legs, f"({fee})/{_flow_rate(R, r, 'tx_count')}")
 
 
 def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str,
@@ -3321,6 +3456,13 @@ def _a1_headline(R: Refs) -> list[tuple]:
          vyield, FMT_PCT, "calc", True,
          {"metric_fn": lambda n: {"Ethereum": "beacon_chain_eth", "Near": "total_supply",
                                   "Chainlink": "reward_emission_rate_annual"}.get(n)}),
+        ("Validator yield — caveat (a maturing rate)",
+         lambda r, p: (config.VALIDATOR_YIELD.get(p["name"]) or {}).get("maturing", ""), FMT_TEXT, "text"),
+        # WHERE THE HEADLINE IS NET OF COMMISSION (Plume, Jake 2026-10-05), the gross rate beside it.
+        ("Validator yield GROSS of commission (where the headline is net)",
+         lambda r, p: pull(R.D(r, (config.VALIDATOR_YIELD.get(p["name"]) or {})["gross_metric"], "now"))
+         if (config.VALIDATOR_YIELD.get(p["name"]) or {}).get("gross_metric") else "", FMT_PCT, "pull", False,
+         {"metric_fn": lambda n: (config.VALIDATOR_YIELD.get(n) or {}).get("gross_metric")}),
         *_eth_yield_columns(R),
         # SETTLEMENT VOLUME AND NRR (Jake, 2026-09-30): Artemis's daily settlement volume (DEX +
         # NFT trading + P2P transfers), summed over the 365 days ending on the export's LAST date,
@@ -4008,6 +4150,9 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Price — 90d average ($)", lambda r, p: pull(R.D(r, "price_usd", "q0")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Market cap ($)", lambda r, p: pull(R.D(r, "market_cap_usd", "now")), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
         ("Circulating supply (reported)", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
+        ("Market cap — CoinGecko ($, cross-check: price x CoinGecko's circulating)",
+         lambda r, p: pull(R.D(r, "market_cap_usd_coingecko", "now")), FMT_USD, "pull", False,
+         {"metric": "market_cap_usd_coingecko"}),
         ("FDV ($)", lambda r, p: pull(R.D(r, "fdv_usd", "now")), FMT_USD, "pull", False, {"metric": "fdv_usd"}),
         ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
         ("Revenue Q0 ($)", lambda r, p: pull(R.D(r, "revenue_usd", "q0")), FMT_USD, "pull", False, {"metric": "revenue_usd"}),
@@ -4337,9 +4482,10 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         *_a1_headline(R),
         ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False, {"metric": "tx_count"}),
         ("Fees Q0 ($)", lambda r, p: pull(fees(r)), FMT_USD, "pull", False, {"metric": "fees_usd"}),
-        ("Fee per transaction ($)",
-         lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("transactions", "tx_count", "q0")],
-                                      f"{_flow_rate(R, r, 'fees_usd')}/{_flow_rate(R, r, 'tx_count')}"), FMT_USD4, "calc"),
+        ("Fee per transaction ($)", lambda r, p: _fee_per_tx(R, r, p, price(r)), FMT_USD4, "calc"),
+        ("Fee per transaction — what it divides",
+         lambda r, p: (config.fee_per_tx(p["name"]) or {}).get("label", "fees_usd ÷ tx_count, Q0 per covered day"),
+         FMT_TEXT, "text"),
         ("Active addresses (latest, low weight)", lambda r, p: pull(R.D(r, "active_addresses", "now")), FMT_NUM, "pull", False, {"metric": "active_addresses"}),
         ("Stablecoin supply on chain ($)", lambda r, p: pull(R.D(r, "stablecoin_supply_usd", "now")), FMT_USD, "pull", False, {"metric": "stablecoin_supply_usd"}),
         ("TVL — chain ($) [primary demand metric]", lambda r, p: pull(R.D(r, "tvl_usd", "now")), FMT_USD, "pull", True, {"metric": "tvl_usd"}),
@@ -4399,6 +4545,17 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Capacity utilisation (latest)", lambda r, p: pull(R.D(r, "utilisation_pct", "now")), FMT_PCT, "pull", False, {"metric": "utilisation_pct"}),
         ("Customer revenue Q0 ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull", True, {"metric": "customer_revenue_usd"}),
         ("Emissions to suppliers Q0 (tokens)", lambda r, p: pull(emi(r)), FMT_NUM, "pull", True, {"metric": "emissions_tokens"}),
+        # THE BREAKDOWN (Jake, 2026-10-05, E): what the figure to the left is made of, where the
+        # project measures emissions from its components (Aethir). Each is Q0 tokens over its own
+        # covered days; "% of circulating, annualised" puts released and earned side by side.
+        *[(f"  of which {lab} Q0 (tokens)", (lambda m: lambda r, p: pull(R.D(r, m, "q0")))(m), FMT_NUM, "pull",
+           False, {"metric": m}) for m, lab in _EMISSION_PARTS],
+        ("  Emissions RELEASED, % of circulating (annualised over covered days)",
+         lambda r, p: calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({_circ(R, r, p)})"), FMT_PCT, "calc",
+         False, {"metric": "emissions_tokens"}),
+        ("  Emissions EARNED (incl. vesting), % of circulating (annualised over covered days)",
+         lambda r, p: calc(f"{_annualise(R, r, p, 'emissions_earned_tokens', R.D(r, 'emissions_earned_tokens', 'q0'))}"
+                           f"/({_circ(R, r, p)})"), FMT_PCT, "calc", False, {"metric": "emissions_earned_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Emissions Q0 ($ at avg price)", lambda r, p: calc(f"{emi(r)}*{price(r)}"), FMT_USD, "calc"),
         ("CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
@@ -4938,7 +5095,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     ws_data = wb.create_sheet("Data")
     ws_mon = wb.create_sheet("Monthly")
 
-    write_config(ws_cfg, asof)
+    write_config(ws_cfg, asof, silence=buyback_silence(data))
     write_data(ws_data, data, asof)
     write_monthly(ws_mon, months, monthly)
     write_master(ws_master, R, data_by_key)

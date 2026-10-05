@@ -386,6 +386,47 @@ _RATE_HEADERS = ("retry-after", "ratelimit-reset", "ratelimit-window", "x-rateli
                  "x-ratelimit-remaining-month", "x-ratelimit-reset", "x-ratelimit-limit")
 
 
+class HostPace:
+    """Thread-safe spacing of calls to ONE host at `per_s` requests a second (all callers share it)."""
+
+    def __init__(self, per_s: float, sleep=time.sleep, clock=time.monotonic):
+        self.gap = 1.0 / float(per_s) if per_s else 0.0
+        self.sleep, self.clock, self._next, self._lock = sleep, clock, 0.0, threading.Lock()
+
+    def slow_to(self, per_s: float) -> None:
+        """Never faster than the slowest rate any caller of this host asked for."""
+        if per_s:
+            with self._lock:
+                self.gap = max(self.gap, 1.0 / float(per_s))
+
+    def wait(self) -> None:
+        with self._lock:
+            now = self.clock()
+            at = max(now, self._next)
+            self._next = at + self.gap
+        if at > now:
+            self.sleep(at - now)
+
+
+# ONE PACER PER HOST FOR EVERY ADAPTER IN THE RUN (Jake, 2026-10-05, G5): plume_staking drew HTTP 429
+# from explorer.plume.org alongside plume_settlement — each paced itself and neither saw the other.
+# Keyed by (host, sleep): production callers (time.sleep) share one pacer per host; a test that
+# injects its own sleep gets its own, so no test ever waits on another's clock.
+_HOST_PACES: dict = {}
+_HOST_PACES_LOCK = threading.Lock()
+
+
+def host_pace(url: str, per_s: float, sleep=time.sleep) -> HostPace:
+    """The run-wide pacer for `url`'s host, at the slowest rate any caller has asked for."""
+    host = urllib.parse.urlsplit(url).netloc.lower() or url
+    with _HOST_PACES_LOCK:
+        pace = _HOST_PACES.get((host, sleep))
+        if pace is None:
+            pace = _HOST_PACES[(host, sleep)] = HostPace(per_s, sleep=sleep)
+    pace.slow_to(per_s)
+    return pace
+
+
 class RateLimited(RuntimeError):
     """A 429 whose Retry-After is longer than MAX_RETRY_WAIT_S. Not waited; the message says why.
     `retry_after` (seconds) and `headers` (the rate-limit headers only, never keys) let a caller
@@ -732,6 +773,11 @@ BACKFILL: set = set()
 def set_backfill(pairs) -> None:
     BACKFILL.clear()
     BACKFILL.update(pairs or ())
+
+
+# Days re-read before the newest stored one on a routine (incremental) fetch: enough for the change
+# checks' weekend comparison (a Monday against Friday) — Jake, 2026-10-05.
+OVERLAP_DAYS = 3
 
 
 def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:

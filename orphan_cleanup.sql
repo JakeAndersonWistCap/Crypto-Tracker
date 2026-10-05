@@ -4016,3 +4016,34 @@ SELECT o.date, o.value AS coingecko_derived, n.value AS erc20_derived, n.source
 -- DELETE FROM metrics
 --  WHERE project = 'Plume' AND metric = 'gross_issuance_tokens'
 --    AND source LIKE 'derived:d_supply%';
+
+
+-- ========================================================================================
+-- BS. ETHEREUM: THE FROZEN ULTRASOUND SERIES GO — total_supply_ultrasound, beacon_validators_eth  2026-10-05
+--     Jake's run 2026-10-05: ultrasound.money's supply-projection-inputs ends 2024-06-22 and the tier
+--     re-wrote its whole series each day — ~1,047 stale rows, 1,047 of the run's 1,102 Review Queue items.
+--     The tier is DISABLED (config Ethereum.ultrasound_history.disabled; fetch/ultrasound.py skips it).
+--     Nothing reads either metric (no build view, no ratio); the pre-2024 cross-check it was kept for
+--     has never been wired. The rows and their review items go together.
+--     Run: python run_sql.py BS (counts and spans), then python run_sql.py --delete BS
+--     (preview + typed "DELETE BS").
+-- ========================================================================================
+-- BS1. THE ROWS, by metric and source, with their span.
+SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric IN ('total_supply_ultrasound', 'beacon_validators_eth')
+ GROUP BY metric, source
+ ORDER BY metric;
+
+-- BS2. THEIR REVIEW QUEUE ITEMS (expect ~1,047).
+SELECT metric, reason, COUNT(*) AS n_items, MIN(date) AS first_date, MAX(date) AS last_date
+  FROM review_queue
+ WHERE project = 'Ethereum' AND metric IN ('total_supply_ultrasound', 'beacon_validators_eth')
+ GROUP BY metric, reason
+ ORDER BY n_items DESC;
+
+-- BS3. THE DELETES: the two metrics' rows, then their review items.
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric IN ('total_supply_ultrasound', 'beacon_validators_eth');
+-- DELETE FROM review_queue
+--  WHERE project = 'Ethereum' AND metric IN ('total_supply_ultrasound', 'beacon_validators_eth');

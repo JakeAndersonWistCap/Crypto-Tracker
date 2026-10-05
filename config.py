@@ -164,7 +164,8 @@ ARCHETYPE_NAMES = {
 METRICS = {
     # --- free API: price & supply (CoinGecko)
     "price_usd":                  {"label": "Price",                           "kind": "stock", "unit": "usd",    "archetypes": [1, 2, 3, 4], "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e7},
-    "market_cap_usd":             {"label": "Market cap",                      "kind": "stock", "unit": "usd",    "archetypes": [1, 2, 3, 4], "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
+    "market_cap_usd":             {"label": "Market cap = price x the circulating the token ratios use (first-party / on-chain where established, else CoinGecko's) — read-time view",                      "kind": "stock", "unit": "usd",    "archetypes": [1, 2, 3, 4], "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
+    "market_cap_usd_coingecko":   {"label": "Market cap as CoinGecko serves it (price x CoinGecko's circulating) — CROSS-CHECK", "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e13, "view_only": True},
     "volume_usd":                 {"label": "Trading volume",                  "kind": "flow",  "unit": "usd",    "archetypes": [],           "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e12},
     "circulating_supply":         {"label": "Circulating supply (reported)",   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 2], "sanity_min": 0,    "sanity_max": 1e15},
     "circulating_supply_implied": {"label": "Circulating supply (mcap/price)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4],       "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e15},
@@ -272,6 +273,10 @@ METRICS = {
     "tx_count_ex_kaiching": {"label": "Transactions per day EXCLUDING Kai-Ching's signers (*.kaiching) — NEAR's organic activity across the April 2026 break (BigQuery)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     "tx_count_kaiching": {"label": "Transactions per day SIGNED by Kai-Ching accounts (*.kaiching) — the payouts excluded above (BigQuery)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     "emissions_released_tokens": {"label": "Supplier emissions RELEASED to holders (ATH per day) — Aethir: checker + edge (no locked split: treated as released) + compute rewards net of locked; feeds supply trajectory", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_checker_tokens": {"label": "Supplier emissions — CHECKER-NODE rewards (ATH per day, rise of base + bonus + airdrop; no locked split, counted as released) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_edge_tokens": {"label": "Supplier emissions — EDGE rewards (ATH per day, rise of earnings + stipend; no locked split, counted as released) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_compute_released_tokens": {"label": "Supplier emissions — COMPUTE rewards RELEASED (ATH per day, rise of totalRewards - totalLockedRewards) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_compute_earned_tokens": {"label": "Supplier emissions — COMPUTE rewards EARNED (ATH per day, rise of totalRewards, incl. vesting) — breakdown of emissions_earned_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "emissions_earned_tokens": {"label": "Supplier emissions EARNED (ATH per day) — accrued, still vesting: a COMMITMENT, not supply reaching holders", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "compute_rewards_locked_tokens": {"label": "Aethir compute rewards LOCKED (ATH) — supply-metric totalLockedRewards; whether vesting is not established", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "compute_service_fee_cumulative_tokens": {"label": "ATH paid for compute service, cumulative — supply-metric totalServiceFee; DEMAND, never rewards", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aethir",)},
@@ -2470,6 +2475,11 @@ PROJECTS = [
             # cannot give the last year. Kept, whole, ONLY as the pre-2024-06-22 cross-check; it is
             # no longer the issuance or staked-ETH history route (that is ETH.Store, above).
             "keep_days": None,
+            # DISABLED (Jake, 2026-10-05, G1): frozen at 2024-06-22, it re-wrote ~1,047 stale rows a run —
+            # 1,047 of the 1,102 Review Queue items. The adapter skips a disabled block and says so;
+            # the stored rows are orphan_cleanup.sql section BS.
+            "disabled": "frozen at 2024-06-22 and wrote 1,047 stale rows (1,047 of 1,102 review items, "
+                        "Jake's run 2026-10-05) — disabled 2026-10-05; rows removed by SQL BS",
             "frozen_since": "2024-06-22",
             "role": "cross-check before 2024-06-22 only",
             "field_source": "https://github.com/ultrasoundmoney/eth-analysis-rs/blob/1012fcb74037bc45bf545fec240e6a4ad3d36052/src/bin/update-supply-projection-inputs/main.rs",
@@ -3822,7 +3832,11 @@ PROJECTS = [
             "base": "https://explorer.plume.org/stats-service",
             # nativeCoinSupply REMOVED 2026-10-01: HTTP 404 (Jake's run) — the stats service has no
             # supply chart; supply is measured from the Ethereum ERC-20 (contracts.token_ethereum).
-            "lines": {"tx_count": "newTxns", "active_addresses": "activeAccounts",
+            # tx_count EXCLUDES the one-per-block ArbitrumInternalTx (Jake, 2026-10-05: newTxns read
+            # ~395K/day vs growthepie ~200K/day). Blockscout's own newOperationalTxns; where the
+            # instance lacks it, newTxns - newBlocks (fetch/blockscout_stats.py).
+            "lines": {"tx_count": {"chart": "newOperationalTxns", "minus": ("newTxns", "newBlocks")},
+                      "active_addresses": "activeAccounts",
                       "fees_native_tokens": "txnsFee"},
             "unit_note": {"fees_native_tokens": "PLUME"},
             "days": 365,
@@ -3921,7 +3935,9 @@ PROJECTS = [
             "payouts": {"metric": "emissions_claimed_tokens",
                         "logs_api": "https://explorer.plume.org/api",
                         "topic0": "0xf1eed3d591352eb08c0dc172ef5a4d787195741a1cd3bea8fe04e701940964ab",
-                        "page_cap": 1000, "max_calls_per_run": 40},
+                        # /api allows 10 calls per window of >= 40 minutes (plume_settlement.py ROUTE B):
+                        # 8 a run, once a day, paced with every other explorer.plume.org caller (G5).
+                        "page_cap": 1000, "max_calls_per_run": 8, "rate_per_s": 2.9},
             # myPLUME (Mystic) HAS NO RISING EXCHANGE RATE: it mints 1:1 on deposit
             # (frxETHMinter.sol:77 @b5b4fa5) and streams rewards separately (stPlumeRewards
             # rewardPerToken()), so "exchange-rate growth" does not exist to wire; MyPlumeFeed.
@@ -7772,7 +7788,12 @@ PROJECTS = [
                                         "adds": ({"what": "compute rewards (PoRW + PoC)",
                                                   "stock": "compute_rewards_cumulative_tokens",
                                                   "weekly_flow": "compute_rewards_tokens", "tag": "compute",
-                                                  "locked_stock": "compute_rewards_locked_tokens"},),
+                                                  "locked_stock": "compute_rewards_locked_tokens",
+                                                  "earned_metric": "emissions_compute_earned_tokens",
+                                                  "released_metric": "emissions_compute_released_tokens"},),
+                                        # THE BREAKDOWN beside the sum (Jake, 2026-10-05, E).
+                                        "component_metrics": {"checker_rewards_cumulative_tokens": "emissions_checker_tokens",
+                                                              "edge_rewards_cumulative_tokens": "emissions_edge_tokens"},
                                         # RELEASED vs EARNED (Jake, 2026-10-02): node rewards are "accrued and
                                         # earned upon a vesting logic" (node-sale terms, Feb 2024) and the 50%
                                         # Checkers & Compute Providers allocation vests linearly over ~5 years.
@@ -10306,6 +10327,17 @@ PROJECTS = [
         },
         "name": "Hyperliquid", "symbol": "HYPE",
         "coingecko_id": "hyperliquid",
+        # ===== FEE PER TRANSACTION: ONE LAYER ON BOTH SIDES (Jake, 2026-10-05, D). =====
+        # It read $6.944 = HyperCore fees (fees_usd, DefiLlama: trading fees) ÷ HyperEVM transactions
+        # (tx_count is HyperEVM only — hyperliquid_tx_count_layer). Now HyperEVM fees ÷ HyperEVM
+        # transactions: base + priority fees (HYPE, ASXN /api/hyper-evm/token-metrics, read in the
+        # browser) x the 90-day average price, ÷ tx_count. Blank with the reason where either leg
+        # has too little coverage — never the cross-layer ratio.
+        "fee_per_tx": {"fee_metrics": ("hyperevm_base_fees_tokens_asxn", "hyperevm_priority_fees_tokens_asxn"),
+                       "unit": "tokens",
+                       "label": "HyperEVM fees (base + priority, HYPE x 90d avg price) ÷ HyperEVM transactions — "
+                                "both HyperEVM (ASXN). HyperCore trading fees are NOT in it: HyperCore orders "
+                                "are not counted as transactions."},
         # ===== PERPS VOLUME FROM HYPERLIQUID'S OWN DAILY CANDLES (Jake, 2026-10-01). =====
         # DefiLlama's derivatives route is paid (HTTP 402). Every perp market (main dex + HIP-3),
         # daily candle v x close summed — an approximation of notional (fetch/hl_candles.py). The
@@ -16423,9 +16455,11 @@ def buyback_route(project_name: str) -> dict:
 VALIDATOR_YIELD = {
     # PLUME (G, 2026-09-30): the staking diamond's own reward rate for native PLUME, annualised,
     # GROSS of validator commission (fetch/plume_staking.py). Jake's understanding: 5-8%.
-    "Plume": {"method": "stored", "metric": "staking_yield_pct",
-              "note": "GROSS of validator commission: rewardRates[PLUME_NATIVE] x 31,536,000 / 1e18 "
-                      "from Plume's staking diamond"},
+    # NET IS THE HEADLINE (Jake, 2026-10-05): what a delegator receives after the stake-weighted
+    # validator commission (~10%) — 4.5% where gross reads 4.997%. Gross stands beside it.
+    "Plume": {"method": "stored", "metric": "staking_yield_net_pct", "gross_metric": "staking_yield_pct",
+              "note": "NET of validator commission (stake-weighted over active validators); GROSS = "
+                      "rewardRates[PLUME_NATIVE] x 31,536,000 / 1e18 from Plume's staking diamond, alongside"},
     # ===== WITHOUT beaconcha.in (Jake, 2026-09-29). =====
     # consensus = issuance (annualised over its covered days) / ETH on the beacon chain;
     # execution = priority fees (DefiLlama fees - burned revenue, both stored) / price / the same.
@@ -16497,7 +16531,14 @@ VALIDATOR_YIELD = {
                     "watch_2026_09_29": {"observed": 0.0125, "days": 2, "published_scaled": 0.0226,
                                          "recheck_when": "7 days of emissions_tokens stored (~2026-10-04)",
                                          "if_still_half": "check whether d(futureEmissions) misses "
-                                                          "part of the staking rewards"}},
+                                                          "part of the staking rewards"},
+                    # ===== MATURING (Jake, 2026-10-05): 2.48% vs the documented ~2.26% at 441M staked
+                    # (earlier 2.04%). Forward-only — futureEmissions has no history before our first
+                    # read — and still short; a few days of emissions move it. Recheck at 30+ days.
+                    "maturing": "MATURING, forward-only and short: read 2.48% (Jake's run 2026-10-05) vs the "
+                                "documented ~2.26% at 441M staked (earlier 2.04%); emissions_tokens is the "
+                                "day-on-day fall of futureEmissions from our first read (~2026-09-27), so the "
+                                "rate swings with each day added. Recheck once 30+ days are stored (~2026-10-27)."},
     # B2 (2026-09-28): LINK paid out of the staking v0.2 reward vault (log_scans.
     # staking_rewards_out), annualised, over staked principal (both pools' getTotalPrincipal).
     # Staking secures the oracle network, not a chain — archetype 1's validator column is the
@@ -17076,6 +17117,11 @@ def declared_na(project_name: str, metric: str) -> str | None:
     if rec.get("decided"):
         return f"ANSWERED, NOT OPEN — {rec['decided']}"
     return not_applicable_reason(project_name, metric)
+
+
+def fee_per_tx(project_name: str) -> dict | None:
+    """A project whose fee-per-transaction must divide fees and transactions of ONE layer, declared."""
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("fee_per_tx")
 
 
 def supply_unnetted_burn(project_name: str) -> dict | None:

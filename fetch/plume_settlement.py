@@ -78,7 +78,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, Progress, limit_wait, query_params, tidy, today
+from .base import HostPace, Http, Progress, host_pace, limit_wait, query_params, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.plume_settlement")
 
@@ -117,20 +117,8 @@ def code_is_account(code) -> bool:
     return c in ("0x", "0x0", "") or (c.startswith("0xef0100") and len(c) == 2 + 46)
 
 
-class _Pace:
-    """Thread-safe spacing of calls to ONE host at `per_s` requests a second (all workers share it)."""
-
-    def __init__(self, per_s: float, sleep=time.sleep, clock=time.monotonic):
-        self.gap = 1.0 / float(per_s) if per_s else 0.0
-        self.sleep, self.clock, self._next, self._lock = sleep, clock, 0.0, threading.Lock()
-
-    def wait(self) -> None:
-        with self._lock:
-            now = self.clock()
-            at = max(now, self._next)
-            self._next = at + self.gap
-        if at > now:
-            self.sleep(at - now)
+# The pacer is fetch.base.HostPace, shared per HOST with every other adapter (G5, 2026-10-05).
+_Pace = HostPace
 
 
 def p2p_side_ok(item) -> bool:
@@ -167,8 +155,10 @@ class PlumeSettlement:
         return self._tls.h
 
     def _pace(self, host: str, per_s: float) -> _Pace:
+        """The run-wide pacer for this URL's HOST (fetch.base.host_pace), shared with plume_staking:
+        explorer.plume.org's /api and v2 routes are one host and one limit (G5, Jake 2026-10-05)."""
         if host not in self._paces:
-            self._paces[host] = _Pace(per_s, sleep=self._sleep)
+            self._paces[host] = host_pace(host, per_s, sleep=self._sleep)
         return self._paces[host]
 
     def _honour(self, host: str, client) -> None:

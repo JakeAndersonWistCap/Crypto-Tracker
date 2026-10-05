@@ -48,7 +48,10 @@ class CoinGecko:
     NO_KEY = 6.0        # public tier is variable and lower (roughly 5-15/min); 10/min sits inside
                         # that band. 60 calls -> ~6 minutes, and no 429 storm on top.
 
-    def __init__(self, known_absent: set | None = None):
+    def __init__(self, known_absent: set | None = None, last_dates: dict | None = None):
+        # {(project, metric): last stored date} — the price history is asked for only since then
+        # plus OVERLAP_DAYS (A, Jake 2026-10-05: history once, then incremental).
+        self.last_dates = last_dates or {}
         # (source, project) pairs whose endpoint 404'd and never worked — see store.known_absent.
         # A coin id that CoinGecko does not have 404s on every call, every run, for ever.
         self.known_absent = known_absent or set()
@@ -97,7 +100,7 @@ class CoinGecko:
         return found
 
     def run(self, projects: list[dict], window_days, out):
-        from .base import BACKFILL, BACKFILL_DAYS
+        from .base import BACKFILL, BACKFILL_DAYS, OVERLAP_DAYS
         markets = self._markets(projects)
         for p in projects:
             cid, name = p.get("coingecko_id"), p["name"]
@@ -106,6 +109,13 @@ class CoinGecko:
                                                         "circulating_supply_implied"))
             days = ("365" if window_days is None
                     else str(BACKFILL_DAYS if short else window_days))
+            # SINCE THE LAST STORED DAY (A, 2026-10-05): a routine run asks only for the days after
+            # the newest stored price, plus OVERLAP_DAYS for the change checks (a Monday compares
+            # with Friday) — never more than the window.
+            last = self.last_dates.get((name, "price_usd"))
+            if window_days is not None and not short and last is not None and not pd.isna(last):
+                since = (today().normalize() - pd.Timestamp(last).normalize()).days
+                days = str(max(1, min(int(window_days), since + OVERLAP_DAYS)))
             if not cid:
                 out.unconfigured(SOURCE, name, "no coingecko_id", TIER)
                 continue

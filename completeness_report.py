@@ -95,13 +95,9 @@ DECISIONS = {
     # rebuildable). NEAR's rebuild waits on two things only Jake can decide on.
     # 2026-10-01 (Jake): BigQuery's public NEAR dataset is LIVE (MAX(block_date) 2026-10-01); Dune
     # (paid plan to save a query) and Flipside (API shut) are closed. Built: fetch/near_bigquery.py.
-    **{("Near", m): ("NEEDS JAKE", "BUILDABLE — BigQuery's public NEAR dataset is live (Dune and Flipside "
-                                   "closed). fetch/near_bigquery.py rebuilds the P2P leg (Artemis method "
-                                   "adapted to NEAR, UNVALIDATED; approved 2026-10-01) once Jake's "
-                                   "Application Default Credentials are in place (`gcloud auth "
-                                   "application-default login`, RUNBOOK 11n); then `token_metrics.py --seed "
-                                   "near_bigquery`. A1's throughput NRR covers NEAR meanwhile")
-       for m in ("settlement_volume_usd", "network_reserve_ratio")},
+    # BUILT (Jake, 2026-10-05): NEAR's rows are arriving (187 days held, backfill in progress), so
+    # the old "NEEDS JAKE — BUILDABLE" record is retired. It is MATURING until a full year is held
+    # (FULL_YEAR_FROM below); NEEDS JAKE only while the store holds none of it (PENDING_SEED).
     ("Sky", "net_protocol_surplus_usd"): (
         "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
                       "publishes it"),
@@ -125,7 +121,15 @@ WAIT_ON_SERIES: dict = {
 # date it is classified on its own status again, so a seed that never lands still surfaces.
 # A SERIES WHOSE FIRST YEAR COMES FROM A ONE-OFF SEED (Jake, 2026-10-01): while the store holds none
 # of it, the cell is NEEDS JAKE — run the seed — not a BUG; once rows exist it is classified as usual.
+# A TRAILING-YEAR SERIES (settlement volume and the NRR built on it) is MATURING until its input
+# holds a full year — dated from the input's first stored day. Jake, 2026-10-05.
+FULL_YEAR_FROM = {("Near", "settlement_volume_usd"): "settlement_volume_usd",
+                  ("Near", "network_reserve_ratio"): "settlement_volume_usd"}
 PENDING_SEED = {
+    **{("Near", m): "BigQuery's public NEAR dataset (fetch/near_bigquery.py, approved 2026-10-01) with "
+                    "Jake's Application Default Credentials (`gcloud auth application-default login`, "
+                    "RUNBOOK 11n), then `token_metrics.py --seed near_bigquery`"
+       for m in ("settlement_volume_usd", "network_reserve_ratio")},
     # the browser route (Jake, 2026-10-02): rendered with the tabs clicked; its keys are pinned from the probe
     ("Aethir", "compute_hours_weekly"): "read from the demand page's server payload (`weeklyComputeHo*`, pinned by "
                                         "prefix — Jake's probes8); the Run Log's aethir_page line names the full key",
@@ -298,6 +302,16 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
                                   f"old, past its {limit}-day cadence | {note[:160]}")
         return "COMPLETE (MANUAL)", (f"{note[:200]} (dated {str(latest)[:10]}, entered "
                                      f"{str(row.get('entered_on') or '')[:10]}; refreshed {cadence}, due by {due})")
+    series = FULL_YEAR_FROM.get((name, metric))
+    f0 = (firsts or {}).get((name, series)) if series else None
+    if series and f0 is not None and not (isinstance(f0, float) and pd.isna(f0)):
+        held = (asof - pd.Timestamp(f0)).days + 1
+        if held < 365:
+            return "MATURING", (f"{held} of 365 days of {series} held since {str(f0)[:10]} (backfill in "
+                                f"progress); the full-year figure is complete when the backfill reaches "
+                                f"{(asof - pd.Timedelta(days=364)).date()}, or forward-only on "
+                                f"{(pd.Timestamp(f0) + pd.Timedelta(days=364)).date()}"
+                                + (f" | now: {status} — {note[:120]}" if status not in ("ok", "review") else ""))
     if status in ("missing", "gap") and (name, metric) in PENDING_SEED:
         return "NEEDS JAKE", f"run the one-off seed: {PENDING_SEED[(name, metric)]}"
     if status in ("missing", "gap") and config.is_manual_quarterly(name, metric):

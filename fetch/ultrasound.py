@@ -65,7 +65,9 @@ class UltrasoundHistory:
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             spec = p.get("ultrasound_history")
-            if spec:
+            if spec and spec.get("disabled"):
+                out.skipped(SOURCE, p["name"], f"ultrasound_history DISABLED: {spec['disabled']}", TIER)
+            elif spec:
                 self._project(p["name"], spec, out)
 
     def _project(self, name: str, spec: dict, out) -> None:

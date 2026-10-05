@@ -31,7 +31,7 @@ import pandas as pd
 
 import config
 
-from .base import Http, tidy, window
+from .base import Http, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.growthepie")
 
@@ -49,8 +49,12 @@ class GrowThePie:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, **_ignored):
+    def __init__(self, last_dates: dict | None = None, **_ignored):
         self.http = Http(min_interval=0.5)
+        # A project whose every growthepie metric is stored through yesterday is not fetched again
+        # (A, Jake 2026-10-05): the document carries every chain's whole history and has no date
+        # parameter, so once the day is complete there is nothing new in it until tomorrow.
+        self.last_dates = last_dates or {}
         self._doc = None
         self._failed = None
 
@@ -86,6 +90,14 @@ class GrowThePie:
             if not origin:
                 continue
             name = p["name"]
+            yday = today().normalize() - pd.Timedelta(days=1)
+            mets = list((spec.get("metrics") or {}))
+            held = [self.last_dates.get((name, m)) for m in mets]
+            if mets and all(d is not None and not pd.isna(d) and pd.Timestamp(d).normalize() >= yday for d in held):
+                for m in mets:
+                    out.mark_current(SOURCE, name, m, f"{m}: stored through {yday.date()} — growthepie's "
+                                                      f"full-history document not re-downloaded", TIER)
+                continue
             doc = self._fundamentals(spec["endpoint"])
             if doc is None:
                 out.fail(SOURCE, name, f"{spec['endpoint']}: {self._failed}", TIER)

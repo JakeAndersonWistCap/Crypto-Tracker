@@ -62,13 +62,14 @@ log = logging.getLogger("token_metrics.fetch")
 
 TIER_ORDER = [
     ("schedule:config", 1, lambda ctx: Schedule()),
-    ("defillama", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"])),
+    ("defillama", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"],
+                                           stored_long=ctx.get("stored_long"))),
     # BEFORE DefiLlama's own lending route would matter, and independent of it: the protocol's
     # API gives the unbiased figure, and DefiLlama's stands down once it is confirmed. The two
     # must never alternate — see DefiLlama.lending_supply.
     ("morpho_api", 1, lambda ctx: MorphoBlueApi()),
     # Chain activity — daily active addresses and transaction count, free and unauthenticated.
-    ("growthepie", 1, lambda ctx: GrowThePie()),
+    ("growthepie", 1, lambda ctx: GrowThePie(last_dates=ctx["last_dates"])),
     # Plume's own explorer stats service (Blockscout), full daily history (2026-09-30).
     ("blockscout_stats", 1, lambda ctx: BlockscoutStats(last_dates=ctx["last_dates"])),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
@@ -78,7 +79,7 @@ TIER_ORDER = [
     # Ethereum's cumulative burn and protocol supply (Etherscan stats/ethsupply2, A9).
     ("etherscan_supply", 1, lambda ctx: EtherscanSupply(prior_dates=ctx["prior_dates"],
                                                         prior_delta=ctx["prior_delta"])),
-    ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"])),
+    ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"], last_dates=ctx["last_dates"])),
     # Hyperliquid's perps volume per day from its own daily candles (DefiLlama's is paid). 2026-10-01.
     ("hl_candles", 1, lambda ctx: HLCandles()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],

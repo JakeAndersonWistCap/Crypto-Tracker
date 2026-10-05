@@ -18948,8 +18948,13 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
                     *_cr.PENDING_SEED}           # one-off seeds Jake runs (Plume rebuild, Hyperliquid candles)
     for m in ("settlement_volume_usd", "network_reserve_ratio"):
         assert got[("Hyperliquid", m)][0] == "ACCEPTED LIMIT", got[("Hyperliquid", m)]
-        # 2026-10-01: BigQuery is live; the NEAR rebuild is built and waits on Jake's key and approval
-        assert "BUILDABLE" in got[("Near", m)][1] and "near_bigquery" in got[("Near", m)][1]
+        # 2026-10-05: built; with none of it in the store it is the seed Jake runs (NEEDS JAKE) ...
+        assert got[("Near", m)][0] == "NEEDS JAKE" and "near_bigquery" in got[("Near", m)][1], got[("Near", m)]
+        # ... and once rows are held, MATURING with the full-year date — never NEEDS JAKE again
+        v, d = cr.classify(config.PROJECT_BY_NAME["Near"], m, {"status": "gap", "note": "backfill"},
+                           "2026-04-01", pd.Timestamp("2026-10-05"),
+                           {("Near", "settlement_volume_usd"): "2026-04-01"})
+        assert v == "MATURING" and "188 of 365 days" in d and "2027-03-31" in d, (v, d)
     # GEODNET locked_tokens: the manual row is in (3,000,000 GEOD, 2026-10-01) — no decision left
     assert ("GEODNET", "locked_tokens") not in cr.DECISIONS
     mo = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "manual_overrides.csv")).read()
@@ -19434,7 +19439,14 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
     import fetch.scrape as scrape
     from fetch.base import today
     from fetch.ultrasound import UltrasoundHistory
-    eth = config.PROJECT_BY_NAME["Ethereum"]
+    # DISABLED 2026-10-05 (G1): the configured block is skipped and says why ...
+    out0, calls0 = FetchOutput(), []
+    UltrasoundHistory(http=type("H0", (), {"get": lambda self, url, **k: calls0.append(url)})(),
+                      daily=_Daily()).run([config.PROJECT_BY_NAME["Ethereum"]], None, out0)
+    assert not calls0 and any("DISABLED" in e.message for e in out0.log)
+    # ... and the adapter itself still reads a block that is not disabled
+    eth = dict(config.PROJECT_BY_NAME["Ethereum"])
+    eth["ultrasound_history"] = {k: v for k, v in eth["ultrasound_history"].items() if k != "disabled"}
     spec = eth["ultrasound_history"]
     assert spec["url"].endswith("/api/v2/fees/supply-projection-inputs")
     assert spec["series"] == {"supplyByDay": "total_supply_ultrasound",
@@ -19472,12 +19484,13 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
     assert not calls and any("robots.txt disallows" in e.message for e in out3.log)
 
 
-def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_active_service():
-    """Addendum 10 (Jake's run 2026-09-30 14:54: "Fees for chainlink-keepers not found" emptied the
-    whole sum). Services are resolved from the PARENT's childProtocols (Keepers -> Automation) with
-    fallback slugs; whatever reports is summed; a service silent for longer than
-    retired_after_days before the newest day is RETIRED (0 after its last day, logged); a day an
-    ACTIVE service misses is stored and flagged, never dropped. A3's base stays revenue_usd."""
+def test_chainlink_customer_revenue_sums_complete_days_only_and_repairs_earlier_partial_days():
+    """Addendum 10 (2026-09-30: "Fees for chainlink-keepers not found") + C (Jake 2026-10-05: Q0
+    customer revenue $692,288 vs ~$15.26M after DefiLlama timeouts). Services resolve from the
+    PARENT's childProtocols with fallback slugs; a service silent longer than retired_after_days is
+    RETIRED (0 after its last day). A day an ACTIVE service misses — or any day while a service is
+    UNRESOLVED — is REFUSED with a gap, never stored partial; days stored partial earlier are
+    re-stored by the next complete run whatever the window. A3's base stays revenue_usd."""
     from fetch.llama import DefiLlama
     spec = config.PROJECT_BY_NAME["Chainlink"]["defillama_sum_slugs"][0]
     d = lambda n: pd.Timestamp("2026-08-01") + pd.Timedelta(days=n)  # noqa: E731
@@ -19485,7 +19498,7 @@ def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_ac
               "chainlink-automation": [(d(i), 200.0) for i in range(50)],
               "chainlink-vrf-v1": [(d(i), 300.0) for i in range(6)],          # retired after day 5
               "chainlink-vrf-v2": [(d(i), 400.0) for i in range(50)],
-              "chainlink-ccip": [(d(i), 500.0) for i in range(50) if i != 20]}  # active, misses day 20
+              "chainlink-ccip": [(d(i), 500.0) for i in range(49) if i != 20]}  # misses day 20, lags day 49
     tried = []
 
     def chart(slug, dt):
@@ -19494,6 +19507,7 @@ def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_ac
             raise RuntimeError(f"HTTP 400 — Fees for {slug} not found")
         return charts[slug]
     ll = DefiLlama.__new__(DefiLlama)
+    ll.stored_long = None
     ll._summary = lambda slug, dt: {"childProtocols": [
         {"name": "Chainlink Requests"}, {"name": "Chainlink Automation"}, {"name": "Chainlink VRF V1"},
         {"name": "Chainlink VRF V2"}, {"name": "Chainlink CCIP"}]}
@@ -19502,21 +19516,49 @@ def test_chainlink_customer_revenue_sums_whatever_reports_and_flags_a_missing_ac
     ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out)
     f = out.frame().set_index("date")
     assert "chainlink-keepers" not in tried, "the renamed service resolves through the parent's list"
-    assert len(f) == 50, "every day any service reported is stored"
+    assert len(f) == 48, "day 20 (ccip missing) and day 49 (ccip lagging) are refused, not stored"
+    assert d(20) not in f.index and d(49) not in f.index
     assert f.loc[d(0), "value"] == 1500.0 and f.loc[d(10), "value"] == 1200.0, "VRF v1 is 0 after retiring"
-    assert f.loc[d(20), "value"] == 700.0 and "[missing: ccip]" in f.loc[d(20), "source"]
-    assert not any("[missing" in s_ for s_ in f.drop(index=d(20))["source"])
+    assert not any("[missing" in s_ for s_ in f["source"])
     msg = next(e.message for e in out.log if e.status == "ok")
     assert "RETIRED (0 after): vrf-v1 last reported 2026-08-06" in msg and "automation=chainlink-automation" in msg
-    assert "1 of 50 day(s) flagged" in msg
-    # a service nobody answers for is flagged on every day, and the rest still sum
+    assert "2 of 50 day(s) REFUSED as partial" in msg
+    gap = out.gaps[0]
+    assert gap["metric"] == "customer_revenue_usd" and "PARTIAL SUM REFUSED on 2 day(s)" in gap["reason"]
+    assert "ccip" in gap["reason"]
+    # REPAIR: a complete run re-stores days stored partial earlier, even outside its window
+    charts["chainlink-ccip"] = [(d(i), 500.0) for i in range(50)]
+    ll.stored_long = pd.DataFrame([{"date": d(3), "project": "Chainlink", "metric": "customer_revenue_usd",
+                                    "value": 300.0, "source": "defillama:sum(chainlink services)[missing: ccip]"}])
+    import fetch.base as fb
+    real_today = fb.today
+    fb.today = lambda: d(50)
+    try:
+        out3 = FetchOutput()
+        ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, 10, out3)
+    finally:
+        fb.today = real_today
+    f3 = out3.frame().set_index("date")
+    assert d(3) in f3.index and f3.loc[d(3), "value"] == 1500.0, "the partial day is repaired"
+    assert d(30) not in f3.index, "other days outside the window are not re-stored"
+    assert "REPAIRED 1 day(s)" in next(e.message for e in out3.log if e.status == "ok")
+    # a service nobody answers for: every day is refused and nothing is stored
     del charts["chainlink-ccip"]
+    ll.stored_long = None
     ll._summary = lambda slug, dt: {"childProtocols": []}
     out2 = FetchOutput()
     ll._sum_slugs(config.PROJECT_BY_NAME["Chainlink"], spec, None, out2)
-    f2 = out2.frame()
-    assert len(f2) == 50 and all("ccip" in s_ for s_ in f2["source"])
+    assert out2.frame().empty and "NOTHING STORED" in out2.log[-1].message
     assert config.revenue_base_metric("Chainlink") == "revenue_usd"
+
+
+def test_partial_summed_days_stored_earlier_are_not_read():
+    """C: rows stored "[missing: …]" by the old rule are dropped at read time until repaired."""
+    import build_workbook as bw
+    g = _grp([("2026-10-01", "Chainlink", "customer_revenue_usd", 7000.0, "defillama:sum(chainlink services)[missing: ccip]"),
+              ("2026-10-02", "Chainlink", "customer_revenue_usd", 170000.0, "defillama:sum(chainlink services)")])
+    bw._partial_sum_views(g)
+    assert list(g[("Chainlink", "customer_revenue_usd")]["value"]) == [170000.0]
 
 
 def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_stores_nothing():
@@ -19532,7 +19574,9 @@ def test_plume_staking_apr_is_the_contracts_own_rate_and_a_rate_over_the_cap_sto
     spec = config.PROJECT_BY_NAME["Plume"]["plume_staking"]
     assert spec["address"] == "0x30c791E4654EdAc575FA1700eD8633CB2FEDE871"
     assert spec["live_contract"]["confirmed"] is True and spec["cooldown_seconds"] == 1_814_400
-    assert config.VALIDATOR_YIELD["Plume"]["metric"] == "staking_yield_pct"
+    # NET IS THE HEADLINE (Jake, 2026-10-05); gross stands beside it
+    assert config.VALIDATOR_YIELD["Plume"]["metric"] == "staking_yield_net_pct"
+    assert config.VALIDATOR_YIELD["Plume"]["gross_metric"] == "staking_yield_pct"
 
     def factory(rate, aggregate, validators, active=None, cooldown=1_814_400):
         active = active or {}
@@ -22833,3 +22877,181 @@ def test_plume_issuance_cleanup_br_is_select_first_and_deletes_only_the_coingeck
     assert len(sel) == 2
     import config
     assert config.PROJECT_BY_NAME["Plume"]["issuance_supply_metric"] == "total_supply_protocol"
+
+
+def test_market_cap_is_price_times_the_circulating_the_ratios_use():
+    """B, Jake 2026-10-05: market cap was CoinGecko's (price x CoinGecko's ~20.1bn ATH) while the
+    ratios used Aethir's first-party 24.05bn, so free-float mcap $166.6M > mcap $150.6M. Market cap
+    is now price x the chosen circulating; CoinGecko's stays beside it as the cross-check, and a
+    day without the first-party figure falls back to CoinGecko's circulating exactly as _circ does."""
+    import build_workbook as bw
+    assert bw.chosen_circulating_metric({"name": "Aethir"}) == "circulating_supply_first_party"
+    assert bw.chosen_circulating_metric({"name": "Plume"}) == "circulating_supply"
+    g = _grp([("2026-10-03", "Aethir", "price_usd", 0.0075, "coingecko"),
+              ("2026-10-04", "Aethir", "price_usd", 0.0075, "coingecko"),
+              ("2026-10-03", "Aethir", "circulating_supply", 20.1e9, "coingecko"),
+              ("2026-10-04", "Aethir", "circulating_supply", 20.1e9, "coingecko"),
+              ("2026-10-04", "Aethir", "circulating_supply_first_party", 24.05e9, "aethir_page"),
+              ("2026-10-03", "Aethir", "market_cap_usd", 150.6e6, "coingecko"),
+              ("2026-10-04", "Aethir", "market_cap_usd", 150.6e6, "coingecko")])
+    bw._market_cap_views(g)
+    mc = g[("Aethir", "market_cap_usd")].set_index("date")
+    assert mc.loc[pd.Timestamp("2026-10-04"), "value"] == _pytest.approx(0.0075 * 24.05e9)
+    assert "circulating_supply_first_party" in mc.loc[pd.Timestamp("2026-10-04"), "source"]
+    assert mc.loc[pd.Timestamp("2026-10-03"), "value"] == _pytest.approx(0.0075 * 20.1e9), \
+        "no first-party figure that day: CoinGecko's circulating, as the ratios fall back"
+    assert mc.loc[pd.Timestamp("2026-10-03"), "source"].startswith("derived:price_x_circulating[circulating_supply")
+    cg = g[("Aethir", "market_cap_usd_coingecko")]
+    assert list(cg["value"]) == [150.6e6, 150.6e6] and set(cg["metric"]) == {"market_cap_usd_coingecko"}
+    assert "market_cap_usd_coingecko" in config.METRICS
+
+
+def test_hyperliquid_fee_per_transaction_divides_one_layer():
+    """D, Jake 2026-10-05: $6.944 was HyperCore fees ÷ HyperEVM transactions. Hyperliquid's cell now
+    divides HyperEVM fees (base + priority, HYPE x avg price) by HyperEVM tx; every other project
+    keeps fees_usd ÷ tx_count. The basis column says which."""
+    import build_workbook as bw
+
+    class R_:
+        def D(self, r, m, w):
+            return f"{m}@{w}"
+    f = bw._fee_per_tx(R_(), 5, config.PROJECT_BY_NAME["Hyperliquid"], "PX")
+    assert "hyperevm_base_fees_tokens_asxn@q0" in f and "hyperevm_priority_fees_tokens_asxn@q0" in f
+    assert "fees_usd@q0" not in f and "*PX" in f and "tx_count@q0" in f
+    g = bw._fee_per_tx(R_(), 5, config.PROJECT_BY_NAME["Plume"], "PX")
+    assert "fees_usd@q0" in g and "PX" not in g
+    assert "HyperCore trading fees are NOT in it" in config.fee_per_tx("Hyperliquid")["label"]
+
+
+def test_aethir_emissions_breakdown_sums_to_the_emissions_figure():
+    """E, Jake 2026-10-05: A2 read 4.71% where released was estimated ~7.5% and earned ~10%. Each
+    component is shown beside the sum: checker + edge + compute released = emissions_tokens, and
+    checker + edge + compute earned = emissions_earned_tokens, day by day."""
+    import build_workbook as bw
+    rows = []
+    for i, d in enumerate(["2026-10-01", "2026-10-02", "2026-10-03"]):
+        rows += [(d, "Aethir", "checker_rewards_cumulative_tokens", 1_000_000.0 + 100.0 * i, "aethir_page"),
+                 (d, "Aethir", "edge_rewards_cumulative_tokens", 500_000.0 + 10.0 * i, "aethir_page"),
+                 (d, "Aethir", "compute_rewards_cumulative_tokens", 3_000_000.0 + 1_000.0 * i, "aethir_page"),
+                 (d, "Aethir", "compute_rewards_locked_tokens", 2_000_000.0 + 600.0 * i, "aethir_page")]
+    g = _grp(rows)
+    bw._measured_emissions_views(g)
+    em = g[("Aethir", "emissions_tokens")].set_index("date")["value"]
+    ea = g[("Aethir", "emissions_earned_tokens")].set_index("date")["value"]
+    parts = {m: g[("Aethir", m)].set_index("date")["value"] for m, _ in bw._EMISSION_PARTS}
+    d = pd.Timestamp("2026-10-03")
+    assert parts["emissions_checker_tokens"][d] == 100.0 and parts["emissions_edge_tokens"][d] == 10.0
+    assert parts["emissions_compute_earned_tokens"][d] == 1_000.0
+    assert parts["emissions_compute_released_tokens"][d] == 400.0
+    assert em[d] == 100.0 + 10.0 + 400.0, "released = checker + edge + compute released"
+    assert ea[d] == 100.0 + 10.0 + 1_000.0, "earned = checker + edge + compute earned"
+
+
+def test_plume_tx_count_excludes_the_one_per_block_system_transaction():
+    """F, Jake 2026-10-05: newTxns read ~395K/day vs growthepie ~200K. Blockscout's own
+    newOperationalTxns (= newTxns - newBlocks, blockscout-rs @bfc3771) is read; where the instance
+    lacks it (404) the same difference is taken from the two charts."""
+    from fetch.blockscout_stats import BlockscoutStats
+    from fetch.base import today
+    spec = config.PROJECT_BY_NAME["Plume"]["blockscout_stats"]
+    assert spec["lines"]["tx_count"] == {"chart": "newOperationalTxns", "minus": ("newTxns", "newBlocks")}
+    d1, d2 = (today() - pd.Timedelta(days=2)).date(), (today() - pd.Timedelta(days=1)).date()
+    charts = {"newTxns": [395_000, 401_000], "newBlocks": [195_000, 199_000]}
+    seen = []
+
+    class H:
+        def get(self, url, params=None):
+            c = url.rsplit("/", 1)[1]
+            seen.append(c)
+            if c not in charts:
+                raise RuntimeError("HTTP 404 Not Found")
+            return {"chart": [{"date": str(d1), "value": str(charts[c][0])},
+                              {"date": str(d2), "value": str(charts[c][1])}]}
+    one = dict(spec, lines={"tx_count": spec["lines"]["tx_count"]})
+    out = FetchOutput()
+    BlockscoutStats(http=H(), daily=_Daily()).run([{"name": "Plume", "blockscout_stats": one}], None, out)
+    f = out.frame().sort_values("date")
+    assert seen[0] == "newOperationalTxns" and list(f["value"]) == [200_000.0, 202_000.0]
+    assert set(f["source"]) == {"blockscout_stats:newTxns-newBlocks"}
+    charts["newOperationalTxns"] = [200_500, 202_500]
+    out2 = FetchOutput()
+    BlockscoutStats(http=H(), daily=_Daily()).run([{"name": "Plume", "blockscout_stats": one}], None, out2)
+    assert set(out2.frame()["source"]) == {"blockscout_stats:newOperationalTxns"}
+
+
+def test_buyback_status_reads_silent_when_the_program_cadence_is_broken():
+    """F, Jake 2026-10-05: Ether.fi read "active" though silent since 2026-04-01 (CoW-only)."""
+    import build_workbook as bw
+    data = pd.DataFrame([{"project": "Ether.fi", "metric": "actual_buyback_tokens",
+                          "silence_flag": "silent since 2026-04-01 — 187 days", "last_nonzero_date": "2026-04-01"},
+                         {"project": "Maple", "metric": "actual_buyback_tokens", "silence_flag": "",
+                          "last_nonzero_date": "2026-09-01"}])
+    assert bw.buyback_silence(data) == {"Ether.fi": "2026-04-01"}
+    from openpyxl import Workbook
+    ws = Workbook().active
+    bw.write_config(ws, pd.Timestamp("2026-10-05"), silence={"Ether.fi": "2026-04-01"})
+    vals = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    assert any(v.startswith("SILENT since 2026-04-01") for v in vals)
+    assert any(v.startswith("SILENT — no buyback since 2026-04-01") for v in vals), "the Q0 window cell too"
+
+
+def test_one_pacer_per_host_for_every_explorer_plume_caller():
+    """G5, Jake 2026-10-05: plume_staking drew 429s alongside plume_settlement. Both now wait on
+    one run-wide pacer per host, at the slowest rate either asked for."""
+    from fetch.base import host_pace
+    a = host_pace("https://explorer.plume.org/api/v2/x", 4.0)
+    b = host_pace("https://explorer.plume.org/api", 2.9)
+    assert a is b and abs(a.gap - 1 / 2.9) < 1e-9, "one pacer, never faster than the slowest caller"
+    assert host_pace("https://rpc.plume.org", 10.0) is not a
+    fake = lambda s: None  # noqa: E731
+    assert host_pace("https://explorer.plume.org", 2.9, sleep=fake) is not a, "a test's own sleep, its own pacer"
+    pay = config.PROJECT_BY_NAME["Plume"]["plume_staking"]["payouts"]
+    assert pay["max_calls_per_run"] <= 10, "the /api allows 10 calls per >=40-minute window"
+
+
+def test_routine_fetches_ask_only_for_days_since_the_last_stored_one(monkeypatch):
+    """A, Jake 2026-10-05: history once, then incremental. CoinGecko asks for the days since the
+    newest stored price plus OVERLAP_DAYS; growthepie is not downloaded when every metric is held
+    through yesterday; DefiLlama (no date parameter) is read at most once a day per project."""
+    import fetch.coingecko as cg
+    from fetch.base import OVERLAP_DAYS, today
+    asked = []
+
+    class H:
+        min_interval = 0
+
+        def get(self, url, params=None, headers=None):
+            if "market_chart" in url:
+                asked.append(params["days"])
+                return {"prices": [], "market_caps": [], "total_volumes": []}
+            return []
+    c = cg.CoinGecko(last_dates={("Aethir", "price_usd"): str((today() - pd.Timedelta(days=2)).date())})
+    c.http = H()
+    c.run([config.PROJECT_BY_NAME["Aethir"]], 30, FetchOutput())
+    assert asked == [str(2 + OVERLAP_DAYS)]
+    from fetch.growthepie import GrowThePie
+    p = config.PROJECT_BY_NAME["Plume"]
+    yday = str((today() - pd.Timedelta(days=1)).date())
+    gp = GrowThePie(last_dates={("Plume", m): yday for m in p["growthepie"]["metrics"]})
+    gp._fundamentals = lambda url: (_ for _ in ()).throw(AssertionError("must not download"))
+    out = FetchOutput()
+    gp.run([p], 30, out)
+    assert {("Plume", m) for m in p["growthepie"]["metrics"]} <= out.current
+    # DefiLlama: a project read complete today is not called again today
+    from fetch.llama import DefiLlama
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    ll = DefiLlama()
+    calls = []
+
+    def fake_project(proj, wd, o):
+        calls.append(proj["name"])
+        o.add(pd.DataFrame([{"date": today().normalize() - pd.Timedelta(days=1), "project": proj["name"],
+                             "metric": "fees_usd", "value": 1.0, "source": "defillama", "tier": 1}]),
+              "defillama", proj["name"], "", 1)
+    ll._project = fake_project
+    ll.rwa = lambda *a, **k: None
+    u = config.PROJECT_BY_NAME["Uniswap"]
+    ll.run([u], 30, FetchOutput())
+    out2 = FetchOutput()
+    ll.run([u], 30, out2)
+    assert calls == ["Uniswap"] and ("Uniswap", "fees_usd") in out2.current

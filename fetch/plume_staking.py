@@ -278,13 +278,27 @@ class PlumeStaking:
             st = {}
         if st.get("treasury", "").lower() != str(treasury).lower():
             st = {"treasury": str(treasury), "next_block": 0, "days": {}}
-        http = self._http or Http(min_interval=0.25, retries=2)
+        http = self._http or Http(min_interval=0.0, retries=1)
         native_topic = "0x" + spec["reward_token"][2:].lower().rjust(64, "0")
-        calls = 0
-        while calls < int(pay["max_calls_per_run"]):
-            j = http.get(pay["logs_api"], params={
-                "module": "logs", "action": "getLogs", "address": str(treasury), "fromBlock": st["next_block"],
-                "toBlock": "latest", "topic0": pay["topic0"], "topic1": native_topic, "topic0_1_opr": "and"})
+        # ONE PACER FOR explorer.plume.org (G5, Jake 2026-10-05): this adapter drew 429s alongside
+        # plume_settlement. Calls wait on the host's run-wide pacer (fetch.base.host_pace), run once
+        # a day, and stop at the first refusal — the block cursor is kept, the next run resumes there.
+        from .base import host_pace
+        from .logcache import DailyChecks
+        daily, day_key = DailyChecks(), f"plume_staking:payouts:{str(treasury).lower()}"
+        today_s = str(pd.Timestamp.now(tz="UTC").tz_localize(None).normalize().date())
+        pace = host_pace(pay["logs_api"], float(pay.get("rate_per_s", 2.9)))
+        calls, stopped = 0, None
+        budget = int(pay["max_calls_per_run"]) if daily.due(day_key, today_s) else 0
+        while calls < budget:
+            pace.wait()
+            try:
+                j = http.get(pay["logs_api"], params={
+                    "module": "logs", "action": "getLogs", "address": str(treasury), "fromBlock": st["next_block"],
+                    "toBlock": "latest", "topic0": pay["topic0"], "topic1": native_topic, "topic0_1_opr": "and"})
+            except Exception as e:  # noqa: BLE001 — a refusal ends this run's reads; what was read stands
+                stopped = f"stopped after {calls} call(s) at block {st['next_block']:,}: {e} — resumes there next run"
+                break
             calls += 1
             res = j.get("result") if isinstance(j, dict) else None
             if not isinstance(res, list):
@@ -304,6 +318,10 @@ class PlumeStaking:
                 continue
             st["next_block"] = (max(blocks) + 1) if blocks else st["next_block"]
             break
+        if budget and stopped is None:
+            daily.done(day_key, today_s)
+        if stopped:
+            out.fail(SOURCE, name, f"{pay['metric']}: explorer logs API {stopped}", TIER)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(st))
         today_ = str(pd.Timestamp.now(tz="UTC").tz_localize(None).normalize().date())
