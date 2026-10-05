@@ -44,6 +44,7 @@ import config
 from .base import LogEntry, tidy, today, Progress
 from .logcache import LogCache, stream_id
 from .explorer import ExplorerLogs, ExplorerRefused, TRANSFER_TOPIC, pad_address, topic_address
+from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.balance_flow")
 
@@ -88,9 +89,7 @@ class BalanceFlow:
     def _save(self, key: str, st: dict) -> None:
         f = self._state_file(key)
         f.parent.mkdir(parents=True, exist_ok=True)
-        tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps(st, sort_keys=True))
-        tmp.replace(f)
+        atomic_write_text(f, json.dumps(st, sort_keys=True))
 
     # ------------------------------------------------------------------ blocks
     def _ts(self, w3, n: int) -> int:

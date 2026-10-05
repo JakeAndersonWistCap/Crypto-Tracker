@@ -20334,7 +20334,7 @@ def test_aethir_page_fields_come_from_the_nextjs_server_payload():
         f = out.frame().set_index("metric")
         assert f.loc["supply_units", "value"] == 433704 and f.loc["capacity_monthly_total", "value"] == 638256960
         assert f.loc["supply_units", "source"] == "aethir_page:protocol/supply-metric.nodes"
-        chunk2 = json.dumps('1a:[{"nodes":433704,"locations":94},{"nodes":1}]')[1:-1]
+        chunk2 = json.dumps('1a:[{"nodes":433704,"locations":94,"totalComputePower":1},{"nodes":1}]')[1:-1]
         two = f'<html><script>self.__next_f.push([1,"{chunk2}"])</script></html>'
         out = FetchOutput()
         AethirPages(get=lambda url: two if "supply" in url else "", daily=Daily()).run(
@@ -20497,8 +20497,8 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     two = page([{"a": 62_000_000, "b": 63_000_000}])
     unpinned = {**aeth["dashboard_pages"]["labelled"]["arr"], "key": None}
     assert resolve_scalar(unpinned, {"protocol/demand-metric": two}).startswith("ambiguous")
-    assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}) == \
-        "pinned `arr` is not in the payload of protocol/demand-metric"
+    assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}).startswith(
+        "pinned `arr` is not in the payload of protocol/demand-metric — `arr` is not in the payload")
 
     # READ TIME: supplier emissions from the stocks' day-on-day rise; the schedule gives way
     d = pd.date_range("2026-09-25", "2026-10-03")
@@ -22673,3 +22673,163 @@ def test_plume_nrr_reads_the_organic_window_and_the_full_year_beside_it():
                                   "n_points": 100, "entered_on": ""}, pd.Timestamp("2026-10-01"))
     assert "organic window (post-Points-Season-2): annualised over 183 covered day(s)" in why
     assert config.incentive_caveat("Plume", "network_reserve_ratio_incl_incentive").startswith("INCENTIVE-INFLATED")
+
+
+def test_robots_txt_retries_network_errors_and_is_rechecked_once_later_in_the_run(monkeypatch):
+    """Jake's run 2026-10-05 09:19: an SSL blip made robots.txt UNREACHABLE for six hosts for the whole run
+    while the data calls retried and recovered. robots.txt now retries a network error with backoff
+    before concluding unreachable, and an unreachable host is re-checked once after every tier — the
+    sources it refused are re-run for those projects, their refusal lines replaced."""
+    import requests
+    import fetch
+    import fetch.scrape as sc
+    from fetch.base import FetchOutput as FO
+    sc._ROBOTS.clear()
+    slept = []
+    monkeypatch.setattr(sc, "_robots_sleep", lambda s: slept.append(s))
+    calls = {"n": 0}
+    ok = type("R", (), {"status_code": 200, "text": "User-agent: *\nAllow: /\n"})()
+
+    def flaky(url, headers=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise requests.exceptions.SSLError("blip")
+        return ok
+    monkeypatch.setattr(requests, "get", flaky)
+    allowed, why = sc.robots_verdict("https://a.example/page")
+    assert allowed and calls["n"] == 3 and slept == [2.0, 4.0]
+    # every attempt fails -> UNREACHABLE, saying how many attempts
+    sc._ROBOTS.clear()
+    monkeypatch.setattr(requests, "get", lambda *a, **k: (_ for _ in ()).throw(requests.exceptions.SSLError("x")))
+    allowed, why = sc.robots_verdict("https://b.example/page")
+    assert not allowed and why.startswith(sc.UNREACHABLE_MARK) and "SSLError, SSLError, SSLError on 3 attempt(s)" in why
+    # LATER IN THE RUN: the host answers; the refused source is re-run for the refused project only
+    monkeypatch.setattr(requests, "get", lambda *a, **k: ok)
+    runs = []
+
+    class Adapter:
+        def run(self, projects, window_days, out):
+            runs.append([p["name"] for p in projects])
+            ok_, why_ = sc.robots_verdict("https://b.example/page")
+            if ok_:
+                out.add(pd.DataFrame({"date": [pd.Timestamp("2026-10-05")], "project": [projects[0]["name"]],
+                                      "metric": ["tx_count"], "value": [1.0], "source": ["x"], "tier": [1]}),
+                        "nearblocks", projects[0]["name"], "tx_count read", 1)
+            else:
+                out.fail("nearblocks", projects[0]["name"], f"robots.txt disallows — {why_}", 1)
+    first = FO()
+    first.fail("nearblocks", "Near", f"robots.txt disallows — {why}", 1)
+    first.add(pd.DataFrame({"date": [pd.Timestamp("2026-10-05")], "project": ["Sky"], "metric": ["price_usd"],
+                            "value": [1.0], "source": ["x"], "tier": [1]}), "nearblocks", "Sky", "ok", 1)
+    todo = [("nearblocks", 1, lambda ctx: Adapter())]
+    projects = [{"name": "Near"}, {"name": "Sky"}]
+    res = fetch._recheck_robots([("nearblocks", 1, first, 5.0, False)], todo, projects, None, {})
+    name, tier, sub, secs, to = res[0]
+    assert runs == [["Near"]], "re-run for the refused project only"
+    assert not any(sc.UNREACHABLE_MARK in e.message for e in sub.log)
+    assert {f.iloc[0]["project"] for f in sub.frames} == {"Near", "Sky"}
+    # nothing unreachable left: no second re-check
+    assert sc.recheck_unreachable() == {}
+    sc._ROBOTS.clear()
+
+
+def test_http_summary_reports_per_call_times():
+    """Jake's run 2026-10-05: DefiLlama timed out at 150s over 67 calls — the summary now gives the spread
+    (p50 / p90 / max), how many calls took 10s or more, and the slowest paths."""
+    from fetch.base import Http
+    h = Http.__new__(Http)
+    h.stats = {"calls": 4, "http_s": 40.0, "retries": 1, "waited_s": 2.0, "slowest_s": 18.5, "slowest": "/a",
+               "times": [(0.5, "/x"), (0.6, "/y"), (18.5, "/a"), (17.2, "/b")]}
+    s = h.summary()
+    assert "per call p50" in s and "max 18.5s" in s and "2 call(s) >= 10s" in s and "/a 18.5s" in s
+
+
+def test_cache_writes_are_locked_unique_and_retry_a_windows_sharing_violation(tmp_path, monkeypatch):
+    """Jake's run 2026-10-05: blockscout_stats crashed on "[WinError 32] ... daily-checks.tmp ->
+    daily-checks.json" — parallel tiers wrote one cache file through one temp name. Writes are now
+    locked per file, each through its own temp file, and the rename retries a sharing violation."""
+    import os as _os
+    import threading as _th
+    import fetch.logcache as lc
+    d = lc.DailyChecks(tmp_path)
+    ts = [_th.Thread(target=d.done, args=(f"k{i}", "2026-10-05")) for i in range(16)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert set(json.loads(d.f.read_text())) == {f"k{i}" for i in range(16)}, "no key lost"
+    assert not list(tmp_path.rglob("*.tmp")), "no temp file left behind"
+    a, b = lc.unique_tmp(d.f), lc.unique_tmp(d.f)
+    assert a != b and a.name.startswith("daily-checks.json.")
+    # WinError 32 twice, then the rename goes through
+    real, n, naps = _os.replace, {"i": 0}, []
+
+    def flaky(src, dst):
+        n["i"] += 1
+        if n["i"] <= 2:
+            e = PermissionError(13, "being used by another process")
+            e.winerror = 32
+            raise e
+        real(src, dst)
+    monkeypatch.setattr(lc.os, "replace", flaky)
+    src = tmp_path / "x.tmp"
+    src.write_text("1")
+    lc.replace_with_retry(src, tmp_path / "x.json", sleep=naps.append)
+    assert (tmp_path / "x.json").read_text() == "1" and naps == [0.05, 0.1]
+
+
+def test_aethir_page_without_its_data_is_not_marked_read_and_missing_keys_are_diagnosed():
+    """Jake's run 2026-10-05: every onchain-metric field, the APRs, revenue, purchases, ecosystem and edge
+    figures failed NOTHING STORED. A page served without its data (a challenge / loading shell / error page
+    with HTTP 200) now fails ONCE with what came back and is NOT marked read, so the rerun tries again; a
+    pinned key that is missing says whether it was renamed or served as a string; a by-value match that
+    fails names the nearest current figures (anchor drift vs no data)."""
+    import fetch.aethir_pages as ap
+    import fetch.scrape as scrape
+    done = []
+
+    class Daily:
+        def due(self, *a):
+            return True
+
+        def done(self, key, day):
+            done.append(key)
+    orig = scrape.robots_verdict
+    scrape.robots_verdict = lambda url: (True, "test")
+    try:
+        out = FetchOutput()
+        ap.AethirPages(get=lambda url: "<html><body>Just a moment...</body></html>", daily=Daily()).run(
+            [config.PROJECT_BY_NAME["Aethir"]], None, out)
+    finally:
+        scrape.robots_verdict = orig
+    msgs = [e.message for e in out.log if e.status == "failed"]
+    assert any("served WITHOUT ITS DATA" in m and "NOT marked read" in m for m in msgs)
+    assert not done, "no page marked read"
+    assert not any("no current figure" in m for m in msgs), "one failure per page, not one per field"
+    html = '<script>self.__next_f.push([1,"5:{\\"aiStakedAmount\\":416297029,\\"gamingStaked\\":\\"369439890\\"}"])</script>'
+    d = ap.key_diagnosis(html, "aiStaked")
+    assert "'aiStakedAmount'" in d and "(renamed?)" in d
+    assert "served as a STRING" in ap.key_diagnosis(html, "gamingStaked")
+    page = ap.fields(html)
+    assert "aiStakedAmount" in page
+    spec = {"label": "x", "metric": "m", "pages": ("p",), "key": None, "anchor": 400_000_000, "within": 0.01}
+    why = ap.resolve_scalar(spec, {"p": html})
+    assert "nearest: `aiStakedAmount` 416,297,029.0000 (+4.1%)" in why
+
+
+def test_plume_issuance_cleanup_br_is_select_first_and_deletes_only_the_coingecko_derivation():
+    """Jake's run 2026-10-05: Plume gross_issuance_tokens BUG measuring_point_changed — the old
+    d(CoinGecko total_supply) rows (derived:d_supply) beside the ERC-20 totalSupply derivation
+    (derived:d_total_supply_protocol) that superseded them on 2026-10-01 and overlaps their dates. BR
+    previews both legs and deletes only the old one, through --delete."""
+    import run_sql as R
+    secs = R.parse_sections(R.SQL_FILE.read_text())
+    assert "BR" in secs and not R._check_section_labels(R.SQL_FILE.read_text(), secs)
+    text = secs["BR"]["text"]
+    w = [R.write_target(x) for x in R.split_statements("\n".join(R.uncommented_write(text)))]
+    assert len(w) == 1 and w[0][0] == "DELETE"
+    assert "source LIKE 'derived:d_supply%'" in text and "derived:d_total_supply_protocol" in text
+    sel = [s for s in R.split_statements(text) if R.classify(s) == "select"]
+    assert len(sel) == 2
+    import config
+    assert config.PROJECT_BY_NAME["Plume"]["issuance_supply_metric"] == "total_supply_protocol"

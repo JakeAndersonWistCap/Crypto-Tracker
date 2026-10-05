@@ -1640,6 +1640,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     todo = [(name, tier, build) for name, tier, build in TIER_ORDER
             if not sources or name in sources]
     results = _dispatch(todo, projects, window_days, ctx)
+    results = _recheck_robots(results, todo, projects, window_days, ctx)
 
     # MERGED IN TIER_ORDER, NOT IN COMPLETION ORDER. Sources run concurrently, each into its own
     # FetchOutput; folding them back in the fixed order below is what keeps the tier-collision
@@ -1858,6 +1859,54 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
                 if pending:
                     time.sleep(0.2)
     return [state[n]["result"] for n, _, _ in todo]
+
+
+def _recheck_robots(results, todo, projects, window_days, ctx):
+    """ROBOTS.TXT RE-CHECKED ONCE LATER IN THE RUN (Jake's run 2026-10-05 09:19). After every tier: each host
+    whose robots.txt was concluded UNREACHABLE is read once more; for every source that refused a project
+    for it, the source is run AGAIN for those projects only, and the refusal lines are replaced by what the
+    second pass produced. A host still unreachable keeps its refusal (complete disallow, RFC 9309)."""
+    from .scrape import UNREACHABLE_MARK, recheck_unreachable
+    refused = {}
+    for name, tier, sub, secs, timed_out in results:
+        hits = [e for e in sub.log if UNREACHABLE_MARK in str(e.message)]
+        if hits and not timed_out:
+            refused[name] = {e.project for e in hits}
+    if not refused:
+        return results
+    now = recheck_unreachable()
+    for root, (ok, how) in now.items():
+        (log.info if ok else log.warning)("ROBOTS RE-CHECK %s: %s", root, "readable now" if ok else how)
+    if not any(ok for ok, _ in now.values()):
+        return results
+    by_name = {p["name"]: p for p in projects}
+    again = []
+    for name, tier, build in todo:
+        if name in refused:
+            names = refused[name]
+            subset = projects if None in names else [by_name[n] for n in names if n in by_name]
+            again.append((name, tier, build, subset))
+    out = []
+    redo = {}
+    for name, tier, build, subset in again:
+        log.info("ROBOTS RE-CHECK: re-running %s for %s", name, ", ".join(p["name"] for p in subset))
+        redo[name] = _dispatch([(name, tier, build)], subset, window_days, ctx)[0]
+    for name, tier, sub, secs, timed_out in results:
+        if name in redo:
+            _, _, sub2, secs2, to2 = redo[name]
+            names = refused[name]
+            sub.log = [e for e in sub.log if not (UNREACHABLE_MARK in str(e.message)
+                                                   and (None in names or e.project in names))]
+            sub.frames.extend(sub2.frames)
+            sub.log.extend(sub2.log)
+            sub.review.extend(sub2.review)
+            sub.gaps.extend(sub2.gaps)
+            sub.staged.extend(sub2.staged)
+            sub.current |= sub2.current
+            out.append((name, tier, sub, secs + secs2, timed_out or to2))
+        else:
+            out.append((name, tier, sub, secs, timed_out))
+    return out
 
 
 def _http_summary(st: dict) -> str:

@@ -34,6 +34,7 @@ import importlib
 import json
 import logging
 import os
+import time
 import urllib.parse
 import urllib.robotparser
 
@@ -45,6 +46,7 @@ import yaml
 
 from .base import (USER_AGENT, derive_flow_from_cumulative, json_path_get, parse_number, point, today,
                    waiting_on, LogEntry)
+from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.scrape")
 
@@ -187,30 +189,64 @@ def robots_from_response(url: str, status: int, text: str) -> tuple[urllib.robot
     return rp, how
 
 
+# ROBOTS.TXT RETRIES A NETWORK ERROR (Jake's run 2026-10-05 09:19): a local network blip (SSLErrors for
+# ~6s) hit robots.txt for coingecko, flashbots, nearblocks, pendle, maple and ultrasound; the data calls
+# retried and recovered but robots.txt did not, so each host stayed UNREACHABLE — complete disallow — for
+# the whole run. Now a network/SSL error is retried with backoff (as data calls are) before robots.txt is
+# concluded unreachable, and an unreachable host is re-checked once later in the run (recheck_unreachable,
+# called by fetch.run after every tier, which re-runs the sources it refused).
+ROBOTS_BACKOFF_S = (2.0, 4.0)
+_robots_sleep = time.sleep
+UNREACHABLE_MARK = "robots.txt UNREACHABLE"
+
+
 def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, str]:
     """(parser, how robots.txt answered). None means "no robots.txt could be read"."""
     if root in _ROBOTS:
         return _ROBOTS[root]
     import requests
     url = f"{root}/robots.txt"
-    try:
-        # THE TOOL'S OWN USER AGENT, not urllib's default. Until 2026-09-24 robots.txt was read
-        # by RobotFileParser.read(), which sends "Python-urllib/3.x" — a UA many CDNs refuse
-        # outright — so "robots.txt disallows" could mean a 403 on robots.txt itself.
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=(10, 20))
-    except Exception as e:  # noqa: BLE001
+    errors = []
+    for attempt in range(len(ROBOTS_BACKOFF_S) + 1):
+        try:
+            # THE TOOL'S OWN USER AGENT, not urllib's default. Until 2026-09-24 robots.txt was read
+            # by RobotFileParser.read(), which sends "Python-urllib/3.x" — a UA many CDNs refuse
+            # outright — so "robots.txt disallows" could mean a 403 on robots.txt itself.
+            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=(10, 20))
+            break
+        except Exception as e:  # noqa: BLE001 — network / SSL / timeout
+            errors.append(type(e).__name__)
+            if attempt < len(ROBOTS_BACKOFF_S):
+                log.warning("RETRY robots.txt %s: %s (attempt %d of %d)", root, type(e).__name__, attempt + 1,
+                            len(ROBOTS_BACKOFF_S) + 1)
+                _robots_sleep(ROBOTS_BACKOFF_S[attempt])
+    else:
         # ** A NETWORK ERROR IS "UNREACHABLE", NOT "NO FILE". Corrected 2026-09-28. ** RFC 9309
         # s2.3.1.4: robots.txt unreachable "due to server or network errors" -> the crawler MUST
         # assume complete disallow. This used to be read as permissive.
         rp = urllib.robotparser.RobotFileParser()
         rp.set_url(url)
         rp.disallow_all = True
-        _ROBOTS[root] = (rp, f"robots.txt UNREACHABLE ({type(e).__name__}) — complete disallow "
-                             f"until it answers (RFC 9309 s2.3.1.4)")
+        _ROBOTS[root] = (rp, f"{UNREACHABLE_MARK} ({', '.join(errors)} on {len(errors)} attempt(s)) — complete "
+                             f"disallow until it answers (RFC 9309 s2.3.1.4); re-checked once later in the run")
         return _ROBOTS[root]
     rp, how = robots_from_response(url, r.status_code, r.text)
     _ROBOTS[root] = (rp, how)
     return _ROBOTS[root]
+
+
+def recheck_unreachable() -> dict:
+    """Re-read robots.txt ONCE for every host concluded unreachable this run: {root: (now_ok, how)}.
+    A host that answers now is readable again for the rest of the run."""
+    out = {}
+    for root in [r for r, (_, how) in list(_ROBOTS.items()) if how.startswith(UNREACHABLE_MARK)
+                 and not how.endswith("re-checked: still unreachable")]:
+        _ROBOTS.pop(root, None)
+        rp, how = _robots_for(root)
+        if how.startswith(UNREACHABLE_MARK):
+            _ROBOTS[root] = (rp, how + "; re-checked: still unreachable")
+        out[root] = (not how.startswith(UNREACHABLE_MARK), _ROBOTS[root][1])
+    return out
 
 
 def robots_verdict(url: str) -> tuple[bool, str]:
@@ -258,9 +294,7 @@ class _Backoff:
 
     def _write(self, state: dict) -> None:
         self.f.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.f.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, sort_keys=True, indent=1))
-        tmp.replace(self.f)
+        atomic_write_text(self.f, json.dumps(state, sort_keys=True, indent=1))
 
     # ===== A CHANGED ENTRY STARTS AGAIN. Added 2026-09-28. =====
     # Run 20260928T165724Z: Pendle's two spendle/data entries moved from method xhr to json, but

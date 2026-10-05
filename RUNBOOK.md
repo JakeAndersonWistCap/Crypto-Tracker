@@ -527,6 +527,30 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11v. Jake's run 2026-10-05 09:19: network blip, cache race, Aethir, Plume issuance
+
+```bash
+python run_sql.py BR              # Plume gross_issuance_tokens: both derivations, spans (SELECT first)
+python run_sql.py --delete BR     # then: remove the superseded d(CoinGecko supply) rows
+```
+- **robots.txt retries.** Network and SSL errors on robots.txt are retried with backoff (2s,
+  4s) before the host is concluded UNREACHABLE. After every tier, each still-unreachable host is
+  re-checked once. If it answers, the sources it refused are re-run for those projects only
+  ("ROBOTS RE-CHECK" in the log).
+- **Per-call times.** A source's HTTP summary (including a TIMED OUT line) now gives p50 / p90 /
+  max per call, the count of calls over 10s, and the slowest paths.
+- **Cache writes.** Every cache file is written under a per-file lock, through its own temp
+  file. The rename retries a Windows sharing violation (WinError 32). This fixes
+  blockscout_stats' daily-checks crash.
+- **Aethir pages.**
+  - A page served without its data (a challenge, loading shell or error page) now fails once,
+    saying what came back, and is NOT marked read, so the rerun tries it again.
+  - A missing pinned key says whether it was renamed or served as a string.
+  - A by-value match that fails names the nearest current figures.
+- **Plume gross_issuance_tokens.** The BUG is two derivations in one series:
+  d(CoinGecko total_supply) (`derived:d_supply`, retired 2026-10-01) and d(ERC-20 totalSupply)
+  (`derived:d_total_supply_protocol`). They overlap, so this is a cleanup, not a handover (BR).
+
 ## 11u. probes9, 2026-10-02: Aethir durations unavailable, HyperEVM tx_count, revenue cross-check
 
 - **Aethir stake duration is UNAVAILABLE (config UNAVAILABLE).** The tile "read" 2,024, which

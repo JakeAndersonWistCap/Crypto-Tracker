@@ -40,6 +40,7 @@ import pandas as pd
 import config
 
 from .base import AdaptivePacer, FetchOutput, LONG_COLUMNS, Progress, RateLimitedTooLong, redact, _measuring_point, derive_flow_from_cumulative, today
+from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.archive")
 
@@ -233,9 +234,7 @@ class DayBlocks:
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.known, sort_keys=True))
-        tmp.replace(self.file)
+        atomic_write_text(self.file, json.dumps(self.known, sort_keys=True))
 
     def at(self, day: pd.Timestamp, head: int) -> int:
         k = str(day.date())
@@ -308,9 +307,7 @@ class SolanaAccountHistory:
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.state))
-        tmp.replace(self.file)
+        atomic_write_text(self.file, json.dumps(self.state))
 
     def _bal(self, tx: dict, which: str):
         keys = [k.get("pubkey") if isinstance(k, dict) else k
@@ -769,9 +766,7 @@ class NearArchive:
 
     def save(self) -> None:
         self.file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.file.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"known": self.known, "pace": round(self.pace, 3)}, sort_keys=True))
-        tmp.replace(self.file)
+        atomic_write_text(self.file, json.dumps({"known": self.known, "pace": round(self.pace, 3)}, sort_keys=True))
 
     def _nap(self, seconds: float) -> None:
         if self.deadline is not None and time.monotonic() + seconds > self.deadline:

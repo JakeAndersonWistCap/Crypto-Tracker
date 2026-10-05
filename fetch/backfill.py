@@ -27,6 +27,7 @@ import pandas as pd
 
 import config
 from .base import BACKFILL_DAYS, today
+from .logcache import atomic_write_text
 
 RECHECK_DAYS = 30
 PRICE_SERIES = ("price_usd", "market_cap_usd", "volume_usd")
@@ -126,6 +127,4 @@ def record(pairs: set, first_dates_after: dict, answered: set | None = None) -> 
             memo[f"{name}|{metric}"] = {"first": first, "checked_on": str(today().date())}
     f = _depth_file()
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(memo, sort_keys=True, indent=1))
-    tmp.replace(f)
+    atomic_write_text(f, json.dumps(memo, sort_keys=True, indent=1))

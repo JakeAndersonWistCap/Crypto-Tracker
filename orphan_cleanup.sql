@@ -3981,3 +3981,38 @@ SELECT metric, source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS
 --    AND NOT EXISTS (SELECT 1 FROM metrics s
 --                     WHERE s.project = metrics.project AND s.metric = 'utilisation_containers_pct'
 --                       AND s.date = metrics.date);
+
+-- ========================================================================================
+-- BR. PLUME gross_issuance_tokens: THE OLD CoinGecko DERIVATION GOES — THE ERC-20 ONE IS THE SERIES  2026-10-05
+--     Jake's run 2026-10-05 09:19: the one BUG, measuring_point_changed. Two derivations sit in one series:
+--       derived:d_supply                  d(CoinGecko total_supply) — the route until 2026-10-01, when
+--                                         CoinGecko served supply as a current value only (7 days held);
+--       derived:d_total_supply_protocol   d(totalSupply()) of the Ethereum PLUME ERC-20 (contracts.
+--                                         token_ethereum, issuance_supply_metric since 30cb710), live and
+--                                         re-derived over the archive reads' year (fetch/history_derive).
+--     They are different measurements of different quantities and they OVERLAP in dates, so this is not a
+--     handover to declare: the old leg is superseded. Nothing writes derived:d_supply for Plume any more.
+--     Run: python run_sql.py BR (check BR2 covers BR1's dates), then python run_sql.py --delete BR
+--     (preview + typed "DELETE BR").
+-- ========================================================================================
+-- BR1. EVERY SOURCE IN PLUME'S gross_issuance_tokens, with its span.
+SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_date,
+       MIN(value) AS min_value, MAX(value) AS max_value
+  FROM metrics
+ WHERE project = 'Plume' AND metric = 'gross_issuance_tokens'
+ GROUP BY source
+ ORDER BY first_date;
+
+-- BR2. THE OLD ROWS' DATES THAT THE ERC-20 DERIVATION ALSO HOLDS (expect all of them).
+SELECT o.date, o.value AS coingecko_derived, n.value AS erc20_derived, n.source
+  FROM metrics o
+  LEFT JOIN metrics n
+    ON n.project = o.project AND n.metric = o.metric AND n.date = o.date
+   AND n.source LIKE 'derived:d_total_supply_protocol%'
+ WHERE o.project = 'Plume' AND o.metric = 'gross_issuance_tokens' AND o.source LIKE 'derived:d_supply%'
+ ORDER BY o.date;
+
+-- BR3. THE DELETE: the superseded CoinGecko derivation only.
+-- DELETE FROM metrics
+--  WHERE project = 'Plume' AND metric = 'gross_issuance_tokens'
+--    AND source LIKE 'derived:d_supply%';

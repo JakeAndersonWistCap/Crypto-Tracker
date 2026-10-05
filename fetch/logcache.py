@@ -33,6 +33,9 @@ import hashlib
 import json
 import logging
 import os
+import threading
+import time
+import uuid
 from pathlib import Path
 
 log = logging.getLogger("token_metrics.fetch.logcache")
@@ -47,6 +50,56 @@ def stream_id(chain, address: str, topics: list, start=None) -> str:
     digest = hashlib.sha1(ident.encode()).hexdigest()[:16]
     return f"{chain}-{str(address).lower()[:10]}-{digest}"
 
+
+
+# ===== ONE WRITER AT A TIME, A TEMP FILE OF ITS OWN (Jake's run 2026-10-05). =====
+# blockscout_stats crashed: "[WinError 32] The process cannot access the file because it is being used by
+# another process: '.cache\\logscan\\daily-checks.tmp' -> '.cache\\logscan\\daily-checks.json'". Sources run
+# on parallel threads and several write the same cache file through the same "<name>.tmp", so one thread's
+# rename met another's open temp. Every cache write now (1) takes a per-file lock (re-entrant, so a
+# read-modify-write can hold it across both), (2) writes its own uniquely named temp file, and (3) renames
+# with retries on the Windows sharing violation (WinError 32 / 5) — a reader or antivirus holding the target
+# for a moment. Across PROCESSES (a seed beside a routine run) the unique temp and the retry still apply.
+_FILE_LOCKS: dict = {}
+_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def file_lock(path) -> "threading.RLock":
+    key = str(Path(path).resolve())
+    with _FILE_LOCKS_GUARD:
+        return _FILE_LOCKS.setdefault(key, threading.RLock())
+
+
+def unique_tmp(path) -> Path:
+    path = Path(path)
+    return path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}.tmp")
+
+
+def replace_with_retry(src, dst, attempts: int = 8, sleep=time.sleep) -> None:
+    """os.replace, retried with backoff (0.05s doubling, ~6s in all) on a Windows sharing violation."""
+    delay = 0.05
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            if i == attempts - 1 or getattr(e, "winerror", 32) not in (5, 32):
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+                raise
+            sleep(delay)
+            delay *= 2
+
+
+def atomic_write_text(path, text: str) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with file_lock(path):
+        tmp = unique_tmp(path)
+        tmp.write_text(text)
+        replace_with_retry(tmp, path)
 
 class LogCache:
     def __init__(self, root: str | Path | None = None):
@@ -76,12 +129,13 @@ class LogCache:
     def save(self, sid: str, events: list, scanned_to: int, proven_to) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         f = self.path(sid)
-        tmp = f.with_suffix(".tmp")
-        with gzip.open(tmp, "wt") as fh:
-            json.dump({"version": VERSION, "scanned_to": int(scanned_to),
-                       "proven_to": None if proven_to is None else int(proven_to),
-                       "events": events}, fh, separators=(",", ":"))
-        tmp.replace(f)
+        with file_lock(f):
+            tmp = unique_tmp(f)
+            with gzip.open(tmp, "wt") as fh:
+                json.dump({"version": VERSION, "scanned_to": int(scanned_to),
+                           "proven_to": None if proven_to is None else int(proven_to),
+                           "events": events}, fh, separators=(",", ":"))
+            replace_with_retry(tmp, f)
 
     def cut_back(self, sid: str, block_of) -> str:
         """Drop everything a reconciliation has not vouched for. Returns what was done."""
@@ -127,9 +181,7 @@ class DailyChecks:
         return self._read().get(key) != today
 
     def done(self, key: str, today: str) -> None:
-        state = self._read()
-        state[key] = today
-        self.f.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.f.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, sort_keys=True))
-        tmp.replace(self.f)
+        with file_lock(self.f):                          # read-modify-write under one lock: no lost key
+            state = self._read()
+            state[key] = today
+            atomic_write_text(self.f, json.dumps(state, sort_keys=True))

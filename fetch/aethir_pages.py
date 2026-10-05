@@ -271,6 +271,29 @@ def auto_keys(objs: list, a: dict):
     return dk, vk, None
 
 
+def payload_health(html: str) -> tuple[int, int, int]:
+    """(bytes, numeric keys, RSC chunks) — enough to tell a page that carries its data from a challenge,
+    loading shell or error page served with HTTP 200 (Jake's run 2026-10-05: every field on onchain-metric
+    'no current figure', the APRs, revenue, purchases, ecosystem and edge figures all NOTHING STORED)."""
+    text = rsc_text(html)
+    numeric = set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*-?\d', text))
+    return len(html or ""), len(numeric), len(_PUSH_RE.findall(html or ""))
+
+
+def key_diagnosis(html: str, key: str) -> str:
+    """Why a pinned key is missing: served as a string, or renamed (the payload's closest keys)."""
+    import difflib
+    text = rsc_text(html)
+    if re.search(re.escape(f'"{key}"') + r'\s*:\s*"', text):
+        return f"`{key}` is served as a STRING, not a number"
+    if re.search(re.escape(f'"{key}"') + r'\s*:\s*(null|\{|\[)', text):
+        return f"`{key}` is present but null / an object / a list"
+    keys = sorted(set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:', text)))
+    close = difflib.get_close_matches(key, keys, n=4, cutoff=0.6)
+    return (f"`{key}` is not in the payload" + (f" — keys like it: {close} (renamed?)" if close else
+                                                f" ({len(keys)} keys on the page, none like it)"))
+
+
 def key_scalar(html: str, key: str):
     """(value, why) for `"key": <number>` ANYWHERE in the payload — inside nested objects and beside
     arrays, where rsc_objects() (flat objects only) cannot see it. Jake's probes5 (2026-10-01): the
@@ -353,10 +376,23 @@ def resolve_scalar(spec: dict, pages: dict):
     if len(cands) == 1:
         return cands[0]
     if not cands:
+        read = [pages[p] for p in spec["pages"] if pages.get(p) is not None]
         if spec.get("key"):
-            return f"pinned `{spec['key']}` is not in the payload of {', '.join(spec['pages'])}"
+            return (f"pinned `{spec['key']}` is not in the payload of {', '.join(spec['pages'])}"
+                    + (f" — {key_diagnosis(read[0], spec['key'])}" if read else " (page not read)"))
+        # the nearest current figures, so a drifted anchor reads apart from a page without data
+        near = []
+        for html in read:
+            for k, vals in fields(html).items():
+                for v in vals:
+                    for scale in ((1.0, 100.0) if spec.get("pct") else (1.0,)):
+                        if v and spec["anchor"]:
+                            near.append((abs(v / scale / spec["anchor"] - 1), k, v / scale))
+        near.sort()
         return (f"no current figure within {spec['within']:.0%} of {spec['anchor']:,} on "
-                f"{', '.join(spec['pages'])}")
+                f"{', '.join(spec['pages'])}" + (" (page not read)" if not read else
+                f" — nearest: {', '.join(f'`{k}` {v:,.4f} ({d:+.1%})' for d, k, v in near[:3])}" if near else
+                " — the page carries no numeric figure"))
     return "ambiguous — " + ", ".join(f"{p} `{k}` {v:,.4f}" for p, k, v in cands)
 
 
@@ -473,6 +509,17 @@ class AethirPages:
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             out.fail(SOURCE, name, f"{url}: {e}", TIER)
             return None
+        # A PAGE WITHOUT ITS DATA IS NOT A READ PAGE (Jake's run 2026-10-05): a challenge, loading shell or
+        # error page served with HTTP 200 made every field on it fail one by one — and was marked read for
+        # the day, so a same-day rerun skipped it. Now it fails ONCE, says what came back, and is retried.
+        size, numeric, chunks = payload_health(html)
+        if numeric < int(spec.get("min_numeric_keys", 3)):
+            out.fail(SOURCE, name, f"{url}: served WITHOUT ITS DATA ({size:,} bytes, {numeric} numeric key(s), "
+                                   f"{chunks} RSC chunk(s)) — a challenge / loading shell / error page, or a payload "
+                                   f"that changed shape. Nothing read from it; NOT marked read, so the next run "
+                                   f"(same day included) tries again.", TIER)
+            return None
+        log.info("aethir_page %s: %s bytes, %d numeric keys, %d RSC chunks", page, f"{size:,}", numeric, chunks)
         self.daily.done(f"aethir_page:{url}", day)
         return html
 
@@ -525,7 +572,8 @@ class AethirPages:
         if cur is not None:
             rows.append((today(), cur))
         if not rows:
-            out.fail(SOURCE, name, f"{metric}: {why or f'`{key}` has no current figure'} on {page}. NOTHING STORED"
+            why = f"{why or f'`{key}` has no current figure'}; {key_diagnosis(html, key)}"
+            out.fail(SOURCE, name, f"{metric}: {why} on {page}. NOTHING STORED"
                                    + ("; the manual row stays the fallback." if metric == "supply_units" else "."), TIER)
             return
         frame = tidy(rows, name, metric, src, TIER)

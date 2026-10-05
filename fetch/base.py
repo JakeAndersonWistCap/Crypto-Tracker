@@ -504,16 +504,26 @@ class Http:
         # the run before, and nothing said whether calls were slow, retried or simply many).
         # Read by fetch._dispatch into the source's timing line and its timeout message.
         self.stats = {"calls": 0, "http_s": 0.0, "retries": 0, "waited_s": 0.0,
-                      "slowest_s": 0.0, "slowest": ""}
+                      "slowest_s": 0.0, "slowest": "", "times": []}
 
     def summary(self) -> str:
         st = self.stats
         if not st["calls"]:
             return "no HTTP calls"
-        return (f"{st['calls']} HTTP call(s), {st['http_s']:.0f}s in requests "
+        line = (f"{st['calls']} HTTP call(s), {st['http_s']:.0f}s in requests "
                 f"(mean {st['http_s'] / st['calls']:.2f}s), {st['retries']} retr"
                 f"{'y' if st['retries'] == 1 else 'ies'}, {st['waited_s']:.0f}s in backoff/spacing, "
                 f"slowest {st['slowest_s']:.1f}s ({st['slowest']})")
+        # PER-CALL TIMES (Jake's run 2026-10-05: DefiLlama timed out at 150s over 67 calls): the spread, and
+        # the slowest calls by path, so a blip (a few calls hanging ~18s) reads apart from a slow API.
+        times = sorted(t for t, _ in st.get("times") or ())
+        if times:
+            pick = lambda q: times[min(len(times) - 1, int(q * len(times)))]       # noqa: E731
+            slow = sorted(st["times"], key=lambda x: -x[0])[:3]
+            line += (f"; per call p50 {pick(0.5):.2f}s p90 {pick(0.9):.2f}s max {times[-1]:.1f}s, "
+                     f"{sum(1 for t in times if t >= 10)} call(s) >= 10s"
+                     + (f" (slowest: {', '.join(f'{p} {t:.1f}s' for t, p in slow)})" if slow else ""))
+        return line
 
     def post(self, url: str, json_body: dict | None = None, headers: dict | None = None):
         """Same retry/backoff policy as get(). Some node APIs only accept POST."""
@@ -562,6 +572,8 @@ class Http:
                     took = time.monotonic() - t0
                     self.stats["calls"] += 1
                     self.stats["http_s"] += took
+                    if len(self.stats.setdefault("times", [])) < 2000:
+                        self.stats["times"].append((took, urllib.parse.urlsplit(url).path[:60]))
                     if took > self.stats["slowest_s"]:
                         self.stats["slowest_s"] = took
                         self.stats["slowest"] = urllib.parse.urlsplit(url).path[:80]

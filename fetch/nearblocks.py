@@ -85,6 +85,7 @@ import pandas as pd
 
 from .base import Http, sleep as base_sleep, tidy, today, window, Progress
 from .logcache import LogCache
+from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.nearblocks")
 
@@ -161,18 +162,14 @@ def _load_state(f, after: str) -> dict:
 
 def _save_raw(f, state: dict) -> None:
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps({**state, "version": 1}))
-    tmp.replace(f)
+    atomic_write_text(f, json.dumps({**state, "version": 1}))
 
 
 def _save_state(f, after: str, newest_ts, newest_ids, by_day: dict) -> None:
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"version": 1, "after": after, "newest_ts": newest_ts,
+    atomic_write_text(f, json.dumps({"version": 1, "after": after, "newest_ts": newest_ts,
                                "newest_ids": sorted(newest_ids),
                                "by_day": {str(d.date()): v for d, v in sorted(by_day.items())}}))
-    tmp.replace(f)
 
 
 class NearBlocks:

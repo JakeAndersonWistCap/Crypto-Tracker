@@ -39,6 +39,7 @@ import pandas as pd
 import config
 
 from .base import FetchOutput, LogEntry, derive_flow_from_cumulative, point, today, waiting_on
+from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.chain")
 
@@ -578,9 +579,7 @@ class ChainReader:
         if safe is not None and block <= safe:
             self._ts_disk[key] = ts
             self._ts_file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._ts_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self._ts_disk, separators=(",", ":")))
-            tmp.replace(self._ts_file)
+            atomic_write_text(self._ts_file, json.dumps(self._ts_disk, separators=(",", ":")))
         return ts
 
     # An endpoint that REFUSES eth_getLogs, and what it costs to find out at connect time.
