@@ -7,9 +7,12 @@ credibility_report.py — the Credibility tab, printed (Jake, 2026-10-05).
     python credibility_report.py --project Sky   one project
     python credibility_report.py --open-only     only the CHECK / UNVERIFIABLE list
 
-Builds the workbook from metrics.db into a temporary file, recalculates it with LibreOffice (the
-verdicts are formulas over the headline cells), and reads the Credibility tab back. Writes nothing to
-the store and leaves token_metrics.xlsx alone. Output is ASCII, for any console.
+Builds the workbook from metrics.db into a temporary file and works out the Credibility tab's formulas
+(the verdicts are formulas over the headline cells) IN PYTHON, with xlcalc.py — no LibreOffice or
+Excel needed, so it runs as-is on Windows. xlcalc covers exactly the functions build_workbook.py
+writes and names any it does not know instead of guessing; it agrees with LibreOffice on every formula
+of a full workbook (tests/test_adapters.py). `--libreoffice` recalculates with LibreOffice instead.
+Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII, for any console.
 """
 from __future__ import annotations
 
@@ -39,14 +42,31 @@ def fmt(v) -> str:
     return a(v or "")
 
 
-def read_tab(path: Path) -> tuple[list, list]:
+def read_tab(path: Path, evaluate: bool = True) -> tuple[list, list]:
+    """(summary rows, data rows) of the Credibility tab. evaluate=True works every formula out in
+    Python; False reads the values a recalculation (LibreOffice / Excel) saved in the file."""
     import openpyxl
-    ws = openpyxl.load_workbook(path, data_only=True)["Credibility"]
+    if evaluate:
+        import xlcalc
+        wb = openpyxl.load_workbook(path)
+        missing = xlcalc.unsupported(wb)
+        if missing:
+            raise SystemExit("the workbook uses formula functions xlcalc.py does not evaluate: "
+                             + "; ".join(f"{k} (e.g. {', '.join(v)})" for k, v in missing.items())
+                             + " - run with --libreoffice, or extend xlcalc.py")
+        X = xlcalc.Workbook(wb)
+
+        def get(r, c):
+            return xlcalc.display(X.value("Credibility", r, c))
+        ws = wb["Credibility"]
+    else:
+        ws = openpyxl.load_workbook(path, data_only=True)["Credibility"]
+
+        def get(r, c):
+            return ws.cell(r, c).value
     head = next(r for r in range(1, 60) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Tab")
-    summary = [[ws.cell(r, c).value for c in range(1, 8)] for r in range(5, head - 1)
-               if ws.cell(r, 1).value]
-    rows = [[ws.cell(r, c).value for c in range(1, 13)] for r in range(head + 1, ws.max_row + 1)
-            if ws.cell(r, 1).value]
+    summary = [[get(r, c) for c in range(1, 8)] for r in range(5, head - 1) if ws.cell(r, 1).value]
+    rows = [[get(r, c) for c in range(1, 13)] for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value]
     return summary, rows
 
 
@@ -54,10 +74,11 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--project")
     ap.add_argument("--open-only", action="store_true")
+    ap.add_argument("--libreoffice", action="store_true",
+                    help="recalculate with LibreOffice instead of evaluating the formulas in Python")
     args = ap.parse_args(argv)
     import store as store_mod
     from build_workbook import build_workbook
-    from recalc import recalc
     if not Path(store_mod.DB_PATH).exists():
         print(f"no {store_mod.DB_PATH} — run token_metrics.py first")
         return 1
@@ -68,11 +89,13 @@ def main(argv=None) -> int:
             build_workbook(st, path)
         finally:
             st.close()
-        res = recalc(str(path), timeout=180)
-        if isinstance(res, dict) and res.get("error"):
-            print(f"recalculation failed: {a(res['error'])} — the verdicts are formulas and cannot be read")
-            return 1
-        summary, rows = read_tab(path)
+        if args.libreoffice:
+            from recalc import recalc
+            res = recalc(str(path), timeout=180)
+            if isinstance(res, dict) and res.get("error"):
+                print(f"recalculation failed: {a(res['error'])} - run without --libreoffice to evaluate in Python")
+                return 1
+        summary, rows = read_tab(path, evaluate=not args.libreoffice)
     if args.project:
         rows = [r for r in rows if str(r[0]).lower() == args.project.lower()]
         summary = [s for s in summary if str(s[0]).lower() in (args.project.lower(), "all")]

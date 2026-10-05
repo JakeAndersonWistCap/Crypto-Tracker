@@ -174,6 +174,64 @@ def _sum_month(p, rows, long, asof, metric="", month="", **_):
     return float(m.sum()), month, f"{metric} summed over {month} ({len(m)} day(s))"
 
 
+def _common_day(p, long, a, b, asof):
+    """(day, a's value, b's value) on the latest COMPLETED day both series hold. Today is excluded: our
+    newest CoinGecko point is taken at fetch time, not at 00:00, so it is never compared."""
+    sa, sb = _series(long, p, a), _series(long, p, b)
+    days = sorted(set(sa.index) & set(sb.index))
+    days = [d for d in days if d < asof.normalize()]
+    if not days:
+        return None, None, None
+    d = days[-1]
+    return d, float(sa.loc[d]), float(sb.loc[d])
+
+
+def _common_day_value(p, rows, long, asof, metric="price_usd", ref="price_usd_coinbase", side="ours", **_):
+    d, va, vb = _common_day(p, long, metric, ref, asof)
+    if d is None:
+        return None, None, f"no completed day on which both {metric} and {ref} have a 00:00 point"
+    return (va if side == "ours" else vb), str(d.date()), f"{metric if side == 'ours' else ref} on {d.date()} (00:00 UTC)"
+
+
+def _months_match(p, rows, long, asof, daily="gross_burn_tokens", monthly="gross_burn_tokens_dune_monthly",
+                  months=3, side="ours", **_):
+    """The same COMPLETE calendar months on both sides: our daily rows summed per month vs the monthly
+    series' row for that month (as SQL BX2 does) — never a 90-day window against one monthly row."""
+    d, m = _series(long, p, daily), _series(long, p, monthly)
+    if d.empty or m.empty:
+        return None, None, f"no {daily} or {monthly} in the store"
+    last_full = (asof.normalize().to_period("M") - 1)
+    picked = []
+    for day in sorted(m.index, reverse=True):
+        per = day.to_period("M")
+        if per > last_full:
+            continue
+        span = d[(d.index >= per.start_time) & (d.index <= per.end_time.normalize())]
+        if len(span) >= per.days_in_month - 1:          # one day of slack: the 1st can collide
+            picked.append((per, float(span.sum()), float(m.loc[day])))
+        if len(picked) >= months:
+            break
+    if not picked:
+        return None, None, f"no complete month held by both {daily} and {monthly}"
+    v = sum(x[1] if side == "ours" else x[2] for x in picked)
+    names = ", ".join(str(x[0]) for x in sorted(picked))
+    return v, str(picked[0][0]), f"{daily if side == 'ours' else monthly} summed over {names}"
+
+
+def _hl_reward_active(p, rows, long, asof, **_):
+    """The documented curve paid on ACTIVE stake only: 2.37% x sqrt(400M / S_total) x S_active, over our
+    emissions' Q0 covered days — if this meets the observed emissions, inactive stake explains the gap."""
+    s_tot = _num((rows.get(f"{p}|locked_tokens") or {}).get("now"))
+    s_off = _num((rows.get(f"{p}|locked_tokens_inactive") or {}).get("now"))
+    cov = _num((rows.get(f"{p}|emissions_tokens") or {}).get("q0_covered_days")) or 90.0
+    if not s_tot or s_off is None:
+        return None, None, "no locked_tokens / locked_tokens_inactive stored"
+    v = 0.0237 * math.sqrt(400e6 / s_tot) * (s_tot - s_off) / 365.0 * cov
+    return v, (rows.get(f"{p}|locked_tokens") or {}).get("latest_date"), (
+        f"2.37% x sqrt(400M / {s_tot / 1e6:,.1f}M) x ACTIVE {(s_tot - s_off) / 1e6:,.1f}M "
+        f"({s_off / s_tot:.1%} of stake inactive) / 365 x {cov:.0f} day(s)")
+
+
 def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
     sr = _series(long, p, metric)
     sr = sr[(sr.index > asof - pd.Timedelta(days=30)) & (sr.index <= asof)]
@@ -185,7 +243,9 @@ def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
 FORMULAS = {"eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "sum_month": _sum_month, "last30_annualised": _last30_annualised}
+            "value_on": _value_on, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
+            "common_day_value": _common_day_value, "months_match": _months_match,
+            "hl_reward_active": _hl_reward_active}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -229,6 +289,10 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
                 val, date = _num(sr.iloc[-1]), str(sr.index[-1].date())
         if val is None:
             note = (note + " " if note else "") + f"{spec['metric']} has no value in the store"
+    if val is not None and val == 0 and spec.get("zero_is_missing"):
+        val = None
+        note = (note + " " if note else "") + "The reference reads 0, which this source uses for 'not published' " \
+                                              "— treated as no reference."
     if val is not None:
         val *= scale
     if spec.get("force_verdict"):
@@ -282,21 +346,22 @@ DERIVED_INPUTS = {
     "a4_net_change": ("a4_gross_burn", "@issuance"),
     "a4_net_change_pct": ("a4_net_change", "in_circ"),
     "a3_circ_retirement": ("@buyback", "in_circ"),
-    "a3_fdv_retirement": ("@buyback", "in_price"),
-    "a3_implied_buyback_pct": ("@revenue", "in_price", "in_circ"),
-    "a3_actual_buyback_pct": ("@buyback", "in_price", "in_circ"),
+    "a3_fdv_retirement": ("@buyback", "@price"),
+    "a3_implied_buyback_pct": ("@revenue", "@price", "in_circ"),
+    "a3_actual_buyback_pct": ("@buyback", "@price", "in_circ"),
     "a3_net_absorption": ("@buyback", "@emissions"),
-    "a3_protocol_yield": ("@revenue", "@locked", "in_price"),
+    "a3_protocol_yield": ("@revenue", "@locked", "@price"),
     "a1_fees_issuance": ("@fees", "@issuance"),
     "a1_validator_yield": ("@issuance", "@locked"),
     "a2_free_float": ("in_circ", "@locked"),
-    "a2_ff_arr": ("a2_free_float", "in_price", "@arr"),
+    "a2_ff_arr": ("a2_free_float", "@price", "@arr"),
     "a2_trajectory": ("a2_emissions", "a2_free_float"),
     "a2_rev_per_token": ("a2_customer_revenue", "a2_emissions"),
-    "a2_rev_vs_emissions_value": ("a2_customer_revenue", "a2_emissions", "in_price"),
+    "a2_rev_vs_emissions_value": ("a2_customer_revenue", "a2_emissions", "@price"),
 }
 ALIASES = {
     "@issuance": ("a4_gross_issuance", "a4_pool_release", "in_issuance"),
+    "@price": ("in_price", "in_price_llama"),
     "@buyback": ("in_reserve_month", "in_buyback_july", "@burn_route", "in_buyback"),
     "@revenue": ("in_revenue",),
     "@locked": ("in_locked", "in_shares"),
@@ -388,6 +453,37 @@ def generic_inputs(name: str) -> dict:
     return out
 
 
+def price_inputs(name: str) -> dict:
+    """Price beside a second source on the SAME instant (00:00 UTC of the latest completed day both hold):
+    Coinbase Exchange where a product is declared, and DefiLlama's price for the token's verified address
+    for every project (the second source where Coinbase has none, a third where it does)."""
+    from fetch.xref import CrossRefs
+    p = config.PROJECT_BY_NAME[name]
+    fmt = '$#,##0.0000;($#,##0.0000);-'
+    key, indep = CrossRefs.llama_key(p)
+    out = {}
+    product = (config.CREDIBILITY_XREF.get("coinbase_product") or {}).get(name)
+    if product:
+        out["in_price"] = {"what": f"Price vs Coinbase {product} (00:00 UTC, latest completed day both hold)",
+                           "ours": {"py": "common_day_value", "args": {"metric": "price_usd", "ref": "price_usd_coinbase",
+                                                                      "side": "ours"}}, "fmt": fmt,
+                           "ref": {"formula": "common_day_value", "tol": 2.0,
+                                   "args": {"metric": "price_usd", "ref": "price_usd_coinbase", "side": "ref"},
+                                   "source": f"Coinbase Exchange {product}: the daily candle's OPEN = the price at 00:00 "
+                                             f"UTC, the instant CoinGecko's daily point is stamped"}}
+    out["in_price_llama"] = {
+        "what": f"Price vs DefiLlama {key} (00:00 UTC, latest completed day both hold)",
+        "ours": {"py": "common_day_value", "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ours"}},
+        "fmt": fmt,
+        "ref": {"formula": "common_day_value", "tol": 2.0, "same_source": not indep,
+                "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ref"},
+                "source": f"DefiLlama coins API, {key}" + ("" if indep else " — CoinGecko's own price relayed"),
+                "note": ("DefiLlama prices a listed token partly from CoinGecko, so a match here is weaker evidence "
+                         "than an exchange price." if indep else
+                         "No token address on file (a native coin): DefiLlama relays CoinGecko — FRESH-only.")}}
+    return out
+
+
 def circulating_input(name: str) -> dict:
     """The circulating row every project gets, by how its circulating is chosen (config
     CIRCULATING_ONCHAIN status): an independent figure where one exists, else where to read it."""
@@ -427,6 +523,13 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 cl = hc["closed"]
                 spec = {"verdict": "UNVERIFIABLE",
                         "why": f"the figure itself is CLOSED (config UNAVAILABLE): {cl.get('summary', '')}"}
+            if spec is not None and spec.get("inputs"):
+                out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
+                            "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
+                            "fmt": hc.get("fmt"), "tol": None, "value": None, "date": None,
+                            "source": spec.get("source", "its input rows (below)"), "mode": "derived",
+                            "verdict": None, "inputs": tuple(spec["inputs"]), "note": spec.get("why", "")})
+                continue
             if spec is None and hc["id"] in DERIVED_INPUTS:
                 out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
                             "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
@@ -442,6 +545,7 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                         "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
                         "fmt": hc.get("fmt"), "tol": spec.get("tol"), **ref})
         inputs = dict(config.CREDIBILITY_COMMON_INPUTS)
+        inputs.update(price_inputs(name))
         inputs["in_circ"] = circulating_input(name)
         inputs.update(generic_inputs(name))
         inputs.update({k: v for k, v in spec_p.items() if k.startswith("in_")})
@@ -472,7 +576,8 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 rid = resolve_alias(name, a, have)
                 (got.append(pos[rid]) if rid else missing.append(a.lstrip("@")))
             r["input_rows"], r["missing_inputs"] = got, missing
-            r["note"] = ("Derived here from: " + ", ".join(out[i]["id"] for i in got)
+            r["note"] = ((r["note"] + " ") if r.get("note") else "") + (
+                         "Judged by: " + ", ".join(out[i]["id"] for i in got)
                          + (f". UNCHECKED input(s): {', '.join(missing)} — no row checks them" if missing else "")
                          + ". PASS only when every input passes on an independent reference.")
     return out

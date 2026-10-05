@@ -343,7 +343,7 @@ class LogScan:
         internal = set(holders)
         excluded = {a.lower() for a in spec.get("exclude_counterparties") or []}
         count_from = {a.lower() for a in spec["count_from"]} if spec.get("count_from") else None
-        counted, uncounted = [], defaultdict(int)
+        counted, uncounted, uncounted_ev = [], defaultdict(int), []
         if direction == "in":
             for h in holders:
                 for e in ins[h]:
@@ -352,6 +352,7 @@ class LogScan:
                         continue
                     if frm in excluded or frm in MINT_SENDERS or (count_from is not None and frm not in count_from):
                         uncounted[frm] += _amount(e)
+                        uncounted_ev.append((frm, e))
                     else:
                         counted.append(e)
         else:
@@ -433,12 +434,26 @@ class LogScan:
         # dating fault, and the log gave no way to say which.
         dated = [e["timeStamp"] for e in counted if int(e.get("timeStamp") or 0) > 0]
         last_moved = (pd.Timestamp(max(dated), unit="s").date().isoformat() if dated else "never")
+        # NOT-COUNTED INFLOW AFTER THE LAST COUNTED ONE (Jake's credibility run, 2026-10-05): Ether.fi's
+        # CoW-only count went SILENT on 2026-04-01 while DefiLlama — every aggregator trade by this wallet —
+        # kept booking buybacks. Inflow from other senders since then, by sender with its last date, says
+        # whether purchases moved to another route rather than stopped.
+        cut = max(dated) if dated else 0
+        late = defaultdict(lambda: [0, 0])
+        for frm, e in uncounted_ev:
+            t = int(e.get("timeStamp") or 0)
+            if t > cut:
+                late[frm][0] += _amount(e)
+                late[frm][1] = max(late[frm][1], t)
+        late_table = ", ".join(
+            f"{a} {v[0] / scale:,.2f} (last {pd.Timestamp(v[1], unit='s').date()})" + (f" [{labels[a]}]" if a in labels else "")
+            for a, v in sorted(late.items(), key=lambda kv: -kv[1][0])[:8]) if late else "none"
         summary = (f"{key}: RECONCILED to the wei for {len(holders)} holder(s) at block "
                    f"{to_block:,}; served by {via} in {requests} request(s), {increment}"
                    + (f" after refusal(s): {'; '.join(refused)}" if refused else "")
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
                      f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "
-                     f"{u_table}." + rq_note)
+                     f"{u_table}. Not-counted inflow AFTER the last counted transfer: {late_table}." + rq_note)
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
 

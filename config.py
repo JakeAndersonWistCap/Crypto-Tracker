@@ -514,6 +514,12 @@ METRICS = {
                            "only_projects": ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume", "Aethir", "Maple",
                                              "Morpho", "Aerodrome", "Ether.fi", "Fluid", "Sky", "Uniswap", "GEODNET",
                                              "Pendle")},
+    "price_usd_llama": {"label": "Price — DefiLlama coins API at 00:00 UTC for the token's verified address, CREDIBILITY "
+                                 "reference only", "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                        "sanity_min": 0, "sanity_max": 1e7, "view_only": True,
+                        "only_projects": ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume", "Aethir", "Maple",
+                                          "Morpho", "Aerodrome", "Ether.fi", "Fluid", "Sky", "Uniswap", "GEODNET",
+                                          "Pendle")},
     "staking_apr_lido": {"label": "Lido stETH APR, 7-day SMA (fraction, NET of Lido's 10% fee) — CREDIBILITY reference only",
                          "kind": "stock", "unit": "fraction", "archetypes": [1, 4], "tiers": [1],
                          "sanity_min": 0, "sanity_max": 0.2, "only_projects": ("Ethereum",), "view_only": True},
@@ -578,9 +584,9 @@ METRICS = {
     "total_supply_protocol": {
         "label": "Total supply — protocol's own figure, net of burn (NEAR block header; "
                  "Ethereum: Etherscan ethsupply2 EthSupply + Eth2Staking - BurntFees)",
-        "kind": "stock", "unit": "tokens", "archetypes": [1],
-        # Bounds are NEAR's; Ethereum's own band (100m-140m) is on its project entry.
-        "tiers": [1, 2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near", "Ethereum", "Plume")},
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 4],
+        # Bounds are NEAR's; Ethereum's, Plume's and Sky's own bands are on their project entries.
+        "tiers": [1, 2], "sanity_min": 1e9, "sanity_max": 2e9, "only_projects": ("Near", "Ethereum", "Plume", "Sky")},
     # Ethereum's cumulative EIP-1559 burn (Etherscan ethsupply2 BurntFees). A STOCK whose daily
     # change is gross_burn_tokens. Bounded by what could possibly have been burned: 0 .. supply.
     # ===== ETHEREUM'S CONSENSUS REWARDS, FROM ethsupply2's Eth2Staking. 2026-09-29 (Jake). =====
@@ -2161,6 +2167,17 @@ EXPLORERS = {
         "key_env": "BLOCKSCOUT_API_KEY",
         "max_records": 1000,
         "limits": "5 req/s (keyed)",
+        # ===== THE PRO API (Jake's credibility run, 2026-10-05: base/optimism.blockscout.com answered 429
+        # to the Chainlink seed even at 4 req/s). Per-instance keys are DEPRECATED (blockscout/docs
+        # devs/apis.mdx: "per-instance API support has been deprecated ... Your old MyAccount API keys and
+        # prior routes will not work with the new PRO API"); one key now serves every chain at
+        # api.blockscout.com, chain id in the path (devs/migrate-from-etherscan.mdx: "path-based routing
+        # ... https://api.blockscout.com/1/api?module=...&apikey=proapi_YOUR_KEY"), the key as `apikey`.
+        # Tiers (rate-limits.mdx @2336a23f): Free 5 RPS / 100K credits a day (20 credits per getLogs ->
+        # ~5,000 calls a day); Builder 15 RPS; Pro 30 RPS. base-api.mdx: "Base API access requires a paid
+        # plan" — a free key is refused on chain 8453. A 429 carries x-ratelimit-reset in MILLISECONDS
+        # and no Retry-After (apps/block_scout_web/lib/block_scout_web/plug/rate_limit.ex). =====
+        "pro_api": "https://api.blockscout.com/{chain_id}/api",
         # one run-wide pacer PER HOST (base.blockscout.com answered 429 to chainlink_fees on 2026-10-05
         # 14:35 while other adapters read the same host on their own spacing)
         "rate_per_s": 4.0,
@@ -4500,6 +4517,10 @@ PROJECTS = [
         # src/content/chainlink-automation/overview/supported-networks.mdx. Each was checked under its
         # chain's heading. OnRamps are discovered from each Router's OnRampSet history, not listed.
         "chainlink_fee_lines": {
+            # OPTIONAL CHAINS (Jake, 2026-10-05): a line missing only these is stored PARTIAL with the chains
+            # named, and the seed completes on the rest. Base and OP sit behind Blockscout's PRO API (Base:
+            # paid plan only). Their share of the PLUS lines is estimated in RUNBOOK 11y.
+            "optional_chains": ("base", "optimism"),
             "days": 365,
             "price_api": "https://coins.llama.fi",
             "link_coin": "coingecko:chainlink",
@@ -6495,6 +6516,21 @@ PROJECTS = [
             "reported_arr": 10_400_000,
             "worked_on": "2026-09-23",
             "status": "OPEN — three readings, none chosen",
+            # ITEM 9 (Jake's credibility run, 2026-10-05): "establish the CURRENT split from GEODNET's own
+            # docs/governance — it may have changed". GEODNET's newest first-party statement found still says
+            # 80%: its own X account, June-2026 burn stats, posted 2026-07-02 (status id decodes to
+            # 2026-07-02 16:06 UTC): "$722,021 worth of GEOD burned … 80% of GEODNET data revenue going toward
+            # buying and burning GEOD". No GIP / governance vote changing it was found. So the split IN USE
+            # stays 0.80, now sourced to that post. The 0.8706 is NOT a newer split: it is burn / reported ARR,
+            # and GEODNET's "data revenue" (the 80% base) and its ARR need not be the same base — that reading
+            # stays OPEN. DefiLlama's adapter divides by the same 0.8 (fees/geodnet.ts, unsourced since
+            # 5cfc324a, 2024-03-12) — it agrees with GEODNET's statement, so nothing to change there.
+            # Read 2026-10-05 from the search index's copy of the post; x.com and geodnet.com are not
+            # reachable from the build sandbox — Jake to open the link once to confirm the wording.
+            "current_split": {"share": 0.80, "source_url": "https://x.com/GEODNET/status/2072713418818068898",
+                              "source_date": "2026-07-02", "read_on": "2026-10-05",
+                              "read_by": "Claude Code (search-index copy), pending Jake's review",
+                              "governance": "no GIP found changing the 80/20 split"},
         },
         "metric_labels": {
             # ===== SAY ON THE SHEET WHAT THESE FIGURES ARE. Added 2026-09-23. =====
@@ -12474,6 +12510,9 @@ PROJECTS = [
             "note": "staked SKY is represented by a liquid token; nothing is time-locked.",
         },
         "name": "Sky", "symbol": "SKY",
+        # SKY totalSupply ~23.5bn after the MKR->SKY conversion (24,000 SKY per MKR); band for the
+        # total_supply_protocol read added 2026-10-05.
+        "sanity": {"total_supply_protocol": {"min": 15_000_000_000, "max": 30_000_000_000}},
         # ===== ALL SKY PURCHASED, NOT ONLY THE 5% BURN LEG. 2026-09-28 (Jake). =====
         # A3 read 0.039% because Sky's actual_buyback_tokens was the Stage 2 burn leg re-labelled.
         # Sky buys SKY with 27.5% of NPS (22.5% for SKY staking rewards + 5% burned) and every
@@ -12998,6 +13037,16 @@ PROJECTS = [
                      "'SKY Governance Token', symbol 'SKY'. Codebase: https://github.com/sky-ecosystem/sky. "
                      "The other address that was circulating is WRONG and has been deleted "
                      "entirely rather than kept as a fallback."),
+            # ===== SKY's ON-CHAIN totalSupply WITH HISTORY (Jake, credibility run 2026-10-05). =====
+            # The same verified contract, stored as total_supply_protocol so archive_backfill.py reads a
+            # year of it (total_supply itself is CoinGecko's series and is not archived by design). The
+            # Credibility tab's Sky issuance / emissions / net-supply references need d(supply) across Q0.
+            "token_supply_protocol": _contract(
+                "0x56072C95FAA701256059aa122697B133aDEd9279", "ethereum", "erc20_total_supply", "SKY",
+                "https://developers.skyeco.com/guides/sky/token-governance-upgrade/key-info/",
+                verified="2026-09-11", provenance="protocol docs (the token entry above)",
+                metric_override="total_supply_protocol", token_standard="erc20",
+                purpose="SKY totalSupply() as a daily series with archive history — d(supply) across a window."),
             # ===== THE ARCHETYPE 4 READ. ADDED 2026-09-22, NOT YET RUN LIVE. =====
             # Sky's burn is protocol-level, so there is no balance to read — but SKY.burn() runs
             # through OpenZeppelin's _burn, which emits Transfer(holder, address(0), amount). The
@@ -15882,6 +15931,23 @@ PROJECTS = [
         ],
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
+        # ===== HOLDERS REVENUE FROM DEFILLAMA'S STAKE CHILD (Jake's credibility run, 2026-10-05). =====
+        # DefiLlama split its adapter on 2026-08-04 (dimension-adapters PR #8586, commit 11744feb, "split
+        # etherfi liquid and staking"): ONLY fees/ether-fi-stake/index.ts books holders revenue; the Liquid,
+        # Cash and Cash-collateral adapters book 0. Read through the parent's listing (/overview/fees,
+        # parentProtocol), never a guessed slug. WHAT IT COUNTS (@c9ff7c2, 2026-10-05): the USD of every
+        # Ethereum DEX-aggregator trade whose TAKER is 0x2f5301a3… (the buyback wallet) — ANY token, not
+        # ETHFI only — plus ten hand-entered off-chain USDC buybacks 2024-07-31..2025-04-30 (~$1.31M). It is
+        # BUY PRESSURE into the wallet, not a payment to sETHFI stakers; nothing in the adapter names the new
+        # programme (2026-09-03) or a TWAP/CoW executor.
+        "defillama_sum_slugs": (
+            {"metric": "holders_revenue_usd", "data_type": "dailyHoldersRevenue", "parent": "ether.fi",
+             "parent_id": "parent#ether.fi", "include_names": ("stake",), "retired_after_days": 30,
+             "why": "holders revenue lives in the ether.fi Stake child only since DefiLlama's 2026-08-04 split",
+             "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/c9ff7c2da3f3cf8a2189826333013078f7fbcbb6/"
+                           "fees/ether-fi-stake/index.ts",
+             "read_on": "2026-10-05"},
+        ),
         "archetypes": [3], "archetypes_held": [],
         # ===== CIRCULATING INCLUDES LOCKED — VERDICT B. =====
         # The opposite convention from Aerodrome, which is exactly why this is recorded per project
@@ -21522,19 +21588,15 @@ CREDIBILITY_PROJECTS = ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume",
 CREDIBILITY_PARKED = {"World Mobile": "parked by Jake, 2026-10-05"}
 CREDIBILITY_XREF = {
     "days": 30,                       # first read of Coinbase candles; later runs read a week
-    "coinbase_product": {},           # project -> product id where it is not "<SYMBOL>-USD"
+    # DECLARED PRODUCTS ONLY — never "<SYMBOL>-USD" guessed (Fluid read 22% off on a guessed FLUID-USD,
+    # 2026-10-05). Listed here only where the Coinbase asset is the same token; the rest use DefiLlama.
+    "coinbase_product": {"Ethereum": "ETH-USD", "Chainlink": "LINK-USD", "Near": "NEAR-USD",
+                         "Uniswap": "UNI-USD", "Aerodrome": "AERO-USD"},
     "lido_apr_projects": ("Ethereum",),
 }
 # Rows every project gets. A callable takes the project name and returns the spec (or None).
-CREDIBILITY_COMMON_INPUTS = {
-    "in_price": {"what": "Price (CoinGecko, daily point at 00:00 UTC)",
-                 "ours": {"metric": "price_usd", "window": "now"}, "fmt": '$#,##0.0000;($#,##0.0000);-',
-                 "ref": {"metric": "price_usd_coinbase", "align_to": "price_usd", "tol": 2.0,
-                         "source": "Coinbase Exchange daily candle OPEN (00:00 UTC) on the same day as our latest "
-                                   "price — an exchange price, independent of CoinGecko's aggregate",
-                         "note": "Not listed on Coinbase Exchange -> no reference value (the Run Log says 404); "
-                                 "a second exchange would resolve it."}},
-}
+# Rows every project gets beyond the generic ones in credibility.py (price and circulating are built there).
+CREDIBILITY_COMMON_INPUTS: dict = {}
 _C_TOK, _C_USD, _C_PCT = '#,##0;(#,##0);-', '$#,##0;($#,##0);-', '0.00%;(0.00%);-'
 
 
@@ -21661,6 +21723,12 @@ CREDIBILITY: dict = {
         "in_perps": _c_in("Perps volume Q0 (Hyperliquid candleSnapshot)", "perps_volume_usd", "q0",
                           {"metric": "perps_volume_usd_asxn", "window": "q0", "tol": 10.0,
                            "source": "ASXN perps volume, Q0"}, fmt=_C_USD),
+        "in_emissions_active": _c_in("Emissions Q0 vs the curve paid on ACTIVE stake only", "emissions_tokens", "q0",
+                                     {"formula": "hl_reward_active", "tol": 10.0,
+                                      "source": "the documented curve, rate set by TOTAL stake, paid on ACTIVE stake "
+                                                "(validatorSummaries: jailed / inactive excluded)",
+                                      "note": "Jake's run 2026-10-05: observed -24% vs the curve on total stake. If "
+                                              "this row PASSES, inactive stake explains the gap."}),
         "in_emissions": _c_in("Emissions Q0 (fall in tokenDetails.futureEmissions)", "emissions_tokens", "q0",
                               {"metric": "emissions_modelled_tokens", "window": "q0", "tol": 20.0,
                                "source": "the documented reward curve applied to the daily stake (emissions_modelled_tokens)",
@@ -21739,6 +21807,15 @@ CREDIBILITY: dict = {
                          "tol": 25.0, "source": "Aethir's published Checker Node schedule",
                          "note": "Until supplier rewards are measured our series IS this schedule (stitched) — then "
                                  "the comparison is circular; it becomes a check once the measured leg takes over."},
+        "in_circ": _c_in("Circulating supply (Aethir dashboard athCirculatingSupply)", "circulating_supply_first_party",
+                         "now", _c_unv(
+            "Aethir's circulating is its own VESTING-SCHEDULE value, not an on-chain count: docs.aethir.com 'ATH "
+            "Circulating Supply' gives monthly steps (20.13B May, 21.01B Jun, 21.78B Jul 2026 per a secondary copy; "
+            "the dashboard read 21.01B on 2026-06-28), and the dashboard stepped 23.31B -> 24.05B on 2026-10-01. "
+            "CoinGecko's 20.13B is the MAY step — stale, not a second measurement. The schedule (current, the "
+            "issuer's own) is the one the ratios use.",
+            "read the docs page's October 2026 step by hand and record it; an on-chain count would need Aethir's "
+            "list of locked/vesting wallets")),
         "in_locked": _c_in("ATH staked (dashboard totalStaked)", "locked_tokens", "now", {
             "verdict": "FRESH-only",
             "why": "Only Aethir's dashboard reports all four pools; spot_checks re-read it live on 2026-10-05.",
@@ -21752,14 +21829,24 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Maple
     "Maple": {
-        "a3_buyback_locked": _c_chk(
-            "UNRECONCILED: the transparency page's SYRUP Holdings (77.66-79.21M) vs the DAO multisig on-chain "
-            "(23.09M), ~3.4x apart; no buyback executor address is on file.",
-            "Maple's methodology for 'SYRUP Holdings' (which wallets) — then read those wallets on-chain"),
-        "in_revenue": _c_in("Revenue Q0 (Maple transparency page, monthly)", "revenue_usd", "q0",
-                            {"metric": "revenue_usd_defillama", "window": "q0", "tol": 10.0,
+        "a3_buyback_locked": {"verdict": "UNVERIFIABLE (awaiting the SSF address)",
+                              "why": "NOT a disagreement (Jake, 2026-10-05): the page's 77.66-79.21M SYRUP is the "
+                                     "Syrup Strategic Fund, a DIFFERENT wallet from the DAO multisig (23.09M "
+                                     "on-chain); the SSF's address is unpublished — Jake has asked Maple.",
+                              "resolve": "the SSF address from Maple, then read its SYRUP balance on-chain"},
+        "in_revenue": _c_in_py("Revenue, latest 3 complete months (Maple transparency page, monthly rows)",
+                               "months_match", {"daily": "revenue_usd_defillama", "monthly": "revenue_usd",
+                                                "side": "ref"},
+                            {"formula": "months_match", "tol": 10.0,
+                             "args": {"daily": "revenue_usd_defillama", "monthly": "revenue_usd", "side": "ours"},
                              "force_verdict": "CHECK",
-                             "source": "DefiLlama Maple revenue, Q0",
+                             "source": "DefiLlama Maple revenue summed over the SAME complete months",
+                             "note": "MONTHS, NOT Q0 (Jake's run 2026-10-05: page Q0 $2.84M vs DefiLlama $3.63M, "
+                                     "-21.8%, looked like a reversal — the page's Q0 held Jul + Aug only, its "
+                                     "September row not yet published, against ~3 months of DefiLlama days). "
+                                     "DefiLlama's dailyRevenue is GROSS of the holders share and of delegate fees "
+                                     "(fees/maple-finance.ts @c9ff7c2); its July read $1,024,386 vs Maple's "
+                                     "$1,367,683 (PR #8936 body).",
                              "why": "UNEXPLAINED: 0.99-1.01x through 2025-09, then 1.24-2.23x from 2025-10 with Maple's "
                                     "figure now primary. Partly explained only: DefiLlama nets a holders share (25% from "
                                     "2025-11, 10% from 2026-07 = 1.33x / 1.11x on its own), misses the "
@@ -21846,11 +21933,12 @@ CREDIBILITY: dict = {
         "a4_gross_burn": _c_chk(
             "Stage 2 burns began 2026-09-14 (Pause Proxy -> 0x0); Sky's own monthly burn figure for September is not "
             "on file.", "Sky's September settlement report: burned SKY, compared month to month"),
-        "a4_gross_issuance": {"formula": "delta_q0", "args": {"metric": "total_supply", "plus": "sky_stage2_burn_tokens"},
+        "a4_gross_issuance": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
+                                                              "plus": "sky_stage2_burn_tokens"},
                               "tol": 20.0, "source": "observed: d(total_supply) + Stage 2 burn across Q0 — ours is the "
                                                     "DECLARED schedule (96.9M SKY / 90 days, Messari)"},
-        "a4_net_change": {"formula": "delta_q0", "args": {"metric": "total_supply"}, "tol": 20.0,
-                          "source": "d(total_supply) across Q0"},
+        "a4_net_change": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol"}, "tol": 20.0,
+                          "source": "d(SKY totalSupply on-chain, archive-backfilled) across Q0"},
         "a3_protocol_yield": _c_chk(
             "Ours is DefiLlama holders revenue / (staked SKY x price); Sky's own staking rewards rate (sky.money) is "
             "not read.", "read the SKY staking rewards rate on sky.money by hand and record it"),
@@ -21868,7 +21956,8 @@ CREDIBILITY: dict = {
             "The manual NPS rows ARE Sky's own figures (insights.skyeco.com / financial.skyeco.com); there is no "
             "second publisher of NPS."), fmt=_C_USD),
         "in_emissions": _c_in("Emissions Q0 (declared schedule, Messari)", "emissions_tokens", "q0",
-                              {"formula": "delta_q0", "args": {"metric": "total_supply", "plus": "sky_stage2_burn_tokens"},
+                              {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
+                                                               "plus": "sky_stage2_burn_tokens"},
                                "tol": 20.0, "source": "observed: d(total_supply) + Stage 2 burn across Q0 — the chain"}),
     },
     # ---------------------------------------------------------------- Uniswap
@@ -21880,10 +21969,17 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- GEODNET
     "GEODNET": {
-        "a4_gross_burn": {"metric": "gross_burn_tokens_dune_monthly", "window": "q0", "tol": 15.0,
-                          "source": "Dune 8683175 monthly burn (Polygon + Solana) — ours is the daily on-chain sum",
-                          "note": "Monthly rows vs a 90-day window: a month straddling the window edge moves the gap; "
-                                  "SQL BX2 compares month by month."},
+        "a4_gross_burn": {"inputs": ("in_burn_months",),
+                          "source": "the same complete months on both sides (row in_burn_months)",
+                          "why": "Dune serves MONTHS; the Q0 cell is 90 days, so the check is made month by month "
+                                 "on the latest complete months (as SQL BX2 does: within 0.15% over 11 months)."},
+        "in_burn_months": _c_in_py("GEOD burned, latest 3 complete months (daily on-chain rows summed per month)",
+                                   "months_match", {"daily": "gross_burn_tokens",
+                                                    "monthly": "gross_burn_tokens_dune_monthly", "side": "ours"},
+                                   {"formula": "months_match", "tol": 2.0,
+                                    "args": {"daily": "gross_burn_tokens", "monthly": "gross_burn_tokens_dune_monthly",
+                                             "side": "ref"},
+                                    "source": "Dune 8683175 monthly burn (Polygon + Solana), the same months"}),
         "a4_pool_release": _c_unv(
             "Measured from the two mining wallets' own balances; GEODNET publishes no release schedule.",
             "a published GEOD release/emission schedule"),
@@ -21891,7 +21987,9 @@ CREDIBILITY: dict = {
                                "no emission schedule.", "a published GEOD release/emission schedule"),
         "a2_customer_revenue": _c_chk(
             "Ours is DefiLlama's burn-derived fees (holders revenue / 0.8) — the burn itself, restated; GEODNET's own "
-            "revenue reports are not wired. The fee split is OPEN (declared 0.80 vs observed 0.8706).",
+            "revenue reports are not wired. The split in use is 0.80, restated by GEODNET itself on 2026-07-02 "
+            "(x.com/GEODNET/status/2072713418818068898); burn / reported ARR is 0.8706 — a base question (data "
+            "revenue vs ARR), still OPEN, not a newer split.",
             "GEODNET's monthly revenue figures (its own reports) recorded as manual references"),
         "in_locked": _c_in("GEOD staked (staking wallet 0x682B…, Polygon)", "locked_tokens", "now",
                            {"manual": {"value": 2_993_000, "read_on": "2026-10-04", "read_by": "Jake",
@@ -21901,6 +21999,7 @@ CREDIBILITY: dict = {
     # ---------------------------------------------------------------- Pendle
     "Pendle": {
         "a3_protocol_yield": {"metric": "staking_apr_published", "window": "now", "tol": 25.0, "same_source": True,
+                              "zero_is_missing": True,
                               "source": "Pendle's lastEpochApr (spendle/data)",
                               "note": "Ours is PENDLE distributed per epoch (the same API) over on-chain sPENDLE + "
                                       "virtual — a shared input, so FRESH-only at best."},

@@ -1664,14 +1664,15 @@ def _customer_revenue_views(groups: dict) -> None:
         if not spec:
             continue
         name, legs = p["name"], (spec["core"], *spec["plus"])
-        series = []
+        series, sources = [], []
         for m in legs:
             g = groups.get((name, m))
             if g is None or g.empty:
                 series = None
                 break
-            series.append(g.assign(date=pd.to_datetime(g["date"]).dt.normalize())
-                          .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+            g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            series.append(g.set_index("date")["value"].astype(float))
+            sources.append(g.set_index("date")["source"].astype(str))
         if series is None:
             groups.pop((name, spec["metric"]), None)
             _VIEW_BLOCKS_PENDING[(name, spec["metric"])] = (
@@ -1684,8 +1685,15 @@ def _customer_revenue_views(groups: dict) -> None:
             continue
         total = sum(s_.reindex(days) for s_ in series)
         cols = groups[(name, spec["core"])].columns
+        # A PARTIAL LEG MAKES A PARTIAL SUM (Chainlink's fee lines without Base/OP, 2026-10-05): the day is
+        # stored, and the marker names which legs are short.
+        base_src = f"derived:sum({' + '.join(legs)})"
+        srcs = []
+        for d in days:
+            short = [m for m, sr in zip(legs, sources) if ":PARTIAL" in sr.get(d, "")]
+            srcs.append(config.mark_source(base_src, "PARTIAL") + f"[{', '.join(short)} partial]" if short else base_src)
         view = pd.DataFrame({"date": days, "project": name, "metric": spec["metric"], "value": total.values,
-                             "source": f"derived:sum({' + '.join(legs)})", "tier": 2})
+                             "source": srcs, "tier": 2})
         groups[(name, spec["metric"])] = _as_stored(view, cols)
 
 
@@ -4437,6 +4445,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     # The split that applied to each window — NEVER the current split applied backwards.
     share = lambda r, w="q0": R.C(r, WINDOW_SHARE_COL[w])  # noqa: E731
     st = lambda r, w="q0": R.C(r, WINDOW_STATUS_COL[w])  # noqa: E731
+    # NO TOKEN IS BOUGHT WHERE FEES GO TO VOTERS IN THE PAIRS' OWN TOKENS (Aerodrome; Credibility pass
+    # 2026-10-05: the implied cell read 18.25% because share_to_buyback 1.0 is the share DISTRIBUTED, not
+    # bought). The implied figures are a structural 0, as the retirement rates already are.
+    no_buy = lambda p: "=0" if _retirement_zero(p) else None  # noqa: E731
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
@@ -4458,15 +4470,17 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Base for the implied buyback ($) — revenue, or the metric the protocol's share names",
          lambda r, p: pull(rev(r, p)), FMT_USD, "pull", False, {"metric_fn": config.revenue_base_metric}),
         ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
-        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
+        ("Implied buyback Q0 ($) = revenue × share", lambda r, p: no_buy(p) or base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
-        ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
+        ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: no_buy(p) or base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
         ("Circulating supply", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), f"{_annualise(R, r, p, config.revenue_base_metric(p['name']), rev(r, p))}*{share(r)}/{price(r)}/({circ(r, p)})", share(r)))),
-         FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True}),
+         lambda r, p: no_buy(p) or base_gated(p, threshold_gated(p, gated(st(r), f"{_annualise(R, r, p, config.revenue_base_metric(p['name']), rev(r, p))}*{share(r)}/{price(r)}/({circ(r, p)})", share(r)))),
+         FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True,
+                                 "flag_fn": lambda p: ((" · no buyback — fees to voters", _retirement_zero(p))
+                                                       if _retirement_zero(p) else None)}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False,
          {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False,

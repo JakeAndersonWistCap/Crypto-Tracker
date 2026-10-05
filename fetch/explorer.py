@@ -89,7 +89,8 @@ class ExplorerLogs:
 
     def __init__(self, http: Http | None = None, pace_sleep=None):
         # 5 req/s is the free-tier ceiling on both; 0.25s keeps a margin under it.
-        self.http = http or Http(min_interval=float(config.EXPLORER_MIN_INTERVAL_S), retries=2)
+        self.http = http or Http(min_interval=float(config.EXPLORER_MIN_INTERVAL_S), retries=2,
+                                 ratelimit_reset_ms=True)
         # ONE PACER PER HOST FOR THE WHOLE RUN (Jake, 2026-10-05): each adapter used to hold its own
         # ExplorerLogs and its own spacing, so chainlink_fees, logscan and balance_flow together drew
         # HTTP 429 from base.blockscout.com. Every call now waits on fetch.base.host_pace for its host —
@@ -138,6 +139,9 @@ class ExplorerLogs:
         spec = config.EXPLORERS[name]
         if name == "etherscan":
             return spec["base_url"], {"chainid": chain_id}
+        # A KEY GOES TO THE PRO API (per-instance keys are deprecated): one host for every chain.
+        if spec.get("pro_api") and self.key(name):
+            return spec["pro_api"].format(chain_id=int(chain_id)), {}
         host = (spec.get("hosts") or {}).get(chain_id)
         if not host:
             raise ExplorerRefused(f"{name}: no host configured for chain {chain_id}")
@@ -161,6 +165,11 @@ class ExplorerLogs:
                 self._errors.append(f"{name}: {self._scrub(e)}")
                 raise self._timed_out() from None
             except Exception as e:  # noqa: BLE001 — reported as a refusal, never swallowed
+                if "429" in str(e) and pace.gap:
+                    # STILL LIMITED AFTER THE WAITS: halve this host's rate for the rest of the run, for
+                    # every adapter that shares it (Jake's run 2026-10-05: Base/OP 429 at 4 req/s).
+                    pace.slow_to(0.5 / pace.gap)
+                    log.info("explorer: %s answered 429 — pace for its host now %.2f req/s", name, 1 / pace.gap)
                 self._errors.append(f"{name}: {self._scrub(e)[:160]}")
                 raise ExplorerRefused(f"{name}: {self._scrub(e)}") from None
             self.requests[name] = self.requests.get(name, 0) + 1

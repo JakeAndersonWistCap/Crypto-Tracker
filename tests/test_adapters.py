@@ -9300,10 +9300,12 @@ def test_the_contract_supply_read_lands_on_the_gross_metric():
         assert "total_supply_gross" in config.metrics_for_project(p), name
 
     # And it is scoped: a project with no declared convention keeps the chain read on total_supply.
+    # (Its second read of the same SKY contract, under total_supply_protocol, is the Credibility
+    # round's issuance base — 2026-10-05 — and never the gross metric.)
     sky = config.PROJECT_BY_NAME["Sky"]
-    for c in sky["contracts"].values():
-        if c["kind"] == "erc20_total_supply":
-            assert c["metric_override"] is None, "Sky does not declare net_of_burn — do not move it"
+    overrides = [c["metric_override"] for c in sky["contracts"].values() if c["kind"] == "erc20_total_supply"]
+    assert None in overrides, "Sky does not declare net_of_burn — its chain read stays on total_supply"
+    assert set(overrides) <= {None, "total_supply_protocol"}, overrides
     print("gross metric ok: six contracts re-pointed, scoped to the four net_of_burn projects")
 
 
@@ -23301,12 +23303,23 @@ def test_chainlink_fee_lines_store_complete_priced_days_and_refuse_an_incomplete
     f2 = out2.frame()
     assert f2[f2.metric == "customer_revenue_ccip_legacy_usd"].set_index("date")["value"][pd.Timestamp(d1)] == 30.0
     # one chain failing: the line is not stored at all
-    c3 = cf.ChainlinkFees(explorer=Ex(fail_chain=8453), prices=prices, cache_file=tmp_path / "clf3.json")
+    c3 = cf.ChainlinkFees(explorer=Ex(fail_chain=1), prices=prices, cache_file=tmp_path / "clf3.json")
     out3 = FetchOutput()
     c3.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out3, unbounded=True)
     assert "customer_revenue_vrf_usd" not in set(out3.frame().get("metric", pd.Series(dtype=str)))
     assert any("NOT STORED" in e.message for e in out3.log)
-    assert c3.seed_complete() is None, "a seed with a chain unread is not complete; routine runs keep skipping"
+    assert c3.seed_complete() is None, "a REQUIRED chain unread: not complete; routine runs keep skipping"
+    # AN OPTIONAL CHAIN UNREAD (Base behind Blockscout's limits, Jake 2026-10-05): stored PARTIAL, named,
+    # its part-read events left out, and the seed complete on the required chains
+    c4 = cf.ChainlinkFees(explorer=Ex(fail_chain=8453), prices=prices, cache_file=tmp_path / "clf4.json")
+    out4 = FetchOutput()
+    c4.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out4, unbounded=True)
+    f4 = out4.frame()
+    vrf4 = f4[f4.metric == "customer_revenue_vrf_usd"]
+    assert len(vrf4) and vrf4["source"].str.contains(":PARTIAL").all() \
+        and vrf4["source"].str.contains("base not covered").all()
+    assert c4.seed_complete()["partial_chains"] == ["base"]
+    assert any("PARTIAL, missing: base" in e.message for e in out4.log)
 
 
 def test_chainlink_fee_seed_reads_in_passes_saving_after_each_and_resumes(tmp_path):
@@ -23632,22 +23645,38 @@ def test_xref_coinbase_candles_and_lido_apr(tmp_path):
                 raise a
             return a
 
+    t0 = int(pd.Timestamp("2026-10-04").timestamp())
+
     def answers(url):
         if "lido" in url:
             return {"data": {"smaApr": 2.83, "aprs": []}}
-        if "HYPE-USD" in url:
+        if "LINK-USD" in url:
             return RuntimeError("404 Client Error: Not Found for url")
-        return [[int(pd.Timestamp("2026-10-04").timestamp()), 1, 2, 1.5, 1.6, 1]]
+        if "coins.llama.fi" in url:
+            return {"coins": {"ethereum:0x6f40d4a6237c257fff2db00fa0510deeecd303eb": {
+                "prices": [{"timestamp": t0 + 120, "price": 2.15}, {"timestamp": t0 + 43200, "price": 2.5}]},
+                "coingecko:hyperliquid": {"prices": [{"timestamp": t0, "price": 40.0}]}}}
+        return [[t0, 1, 2, 1.5, 1.6, 1]]
     daily = DailyChecks(tmp_path)
-    x = CrossRefs(http=H(answers), daily=daily, robots=lambda u: (True, "test"))
+    http = H(answers)
+    x = CrossRefs(http=http, daily=daily, robots=lambda u: (True, "test"))
     out = FetchOutput()
-    x.run([config.PROJECT_BY_NAME[n] for n in ("Ethereum", "Hyperliquid", "World Mobile")], 30, out)
+    x.run([config.PROJECT_BY_NAME[n] for n in ("Ethereum", "Chainlink", "Hyperliquid", "Fluid", "World Mobile")],
+          30, out)
     f = out.frame()
     assert f[f.metric == "staking_apr_lido"]["value"].iloc[0] == _pytest.approx(0.0283)
     assert set(f[f.metric == "price_usd_coinbase"]["project"]) == {"Ethereum"}, "parked / unlisted get none"
-    assert any("HYPE-USD not listed on Coinbase Exchange" in e.message for e in out.log)
+    # ONLY DECLARED PRODUCTS (Fluid read 22% off on a guessed FLUID-USD): no call for FLUID or HYPE
+    assert not any("FLUID-USD" in u or "HYPE-USD" in u for u in http.calls)
+    assert any("LINK-USD not listed on Coinbase Exchange" in e.message for e in out.log)
+    # DefiLlama by the token's verified address; a point far from 00:00 is dropped; a native coin is
+    # keyed coingecko: and said to be CoinGecko's own price
+    fl = f[(f.metric == "price_usd_llama") & (f.project == "Fluid")]
+    assert list(fl["value"]) == [2.15] and fl["source"].iloc[0] == \
+        "defillama_coins:ethereum:0x6f40d4a6237c257fff2db00fa0510deeecd303eb"
+    assert CrossRefs.llama_key(config.PROJECT_BY_NAME["Hyperliquid"]) == ("coingecko:hyperliquid", False)
     out2 = FetchOutput()
-    x.run([config.PROJECT_BY_NAME["Hyperliquid"]], 30, out2)
+    x.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out2)
     assert any("re-tried weekly" in e.message for e in out2.log), "a 404 is remembered, not re-asked every run"
     bad = CrossRefs(http=H(lambda u: {"data": {"smaApr": 31.0}}), daily=DailyChecks(tmp_path / "b"),
                     robots=lambda u: (True, ""))
@@ -23656,6 +23685,7 @@ def test_xref_coinbase_candles_and_lido_apr(tmp_path):
     assert out3.frame().empty and any("outside 0-20%" in e.message for e in out3.log)
     assert "api.exchange.coinbase.com" in config.SOURCE_REGISTER and "eth-api.lido.fi" in config.SOURCE_REGISTER
     assert set(config.METRICS["price_usd_coinbase"]["only_projects"]) == set(config.CREDIBILITY_PROJECTS)
+    assert set(config.METRICS["price_usd_llama"]["only_projects"]) == set(config.CREDIBILITY_PROJECTS)
     assert config.METRICS["price_usd_coinbase"]["view_only"] and config.METRICS["staking_apr_lido"]["view_only"]
 
 
@@ -23668,3 +23698,276 @@ def test_a_route_only_closure_never_blanks_a_live_headline(tmp_path):
     row = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "Ethereum")
     assert ws.cell(row, col).value != bw.CLOSED_TEXT and "gross_issuance_tokens" in str(ws.cell(row, col).value)
     assert config.unavailable_for("Ethereum", "gross_issuance_tokens")["route_only"] is True
+
+
+# ===================================================================================
+# CREDIBILITY RESULTS round (Jake, 2026-10-05 17:00)
+# ===================================================================================
+def test_xlcalc_follows_excel_rules_for_the_functions_the_workbook_writes():
+    """D: the verdicts are worked out in Python on a machine without LibreOffice. Excel's rules where
+    they bite: errors propagate, IF/IFERROR are lazy, an empty cell is 0 / "", text compares
+    case-insensitively, MATCH(…,0) is exact, COUNTIFS takes wildcards, TEXT of text is the text."""
+    import openpyxl
+    import xlcalc
+    wb = openpyxl.Workbook()
+    d = wb.active
+    d.title = "Data"
+    for i, (k, v) in enumerate([("A|x", 10), ("B|x", "n/a"), ("C|x", None), ("a|y", 4)], start=2):
+        d.cell(i, 1, k)
+        d.cell(i, 2, v)
+    s = wb.create_sheet("My Tab")
+    f = {
+        "A1": '=INDEX(Data!$B$2:$B$5,MATCH("A"&"|x",Data!$A$2:$A$5,0))*2',
+        "A2": '=IFERROR(INDEX(Data!$B$2:$B$5,MATCH("Z|x",Data!$A$2:$A$5,0)),"none")',
+        "A3": '=INDEX(Data!$B$2:$B$5,MATCH("C|x",Data!$A$2:$A$5,0))',              # empty -> 0
+        "A4": '=ISNUMBER(INDEX(Data!$B$2:$B$5,MATCH("B|x",Data!$A$2:$A$5,0)))',
+        "A5": '=IF(TRUE,1,1/0)',                                                   # lazy branch
+        "A6": '=1/0',
+        "A7": '=IF(AND(ISNUMBER(A1),ABS(A1-19.5)<=0.5),"PASS","CHECK")',                # tolerance inclusive
+        "A8": '=LEFT("CHECK (inputs)",5)="check"',                                 # case-insensitive
+        "A9": '=COUNTIFS(B1:B4,"PASS*")',
+        "A10": '="x"&TEXT(1234567.4,"#,##0")&TEXT("n/a","#,##0")',
+        "A11": '=ROUND(2.5,0)+ROUND(-2.5,0)+SQRT(16)',
+        "A12": '="n/a">0',                                                         # text sorts above numbers
+        "A13": "='My Tab'!A1+INDEX(Data!$B$2:$B$5,MATCH(\"A|Y\",Data!$A$2:$A$5,0))",
+        "A14": '=-2^2+50%',
+        "A15": '=COUNTA(B1:B4)',
+    }
+    for k, v in f.items():
+        s[k] = v
+    for i, v in enumerate(["PASS", "PASS (inputs)", "CHECK", None], start=1):
+        s.cell(i, 2, v)
+    X = xlcalc.Workbook(wb)
+    got = {k: xlcalc.display(X.cell("My Tab", k)) for k in f}
+    assert got == {"A1": 20.0, "A2": "none", "A3": 0.0, "A4": False, "A5": 1, "A6": "#DIV/0!", "A7": "PASS",
+                   "A8": True, "A9": 2.0, "A10": "x1,234,567n/a", "A11": 4.0, "A12": True, "A13": 24.0,
+                   "A14": 4.5, "A15": 3.0}, got
+    assert xlcalc.unsupported(wb) == {}
+    s["C1"] = "=VLOOKUP(1,B1:B4,1,FALSE)"
+    assert "VLOOKUP" in xlcalc.unsupported(wb), "a function it does not know is named, never guessed"
+
+
+def test_xlcalc_agrees_with_libreoffice_on_every_formula_of_a_built_workbook(tmp_path):
+    """D: on the real workbook (every tab, 3,963 formulas on the empty store) the Python values are the
+    LibreOffice values. Checked also on a 1.26M-row synthetic store when written (2026-10-05): 0 differ.
+    Where LibreOffice is not installed (Jake's Windows box) the coverage half still runs."""
+    import shutil
+
+    import openpyxl
+    import xlcalc
+    import build_workbook as bw
+    import store as sm
+    st = sm.Store(tmp_path / "e.db")
+    out = tmp_path / "w.xlsx"
+    bw.build_workbook(st, out)
+    st.close()
+    wb = openpyxl.load_workbook(out)
+    assert xlcalc.unsupported(wb) == {}, "build_workbook writes a function xlcalc.py does not evaluate"
+    X = xlcalc.Workbook(wb)
+    cells = [(ws.title, c.row, c.column) for ws in wb.worksheets for row in ws.iter_rows() for c in row
+             if isinstance(c.value, str) and c.value.startswith("=")]
+    ours = {k: xlcalc.display(X.value(*k)) for k in cells}
+    cred = [v for (sh, r, c), v in ours.items() if sh == "Credibility" and c == 11]
+    assert cred and all(str(v).startswith(("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")) for v in cred), \
+        [v for v in cred if not str(v).startswith(("PASS", "CHECK", "FRESH", "UNVER", "N/A"))][:5]
+    if not shutil.which("soffice"):
+        return
+    from recalc import recalc
+    lo = tmp_path / "lo.xlsx"
+    shutil.copy(out, lo)
+    recalc(str(lo), timeout=300)
+    v = openpyxl.load_workbook(lo, data_only=True)
+    diff = []
+    for (sh, r, c), mine in ours.items():
+        ref = v[sh].cell(r, c).value
+        same = mine == ref or (ref in (None, "") and mine in (None, "")) or (
+            isinstance(mine, float) and isinstance(ref, (int, float)) and abs(mine - ref) <= 1e-9 * max(1, abs(ref)))
+        if not same:
+            diff.append((sh, r, c, mine, ref))
+    assert not diff, diff[:5]
+
+
+def test_credibility_report_runs_without_libreoffice(tmp_path, monkeypatch, capsys):
+    """D: `python credibility_report.py` on Windows without LibreOffice — recalc.py is never imported."""
+    import credibility_report as cr
+    import store as sm
+    db = tmp_path / "m.db"
+    sm.Store(db).close()
+    monkeypatch.setattr(sm, "DB_PATH", str(db))
+    monkeypatch.setitem(sys.modules, "recalc", None)          # importing it would fail
+    assert cr.main(["--open-only", "--project", "Maple"]) == 0
+    out = capsys.readouterr().out
+    assert "CREDIBILITY - counts by verdict" in out and "Maple" in out
+    assert "[UNVERIFIABLE (awaiting the SSF address)] Maple" in out, out[-1500:]
+    out.encode("ascii")
+
+
+def test_maple_ssf_gap_is_awaiting_an_address_not_a_disagreement():
+    """8: SSF vs the DAO multisig (~3.4x) is not a data error — the SSF address is not on file."""
+    import credibility as cred
+    ref = cred.reference("Maple", config.CREDIBILITY["Maple"]["a3_buyback_locked"], {}, None,
+                         pd.Timestamp("2026-10-05"))
+    assert ref["mode"] == "static" and ref["verdict"] == "UNVERIFIABLE (awaiting the SSF address)"
+    assert "CHECK" not in ref["verdict"]
+
+
+def test_http_429_without_retry_after_waits_blockscout_x_ratelimit_reset_in_ms(monkeypatch):
+    """A: Blockscout's 429 carries no Retry-After, only x-ratelimit-reset in MILLISECONDS."""
+    from fetch import base
+    naps = []
+    monkeypatch.setattr(base.time, "sleep", lambda s: naps.append(s))
+
+    class R:
+        def __init__(self, code, headers=None):
+            self.status_code, self.headers = code, headers or {}
+
+        def json(self):
+            return {"ok": 1}
+
+        def raise_for_status(self):
+            pass
+
+    def run(responses, **kw):
+        naps.clear()
+        h = base.Http(retries=2, **kw)
+        seq = iter(responses)
+        monkeypatch.setattr(h.s, "get", lambda *a, **k: next(seq))
+        assert h.get("https://api.blockscout.com/8453/api") == {"ok": 1}
+        return list(naps)
+    assert run([R(429, {"x-ratelimit-reset": "4500"}), R(200)], ratelimit_reset_ms=True) == [4.5]
+    assert run([R(429, {"x-ratelimit-reset": "4500"}), R(200)]) == [2.0], "other hosts: the header is not read"
+    assert run([R(429, {"x-ratelimit-reset": "300"}), R(200)], ratelimit_reset_ms=True) == [2.0], \
+        "never shorter than the backoff floor"
+    assert run([R(429, {"Retry-After": "3", "x-ratelimit-reset": "1500"}), R(200)], ratelimit_reset_ms=True) == [3.0]
+
+
+def test_a_blockscout_key_goes_to_the_pro_api_and_a_429_halves_the_hosts_pace(monkeypatch):
+    """A: with BLOCKSCOUT_API_KEY set every chain is read from api.blockscout.com/{chain_id}/api; a 429
+    that survives Http's waits halves that host's pace for every adapter, and the key is never logged."""
+    from fetch.explorer import ExplorerLogs, ExplorerRefused
+    monkeypatch.setenv("BLOCKSCOUT_API_KEY", "SECRET-BS-KEY-123")
+
+    class H429:
+        def get(self, url, params=None, headers=None, deadline=None):
+            raise RuntimeError(f"HTTP 429 from {url}?apikey={params['apikey']}")
+
+    def nap(_s):
+        pass
+    ex = ExplorerLogs(http=H429(), pace_sleep=nap)
+    url, extra = ex._endpoint("blockscout", 8453)
+    assert url == "https://api.blockscout.com/8453/api" and extra == {}
+    from fetch.base import host_pace
+    pace = host_pace(url, 4.0, sleep=nap)
+    before = pace.gap
+    with _pytest.raises(ExplorerRefused) as e:
+        ex._call("blockscout", 8453, {"module": "logs", "action": "getLogs"})
+    assert pace.gap == _pytest.approx(2 * before), "4 req/s -> 2 req/s for the rest of the run"
+    assert "SECRET-BS-KEY-123" not in str(e.value) and all("SECRET-BS-KEY-123" not in x for x in ex._errors)
+    monkeypatch.delenv("BLOCKSCOUT_API_KEY")
+    assert "api.blockscout.com" not in ExplorerLogs(http=H429(), pace_sleep=nap)._endpoint("blockscout", 1)[0]
+
+
+def test_a_partial_fee_line_makes_a_partial_customer_revenue_day():
+    """A: a fee line stored without Base/OP is PARTIAL; the day's customer-revenue sum says so."""
+    import build_workbook as bw
+    legs = ["fees_usd", "customer_revenue_requests_usd", "customer_revenue_ccip_legacy_usd",
+            "customer_revenue_vrf_usd", "customer_revenue_automation_premium_usd"]
+    rows = []
+    for d in ("2026-10-02", "2026-10-03"):
+        for m in legs:
+            src = "chainlink_fees:vrf[ethereum, arbitrum]"
+            if m == "customer_revenue_vrf_usd" and d == "2026-10-03":
+                src = config.mark_source(src, "PARTIAL") + "[base, optimism not covered]"
+            rows.append((d, "Chainlink", m, 10.0, src))
+    g = _grp(rows)
+    bw._customer_revenue_views(g)
+    v = g[("Chainlink", "customer_revenue_usd")].set_index("date")
+    assert ":PARTIAL" not in v.loc[pd.Timestamp("2026-10-02"), "source"]
+    s = v.loc[pd.Timestamp("2026-10-03"), "source"]
+    assert ":PARTIAL" in s and "customer_revenue_vrf_usd partial" in s
+    assert v["value"].tolist() == [50.0, 50.0]
+    assert set(config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["optional_chains"]) == {"base", "optimism"}
+
+
+def test_logscan_names_not_counted_inflow_after_the_last_counted_transfer(monkeypatch):
+    """B1: Ether.fi's CoW-only count went silent while DefiLlama kept booking buybacks; the run log now
+    lists inflow from other senders AFTER the last counted transfer, by sender with its last date."""
+    spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "buyback_wallet_inflow")
+    cow, other = spec["count_from"][0], "0x00000000000000000000000000000000000000cc"
+    wallet = spec["holders"][0].lower()
+    t0 = int(pd.Timestamp("2026-04-01").timestamp())
+    E = 10 ** 18
+    logs = _flow_logs(wallet, [(100, cow, 5 * E, t0), (200, other, 7 * E, t0 - 86_400),
+                               (300, other, 3 * E, t0 + 86_400 * 30)])
+    out = _run_scan(monkeypatch, dict(spec, token="0xtoken"), logs, {wallet: 15 * E}, name="Ether.fi")
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert f"Not-counted inflow AFTER the last counted transfer: {other} 3.00 (last 2026-05-01)" in line, line
+
+
+def test_defillama_include_names_and_no_main_slug_read_for_a_summed_metric():
+    """B1: Ether.fi's holders revenue lives in the Stake child since DefiLlama's 2026-08-04 split; it is
+    summed from children named 'stake' and never also read from the main slug."""
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+    spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["defillama_sum_slugs"]
+                if s["metric"] == "holders_revenue_usd")
+    assert spec["include_names"] == ("stake",) and spec["parent_id"] == "parent#ether.fi"
+    listing = [{"name": "ether.fi Stake", "slug": "ether.fi-stake", "parentProtocol": "parent#ether.fi"},
+               {"name": "ether.fi Cash", "slug": "ether.fi-cash", "parentProtocol": "parent#ether.fi"}]
+    tried = []
+
+    def chart(slug, data_type="dailyHoldersRevenue"):
+        tried.append(slug)
+        return [(pd.Timestamp("2026-10-01"), 100.0)]
+    ll = DefiLlama.__new__(DefiLlama)
+    ll.stored_long = None
+    ll._fees_listing = lambda: listing
+    ll._summary_chart = chart
+    out = FetchOutput()
+    ll._sum_slugs(config.PROJECT_BY_NAME["Ether.fi"], spec, None, out)
+    assert tried == ["ether.fi-stake"], tried
+    import inspect
+    assert "if metric in summed:" in inspect.getsource(DefiLlama)
+
+
+def test_credibility_price_rows_compare_one_completed_day_and_months_match_whole_months():
+    """C: price on the SAME 00:00 instant (today, a fetch-time point, never compared); GEODNET's burn over
+    the same complete calendar months as the monthly series; Pendle's 0 APR is 'not published'."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-10-05")
+    rows = [(pd.Timestamp("2026-10-03"), "Fluid", "price_usd", 2.10), (pd.Timestamp("2026-10-03"), "Fluid", "price_usd_llama", 2.14),
+            (pd.Timestamp("2026-10-04"), "Fluid", "price_usd", 2.16), (pd.Timestamp("2026-10-05"), "Fluid", "price_usd", 9.0),
+            (pd.Timestamp("2026-10-05"), "Fluid", "price_usd_llama", 1.0)]
+    for d in pd.date_range("2026-06-01", "2026-09-30"):
+        rows.append((d, "GEODNET", "gross_burn_tokens", 10.0))
+    for m in ("2026-06-01", "2026-07-01", "2026-08-01", "2026-09-01", "2026-10-01"):
+        rows.append((pd.Timestamp(m), "GEODNET", "gross_burn_tokens_dune_monthly", 300.0))
+    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value"])
+    v, d, _ = cred._common_day_value("Fluid", {}, long, asof, ref="price_usd_llama", side="ours")
+    r, d2, _ = cred._common_day_value("Fluid", {}, long, asof, ref="price_usd_llama", side="ref")
+    assert (v, r, d, d2) == (2.10, 2.14, "2026-10-03", "2026-10-03")
+    ours, _, how = cred._months_match("GEODNET", {}, long, asof)
+    ref, _, _ = cred._months_match("GEODNET", {}, long, asof, side="ref")
+    assert ours == 310.0 + 310.0 + 300.0 and ref == 900.0 and "2026-07, 2026-08, 2026-09" in how, how
+    pend = config.CREDIBILITY["Pendle"]
+    zspec = pend["a3_protocol_yield"]
+    assert zspec["zero_is_missing"] is True
+    lz = pd.DataFrame([(asof, "Pendle", zspec["metric"], 0.0)], columns=["date", "project", "metric", "value"])
+    got = cred.reference("Pendle", zspec, {}, lz, asof)
+    assert got["value"] is None and "not published" in got["note"]
+
+
+def test_aerodrome_implied_buyback_is_a_structural_zero(tmp_path):
+    """B2: share_to_buyback 1.0 is the share DISTRIBUTED to voters, in the pairs' own tokens — no AERO is
+    bought. A3's implied buyback $ / tokens / % are 0 with the reason, never 18.25%."""
+    import openpyxl
+    bw, wb = _cred_build(tmp_path)
+    ws = wb["A3 Revenue Buyback"]
+    hr = next(i for i in range(1, 10) if ws.cell(row=i, column=1).value == "Project")
+    hdr = {ws.cell(row=hr, column=c).value: c for c in range(1, ws.max_column + 1)}
+    r = next(i for i in range(hr + 1, ws.max_row + 1) if ws.cell(row=i, column=1).value == "Aerodrome")
+    for head in ("Implied buyback Q0 ($)", "Implied buyback Q0 (tokens)", "BUYBACK AS % OF SUPPLY (annualised, implied)"):
+        col = next(v for k, v in hdr.items() if k and str(k).startswith(head))
+        assert ws.cell(r, col).value == "=0", (head, ws.cell(r, col).value)
+    col = next(v for k, v in hdr.items() if k and str(k).startswith("BUYBACK AS % OF SUPPLY"))
+    assert "no buyback" in ws.cell(r, col).number_format

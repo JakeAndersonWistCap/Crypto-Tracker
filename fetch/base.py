@@ -530,10 +530,14 @@ class Http:
     """Retry with exponential backoff on 429/5xx. Never disables TLS verification."""
 
     def __init__(self, min_interval: float = 0.0, retries: int = 4, timeout: float = READ_TIMEOUT_S,
-                 rate_limit_wait: float | None = None, max_retry_wait: float | None = None):
+                 rate_limit_wait: float | None = None, max_retry_wait: float | None = None,
+                 ratelimit_reset_ms: bool = False):
         # rate_limit_wait: the wait on a 429 that carries no Retry-After, for a source whose
         # limiter window is known (NearBlocks: one minute). None keeps the exponential backoff.
         self.rate_limit_wait = rate_limit_wait
+        # ratelimit_reset_ms: a 429 without Retry-After is waited for x-ratelimit-reset MILLISECONDS
+        # (Blockscout, 2026-10-05 — plug/rate_limit.ex sets it from Hammer's ms-to-reset; no Retry-After).
+        self.ratelimit_reset_ms = bool(ratelimit_reset_ms)
         self.max_retry_wait = MAX_RETRY_WAIT_S if max_retry_wait is None else float(max_retry_wait)
         self.s = requests.Session()
         self.s.headers["User-Agent"] = USER_AGENT
@@ -621,6 +625,11 @@ class Http:
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
                     asked = retry_after(r.headers.get("Retry-After"))
+                    if asked is None and r.status_code == 429 and self.ratelimit_reset_ms:
+                        try:
+                            asked = max(0.0, float(r.headers.get("x-ratelimit-reset")) / 1000.0)
+                        except (TypeError, ValueError):
+                            asked = None
                     if r.status_code == 429 and asked is not None and asked > self.max_retry_wait:
                         seen = {k: r.headers.get(k) for k in _RATE_HEADERS if r.headers.get(k)}
                         raise RateLimited(

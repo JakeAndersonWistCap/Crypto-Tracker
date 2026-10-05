@@ -4217,3 +4217,38 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 -- DELETE FROM metrics
 --  WHERE project = 'Chainlink' AND metric = 'customer_revenue_usd'
 --    AND source LIKE 'defillama:sum(%';
+
+
+-- ========================================================================================
+-- BZ. ETHEREUM ISSUANCE: OURS 17,890 ETH vs THE CURVE 21,430 (-16.5%)  2026-10-05
+--     Both cover the same days (the curve is 166.32 x sqrt(staked) x OUR q0_covered_days / 365), ~8 days
+--     of the Etherscan ethsupply2 leg. The question is whether each daily delta spans 24h: the snapshots
+--     are taken when the run happens, so a day's delta can span 18h or 30h. BZ1 puts each delta beside the
+--     hours between its snapshot and the previous one and scales it to 24h; BZ2 shows the stake the curve
+--     reads (beacon_chain_eth: deposit contract + Eth2Staking - WithdrawnTotal — it includes deposits still
+--     queued and balances above the effective 32/2048 ETH, which earn nothing, so it OVERSTATES the active
+--     stake and the curve with it). SELECT only — nothing here writes.
+-- ========================================================================================
+-- BZ1. DAILY ISSUANCE PER 24 HOURS OF SNAPSHOT TIME (issuance = d(total_supply_protocol) + d(burn)).
+SELECT s.date, s.fetched_at,
+       ROUND((julianday(s.fetched_at) - julianday(p.fetched_at)) * 24, 1) AS hours_since_previous,
+       ROUND((s.value - p.value) + (b.value - bp.value), 1) AS issued_eth,
+       ROUND(((s.value - p.value) + (b.value - bp.value))
+             / ((julianday(s.fetched_at) - julianday(p.fetched_at)) * 24) * 24, 1) AS issued_per_24h
+  FROM metrics s
+  JOIN metrics p  ON p.project = s.project AND p.metric = s.metric
+                 AND p.date = (SELECT MAX(date) FROM metrics x WHERE x.project = s.project
+                                AND x.metric = s.metric AND x.date < s.date)
+  JOIN metrics b  ON b.project = s.project AND b.metric = 'burn_cumulative_tokens' AND b.date = s.date
+  JOIN metrics bp ON bp.project = s.project AND bp.metric = 'burn_cumulative_tokens' AND bp.date = p.date
+ WHERE s.project = 'Ethereum' AND s.metric = 'total_supply_protocol'
+ ORDER BY s.date DESC
+ LIMIT 20;
+
+-- BZ2. THE STAKE THE CURVE READS, and the curve per day at each value (166.32 x sqrt(staked) / 365).
+SELECT date, ROUND(value, 0) AS beacon_chain_eth, ROUND(166.32 * sqrt(value) / 365, 1) AS curve_eth_per_day,
+       source
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'beacon_chain_eth'
+ ORDER BY date DESC
+ LIMIT 20;

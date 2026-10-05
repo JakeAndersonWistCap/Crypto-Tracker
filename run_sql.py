@@ -630,6 +630,9 @@ def main(argv=None) -> int:
         return 1
 
     conn = sqlite3.connect(str(db))
+    # sqrt for section BZ: not every SQLite build (Windows Python's included) has the math functions.
+    import math
+    conn.create_function("sqrt", 1, lambda x: math.sqrt(x) if x is not None and x >= 0 else None)
     try:
         sec = sections[letter]
         print(f"\n  {SQL_FILE.name} section {letter} (line {sec['line']}) against {db.name}")

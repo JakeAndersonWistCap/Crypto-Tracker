@@ -187,6 +187,7 @@ class ChainlinkFees:
         start_day = (today().normalize() - pd.Timedelta(days=int(spec.get("days", 365))))
         complete: dict = {k: True for k in ("ccip_legacy", "ccip_v2", "vrf", "automation")}
         why: dict = defaultdict(list)
+        failed: dict = defaultdict(set)            # line -> chains not read through
         prog = None
         if unbounded:
             prog = Progress(f"--seed chainlink_fees {name}", unit="passes", every_units=1,
@@ -197,6 +198,7 @@ class ChainlinkFees:
             if not self.explorer.configured(cid):
                 for k in complete:
                     complete[k] = False
+                    failed[k].add(chain)
                     why[k].append(f"{chain}: no explorer key/route ({config.explorer_order(cid) or 'none'})")
                 continue
             try:
@@ -205,6 +207,7 @@ class ChainlinkFees:
             except ExplorerRefused as e:
                 for k in complete:
                     complete[k] = False
+                    failed[k].add(chain)
                     why[k].append(f"{chain}: start block not found ({e})")
                 continue
             # single-address lines
@@ -213,6 +216,7 @@ class ChainlinkFees:
                                   c[addr_key], wstart, None, out, name, prog, head)
                 if not ok:
                     complete[kind] = False
+                    failed[kind].add(chain)
                     why[kind].append(f"{chain} {kind} scan incomplete")
             # CCIP: every OnRamp the Router ever pointed at
             try:
@@ -220,6 +224,7 @@ class ChainlinkFees:
             except (ExplorerRefused, ExplorerTimeout) as e:
                 for k in ("ccip_legacy", "ccip_v2"):
                     complete[k] = False
+                    failed[k].add(chain)
                     why[k].append(f"{chain}: Router OnRampSet history unreadable ({e})")
                 continue
             for ramp, (b0, b1) in spans.items():
@@ -230,13 +235,20 @@ class ChainlinkFees:
                                       max(wstart, b0), b1, out, name, prog, head)
                     if not ok:
                         complete[kind] = False
+                        failed[kind].add(chain)
                         why[kind].append(f"{chain} OnRamp {ramp[:10]}… {kind} scan incomplete")
             self._save("chainlink-fees.json", state)
         self._prune(streams, start_day)
-        if unbounded and all(complete.values()):
+        optional = set(spec.get("optional_chains") or ())
+        required_done = all(not (failed[k] - optional) for k in complete)
+        if unbounded and required_done:
+            # COMPLETE ON THE REQUIRED CHAINS (Jake, 2026-10-05): an optional chain still unread (Base and
+            # OP behind Blockscout's limits) leaves its lines stored PARTIAL, not the whole seed open.
             state["seed_complete"] = {"window_start": str(start_day.date()),
                                       "completed_at": pd.Timestamp.now("UTC").isoformat(timespec="seconds"),
-                                      "chains": list(spec["chains"])}
+                                      "chains": [c for c in spec["chains"]
+                                                 if not any(c in failed[k] for k in complete)],
+                                      "partial_chains": sorted(set().union(*failed.values()) & optional)}
         self._save("chainlink-fees.json", state)
         if prog is not None:
             prog.flush(final=True)
@@ -244,7 +256,7 @@ class ChainlinkFees:
                                                   if state.get("seed_complete") else
                                                   "NOT complete: " + "; ".join(sum(why.values(), [])[:6])
                                                   + " — run the seed again; it resumes"), TIER)
-        self._emit(name, spec, streams, complete, why, start_day, out)
+        self._emit(name, spec, streams, complete, why, start_day, out, failed)
 
     def _window_block(self, state: dict, chain: str, cid: int, start_day: pd.Timestamp) -> int:
         key = f"{chain}:{start_day.date()}"
@@ -432,7 +444,9 @@ class ChainlinkFees:
         return f"{c['llama_chain']}:{token}"
 
     # ---------------------------------------------------------------- emit
-    def _emit(self, name, spec, streams, complete, why, start_day, out) -> None:
+    def _emit(self, name, spec, streams, complete, why, start_day, out, failed=None) -> None:
+        failed = failed or defaultdict(set)
+        optional = set(spec.get("optional_chains") or ())
         last = today().normalize() - pd.Timedelta(days=1)
         days = [str(d.date()) for d in pd.date_range(start_day, last)]
         needs: dict = defaultdict(set)
@@ -450,8 +464,8 @@ class ChainlinkFees:
         unpriced: dict = defaultdict(set)
         for key, s in streams.items():
             chain, kind = key.split(":")[:2]
-            if chain not in spec["chains"]:
-                continue
+            if chain not in spec["chains"] or chain in failed[kind]:
+                continue                            # a chain not read through never contributes part-days
             for day, toks in (s.get("agg") or {}).items():
                 for tok, (amt, prem) in toks.items():
                     if tok == "usd":
@@ -465,17 +479,24 @@ class ChainlinkFees:
                     totals[kind][day] += int(amt) / 10 ** dec * px
                     if kind == "ccip_v2":
                         totals["ccip_v2_premium"][day] += int(prem) / 10 ** dec * px
-        chains = ",".join(spec["chains"])
         for kind, metric in METRIC.items():
             base = "ccip_v2" if kind == "ccip_v2_premium" else kind
-            if not complete[base]:
+            missing = failed[base]
+            if missing - optional:
                 out.fail(SOURCE, name, f"{metric}: NOT STORED this run — " + "; ".join(why[base][:6]), TIER)
                 continue
             bad = unpriced[base]
             rows = [(pd.Timestamp(d), totals[kind].get(d, 0.0)) for d in days if d not in bad]
             if not rows:
                 continue
-            frame = tidy(rows, name, metric, f"{SOURCE}:{kind}[{chains}]", TIER)
+            chains = ",".join(c for c in spec["chains"] if c not in missing)
+            src = f"{SOURCE}:{kind}[{chains}]"
+            if missing:
+                # STORED, MARKED: the optional chains' share is missing and named on the cell.
+                src = config.mark_source(src, "PARTIAL") + f"[{', '.join(sorted(missing))} not covered]"
+            frame = tidy(rows, name, metric, src, TIER)
             out.add(frame, SOURCE, name, f"{metric}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} "
-                                         f"over {chains}" + (f"; {len(bad)} day(s) refused — an event on "
-                                                             f"them has no price" if bad else ""), TIER)
+                                         f"over {chains}" + (f" — PARTIAL, missing: {', '.join(sorted(missing))}"
+                                                             if missing else "")
+                                         + (f"; {len(bad)} day(s) refused — an event on them has no price"
+                                            if bad else ""), TIER)

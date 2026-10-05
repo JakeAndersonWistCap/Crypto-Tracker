@@ -347,9 +347,14 @@ class DefiLlama:
         # project then declares `defillama_metric_as`, and DefiLlama's series is stored under that
         # cross-check name — never beside the first-party one in the same metric.
         rename = project.get("defillama_metric_as") or {}
+        # A METRIC A LISTING-SUM PRODUCES IS NOT ALSO WRITTEN FROM THE MAIN SLUG (Ether.fi, 2026-10-05:
+        # DefiLlama split its adapter on 2026-08-04 and holders revenue now lives in the Stake child only).
+        summed = {sp["metric"] for sp in project.get("defillama_sum_slugs") or ()}
         for data_type, metric in (("dailyRevenue", "revenue_usd"),
                                   ("dailyHoldersRevenue", "holders_revenue_usd")):
             metric = rename.get(metric, metric)
+            if metric in summed:
+                continue
             try:
                 rows = self._summary_chart(slug, data_type)
                 out.add(window(tidy(rows, name, metric, SOURCE, TIER), window_days), SOURCE, name,
@@ -402,6 +407,11 @@ class DefiLlama:
         pid = str(spec["parent_id"]).lower()
         excluded = {x.lower() for x in spec.get("exclude_slugs", ())}
         kids = [k for k in listing if str(k.get("parentProtocol") or "").lower() == pid]
+        # ONLY THE NAMED CHILDREN where the spec says so (include_names: substrings of the listing name,
+        # case-insensitive) — the children that do not carry the series are not asked for it.
+        inc = [x.lower() for x in spec.get("include_names", ())]
+        if inc:
+            kids = [k for k in kids if any(x in str(k.get("name") or "").lower() for x in inc)]
         listed = "; ".join(f"{k.get('name')} = {k.get('slug') or '(no slug)'}"
                            + (" [EXCLUDED]" if str(k.get("slug") or "").lower() in excluded else "")
                            for k in kids)

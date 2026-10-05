@@ -527,6 +527,95 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11y. Credibility results, 2026-10-05 17:00: Chainlink seed, seven disagreements, checker fixes
+
+**A. Chainlink seed (Base/OP 429, 0 rows).**
+- Set `BLOCKSCOUT_API_KEY` in `.env`. With a key, every chain is read from the PRO API,
+  `https://api.blockscout.com/{chain_id}/api` (one key, every chain; the per-instance hosts are
+  deprecated). The key is sent as `apikey` and scrubbed from every error and log line.
+- Blockscout sends **no Retry-After**. Its 429 carries `x-ratelimit-reset` in **milliseconds**, and
+  Http now waits that long, never less than its 2 s backoff floor. A 429 that survives the retries
+  halves that host's pace for the rest of the run, for every adapter that shares the host
+  (4 → 2 → 1 req/s …). The log says so ("pace for its host now … req/s").
+- Free PRO tier: 5 req/s and 100K credits/day. getLogs costs 20 credits, so about 5,000 calls/day.
+  **Base (8453) is paid-plan only** in Blockscout's docs. Optimism is on the free tier.
+- **Base/OP share of the PLUS lines: not measured.** DefiLlama and Blockscout are both blocked from
+  the build sandbox, and the store holds no Base/OP rows yet. To get the number, open
+  defillama.com/fees for Chainlink VRF, CCIP, Automation and Requests, read the per-chain split for
+  the last 30 days, and add up Base + OP against the total. Once OP is read on the free key, the
+  seed's own run log gives OP's share directly.
+- **Recommendation (implemented): store the completed lines now, marked PARTIAL.** Each fee line
+  that fails only on `optional_chains` (base, optimism) is stored with
+  `:PARTIAL[base, optimism not covered]` instead of nothing. `customer_revenue_usd` carries the
+  marker on every day that has a short leg, and `seed_complete()` records `partial_chains`. A
+  failure on any other chain still stores nothing for that line. If the defillama.com split shows
+  Base + OP above ~10% of the PLUS lines, Base needs the paid Blockscout plan; Etherscan's free tier
+  does not cover Base either.
+
+**B. The seven disagreements.**
+1. *Ether.fi yield 0 vs DefiLlama 14.03%.* DefiLlama split its ether.fi adapter on 2026-08-04
+   (dimension-adapters PR #8586, commit 11744feb). Holders revenue now lives only in the **Stake**
+   child, so the main slug reads ~0. It is now summed from the children whose listing name contains
+   "stake" (`include_names`) and never also read from the main slug. DefiLlama's holders revenue is
+   *every aggregator trade by taker 0x2f53…* (any token) plus 10 off-chain USDC buybacks
+   (2024-07-31..2025-04-30, ~$1.31M). That is buy pressure, not payments to stakers. Our count is
+   CoW settlements only. No address for a new programme was found in the adapter. The SILENT flag
+   may be wrong: each log scan's run-log line now ends with "Not-counted inflow AFTER the last
+   counted transfer: …", by sender with its last date. If a sender shows up there after
+   2026-04-01, purchases moved route rather than stopped.
+2. *Aerodrome implied buyback 18.25%.* `share_to_buyback` 1.0 is the share *distributed to voters
+   in the pairs' own tokens*, not AERO bought. A3's implied $ / tokens / % are now a structural
+   `=0`, with the reason "no buyback — fees to voters" in the number format.
+3. *Aethir circulating 24.05bn vs CoinGecko 20.13bn.* The dashboard figure follows Aethir's own
+   vesting schedule (20.13B May, 21.01B Jun, 21.78B Jul 2026; dashboard 23.31B → 24.05B on
+   2026-10-01). CoinGecko's 20.13B is the May step, i.e. stale. The first-party figure belongs.
+   Free float (circulating − 1.79B locked) is 22.26B first-party vs 18.34B CoinGecko. Market cap
+   is 1.195x higher on the first-party count.
+4. *Maple Q0 $2.84M vs DefiLlama $3.63M.* Q0 on the page held only Jul + Aug (1.367 + 1.471)
+   against about three months of DefiLlama, so the opposite sign is an artefact. The rows now
+   compare the same complete calendar months (`months_match`). Month by month the page is still
+   1.17-1.34x higher, because DefiLlama's holders share is 0.2/0.25/0.1 of gross and its OTC Dune
+   dataset has been stale since 2025-10-09. The row stays a forced CHECK.
+5. *Fluid price $2.16 vs $1.771.* The reference was a **guessed** Coinbase FLUID-USD: a ticker
+   that can belong to another asset. Coinbase is now read only for declared products (ETH, LINK,
+   NEAR, UNI, AERO). Every project gets a second price from DefiLlama's coins API for its
+   **verified** token address. For Fluid that is ethereum:0x6f40d4a6…, so the next run shows which
+   price is right. A native coin keyed `coingecko:` is FRESH-only.
+6. *ETH issuance 17,890 vs formula 21,430.* Same covered days (~8). The shortfall is ~18%/day.
+   Likeliest cause: `beacon_chain_eth` overstates the stake the curve pays on (queued deposits,
+   balances above the effective cap). Snapshot timing is the other candidate. SQL **BZ** (SELECT
+   only) gives issuance per 24 h of snapshot time and the curve on `beacon_chain_eth`. Run
+   `python run_sql.py BZ`; run_sql registers `sqrt` for SQLite builds without it.
+7. *HL emissions −24% vs formula.* A new row computes the curve paid on **active** stake only
+   (`hl_reward_active`: 2.37% x sqrt(400M/S_total) x S_active). If it passes, inactive stake is the
+   whole gap, and the note gives the inactive share.
+
+**C. Checker fixes.** Price rows compare the same 00:00 UTC instant on the latest completed day
+both series hold; today's fetch-time point is never compared. The "Not listed on Coinbase" note no longer appears
+beside a value, because a Coinbase row now exists only for a declared product. GEODNET's gross burn is compared over the same complete
+calendar months as the monthly series (as SQL BX2). Pendle's `lastEpochApr` 0 means "not
+published" (`zero_is_missing`). Sky issuance, emissions and net supply read SKY `totalSupply` under
+`total_supply_protocol` (archive backfill on Ethereum). **ETH staking yield** is BLOCKED by
+unequal coverage until each leg holds 7 days (`RATE_MIN_DAYS`). The consensus leg starts
+2026-09-30, so it clears on the 2026-10-06/07 run if the MEV leg also has 7 days by then.
+
+**D. `python credibility_report.py` needs no LibreOffice.** It evaluates the workbook's formulas in
+Python (`xlcalc.py`: INDEX, MATCH(…,0), IF, IFERROR, ISNUMBER, AND, OR, NOT, LEFT, ABS, ROUND, SQRT,
+NA, COUNTIF(S), COUNTA, TEXT "#,##0"). It agreed with LibreOffice on every one of 3,963 formulas,
+on both an empty store and a 1.26M-row synthetic one. A function it does not know is named, never
+guessed. `--libreoffice` recalculates with LibreOffice instead.
+
+**8. Maple SSF vs DAO multisig (~3.4x)** is not a data error: the SSF is a different wallet and
+its address is unpublished. The row reads "UNVERIFIABLE (awaiting the SSF address)".
+
+**9. GEODNET fee split.** The current first-party statement is still **80%**: GEODNET's own X
+account, June-2026 burn stats, posted 2026-07-02 (x.com/GEODNET/status/2072713418818068898). No GIP
+changes it. It was read from a search-index copy (x.com and geodnet.com are blocked from the
+sandbox), so **Jake to open the link once to confirm the wording**. Recorded under
+`revenue_split_reconciliation.current_split`. 0.80 stays in use. DefiLlama's burn/0.8 agrees with
+it, though DefiLlama gives no source of its own. The 0.8706 is burn / reported ARR, a question of
+base (data revenue vs ARR), not a newer split, and it stays OPEN.
+
 ## 11x. The Credibility tab (2026-10-05): every headline cell beside an independent reference
 
 ```bash
