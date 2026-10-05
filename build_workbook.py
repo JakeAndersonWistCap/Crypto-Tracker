@@ -888,6 +888,25 @@ def _monthly_leg_views(groups: dict) -> None:
         if not legs or g.empty:
             continue
         pts = g["source"].astype(str).map(_measuring_point)
+        # MONTHLY ROWS NEVER SHARE DATES WITH THE DAILY SERIES (Jake, 2026-10-05, generalised). A
+        # monthly row whose month starts on or after the daily series' first day is the CROSS-CHECK
+        # (config.monthly_crosscheck_metric), not the series: the daily rows hold that month.
+        cross = config.monthly_crosscheck_metric(name, metric)
+        daily = g[pts != legs[0]]
+        if cross and not daily.empty:
+            # ONE DAY OF SLACK: the collision itself hides the 1st, so a series whose first stored
+            # day is the 2nd covers the month from its 1st.
+            first = pd.Timestamp(daily["date"].min()).normalize() - pd.Timedelta(days=1)
+            mv = (pts == legs[0]) & (g["date"] >= first)
+            if mv.any():
+                held = groups.get((name, cross))
+                moved = g[mv].assign(metric=cross)
+                if held is not None and not held.empty:
+                    moved = moved[~moved["date"].isin(set(held["date"]))]
+                    moved = pd.concat([held, moved], ignore_index=True)
+                groups[(name, cross)] = moved.sort_values("date")
+                g, pts = g[~mv], pts[~mv]
+                groups[(name, metric)] = g
         per = g["date"].dt.to_period("M")
         # ...UNLESS THE FULL LIVE LEG HOLDS EVERY DAY OF THE MONTH (archive_backfill.py,
         # 2026-09-29): then the daily rows are the same burn at daily resolution, and they win.

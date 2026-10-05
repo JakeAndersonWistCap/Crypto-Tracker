@@ -119,7 +119,8 @@ TIER_ORDER = [
     ("artemis_csv", 5, lambda ctx: ArtemisCSV()),
     ("scrape", 3, lambda ctx: Scrape(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                      prior_delta=ctx["prior_delta"])),
-    ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"])),
+    ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"],
+                                 stored_long=ctx.get("stored_long"))),
 ]
 
 

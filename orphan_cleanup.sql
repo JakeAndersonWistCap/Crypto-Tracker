@@ -4132,3 +4132,65 @@ SELECT source, COUNT(*) AS n_rows, MIN(date) AS first_date, MAX(date) AS last_da
 -- BV3. THE DELETE: the table copy of the retired manual row.
 -- DELETE FROM manual_overrides
 --  WHERE project = 'GEODNET' AND metric = 'locked_tokens' AND date = '2026-09-30';
+
+
+-- ========================================================================================
+-- BW. CHAINLINK: IS DEFILLAMA'S "Chainlink Staking" THE FEE AGGREGATOR?  2026-10-05
+--     DefiLlama's "Chainlink Staking" listing is its `chainlink` module, whose only fee adapter
+--     (fees/chainlink/index.ts) counts tokens received by the fee aggregator 0xd6e39d42... — the same
+--     series as our fees_usd. If customer_revenue_usd minus fees_usd is ~the requests line (~$7.7K/day),
+--     "Staking" is the aggregator and it leaves the sum (the rebuilt structure no longer reads the
+--     DefiLlama listing at all). SELECT only — nothing here writes.
+-- ========================================================================================
+-- BW1. THE LAST 30 DAYS: customer revenue, fees_usd, and their difference.
+SELECT c.date, ROUND(c.value, 0) AS customer_revenue_usd, ROUND(f.value, 0) AS fees_usd,
+       ROUND(c.value - f.value, 0) AS difference, c.source
+  FROM metrics c
+  JOIN metrics f ON f.project = c.project AND f.date = c.date AND f.metric = 'fees_usd'
+ WHERE c.project = 'Chainlink' AND c.metric = 'customer_revenue_usd'
+ ORDER BY c.date DESC
+ LIMIT 30;
+
+
+-- ========================================================================================
+-- BX. GEODNET gross_burn_tokens: DUNE'S MONTHLY ROWS LEAVE THE DAILY KEY  2026-10-05
+--     Since the 365-day archive backfill the daily series starts 2025-10. Dune 8683175's monthly rows
+--     for 2025-10..2026-08 sat on (YYYY-MM-01, GEODNET, gross_burn_tokens): the 1st's own daily burn
+--     could never be stored (the unreconciled_flow BUG: 3,305,000 recorded vs 3,525,000 stock move),
+--     and rederive --apply would have overwritten each month's total with one day (2026-08-01:
+--     3,645,000 -> ~135,000). They MOVE to gross_burn_tokens_dune_monthly — Dune's figure kept as the
+--     cross-check, never on the daily key. Months before the daily series (2023-04..2025-09) stay.
+--     Order: python run_sql.py BX (BX1/BX2), python run_sql.py --delete BX (moves; preview + typed
+--     "DELETE BX"), then python rederive.py GEODNET gross_burn_tokens (preview: the 1sts appear),
+--     then python rederive.py GEODNET gross_burn_tokens --apply, then BX2 again.
+-- ========================================================================================
+-- BX1. THE DUNE MONTHLY ROWS, and whether each falls inside the daily series.
+SELECT m.date, ROUND(m.value, 0) AS dune_month, m.source,
+       CASE WHEN m.date >= (SELECT date(MIN(d.date), '-1 day') FROM metrics d
+                             WHERE d.project = 'GEODNET' AND d.metric = 'gross_burn_tokens'
+                               AND d.source NOT LIKE 'dune:%')
+            THEN 'MOVES to gross_burn_tokens_dune_monthly' ELSE 'stays (before the daily series)' END AS action
+  FROM metrics m
+ WHERE m.project = 'GEODNET' AND m.metric = 'gross_burn_tokens' AND m.source LIKE 'dune:8683175%'
+ ORDER BY m.date;
+
+-- BX2. THE CROSS-CHECK, month by month: Dune's monthly total against the sum of the daily rows
+--      (before the rederive the 1st is missing from each month's daily sum; after it, it is in).
+SELECT strftime('%Y-%m', d.date) AS month, COUNT(*) AS daily_rows,
+       ROUND(SUM(d.value), 0) AS daily_sum,
+       (SELECT ROUND(x.value, 0) FROM metrics x
+         WHERE x.project = 'GEODNET' AND x.date = strftime('%Y-%m-01', d.date)
+           AND x.metric IN ('gross_burn_tokens_dune_monthly', 'gross_burn_tokens')
+           AND x.source LIKE 'dune:8683175%' LIMIT 1) AS dune_month
+  FROM metrics d
+ WHERE d.project = 'GEODNET' AND d.metric = 'gross_burn_tokens' AND d.source NOT LIKE 'dune:%'
+ GROUP BY month
+ ORDER BY month;
+
+-- BX3. THE MOVE: Dune's monthly rows from the daily series' first day go to the cross-check (one day of
+--      slack: the collision hides the 1st, so a daily series starting on the 2nd covers the 1st's month).
+-- UPDATE metrics SET metric = 'gross_burn_tokens_dune_monthly'
+--  WHERE project = 'GEODNET' AND metric = 'gross_burn_tokens' AND source LIKE 'dune:8683175%'
+--    AND date >= (SELECT date(MIN(d.date), '-1 day') FROM metrics d
+--                  WHERE d.project = 'GEODNET' AND d.metric = 'gross_burn_tokens'
+--                    AND d.source NOT LIKE 'dune:%');

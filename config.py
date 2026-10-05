@@ -368,6 +368,7 @@ METRICS = {
     "active_addresses":           {"label": "Active addresses (low weight)",   "kind": "stock", "unit": "count",  "archetypes": [1],          "tiers": [3, 4], "sanity_min": 0,    "sanity_max": 1e9},
     "gross_issuance_tokens":      {"label": "Gross issuance",                  "kind": "flow",  "unit": "tokens", "archetypes": [1, 4],       "tiers": [1, 2, 3, 4], "sanity_min": 0, "sanity_max": 1e12},
     "gross_burn_tokens":          {"label": "Gross burn",                      "kind": "flow",  "unit": "tokens", "archetypes": [1, 4],       "tiers": [2, 3, 4], "sanity_min": 0,   "sanity_max": 1e12},
+    "gross_burn_tokens_dune_monthly": {"label": "Gross burn per MONTH as Dune 8683175 reports it (Polygon + Solana) — CROSS-CHECK of the daily series for the months it covers; never summed with it", "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [4], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("GEODNET",)},
     # THE SPLIT SERIES. Where a cumulative burn is mostly a one-off supply event, the cumulative
     # and the recurring programme are two different figures and only the second is a demand
     # signal. Venice is the case: ~99.5% of its cumulative is a single March 2025 airdrop burn.
@@ -1340,6 +1341,15 @@ def handover_monthly_leg(project_name: str, metric: str) -> tuple[str, str] | No
     if q.get("granularity") != "monthly" or f"dune:{q.get('query_id')}" != pts[0]:
         return None
     return pts[0], pts[-1]
+
+
+def monthly_crosscheck_metric(project_name: str, metric: str) -> str | None:
+    """Where a monthly handover leg's rows go once the daily series covers their month (Jake,
+    2026-10-05): never the daily key. Declared on the handover; else `<metric>_monthly`."""
+    if not handover_monthly_leg(project_name, metric) or relabelled_from(project_name, metric) \
+            or metric == "actual_buyback_usd":
+        return None                     # a relabelled copy follows its origin's corrected series
+    return (declared_handover(project_name, metric) or {}).get("monthly_crosscheck_metric") or f"{metric}_monthly"
 
 
 def is_manual_quarterly(project_name: str, metric: str) -> bool:
@@ -7205,6 +7215,14 @@ PROJECTS = [
                 # 09-29 is the switch day doing its job: the first summed stock stores no flow,
                 # and the summed delta starts with the next dated reading (orphan_cleanup AU4/AU5).
                 "windows": "complete months from Dune until the summed leg covers the window",
+                # ===== MONTHLY ROWS NEVER SHARE THE DAILY KEY (Jake, 2026-10-05). =====
+                # Since the 365-day archive backfill the daily series starts 2025-10. Dune's monthly row
+                # for a month the daily series covers sat on (YYYY-MM-01, GEODNET, gross_burn_tokens) —
+                # the 1st's daily burn could never be stored (unreconciled_flow: 3,305,000 recorded vs
+                # 3,525,000 stock move) and a rederive --apply would have overwritten Dune's month with
+                # one day. Those rows live under this cross-check metric instead (SQL BX moves the stored
+                # ones; fetch/dune.py routes new ones; build_workbook._monthly_leg_views enforces it).
+                "monthly_crosscheck_metric": "gross_burn_tokens_dune_monthly",
             },
         },
         "burn_backfill_spans_chains": True,   # Polygon-era burns belong in the same series as the Solana ones

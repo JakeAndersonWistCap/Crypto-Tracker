@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import config
+
 from .base import Http, HttpError, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.dune")
@@ -77,7 +79,10 @@ def always_refetch() -> bool:
 
 class Dune:
     def __init__(self, has_history: set[tuple[str, str]] | None = None,
-                 last_dates: dict[tuple[str, str], str] | None = None):
+                 last_dates: dict[tuple[str, str], str] | None = None, stored_long=None):
+        # The store at the run's start — read only to find where a metric's DAILY series begins, so
+        # a monthly row for a month it covers is routed to the cross-check metric (2026-10-05).
+        self.stored_long = stored_long
         self.key = os.environ.get("DUNE_API_KEY", "").strip()
         self.http = Http(min_interval=0.5)
         self.has_history = has_history or set()
@@ -366,6 +371,20 @@ class Dune:
                         dropped = int((~keep).sum())
                         df = df[keep]
 
+                    # MONTHLY ROWS NEVER OCCUPY DATES THE DAILY SERIES COVERS (Jake, 2026-10-05). A month
+                    # whose first day is on or after the daily series' first stored day goes to the
+                    # cross-check metric; the daily key stays free for that day's own burn.
+                    routed = 0
+                    cross = config.monthly_crosscheck_metric(name, metric)
+                    first = daily_series_start(self.stored_long, name, metric, f"dune:{qid}") if cross else None
+                    if first is not None and not df.empty:
+                        mv = df["date"] >= first
+                        routed = int(mv.sum())
+                        if routed:
+                            out.add(df[mv].assign(metric=cross), SOURCE, name,
+                                    f"{cross}: query {qid}, {routed} month(s) from {first.date()} — the daily "
+                                    f"series covers them; stored as the cross-check, never on the daily key", TIER)
+                            df = df[~mv]
                     note = (f"{metric}: query {qid} ({len(pairs)} rows, "
                             f"{'current-state snapshot' if snapshot else q.get('granularity', 'unspecified') + ' granularity'}"
                             + (f", dropped {dropped} incomplete current-period row(s)" if dropped else "") + ")")
@@ -387,3 +406,19 @@ class Dune:
                     out.fail(SOURCE, name, f"{metric}: query {qid}: {e}", TIER)
                     out.gap(name, metric, reason=f"Dune query {qid} failed: {e}", tiers_attempted="4",
                             suggestion="Check the query id and its date_col/value_col in config.py")
+
+
+def daily_series_start(stored_long, project: str, metric: str, monthly_point: str):
+    """First stored day of `metric`'s rows that are NOT the monthly leg, or None (2026-10-05)."""
+    from .base import _measuring_point
+    if stored_long is None or getattr(stored_long, "empty", True):
+        return None
+    g = stored_long[(stored_long["project"] == project) & (stored_long["metric"] == metric)]
+    if g.empty:
+        return None
+    daily = g[g["source"].astype(str).map(_measuring_point) != monthly_point]
+    if daily.empty:
+        return None
+    # ONE DAY OF SLACK: a monthly row on the 1st hides that day's daily row, so a series whose first
+    # stored day is the 2nd covers the month from the 1st.
+    return pd.Timestamp(pd.to_datetime(daily["date"]).min()).normalize() - pd.Timedelta(days=1)

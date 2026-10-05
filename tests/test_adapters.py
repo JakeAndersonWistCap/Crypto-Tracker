@@ -23149,3 +23149,48 @@ def test_aethir_emissions_basis_says_what_feeds_a2():
                                  "Aethir|emissions_edge_tokens": {"first_date": "2026-10-06"}})
     assert t2.startswith("MEASURED from 2026-10-06") and "checker-node rewards 2026-10-06" in t2
     assert bw._emissions_basis(config.PROJECT_BY_NAME["Plume"], {}) == ""
+
+
+def test_monthly_dune_rows_never_occupy_dates_the_daily_burn_series_covers():
+    """Jake, 2026-10-05: since the 365-day archive backfill GEODNET's daily burn starts 2025-10, but
+    Dune 8683175's monthly rows for 2025-10..2026-08 sat on the 1sts — the daily burn of each 1st
+    could never be stored (unreconciled_flow) and a rederive --apply would have replaced each month
+    with one day. Monthly rows whose month starts on/after the daily series' first day are the
+    CROSS-CHECK (gross_burn_tokens_dune_monthly): routed there by the Dune adapter, moved there at
+    read time, and the series sums each month once."""
+    import os
+    import build_workbook as bw
+    from fetch.dune import Dune, daily_series_start
+    SUM = config.GEODNET_BURN_SUM_POINT + ":delta"
+    days = pd.date_range("2025-10-01", "2025-10-31")
+    daily = [(str(d.date()), "GEODNET", "gross_burn_tokens", 90_000.0, SUM) for d in days]
+    stored = pd.DataFrame([{"date": pd.Timestamp(d), "project": p, "metric": m, "value": v, "source": s}
+                           for d, p, m, v, s in daily])
+    assert daily_series_start(stored, "GEODNET", "gross_burn_tokens", "dune:8683175") == pd.Timestamp("2025-09-30")
+    # the real store: the 1st is hidden by the Dune row, so the daily rows start on the 2nd — still Oct
+    assert daily_series_start(stored[stored.date > pd.Timestamp("2025-10-01")], "GEODNET", "gross_burn_tokens",
+                              "dune:8683175") == pd.Timestamp("2025-10-01")
+    # the Dune adapter routes a covered month to the cross-check metric
+    os.environ["DUNE_API_KEY"] = "test-key"
+    d = Dune(stored_long=stored)
+    d.http = _Rows([{"month": "2025-09-01", "tokens_burned": 800_000.0, "sol_tokens_burned": 100_000.0},
+                    {"month": "2025-10-01", "tokens_burned": 2_700_000.0, "sol_tokens_burned": 63_001.0}])
+    out = FetchOutput()
+    d.run([config.PROJECT_BY_NAME["GEODNET"]], None, out)
+    f = out.frame()
+    burn = f[f.metric == "gross_burn_tokens"]
+    cross = f[f.metric == "gross_burn_tokens_dune_monthly"]
+    assert list(burn["date"]) == [pd.Timestamp("2025-09-01")] and burn.value.iloc[0] == 900_000.0
+    assert list(cross["date"]) == [pd.Timestamp("2025-10-01")] and cross.value.iloc[0] == 2_763_001.0
+    # read time: a stored monthly row inside the daily span is moved, the month counts once
+    g = _grp(daily + [("2025-09-01", "GEODNET", "gross_burn_tokens", 900_000.0, "dune:8683175"),
+                      ("2025-10-01", "GEODNET", "gross_burn_tokens", 2_763_001.0, "dune:8683175")])
+    # the stored collision: the Dune row holds 2025-10-01, so the daily 1st is absent
+    g[("GEODNET", "gross_burn_tokens")] = g[("GEODNET", "gross_burn_tokens")].drop_duplicates("date", keep="last")
+    bw._monthly_leg_views(g)
+    s = g[("GEODNET", "gross_burn_tokens")]
+    assert pd.Timestamp("2025-09-01") in set(s["date"]) and (s[s.date == pd.Timestamp("2025-09-01")].value == 900_000.0).all()
+    oct_ = s[s["date"].dt.to_period("M") == pd.Period("2025-10")]
+    assert set(oct_["source"]) == {SUM}, "October is the daily series only, never Dune's month beside it"
+    assert set(g[("GEODNET", "gross_burn_tokens_dune_monthly")]["value"]) == {2_763_001.0}
+    assert config.monthly_crosscheck_metric("GEODNET", "actual_buyback_tokens") is None
