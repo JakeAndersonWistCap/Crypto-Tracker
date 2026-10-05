@@ -23396,3 +23396,71 @@ def test_chainlink_customer_revenue_is_the_aggregator_core_plus_the_lines_that_b
     assert list(s.index) == [pd.Timestamp("2026-10-02"), pd.Timestamp("2026-10-03")]
     assert (s == 1500.0).all(), "core + four lines, never ccip_v2, never the retired listing sum"
     assert "ccip_v2" not in str(config.PROJECT_BY_NAME["Chainlink"]["customer_revenue_components"]["plus"])
+
+
+def test_spot_checks_compare_our_figure_with_a_live_reference_and_never_pass_without_one(monkeypatch, capsys):
+    """Jake, 2026-10-05: `check_offline_items.py spot_checks` — OUR figure, an INDEPENDENT live reference,
+    the % gap and PASS/CHECK against a stated tolerance. A same-source read checks freshness only (FRESH,
+    never PASS); a reference that cannot be fetched prints where to look and is MANUAL, never PASS."""
+    import check_offline_items as coi
+    asof = pd.Timestamp("2026-10-05")
+    rows = {
+        "Hyperliquid|market_cap_usd": {"now": 27.7e9, "latest_date": "2026-10-04"},
+        "Hyperliquid|price_usd": {"now": 92.75},
+        "Hyperliquid|circulating_supply_first_party": {"now": 298.67e6},
+        "Aethir|arr_usd": {"now": 62.49e6}, "Aethir|locked_tokens": {"now": 1.79e9},
+        "Aethir|customer_revenue_usd": {"q0": 14.0e6, "q0_covered_days": 84.0},
+        "Uniswap|gross_burn_tokens": {"q0": 5.7e6, "q0_covered_days": 90.0},
+        "Pendle|locked_tokens_shares": {"now": 60.0e6}, "Pendle|locked_tokens": {"now": 62.0e6},
+        "Pendle|locked_tokens_legacy_vependle": {"now": 33.9e6}, "Pendle|locked_tokens_virtual": {"now": 5.0e6},
+        "Pendle|pendle_distributed_tokens": {"q0": 1.4e6, "q0_events": 6.0},
+        "Sky|actual_buyback_usd": {"q0": 5.2e6}, "Sky|actual_buyback_tokens": {"q0": 84.1e6},
+    }
+    monkeypatch.setattr(coi, "_spot_ours", lambda: (None, rows, asof))
+    day = int(pd.Timestamp("2026-09-01").timestamp())
+    arr_html = 'self.__next_f.push([1,"{\\"arr\\": 62490000.0}"])'
+    staked_html = 'self.__next_f.push([1,"{\\"totalStaked\\": 1790000000.0}"])'
+
+    def polite(url, method="GET", **kw):
+        if "hyperliquid" in url:
+            if kw["json"]["type"] == "spotMeta":
+                return {"tokens": [{"name": "HYPE", "tokenId": "0xabc"}]}, ""
+            return {"circulatingSupply": "298670000.0", "markPx": "93.10"}, ""
+        if "api.coingecko.com" in url:
+            return [{"market_cap": 20.6e9, "current_price": 93.0, "circulating_supply": 222e6}], ""
+        if "demand-metric" in url:
+            return arr_html, ""
+        if "onchain-metric" in url:
+            return staked_html, ""
+        if "api.llama.fi" in url:
+            return {"totalDataChart": [[day, 600_000.0]]}, ""
+        if "coins.llama.fi" in url:
+            return {"coins": {"coingecko:uniswap": {"prices": [{"timestamp": day + 3600, "price": 6.0}]}}}, ""
+        if "pendle" in url:
+            return {"totalStakedInSpendle": str(int(60.1e6 * 1e18))}, ""
+        return None, "unexpected"
+    monkeypatch.setattr(coi, "_polite", polite)
+    monkeypatch.setattr(coi, "_render_once", lambda url: (None, "robots.txt disallows (test)"))
+    coi.spot_checks()
+    out = capsys.readouterr().out
+    # a) market cap against tokenDetails circulating x markPx: inside ±5%; ASXN not read -> MANUAL
+    assert "[PASS] market cap: ours $27.70bn" in out and "tokenDetails" in out
+    assert "[FRESH] first-party circulating" in out
+    assert "[MANUAL] market cap vs ASXN" in out and "hyperscreener.asxn.xyz" in out
+    assert "the gap is the circulating basis" in out
+    # b) Aethir: stored vs a fresh read of the same dashboard is FRESH, never PASS
+    assert "[FRESH] ARR (stored) vs dashboard arr" in out and "[FRESH] locked_tokens vs dashboard totalStaked" in out
+    assert "customer revenue annualised vs dashboard arr" in out
+    # c) 5.7M UNI vs $600K / $6 = 100K UNI: far outside ±30% -> CHECK, source named
+    assert "[CHECK] UNI burned (90d)" in out and "DefiLlama dailyHoldersRevenue" in out
+    # d) Pendle: shares inside 1%; no hub total and no last epoch in the answer -> MANUAL with where to look
+    assert "[PASS] sPENDLE shares vs totalStakedInSpendle" in out
+    assert "[MANUAL] shares + legacy vePENDLE" in out and "Total PENDLE Staked" in out
+    # e) Sky: financial.skyeco.com not read live -> Jake's last reading is shown, but MANUAL, not PASS
+    assert "[MANUAL] SKY bought (USD, 90d) vs Revenue Allocation" in out and "not live, so not a PASS" in out
+    summary = out[out.index("SPOT CHECKS — SUMMARY"):]
+    lines = {l.split(":")[0].split(None, 1)[1]: l.split()[0] for l in summary.splitlines()[1:] if l.strip()[:1] in "PCM" and ")" in l}
+    assert lines["a) Hyperliquid market cap"] == "PASS"
+    assert lines["c) Uniswap burn (last 90 days, 100M one-off excluded)"] == "CHECK"
+    assert lines["e) Sky buybacks (flapper Exec)"] == "MANUAL", "no live reference is never a PASS"
+    assert set(coi.SPOT_TOLERANCE_PCT) >= {"hl_mcap_first_party", "uni_burn_vs_holders_revenue", "sky_buyback_vs_allocation"}

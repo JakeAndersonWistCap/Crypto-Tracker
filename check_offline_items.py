@@ -4928,6 +4928,441 @@ def mev_relays():
     print(f"  not covered: {', '.join(spec['not_covered'])}")
 
 
+# ======================================================================================
+# SPOT CHECKS (Jake, 2026-10-05): OUR figure beside an INDEPENDENT reference fetched live.
+# Read-only — nothing is stored. Each comparison states its tolerance; a reference that
+# cannot be fetched automatically prints where to look by hand and is MANUAL, never PASS.
+# A reference read from the SAME source as our figure checks only that the store is current:
+# it is reported FRESH (or CHECK), and never counts as a PASS.
+# ======================================================================================
+SPOT_TOLERANCE_PCT = {
+    # our latest stored day vs a live read: the HYPE price moves a few % within a day
+    "hl_mcap_first_party": 5.0,
+    "hl_mcap_asxn": 5.0,
+    "hl_circulating": 0.5,          # first-party circulating changes slowly (emissions, unlocks)
+    "aethir_arr_fresh": 1.0,
+    "aethir_staked_fresh": 1.0,
+    # Aethir's ARR is a run-rate whose definition is not published; our figure is the Q0
+    # weekly revenue annualised — a different window by construction
+    "aethir_revenue_vs_arr": 25.0,
+    # DefiLlama's holders revenue is fee VALUE accrued; UNI is burned in fixed lots when the
+    # Firepit threshold is met, so burns lag and track fees net of the burner's margin
+    "uni_burn_vs_holders_revenue": 30.0,
+    "pendle_shares": 1.0,
+    "pendle_total_staked": 1.0,
+    "pendle_last_epoch": 1.0,
+    # token-terms yield over real + virtual sPENDLE (Q0 epochs) vs Pendle's last-epoch APR
+    "pendle_yield_vs_published": 25.0,
+    # ROUGH: allocation x 27.5/50 over a window that straddles Stage 2's start (2026-08-17)
+    "sky_buyback_vs_allocation": 35.0,
+}
+
+
+def _num(v, unit=""):
+    if v is None:
+        return "n/a"
+    a = abs(float(v))
+    if unit == "%":
+        return f"{float(v) * 100:.2f}%"
+    for div, suf in ((1e12, "tn"), (1e9, "bn"), (1e6, "M"), (1e3, "K")):
+        if a >= div:
+            s = f"{float(v) / div:,.2f}{suf}"
+            break
+    else:
+        s = f"{float(v):,.2f}"
+    return f"${s}" if unit == "$" else (f"{s} {unit}" if unit else s)
+
+
+class _Spot:
+    """Collects one line per comparison and one verdict per item."""
+
+    def __init__(self):
+        self.items: dict = {}
+
+    def _add(self, item, verdict, text):
+        self.items.setdefault(item, []).append((verdict, text))
+
+    def compare(self, item, label, ours, ref, tol_key, ref_from, unit="", same_source=False, ours_from=""):
+        tol = SPOT_TOLERANCE_PCT[tol_key]
+        if ours is None or ref is None or not ref:
+            missing = "our figure" if ours is None else "the reference"
+            print(f"  [MANUAL] {label}: {missing} unavailable — ours {_num(ours, unit)} vs {_num(ref, unit)} ({ref_from})")
+            self._add(item, "MANUAL", f"{label}: {missing} unavailable")
+            return None
+        gap = (float(ours) - float(ref)) / abs(float(ref)) * 100
+        ok = abs(gap) <= tol
+        verdict = ("FRESH" if ok else "CHECK") if same_source else ("PASS" if ok else "CHECK")
+        print(f"  [{verdict}] {label}: ours {_num(ours, unit)}{f' ({ours_from})' if ours_from else ''} vs "
+              f"{_num(ref, unit)} — {ref_from}; gap {gap:+.1f}% (tolerance ±{tol:g}%)"
+              + ("  [same source: checks the store is current, not the figure]" if same_source else ""))
+        self._add(item, verdict, f"{label} {gap:+.1f}% (±{tol:g}%)")
+        return gap
+
+    def manual(self, item, label, ours, where, unit=""):
+        print(f"  [MANUAL] {label}: ours {_num(ours, unit)} — check by hand: {where}")
+        self._add(item, "MANUAL", f"{label}: by hand — {where}")
+
+    def info(self, text):
+        print(f"           {text}")
+
+    def summary(self):
+        head("SPOT CHECKS — SUMMARY (PASS needs an independent reference within tolerance)")
+        for item, rows in self.items.items():
+            vs = [v for v, _ in rows]
+            verdict = ("CHECK" if "CHECK" in vs else "PASS" if "PASS" in vs else "MANUAL")
+            print(f"  {verdict:<6} {item}: " + "; ".join(f"{v} {t}" for v, t in rows))
+
+
+def _spot_ours():
+    """(long frame, {"Project|metric": aggregate row}, asof) — the figures the workbook shows, built from
+    the store exactly as build_workbook does. (None, {}, asof) without a metrics.db."""
+    import pandas as pd                                    # noqa: PLC0415
+    asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    try:
+        import store as store_mod                          # noqa: PLC0415
+        if not os.path.exists(store_mod.DB_PATH):
+            print(f"  no {store_mod.DB_PATH} here — our figures are unavailable; references still print")
+            return None, {}, asof
+        import build_workbook as bw                        # noqa: PLC0415
+        st = store_mod.Store(store_mod.DB_PATH)
+        try:
+            long = st.load_long()
+            data = bw.aggregate(long, st.fetch_status(), asof, gaps=st.gap_report(), review=st.review_queue())
+        finally:
+            st.close()
+        return long, {r["key"]: r for r in data.to_dict("records")}, asof
+    except Exception as e:  # noqa: BLE001
+        print(f"  our figures not loaded: {type(e).__name__}: {e}")
+        return None, {}, asof
+
+
+def _row(rows, key, field="now"):
+    r = rows.get(key) or {}
+    v = r.get(field)
+    try:
+        return None if v is None or v != v else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _polite(url, method="GET", **kw):
+    """(parsed JSON or text, why) after the pipeline's own robots.txt verdict for the URL."""
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    ok, why = robots_verdict(url)
+    if not ok:
+        return None, f"robots.txt disallows {url} ({why})"
+    try:
+        r = (requests.post(url, headers=_ua(), timeout=TIMEOUT, **kw) if method == "POST"
+             else requests.get(url, headers=_ua(), timeout=TIMEOUT, **kw))
+    except Exception as e:  # noqa: BLE001
+        return None, f"{urlparse(url).netloc}: {type(e).__name__}"
+    if r.status_code != 200:
+        return None, f"{urlparse(url).netloc}: HTTP {r.status_code}"
+    try:
+        return r.json(), ""
+    except ValueError:
+        return r.text, ""
+
+
+def _render_once(url):
+    """(rendered text, why) — ONE normal page load in the browser (fetch/browser_capture.capture),
+    after robots.txt; for pages whose figures exist only once rendered."""
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    ok, why = robots_verdict(url)
+    if not ok:
+        return None, f"robots.txt disallows {url} ({why})"
+    try:
+        from fetch import browser_capture as bc            # noqa: PLC0415
+        cap = bc.capture(url)
+    except Exception as e:  # noqa: BLE001
+        return None, f"browser route unavailable ({type(e).__name__}: {str(e)[:120]})"
+    return cap.get("text") or "", ""
+
+
+_MULT = {"k": 1e3, "m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9, "t": 1e12, "tn": 1e12}
+
+
+def _figure_after(text, label, window=80):
+    """($ figure, the snippet) for the first amount printed within `window` characters after `label`."""
+    import re                                              # noqa: PLC0415
+    m = re.search(re.escape(label), text or "", re.I)
+    if not m:
+        return None, ""
+    snip = text[m.start(): m.end() + window].replace("\n", " ")
+    n = re.search(r"\$?\s*([\d][\d,]*(?:\.\d+)?)\s*(bn|billion|million|mn|tn|[kmbt])?\b", snip[len(label):], re.I)
+    if not n:
+        return None, snip
+    v = float(n.group(1).replace(",", ""))
+    return v * _MULT.get((n.group(2) or "").lower(), 1.0), snip
+
+
+def _spot_hyperliquid(spot, rows):
+    import config                                          # noqa: PLC0415
+    item = "a) Hyperliquid market cap"
+    head(item)
+    ours = _row(rows, "Hyperliquid|market_cap_usd")
+    when = (rows.get("Hyperliquid|market_cap_usd") or {}).get("latest_date")
+    price = _row(rows, "Hyperliquid|price_usd")
+    circ = _row(rows, "Hyperliquid|circulating_supply_first_party")
+    spot.info(f"ours = price x first-party circulating (build_workbook _market_cap_views): "
+              f"{_num(price, '$')} x {_num(circ)} HYPE = {_num(ours, '$')} as of {when}")
+    info = "https://api.hyperliquid.xyz/info"
+    meta, why = _polite(info, "POST", json={"type": "spotMeta"})
+    tid = None
+    if isinstance(meta, dict):
+        tid = next((t.get("tokenId") for t in meta.get("tokens") or () if t.get("name") == "HYPE"), None)
+    td, why2 = (_polite(info, "POST", json={"type": "tokenDetails", "tokenId": tid}) if tid else (None, why or "HYPE not in spotMeta"))
+    if isinstance(td, dict):
+        c_live = float(td.get("circulatingSupply") or 0) or None
+        px_key = next((k for k in ("markPx", "midPx", "prevDayPx") if td.get(k) not in (None, "")), None)
+        px = float(td[px_key]) if px_key else None
+        spot.compare(item, "first-party circulating", circ, c_live, "hl_circulating",
+                     "Hyperliquid tokenDetails.circulatingSupply, live", unit="HYPE", same_source=True)
+        ref = c_live * px if (c_live and px) else None
+        spot.compare(item, "market cap", ours, ref, "hl_mcap_first_party",
+                     f"Hyperliquid tokenDetails circulatingSupply x {px_key or 'markPx'} ({_num(px, '$')}), live "
+                     f"— our price is CoinGecko's, the circulating is the same first-party figure", unit="$",
+                     ours_from=str(when))
+    else:
+        spot.manual(item, "market cap vs tokenDetails", ours,
+                    f"tokenDetails unreadable ({why2}); app.hyperliquid.xyz → HYPE token page: circulating x mark price",
+                    unit="$")
+    # ASXN — rendered page loads only; its pages carry no market-cap pin in config
+    pg = next((pg for p in config.PROJECTS if p["name"] == "Hyperliquid"
+               for pg in (p.get("browser_capture") or {}).get("pages") or ()), None)
+    url = (pg or {}).get("url", "https://hyperscreener.asxn.xyz")
+    text, why = _render_once(url)
+    v, snip = _figure_after(text, "Market Cap") if text else (None, "")
+    if v:
+        spot.info(f"ASXN rendered text: “{snip[:120]}”")
+        spot.compare(item, "market cap vs ASXN", ours, v, "hl_mcap_asxn", f"{url}, rendered once", unit="$",
+                     ours_from=str(when))
+    else:
+        spot.manual(item, "market cap vs ASXN", ours,
+                    (f"{why}; " if why else "no 'Market Cap' figure in the rendered page; ")
+                    + f"open {url} and look for a Market Cap tile (ASXN: internal check only, no public use "
+                      f"without ASXN's permission)", unit="$")
+    # CoinGecko: shown with the reason it differs, never as the reference
+    cg, why = _polite("https://api.coingecko.com/api/v3/coins/markets",
+                      params={"vs_currency": "usd", "ids": "hyperliquid"})
+    if isinstance(cg, list) and cg:
+        c = cg[0]
+        spot.info(f"CoinGecko (context, not a reference): market cap {_num(c.get('market_cap'), '$')} = price "
+                  f"{_num(c.get('current_price'), '$')} x ITS circulating {_num(c.get('circulating_supply'))} HYPE")
+        if circ and c.get("circulating_supply") and ours and c.get("market_cap"):
+            spot.info(f"  why it differs: its circulating is {c['circulating_supply'] / circ:.1%} of the first-party "
+                      f"{_num(circ)}; its market cap is {c['market_cap'] / ours:.1%} of ours — the gap is the "
+                      f"circulating basis, not the price")
+    else:
+        spot.info(f"CoinGecko market cap not read ({why})")
+
+
+def _spot_aethir(spot, rows):
+    from fetch.aethir_pages import key_scalar              # noqa: PLC0415
+    item = "b) Aethir ARR and total staked"
+    head(item)
+    base = "https://dashboard.aethir.com/protocol/"
+    demand, why_d = _polite(base + "demand-metric")
+    chain, why_c = _polite(base + "onchain-metric")
+    arr = key_scalar(demand, "arr")[0] if isinstance(demand, str) else None
+    staked = key_scalar(chain, "totalStaked")[0] if isinstance(chain, str) else None
+    if arr is None:
+        spot.info(f"dashboard arr not read: {why_d or key_scalar(demand or '', 'arr')[1]}")
+    if staked is None:
+        spot.info(f"dashboard totalStaked not read: {why_c or key_scalar(chain or '', 'totalStaked')[1]}")
+    spot.compare(item, "ARR (stored) vs dashboard arr", _row(rows, "Aethir|arr_usd"), arr, "aethir_arr_fresh",
+                 base + "demand-metric `arr`, read now", unit="$", same_source=True)
+    spot.compare(item, "locked_tokens vs dashboard totalStaked", _row(rows, "Aethir|locked_tokens"), staked,
+                 "aethir_staked_fresh", base + "onchain-metric `totalStaked`, read now", unit="ATH", same_source=True)
+    q0 = _row(rows, "Aethir|customer_revenue_usd", "q0")
+    cov = _row(rows, "Aethir|customer_revenue_usd", "q0_covered_days") or 90.0
+    ann = q0 * 365.0 / cov if q0 is not None and cov else None
+    spot.info(f"ours: weekly customer revenue, Q0 sum {_num(q0, '$')} over {cov:.0f} covered day(s), x365/{cov:.0f} "
+              f"= {_num(ann, '$')}/yr")
+    spot.compare(item, "customer revenue annualised vs dashboard arr", ann, arr, "aethir_revenue_vs_arr",
+                 "the dashboard's own run-rate (definition not published) — a different derivation from the "
+                 "weekly series, both Aethir's own figures", unit="$")
+    if arr is None:
+        spot.manual(item, "ARR", _row(rows, "Aethir|arr_usd"),
+                    "dashboard.aethir.com → Protocol → Demand Metric, the ARR tile", unit="$")
+
+
+def _spot_uniswap(spot, rows, asof):
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    item = "c) Uniswap burn (last 90 days, 100M one-off excluded)"
+    head(item)
+    q0 = _row(rows, "Uniswap|gross_burn_tokens", "q0")
+    cov = _row(rows, "Uniswap|gross_burn_tokens", "q0_covered_days") or 90.0
+    start = asof - pd.Timedelta(days=90)
+    one = next((f for f in (config.PROJECT_BY_NAME["Uniswap"].get("one_off_flows") or ())
+                if f.get("metric") == "gross_burn_tokens"), {})
+    w = one.get("window") or ("", "")
+    inside = bool(w[0]) and pd.Timestamp(w[1]) > start
+    spot.info(f"ours: UNI to 0x…dEaD (on-chain, archive reads), window {start.date()}..{asof.date()} — Q0 "
+              f"{_num(q0, 'UNI')} over {cov:.0f} covered day(s) = {_num(q0 * 365 / cov if q0 else None, 'UNI')}/yr; "
+              f"one-off window {w[0]}..{w[1]} is {'INSIDE (removed by the one-off view)' if inside else 'outside'} it")
+    fees, why = _polite("https://api.llama.fi/summary/fees/uniswap", params={"dataType": "dailyHoldersRevenue"})
+    t0 = int(start.timestamp())
+    px, why_p = _polite(f"https://coins.llama.fi/chart/coingecko:uniswap", params={"start": t0, "span": 92, "period": "1d"})
+    if not (isinstance(fees, dict) and isinstance(px, dict)):
+        spot.manual(item, "UNI burned vs holders revenue", q0,
+                    f"DefiLlama not read ({why or why_p}); defillama.com/protocol/uniswap → Holders Revenue, last 90d, "
+                    f"÷ the UNI price", unit="UNI")
+        return
+    prices = {pd.Timestamp(int(p["timestamp"]), unit="s").normalize(): float(p["price"])
+              for p in ((px.get("coins") or {}).get("coingecko:uniswap") or {}).get("prices") or ()}
+    usd = uni = 0.0
+    days = unpriced = 0
+    for ts, v in fees.get("totalDataChart") or ():
+        d = pd.Timestamp(int(ts), unit="s").normalize()
+        if start < d <= asof:
+            days += 1
+            usd += float(v or 0)
+            p = prices.get(d)
+            if p:
+                uni += float(v or 0) / p
+            else:
+                unpriced += 1
+    spot.info(f"reference: DefiLlama Uniswap holders revenue {_num(usd, '$')} over {days} day(s), each day ÷ that "
+              f"day's UNI price (coins.llama.fi) = {_num(uni, 'UNI')}" + (f"; {unpriced} day(s) unpriced, left out" if unpriced else ""))
+    spot.compare(item, "UNI burned (90d)", q0, uni if days and not unpriced else None, "uni_burn_vs_holders_revenue",
+                 "DefiLlama dailyHoldersRevenue ÷ same-day UNI price (an independent source: our burn is an on-chain "
+                 "read)", unit="UNI")
+
+
+def _spot_pendle(spot, rows, long):
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.pendle_epochs import fitting_scale          # noqa: PLC0415
+    item = "d) Pendle staking"
+    head(item)
+    spec = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]
+    api, why = _polite(spec["url"])
+    shares = _row(rows, "Pendle|locked_tokens_shares")
+    assets = _row(rows, "Pendle|locked_tokens")
+    legacy = _row(rows, "Pendle|locked_tokens_legacy_vependle")
+    virtual = _row(rows, "Pendle|locked_tokens_virtual")
+    spot.info(f"ours (chain reads): sPENDLE assets {_num(assets, 'PENDLE')}, shares {_num(shares)}, legacy vePENDLE "
+              f"{_num(legacy, 'PENDLE')}, virtual {_num(virtual)}")
+    if not isinstance(api, dict):
+        spot.manual(item, "staking totals", shares, f"{spec['url']} not read ({why}); app.pendle.finance → sPENDLE: "
+                                                    f"'Total PENDLE Staked'")
+        return
+    scal = {k: v for k, v in api.items() if not isinstance(v, (list, dict))}
+    spot.info("API scalars: " + ", ".join(f"{k}={str(v)[:24]}" for k, v in scal.items()))
+    t = api.get("totalStakedInSpendle")
+    spot.compare(item, "sPENDLE shares vs totalStakedInSpendle", shares, float(t) / 1e18 if t is not None else None,
+                 "pendle_shares", "Pendle spendle/data API (18 decimals, as sources.yaml reads it) — independent of "
+                 "our totalSupply() read", unit="sPENDLE")
+    hub = api.get("totalPendleStaked")
+    ours_hub = (shares + legacy) if shares is not None and legacy is not None else None
+    if hub is not None:
+        spot.compare(item, "shares + legacy vePENDLE vs totalPendleStaked", ours_hub, float(hub) / 1e18,
+                     "pendle_total_staked", "spendle/data totalPendleStaked, READ AS 18 DECIMALS like "
+                     "totalStakedInSpendle (assumed; a gap near a power of ten means it is not)", unit="PENDLE")
+    else:
+        spot.manual(item, "shares + legacy vePENDLE (the hub's ~93.9M)", ours_hub,
+                    "no totalPendleStaked in the API answer; app.pendle.finance → sPENDLE: 'Total PENDLE Staked'",
+                    unit="PENDLE")
+    # last epoch: our stored epoch vs the API's own lastEpochBuybackAmount, at the scale the adapter fits
+    k, done, _med, tried = fitting_scale(api, spec, pd.Timestamp.now("UTC").tz_localize(None))
+    ours_last = None
+    if long is not None:
+        s = long[(long.project == "Pendle") & (long.metric == spec["metric"])].sort_values("date")
+        ours_last = float(s["value"].iloc[-1]) if len(s) else None
+        if len(s):
+            spot.info(f"our last stored epoch: {s['date'].iloc[-1].date()} {_num(ours_last, 'PENDLE')}")
+    lb = api.get("lastEpochBuybackAmount")
+    if lb is not None and k is not None:
+        spot.compare(item, "last epoch distributed vs lastEpochBuybackAmount", ours_last, float(lb) / 10 ** k,
+                     "pendle_last_epoch", f"spendle/data lastEpochBuybackAmount at the scale the epoch series fits "
+                     f"(10^{k}; tried {tried})", unit="PENDLE", same_source=True)
+    else:
+        spot.manual(item, "last epoch", ours_last,
+                    ("no lastEpochBuybackAmount in the API answer" if lb is None else f"no scale fits the epoch series ({tried})")
+                    + "; app.pendle.finance → sPENDLE: last epoch's buyback", unit="PENDLE")
+    # token-terms yield, exactly as the workbook's _token_yield builds it
+    q0 = _row(rows, f"Pendle|{spec['metric']}", "q0")
+    ev = _row(rows, f"Pendle|{spec['metric']}", "q0_events")
+    stake = (shares or 0) + (virtual or 0)
+    y = (q0 / ev) * 365.25 / spec["epoch_days"] / stake if q0 and ev and stake else None
+    apr = api.get(spec["apr_field"])
+    try:
+        apr = float(apr) if apr is not None else None
+    except (TypeError, ValueError):
+        apr = None
+    if not apr:
+        hist = (api.get(spec["history_key"]) or {}).get(spec["aprs_field"]) or []
+        apr = next((float(a) for a in reversed(hist) if a), None)
+        spot.info("lastEpochApr is 0 or absent — the last non-zero entry of the aprs history is used")
+    spot.info(f"ours: token yield = (Q0 {_num(q0, 'PENDLE')} / {ev or 0:.0f} epochs) x 365.25/{spec['epoch_days']} ÷ "
+              f"(shares + virtual {_num(stake)}) = {_num(y, '%')}")
+    spot.compare(item, "token-terms yield vs Pendle's published APR", y, apr, "pendle_yield_vs_published",
+                 "spendle/data lastEpochApr (a fraction) — Pendle's own APR, one epoch", unit="%")
+
+
+def _spot_sky(spot, rows, long, asof):
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    item = "e) Sky buybacks (flapper Exec)"
+    head(item)
+    usd = _row(rows, "Sky|actual_buyback_usd", "q0")
+    tok = _row(rows, "Sky|actual_buyback_tokens", "q0")
+    spot.info(f"ours (SKY into the Pause Proxy in flapper Exec transactions), {(asof - pd.Timedelta(days=90)).date()}.."
+              f"{asof.date()}: {_num(tok, 'SKY')}, {_num(usd, '$')} at same-day prices")
+    page = ((config.PROJECT_BY_NAME["Sky"].get("net_protocol_surplus_reference") or {})
+            .get("financials_page_2026_09_29") or {})
+    xc = page.get("a3_buyback_cross_check") or {}
+    share = float(xc.get("sky_buyback_share") or 27.5 / 50)
+    url = page.get("url", "https://financial.skyeco.com/financials/revenue")
+    text, why = _render_once(url)
+    alloc, snip = _figure_after(text, "Revenue Allocation") if text else (None, "")
+    if alloc:
+        spot.info(f"financial.skyeco.com rendered once: “{snip[:120]}” — CONFIRM the page's window reads 90 days")
+        spot.compare(item, "SKY bought (USD, 90d) vs allocation x 27.5/50", usd, alloc * share,
+                     "sky_buyback_vs_allocation", f"{url} Revenue Allocation {_num(alloc, '$')} x {share:.3f} "
+                     f"(ROUGH: the window straddles Stage 2's start)", unit="$")
+    else:
+        last = xc.get("allocation_usd")
+        spot.info(f"financial.skyeco.com not read live ({why or 'no Revenue Allocation figure in the rendered text'}); "
+                  f"Jake's reading of {page.get('read_on', '?')}: allocation {_num(last, '$')} x {share:.3f} = "
+                  f"{_num(last * share if last else None, '$')} — not live, so not a PASS")
+        spot.manual(item, "SKY bought (USD, 90d) vs Revenue Allocation", usd,
+                    f"{url} → 'Revenue Allocation', last 90 days; implied SKY buyback = it x 27.5/50", unit="$")
+    # Sky's announced monthly figures: no automatic route — our months, to compare by hand
+    if long is not None:
+        s = long[(long.project == "Sky") & (long.metric.isin(["actual_buyback_tokens", "actual_buyback_usd"]))]
+        if len(s):
+            m = (s.assign(month=s["date"].dt.to_period("M")).pivot_table(index="month", columns="metric",
+                                                                           values="value", aggfunc="sum").tail(4))
+            for mon, r in m.iterrows():
+                spot.info(f"  ours {mon}: {_num(r.get('actual_buyback_tokens'), 'SKY')}, "
+                          f"{_num(r.get('actual_buyback_usd'), '$')}")
+    spot.manual(item, "monthly SKY bought vs Sky's announced figures", tok,
+                "Sky's own monthly buyback posts (forum.sky.money, Stage 2 / Smart Burn Engine updates) — "
+                "info.skyeco.com disallows robots; compare the months above", unit="SKY")
+
+
+def spot_checks():
+    """Jake, 2026-10-05: OUR figure (the store, through build_workbook's own views) beside an INDEPENDENT
+    reference fetched live, the % gap, and PASS / CHECK against a stated tolerance (SPOT_TOLERANCE_PCT).
+    robots.txt first everywhere; the browser route only for a page that needs rendering, once. A
+    reference that cannot be fetched prints where to look by hand: MANUAL, never PASS. Stores nothing."""
+    spot = _Spot()
+    long, rows, asof = _spot_ours()
+    for fn, args in ((_spot_hyperliquid, (spot, rows)), (_spot_aethir, (spot, rows)),
+                     (_spot_uniswap, (spot, rows, asof)), (_spot_pendle, (spot, rows, long)),
+                     (_spot_sky, (spot, rows, long, asof))):
+        try:
+            fn(*args)
+        except Exception as e:  # noqa: BLE001 — one item failing must not stop the rest
+            print(f"  {fn.__name__} FAILED: {type(e).__name__}: {e}")
+            spot._add(fn.__name__, "MANUAL", f"probe failed: {type(e).__name__}")
+    spot.summary()
+    print("  Nothing was stored. PASTE BACK the whole section.")
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -4951,6 +5386,7 @@ CHECKS = (
     near_activity_cause, near_activity_signers,
     browser_captures,
     mev_relays,
+    spot_checks,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

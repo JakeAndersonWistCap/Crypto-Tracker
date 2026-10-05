@@ -548,6 +548,21 @@ python check_offline_items.py spot_checks         # our figure vs an independent
   - for Etherscan, that is one pacer for the key across every chain id;
   - for Blockscout, one pacer per chain host, e.g. base.blockscout.com.
   This fixes the 429s that came from several adapters reading the same host.
+- **Spot checks.** Five items: Hyperliquid market cap, Aethir ARR and total staked, the Uniswap
+  burn, Pendle staking, and Sky buybacks. For each, the check prints:
+  - our figure, taken from the store through the workbook's own views;
+  - a reference read live, after robots.txt is checked;
+  - the % gap and a verdict against `SPOT_TOLERANCE_PCT`.
+
+  What each verdict means:
+  - **PASS** needs an independent reference within tolerance.
+  - **FRESH** means a re-read of the same source as our figure, so it only shows the store is
+    current. Examples are Aethir's dashboard and Hyperliquid's circulating supply.
+  - **MANUAL** means no reference could be fetched; the line names the page and tile to read by
+    hand. MANUAL is never PASS.
+
+  Pages that need rendering (ASXN, financial.skyeco.com) are loaded once each in the browser.
+  ASXN's figures are for internal checking only. Nothing is stored.
 
 ## 11v. Jake's run 2026-10-05 09:19: network blip, cache race, Aethir, Plume issuance
 
