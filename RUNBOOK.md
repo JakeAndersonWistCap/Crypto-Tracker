@@ -527,6 +527,41 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11x. The Credibility tab (2026-10-05): every headline cell beside an independent reference
+
+```bash
+python token_metrics.py                 # the xref tier reads Coinbase daily candles + Lido's APR once a day
+python credibility_report.py            # the tab, recalculated and printed: table, counts, every CHECK/UNVERIFIABLE
+python credibility_report.py --open-only
+```
+- **What the tab covers.** One row per headline cell on A1-A4 for the 15 projects in
+  `config.CREDIBILITY_PROJECTS` (World Mobile parked). Each project also gets input rows: price,
+  circulating, and whichever of revenue, buyback, locked, fees and issuance its headlines use.
+- **Our value is the headline cell itself**, as a formula, so a row can never disagree with the
+  tab it checks.
+- **Verdicts:**
+  - **PASS**: an independent source agrees within the stated tolerance.
+  - **CHECK**: the source disagrees, or a reference exists but was not read. The note names the
+    reference and how to read it.
+  - **FRESH-only**: a re-read of our own source. Never a PASS.
+  - **UNVERIFIABLE**: no independent source exists, with the reason.
+  - **N/A**: no figure here by design. If the cell shows a number anyway, it turns into CHECK.
+  - **"(inputs)"**: a derived ratio such as burn yield or crossover is judged by its input rows.
+    It is PASS only when every input passes. An input with no row (unchecked) keeps it from
+    ever passing.
+- **Where things are configured.**
+  - References: `config.CREDIBILITY`. Kinds: another stored series; the same day as our
+    figure; a computed formula; a manual reading with its date and reader; or a static verdict
+    with its resolution.
+  - Rows: `credibility.py`. Sheet: `build_workbook.write_credibility`.
+  - New fetches: `fetch/xref.py`, which stores only reference metrics. These never feed a
+    headline and are never a gap.
+- **To add a by-hand reading**, put a `{"manual": {...}}` reference on the row in
+  `config.CREDIBILITY`. Include value, read_on, read_by and source.
+- **Found by this pass:** Ethereum's A4 "GROSS ISSUANCE Q0" showed "none available".
+  ultrasound.money's issuance route was closed, and the build treated that as the figure being
+  closed. The record is now `route_only`, and the cell shows the Etherscan figure.
+
 ## 11w. Jake's run 2026-10-05 14:35: Chainlink fee lines become a seed; spot checks
 
 ```bash

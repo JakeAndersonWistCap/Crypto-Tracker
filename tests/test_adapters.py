@@ -23511,3 +23511,160 @@ def test_spot_checks_like_with_like_manual_record_and_ascii_output(monkeypatch, 
     assert buf.buffer.getvalue().decode("ascii") == 'a -> b - +/- / "q" ...  contains  ?\n'
     src = open(coi.__file__, encoding="utf-8").read()
     assert "setattr(sys, name, _AsciiStream(getattr(sys, name)))" in src
+
+
+# ===================================================================================
+# CREDIBILITY TAB (Jake, 2026-10-05)
+# ===================================================================================
+def _cred_build(tmp_path):
+    import build_workbook as bw
+    import openpyxl
+    import store as sm
+    st = sm.Store(tmp_path / "empty.db")
+    out = tmp_path / "cred.xlsx"
+    bw.build_workbook(st, out)
+    st.close()
+    return bw, openpyxl.load_workbook(out)
+
+
+def test_credibility_tab_has_a_row_for_every_headline_cell_of_the_fifteen_projects(tmp_path):
+    """One row per headline cell on A1-A4 for each of the 15 projects (World Mobile parked), each with
+    an id, our value = the headline cell itself, and a verdict from the four (plus N/A by design)."""
+    bw, wb = _cred_build(tmp_path)
+    cells = [h for h in bw._HEADLINE_CELLS if h["project"] in config.CREDIBILITY_PROJECTS]
+    assert len(config.CREDIBILITY_PROJECTS) == 15 and "World Mobile" not in config.CREDIBILITY_PROJECTS
+    assert all(h["id"] for h in cells), [h["header"][:40] for h in cells if not h["id"]]
+    ws = wb["Credibility"]
+    head = next(r for r in range(1, 60) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Tab")
+    rows = [[ws.cell(r, c).value for c in range(1, 13)] for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value]
+    assert {r[0] for r in rows} == set(config.CREDIBILITY_PROJECTS)
+    ours = {r[4] for r in rows}
+    for h in cells:
+        assert f"='{h['sheet']}'!{h['cell']}" in ours, f"{h['project']} {h['id']} has no Credibility row"
+    allowed = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")
+    for r in rows:
+        v = str(r[10])
+        assert v.startswith("=") or v.startswith(allowed), r
+        if v.startswith(("UNVERIFIABLE", "CHECK")):
+            assert r[11] and len(r[11]) > 20, f"a static {v} must say why: {r[:4]}"
+    # the summary counts every verdict family per project
+    assert ws.cell(4, 2).value == "PASS" and ws.cell(4, 6).value.startswith("N/A")
+    assert any(str(ws.cell(r, 1).value) == "All" for r in range(5, head))
+
+
+def test_credibility_never_counts_a_reread_of_our_own_source_as_pass(tmp_path):
+    """FRESH-only, never PASS: a same-source reference's verdict formula cannot produce PASS, and the
+    derived rows are PASS only when every input passes."""
+    import credibility as cred
+    bw, wb = _cred_build(tmp_path)
+    rows = cred.build_rows(bw._HEADLINE_CELLS, {}, None, pd.Timestamp("2026-10-05"))
+    same = [r for r in rows if r["mode"] == "same_source"]
+    assert {(r["project"], r["id"]) for r in same} >= {("Aethir", "a2_customer_revenue"), ("Pendle", "a3_protocol_yield")}
+    ws = wb["Credibility"]
+    head = next(r for r in range(1, 60) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Tab")
+    for k, r in enumerate(rows):
+        f = str(ws.cell(head + 1 + k, 11).value)
+        if r["mode"] == "same_source":
+            assert '"FRESH-only"' in f and '"PASS"' not in f, f
+        if r["mode"] == "derived":
+            assert "PASS (inputs)" in f or "UNVERIFIABLE (inputs)" in f
+            if r.get("missing_inputs"):
+                assert "PASS (inputs)" not in f, "an unchecked input can never let a derived figure PASS"
+    # Hyperliquid's first-party circulating has no independent twin: FRESH-only, said so
+    hl = next(r for r in rows if r["project"] == "Hyperliquid" and r["id"] == "in_circ")
+    assert hl["verdict"] == "FRESH-only" and "spot_checks" in hl["note"]
+
+
+def test_credibility_references_computed_from_the_store():
+    """Q0 USD / same-day price, a stock's change across Q0 (+ a flow), a value on a hand-read date, a
+    month's sum, and the issuance curve — each says how it was computed."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-10-05")
+    days = pd.date_range("2026-07-01", "2026-10-05")
+    rows = []
+    for i, d in enumerate(days):
+        rows += [(d, "Uniswap", "price_usd", 6.0 if i % 10 else None), (d, "Uniswap", "holders_revenue_usd", 60.0),
+                 (d, "Near", "total_supply_protocol", 1_000_000.0 + 100.0 * i), (d, "Near", "gross_burn_tokens", 5.0)]
+    rows += [(pd.Timestamp("2026-09-08"), "Pendle", "pendle_distributed_tokens", 82_550.0),
+             (pd.Timestamp("2026-09-29"), "Pendle", "locked_tokens_shares", 30.34e6),
+             (pd.Timestamp("2026-09-29"), "Pendle", "locked_tokens_legacy_vependle", 63.55e6)]
+    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value"]).dropna()
+    v, d, how = cred._flow_usd_over_price("Uniswap", {}, long, asof, metrics=("holders_revenue_usd",))
+    q0_days = [x for x in days if asof - pd.Timedelta(days=90) < x <= asof]
+    priced = [x for x in q0_days if (days.get_loc(x) % 10)]
+    assert v == _pytest.approx(10.0 * len(priced)) and f"{len(priced)} priced day(s) of {len(q0_days)}" in how
+    v, d, how = cred._delta_q0("Near", {}, long, asof, metric="total_supply_protocol", plus="gross_burn_tokens")
+    assert v == _pytest.approx(100.0 * 90 + 5.0 * 90) and "+ gross_burn_tokens" in how
+    v, d, how = cred._value_on("Pendle", {}, long, asof, metric="locked_tokens_shares", date="2026-09-29",
+                               plus=("locked_tokens_legacy_vependle",))
+    assert v == _pytest.approx(93.89e6)
+    v, d, how = cred._value_on("Pendle", {}, long, asof, metric="pendle_distributed_tokens", date="2026-09-08")
+    assert v == 82_550.0
+    v, _, _ = cred._eth_issuance_formula("Ethereum", {"Ethereum|beacon_chain_eth": {"now": 36e6},
+                                                      "Ethereum|gross_issuance_tokens": {"q0_covered_days": 90}},
+                                         None, asof)
+    assert v == _pytest.approx(166.32 * 6000 * 90 / 365)
+    # a manual reference is labelled as one; a static verdict carries its resolution
+    ref = cred.reference("Pendle", config.CREDIBILITY["Pendle"]["in_epoch"]["ref"], {}, long, asof)
+    assert ref["value"] == 82_545 and "Manual record" in ref["note"]
+    ref = cred.reference("Maple", config.CREDIBILITY["Maple"]["in_revenue"]["ref"], {}, long, asof)
+    assert ref["mode"] == "static" and ref["verdict"] == "CHECK" and "UNEXPLAINED" in ref["note"] \
+        and "RESOLVE:" in ref["note"]
+
+
+def test_xref_coinbase_candles_and_lido_apr(tmp_path):
+    """fetch/xref.py: the candle OPEN at 00:00 UTC per day; a 404 is NOT LISTED (remembered, re-tried
+    weekly); Lido's 7-day SMA stored as a fraction, a rate outside 0-20% refused."""
+    from fetch.xref import CrossRefs
+    from fetch.logcache import DailyChecks
+    assert CrossRefs.parse_candles([[1759622400, 1, 3, 2.5, 2.8, 10], [1759536000, 1, 3, 2.4, 2.5, 9]]) == \
+        [(pd.Timestamp("2025-10-04"), 2.4), (pd.Timestamp("2025-10-05"), 2.5)]
+    assert "00:00" in CrossRefs.parse_candles([[1759622401, 1, 3, 2.5, 2.8, 10]])
+
+    class H:
+        def __init__(self, answers):
+            self.answers, self.calls = answers, []
+
+        def get(self, url, params=None, headers=None, deadline=None):
+            self.calls.append(url)
+            a = self.answers(url)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+    def answers(url):
+        if "lido" in url:
+            return {"data": {"smaApr": 2.83, "aprs": []}}
+        if "HYPE-USD" in url:
+            return RuntimeError("404 Client Error: Not Found for url")
+        return [[int(pd.Timestamp("2026-10-04").timestamp()), 1, 2, 1.5, 1.6, 1]]
+    daily = DailyChecks(tmp_path)
+    x = CrossRefs(http=H(answers), daily=daily, robots=lambda u: (True, "test"))
+    out = FetchOutput()
+    x.run([config.PROJECT_BY_NAME[n] for n in ("Ethereum", "Hyperliquid", "World Mobile")], 30, out)
+    f = out.frame()
+    assert f[f.metric == "staking_apr_lido"]["value"].iloc[0] == _pytest.approx(0.0283)
+    assert set(f[f.metric == "price_usd_coinbase"]["project"]) == {"Ethereum"}, "parked / unlisted get none"
+    assert any("HYPE-USD not listed on Coinbase Exchange" in e.message for e in out.log)
+    out2 = FetchOutput()
+    x.run([config.PROJECT_BY_NAME["Hyperliquid"]], 30, out2)
+    assert any("re-tried weekly" in e.message for e in out2.log), "a 404 is remembered, not re-asked every run"
+    bad = CrossRefs(http=H(lambda u: {"data": {"smaApr": 31.0}}), daily=DailyChecks(tmp_path / "b"),
+                    robots=lambda u: (True, ""))
+    out3 = FetchOutput()
+    bad._lido(config.PROJECT_BY_NAME["Ethereum"], "2026-10-05", out3)
+    assert out3.frame().empty and any("outside 0-20%" in e.message for e in out3.log)
+    assert "api.exchange.coinbase.com" in config.SOURCE_REGISTER and "eth-api.lido.fi" in config.SOURCE_REGISTER
+    assert set(config.METRICS["price_usd_coinbase"]["only_projects"]) == set(config.CREDIBILITY_PROJECTS)
+    assert config.METRICS["price_usd_coinbase"]["view_only"] and config.METRICS["staking_apr_lido"]["view_only"]
+
+
+def test_a_route_only_closure_never_blanks_a_live_headline(tmp_path):
+    """Found by the Credibility pass (2026-10-05): Ethereum's A4 GROSS ISSUANCE Q0 rendered "none
+    available" because ultrasound.money's issuance ROUTE was closed — the figure itself is computed."""
+    bw, wb = _cred_build(tmp_path)
+    ws = wb["A4 Permanent Burn"]
+    col = next(c.column for c in ws[4] if c.value and str(c.value).startswith("GROSS ISSUANCE"))
+    row = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "Ethereum")
+    assert ws.cell(row, col).value != bw.CLOSED_TEXT and "gross_issuance_tokens" in str(ws.cell(row, col).value)
+    assert config.unavailable_for("Ethereum", "gross_issuance_tokens")["route_only"] is True

@@ -4026,6 +4026,51 @@ def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], da
     return row + 6
 
 
+# ---------------------------------------------------------------------------------------
+# CREDIBILITY (Jake, 2026-10-05): every headline cell on A1-A4 beside an independent reference.
+# ---------------------------------------------------------------------------------------
+_HEADLINE_CELLS: list = []          # filled by _write_table while A1-A4 are written
+
+# (tab prefix, header prefix, stable id) — the id is what config.CREDIBILITY keys on, so a header can
+# be reworded without losing its checks. A headline column not listed here fails the test that
+# requires every headline cell to have an id.
+HEADLINE_IDS = (
+    ("A1", "VALIDATOR STAKING YIELD", "a1_validator_yield"),
+    ("A1", "NRR ON SETTLEMENT VOLUME", "a1_nrr_settlement"),
+    ("A1", "NRR ON TRADING THROUGHPUT", "a1_nrr_throughput"),
+    ("A1", "TVL", "a1_tvl"),
+    ("A1", "FEES ÷ ISSUANCE", "a1_fees_issuance"),
+    ("A2", "FREE FLOAT ÷ ARR", "a2_ff_arr"),
+    ("A2", "FREE FLOAT = circulating", "a2_free_float"),
+    ("A2", "SUPPLY TRAJECTORY", "a2_trajectory"),
+    ("A2", "Customer revenue Q0", "a2_customer_revenue"),
+    ("A2", "Emissions to suppliers Q0", "a2_emissions"),
+    ("A2", "CUSTOMER REVENUE PER TOKEN EMITTED", "a2_rev_per_token"),
+    ("A2", "Customer revenue ÷ emissions value", "a2_rev_vs_emissions_value"),
+    ("A3", "CIRCULATING RETIREMENT RATE (tokens)", "a3_circ_retirement"),
+    ("A3", "FDV RETIREMENT RATE (tokens)", "a3_fdv_retirement"),
+    ("A3", "BUYBACK AS % OF SUPPLY (annualised, implied)", "a3_implied_buyback_pct"),
+    ("A3", "Actual buyback as % of supply", "a3_actual_buyback_pct"),
+    ("A3", "Net absorption Q0", "a3_net_absorption"),
+    ("A3", "PROTOCOL STAKING YIELD (tokens)", "a3_protocol_yield"),
+    ("A3", "Buyback to LOCKED supply", "a3_buyback_locked"),
+    ("A4", "PERMANENT BURN YIELD", "a4_burn_yield"),
+    ("A4", "BURN ÷ ISSUANCE", "a4_crossover"),
+    ("A4", "NET SUPPLY CHANGE Q0", "a4_net_change"),
+    ("A4", "NET SUPPLY CHANGE, annualised", "a4_net_change_pct"),
+    ("A4", "GROSS BURN Q0", "a4_gross_burn"),
+    ("A4", "GROSS ISSUANCE Q0", "a4_gross_issuance"),
+    ("A4", "Pool release Q0", "a4_pool_release"),
+)
+
+
+def headline_id(sheet: str, header: str) -> str | None:
+    for tab, prefix, hid in HEADLINE_IDS:
+        if sheet.startswith(tab) and header.startswith(prefix):
+            return hid
+    return None
+
+
 def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_key: dict, flag_metrics: list[str],
                  start_row: int = 4, key_cols: set[int] | None = None) -> int:
     headers = [s[0] for s in specs] + ["Data flags (stale / manual / missing)"]
@@ -4051,6 +4096,15 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 meta = dict(meta, metric=meta["metric_fn"](p["name"]))
             dep = meta.get("closed_with") or meta.get("metric")
             closed = config.unavailable_for(p["name"], dep) if dep else None
+            if closed and closed.get("route_only"):
+                closed = None               # one ROUTE was closed; the figure itself is live
+            # THE CREDIBILITY TAB READS THIS CELL (Jake, 2026-10-05): every headline figure on A1-A4,
+            # by address, so its row there shows exactly what this tab shows.
+            if bold and kind in ("calc", "pull") and ws.title[:2] in ("A1", "A2", "A3", "A4"):
+                _HEADLINE_CELLS.append({"sheet": ws.title, "project": p["name"], "header": head,
+                                        "cell": c.coordinate, "kind": kind, "fmt": fmt,
+                                        "id": headline_id(ws.title, head), "metric": meta.get("metric"),
+                                        "closed": closed})
             # A HALTED PROGRAMME IS A MEASURED ZERO (Fluid, 2026-09-28): 0 with the halt date,
             # like the "silent since" flag, not "none available".
             if closed and closed.get("renders_as_zero_since"):
@@ -4797,6 +4851,102 @@ def write_charts(ws, sheets: dict):
 
 
 
+CRED_HEAD = ["Project", "Tab", "Cell", "What is checked", "Our value", "Independent reference (source)",
+             "Reference value", "Reference date", "Gap %", "Tolerance ±", "Verdict",
+             "Note — why, and what would resolve it"]
+
+
+def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) -> list[dict]:
+    """THE CREDIBILITY TAB (Jake, 2026-10-05): every headline cell on A1-A4 for the projects in
+    config.CREDIBILITY_PROJECTS, plus each project's input rows, beside an independent reference.
+    OUR VALUE IS THE HEADLINE CELL ITSELF (a formula to it), so the row can never disagree with the tab
+    it checks. Gap and verdict are formulas; UNVERIFIABLE and the not-yet-read CHECKs are literals
+    with their reason. A re-read of our own source is FRESH-only — never PASS. Rows: credibility.py."""
+    import credibility as cred
+    from openpyxl.formatting.rule import FormulaRule
+    in_scope = {p["name"] for p in scoped_projects()}
+    rows = cred.build_rows(_HEADLINE_CELLS, data_by_key, long, asof, projects=in_scope)
+    projects = [n for n in config.CREDIBILITY_PROJECTS if n in in_scope]
+    parked = "; ".join(f"{k}: {v}" for k, v in config.CREDIBILITY_PARKED.items())
+    _title(ws, "Credibility — every headline beside an independent reference",
+           "PASS = an independent source agrees within tolerance · '(inputs)' = a derived figure, judged by its input "
+           "rows: PASS only when every input passes · CHECK = it disagrees, or a reference exists "
+           "but was not read (the note says how to resolve) · FRESH-only = the only reference re-reads our own "
+           "source: current, not verified — never a PASS · UNVERIFIABLE = no independent source exists (the note "
+           f"says why). Our value is the headline cell itself. Parked: {parked or 'none'}.")
+    s0 = 4
+    _header(ws, s0, ["Project", "PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A (no figure by design)", "Rows"])
+    d_head = s0 + len(projects) + 3
+    d0, d1 = d_head + 1, d_head + max(len(rows), 1)
+    K, A = f"$K${d0}:$K${d1}", f"$A${d0}:$A${d1}"
+    for i, n in enumerate(projects + ["All"]):
+        r = s0 + 1 + i
+        ws.cell(row=r, column=1, value=n).font = F_BOLD if n == "All" else F_BASE
+        crit = (f'{A},$A{r},' if n != "All" else "")
+        for j, v in enumerate(("PASS*", "CHECK*", "FRESH-only*", "UNVERIFIABLE*", "N/A*"), start=2):
+            ws.cell(row=r, column=j, value=f'=COUNTIFS({crit}{K},"{v}")')
+        ws.cell(row=r, column=7, value=f"=COUNTIF({A},$A{r})" if n != "All" else f"=COUNTA({A})")
+    _header(ws, d_head, CRED_HEAD)
+
+    def text(v):                     # a note that starts with "=" must never become a formula
+        return (" " + v) if isinstance(v, str) and v[:1] in "=+-@" else v
+    for k, row in enumerate(rows):
+        r = d0 + k
+        ws.cell(row=r, column=1, value=row["project"])
+        ws.cell(row=r, column=2, value=row["tab"])
+        ws.cell(row=r, column=3, value=row["cell"])
+        ws.cell(row=r, column=4, value=text(row["what"]))
+        ours = row["ours"]
+        f = (f"={ours['cell']}" if "cell" in ours else ours.get("value") if "py" in ours else
+             f'=IFERROR({R.D(r, ours["metric"], ours.get("window", "now"))},{NA})')
+        c = ws.cell(row=r, column=5, value=f)
+        _style(c, "pull", row.get("fmt") or FMT_NUM2)
+        ws.cell(row=r, column=6, value=text(row["source"]))
+        g = ws.cell(row=r, column=7, value=row["value"])
+        _style(g, "input", row.get("fmt") or FMT_NUM2)
+        ws.cell(row=r, column=8, value=row["date"])
+        # A ZERO REFERENCE (a halted programme) is met by a zero, and by nothing else.
+        gap = ws.cell(row=r, column=9, value=f'=IF(AND(ISNUMBER(E{r}),ISNUMBER(G{r})),'
+                                             f'IF(G{r}=0,IF(E{r}=0,0,1),(E{r}-G{r})/ABS(G{r})),"")')
+        gap.number_format = FMT_PCT
+        tol = row.get("tol")
+        t = ws.cell(row=r, column=10, value=(tol / 100.0) if tol is not None else None)
+        t.number_format = FMT_PCT
+        if row["mode"] == "static" and row["verdict"] == "N/A":
+            # A CELL DECLARED EMPTY BY DESIGN THAT SHOWS A NUMBER is a contradiction — said, not hidden.
+            v = f'=IF(AND(ISNUMBER(E{r}),E{r}<>0),"CHECK (figure where none is expected)","N/A")'
+        elif row["mode"] == "static":
+            v = row["verdict"]
+        elif row["mode"] == "derived":
+            cells = [f"K{d0 + i}" for i in row.get("input_rows") or ()]
+            anycheck = "OR(" + ",".join(f'LEFT({x},5)="CHECK"' for x in cells) + ")" if cells else "FALSE"
+            allpass = "AND(" + ",".join(f'OR(LEFT({x},4)="PASS",LEFT({x},3)="N/A")' for x in cells) + ")"
+            anyunv = "OR(" + ",".join(f'LEFT({x},5)="UNVER"' for x in cells) + ")"
+            if not cells:
+                v = "UNVERIFIABLE (inputs)"
+            elif row.get("missing_inputs"):
+                v = f'=IF({anycheck},"CHECK (inputs)","UNVERIFIABLE (inputs)")'
+            else:
+                v = (f'=IF({anycheck},"CHECK (inputs)",IF({allpass},"PASS (inputs)",'
+                     f'IF({anyunv},"UNVERIFIABLE (inputs)","FRESH-only (inputs)")))')
+        else:
+            ok = "FRESH-only" if row["mode"] == "same_source" else "PASS"
+            v = (f'=IF(NOT(ISNUMBER(G{r})),"CHECK (no reference)",IF(NOT(ISNUMBER(E{r})),"CHECK (no figure)",'
+                 f'IF(ABS(I{r})<=J{r},"{ok}","CHECK")))')
+        ws.cell(row=r, column=11, value=v).font = F_BOLD
+        ws.cell(row=r, column=12, value=text(row.get("note") or ""))
+    rng = f"K{d0}:K{d1}"
+    for test, fill in (('LEFT({c},4)="PASS"', FILL_GREEN), ('LEFT({c},5)="CHECK"', FILL_RED),
+                       ('LEFT({c},5)="FRESH"', FILL_AMBER), ('LEFT({c},5)="UNVER"', FILL_UNCONFIRMED),
+                       ('LEFT({c},3)="N/A"', FILL_UNCONFIRMED)):
+        ws.conditional_formatting.add(rng, FormulaRule(formula=[test.format(c=f"K{d0}")], fill=fill))
+    for col, w in zip("ABCDEFGHIJKL", (13, 18, 22, 60, 16, 48, 16, 12, 9, 10, 20, 90)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = ws.cell(row=d0, column=5)
+    ws.auto_filter.ref = f"A{d_head}:L{d1}"
+    return rows
+
+
 def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     """The to-do list. Every metric no tier could resolve, with the reason and the fix.
 
@@ -5186,6 +5336,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     ws_a2 = wb.create_sheet("A2 Coordination")
     ws_a3 = wb.create_sheet("A3 Revenue Buyback")
     ws_a4 = wb.create_sheet("A4 Permanent Burn")
+    ws_cred = wb.create_sheet("Credibility")
     ws_ch = wb.create_sheet("Charts")
     ws_cfg = wb.create_sheet("Config & Sources")
     ws_gap = wb.create_sheet("Gap Report")
@@ -5199,10 +5350,12 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     write_data(ws_data, data, asof)
     write_monthly(ws_mon, months, monthly)
     write_master(ws_master, R, data_by_key)
+    _HEADLINE_CELLS.clear()
     a4 = write_a4(ws_a4, R, data_by_key)
     a3 = write_a3(ws_a3, R, data_by_key)
     a1 = write_a1(ws_a1, R, data_by_key, months)
     a2 = write_a2(ws_a2, R, data_by_key, months)
+    write_credibility(ws_cred, R, data_by_key, long, asof)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
     _write_manual_quarterly(ws_gap, gap_end + 2, long)
