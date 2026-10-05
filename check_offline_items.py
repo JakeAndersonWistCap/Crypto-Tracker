@@ -4973,6 +4973,30 @@ def _num(v, unit=""):
     return f"${s}" if unit == "$" else (f"{s} {unit}" if unit else s)
 
 
+# ASCII-SAFE OUTPUT (Jake's run 2026-10-05: spot_checks died on "UnicodeEncodeError: 'charmap' codec
+# can't encode character '\u2192'" — his console and Tee write cp1252). Every line this script prints
+# passes through _AsciiStream: the symbols used here get ASCII spellings, anything else becomes '?'.
+_ASCII = str.maketrans({"\u2014": "-", "\u2013": "-", "\u2026": "...", "\u2192": "->", "\u2190": "<-",
+                        "\u00b1": "+/-", "\u00f7": "/", "\u00d7": "x", "\u201c": '"', "\u201d": '"',
+                        "\u2018": "'", "\u2019": "'", "\u220b": " contains ", "\u2264": "<=", "\u2265": ">=",
+                        "\u2248": "~", "\u00a0": " "})
+
+
+def ascii_safe(text) -> str:
+    return str(text).translate(_ASCII).encode("ascii", "replace").decode("ascii")
+
+
+class _AsciiStream:
+    def __init__(self, stream):
+        self._s = stream
+
+    def write(self, text):
+        return self._s.write(ascii_safe(text))
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
 class _Spot:
     """Collects one line per comparison and one verdict per item."""
 
@@ -4997,6 +5021,20 @@ class _Spot:
               + ("  [same source: checks the store is current, not the figure]" if same_source else ""))
         self._add(item, verdict, f"{label} {gap:+.1f}% (±{tol:g}%)")
         return gap
+
+    def recorded(self, item, label, ours, ref, tol_key, ref_from, unit=""):
+        """A BY-HAND reading on record (config), compared with the store: "PASS (manual record)" — the
+        reference was read by a person, not fetched by this run, and the line says so."""
+        tol = SPOT_TOLERANCE_PCT[tol_key]
+        if ours is None:
+            print(f"  [MANUAL] {label}: no stored value for it here — on record: {_num(ref, unit)} ({ref_from})")
+            self._add(item, "MANUAL", f"{label}: not in the store here")
+            return
+        gap = (float(ours) - float(ref)) / abs(float(ref)) * 100
+        verdict = "PASS" if abs(gap) <= tol else "CHECK"
+        print(f"  [{verdict} (manual record)] {label}: ours {_num(ours, unit)} vs {_num(ref, unit)} — {ref_from}; "
+              f"gap {gap:+.2f}% (tolerance ±{tol:g}%)")
+        self._add(item, verdict, f"{label} {gap:+.2f}% (manual record)")
 
     def manual(self, item, label, ours, where, unit=""):
         print(f"  [MANUAL] {label}: ours {_num(ours, unit)} — check by hand: {where}")
@@ -5187,7 +5225,7 @@ def _spot_aethir(spot, rows):
                     "dashboard.aethir.com → Protocol → Demand Metric, the ARR tile", unit="$")
 
 
-def _spot_uniswap(spot, rows, asof):
+def _spot_uniswap(spot, rows, asof, long=None):
     import pandas as pd                                    # noqa: PLC0415
     import config                                          # noqa: PLC0415
     item = "c) Uniswap burn (last 90 days, 100M one-off excluded)"
@@ -5213,7 +5251,7 @@ def _spot_uniswap(spot, rows, asof):
     prices = {pd.Timestamp(int(p["timestamp"]), unit="s").normalize(): float(p["price"])
               for p in ((px.get("coins") or {}).get("coingecko:uniswap") or {}).get("prices") or ()}
     usd = uni = 0.0
-    days = unpriced = 0
+    days, priced = 0, []
     for ts, v in fees.get("totalDataChart") or ():
         d = pd.Timestamp(int(ts), unit="s").normalize()
         if start < d <= asof:
@@ -5222,13 +5260,41 @@ def _spot_uniswap(spot, rows, asof):
             p = prices.get(d)
             if p:
                 uni += float(v or 0) / p
-            else:
-                unpriced += 1
+                priced.append(d)
+    unpriced = days - len(priced)
     spot.info(f"reference: DefiLlama Uniswap holders revenue {_num(usd, '$')} over {days} day(s), each day ÷ that "
-              f"day's UNI price (coins.llama.fi) = {_num(uni, 'UNI')}" + (f"; {unpriced} day(s) unpriced, left out" if unpriced else ""))
-    spot.compare(item, "UNI burned (90d)", q0, uni if days and not unpriced else None, "uni_burn_vs_holders_revenue",
-                 "DefiLlama dailyHoldersRevenue ÷ same-day UNI price (an independent source: our burn is an on-chain "
-                 "read)", unit="UNI")
+              f"day's UNI price (coins.llama.fi) = {_num(uni, 'UNI')} over {len(priced)} priced day(s)"
+              + (f"; {unpriced} day(s) unpriced, left out" if unpriced else ""))
+    if not priced:
+        spot.manual(item, "UNI burned (90d)", q0, "no priced day in the window; defillama.com/protocol/uniswap -> "
+                                                  "Holders Revenue, last 90d, / the UNI price", unit="UNI")
+        return
+    # LIKE WITH LIKE (Jake, 2026-10-05): our burn over the SAME priced days, from the stored daily rows
+    # (one-off removed as the workbook removes it); without them, the reference is scaled up instead.
+    ours_days = None
+    if long is not None:
+        g = long[(long.project == "Uniswap") & (long.metric == "gross_burn_tokens")]
+        daily = g.groupby(g["date"].dt.normalize())["value"].sum()
+        if len(daily):
+            if inside and one.get("tokens"):
+                win = daily[(daily.index >= pd.Timestamp(w[0])) & (daily.index <= pd.Timestamp(w[1]))]
+                big = win[win >= float(one["tokens"])]
+                if len(big) == 1:
+                    daily.loc[big.index[0]] -= float(one["tokens"])
+            ours_days = float(daily.reindex(priced).fillna(0.0).sum())
+    if ours_days is not None:
+        spot.info(f"ours over the same {len(priced)} priced day(s): {_num(ours_days, 'UNI')}")
+        spot.compare(item, f"UNI burned ({len(priced)} priced days of 90)", ours_days, uni,
+                     "uni_burn_vs_holders_revenue",
+                     "DefiLlama dailyHoldersRevenue / same-day UNI price, the same days (an independent source: our "
+                     "burn is an on-chain read)", unit="UNI")
+    else:
+        scaled = uni * cov / len(priced)
+        spot.info(f"our daily rows are not in the store here: the reference is SCALED x{cov:.0f}/{len(priced)} to our "
+                  f"{cov:.0f} covered days = {_num(scaled, 'UNI')}")
+        spot.compare(item, "UNI burned (90d)", q0, scaled, "uni_burn_vs_holders_revenue",
+                     f"DefiLlama dailyHoldersRevenue / same-day UNI price over {len(priced)} priced day(s), scaled "
+                     f"x{cov:.0f}/{len(priced)}", unit="UNI")
 
 
 def _spot_pendle(spot, rows, long):
@@ -5266,7 +5332,10 @@ def _spot_pendle(spot, rows, long):
                     "no totalPendleStaked in the API answer; app.pendle.finance → sPENDLE: 'Total PENDLE Staked'",
                     unit="PENDLE")
     # last epoch: our stored epoch vs the API's own lastEpochBuybackAmount, at the scale the adapter fits
-    k, done, _med, tried = fitting_scale(api, spec, pd.Timestamp.now("UTC").tz_localize(None))
+    try:
+        k, done, _med, tried = fitting_scale(api, spec, pd.Timestamp.now("UTC").tz_localize(None))
+    except (ValueError, KeyError, TypeError) as e:          # an unreadable epoch history: say so, go on
+        k, tried = None, [f"epoch history unreadable: {e}"]
     ours_last = None
     if long is not None:
         s = long[(long.project == "Pendle") & (long.metric == spec["metric"])].sort_values("date")
@@ -5274,14 +5343,31 @@ def _spot_pendle(spot, rows, long):
         if len(s):
             spot.info(f"our last stored epoch: {s['date'].iloc[-1].date()} {_num(ours_last, 'PENDLE')}")
     lb = api.get("lastEpochBuybackAmount")
+    try:
+        lb = float(lb) if lb is not None else None
+    except (TypeError, ValueError):
+        lb = None
+    if lb == 0:
+        lb = None
+        spot.info("lastEpochBuybackAmount reads 0 in the API answer (as on Jake's run of 2026-10-05)")
     if lb is not None and k is not None:
         spot.compare(item, "last epoch distributed vs lastEpochBuybackAmount", ours_last, float(lb) / 10 ** k,
                      "pendle_last_epoch", f"spendle/data lastEpochBuybackAmount at the scale the epoch series fits "
                      f"(10^{k}; tried {tried})", unit="PENDLE", same_source=True)
     else:
         spot.manual(item, "last epoch", ours_last,
-                    ("no lastEpochBuybackAmount in the API answer" if lb is None else f"no scale fits the epoch series ({tried})")
-                    + "; app.pendle.finance → sPENDLE: last epoch's buyback", unit="PENDLE")
+                    ("no usable lastEpochBuybackAmount in the API answer" if lb is None else f"no scale fits the epoch series ({tried})")
+                    + "; app.pendle.finance -> sPENDLE: 'Last Epoch Distribution'", unit="PENDLE")
+    # BY-HAND CHECKS ON RECORD (config spendle_epochs.manual_checks): the stored epoch vs Jake's reading
+    for mc in spec.get("manual_checks") or ():
+        mine = None
+        if long is not None:
+            s_ = long[(long.project == "Pendle") & (long.metric == spec["metric"])]
+            hit = s_[s_["date"].dt.normalize() == pd.Timestamp(mc["epoch"])]
+            mine = float(hit["value"].iloc[-1]) if len(hit) else None
+        spot.recorded(item, f"epoch {mc['epoch']} distributed vs '{mc['field']}'", mine, float(mc["value"]),
+                      "pendle_last_epoch", f"{mc['source']}, read {mc['read_on']} by {mc['read_by']}",
+                      unit="PENDLE")
     # token-terms yield, exactly as the workbook's _token_yield builds it
     q0 = _row(rows, f"Pendle|{spec['metric']}", "q0")
     ev = _row(rows, f"Pendle|{spec['metric']}", "q0_events")
@@ -5352,7 +5438,7 @@ def spot_checks():
     spot = _Spot()
     long, rows, asof = _spot_ours()
     for fn, args in ((_spot_hyperliquid, (spot, rows)), (_spot_aethir, (spot, rows)),
-                     (_spot_uniswap, (spot, rows, asof)), (_spot_pendle, (spot, rows, long)),
+                     (_spot_uniswap, (spot, rows, asof, long)), (_spot_pendle, (spot, rows, long)),
                      (_spot_sky, (spot, rows, long, asof))):
         try:
             fn(*args)
@@ -5442,6 +5528,9 @@ def main():
         load_dotenv()
     except Exception:  # noqa: BLE001
         pass
+    for name in ("stdout", "stderr"):                     # cp1252 consoles: ASCII only (2026-10-05)
+        if not isinstance(getattr(sys, name), _AsciiStream):
+            setattr(sys, name, _AsciiStream(getattr(sys, name)))
     from fetch.base import install_redaction              # noqa: PLC0415
     install_redaction()
 

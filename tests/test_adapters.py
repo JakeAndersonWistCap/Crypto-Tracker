@@ -242,7 +242,7 @@ def test_every_check_is_reachable_from_main_and_prints_its_section(capsys, monke
     aero = out[out.upper().index("AERODROME"):]
     aero = aero[:aero.find("=====", 200) if aero.find("=====", 200) > 0 else len(aero)]
     assert "(None, None)" not in aero, f"a tuple leaked into the output: {aero[:300]}"
-    assert "UNREACHABLE — no Base RPC" in aero, \
+    assert "UNREACHABLE - no Base RPC" in aero, \
         f"with no network it must say so and stop, not proceed: {aero[:300]}"
 
     # ===== 2. NOTHING THAT PRINTS A SECTION IS LEFT OUT OF THE REGISTRY.
@@ -14685,8 +14685,8 @@ def test_offline_checks_filter_runs_only_the_named_check(monkeypatch, capsys):
     assert "Done. 1 check ran: settlement_rebuild_coverage" in out
     assert "HYPERLIQUID: not rebuildable" in out, "the one selected check must still actually run"
     # Nothing else ran: another check's own section header must not appear.
-    assert "SKY — is the 2024 flapper" not in out
-    assert "GEODNET — GEOD destinations" not in out
+    assert "SKY - is the 2024 flapper" not in out
+    assert "GEODNET - GEOD destinations" not in out
 
 
 def test_offline_checks_filter_matches_exact_name_before_considering_it_a_prefix(monkeypatch, capsys):
@@ -23464,3 +23464,50 @@ def test_spot_checks_compare_our_figure_with_a_live_reference_and_never_pass_wit
     assert lines["c) Uniswap burn (last 90 days, 100M one-off excluded)"] == "CHECK"
     assert lines["e) Sky buybacks (flapper Exec)"] == "MANUAL", "no live reference is never a PASS"
     assert set(coi.SPOT_TOLERANCE_PCT) >= {"hl_mcap_first_party", "uni_burn_vs_holders_revenue", "sky_buyback_vs_allocation"}
+
+
+def test_spot_checks_like_with_like_manual_record_and_ascii_output(monkeypatch, capsys):
+    """Jake's first spot_checks run (2026-10-05): (1) the Uniswap reference was computed over 81 priced
+    days but printed MANUAL — ours is now summed over the SAME priced days; (2) Sky died on a cp1252
+    console — every line is ASCII-safe; (3) Pendle's 2026-09-08 epoch vs Jake's screenshot (82,545) is
+    printed as a manual PASS, and lastEpochBuybackAmount = 0 keeps the automatic line MANUAL."""
+    import io
+    import check_offline_items as coi
+    asof = pd.Timestamp("2026-10-05")
+    days = pd.date_range("2026-07-08", "2026-10-05")                      # 90 days in (asof-90, asof]
+    rows = [(d, "Uniswap", "gross_burn_tokens", 64_000.0) for d in days]  # 5.76M over 90 days
+    rows += [(pd.Timestamp("2026-08-25"), "Pendle", "pendle_distributed_tokens", 120_000.0),
+             (pd.Timestamp("2026-09-08"), "Pendle", "pendle_distributed_tokens", 82_550.0)]
+    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value"])
+    aggs = {"Uniswap|gross_burn_tokens": {"q0": 5.76e6, "q0_covered_days": 90.0},
+            "Pendle|locked_tokens_shares": {"now": 60.0e6}}
+    priced = list(days[:81])                                             # 9 days unpriced
+
+    def polite(url, method="GET", **kw):
+        if "api.llama.fi" in url:
+            return {"totalDataChart": [[int(d.timestamp()), 64_000.0 * 6.0] for d in days]}, ""
+        if "coins.llama.fi" in url:
+            return {"coins": {"coingecko:uniswap": {"prices": [{"timestamp": int(d.timestamp()) + 60, "price": 6.0}
+                                                               for d in priced]}}}, ""
+        if "pendle" in url:
+            return {"totalStakedInSpendle": str(int(60.0e6 * 1e18)), "lastEpochBuybackAmount": "0",
+                    "sPendleHistoricalData": {"timestamps": [], "buybackAmounts": [], "aprs": []}}, ""
+        return None, "unexpected"
+    monkeypatch.setattr(coi, "_polite", polite)
+    spot = coi._Spot()
+    coi._spot_uniswap(spot, aggs, asof, long)
+    coi._spot_pendle(spot, aggs, long)
+    out = capsys.readouterr().out
+    assert "9 day(s) unpriced, left out" in out and "ours over the same 81 priced day(s): 5.18M UNI" in out
+    assert "[PASS] UNI burned (81 priced days of 90)" in out and "gap +0.0%" in out
+    assert "lastEpochBuybackAmount reads 0" in out and "[MANUAL] last epoch" in out
+    assert "[PASS (manual record)] epoch 2026-09-08 distributed vs 'Last Epoch Distribution'" in out
+    assert "82.55K PENDLE vs 82.55K PENDLE" in out and "Jake's screenshot" in out
+    # every symbol this script prints survives a cp1252 console
+    buf = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    s = coi._AsciiStream(buf)
+    s.write("a → b — ± ÷ “q” … ∋ 中\n")
+    buf.flush()
+    assert buf.buffer.getvalue().decode("ascii") == 'a -> b - +/- / "q" ...  contains  ?\n'
+    src = open(coi.__file__, encoding="utf-8").read()
+    assert "setattr(sys, name, _AsciiStream(getattr(sys, name)))" in src

@@ -14252,6 +14252,16 @@ PROJECTS = [
             # lastEpochApr read 0 on Jake's run of 2026-09-29: a 0 is replaced by the last COMPLETE
             # epoch's sPendleHistoricalData.aprs entry, or the cross-check reads unavailable.
             "aprs_field": "aprs", "epoch_days": 14,
+            # BY-HAND CHECKS ON RECORD, printed by `check_offline_items.py spot_checks` as a manual PASS/CHECK
+            # against the stored epoch. lastEpochBuybackAmount reads 0 in spendle/data (Jake's run of
+            # 2026-10-05), so the automatic last-epoch line stays MANUAL.
+            "manual_checks": [
+                {"epoch": "2026-09-08", "field": "Last Epoch Distribution", "value": 82_545,
+                 "source": "Pendle staking page (app.pendle.finance, sPENDLE), Jake's screenshot",
+                 "read_on": "2026-09-29", "read_by": "Jake",
+                 "result": "PASS — ours 82.55K PENDLE for the 2026-09-08 epoch (spot_checks, 2026-10-05)",
+                 "entered": "entered by Claude Code, pending Jake's review"},
+            ],
         },
         "defillama_fees_slug": "pendle", "defillama_protocol": "pendle", "defillama_chain": None,
         "archetypes": [3], "archetypes_held": [],
