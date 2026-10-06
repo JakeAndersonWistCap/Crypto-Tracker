@@ -372,13 +372,20 @@ def group_value(html: str, key: str, group: tuple):
     one object, nested where the flat reader cannot see it, while stakeHistory's dated entries carry two of
     them each). Objects at any depth; one distinct value or nothing."""
     text = rsc_text(html)
-    vals = set()
+    vals, dated = set(), 0
     for m in re.finditer(re.escape(f'"{key}"') + r"\s*:\s*-?\d", text):
         obj = _enclosing_object(text, m.start())
         if obj and all(isinstance(obj.get(k), (int, float)) and not isinstance(obj.get(k), bool) for k in group):
-            vals.add(float(obj[key]))
+            # THE TILE IS THE UNDATED ONE (Jake's run 2026-10-06 17:20: "13 objects carry all of aiStaked,
+            # gamingStaked, edgeStaked, idcStaked" — the stakeHistory entries carry all four too, each with a
+            # startTime/endTime). A dated object is history, never the current figure.
+            if _date_of(obj) is None:
+                vals.add(float(obj[key]))
+            else:
+                dated += 1
     if not vals:
-        return None, f"no object carries all of {', '.join(group)} together"
+        return None, (f"no UNDATED object carries all of {', '.join(group)} together"
+                      + (f" ({dated} dated one(s) do — history entries)" if dated else ""))
     if len(vals) > 1:
         return None, f"{len(vals)} objects carry all of {', '.join(group)} with different `{key}` ({sorted(vals)[:4]})"
     return vals.pop(), ""

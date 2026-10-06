@@ -45,6 +45,7 @@ log = logging.getLogger("token_metrics.fetch.history_derive")
 SOURCE = "derive_history"
 USD_SOURCE = "derived:tokens*price"
 BURN_SOURCE = "derived:defillama_burned_fee_revenue/price"
+RULE_SOURCE = "derived:near_protocol_rule_x_defillama_fees/price"   # fees x declared share (chain_burn fees_rule)
 REL_EPS = 1e-9
 
 
@@ -113,7 +114,7 @@ def _chain_burn(out, h, p) -> int:
     if not decl:
         return 0
     burn = _series(h, name, "gross_burn_tokens")
-    measured = burn[burn["source"].astype(str).map(_measuring_point) != BURN_SOURCE]
+    measured = burn[~burn["source"].astype(str).map(_measuring_point).isin((BURN_SOURCE, RULE_SOURCE))]
     rev = _series(h, name, "revenue_usd")
     if len(measured):
         # A MEASURED BURN TAKES OVER, BUT ONLY FROM ITS FIRST DAY (Ethereum, 2026-09-29). Where the
@@ -137,23 +138,35 @@ def _chain_burn(out, h, p) -> int:
     rows = []
     # EVERY REFUSAL COUNTED (Jake's run 2026-10-06 16:33: revenue and fees spanned 2,182 days, price a year, and the
     # burn stayed at 108 days with nothing in the log to say which gate held the rest back).
-    no_fee, off, no_px = [], [], []
+    no_fee, off, no_px, ruled = [], [], [], []
+    # THE PROTOCOL RULE (NEAR, Jake 2026-10-06 17:20): where DefiLlama's revenue EQUALS its fees it is not the burn;
+    # burn = fees x the declared share, before the rule's end, under its own source.
+    rule = decl.get("fees_rule") or {}
+    rule_end = pd.Timestamp(rule["valid_before"]) if rule.get("valid_before") else None
     for r in rev.itertuples(index=False):
+        amount, src = float(r.value), BURN_SOURCE
         if share is not None:
             fee = fees.get(r.date)
             if fee is None or fee <= 0:
                 no_fee.append(r.date)
                 continue
-            ratio = float(r.value) / float(fee)
+            ratio = amount / float(fee)
             if abs(ratio - share) > tol:
-                off.append((r.date, ratio))
-                continue           # the methodology tripwire, exactly as at write time
+                if (rule and abs(ratio - float(rule["when_revenue_share"])) <= tol
+                        and (rule_end is None or r.date < rule_end)):
+                    amount, src = float(fee) * float(rule["share"]), RULE_SOURCE
+                    ruled.append(r.date)
+                else:
+                    off.append((r.date, ratio))
+                    continue       # the methodology tripwire, exactly as at write time
         if r.date in px.index and px[r.date] > 0:
-            v = float(r.value) / float(px[r.date])
+            v = amount / float(px[r.date])
             if _differs(held, r.date, v):
-                rows.append((r.date, v, BURN_SOURCE))
+                rows.append((r.date, v, src))
         else:
             no_px.append(r.date)
+            if src == RULE_SOURCE:
+                ruled.pop()
     n = _emit(out, name, "gross_burn_tokens", rows,
               f"revenue_usd / price_usd, DefiLlama burned-fee revenue ({decl.get('components', '')})")
 
@@ -164,7 +177,9 @@ def _chain_burn(out, h, p) -> int:
          f"gross_burn_tokens history — revenue_usd {span(list(rev['date']))}; price_usd {span(list(px.index))}; "
          f"{n} row(s) written (new or changed), {len(held)} held before; refused: no price {span(no_px)}, "
          f"no fees {span(no_fee)}, share tripwire ({share} ± {tol}) {span([d for d, _ in off])}"
-         + (f" — ratios {ratios[0]:.4f}..{ratios[-1]:.4f}, median {ratios[len(ratios) // 2]:.4f}" if ratios else ""))
+         + (f" — ratios {ratios[0]:.4f}..{ratios[-1]:.4f}, median {ratios[len(ratios) // 2]:.4f}" if ratios else "")
+         + (f"; PROTOCOL RULE (fees x {rule['share']}, where revenue = fees; {rule['source']}) on {span(ruled)}"
+            if rule else ""))
     return n
 
 

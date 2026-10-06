@@ -3688,10 +3688,22 @@ def _topup_split(R: Refs):
         return (" · allocated", "OF WHICH BOUGHT — ETHFI bought on DEXs in Q0 ÷ ETHFI topped up in Q0, capped at "
                                 "100%. Purchases are allocated first (fungible tokens cannot be traced); 1 − this "
                                 "share was TRANSFERRED in (treasury / foundation), not bought.")
-    return ("  of which BOUGHT on DEXs (Q0, purchases allocated first) — the rest transferred in (treasury)",
+    return ("  of which BOUGHT on-chain (DEX fills; Q0, purchases allocated first) — the rest transferred in",
             build, FMT_PCT, "calc", False,
             {"metric_fn": lambda n: ((config.PROTOCOL_YIELD.get(n) or {}).get("token_yield") or {}).get("bought"),
              "flag_fn": note})
+
+
+def _topup_split_alltime(R: Refs):
+    """A3, Ether.fi (Jake, 2026-10-06 17:20): "of which bought on-chain" over the FULL history — the top-up Safe's
+    all-time ETHFI inflows that were DEX fills (~6% since 2024-07), stored by the buyback scan each run."""
+    def build(r, p):
+        ty = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {})
+        m = ty.get("bought_share_alltime")
+        return pull(R.D(r, m, "now")) if m else ""
+    return ("  of which BOUGHT on-chain — FULL HISTORY (the top-up Safe's ETHFI inflows since 2024-07)",
+            build, FMT_PCT, "pull", False,
+            {"metric_fn": lambda n: ((config.PROTOCOL_YIELD.get(n) or {}).get("token_yield") or {}).get("bought_share_alltime")})
 
 
 def _published_apr(R: Refs):
@@ -4607,6 +4619,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         _token_yield(R, data_by_key),
         _topup_split(R),
+        _topup_split_alltime(R),
         _protocol_yield(R, data_by_key),
         _published_apr(R),
         _virtual_share(R),

@@ -24683,13 +24683,19 @@ def test_aethir_staked_components_read_their_current_figure_from_the_tile_object
     assert group == ("aiStaked", "gamingStaked", "edgeStaked", "idcStaked")
     tile = {"aiStaked": 416_626_182.69, "gamingStaked": 371_377_113.56, "edgeStaked": 136_696_638,
             "idcStaked": 866_896_004.12, "note": "a {brace} in a string", "meta": {"x": 1}}
+    # Jake's run 2026-10-06 17:20: the stakeHistory entries carry ALL FOUR keys too (13 objects matched) — the tile is
+    # the UNDATED one; dated entries are history, never the current figure
+    hist = [{"startTime": f"2026-0{m}-01T00:00:00.000Z", "endTime": f"2026-0{m + 1}-01T00:00:00.000Z",
+             "aiStaked": 400e6 + m, "gamingStaked": 360e6, "edgeStaked": 130e6, "idcStaked": 860e6} for m in range(1, 9)]
     blob = {"page": {"tiles": tile, "totalStaked": 1_791_595_938, "athCirculatingSupply": 24_053_550_151,
-                     "stakeHistory": [{"startTime": "2026-08-01T00:00:00.000Z", "aiStaked": 400e6, "gamingStaked": 360e6},
-                                      {"startTime": "2026-09-01T00:00:00.000Z", "aiStaked": 410e6, "gamingStaked": 365e6}]}}
+                     "stakeHistory": hist}}
     chunk = json.dumps("1a:" + json.dumps(blob))[1:-1]
     html = f'<html><script>self.__next_f.push([1,"{chunk}"])</script></html>'
     assert sum(group_value(html, k, group)[0] for k in group) == pytest.approx(1_791_595_938.37)
     assert group_value(html, "aiStaked", group + ("nope",))[0] is None
+    only_dated = f'<html><script>self.__next_f.push([1,"{json.dumps("1a:" + json.dumps({"h": hist}))[1:-1]}"])</script></html>'
+    v, why = group_value(only_dated, "aiStaked", group)
+    assert v is None and "(8 dated one(s) do — history entries)" in why, why
     orig = apm.today
     apm.today = lambda: pd.Timestamp("2026-10-06")
     try:
@@ -24733,7 +24739,10 @@ def test_ether_fi_buyback_counts_any_dex_fill_into_both_wallets_and_not_transfer
             ("0xtoken", ho, None): [],
             ("0xtoken", None, hs): [_elog(300, 0, [TRANSFER_TOPIC, pad_address(v4), hs], 2 * E, ts=t_new, tx="0xv4"),
                                     _elog(310, 0, [TRANSFER_TOPIC, pad_address(five_m), hs], 5 * E, ts=t_new, tx="0x5m"),
-                                    _elog(400, 1, [TRANSFER_TOPIC, pad_address(router), hs], 1 * E, ts=t_new, tx="0xsw1")],
+                                    _elog(400, 1, [TRANSFER_TOPIC, pad_address(router), hs], 1 * E, ts=t_new, tx="0xsw1"),
+                                    # ADDRESS POISONING (2026-10-06 17:20): zero value, from a lookalike of the v4 sender
+                                    _elog(410, 0, [TRANSFER_TOPIC, pad_address("0x0000000000000000000000000000000000000a90"), hs],
+                                          0, ts=t_new, tx="0xspam")],
             ("0xtoken", hs, None): [topup],
             ("", ho, None): [],
             ("", hs, None): [usdc_out, topup]}
@@ -24745,7 +24754,13 @@ def test_ether_fi_buyback_counts_any_dex_fill_into_both_wallets_and_not_transfer
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert f"BY HOLDER: {old} 5.00 (last 2026-03-20) [OLD-programme buyback Safe" in line, line
     assert f"{safe} 3.00 (last 2026-09-10) [NEW top-up Safe" in line
-    assert f"{five_m} 5.00 [UNIDENTIFIED sender of 5,000,000 ETHFI" in line
+    assert f"{five_m} 5.00 [EOA relaying a Binance withdrawal" in line
+    assert "1 zero-value lookalike (address-poisoning) transfer(s) ignored." in line
+    assert "0x0000000000000000000000000000000000000a90" not in line
+    # ALL-TIME BOUGHT SHARE of the top-up Safe: 3 of 8 received (2 v4 + 1 router; 5 transferred)
+    sh = f[f.metric == "buyback_bought_share_alltime"]
+    assert list(sh.value) == [3 / 8] and "received 8.00 in all, 3.00 of it bought on-chain" in \
+        " ".join(e.message for e in out.log)
     assert "Bought = a fill from a swap venue (2) or a transaction in which the holder paid another token out." in line
     last = f[f.metric == "buyback_last_inflow_date"]
     assert float(last.value.iloc[0]) == float((pd.Timestamp("2026-09-10") - pd.Timestamp("1899-12-30")).days)
@@ -24784,30 +24799,43 @@ def test_ether_fi_yield_numerator_is_the_top_ups_with_the_bought_share_beside_it
 
 
 def test_near_burn_history_says_which_gate_refused_each_day():
-    """Jake's run 2026-10-06 16:33: revenue_usd / fees_usd spanned 2,182 days and price a year, yet the burn stayed
-    at 108 days with nothing in the log to say why. The burn history (revenue / price, the 70% tripwire on fees)
-    now writes every day it can and names every refusal: no price, no fees, or the tripwire with the ratios seen."""
+    """Jake's runs 2026-10-06 16:33 / 17:20: the burn history (revenue / price, 70% tripwire on fees) now names every
+    refusal; and where DefiLlama's revenue EQUALS its fees (before 2026-06-19: not the burn), the PROTOCOL RULE
+    (nearcore burnt_gas_reward 3/10 -> 70% burned) gives burn = fees x 0.70 under its own source — only where
+    revenue == fees and only before the rule's end (HSP-027 approval, 2026-07-06; v87 removes the rebate)."""
+    import pytest
     from fetch import history_derive as hd
     from fetch.base import FetchOutput
+    rule = config.chain_burn_from_revenue("Near")["fees_rule"]
+    assert rule["share"] == 0.70 and rule["when_revenue_share"] == 1.0 and rule["valid_before"] == "2026-07-06"
+    assert config.declared_handover("Near", "gross_burn_tokens")["ordered_points"] == (hd.RULE_SOURCE, hd.BURN_SOURCE)
     days = pd.date_range("2025-09-01", "2026-10-04")
     rows = []
     for d in days:
         old = d < pd.Timestamp("2026-06-19")
-        rows += [(d, "Near", "revenue_usd", 1_000.0 if old else 700.0, "defillama"),
+        odd = pd.Timestamp("2026-01-10") <= d <= pd.Timestamp("2026-01-12")          # ratio 0.5: neither rule
+        late = pd.Timestamp("2026-08-01") <= d <= pd.Timestamp("2026-08-02")         # revenue = fees after the end
+        rows += [(d, "Near", "revenue_usd", 500.0 if odd else 1_000.0 if (old or late) else 700.0, "defillama"),
                  (d, "Near", "fees_usd", 1_000.0, "defillama")]
     rows += [(d, "Near", "price_usd", 2.0, "coingecko") for d in days[-365:]]
     long = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source"])
     out = FetchOutput()
     n = hd._chain_burn(out, hd._history(long, None), config.PROJECT_BY_NAME["Near"])
-    assert n == 108
+    f = out.frame().set_index("date")
+    assert n == 365 - 3 - 2
+    assert f.loc[pd.Timestamp("2026-03-01"), "value"] == pytest.approx(1_000 * 0.70 / 2.0)
+    assert f.loc[pd.Timestamp("2026-03-01"), "source"] == hd.RULE_SOURCE
+    assert f.loc[pd.Timestamp("2026-09-01"), "source"] == hd.BURN_SOURCE and f.loc[pd.Timestamp("2026-09-01"), "value"] == 350.0
     line = out.log[-1].message
     assert "revenue_usd 399 day(s) 2025-09-01..2026-10-04; price_usd 365 day(s) 2025-10-05..2026-10-04" in line, line
-    assert "share tripwire (0.7 ± 0.001) 291 day(s) 2025-09-01..2026-06-18 — ratios 1.0000..1.0000" in line
-    # where the ratio holds, the year is filled wherever a price exists
-    long2 = long.assign(value=[700.0 if m == "revenue_usd" else v for m, v in zip(long.metric, long.value)])
+    assert "share tripwire (0.7 ± 0.001) 5 day(s) 2026-01-10..2026-08-02 — ratios 0.5000..1.0000" in line
+    assert "PROTOCOL RULE (fees x 0.7, where revenue = fees; nearcore parameters.yaml burnt_gas_reward 3/10" in line
+    assert "on 254 day(s) 2025-10-05..2026-06-18" in line and "no price 34 day(s) 2025-09-01..2025-10-04" in line
+    # a stored rule row is this derivation's own, never a "measured" burn that makes it stand down
     out2 = FetchOutput()
-    assert hd._chain_burn(out2, hd._history(long2, None), config.PROJECT_BY_NAME["Near"]) == 365
-    assert "no price 34 day(s) 2025-09-01..2025-10-04" in out2.log[-1].message
+    held = pd.concat([long, out.frame()[["date", "project", "metric", "value", "source"]]], ignore_index=True)
+    assert hd._chain_burn(out2, hd._history(held, None), config.PROJECT_BY_NAME["Near"]) == 0
+    assert "NOT RUN" not in out2.log[-1].message
 
 
 def test_etherfi_topup_safe_probe_splits_bought_from_transferred_by_month(monkeypatch, capsys):
@@ -24850,7 +24878,161 @@ def test_etherfi_topup_safe_probe_splits_bought_from_transferred_by_month(monkey
     assert "2026-08               2.00               5.00" in text, text
     assert "2026-09               1.00               0.00" in text
     assert "TOTAL                 3.00               5.00" in text
-    assert f"{five_m}  transferred             5.00     1 tx  last 2026-08-13  0x83971edb… (unidentified)" in text
+    assert f"{five_m}  transferred             5.00     1 tx  last 2026-08-13  EOA: 5M from Binance" in text
     assert f"{coi.UNI_V4_POOL_MANAGER}  BOUGHT                  2.00     1 tx  last 2026-08-13  Uniswap v4" in text
     assert f"{router}  BOUGHT                  1.00" in text and f"{safe}  self" in text
     assert "ETHFI IN: 9.00 over 1 transfer(s)" in text and "first ETHFI in: 2023-11-14 — a mint/allocation-era date" in text
+
+
+def test_sethfi_share_price_is_read_at_one_block_now_and_q0_back_for_the_realised_yield(monkeypatch):
+    """Jake's run 2026-10-06 17:20: the token yield (top-ups / ETHFI held) is checked against sETHFI's own share
+    price — read at ONE block each (convertToAssets, else balanceOf/totalSupply at that block), today and ~89 days
+    back via archive — annualised over the span. Both points must use the same method."""
+    import pytest
+    from fetch.base import FetchOutput
+    from fetch.share_price import SharePrice
+    import fetch.share_price as sp
+    monkeypatch.setattr(sp, "today", lambda: pd.Timestamp("2026-10-06"))
+    spec = config.PROJECT_BY_NAME["Ether.fi"]["share_price_onchain"]
+    assert spec["metric"] == "sethfi_share_price_onchain" and spec["days_back"] == 89
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"] == {"metric": "sethfi_share_price_onchain"}
+
+    class Fn:
+        def __init__(self, f):
+            self.f = f
+
+        def call(self, block_identifier=None):
+            return self.f(block_identifier)
+
+    class W3:
+        def __init__(self, rate, erc4626=True):
+            self.rate, self.erc4626 = rate, erc4626
+            self.eth = self
+
+        def contract(self, address, abi):
+            w = self
+
+            class C:
+                class functions:
+                    @staticmethod
+                    def decimals():
+                        return Fn(lambda b: 18)
+
+                    @staticmethod
+                    def convertToAssets(x):
+                        if not w.erc4626:
+                            def boom(b):
+                                raise ValueError("execution reverted")
+                            return Fn(boom)
+                        return Fn(lambda b: int(x * w.rate[b]))
+
+                    @staticmethod
+                    def totalSupply():
+                        return Fn(lambda b: 100 * 10 ** 18)
+
+                    @staticmethod
+                    def balanceOf(a):
+                        return Fn(lambda b: int(100 * 10 ** 18 * w.rate[b]))
+            return C
+
+        def get_block(self, b):
+            return {"timestamp": int(pd.Timestamp("2026-07-09").timestamp())}
+
+    class Reader:
+        def __init__(self, w3):
+            self.w = w3
+
+        def web3(self, chain):
+            return self.w
+
+        def checksum(self, a):
+            return a
+
+        def block_number(self, chain):
+            return 2000
+
+    class Daily:
+        def due(self, *a):
+            return True
+
+        def done(self, *a):
+            pass
+    rates = {2000: 1.25, 1000: 1.24}
+    w = W3(rates)
+    out = FetchOutput()
+    SharePrice(reader=Reader(w), daily=Daily(), archive=(w, 1000)).run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
+    f = out.frame().sort_values("date")
+    assert list(f.value) == [1.24, 1.25] and list(f.date) == [pd.Timestamp("2026-07-09"), pd.Timestamp("2026-10-06")]
+    assert set(f.source) == {"share_vault:0x86B5780b.convertToAssets"}
+    msg = " ".join(e.message for e in out.log)
+    assert "+0.806% over 89 day(s)" in msg and "/yr realised" in msg, msg
+    # a vault without convertToAssets: the same quantity from balanceOf/totalSupply at each block
+    w2 = W3(rates, erc4626=False)
+    out2 = FetchOutput()
+    SharePrice(reader=Reader(w2), daily=Daily(), archive=(w2, 1000)).run([config.PROJECT_BY_NAME["Ether.fi"]], None, out2)
+    assert set(out2.frame().source) == {"share_vault:0x86B5780b.balanceOf/totalSupply"}
+    assert list(out2.frame().sort_values("date").value) == pytest.approx([1.24, 1.25])
+
+
+def test_etherfi_cex_test_finds_payments_reaching_binance_directly_or_via_a_deposit_address(monkeypatch, capsys):
+    """check_offline_items.py etherfi_cex_test (Jake, 2026-10-06 17:20): did an ether.fi wallet send USDC/USDT/ETH
+    toward Binance in the four weeks before the 5M ETHFI Binance withdrawal? A recipient is Binance when it IS the
+    hot wallet or forwards to it (a deposit address)."""
+    import check_offline_items as coi
+    import fetch.explorer as fx
+    safe, dep_addr, other = coi.ETHERFI_TOPUP_SAFE, "0x00000000000000000000000000000000000000d1", "0x00000000000000000000000000000000000000e2"
+    ts = int(pd.Timestamp("2026-07-20").timestamp())
+
+    def lg(frm, to, v, addr):
+        return {"topics": [coi.TRANSFER_TOPIC, coi._pad(frm), coi._pad(to)], "data": hex(v), "transactionHash": "0x1",
+                "timeStamp": ts, "blockNumber": 1, "address": addr}
+
+    class FakeEx:
+        def configured(self, chain_id):
+            return ["etherscan"]
+
+        def block_at(self, chain_id, t):
+            return 100
+
+        def get_logs(self, chain_id, address, topics, from_block=0, to_block="latest"):
+            meta = {"explorer": "etherscan", "requests": 1, "refused": []}
+            if address == coi.USDC_ETH and topics[1] == coi._pad(safe) and len(topics) == 2:
+                return [lg(safe, dep_addr, 3_000_000 * 10 ** 6, address), lg(safe, other, 5 * 10 ** 6, address)], meta
+            if address == coi.USDC_ETH and topics[1] == coi._pad(dep_addr):
+                return [lg(dep_addr, coi.BINANCE_HOT_WALLET, 3_000_000 * 10 ** 6, address)], meta
+            return [], meta
+
+        def _call(self, name, chain_id, params):
+            return []
+    monkeypatch.setattr(fx, "ExplorerLogs", FakeEx)
+    coi.etherfi_cex_test()
+    text = capsys.readouterr().out
+    assert f"top-up Safe      USDC -> {dep_addr}      3,000,000.00    1 tx  last 2026-07-20  forwards to the Binance" in text, text
+    assert "not seen forwarding to the Binance hot wallet" in text
+    assert "TO BINANCE: USDC+USDT $3,000,000" in text and "classify the 5M as 'bought on a CEX (inferred)'" in text
+
+
+def test_near_protocol_v87_probe_finds_the_first_block_at_87(monkeypatch, capsys):
+    """check_offline_items.py near_protocol_v87: nearcore 2.14.0 / protocol 87 removes the 30% contract reward
+    (100% of gas burned, HSP-027). The probe reads the live protocol version, then binary-searches the archival
+    node's EXPERIMENTAL_protocol_config for the first block at >= 87."""
+    import check_offline_items as coi
+    head_h, first87 = 200_000_000, 199_000_000
+
+    def rpc(url, method, params):
+        if method == "status":
+            return {"result": {"protocol_version": 87, "sync_info": {"latest_block_height": head_h}}}
+        if method == "EXPERIMENTAL_protocol_config":
+            return {"result": {"protocol_version": 87 if params["block_id"] >= first87 else 86}}
+        return {"result": {"header": {"timestamp_nanosec": str(int(pd.Timestamp("2026-08-20").value))}}}
+    monkeypatch.setattr(coi, "rpc", rpc)
+    coi.near_protocol_v87()
+    text = capsys.readouterr().out
+    assert "mainnet protocol_version now: 87" in text and f"FIRST BLOCK AT >= 87: {first87:,}" in text, text
+    assert "(2026-08-20)" in text
+
+
+def test_etherscan_runs_under_its_own_three_per_second_limit():
+    """Jake's run 2026-10-06 17:20: "NOTOK — Max calls per sec rate limit reached (3/sec)" with the pacer at 4/s."""
+    assert config.EXPLORERS["etherscan"]["rate_per_s"] <= 2.5
+    assert "3 req/s" in config.EXPLORERS["etherscan"]["limits"]

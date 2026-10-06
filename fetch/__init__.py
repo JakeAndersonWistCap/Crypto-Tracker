@@ -55,6 +55,7 @@ from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import StakedEth
+from .share_price import SharePrice
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
@@ -110,6 +111,8 @@ TIER_ORDER = [
     ("xref", 1, lambda ctx: CrossRefs()),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
     ("validatorqueue", 1, lambda ctx: StakedEth()),
+    # A share vault's own share price, now and ~Q0 back via archive (Ether.fi sETHFI, 2026-10-06).
+    ("share_vault", 2, lambda ctx: SharePrice()),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
@@ -1186,6 +1189,10 @@ def _derive_chain_burn(out: FetchOutput, projects: list[dict], stored_long=None)
                     continue
                 got = float(r.value) / fee
                 if abs(got - share) > tol:
+                    rule = decl.get("fees_rule") or {}
+                    if (rule and abs(got - float(rule["when_revenue_share"])) <= tol
+                            and (not rule.get("valid_before") or day < rule["valid_before"])):
+                        continue   # a declared protocol-rule day: fetch/history_derive writes it (fees x share)
                     off_ratio.append(f"{day} ({got:.4f})")
                     continue
             px = price_on.get((name, day))
@@ -1785,7 +1792,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30,
+    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);

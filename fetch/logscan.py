@@ -61,6 +61,29 @@ def _amount(entry: dict) -> int:
     return int(str(data), 16)
 
 
+def _lookalike(a: str, b: str) -> bool:
+    """`a` MIMICS `b`: a different address sharing its first or last four hex digits — what address-poisoning
+    vanity addresses are made to do (0x3fb667…, 0x3fb625…, 0x3fb67c… against 0x3fb6…7b78)."""
+    a, b = a.lower(), b.lower()
+    return a != b and (a[2:6] == b[2:6] or a[-4:] == b[-4:])
+
+
+def drop_poison(events: list, side: int, known) -> tuple[list, int]:
+    """(events, n dropped): a ZERO-VALUE transfer whose counterparty (topic `side`) mimics a known address is
+    address-poisoning spam (Jake's etherfi_topup_safe probe, 2026-10-06 17:20) — dropped from every scan and probe.
+    It moves no tokens, so no sum changes; it only pollutes the counterparty tables."""
+    known = [k.lower() for k in known]
+    kept, n = [], 0
+    for e in events:
+        if _amount(e) == 0:
+            cp = topic_address(e["topics"][side])
+            if any(_lookalike(cp, k) for k in known):
+                n += 1
+                continue
+        kept.append(e)
+    return kept, n
+
+
 def _merge(cached: list, new: list) -> list:
     """Cached + new, one copy of each log by (transaction, logIndex), in chain order."""
     seen, merged = set(), []
@@ -320,6 +343,16 @@ class LogScan:
                      if not resumed else
                      f"seed completed: {cached_n:,} cached + {fetched_new:,} new event(s)")
 
+        # 2b. ADDRESS-POISONING SPAM OUT (2026-10-06 17:20): zero-value transfers from/to lookalikes of a holder or of
+        # a real (non-zero) counterparty. They move nothing, so reconciliation is unaffected either way.
+        known = set(holders) | {topic_address(e["topics"][1]) for h in holders for e in ins[h] if _amount(e)} \
+            | {topic_address(e["topics"][2]) for h in holders for e in outs[h] if _amount(e)}
+        poisoned = 0
+        for h in holders:
+            ins[h], n_in = drop_poison(ins[h], 1, known)
+            outs[h], n_out = drop_poison(outs[h], 2, known)
+            poisoned += n_in + n_out
+
         # 3. RECONCILE, PER HOLDER, TO THE WEI.
         for h in holders:
             net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
@@ -383,7 +416,7 @@ class LogScan:
                 for h in holders:
                     sent = self._tx_events(chain_id, {"address": None}, to_block, [TRANSFER_TOPIC, pad_address(h)])
                     paid_txs[h] = {str(e["transactionHash"]).lower() for e in sent
-                                   if str(e.get("address") or "").lower() != token.lower()}
+                                   if str(e.get("address") or "").lower() != token.lower() and _amount(e) > 0}
             except ExplorerRefused as e:
                 out.fail(SOURCE, name, f"{key}: the holders' outgoing transfers (any token) could not be read — {e}", TIER)
                 out.gap(name, metric, reason=f"the {key} scan counts an inflow as BOUGHT when the holder paid another "
@@ -536,6 +569,7 @@ class LogScan:
                       if len(holders) > 1 and per_holder else "")
                    + (f" Bought = a fill from a swap venue ({len(venues)}) or a transaction in which the holder paid "
                       f"another token out." if swap else "")
+                   + (f" {poisoned} zero-value lookalike (address-poisoning) transfer(s) ignored." if poisoned else "")
                    + rq_note + self._since_note(spec, counted, labels, scale))
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
@@ -606,6 +640,20 @@ class LogScan:
                 f"this run STORED {len(frame)} daily row(s) covering {stored}"
                 + " (the full reconciled series, every run)"
                 + f". Zeros are observed — the scan covers every block. {summary}", TIER)
+
+        # A HOLDER'S ALL-TIME BOUGHT SHARE (Jake, 2026-10-06 17:20): of everything the holder ever received (not a
+        # hop between holders, not a mint, not address-poisoning spam), the share counted as BOUGHT on-chain — the
+        # top-up Safe's ~6% (1.30M of ~20.95M since 2024-07). Stored as a ratio dated today.
+        bs = spec.get("bought_share")
+        if bs:
+            hb = bs["holder"].lower()
+            got_in = sum(_amount(e) for e in ins.get(hb, []) if topic_address(e["topics"][1]) not in internal
+                         and topic_address(e["topics"][1]) not in MINT_SENDERS)
+            if got_in > 0:
+                share = per_holder[hb][0] / got_in
+                out.add(tidy([(today(), share)], name, bs["metric"], f"{SOURCE}:{key}", TIER), SOURCE, name,
+                        f"{bs['metric']} = {share:.2%} — {hb} received {got_in / scale:,.2f} in all, "
+                        f"{per_holder[hb][0] / scale:,.2f} of it bought on-chain (the rest transferred in)", TIER)
 
         # THE LAST COUNTED INFLOW, STORED AS A VALUE. Added 2026-09-28. A window of zeros says
         # nothing about WHEN the program last moved; the run log did, as prose. Excel date serial

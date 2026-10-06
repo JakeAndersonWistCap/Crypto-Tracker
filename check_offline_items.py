@@ -967,6 +967,54 @@ def near_block_supply():
     print("  PASTE BACK: expect ~2.5%/yr less the burnt gas; issuance = this change + burn.")
 
 
+def near_protocol_v87():
+    """NEAR (Jake's run 2026-10-06 17:20): WHEN did protocol version 87 activate on mainnet? nearcore 87.yaml /
+    CHANGELOG 2.14.0: "Remove gas rewards … burnt_gas_reward is changed from 30% (3/10) to 0%" (HSP-027, approved
+    2026-07-06). Before it 70% of gas was burned; from it, 100% — and DefiLlama's revenue (fees x 0.7) then
+    understates the burn by 30%. Reads the protocol version now (rpc.mainnet.near.org `status`), then
+    binary-searches the archival node's EXPERIMENTAL_protocol_config by block for the first block at >= 87."""
+    head("NEAR — protocol v87 (100% of gas burned) activation on mainnet")
+    live, arch = "https://rpc.mainnet.near.org", "https://archival-rpc.mainnet.near.org"
+    try:
+        st = rpc(live, "status", []).get("result") or {}
+        pv, h = int(st.get("protocol_version") or 0), int((st.get("sync_info") or {}).get("latest_block_height") or 0)
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    print(f"  mainnet protocol_version now: {pv} at block {h:,}")
+    if pv < 87:
+        print("  v87 NOT ACTIVE: 70% of gas is still burned; DefiLlama's fees x 0.7 is the burn. Nothing to change.")
+        return
+
+    def ver(height):
+        r = rpc(arch, "EXPERIMENTAL_protocol_config", {"block_id": int(height)}).get("result") or {}
+        return int(r.get("protocol_version") or 0)
+
+    def when(height):
+        hd = (rpc(arch, "block", {"block_id": int(height)}).get("result") or {}).get("header") or {}
+        return pd.Timestamp(int(hd.get("timestamp_nanosec") or 0), unit="ns")
+    import pandas as pd                                    # noqa: PLC0415
+    lo = h - int(120 * 86_400 / 0.6)                       # ~120 days back at ~0.6 s/block (a generous floor)
+    try:
+        if ver(lo) >= 87:
+            print(f"  already >= 87 at block {lo:,} ({when(lo).date()}) — widen the floor")
+            return
+        hi = h
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if ver(mid) >= 87:
+                hi = mid
+            else:
+                lo = mid
+        t = when(hi)
+    except Exception as e:  # noqa: BLE001
+        print(f"  archival read failed — {e}")
+        return
+    print(f"  FIRST BLOCK AT >= 87: {hi:,} — {t} UTC ({t.date()})")
+    print("  PASTE BACK. From that date the burn is 100% of gas fees; config Near.chain_burn_from_revenue.fees_rule "
+          "and the revenue-based burn after it get the activation date.")
+
+
 # World Mobile on Cardano: policy + asset name from the Cardano Foundation token registry,
 # mappings/<policy><asset hex>.json (name "World Mobile Token X", ticker WMTX, decimals 6, url
 # worldmobiletoken.com), read 2026-09-28. The legacy WMT policy is the pre-migration token.
@@ -1238,6 +1286,12 @@ def etherfi_sethfi_topups():
     except ExplorerRefused as e:
         print(f"  explorer refused: {redact(str(e))[:200]}")
         return
+    from fetch.logscan import drop_poison                   # noqa: PLC0415
+    real = {SETHFI.lower()} | set(known) | {"0x" + e["topics"][1][-40:].lower() for e in ins
+                                            if int(str(e.get("data") or "0x0"), 16)}
+    ins, poisoned = drop_poison(ins, 1, real)                # address-poisoning spam (2026-10-06 17:20)
+    if poisoned:
+        print(f"  {poisoned} zero-value lookalike transfer(s) dropped as address poisoning")
     print(f"  from block {b0:,} (2026-08-01): {len(ins):,} ETHFI transfer(s) into sETHFI, {len(mints):,} sETHFI "
           f"mint(s); served by {m1['explorer']} / {m2['explorer']}")
     minted = {str(e["transactionHash"]).lower() for e in mints}
@@ -1354,18 +1408,84 @@ ETHERFI_5M_SENDER = "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd"
 UNI_V4_POOL_MANAGER = "0x000000000004444c5dc75cb358380d2e3de08a90"   # Uniswap/sdks sdk-core addresses.ts (mainnet)
 
 
-def etherfi_topup_safe():
-    """Ether.fi (Jake, 2026-10-06 16:33): the top-up Safe 0x3fb6784e… buys ETHFI and pays it into sETHFI.
-      a) every ETHFI inflow to it, classified on the pipeline's rule (log_scans.buyback_wallet_inflow,
-         attribution "swap"): BOUGHT when the sender is a swap venue (CoW GPv2Settlement, Uniswap v4 PoolManager)
-         or the Safe paid ANOTHER token out in the same transaction; otherwise TRANSFERRED — by month and sender;
-      b) who 0x83971edb… is (sender of 5,000,000 ETHFI): code size, Safe owners vs the buyback Safe's, the
-         OpenZeppelin VestingWallet getters (beneficiary/start/duration/owner), and where its own ETHFI came from.
-    Read-only, Etherscan V2 + the Ethereum RPC. Nothing is wired from it."""
-    head("ETHER.FI — the top-up Safe's ETHFI: bought vs transferred; who is 0x83971edb…")
+def _etherfi_identify(ex, w3, r, addr: str, known: dict, ref_owners) -> None:
+    """Who is `addr`: code size, Safe owners (and how many it shares with the buyback Safe), the OpenZeppelin
+    VestingWallet getters, and its own ETHFI in/out by counterparty with the first date. Read-only."""
     import pandas as pd                                     # noqa: PLC0415
     from collections import defaultdict                     # noqa: PLC0415
     from fetch.base import redact                           # noqa: PLC0415
+    from fetch.explorer import ExplorerRefused              # noqa: PLC0415
+    from fetch.logscan import drop_poison                   # noqa: PLC0415
+    E = 10 ** 18
+    print(f"\n  WHO IS {addr}?  {known.get(addr, '')}")
+    if w3 is not None:
+        a = r.checksum(addr)
+        code = w3.eth.get_code(a)
+        print(f"    code: {len(code)} byte(s) — {'contract' if code else 'EOA'}")
+        abi = [{"name": n, "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": t}]}
+               for n, t in (("getOwners", "address[]"), ("getThreshold", "uint256"), ("VERSION", "string"),
+                            ("beneficiary", "address"), ("owner", "address"), ("start", "uint256"),
+                            ("duration", "uint256"))]
+        c = w3.eth.contract(address=a, abi=abi)
+        for fn in (("getOwners", "getThreshold", "VERSION", "beneficiary", "owner", "start", "duration") if code else ()):
+            try:
+                v = getattr(c.functions, fn)().call()
+            except Exception:  # noqa: BLE001
+                continue
+            if fn == "getOwners":
+                own = {o.lower() for o in v}
+                print(f"    Safe owners ({len(own)}): {', '.join(sorted(own))}")
+                if ref_owners is not None:
+                    print(f"    owners shared with the buyback Safe: {len(own & ref_owners)} of {len(own)}")
+            elif fn == "start" and isinstance(v, int):
+                print(f"    start() = {v} ({pd.Timestamp(v, unit='s').date() if v > 0 else '-'})")
+            elif fn == "duration" and isinstance(v, int):
+                print(f"    duration() = {v} s ({v / 86_400:,.0f} days)")
+            else:
+                print(f"    {fn}() = {str(v).lower()}  {known.get(str(v).lower(), '')}")
+    try:
+        src, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(addr)])
+        out_, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, _pad(addr), None])
+    except ExplorerRefused as e:
+        print(f"    its ETHFI flows unreadable — {redact(str(e))[:120]}")
+        return
+    src, _ = drop_poison(src, 1, [addr] + list(known))
+    out_, _ = drop_poison(out_, 2, [addr] + list(known))
+    for label, evs, side in (("IN", src, 1), ("OUT", out_, 2)):
+        agg, last = defaultdict(int), {}
+        for e in evs:
+            k = "0x" + e["topics"][side][-40:].lower()
+            agg[k] += int(str(e.get("data") or "0x0"), 16)
+            last[k] = max(last.get(k, ""), str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
+        print(f"    ETHFI {label}: {sum(agg.values()) / E:,.2f} over {len(evs)} transfer(s) — "
+              + ", ".join(f"{k} {v / E:,.2f} (last {last[k]})" + (f" [{known[k]}]" if k in known else "")
+                          for k, v in sorted(agg.items(), key=lambda kv: -kv[1])[:6]))
+    if src:
+        first = min(int(e.get("timeStamp") or 0) for e in src)
+        print(f"    first ETHFI in: {pd.Timestamp(first, unit='s').date()}"
+              + (" — a mint/allocation-era date" if first < int(pd.Timestamp('2024-04-01').timestamp()) else ""))
+
+
+BINANCE_HOT_WALLET = "0x28c6c06298d514db089934071355e5743bf21d60"     # Jake's probe 2026-10-06 (Etherscan: Binance 14)
+ETHERFI_JULY_SENDERS = ("0x5ec5e6b4eb6827914ca8bc3ae02c39417242adde",
+                        "0x66fcfc15a40f22fad40fd6b6b9741eef4de85721",
+                        "0xe4439b1d150ab2febd72d699954c7b4dde2b66e2")
+
+
+def etherfi_topup_safe():
+    """Ether.fi (Jake, 2026-10-06 16:33 / 17:20): the top-up Safe 0x3fb6784e… buys ETHFI and pays it into sETHFI.
+      a) every ETHFI inflow to it, classified on the pipeline's rule (log_scans.buyback_wallet_inflow,
+         attribution "swap"): BOUGHT when the sender is a swap venue (CoW GPv2Settlement, Uniswap v4 PoolManager)
+         or the Safe paid ANOTHER token out in the same transaction; otherwise TRANSFERRED — by month and sender.
+         Zero-value lookalike transfers (address poisoning) are dropped first;
+      b) who sent it ETHFI: 0x83971edb… (5M, Binance-withdrawn) and the July 2026 senders 0x5ec5e6b4…, 0x66fcfc15…,
+         0xe4439b1d… — code size, Safe owners vs the buyback Safe's, VestingWallet getters, their own ETHFI flows.
+    Read-only, Etherscan V2 + the Ethereum RPC. Nothing is wired from it."""
+    head("ETHER.FI — the top-up Safe's ETHFI: bought vs transferred; who sends it")
+    import pandas as pd                                     # noqa: PLC0415
+    from collections import defaultdict                     # noqa: PLC0415
+    from fetch.base import redact                           # noqa: PLC0415
+    from fetch.logscan import drop_poison                   # noqa: PLC0415
     try:
         from fetch.explorer import ExplorerLogs, ExplorerRefused   # noqa: PLC0415
     except ImportError as e:
@@ -1379,8 +1499,11 @@ def etherfi_topup_safe():
     venues = {cow: "CoW GPv2Settlement", UNI_V4_POOL_MANAGER: "Uniswap v4 PoolManager"}
     known = {"0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD buyback Safe",
              "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f": "ether.fi deployer EOA",
+             "0x01e42ad3acd58584ffc1d1982ecbbe758996d601": "ether.fi-controlled Safe (600K sender)",
              "0x0c83eae1fe72c390a02e426572854931eeff93ba": "protocol treasury (Deployed.s.sol TREASURY)",
-             ETHERFI_5M_SENDER: "0x83971edb… (unidentified)", safe: "SELF", **venues}
+             ETHERFI_5M_SENDER: "EOA: 5M from Binance 2026-08-12, forwarded 2026-08-13",
+             BINANCE_HOT_WALLET: "Binance hot wallet (Etherscan: Binance 14)",
+             safe: "SELF", **venues}
     E = 10 ** 18
     try:
         ins, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(safe)])
@@ -1388,7 +1511,10 @@ def etherfi_topup_safe():
     except ExplorerRefused as e:
         print(f"  explorer refused: {redact(str(e))[:200]}")
         return
-    paid = {str(e["transactionHash"]).lower() for e in sent if str(e.get("address") or "").lower() != ETHFI.lower()}
+    real = {safe} | {"0x" + e["topics"][1][-40:].lower() for e in ins if int(str(e.get("data") or "0x0"), 16)}
+    ins, poisoned = drop_poison(ins, 1, real | set(known))
+    paid = {str(e["transactionHash"]).lower() for e in sent
+            if str(e.get("address") or "").lower() != ETHFI.lower() and int(str(e.get("data") or "0x0"), 16) > 0}
 
     def amt(e):
         return int(str(e.get("data") or "0x0"), 16)
@@ -1405,85 +1531,143 @@ def etherfi_topup_safe():
         m = pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").strftime("%Y-%m")
         if cls != "self":
             month[m][0 if cls == "BOUGHT" else 1] += amt(e)
-        r = who[(frm, cls)]
-        r[0] += amt(e)
-        r[1] += 1
-        r[3] = max(r[3], str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
-    print(f"  {len(ins):,} ETHFI inflow(s); the Safe sent another token out in {len(paid):,} transaction(s)")
+        r_ = who[(frm, cls)]
+        r_[0] += amt(e)
+        r_[1] += 1
+        r_[3] = max(r_[3], str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
+    print(f"  {len(ins):,} ETHFI inflow(s) ({poisoned} zero-value lookalike transfer(s) dropped as address poisoning); "
+          f"the Safe sent another token out in {len(paid):,} transaction(s)")
     print("\n  BY MONTH (ETHFI):            BOUGHT      TRANSFERRED")
     for m in sorted(month):
         b, t = month[m]
         print(f"    {m}   {b / E:>16,.2f}   {t / E:>16,.2f}")
     tb, tt = sum(v[0] for v in month.values()), sum(v[1] for v in month.values())
-    print(f"    TOTAL     {tb / E:>16,.2f}   {tt / E:>16,.2f}")
+    print(f"    TOTAL     {tb / E:>16,.2f}   {tt / E:>16,.2f}"
+          + (f"   (bought {tb / (tb + tt):.1%})" if tb + tt else ""))
     print("\n  BY SENDER:")
     for (frm, cls), (v, n, _, last) in sorted(who.items(), key=lambda kv: -kv[1][0]):
         print(f"    {frm}  {cls:<11} {v / E:>16,.2f}  {n:>4} tx  last {last}  {known.get(frm, '')}")
 
-    # b) 0x83971edb
-    print(f"\n  WHO IS {ETHERFI_5M_SENDER}?")
     from fetch.chain import ChainReader                     # noqa: PLC0415
+    r = w3 = ref = None
     try:
         r = ChainReader()
         w3 = r.web3("ethereum")
+        abi = [{"name": "getOwners", "type": "function", "stateMutability": "view", "inputs": [],
+                "outputs": [{"type": "address[]"}]}]
+        bs = w3.eth.contract(address=r.checksum("0x2f5301a3D59388c509C65f8698f521377D41Fd0F"), abi=abi)
+        ref = {o.lower() for o in bs.functions.getOwners().call()}
     except Exception as e:  # noqa: BLE001
-        print(f"    no Ethereum RPC — {redact(str(e))[:160]}")
-        w3 = None
-    if w3 is not None:
-        a = r.checksum(ETHERFI_5M_SENDER)
-        code = w3.eth.get_code(a)
-        print(f"    code: {len(code)} byte(s) — {'contract' if code else 'EOA'}")
-        abi = [{"name": n, "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": t}]}
-               for n, t in (("getOwners", "address[]"), ("getThreshold", "uint256"), ("VERSION", "string"),
-                            ("beneficiary", "address"), ("owner", "address"), ("start", "uint256"),
-                            ("duration", "uint256"))]
-        c = w3.eth.contract(address=a, abi=abi)
-        ref = None
-        try:
-            bs = w3.eth.contract(address=r.checksum("0x2f5301a3D59388c509C65f8698f521377D41Fd0F"), abi=abi)
-            ref = {o.lower() for o in bs.functions.getOwners().call()}
-        except Exception:  # noqa: BLE001
-            pass
-        for fn in ("getOwners", "getThreshold", "VERSION", "beneficiary", "owner", "start", "duration"):
-            try:
-                v = getattr(c.functions, fn)().call()
-            except Exception:  # noqa: BLE001
-                continue
-            if fn == "getOwners":
-                own = {o.lower() for o in v}
-                print(f"    Safe owners ({len(own)}): {', '.join(sorted(own))}")
-                if ref is not None:
-                    print(f"    owners shared with the buyback Safe: {len(own & ref)} of {len(own)}")
-            elif fn in ("start",) and isinstance(v, int):
-                print(f"    {fn}() = {v} ({pd.Timestamp(v, unit='s').date() if v > 0 else '-'})")
-            elif fn == "duration" and isinstance(v, int):
-                print(f"    duration() = {v} s ({v / 86_400:,.0f} days)")
-            else:
-                print(f"    {fn}() = {str(v).lower()}  {known.get(str(v).lower(), '')}")
+        print(f"\n  no Ethereum RPC — on-chain identity reads skipped ({redact(str(e))[:160]})")
+    for a in (ETHERFI_5M_SENDER, *ETHERFI_JULY_SENDERS):
+        _etherfi_identify(ex, w3, r, a, known, ref)
+    print("\n  PASTE BACK. A Safe sharing owners with the buyback Safe, a vesting contract or a treasury makes a sender's "
+          "ETHFI a TRANSFER; an exchange withdrawal is 'bought on a CEX (inferred)' only if etherfi_cex_test finds the "
+          "payment going in — never on-chain 'bought'.")
+
+# The two dollar stablecoins on Ethereum mainnet (6 decimals each) — read-only probe constants, not wired.
+USDC_ETH = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+USDT_ETH = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+
+
+def etherfi_cex_test():
+    """Ether.fi (Jake, 2026-10-06 17:20): was the 5,000,000 ETHFI that reached the top-up Safe from Binance (via the EOA
+    0x83971edb…, withdrawn 2026-08-12) BOUGHT on Binance? Test: did any ether.fi wallet — the top-up Safe, the old
+    buyback Safe, the 600K Safe, the deployer — send USDC / USDT / ETH (~$3.3M at ~$0.66) toward Binance in the four
+    weeks before (2026-07-15..2026-08-13)? A recipient counts as Binance when it IS the Binance hot wallet or
+    FORWARDS what it got to it within 7 days (a deposit address). If yes, the 5M is "bought on a CEX (inferred)" —
+    its own category, never mixed into on-chain "bought". Read-only, Etherscan V2."""
+    head("ETHER.FI — did an ether.fi wallet pay Binance before the 5M ETHFI withdrawal? (CEX-buy test)")
+    import pandas as pd                                     # noqa: PLC0415
+    from collections import defaultdict                     # noqa: PLC0415
+    from fetch.base import redact                           # noqa: PLC0415
+    from fetch.logscan import drop_poison                   # noqa: PLC0415
     try:
-        src, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(ETHERFI_5M_SENDER)])
-        out_, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, _pad(ETHERFI_5M_SENDER), None])
-    except ExplorerRefused as e:
-        print(f"    its ETHFI flows unreadable — {redact(str(e))[:120]}")
+        from fetch.explorer import ExplorerLogs, ExplorerRefused   # noqa: PLC0415
+    except ImportError as e:
+        print(f"  fetch.explorer not importable: {e}")
         return
-    agg = defaultdict(int)
-    for e in src:
-        agg["0x" + e["topics"][1][-40:].lower()] += amt(e)
-    print(f"    ETHFI IN: {sum(agg.values()) / E:,.2f} over {len(src)} transfer(s) — "
-          + ", ".join(f"{k} {v / E:,.2f}" + (f" [{known[k]}]" if k in known else "")
-                      for k, v in sorted(agg.items(), key=lambda kv: -kv[1])[:6]))
-    agg = defaultdict(int)
-    for e in out_:
-        agg["0x" + e["topics"][2][-40:].lower()] += amt(e)
-    print(f"    ETHFI OUT: {sum(agg.values()) / E:,.2f} over {len(out_)} transfer(s) — "
-          + ", ".join(f"{k} {v / E:,.2f}" + (f" [{known[k]}]" if k in known else "")
-                      for k, v in sorted(agg.items(), key=lambda kv: -kv[1])[:6]))
-    if src:
-        first = min(int(e.get("timeStamp") or 0) for e in src)
-        print(f"    first ETHFI in: {pd.Timestamp(first, unit='s').date()}"
-              + (" — a mint/allocation-era date" if first < int(pd.Timestamp('2024-04-01').timestamp()) else ""))
-    print("\n  PASTE BACK. A Safe sharing owners with the buyback Safe, or a vesting/treasury contract, makes the 5M a "
-          "TRANSFER (reward-shortfall allowance), never a buyback — the pipeline already counts it that way.")
+    ex = ExplorerLogs()
+    if not ex.configured(1):
+        print("  no Etherscan key in .env (ETHERSCAN_API_KEY) — nothing read")
+        return
+    wallets = {ETHERFI_TOPUP_SAFE: "top-up Safe", "0x2f5301a3d59388c509c65f8698f521377d41fd0f": "old buyback Safe",
+               "0x01e42ad3acd58584ffc1d1982ecbbe758996d601": "600K Safe",
+               "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f": "deployer EOA"}
+    t0, t1 = pd.Timestamp("2026-07-15", tz="UTC"), pd.Timestamp("2026-08-13", tz="UTC")
+    try:
+        b0, b1 = ex.block_at(1, int(t0.timestamp())), ex.block_at(1, int(t1.timestamp()))
+        b2 = ex.block_at(1, int((t1 + pd.Timedelta(days=7)).timestamp()))
+    except ExplorerRefused as e:
+        print(f"  explorer refused: {redact(str(e))[:200]}")
+        return
+    print(f"  window blocks {b0:,}..{b1:,} (2026-07-15..2026-08-13); forwarding checked to block {b2:,}")
+
+    def eth_moves(addr, lo, hi):
+        """[(to, wei, ts)] of ETH leaving `addr`: its own transactions and internal (Safe) transfers."""
+        got = []
+        for action in ("txlist", "txlistinternal"):
+            try:
+                res = ex._call("etherscan", 1, {"module": "account", "action": action, "address": addr,
+                                                "startblock": lo, "endblock": hi, "sort": "asc"}) or []
+            except ExplorerRefused as e:
+                print(f"    {action} for {addr}: refused — {redact(str(e))[:100]}")
+                continue
+            for t in res if isinstance(res, list) else []:
+                if str(t.get("from", "")).lower() == addr and int(t.get("value") or 0) > 0 and str(t.get("isError", "0")) == "0":
+                    got.append((str(t.get("to", "")).lower(), int(t["value"]), int(t.get("timeStamp") or 0)))
+        return got
+    sent = defaultdict(lambda: [0.0, 0, ""])               # (wallet, asset, recipient) -> [amount, n, last]
+    for w in wallets:
+        for sym, tok in (("USDC", USDC_ETH), ("USDT", USDT_ETH)):
+            try:
+                logs, _ = ex.get_logs(1, tok, [TRANSFER_TOPIC, _pad(w)], b0, b1)
+            except ExplorerRefused as e:
+                print(f"    {sym} out of {w}: refused — {redact(str(e))[:100]}")
+                continue
+            logs, _ = drop_poison(logs, 2, [w])
+            for e in logs:
+                k = (w, sym, "0x" + e["topics"][2][-40:].lower())
+                sent[k][0] += int(str(e.get("data") or "0x0"), 16) / 1e6
+                sent[k][1] += 1
+                sent[k][2] = max(sent[k][2], str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
+        for to, wei, ts in eth_moves(w, b0, b1):
+            k = (w, "ETH", to)
+            sent[k][0] += wei / 1e18
+            sent[k][1] += 1
+            sent[k][2] = max(sent[k][2], str(pd.Timestamp(ts, unit="s").date()))
+    if not sent:
+        print("\n  NO USDC / USDT / ETH LEFT ANY ether.fi WALLET in the window — no payment toward an exchange is visible "
+              "on-chain. VERDICT: not shown to be a CEX purchase; classify the 5M as TRANSFERRED (exchange holdings / "
+              "treasury), not bought.")
+        return
+    print("\n  OUTFLOWS IN THE WINDOW (wallet, asset, recipient, amount, transfers, last) and where each recipient sent it:")
+    to_binance = defaultdict(float)
+    for (w, sym, to), (amt_, n, last) in sorted(sent.items(), key=lambda kv: -kv[1][0])[:20]:
+        verdict = ""
+        if to == BINANCE_HOT_WALLET:
+            verdict = "BINANCE hot wallet (direct)"
+        else:
+            try:
+                if sym == "ETH":
+                    fwd = [x for x in eth_moves(to, b0, b2) if x[0] == BINANCE_HOT_WALLET]
+                else:
+                    tok = USDC_ETH if sym == "USDC" else USDT_ETH
+                    fl, _ = ex.get_logs(1, tok, [TRANSFER_TOPIC, _pad(to), _pad(BINANCE_HOT_WALLET)], b0, b2)
+                    fwd = [e for e in fl if int(str(e.get("data") or "0x0"), 16) > 0]
+                verdict = (f"forwards to the Binance hot wallet ({len(fwd)} transfer(s)) — a Binance DEPOSIT address"
+                           if fwd else "not seen forwarding to the Binance hot wallet")
+            except ExplorerRefused as e:
+                verdict = f"onward flow unreadable — {redact(str(e))[:80]}"
+        if verdict.startswith(("BINANCE", "forwards")):
+            to_binance[sym] += amt_
+        print(f"    {wallets[w]:<16} {sym:<4} -> {to}  {amt_:>16,.2f}  {n:>3} tx  last {last}  {verdict}")
+    usd = to_binance.get("USDC", 0.0) + to_binance.get("USDT", 0.0)
+    print(f"\n  TO BINANCE: USDC+USDT ${usd:,.0f}; ETH {to_binance.get('ETH', 0.0):,.4f}  (the 5M ETHFI at ~$0.66 is ~$3.3M)")
+    print("  VERDICT: " + ("PAYMENT TO BINANCE FOUND — classify the 5M as 'bought on a CEX (inferred)', its own category, "
+                           "never on-chain 'bought'." if to_binance else
+                           "no payment reached Binance — the 5M is not shown to be a CEX purchase (TRANSFERRED)."))
+    print("  PASTE BACK.")
 
 
 GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
@@ -5854,7 +6038,7 @@ CHECKS = (
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
-    hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, aethir_pin_keys,
+    hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,

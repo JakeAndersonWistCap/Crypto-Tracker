@@ -520,6 +520,18 @@ METRICS = {
                                       "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1],
                                       "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Ether.fi",),
                                       "view_only": True},
+    # sETHFI's OWN share price read on-chain at one block (convertToAssets, else assets/shares at that block), today
+    # and ~89 days back via archive (fetch/share_price.py, Jake 2026-10-06 17:20) — the realised-yield reference.
+    "sethfi_share_price_onchain": {"label": "sETHFI share price — ETHFI per sETHFI read at one block (convertToAssets, "
+                                            "else balanceOf/totalSupply); today and ~Q0 back (archive)",
+                                   "kind": "stock", "unit": "ratio", "archetypes": [3], "tiers": [2],
+                                   "sanity_min": 0.5, "sanity_max": 10, "only_projects": ("Ether.fi",),
+                                   "view_only": True},
+    "buyback_bought_share_alltime": {"label": "Share of the top-up Safe's ETHFI inflows, ALL TIME, bought on-chain (DEX "
+                                              "fills) — the rest transferred in (Binance withdrawal, treasury, Safes)",
+                                     "kind": "stock", "unit": "ratio", "archetypes": [3], "tiers": [2],
+                                     "sanity_min": 0, "sanity_max": 1, "only_projects": ("Ether.fi",),
+                                     "view_only": True},
     "sethfi_topup_tokens": {
         "label": "ETHFI topped up into sETHFI with NO shares minted (rewards to stakers; deposits excluded) — log scan",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
@@ -2185,9 +2197,11 @@ EXPLORERS = {
         "base_url": "https://api.etherscan.io/v2/api",
         "key_env": "ETHERSCAN_API_KEY",
         "max_records": 1000,           # free tier since July 2026 — researched, confirm live
-        "limits": "5 req/s, 100,000 req/day (free)",
+        # 3 req/s ON THE FREE KEY, as Etherscan itself says: "NOTOK — Max calls per sec rate limit reached
+        # (3/sec)" on polygon ccip_v2 (Jake's run 2026-10-06 17:20; the pacer ran 4/s). Run under it.
+        "limits": "3 req/s, 100,000 req/day (free) — Etherscan's own NOTOK message, 2026-10-06",
         # ONE limit for the key across every chain id: one run-wide pacer for api.etherscan.io
-        "rate_per_s": 4.0,
+        "rate_per_s": 2.5,
     },
     "blockscout": {
         # One host per chain, Etherscan-compatible /api. BSC has no Blockscout instance on file.
@@ -3471,6 +3485,33 @@ PROJECTS = [
                           "rebate is DefiLlama's SupplySideRevenue and is not burned",
             "expect_daily_tokens": None,
             "expect_source": None,
+            # ===== THE PROTOCOL RULE WHERE DEFILLAMA'S REVENUE IS NOT THE BURN (Jake, 2026-10-06 17:20). =====
+            # Before 2026-06-19 DefiLlama's NEAR revenue EQUALS its fees (ratio 1.0000 on 2,073 days: an older adapter
+            # booked every fee as revenue), so it is not the burn there. The protocol rule is: 30% of a FunctionCall's
+            # burnt gas is paid to the contract, 70% burned — nearcore core/parameters/res/runtime_configs/
+            # parameters.yaml `burnt_gas_reward: {numerator: 3, denominator: 10}` (master, read 2026-10-06). On those
+            # days burn = fees x 0.70 / price, labelled "protocol rule x DefiLlama fees" (its own source; declared
+            # handover below), ONLY where revenue == fees and ONLY before `valid_before`. Revenue-based burn stays
+            # primary wherever revenue ~ 70% of fees.
+            # ** THE RULE ENDS AT PROTOCOL VERSION 87. ** nearcore 87.yaml / CHANGELOG 2.14.0: "Remove gas rewards …
+            # burnt_gas_reward is changed from 30% (3/10) to 0%" (HSP-027, approved by House of Stake 2026-07-06), so
+            # from v87's mainnet activation 100% of gas is burned — and DefiLlama's fees x 0.7 then UNDERSTATES the
+            # burn. The activation date is not on file: check_offline_items.py near_protocol_v87 reads it. Until
+            # then the fallback stops at the approval date, before which the 70% rule certainly held.
+            "fees_rule": {"share": 0.70, "when_revenue_share": 1.0, "valid_before": "2026-07-06",
+                          "source": "nearcore parameters.yaml burnt_gas_reward 3/10 (master, read 2026-10-06)",
+                          "ends_with": "protocol v87 (nearcore 2.14.0, 87.yaml: burnt_gas_reward 3/10 -> 0/1; HSP-027 "
+                                       "approved 2026-07-06) — activation date to be read (near_protocol_v87)"},
+        },
+        # The burn's history leg on days DefiLlama's revenue equals its fees, then the revenue-based burn.
+        "series_handover": {
+            "gross_burn_tokens": {
+                "ordered_points": ("derived:near_protocol_rule_x_defillama_fees/price",
+                                   "derived:defillama_burned_fee_revenue/price"),
+                "why": "fees x 0.70 / price (nearcore burnt_gas_reward 3/10) where DefiLlama's revenue equals its fees "
+                       "(before 2026-06-19), then DefiLlama's burned-fee revenue / price where revenue ~ 70% of fees",
+                "declared_on": "2026-10-06",
+            },
         },
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
@@ -16014,6 +16055,14 @@ PROJECTS = [
                 # paid ANOTHER token out in the same transaction (routers and aggregators: 1inch, 0x, Universal
                 # Router...). Treasury/foundation transfers (no payment out) are not purchases — named in the
                 # not-counted table. The old wallet's history is unchanged where every purchase was a CoW fill.
+                # THE RECORD (Jake's etherfi_topup_safe probe, 2026-10-06 17:20): since 2024-07 the top-up Safe received
+                # ~20.95M ETHFI, of which 1,296,885 (6%) was bought on-chain (CoW 129K in 2024; Uniswap v4 1.05M in
+                # 2026-09) and ~19.65M transferred in — incl. 5,000,000 withdrawn from Binance by the EOA 0x83971edb…
+                # (2026-08-12, forwarded 2026-08-13) and 2.79M / 2.72M / 2.14M in July 2026 from 0x5ec5e6b4…,
+                # 0x66fcfc15…, 0xe4439b1d… (unidentified; etherfi_topup_safe reads them). The all-time share is stored
+                # each run (bought_share) and shown beside the Q0 share on A3.
+                "bought_share": {"holder": "0x3fb6784e263643656f386a0371644931133d7b78",
+                                 "metric": "buyback_bought_share_alltime"},
                 "attribution": "swap",
                 "swap_venues": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41",
                                 "0x000000000004444c5dc75cb358380d2e3de08a90"],
@@ -16049,9 +16098,15 @@ PROJECTS = [
                     # 5,000,000.00 ETHFI into the top-up Safe since 2026-08-01 (Jake's probe, 2026-10-06). NOT YET
                     # IDENTIFIED (not in ether.fi's Deployed.s.sol; no web hit): check_offline_items.py
                     # etherfi_topup_safe reads it. A transfer either way — no token was paid out for it.
+                    # IDENTIFIED (Jake's probe, 2026-10-06 17:20): an EOA; 5,000,000 ETHFI in from the Binance hot wallet
+                    # 0x28c6c062… on 2026-08-12, all forwarded here 2026-08-13. A CEX withdrawal: bought on Binance or
+                    # ether.fi's own exchange holdings — etherfi_cex_test decides; never on-chain "bought" either way.
                     "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd":
-                        "UNIDENTIFIED sender of 5,000,000 ETHFI to the top-up Safe — a transfer (treasury / "
-                        "reward-shortfall allowance?), not a purchase",
+                        "EOA relaying a Binance withdrawal (5,000,000 ETHFI from Binance 14 on 2026-08-12) — not an "
+                        "on-chain purchase; 'bought on a CEX (inferred)' only if etherfi_cex_test finds the payment",
+                    "0x5ec5e6b4eb6827914ca8bc3ae02c39417242adde": "July 2026 sender (2.79M) — unidentified; transfer",
+                    "0x66fcfc15a40f22fad40fd6b6b9741eef4de85721": "July 2026 sender (2.72M) — unidentified; transfer",
+                    "0xe4439b1d150ab2febd72d699954c7b4dde2b66e2": "July 2026 sender (2.14M) — unidentified; transfer",
                 },
                 "sender_labels": {
                     "0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD-programme buyback Safe (dormant since 2026-04-01)",
@@ -16105,6 +16160,11 @@ PROJECTS = [
                 "wired_on": "2026-10-06",
             },
         ],
+        # REALISED YIELD REFERENCE (Jake, 2026-10-06 17:20): sETHFI's share price at one block, now and ~89 days back
+        # (archive) — the credibility reference for the token yield. Vault = contracts.sethfi (verified 2026-09-14).
+        "share_price_onchain": {"metric": "sethfi_share_price_onchain", "chain": "ethereum",
+                                "vault": "0x86B5780b606940Eb59A062aA85a07959518c0161",
+                                "asset": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB", "days_back": 89},
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
         # ===== HOLDERS REVENUE FROM DEFILLAMA'S STAKE CHILD (Jake's credibility run, 2026-10-05). =====
@@ -17183,6 +17243,7 @@ PROTOCOL_YIELD = {
     # unconfirmed": the top-ups are now measured going INTO sETHFI, so the recipients are established.)
     "Ether.fi": {"revenue": "holders_revenue_usd_defillama", "lock": "locked_tokens_underlying",
                  "token_yield": {"tokens": "sethfi_topup_tokens", "bought": "actual_buyback_tokens",
+                                 "bought_share_alltime": "buyback_bought_share_alltime",
                                  "note": "TOKEN YIELD — ETHFI topped up into sETHFI (no shares minted: rewards to "
                                          "stakers, however funded), annualised over its covered days, over the "
                                          "ETHFI sETHFI holds. Since 2026-08-13 paid by the top-up Safe 0x3fb6784e…; "
@@ -22139,12 +22200,18 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Ether.fi
     "Ether.fi": {
-        "a3_protocol_yield": {"formula": "share_price_growth", "args": {"metric": "lock_assets_per_share"},
+        # REALISED YIELD FROM THE VAULT ITSELF (Jake, 2026-10-06 17:20): sETHFI's share price read at ONE block each
+        # (convertToAssets, else balanceOf/totalSupply at that block), today and ~89 days back via archive, annualised —
+        # what stakers earned, against ours (top-ups / ETHFI held). The previous reference, lock_assets_per_share, was
+        # a ratio of two separately stored series whose share leg was once the over-counting Dune figure — the 13.15%
+        # Q0 figure and the "101.7%/yr" week were read from it and are NOT established as real accrual; DefiLlama's
+        # holders revenue (old programme only, $0 since 2026-09-03) is not a reference for this row either.
+        "a3_protocol_yield": {"formula": "share_price_growth", "args": {"metric": "sethfi_share_price_onchain"},
                               "tol": 25.0,
-                              "source": "sETHFI's own accrual: assets per share on-chain, annualised over Q0",
-                              "note": "What stakers actually earned on-chain vs DefiLlama holders revenue / stake. The "
-                                      "share price jumped (4.7%/yr then 101.7%/yr, 2026-09-14..23) — unexplained and "
-                                      "flagged; the app's own sETHFI APR is not read."},
+                              "source": "sETHFI share price at one block (convertToAssets / balanceOf÷totalSupply), "
+                                        "today and ~Q0 back via archive, annualised — the realised yield",
+                              "note": "Ours counts top-ups (no shares minted) over ETHFI held; the share price rises by "
+                                      "exactly those top-ups per share, so the two should agree up to timing."},
         "in_buyback": _c_in("ETHFI bought Q0 (DEX fills into 0x2f53… + the top-up Safe 0x3fb6…)", "actual_buyback_tokens", "q0", _c_chk(
             "OLD wallet dormant since 2026-04-01; the NEW programme (Snapshot passed 2026-09-03) is ACTIVE through the "
             "top-up Safe 0x3fb6784e… (4 of 5 owners shared with the buyback Safe), which buys on Uniswap v4 and pays "

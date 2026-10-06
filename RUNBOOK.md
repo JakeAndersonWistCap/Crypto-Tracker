@@ -527,6 +527,56 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11af. Jake's run + probe 2026-10-06 17:20: Ether.fi transfers, NEAR protocol rule, Aethir tile, Etherscan pace
+
+**1. Ether.fi.**
+
+- **(a) The Binance 5M — `check_offline_items.py etherfi_cex_test`:**
+  - What it reads: USDC, USDT and ETH leaving the top-up Safe, the old buyback Safe, the 600K Safe and the
+    deployer over 2026-07-15..08-13. For ETH it reads both the wallet's own transactions and internal ones,
+    because a Safe sends ETH as an internal transaction.
+  - What counts as Binance: a recipient that IS the Binance hot wallet `0x28c6c062…`, or one that forwards to it
+    within 7 days (a deposit address).
+  - **If payment is found:** the 5M is "bought on a CEX (inferred)", its own category, never on-chain "bought".
+  - **Until then:** the pipeline counts it as transferred. 0x83971edb is labelled as an EOA relaying a Binance
+    withdrawal.
+- **(b) Address poisoning:** a zero-value transfer whose counterparty shares the first or last four hex digits
+  with a holder or a real counterparty is dropped from every log scan (`fetch/logscan.drop_poison`, counted in the
+  run line) and from the Ether.fi probes. It moves nothing, so no sum changes.
+- **(c) July senders:** `etherfi_topup_safe` now reads 0x83971edb, 0x5ec5e6b4, 0x66fcfc15 and 0xe4439b1d for
+  each of: code, Safe owners vs the buyback Safe, VestingWallet getters, and their own ETHFI in and out by
+  counterparty. They are labelled "unidentified; transfer" until then.
+- **(d) Recorded:** ~20.95M ETHFI into the top-up Safe since 2024-07, 1,296,885 (6%) bought on-chain.
+  - The scan stores `buyback_bought_share_alltime` each run.
+  - A3 shows "of which BOUGHT on-chain — FULL HISTORY" beside the Q0 share.
+- **(e) Yield reference:**
+  - **New adapter:** `fetch/share_price.py` reads sETHFI's share price at ONE block each, today and ~89 days back
+    via archive. It uses `convertToAssets(1e18)`, else `balanceOf/totalSupply` at that block, stores
+    `sethfi_share_price_onchain`, and the credibility row annualises it.
+  - **The 13.15%:** it came from the previous reference, `lock_assets_per_share`, not from DefiLlama. That is a
+    ratio of two separately stored series whose share leg was once the over-counting Dune figure, so its Q0 growth
+    (and the "101.7%/yr" week) is not established as real accrual.
+
+**2. NEAR burn.**
+
+- **The rule before 2026-06-19:** DefiLlama's revenue equals its fees there, so burn = fees × 0.70, from the
+  protocol rule (nearcore `parameters.yaml` `burnt_gas_reward: 3/10`).
+  - It is labelled `derived:near_protocol_rule_x_defillama_fees/price`, under a declared handover to the
+    revenue-based burn.
+  - It applies only where revenue == fees and before 2026-07-06.
+  - The run line counts the rule days.
+- **Found while confirming:** nearcore protocol **v87** (2.14.0; `87.yaml`; HSP-027, approved 2026-07-06)
+  removes the 30% contract reward, so from v87's mainnet activation **100%** of gas is burned. From then,
+  DefiLlama's fees × 0.7 understates the burn.
+  - `check_offline_items.py near_protocol_v87` finds the activation block and date. Paste it back and the
+    post-activation burn gets fixed.
+
+**3. Aethir staked.** The tile is the UNDATED object carrying all four `*Staked` keys. The `stakeHistory` entries
+carry them too, with `startTime`/`endTime`, and are skipped.
+
+**4. Etherscan pace.** `api.etherscan.io` now runs at 2.5/s. Etherscan's own message says its limit is 3/s.
+
+
 ## 11ae. Jake's probe + run 2026-10-06 16:33: Ether.fi's new route wired, NEAR burn gates, Aethir tile and APRs
 
 **1. Ether.fi.**
