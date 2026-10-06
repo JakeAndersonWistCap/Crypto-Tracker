@@ -294,6 +294,11 @@ def eth_call(to: str, selector: str, block: str = "latest", chain: str = "ethere
         try:
             j = rpc(url, "eth_call", [{"to": to, "data": selector}, block])
             if "result" in j:
+                # "0x" IS NO VALUE (no code there, a revert, or a missing function) — never an int of 0, never a
+                # crash (Jake's probes 2026-10-06 18:21). Logged with the call and address.
+                if str(j["result"]).strip() in ("", "0x", "0X"):
+                    print(f"    eth_call {selector[:10]} on {to} at {block} returned 0x (no value)")
+                    return None, f"{to}: {selector[:10]} returned 0x (no code, a revert, or no such function)"
                 return j["result"], url
             errors.append(f"{_rpc_host(url)}: {j.get('error')}")
         except Exception as e:  # noqa: BLE001
@@ -539,7 +544,7 @@ def sky_splitter_history(splitter: str | None, from_block: int):
                 continue
             what = topics[1].lower()
             name = ("burn" if what == WHAT_BURN else "hop" if what == WHAT_HOP else what)
-            rows.append((lg["blockNumber"], name, int(lg.get("data") or "0x0", 16),
+            rows.append((lg["blockNumber"], name, _hexint(lg.get("data")),
                          time.strftime("%Y-%m-%d", time.gmtime(lg["timeStamp"]))))
         _print_splitter_rows(sorted(rows))
         return
@@ -569,7 +574,7 @@ def sky_splitter_history(splitter: str | None, from_block: int):
             continue
         what = topics[1].lower()
         name = ("burn" if what == WHAT_BURN else "hop" if what == WHAT_HOP else what)
-        raw = int(lg.get("data") or "0x0", 16)
+        raw = _hexint(lg.get("data"))
         rows.append((int(lg["blockNumber"], 16), name, raw, block_time(lg["blockNumber"])))
     _print_splitter_rows(sorted(rows))
 
@@ -1288,7 +1293,7 @@ def etherfi_sethfi_topups():
         return
     from fetch.logscan import drop_poison                   # noqa: PLC0415
     real = {SETHFI.lower()} | set(known) | {"0x" + e["topics"][1][-40:].lower() for e in ins
-                                            if int(str(e.get("data") or "0x0"), 16)}
+                                            if _hexint(e.get("data"))}
     ins, poisoned = drop_poison(ins, 1, real)                # address-poisoning spam (2026-10-06 17:20)
     if poisoned:
         print(f"  {poisoned} zero-value lookalike transfer(s) dropped as address poisoning")
@@ -1298,7 +1303,7 @@ def etherfi_sethfi_topups():
     E = 10 ** 18
 
     def amt(e):
-        return int(str(e.get("data") or "0x0"), 16)
+        return _hexint(e.get("data"))
 
     def day(e):
         return pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()
@@ -1455,7 +1460,7 @@ def _etherfi_identify(ex, w3, r, addr: str, known: dict, ref_owners) -> None:
         agg, last = defaultdict(int), {}
         for e in evs:
             k = "0x" + e["topics"][side][-40:].lower()
-            agg[k] += int(str(e.get("data") or "0x0"), 16)
+            agg[k] += _hexint(e.get("data"))
             last[k] = max(last.get(k, ""), str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
         print(f"    ETHFI {label}: {sum(agg.values()) / E:,.2f} over {len(evs)} transfer(s) — "
               + ", ".join(f"{k} {v / E:,.2f} (last {last[k]})" + (f" [{known[k]}]" if k in known else "")
@@ -1511,13 +1516,13 @@ def etherfi_topup_safe():
     except ExplorerRefused as e:
         print(f"  explorer refused: {redact(str(e))[:200]}")
         return
-    real = {safe} | {"0x" + e["topics"][1][-40:].lower() for e in ins if int(str(e.get("data") or "0x0"), 16)}
+    real = {safe} | {"0x" + e["topics"][1][-40:].lower() for e in ins if _hexint(e.get("data"))}
     ins, poisoned = drop_poison(ins, 1, real | set(known))
     paid = {str(e["transactionHash"]).lower() for e in sent
-            if str(e.get("address") or "").lower() != ETHFI.lower() and int(str(e.get("data") or "0x0"), 16) > 0}
+            if str(e.get("address") or "").lower() != ETHFI.lower() and _hexint(e.get("data")) > 0}
 
     def amt(e):
-        return int(str(e.get("data") or "0x0"), 16)
+        return _hexint(e.get("data"))
     month = defaultdict(lambda: [0, 0])                    # bought, transferred
     who = defaultdict(lambda: [0, 0, "", ""])              # amount, n, class, last
     for e in ins:
@@ -1628,7 +1633,7 @@ def etherfi_cex_test():
             logs, _ = drop_poison(logs, 2, [w])
             for e in logs:
                 k = (w, sym, "0x" + e["topics"][2][-40:].lower())
-                sent[k][0] += int(str(e.get("data") or "0x0"), 16) / 1e6
+                sent[k][0] += _hexint(e.get("data")) / 1e6
                 sent[k][1] += 1
                 sent[k][2] = max(sent[k][2], str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
         for to, wei, ts in eth_moves(w, b0, b1):
@@ -1654,7 +1659,7 @@ def etherfi_cex_test():
                 else:
                     tok = USDC_ETH if sym == "USDC" else USDT_ETH
                     fl, _ = ex.get_logs(1, tok, [TRANSFER_TOPIC, _pad(to), _pad(BINANCE_HOT_WALLET)], b0, b2)
-                    fwd = [e for e in fl if int(str(e.get("data") or "0x0"), 16) > 0]
+                    fwd = [e for e in fl if _hexint(e.get("data")) > 0]
                 verdict = (f"forwards to the Binance hot wallet ({len(fwd)} transfer(s)) — a Binance DEPOSIT address"
                            if fwd else "not seen forwarding to the Binance hot wallet")
             except ExplorerRefused as e:
@@ -2657,6 +2662,13 @@ LOGBUYBACK_TOPIC = "0x8f05f94eed0b7316abb05990df81da789c0a1f51415a0ff7e8b03f5882
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 
+def _hexint(value) -> int:
+    """A log's data word as an int; "0x" / "" (empty: a zero-value spam Transfer, a reverted call) is 0, never a crash
+    (Jake's probes 2026-10-06 18:21)."""
+    from fetch.logscan import hexint                       # noqa: PLC0415
+    return hexint(value)
+
+
 def _pad(addr: str) -> str:
     return "0x" + addr.lower()[2:].rjust(64, "0")
 
@@ -2684,7 +2696,7 @@ def fluid_buyback_destination():
         tally = {}
         for lg in logs:
             to = "0x" + lg["topics"][2][-40:].lower()
-            tally[to] = tally.get(to, 0) + int(lg["data"], 16)
+            tally[to] = tally.get(to, 0) + _hexint(lg["data"])
         total = sum(tally.values()) / 1e18
         print(f"\n  FLUID OUT of {label} ({src}): {total:,.2f} over {len(logs)} transfer(s) — {det}")
         for to, v in sorted(tally.items(), key=lambda kv: -kv[1])[:10]:
@@ -3113,7 +3125,7 @@ def geodnet_staking_candidates(days: int = 30):
         if len(lg["topics"]) < 3:
             continue
         to = "0x" + lg["topics"][2][-40:].lower()
-        v = int(lg["data"], 16)
+        v = _hexint(lg["data"])
         a = agg.setdefault(to, [0, 0, 0, set()])
         a[0] += v
         a[1] += 1
@@ -3243,7 +3255,7 @@ def sky_burn_breakdown():
     for e in burns:
         keys.setdefault((e["transactionHash"], e["logIndex"]), []).append(e)
     dups = {k: v for k, v in keys.items() if len(v) > 1}
-    dup_wei = sum(int(x["data"], 16) for v in dups.values() for x in v[1:])
+    dup_wei = sum(_hexint(x["data"]) for v in dups.values() for x in v[1:])
     print(f"\n1. DUPLICATES: {len(burns):,} events, {len(keys):,} distinct (tx, logIndex); "
           f"{len(dups):,} duplicated key(s) carrying {dup_wei / 1e18:,.2f} SKY of double count")
     blank = sum(1 for e in burns if not e["transactionHash"])
@@ -3268,7 +3280,7 @@ def sky_burn_breakdown():
         f = "0x" + e["topics"][1][-40:].lower()
         n, w, txs = by.get(f, (0, 0, set()))
         txs.add(e["transactionHash"])
-        by[f] = (n + 1, w + int(e["data"], 16), txs)
+        by[f] = (n + 1, w + _hexint(e["data"]), txs)
         lo, hi = span.get(f, (e["blockNumber"], e["blockNumber"]))
         span[f] = (min(lo, e["blockNumber"]), max(hi, e["blockNumber"]))
     total = sum(w for _, w, _ in by.values())
@@ -3311,7 +3323,7 @@ def sky_burn_breakdown():
         kind = "?" if c is None else ("CONTRACT" if len(c) > 2 else "EOA")
         mine = sorted((e for e in clean if "0x" + e["topics"][1][-40:].lower() == f),
                       key=lambda e: e["blockNumber"])
-        amt = sum(int(e["data"], 16) for e in mine)
+        amt = sum(_hexint(e["data"]) for e in mine)
         print(f"\n  LATE SENDER {f} — {kind}, {len(mine)} burn(s), total {amt / 1e18:,.6f} SKY "
               f"({(amt / other_total if other_total else 0):.8%} of everything-else)")
         for e in mine:
@@ -3321,7 +3333,7 @@ def sky_burn_breakdown():
                   f"tx {e['transactionHash']}")
 
     print("\n  LARGEST SINGLE EVENTS")
-    for e in sorted(clean, key=lambda e: -int(e["data"], 16))[:10]:
+    for e in sorted(clean, key=lambda e: -_hexint(e["data"]))[:10]:
         print(f"    block {e['blockNumber']:>11,}  {int(e['data'], 16) / 1e18:>20,.2f} SKY  "
               f"from 0x{e['topics'][1][-40:]}  tx {e['transactionHash']}")
 
@@ -3331,7 +3343,7 @@ def sky_burn_breakdown():
     if mints is None or word is None:
         print("\n3. SUPPLY IDENTITY: not computed — the mint scan or totalSupply() did not answer.")
     else:
-        minted = sum(int(e["data"], 16) for e in
+        minted = sum(_hexint(e["data"]) for e in
                      {(e["transactionHash"], e["logIndex"]): e for e in mints}.values())
         supply = int(word, 16)
         gap = (minted - total) - supply
@@ -4650,7 +4662,7 @@ def geod_stake_recipient():
         inflow: dict = {}
         for lg in logs:
             to = "0x" + lg["topics"][2][-40:]
-            inflow[to] = inflow.get(to, 0.0) + int(lg["data"], 16) / 1e18
+            inflow[to] = inflow.get(to, 0.0) + _hexint(lg["data"]) / 1e18
         target = float(r["geod_stake"])
         close = sorted(inflow.items(), key=lambda kv: abs(kv[1] - target))[:3]
         print(f"  {d.date()}: geod_stake {target:,.4f} ({len(logs)} transfers, {how}); nearest recipients "
@@ -4683,9 +4695,9 @@ def geod_stake_recipient():
             if ins is None or outs is None:
                 cells.append(f"{label}: logs unavailable")
                 continue
-            vin = sum(int(x["data"], 16) for x in ins) / 1e18
+            vin = sum(_hexint(x["data"]) for x in ins) / 1e18
             senders = sorted({"0x" + x["topics"][1][-40:] for x in ins})
-            big = sorted((int(x["data"], 16) / 1e18 for x in outs), reverse=True)[:3]
+            big = sorted((_hexint(x["data"]) / 1e18 for x in outs), reverse=True)[:3]
             st, us = float(r.get("geod_stake") or 0), float(r.get("geod_unstake") or 0)
             hit_in = st > 0 and abs(vin - st) <= 1.0
             hit_out = us > 0 and any(abs(v - us) <= 1.0 for v in big)

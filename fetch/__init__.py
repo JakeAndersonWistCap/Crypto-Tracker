@@ -1144,6 +1144,13 @@ def _derive_chain_burn(out: FetchOutput, projects: list[dict], stored_long=None)
         decl = config.chain_burn_from_revenue(name)
         if not decl:
             continue
+        if decl.get("protocol_burn"):
+            # THE PROTOCOL'S RULE, NOT DEFILLAMA'S REVENUE (NEAR, Jake 2026-10-06): fees x the burned share in force
+            # each day, over the whole stored span, in fetch/history_derive — one writer, one label.
+            out.skipped(SOURCE_DERIVED, name,
+                        "gross_burn_tokens: derived by the protocol rule (fees x burned share in force) in the "
+                        "history step; DefiLlama's revenue is a cross-check only, never converted.", tier=2)
+            continue
         if (name, "gross_burn_tokens") in have:
             # THE CROSS-CHECK (Ethereum, A9): the derivation stands down, and says what it would
             # have read for the latest priced revenue day beside the measured flow.
@@ -1189,10 +1196,6 @@ def _derive_chain_burn(out: FetchOutput, projects: list[dict], stored_long=None)
                     continue
                 got = float(r.value) / fee
                 if abs(got - share) > tol:
-                    rule = decl.get("fees_rule") or {}
-                    if (rule and abs(got - float(rule["when_revenue_share"])) <= tol
-                            and (not rule.get("valid_before") or day < rule["valid_before"])):
-                        continue   # a declared protocol-rule day: fetch/history_derive writes it (fees x share)
                     off_ratio.append(f"{day} ({got:.4f})")
                     continue
             px = price_on.get((name, day))

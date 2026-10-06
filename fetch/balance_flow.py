@@ -54,7 +54,8 @@ ROUTINE_BUDGET_S = 60.0
 
 
 def _amount(e: dict) -> int:
-    return int(str(e.get("data") or "0x0"), 16)
+    from .logscan import hexint
+    return hexint(e.get("data"))          # "0x" = no value, never a crash (2026-10-06 18:21)
 
 
 class BalanceFlow:

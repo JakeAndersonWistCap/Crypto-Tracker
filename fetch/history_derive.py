@@ -45,7 +45,7 @@ log = logging.getLogger("token_metrics.fetch.history_derive")
 SOURCE = "derive_history"
 USD_SOURCE = "derived:tokens*price"
 BURN_SOURCE = "derived:defillama_burned_fee_revenue/price"
-RULE_SOURCE = "derived:near_protocol_rule_x_defillama_fees/price"   # fees x declared share (chain_burn fees_rule)
+RULE_SOURCE = "derived:near_protocol_rule_x_defillama_fees/price"   # fees x the share in force (protocol_burn)
 REL_EPS = 1e-9
 
 
@@ -113,6 +113,8 @@ def _chain_burn(out, h, p) -> int:
     decl = config.chain_burn_from_revenue(name)
     if not decl:
         return 0
+    if decl.get("protocol_burn"):
+        return _protocol_burn(out, h, p, decl)
     burn = _series(h, name, "gross_burn_tokens")
     measured = burn[~burn["source"].astype(str).map(_measuring_point).isin((BURN_SOURCE, RULE_SOURCE))]
     rev = _series(h, name, "revenue_usd")
@@ -138,48 +140,123 @@ def _chain_burn(out, h, p) -> int:
     rows = []
     # EVERY REFUSAL COUNTED (Jake's run 2026-10-06 16:33: revenue and fees spanned 2,182 days, price a year, and the
     # burn stayed at 108 days with nothing in the log to say which gate held the rest back).
-    no_fee, off, no_px, ruled = [], [], [], []
-    # THE PROTOCOL RULE (NEAR, Jake 2026-10-06 17:20): where DefiLlama's revenue EQUALS its fees it is not the burn;
-    # burn = fees x the declared share, before the rule's end, under its own source.
-    rule = decl.get("fees_rule") or {}
-    rule_end = pd.Timestamp(rule["valid_before"]) if rule.get("valid_before") else None
+    no_fee, off, no_px = [], [], []
     for r in rev.itertuples(index=False):
-        amount, src = float(r.value), BURN_SOURCE
         if share is not None:
             fee = fees.get(r.date)
             if fee is None or fee <= 0:
                 no_fee.append(r.date)
                 continue
-            ratio = amount / float(fee)
+            ratio = float(r.value) / float(fee)
             if abs(ratio - share) > tol:
-                if (rule and abs(ratio - float(rule["when_revenue_share"])) <= tol
-                        and (rule_end is None or r.date < rule_end)):
-                    amount, src = float(fee) * float(rule["share"]), RULE_SOURCE
-                    ruled.append(r.date)
-                else:
-                    off.append((r.date, ratio))
-                    continue       # the methodology tripwire, exactly as at write time
+                off.append((r.date, ratio))
+                continue           # the methodology tripwire, exactly as at write time
         if r.date in px.index and px[r.date] > 0:
-            v = amount / float(px[r.date])
+            v = float(r.value) / float(px[r.date])
             if _differs(held, r.date, v):
-                rows.append((r.date, v, src))
+                rows.append((r.date, v, BURN_SOURCE))
         else:
             no_px.append(r.date)
-            if src == RULE_SOURCE:
-                ruled.pop()
     n = _emit(out, name, "gross_burn_tokens", rows,
               f"revenue_usd / price_usd, DefiLlama burned-fee revenue ({decl.get('components', '')})")
-
-    def span(ds):
-        return f"{len(ds)} day(s) {min(ds).date()}..{max(ds).date()}" if ds else "none"
     ratios = sorted(x for _, x in off)
     _say(out, name, n,
-         f"gross_burn_tokens history — revenue_usd {span(list(rev['date']))}; price_usd {span(list(px.index))}; "
-         f"{n} row(s) written (new or changed), {len(held)} held before; refused: no price {span(no_px)}, "
-         f"no fees {span(no_fee)}, share tripwire ({share} ± {tol}) {span([d for d, _ in off])}"
-         + (f" — ratios {ratios[0]:.4f}..{ratios[-1]:.4f}, median {ratios[len(ratios) // 2]:.4f}" if ratios else "")
-         + (f"; PROTOCOL RULE (fees x {rule['share']}, where revenue = fees; {rule['source']}) on {span(ruled)}"
-            if rule else ""))
+         f"gross_burn_tokens history — revenue_usd {_span(list(rev['date']))}; price_usd {_span(list(px.index))}; "
+         f"{n} row(s) written (new or changed), {len(held)} held before; refused: no price {_span(no_px)}, "
+         f"no fees {_span(no_fee)}, share tripwire ({share} ± {tol}) {_span([d for d, _ in off])}"
+         + (f" — ratios {ratios[0]:.4f}..{ratios[-1]:.4f}, median {ratios[len(ratios) // 2]:.4f}" if ratios else ""))
+    return n
+
+
+def _span(ds) -> str:
+    return f"{len(ds)} day(s) {min(ds).date()}..{max(ds).date()}" if ds else "none"
+
+
+def _protocol_burn(out, h, p, decl) -> int:
+    """NEAR (Jake, 2026-10-06): THE BURN BY THE PROTOCOL'S OWN RULE, every day: DefiLlama fees x the burned share in
+    force that day / that day's price — 0.70 before protocol v87 (nearcore burnt_gas_reward 3/10: 30% of a
+    FunctionCall's gas to the contract), 1.00 from v87's mainnet activation (nearcore 2.14.0, 87.yaml, HSP-027).
+    DefiLlama's revenue label is NOT used: it equals fees before 2026-06-19 and ~0.70 x fees after — the opposite
+    of the protocol on both sides. It is reported beside the burn as a labelled cross-check only.
+    Until the activation date is on file, days from `switch_not_before` are derived at the pre-v87 share and marked
+    PARTIAL (a lower bound: if v87 is active they understate by 30%). A stored row is rewritten when its value OR
+    its source differs, so the whole series carries this one label."""
+    name, pb = p["name"], decl["protocol_burn"]
+    burn = _series(h, name, "gross_burn_tokens")
+    held = {d: (float(v), str(s)) for d, v, s in zip(burn["date"], burn["value"], burn["source"])}
+    px = _series(h, name, "price_usd").set_index("date")["value"].astype(float)
+    fees = _series(h, name, "fees_usd").set_index("date")["value"].astype(float)
+    rev = _series(h, name, "revenue_usd").set_index("date")["value"].astype(float)
+    switch = pd.Timestamp(pb["switch_on"]) if pb.get("switch_on") else None
+    pending = pd.Timestamp(pb["switch_not_before"]) if pb.get("switch_not_before") else None
+    # THE SWITCH DATED BY THE PROTOCOL VERSION READ EVERY RUN (Jake, 2026-10-06): the first day at >= v87 is the
+    # switch; until one, everything up to the last day read BELOW it (or the confirmed `not_active_as_of`) is
+    # certain, and only days after that are a lower bound.
+    vers = _series(h, name, pb.get("version_metric") or "near_protocol_version").sort_values("date")
+    seen_note = ""
+    if switch is None and len(vers):
+        hit = vers[vers["value"].astype(float) >= float(pb.get("switch_version", 87))]
+        if len(hit):
+            switch = pd.Timestamp(hit["date"].iloc[0])
+            below = vers[(vers["date"] < switch) & (vers["value"].astype(float) < float(pb.get("switch_version", 87)))]
+            seen_note = (f"; v{int(float(hit['value'].iloc[0]))} FIRST READ {switch.date()} (activation after "
+                         f"{below['date'].iloc[-1].date() if len(below) else 'the first reading'}) — 1.00 from then")
+    certain_to = pd.Timestamp(pb["not_active_as_of"]) if pb.get("not_active_as_of") else None
+    if switch is None and len(vers):
+        last_below = pd.Timestamp(vers["date"].iloc[-1])
+        certain_to = max(certain_to, last_below) if certain_to is not None else last_below
+    if switch is None and certain_to is not None:
+        pending = max(pending, certain_to + pd.Timedelta(days=1)) if pending is not None else certain_to + pd.Timedelta(days=1)
+    lower = (config.mark_source(RULE_SOURCE, "PARTIAL")
+             + f"[{pb['pending_note']}]") if pending is not None and switch is None else None
+    rows, new, no_px, at_after, low = [], {}, [], [], []
+    for d, fee in fees.items():
+        if fee is None or fee < 0:
+            continue
+        after = switch is not None and d >= switch
+        share = float(pb["share_after"] if after else pb["share_before"])
+        src = lower if (lower and d >= pending) else RULE_SOURCE
+        if after:
+            at_after.append(d)
+        if src == lower:
+            low.append(d)
+        if d not in px.index or not px[d] > 0:
+            no_px.append(d)
+            continue
+        v = float(fee) * share / float(px[d])
+        new[d] = v
+        old = held.get(d)
+        if old is None or _differs({d: old[0]}, d, v) or old[1] != src:
+            rows.append((d, v, src))
+    n = _emit(out, name, "gross_burn_tokens", rows,
+              "protocol rule x DefiLlama fees — fees_usd x the burned share in force that day / price_usd")
+
+    # BEFORE / AFTER, Q0 (the 90 days to the newest derived day), and the cross-check against DefiLlama's revenue.
+    msg = ""
+    if new:
+        end = max(new)
+        q0 = [d for d in new if d > end - pd.Timedelta(days=90)]
+        after_q0 = sum(new[d] for d in q0)
+        before_q0 = sum(held[d][0] for d in q0 if d in held)
+        held_days = sum(1 for d in q0 if d in held)
+        circ = _series(h, name, "circulating_supply")
+        c = float(circ.sort_values("date")["value"].iloc[-1]) if len(circ) else None
+
+        def yld(total, days):
+            return f"{total * 365.0 / days / c:.4%}/yr" if c and days else "n/a (no circulating_supply)"
+        rev_q0 = sum(rev[d] / px[d] for d in q0 if d in rev.index and d in px.index and px[d] > 0)
+        msg = (f"; Q0 {min(q0).date()}..{end.date()}: BURN {after_q0:,.2f} NEAR over {len(q0)} day(s) (burn yield "
+               f"{yld(after_q0, len(q0))}) — BEFORE this rule {before_q0:,.2f} over {held_days} stored day(s) (burn "
+               f"yield {yld(before_q0, held_days)}); DefiLlama revenue / price over the same days {rev_q0:,.2f} "
+               f"(CROSS-CHECK ONLY — its label is not the burn)")
+    _say(out, name, n,
+         f"gross_burn_tokens = protocol rule x DefiLlama fees — fees_usd {_span(list(fees.index))}; price_usd "
+         f"{_span(list(px.index))}; share {pb['share_before']} before v87, {pb['share_after']} from "
+         + (f"{switch.date()}" if switch is not None else
+            f"v87 (NOT active — confirmed to {certain_to.date() if certain_to is not None else 'no date'})")
+         + seen_note
+         + f"; {n} row(s) written (new, changed or relabelled), {len(held)} held before; at {pb['share_after']}: "
+         f"{_span(at_after)}; PARTIAL lower bound (date pending): {_span(low)}; no price: {_span(no_px)}" + msg)
     return n
 
 

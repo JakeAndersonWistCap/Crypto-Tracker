@@ -18,3 +18,5 @@ data/near/
 *service-account*.json
 *near-bq*.json
 near-data-510309-*.json
+# the daily task's dated logs (windows/daily_run.ps1)
+logs/

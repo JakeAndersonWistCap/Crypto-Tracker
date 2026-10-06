@@ -1250,3 +1250,58 @@ class MorphoBlueApi:
                         self.SOURCE, name,
                         f"{metric} from Morpho's own API — {detail}. NO COLLATERAL in the "
                         f"denominator, unlike the DefiLlama route this replaces.", self.TIER)
+            if api.get("interest"):
+                self._interest(api, ids, name, when, out)
+
+    def _interest(self, api: dict, ids: list, name: str, when, out) -> None:
+        """Borrower interest per day at the read: sum over LISTED markets of borrowAssetsUsd x the daily
+        rate implied by borrowApy. Its own query — a failure here never touches supply_units."""
+        spec = api["interest"]
+        apy_f, bf, verify = spec["apy_field"], api["borrow_field"], api.get("verify_field")
+        per_day, seen, skip, no_apy, unfiltered, priced = 0.0, 0, 0, [], 0, 0
+        try:
+            while True:
+                page = self._query(api["endpoint"], spec["query"],
+                                   {"c": ids, "skip": skip, "first": int(api.get("page_size", 1000))})
+                if (page or {}).get("errors"):
+                    raise ValueError("GraphQL: " + "; ".join(str(e.get("message", e))[:160]
+                                                             for e in page["errors"][:3]))
+                node = (((page or {}).get("data") or {}).get("markets") or {})
+                items = node.get("items") or []
+                for it in items:
+                    seen += 1
+                    if verify and it.get(verify) is not True:
+                        unfiltered += 1
+                    st = it.get("state") or {}
+                    bv, apy = st.get(bf), st.get(apy_f)
+                    if not bv:
+                        continue                      # nothing borrowed: no interest either way
+                    if apy is None:
+                        no_apy.append(str(it.get("marketId"))[:18])
+                        continue
+                    per_day += float(bv) * ((1.0 + float(apy)) ** (1.0 / 365.0) - 1.0)
+                    priced += 1
+                total = (node.get("pageInfo") or {}).get("countTotal")
+                if not items or (total is not None and seen >= int(total)):
+                    break
+                skip += int(api.get("page_size", 1000))
+        except Exception as e:  # noqa: BLE001 — a failed reference must not kill the run
+            out.fail(self.SOURCE, name, f"{spec['metric']}: interest query failed: {e}", self.TIER)
+            return
+        if unfiltered:
+            out.fail(self.SOURCE, name, f"{spec['metric']}: THE LISTED FILTER DID NOT APPLY ({unfiltered} of "
+                                        f"{seen} market(s) not listed) — NOTHING STORED", self.TIER)
+            return
+        if no_apy:
+            out.fail(self.SOURCE, name, f"{spec['metric']}: {len(no_apy)} market(s) carry {bf} but no {apy_f} "
+                                        f"({', '.join(no_apy[:5])}) — NOTHING STORED (no safe default)", self.TIER)
+            return
+        if priced == 0:
+            out.fail(self.SOURCE, name, f"{spec['metric']}: no listed market carried a borrow — nothing to sum",
+                     self.TIER)
+            return
+        out.add(point(name, spec["metric"], per_day, f"{self.SOURCE}:markets.{apy_f}", self.TIER, when),
+                self.SOURCE, name,
+                f"{spec['metric']} = ${per_day:,.0f}/day from {priced} listed market(s) with a borrow "
+                f"(sum {bf} x ((1 + {apy_f})^(1/365) - 1)) — the credibility reference for DefiLlama's fees",
+                self.TIER)

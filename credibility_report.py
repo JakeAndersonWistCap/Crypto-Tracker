@@ -6,6 +6,8 @@ credibility_report.py — the Credibility tab, printed (Jake, 2026-10-05).
                                                  UNVERIFIABLE with what would resolve it
     python credibility_report.py --project Sky   one project
     python credibility_report.py --open-only     only the CHECK / UNVERIFIABLE list
+    python credibility_report.py --roots         only the ROOT-CAUSE MAP: every open row traced to the root
+                                                 input(s) holding it open, ranked by headline rows blocked
 
 Builds the workbook from metrics.db into a temporary file and works out the Credibility tab's formulas
 (the verdicts are formulas over the headline cells) IN PYTHON, with xlcalc.py — no LibreOffice or
@@ -70,15 +72,39 @@ def read_tab(path: Path, evaluate: bool = True) -> tuple[list, list]:
     return summary, rows
 
 
+def print_roots(roots: list[dict]) -> None:
+    """The root-cause map: each root, the headline rows it holds open, why, and the fix class; then the
+    same roots grouped by input type across projects (one code fix often clears a type everywhere)."""
+    print("\nROOT-CAUSE MAP - every CHECK / UNVERIFIABLE traced to the root input(s) holding it open")
+    print("  (headline = A1-A4 rows blocked; rows = every open row incl. inputs; ranked by headline)")
+    print(f"  {'#':>3} {'hdl':>4} {'rows':>4}  root | verdict | why | fix")
+    for k, d in enumerate(roots, 1):
+        print(f"  {k:>3} {d['headline_rows']:>4} {d['rows']:>4}  {a(d['root'])[:90]} | {a(d['verdict'])}\n"
+              f"             why: {a(d['why'])[:200]}\n             fix: {a(d['fix'])[:200]}\n"
+              f"             blocks: {a(', '.join(d['blocks']))[:400]}")
+    by: dict = {}
+    for d in roots:
+        parts = d["root"].split(" | ")
+        kind = parts[1] if len(parts) > 2 else parts[-1]
+        e = by.setdefault((kind, d["fix"].split(":")[0]), [0, 0, set()])
+        e[0] += d["headline_rows"]
+        e[1] += 1
+        e[2].add(parts[0])
+    print("\nROOT-CAUSE MAP - grouped by input type across projects (headline rows blocked | roots | fix class)")
+    for (kind, fix), (h, n, projs) in sorted(by.items(), key=lambda x: -x[1][0]):
+        print(f"  {h:>4} {n:>3}  {a(kind)[:44]:<44} {a(fix)[:28]:<28} {a(', '.join(sorted(projs)))[:120]}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--project")
     ap.add_argument("--open-only", action="store_true")
+    ap.add_argument("--roots", action="store_true", help="only the counts and the root-cause map")
     ap.add_argument("--libreoffice", action="store_true",
                     help="recalculate with LibreOffice instead of evaluating the formulas in Python")
     args = ap.parse_args(argv)
     import store as store_mod
-    from build_workbook import build_workbook
+    from build_workbook import CREDIBILITY_ROWS, build_workbook
     if not Path(store_mod.DB_PATH).exists():
         print(f"no {store_mod.DB_PATH} — run token_metrics.py first")
         return 1
@@ -96,6 +122,13 @@ def main(argv=None) -> int:
                 print(f"recalculation failed: {a(res['error'])} - run without --libreoffice to evaluate in Python")
                 return 1
         summary, rows = read_tab(path, evaluate=not args.libreoffice)
+    import credibility
+    if len(CREDIBILITY_ROWS) != len(rows):
+        print(f"root-cause map unavailable: the build kept {len(CREDIBILITY_ROWS)} rows, the tab has {len(rows)}")
+        roots = None
+    else:
+        keep = [i for i, r in enumerate(rows) if not args.project or str(r[0]).lower() == args.project.lower()]
+        roots = credibility.root_causes(CREDIBILITY_ROWS, [r[10] if i in keep else "" for i, r in enumerate(rows)])
     if args.project:
         rows = [r for r in rows if str(r[0]).lower() == args.project.lower()]
         summary = [s for s in summary if str(s[0]).lower() in (args.project.lower(), "all")]
@@ -103,6 +136,10 @@ def main(argv=None) -> int:
     print(f"  {'Project':<13}{'PASS':>6}{'CHECK':>7}{'FRESH':>7}{'UNVER':>7}{'N/A':>6}{'Rows':>6}")
     for s in summary:
         print(f"  {a(s[0]):<13}" + "".join(f"{int(x or 0):>{w}}" for x, w in zip(s[1:], (6, 7, 7, 7, 6, 6))))
+    if roots is not None:
+        print_roots(roots)
+    if args.roots:
+        return 0
     if not args.open_only:
         print("\nCREDIBILITY - every row (project | cell | what | ours | reference | gap | tol | verdict)")
         for r in rows:

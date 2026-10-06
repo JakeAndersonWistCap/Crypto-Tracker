@@ -527,6 +527,53 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ag. Credibility burn-down 2026-10-06 (part 1): crash fix, NEAR protocol burn, root-cause map, Morpho interest
+
+**0. The crash.** In the 18:21 run, `explorer / None: adapter crashed: invalid literal for int() with base 16: '0x'`
+killed the whole log-scan tier and the `etherfi_topup_safe` probe.
+
+- **The cause:** a log whose data word is empty (`0x`).
+- **The fix:**
+  - `fetch/logscan.hexint` reads `""` and `"0x"` as no value (0).
+  - The run line counts such logs: "N log(s) carried EMPTY data ('0x') — read as no value."
+  - Each scan is isolated. A crash fails that scan alone ("scan crashed — … The other scans ran."). Only an
+    explorer timeout still stops the tier.
+  - In `check_offline_items.py`, an `eth_call` that returns `0x` prints "returned 0x (no value)" and is treated as
+    no value.
+
+**6. NEAR burn = DefiLlama fees × the burned share in force, every day.**
+
+- **The rule:** 0.70 before protocol v87, 1.00 from its mainnet activation. It is labelled
+  `derived:near_protocol_rule_x_defillama_fees/price`, and DefiLlama's revenue is a labelled cross-check in the run
+  line, never converted.
+- **Switch date:** taken from the new `near_protocol_version` metric, read every run from RPC `status`. The first
+  stored reading ≥ 87 switches the share from that day, and the log says "v87 FIRST READ {date}".
+- **Covered days:** `not_active_as_of` 2026-10-06 (mainnet protocol 86 at block 218,820,858) covers every day up
+  to then.
+- **Uncovered days:** days after the last reading with no version read are `:PARTIAL` (0.70 used; a lower bound).
+- **Run line:** prints Q0 burn and burn yield before vs after.
+
+**1. Root-cause map: `python credibility_report.py --roots`.**
+
+- **What it does:** traces every CHECK / UNVERIFIABLE row to the root input(s) holding it open. A derived row
+  fails because an input fails.
+- **Output:**
+  - The roots are ranked by headline rows blocked, each with why it fails and its fix class: code / data source /
+    manual reading / genuinely unverifiable.
+  - The same roots are then grouped by input type across projects.
+- **Run it after each run and paste it back.**
+
+**Morpho customer revenue (one root, four A2 headlines).**
+
+- **The new reference:** Morpho's own API now gives borrower interest per day: listed markets,
+  sum(borrowAssetsUsd × ((1 + borrowApy)^(1/365) − 1)), stored as `borrow_interest_usd_day_morpho_api`.
+- **Isolation:** it is its own query, so a schema error there never costs the confirmed supply read.
+- **The comparison:** the A2 row is judged by `in_interest_day`, which compares DefiLlama's fees and the API
+  figure on the latest completed day both hold.
+- **Tolerance:** 10%, a judgment pending Jake's review. The API figure is a rate at the moment of the read, over
+  listed markets only.
+
+
 ## 11af. Jake's run + probe 2026-10-06 17:20: Ether.fi transfers, NEAR protocol rule, Aethir tile, Etherscan pace
 
 **1. Ether.fi.**

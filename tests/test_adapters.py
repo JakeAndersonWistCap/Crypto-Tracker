@@ -2503,7 +2503,7 @@ def _chain_rows(project, days, rev, fees, price, start="2026-08-24"):
     return rows
 
 
-def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapter():
+def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapter(monkeypatch):
     """** THE FIGURE WAS ALREADY IN THE STORE UNDER ANOTHER NAME. **
 
     Ethereum and Near both gapped gross_burn_tokens asking for a source while revenue_usd sat
@@ -2518,7 +2518,18 @@ def test_a_chains_burn_is_its_defillama_revenue_and_that_is_read_from_the_adapte
     """
     from fetch import _derive_chain_burn
 
-    # NEAR: 70% of fees, priced on each day's own price.
+    # NEAR FOLLOWS THE PROTOCOL, NOT THE REVENUE LABEL (Jake, 2026-10-06): its write-time derivation stands down and
+    # fetch/history_derive._protocol_burn derives fees x the burned share in force. The revenue mechanism below is
+    # exercised on NEAR's entry with protocol_burn taken away (Ethereum keeps it for real).
+    near = config.PROJECT_BY_NAME["Near"]
+    down = _chain_frame(_chain_rows("Near", 5, rev=70_000.0, fees=100_000.0, price=3.50))
+    _derive_chain_burn(down, [near])
+    assert down.frame().query("metric == 'gross_burn_tokens'").empty
+    assert any("derived by the protocol rule" in e.message for e in down.log)
+    monkeypatch.setitem(near, "chain_burn_from_revenue",
+                        {k: v for k, v in near["chain_burn_from_revenue"].items() if k != "protocol_burn"})
+
+    # NEAR (mechanism): 70% of fees, priced on each day's own price.
     out = _chain_frame(_chain_rows("Near", 5, rev=70_000.0, fees=100_000.0, price=3.50))
     _derive_chain_burn(out, [config.PROJECT_BY_NAME["Near"]])
     got = out.frame().query("metric == 'gross_burn_tokens'")
@@ -2622,15 +2633,18 @@ def test_a_chains_issuance_follows_once_the_burn_exists():
     it just had no burn figure to add, and gapped every run for want of a number that was one
     division away from revenue_usd.
     """
-    from fetch import _derive_chain_burn, _derive_issuance
+    from fetch import _derive_issuance
 
     rows = _chain_rows("Near", 1, rev=70_000.0, fees=100_000.0, price=3.50, start="2026-09-14")
+    # the burn as the protocol rule writes it (fees x 0.70 / price; fetch/history_derive._protocol_burn)
+    rows.append({"date": pd.Timestamp("2026-09-14"), "project": "Near", "metric": "gross_burn_tokens",
+                 "value": 100_000.0 * 0.70 / 3.50, "source": "derived:near_protocol_rule_x_defillama_fees/price",
+                 "tier": 2})
     # A3 2026-09-28: NEAR's issuance reads the block-header supply, not CoinGecko's total_supply.
     rows.append({"date": pd.Timestamp("2026-09-14"), "project": "Near", "metric": "total_supply_protocol",
                  "value": 1_240_000_000.0, "source": "near_rpc:block.header.total_supply", "tier": 1})
     out = _chain_frame(rows)
     p = config.PROJECT_BY_NAME["Near"]
-    _derive_chain_burn(out, [p])
     _derive_issuance(out, [p], {("Near", "total_supply_protocol"): 1_239_900_000.0},
                      {("Near", "total_supply_protocol"): "2026-09-13"})
     got = out.frame().query("metric == 'gross_issuance_tokens'")
@@ -13539,7 +13553,7 @@ def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
     from fetch.near import NearNode
 
     p = dict(config.PROJECT_BY_NAME["Near"])
-    reads = [r for r in p["node_api"]["extra_reads"] if r.get("kind") != "near_block_supply"]
+    reads = [r for r in p["node_api"]["extra_reads"] if r.get("kind") not in ("near_block_supply", "near_protocol_version")]
     assert [r["metric"] for r in reads] == ["buyback_fund_balance"]
     read = reads[0]
     assert read["kind"] == "near_view_account" and read["field"] == "amount"
@@ -18879,7 +18893,10 @@ def test_derived_series_use_the_full_span_of_their_stored_inputs():
     done = derive_from_history(out, ps, stored)
     f = out.frame()
     burn = f[(f.project == "Near") & (f.metric == "gross_burn_tokens")]
-    assert len(burn) == len(days) - 5 and (burn["value"] == 700.0).all(), "the year of revenue / price"
+    # The protocol rule (fees x 0.70 before v87) writes EVERY day: the 5 stored rows carry the old
+    # revenue/price label, so they are relabelled too (same 700: fees 1,000 x 0.70).
+    assert len(burn) == len(days) and (burn["value"] == 700.0).all(), "the year of fees x 0.70 / price"
+    assert burn["source"].str.startswith("derived:near_protocol_rule_x_defillama_fees").all()
     iss = f[(f.project == "Near") & (f.metric == "gross_issuance_tokens")]
     assert len(iss) == len(days) - 1, "every interval of the header supply"
     assert abs(iss["value"].median() - 89_500.0) < 1e-6, "d(supply) + the burn inside the interval"
@@ -18899,7 +18916,8 @@ def test_derived_series_use_the_full_span_of_their_stored_inputs():
     assert derive_from_history(out2, ps, again) == {}
 
     # a burn day missing refuses that interval, never adds a partial burn
-    gap = stored[~((stored.project == "Near") & (stored.metric == "revenue_usd") & (stored.date == days[100]))]
+    # (the burn is fees x the burned share now, so the missing input is a FEES day)
+    gap = stored[~((stored.project == "Near") & (stored.metric == "fees_usd") & (stored.date == days[100]))]
     out3 = FetchOutput()
     derive_from_history(out3, [config.PROJECT_BY_NAME["Near"]], gap)
     i3 = out3.frame().query("metric == 'gross_issuance_tokens'")
@@ -24798,44 +24816,74 @@ def test_ether_fi_yield_numerator_is_the_top_ups_with_the_bought_share_beside_it
     assert "of which BOUGHT" in label
 
 
-def test_near_burn_history_says_which_gate_refused_each_day():
-    """Jake's runs 2026-10-06 16:33 / 17:20: the burn history (revenue / price, 70% tripwire on fees) now names every
-    refusal; and where DefiLlama's revenue EQUALS its fees (before 2026-06-19: not the burn), the PROTOCOL RULE
-    (nearcore burnt_gas_reward 3/10 -> 70% burned) gives burn = fees x 0.70 under its own source — only where
-    revenue == fees and only before the rule's end (HSP-027 approval, 2026-07-06; v87 removes the rebate)."""
+def test_near_burn_follows_the_protocol_rule_every_day_not_defillamas_revenue_label():
+    """Jake, 2026-10-06: DefiLlama's NEAR revenue = fees before 2026-06-19 and ~0.70 x fees after — the opposite of the
+    protocol on both sides. The burn is fees x the burned share IN FORCE THAT DAY / price, every day: 0.70 before
+    v87 (nearcore burnt_gas_reward 3/10), 1.00 from v87 (87.yaml, HSP-027). v87 is NOT active (mainnet protocol 86
+    at block 218,820,858 on 2026-10-06), and the protocol version read every run dates the switch automatically;
+    a day after the last reading below 87 with no reading is 0.70 marked PARTIAL. Stored rows of the old revenue
+    label are rewritten to the one label; revenue is a cross-check; the run line gives Q0 burn / yield before/after."""
     import pytest
     from fetch import history_derive as hd
-    from fetch.base import FetchOutput
-    rule = config.chain_burn_from_revenue("Near")["fees_rule"]
-    assert rule["share"] == 0.70 and rule["when_revenue_share"] == 1.0 and rule["valid_before"] == "2026-07-06"
-    assert config.declared_handover("Near", "gross_burn_tokens")["ordered_points"] == (hd.RULE_SOURCE, hd.BURN_SOURCE)
-    days = pd.date_range("2025-09-01", "2026-10-04")
-    rows = []
-    for d in days:
-        old = d < pd.Timestamp("2026-06-19")
-        odd = pd.Timestamp("2026-01-10") <= d <= pd.Timestamp("2026-01-12")          # ratio 0.5: neither rule
-        late = pd.Timestamp("2026-08-01") <= d <= pd.Timestamp("2026-08-02")         # revenue = fees after the end
-        rows += [(d, "Near", "revenue_usd", 500.0 if odd else 1_000.0 if (old or late) else 700.0, "defillama"),
-                 (d, "Near", "fees_usd", 1_000.0, "defillama")]
-    rows += [(d, "Near", "price_usd", 2.0, "coingecko") for d in days[-365:]]
-    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source"])
+    from fetch.base import FetchOutput, _measuring_point
+    near = config.PROJECT_BY_NAME["Near"]
+    pb = config.chain_burn_from_revenue("Near")["protocol_burn"]
+    assert (pb["share_before"], pb["share_after"], pb["switch_on"], pb["not_active_as_of"]) == (0.70, 1.00, None, "2026-10-06")
+    assert "218,820,858" in pb["not_active_source"] and pb["switch_version"] == 87
+    assert {"kind": "near_protocol_version", "metric": "near_protocol_version"}.items() <= \
+        next(r for r in near["node_api"]["extra_reads"] if r["kind"] == "near_protocol_version").items()
+    assert config.declared_handover("Near", "gross_burn_tokens") is None, "one label: no handover needed"
+
+    def build(end, versions=()):
+        days = pd.date_range("2025-09-01", end)
+        rows = []
+        for d in days:
+            rows += [(d, "Near", "revenue_usd", 700.0 if d >= pd.Timestamp("2026-06-19") else 1_000.0, "defillama"),
+                     (d, "Near", "fees_usd", 1_000.0, "defillama")]
+        for d in days[-365:]:
+            rows.append((d, "Near", "price_usd", 2.0, "coingecko"))
+            rows.append((d, "Near", "gross_burn_tokens", 350.0,
+                         hd.BURN_SOURCE if d >= pd.Timestamp("2026-06-19") else hd.RULE_SOURCE))   # the old store
+        rows.append((days[-1], "Near", "circulating_supply", 1_260_000_000.0, "coingecko"))
+        rows += [(pd.Timestamp(d), "Near", "near_protocol_version", float(v), "near_rpc:status.protocol_version")
+                 for d, v in versions]
+        return pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source"])
+
+    # TO 2026-10-04: v87 confirmed NOT active through 2026-10-06 — 0.70 everywhere, no PARTIAL, one label
+    long = build("2026-10-04")
     out = FetchOutput()
-    n = hd._chain_burn(out, hd._history(long, None), config.PROJECT_BY_NAME["Near"])
+    n = hd._chain_burn(out, hd._history(long, None), near)
     f = out.frame().set_index("date")
-    assert n == 365 - 3 - 2
-    assert f.loc[pd.Timestamp("2026-03-01"), "value"] == pytest.approx(1_000 * 0.70 / 2.0)
-    assert f.loc[pd.Timestamp("2026-03-01"), "source"] == hd.RULE_SOURCE
-    assert f.loc[pd.Timestamp("2026-09-01"), "source"] == hd.BURN_SOURCE and f.loc[pd.Timestamp("2026-09-01"), "value"] == 350.0
+    assert n == 108                                          # 2026-06-19.. relabelled from the revenue label
+    assert set(f.source) == {hd.RULE_SOURCE}
+    assert f.loc[pd.Timestamp("2026-09-01"), "value"] == pytest.approx(1_000 * 0.70 / 2.0)
     line = out.log[-1].message
-    assert "revenue_usd 399 day(s) 2025-09-01..2026-10-04; price_usd 365 day(s) 2025-10-05..2026-10-04" in line, line
-    assert "share tripwire (0.7 ± 0.001) 5 day(s) 2026-01-10..2026-08-02 — ratios 0.5000..1.0000" in line
-    assert "PROTOCOL RULE (fees x 0.7, where revenue = fees; nearcore parameters.yaml burnt_gas_reward 3/10" in line
-    assert "on 254 day(s) 2025-10-05..2026-06-18" in line and "no price 34 day(s) 2025-09-01..2025-10-04" in line
-    # a stored rule row is this derivation's own, never a "measured" burn that makes it stand down
-    out2 = FetchOutput()
+    assert "share 0.7 before v87, 1.0 from v87 (NOT active — confirmed to 2026-10-06)" in line, line
+    assert "PARTIAL lower bound (date pending): none" in line
+    assert "BURN 31,500.00 NEAR over 90 day(s) (burn yield 0.0101%/yr) — BEFORE this rule 31,500.00" in line
+    assert "DefiLlama revenue / price over the same days 31,500.00 (CROSS-CHECK ONLY" in line
     held = pd.concat([long, out.frame()[["date", "project", "metric", "value", "source"]]], ignore_index=True)
-    assert hd._chain_burn(out2, hd._history(held, None), config.PROJECT_BY_NAME["Near"]) == 0
-    assert "NOT RUN" not in out2.log[-1].message
+    assert hd._chain_burn(FetchOutput(), hd._history(held, None), near) == 0, "a second run changes nothing"
+
+    # READINGS: 86 to 2026-10-10, 87 first read 2026-10-12 — 1.00 from 10-12, logged; no reading on 10-11 = 0.70
+    long2 = build("2026-10-14", versions=[("2026-10-09", 86), ("2026-10-10", 86), ("2026-10-12", 87), ("2026-10-13", 87)])
+    out2 = FetchOutput()
+    hd._chain_burn(out2, hd._history(long2, None), near)
+    g = out2.frame().set_index("date")
+    assert g.loc[pd.Timestamp("2026-10-12"), "value"] == pytest.approx(500.0) and g.loc[pd.Timestamp("2026-10-12"), "source"] == hd.RULE_SOURCE
+    assert g.loc[pd.Timestamp("2026-10-11"), "value"] == pytest.approx(350.0)
+    line2 = out2.log[-1].message
+    assert "1.0 from 2026-10-12; v87 FIRST READ 2026-10-12 (activation after 2026-10-10)" in line2, line2
+    assert "at 1.0: 3 day(s) 2026-10-12..2026-10-14" in line2
+
+    # NO READING AFTER THE LAST ONE BELOW 87: those days are 0.70 and PARTIAL (a lower bound)
+    long3 = build("2026-10-14", versions=[("2026-10-10", 86)])
+    out3 = FetchOutput()
+    hd._chain_burn(out3, hd._history(long3, None), near)
+    h3 = out3.frame().set_index("date")
+    assert h3.loc[pd.Timestamp("2026-10-12"), "source"].startswith(hd.RULE_SOURCE + ":PARTIAL[no protocol-version reading")
+    assert _measuring_point(h3.loc[pd.Timestamp("2026-10-12"), "source"]) == hd.RULE_SOURCE
+    assert "PARTIAL lower bound (date pending): 4 day(s) 2026-10-11..2026-10-14" in out3.log[-1].message
 
 
 def test_etherfi_topup_safe_probe_splits_bought_from_transferred_by_month(monkeypatch, capsys):
@@ -25036,3 +25084,109 @@ def test_etherscan_runs_under_its_own_three_per_second_limit():
     """Jake's run 2026-10-06 17:20: "NOTOK — Max calls per sec rate limit reached (3/sec)" with the pacer at 4/s."""
     assert config.EXPLORERS["etherscan"]["rate_per_s"] <= 2.5
     assert "3 req/s" in config.EXPLORERS["etherscan"]["limits"]
+
+
+def test_an_empty_0x_word_is_no_value_and_one_crashing_scan_never_stops_the_others(monkeypatch):
+    """Jake's run 2026-10-06 18:21: "FAILED explorer / None: adapter crashed: invalid literal for int() with base 16:
+    '0x'" — a zero-value Transfer emitted with EMPTY data killed the whole log-scan tier (and the etherfi_topup_safe
+    probe). "0x" is now NO VALUE (0), counted in the run line; and a scan that crashes for any other reason is
+    reported on its own while the next scan still runs."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.logscan import LogScan, hexint
+    from fetch.base import FetchOutput
+    import check_offline_items as coi
+    assert hexint("0x") == 0 and hexint("") == 0 and hexint(None) == 0 and hexint("0x10") == 16
+    assert coi._hexint("0x") == 0
+    holder, cow = "0x2f5301a3d59388c509c65f8698f521377d41fd0f", "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
+    E, t0 = 10 ** 18, int(pd.Timestamp("2026-03-20").timestamp())
+    h = pad_address(holder)
+    spam = _elog(120, 0, [TRANSFER_TOPIC, pad_address("0x2f53000000000000000000000000000000000000"), h], 0, ts=t0, tx="0xs")
+    spam["data"] = "0x"                                     # the crash: an empty data word
+    logs = {("0xtoken", None, h): [_elog(100, 0, [TRANSFER_TOPIC, pad_address(cow), h], 5 * E, ts=t0, tx="0xc"), spam],
+            ("0xtoken", h, None): [], ("", h, None): []}
+    spec = {"key": "k", "metric": "actual_buyback_tokens", "chain": "ethereum", "token": "0xtoken",
+            "holders": [holder], "direction": "in", "store": True, "attribution": "swap", "swap_venues": [cow]}
+    out = _run_scan(monkeypatch, spec, logs, {holder: 5 * E}, name="Ether.fi")
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert "1 log(s) carried EMPTY data ('0x') — read as no value." in line, line
+    assert "1 zero-value lookalike (address-poisoning) transfer(s) ignored." in line
+    assert out.frame().query("metric == 'actual_buyback_tokens'").value.sum() == 5.0
+
+    # ISOLATION: the first scan raises; the second still runs and the failure names the first
+    ran = []
+
+    def fake_scan(self, p, sp, window_days, out_):
+        if sp["key"] == "bad":
+            raise ValueError("invalid literal for int() with base 16: '0x'")
+        ran.append(sp["key"])
+    monkeypatch.setattr(LogScan, "_scan", fake_scan)
+    out2 = FetchOutput()
+    LogScan.__new__(LogScan).run([{"name": "Ether.fi", "log_scans": [{"key": "bad"}, {"key": "good"}]}], None, out2)
+    assert ran == ["good"]
+    assert any("bad: scan crashed — ValueError: invalid literal" in e.message and "The other scans ran." in e.message
+               for e in out2.log)
+
+
+def test_morpho_interest_reference_is_its_own_query_and_judges_the_four_a2_revenue_rows():
+    """Root-cause map 2026-10-06: Morpho's customer revenue (DefiLlama only) held four A2 headlines open.
+    Morpho's own API now gives borrower interest per day (borrowAssetsUsd x daily rate from borrowApy),
+    read by a SEPARATE query: a schema error there never costs the confirmed supply read."""
+    import credibility as cred
+    from fetch.base import FetchOutput
+    from fetch.llama import MorphoBlueApi
+
+    def stub(interest_answer):
+        class Stub:
+            def post(self, url, json_body=None, **kw):
+                q = (json_body or {}).get("query", "")
+                if "chains" in q:
+                    return {"data": {"chains": [{"id": 1}]}}
+                if "borrowApy" in q:
+                    return interest_answer
+                return {"data": {"markets": {"pageInfo": {"countTotal": 2}, "items": [
+                    {"marketId": "0xa", "chain": {"id": 1}, "listed": True,
+                     "state": {"supplyAssetsUsd": 600.0, "borrowAssetsUsd": 365.0}},
+                    {"marketId": "0xb", "chain": {"id": 1}, "listed": True,
+                     "state": {"supplyAssetsUsd": 400.0, "borrowAssetsUsd": 0.0}}]}}}
+        return Stub()
+
+    good = {"data": {"markets": {"pageInfo": {"countTotal": 2}, "items": [
+        {"marketId": "0xa", "listed": True, "state": {"borrowAssetsUsd": 1_000_000.0, "borrowApy": 0.0365}},
+        {"marketId": "0xb", "listed": True, "state": {"borrowAssetsUsd": 0.0, "borrowApy": None}}]}}}
+    a = MorphoBlueApi()
+    a.http = stub(good)
+    out = FetchOutput()
+    a.run([config.PROJECT_BY_NAME["Morpho"]], None, out)
+    f = out.frame()
+    v = float(f[f.metric == "borrow_interest_usd_day_morpho_api"].value.iloc[0])
+    assert abs(v - 1_000_000.0 * (1.0365 ** (1 / 365) - 1)) < 1e-6, v
+    assert "supply_units" in set(f.metric)
+
+    # A schema error on the interest query: supply still stored, interest refused and said.
+    a.http = stub({"errors": [{"message": 'Cannot query field "borrowApy" on type "MarketState".'}]})
+    out = FetchOutput()
+    a.run([config.PROJECT_BY_NAME["Morpho"]], None, out)
+    f = out.frame()
+    assert "supply_units" in set(f.metric) and "borrow_interest_usd_day_morpho_api" not in set(f.metric)
+    msgs = [str(e.message) for e in out.log]
+    assert any("interest query failed" in m and "borrowApy" in m for m in msgs), msgs
+
+    # A market with borrow but no rate: nothing stored, no default.
+    bad = {"data": {"markets": {"pageInfo": {"countTotal": 1}, "items": [
+        {"marketId": "0xa", "listed": True, "state": {"borrowAssetsUsd": 5.0, "borrowApy": None}}]}}}
+    a.http = stub(bad)
+    out = FetchOutput()
+    a.run([config.PROJECT_BY_NAME["Morpho"]], None, out)
+    assert "borrow_interest_usd_day_morpho_api" not in set(out.frame().metric)
+
+    # The headline is judged by the input row: agreement on a common completed day passes.
+    days = pd.to_datetime(["2026-10-04", "2026-10-05"])
+    long = pd.DataFrame({"date": list(days) * 2, "project": "Morpho",
+                         "metric": ["fees_usd"] * 2 + ["borrow_interest_usd_day_morpho_api"] * 2,
+                         "value": [1_000.0, 1_020.0, 990.0, 1_000.0]})
+    spec = config.CREDIBILITY["Morpho"]
+    assert spec["a2_customer_revenue"]["inputs"] == ("in_interest_day",)
+    ref = cred.reference("Morpho", spec["in_interest_day"]["ref"], {}, long, pd.Timestamp("2026-10-06"))
+    ours = cred.ours_value("Morpho", spec["in_interest_day"]["ours"], {}, long, pd.Timestamp("2026-10-06"))
+    assert ref["value"] == 1_000.0 and ours == 1_020.0 and ref["date"] == "2026-10-05"
+    assert abs(ours - ref["value"]) / ref["value"] <= spec["in_interest_day"]["ref"]["tol"] / 100

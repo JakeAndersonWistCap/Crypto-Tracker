@@ -606,3 +606,89 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                          + (f". UNCHECKED input(s): {', '.join(missing)} — no row checks them" if missing else "")
                          + ". PASS only when every input passes on an independent reference.")
     return out
+
+
+# THE ROOT-CAUSE MAP (Jake, 2026-10-06: "burn down the credibility table by impact"). A derived row fails
+# because an input fails, so the rows to fix are the ROOTS: the non-derived rows (and the unchecked inputs)
+# that every open headline traces back to. Ranked by how many headline rows each root holds open.
+OPEN = ("CHECK", "UNVER")
+
+
+def _fix_class(row: dict, verdict: str) -> tuple[str, str]:
+    """(why it fails, fix class) for one ROOT row, from its verdict and its own note."""
+    note = str(row.get("note") or "")
+    resolve = note.split("RESOLVE:", 1)[1].strip() if "RESOLVE:" in note else ""
+    by_hand = any(w in resolve.lower() for w in ("by hand", "read '", "read the", "record it", "manual"))
+    if verdict.startswith("CHECK (no reference)"):
+        return (f"the reference has no value in the store ({note[:140] or row.get('source', '')})",
+                "code / data source: fetch the reference")
+    if verdict.startswith("CHECK (no figure)"):
+        return "our own figure is empty", "code: our figure is not computed"
+    if verdict.startswith("CHECK (figure where none"):
+        return "a figure where the design says there is none", "code: contradiction"
+    if verdict.startswith("UNVER"):
+        if resolve:
+            return (note.split("RESOLVE:", 1)[0].strip()[:160] or "no independent source wired",
+                    f"manual reading: {resolve[:140]}" if by_hand else f"data source: {resolve[:140]}")
+        return note[:160] or "no independent source exists", "genuinely unverifiable"
+    if row.get("mode") == "static":          # a literal CHECK: a reference exists but is not read
+        return (note.split("RESOLVE:", 1)[0].strip()[:160] or "no independent reference wired",
+                (f"manual reading: {resolve[:140]}" if by_hand else
+                 f"data source: {resolve[:140]}" if resolve else "data source: wire an independent reference"))
+    return "it disagrees with an independent reference beyond tolerance", "investigate: a real disagreement"
+
+
+def root_causes(rows: list[dict], verdicts: list) -> list[dict]:
+    """Every root blocking an open (CHECK / UNVERIFIABLE) row, ranked by headline rows blocked.
+    `rows` are build_rows' rows in tab order; `verdicts` the tab's evaluated verdict per row."""
+    v = [str(x or "") for x in verdicts]
+    memo: dict[int, set] = {}
+
+    def roots(i: int) -> set:
+        if i in memo:
+            return memo[i]
+        memo[i] = set()                       # no cycles in practice; never recurse forever
+        r, vi = rows[i], v[i]
+        if r.get("mode") != "derived":
+            got = {("row", i)} if vi.startswith(OPEN) else set()
+        else:
+            ins = r.get("input_rows") or []
+            # A CHECK (inputs) is held open by its CHECK inputs; an UNVERIFIABLE (inputs) by its
+            # unverifiable / unchecked ones (no input checks, or the verdict would be CHECK).
+            want = ("CHECK",) if vi.startswith("CHECK") else ("UNVER", "FRESH")
+            got = set().union(*[roots(j) if v[j].startswith(OPEN) else {("row", j)}
+                                for j in ins if v[j].startswith(want)] or [set()])
+            if not vi.startswith("CHECK"):
+                got |= {("unchecked", r["project"], m) for m in r.get("missing_inputs") or ()}
+                if not ins:
+                    got |= {("unchecked", r["project"], "every input")}
+        memo[i] = got
+        return got
+
+    table: dict = {}
+    for i, r in enumerate(rows):
+        if not v[i].startswith(OPEN):
+            continue
+        for key in roots(i):
+            e = table.setdefault(key, {"headline": [], "rows": []})
+            e["rows"].append(i)
+            if r.get("tab") != "input":
+                e["headline"].append(i)
+    out = []
+    for key, e in table.items():
+        if key[0] == "row":
+            rr, vv = rows[key[1]], v[key[1]]
+            why, fix = _fix_class(rr, vv)
+            if vv.startswith("FRESH"):
+                why, fix = ("the only reference re-reads our own source (FRESH-only)",
+                            "data source: an independent second source")
+            label = f"{rr['project']} | {rr['id']} | {rr['what']}"
+            verdict = vv
+        else:
+            label = f"{key[1]} | (input '{key[2]}' has no row)"
+            verdict, why, fix = "UNCHECKED", "no row checks this input", "code: wire an input row"
+        out.append({"root": label, "verdict": verdict, "headline_rows": len(e["headline"]),
+                    "rows": len(e["rows"]), "why": why, "fix": fix,
+                    "blocks": sorted({f"{rows[i]['project']}:{rows[i]['id']}" for i in e["headline"]})})
+    out.sort(key=lambda d: (-d["headline_rows"], -d["rows"], d["root"]))
+    return out

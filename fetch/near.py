@@ -105,6 +105,8 @@ class NearNode:
             for read in (api.get("extra_reads") or []):
                 if read.get("kind") == "near_block_supply":
                     self._block_supply(p, api, read, out, when)
+                elif read.get("kind") == "near_protocol_version":
+                    self._protocol_version(p, api, read, out, when)
                 else:
                     self._view_accounts(p, api, read, supply, out, when)
             payload, detail = self._call(api)
@@ -211,6 +213,20 @@ class NearNode:
         height = json_path_get(payload, "result.header.height")
         out.add(point(name, metric, value, f"{SOURCE}:block.header.total_supply", TIER, when),
                 SOURCE, name, f"{metric}={value:,.4f} (block {height}, {detail})", TIER)
+
+    def _protocol_version(self, p: dict, api: dict, read: dict, out, when) -> None:
+        """Mainnet's protocol version from `status`, once per run (Jake, 2026-10-06): the burn's share switches from
+        0.70 to 1.00 on protocol v87 (nearcore 2.14.0, HSP-027), and this reading is how the switch is dated."""
+        name, metric = p["name"], read["metric"]
+        body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "status", "params": []}
+        payload, detail = self._call(api, body)
+        v = parse_number(json_path_get(payload, "result.protocol_version")) if payload is not None else None
+        if v is None:
+            out.fail(SOURCE, name, f"{metric}: `status` gave no protocol_version — {detail}", TIER)
+            return
+        height = json_path_get(payload, "result.sync_info.latest_block_height")
+        out.add(point(name, metric, float(v), f"{SOURCE}:status.protocol_version", TIER, when), SOURCE, name,
+                f"{metric}={int(v)} at block {height} — the burn is 100% of gas from v87, 70% before", TIER)
 
     def _view_accounts(self, p: dict, api: dict, read: dict, supply, out, when) -> None:
         """Sum native NEAR held by a list of accounts, via `query` / request_type view_account.

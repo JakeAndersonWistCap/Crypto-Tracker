@@ -532,6 +532,9 @@ METRICS = {
                                      "kind": "stock", "unit": "ratio", "archetypes": [3], "tiers": [2],
                                      "sanity_min": 0, "sanity_max": 1, "only_projects": ("Ether.fi",),
                                      "view_only": True},
+    "near_protocol_version": {"label": "NEAR mainnet protocol version (RPC status) — v87 burns 100% of gas, earlier 70%",
+                              "kind": "stock", "unit": "count", "archetypes": [1, 3, 4], "tiers": [2],
+                              "sanity_min": 60, "sanity_max": 500, "only_projects": ("Near",), "view_only": True},
     "sethfi_topup_tokens": {
         "label": "ETHFI topped up into sETHFI with NO shares minted (rewards to stakers; deposits excluded) — log scan",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
@@ -554,6 +557,11 @@ METRICS = {
                         "only_projects": ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume", "Aethir", "Maple",
                                           "Morpho", "Aerodrome", "Ether.fi", "Fluid", "Sky", "Uniswap", "GEODNET",
                                           "Pendle")},
+    "borrow_interest_usd_day_morpho_api": {
+        "label": "Borrower interest per day at the read — Morpho's own API, listed markets: sum(borrowAssetsUsd x "
+                 "daily rate from borrowApy) — CREDIBILITY reference only",
+        "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [1],
+        "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",), "view_only": True},
     "staking_apr_lido": {"label": "Lido stETH APR, 7-day SMA (fraction, NET of Lido's 10% fee) — CREDIBILITY reference only",
                          "kind": "stock", "unit": "fraction", "archetypes": [1, 4], "tiers": [1],
                          "sanity_min": 0, "sanity_max": 0.2, "only_projects": ("Ethereum",), "view_only": True},
@@ -3420,6 +3428,9 @@ PROJECTS = [
                 # api/rpc/block-chunk (near/docs), and nearcore core/primitives/src/views.rs
                 # BlockHeaderView.total_supply: Balance. The issuance derivation reads it
                 # (issuance_supply_metric) instead of CoinGecko's total.
+                # MAINNET PROTOCOL VERSION, every run (Jake, 2026-10-06): dates v87, from which 100% of gas is burned.
+                {"kind": "near_protocol_version", "metric": "near_protocol_version",
+                 "spec_url": "https://github.com/near/docs/blob/master/api/rpc/network.mdx", "spec_date": "2026-10-06"},
                 {"kind": "near_block_supply", "metric": "total_supply_protocol",
                  "path": "result.header.total_supply",
                  "spec_url": "https://github.com/near/docs/blob/master/api/rpc/block-chunk.mdx",
@@ -3485,33 +3496,32 @@ PROJECTS = [
                           "rebate is DefiLlama's SupplySideRevenue and is not burned",
             "expect_daily_tokens": None,
             "expect_source": None,
-            # ===== THE PROTOCOL RULE WHERE DEFILLAMA'S REVENUE IS NOT THE BURN (Jake, 2026-10-06 17:20). =====
-            # Before 2026-06-19 DefiLlama's NEAR revenue EQUALS its fees (ratio 1.0000 on 2,073 days: an older adapter
-            # booked every fee as revenue), so it is not the burn there. The protocol rule is: 30% of a FunctionCall's
-            # burnt gas is paid to the contract, 70% burned — nearcore core/parameters/res/runtime_configs/
-            # parameters.yaml `burnt_gas_reward: {numerator: 3, denominator: 10}` (master, read 2026-10-06). On those
-            # days burn = fees x 0.70 / price, labelled "protocol rule x DefiLlama fees" (its own source; declared
-            # handover below), ONLY where revenue == fees and ONLY before `valid_before`. Revenue-based burn stays
-            # primary wherever revenue ~ 70% of fees.
-            # ** THE RULE ENDS AT PROTOCOL VERSION 87. ** nearcore 87.yaml / CHANGELOG 2.14.0: "Remove gas rewards …
-            # burnt_gas_reward is changed from 30% (3/10) to 0%" (HSP-027, approved by House of Stake 2026-07-06), so
-            # from v87's mainnet activation 100% of gas is burned — and DefiLlama's fees x 0.7 then UNDERSTATES the
-            # burn. The activation date is not on file: check_offline_items.py near_protocol_v87 reads it. Until
-            # then the fallback stops at the approval date, before which the 70% rule certainly held.
-            "fees_rule": {"share": 0.70, "when_revenue_share": 1.0, "valid_before": "2026-07-06",
-                          "source": "nearcore parameters.yaml burnt_gas_reward 3/10 (master, read 2026-10-06)",
-                          "ends_with": "protocol v87 (nearcore 2.14.0, 87.yaml: burnt_gas_reward 3/10 -> 0/1; HSP-027 "
-                                       "approved 2026-07-06) — activation date to be read (near_protocol_v87)"},
-        },
-        # The burn's history leg on days DefiLlama's revenue equals its fees, then the revenue-based burn.
-        "series_handover": {
-            "gross_burn_tokens": {
-                "ordered_points": ("derived:near_protocol_rule_x_defillama_fees/price",
-                                   "derived:defillama_burned_fee_revenue/price"),
-                "why": "fees x 0.70 / price (nearcore burnt_gas_reward 3/10) where DefiLlama's revenue equals its fees "
-                       "(before 2026-06-19), then DefiLlama's burned-fee revenue / price where revenue ~ 70% of fees",
-                "declared_on": "2026-10-06",
-            },
+            # ===== NEAR'S BURN FOLLOWS THE PROTOCOL, NOT DEFILLAMA'S REVENUE LABEL (Jake, 2026-10-06). =====
+            # DefiLlama's NEAR revenue equals its fees before 2026-06-19 and ~0.70 x fees after — the OPPOSITE of the
+            # protocol on both sides: before v87 70% of gas was burned (nearcore core/parameters/res/runtime_configs/
+            # parameters.yaml `burnt_gas_reward: {numerator: 3, denominator: 10}` — 30% to the called contract), and
+            # from v87 100% (87.yaml: burnt_gas_reward 3/10 -> 0/1; CHANGELOG 2.14.0 "Remove gas rewards"; HSP-027,
+            # approved by House of Stake 2026-07-06). So the burn is derived for EVERY day as DefiLlama fees x the
+            # share in force that day / price, labelled "protocol rule x DefiLlama fees"
+            # (fetch/history_derive._protocol_burn); DefiLlama's revenue is a labelled cross-check only.
+            # v87 IS NOT ACTIVE (Jake's near_protocol_v87, 2026-10-06: mainnet protocol 86 at block 218,820,858), so
+            # every day to 2026-10-06 is 0.70 for certain. From then the stored near_protocol_version (read every run)
+            # dates the switch: the first day it reads >= 87 is switch_on, logged; a day after the last reading
+            # below 87 with no reading at all is 0.70, marked PARTIAL (a lower bound). switch_on set by hand
+            # overrides the readings.
+            "protocol_burn": {"share_before": 0.70, "share_after": 1.00, "switch_on": None,
+                              "switch_not_before": "2026-07-06", "switch_version": 87,
+                              "version_metric": "near_protocol_version",
+                              "not_active_as_of": "2026-10-06",
+                              "not_active_source": "Jake's check_offline_items.py near_protocol_v87, 2026-10-06: mainnet "
+                                                   "protocol_version 86 at block 218,820,858",
+                              "pending_note": "no protocol-version reading covers this day — 0.70 used; a lower "
+                                              "bound (30% short if v87 was already active)",
+                              "share_before_source": "nearcore parameters.yaml burnt_gas_reward 3/10 (master, read "
+                                                     "2026-10-06)",
+                              "share_after_source": "nearcore 87.yaml burnt_gas_reward 3/10 -> 0/1; CHANGELOG 2.14.0; "
+                                                    "HSP-027 (approved 2026-07-06)",
+                              "switch_on_source": "the first stored near_protocol_version >= 87 (RPC status, every run)"},
         },
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
@@ -9652,6 +9662,23 @@ PROJECTS = [
             "page_size": 1000,
             "supply_field": "supplyAssetsUsd",
             "borrow_field": "borrowAssetsUsd",
+            # ===== BORROWER INTEREST FROM MORPHO'S OWN API (credibility burn-down, 2026-10-06) =====
+            # The independent reference for Morpho's customer revenue (DefiLlama fees): per listed
+            # market, borrowAssetsUsd x the daily rate implied by borrowApy ((1 + apy)^(1/365) - 1),
+            # summed = interest borrowers are paying per day at the moment of the read. A SEPARATE
+            # query, so a schema error on borrowApy can never cost the confirmed supply read. A
+            # market with borrow but no borrowApy refuses the whole figure (no safe default).
+            "interest": {
+                "metric": "borrow_interest_usd_day_morpho_api",
+                "query": ("query($c:[Int!],$skip:Int!,$first:Int!){ "
+                          "markets(first:$first, skip:$skip, "
+                          "where:{chainId_in:$c, listed:true}){ "
+                          "pageInfo{countTotal} items{ marketId listed "
+                          "state{ borrowAssetsUsd borrowApy } } } }"),
+                "apy_field": "borrowApy",
+                "spec_url": "https://docs.morpho.org/api/morpho",
+                "spec_date": "2026-10-06",
+            },
             # ** A TRIPWIRE ON THE MEANING, NOT A FILTER ON THE VALUE. ** Nothing is rescaled,
             # clipped or dropped by this band; it only decides whether the unconfirmed-run
             # message invites a human to confirm or tells them not to. The first live run came
@@ -22172,9 +22199,22 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Morpho
     "Morpho": {
-        "a2_customer_revenue": _c_chk(
-            "DefiLlama (morpho-blue + morpho-midnight) only; Morpho's own API serves no fee figure we read.",
-            "add borrowApy x borrowAssetsUsd per listed market to the blue-api read (daily interest paid) and compare"),
+        # ROOT-CAUSE MAP (2026-10-06): this one root held four A2 headlines open. Judged by its input row:
+        # DefiLlama's fees on a day vs Morpho's own API's interest rate read that day.
+        "a2_customer_revenue": {"inputs": ("in_interest_day",),
+                                "why": "Q0 is DefiLlama's daily fees summed; each day is checked against Morpho's "
+                                       "own API in the input row."},
+        "in_interest_day": _c_in_py(
+            "Borrower interest, one day: DefiLlama fees vs Morpho API sum(borrowAssetsUsd x daily rate from borrowApy)",
+            "common_day_value", {"metric": "fees_usd", "ref": "borrow_interest_usd_day_morpho_api", "side": "ours"},
+            {"formula": "common_day_value", "tol": 10.0,
+             "args": {"metric": "fees_usd", "ref": "borrow_interest_usd_day_morpho_api", "side": "ref"},
+             "source": "Morpho's own API (blue-api markets, listed only): sum over markets of "
+                       "borrowAssetsUsd x ((1 + borrowApy)^(1/365) - 1), read once a day",
+             "note": "Tolerance 10% is a judgment, pending Jake's review: the API figure is the rate at the moment "
+                     "of the read and covers LISTED markets only; DefiLlama sums the whole day over every market. "
+                     "A CHECK beyond 10% is a real question about one of the two."},
+            fmt=_C_USD),
         "a2_emissions": _c_chk(
             "Merkl distributor outflows on Ethereum only (PARTIAL — URDs and other chains unscanned).",
             "sum Merkl's campaign amounts (api.merkl.xyz /v4/campaigns, MORPHO) for the same window and compare"),

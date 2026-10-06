@@ -4097,6 +4097,7 @@ def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], da
 # CREDIBILITY (Jake, 2026-10-05): every headline cell on A1-A4 beside an independent reference.
 # ---------------------------------------------------------------------------------------
 _HEADLINE_CELLS: list = []          # filled by _write_table while A1-A4 are written
+CREDIBILITY_ROWS: list = []         # the Credibility tab's rows, in tab order (credibility_report.py --roots)
 
 # (tab prefix, header prefix, stable id) — the id is what config.CREDIBILITY keys on, so a header can
 # be reworded without losing its checks. A headline column not listed here fails the test that
@@ -5430,7 +5431,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     a3 = write_a3(ws_a3, R, data_by_key)
     a1 = write_a1(ws_a1, R, data_by_key, months)
     a2 = write_a2(ws_a2, R, data_by_key, months)
-    write_credibility(ws_cred, R, data_by_key, long, asof)
+    CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, long, asof)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
     _write_manual_quarterly(ws_gap, gap_end + 2, long)

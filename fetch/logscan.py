@@ -55,10 +55,23 @@ CONFIRMATIONS = 20       # blocks behind the head the scan stops at; also where 
 MINT_SENDERS = {config.BURN_ADDRESSES["zero"].lower()}
 
 
+def hexint(value) -> int:
+    """A hex word as an int — "0x" / "" (an EMPTY answer: a zero-value Transfer some tokens emit with no data, a
+    reverted or missing call) is NO VALUE, read as 0, never a crash (Jake's run 2026-10-06 18:21: "invalid literal
+    for int() with base 16: '0x'" killed the whole explorer tier)."""
+    s = str(value if value is not None else "").strip()
+    if s in ("", "0x", "0X"):
+        return 0
+    return int(s, 16)
+
+
 def _amount(entry: dict) -> int:
     """Transfer's value is the DATA word — from and to are the indexed topics."""
-    data = entry.get("data") or "0x0"
-    return int(str(data), 16)
+    return hexint(entry.get("data"))
+
+
+def _empty_data(entry: dict) -> bool:
+    return str(entry.get("data") if entry.get("data") is not None else "").strip() in ("", "0x", "0X")
 
 
 def _lookalike(a: str, b: str) -> bool:
@@ -138,7 +151,17 @@ class LogScan:
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             for spec in p.get("log_scans") or []:
-                self._scan(p, spec, window_days, out)
+                # ONE SCAN'S FAILURE NEVER STOPS THE TIER (Jake's run 2026-10-06 18:21: one bad log crashed the
+                # adapter and no later scan ran).
+                try:
+                    self._scan(p, spec, window_days, out)
+                except ExplorerTimeout:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    from .chain import redact_urls
+                    out.fail(SOURCE, p["name"], f"{spec.get('key')}: scan crashed — {type(e).__name__}: "
+                                                f"{redact_urls(e)}. The other scans ran.", TIER)
+                    log.exception("%s/%s crashed", p["name"], spec.get("key"))
 
     def _tx_events(self, chain_id: int, rq: dict, to_block: int, topics: list | None = None) -> list:
         """Every log of rq's event on rq's address up to to_block, incremental through the cache."""
@@ -348,6 +371,10 @@ class LogScan:
         known = set(holders) | {topic_address(e["topics"][1]) for h in holders for e in ins[h] if _amount(e)} \
             | {topic_address(e["topics"][2]) for h in holders for e in outs[h] if _amount(e)}
         poisoned = 0
+        empty = sum(1 for h in holders for e in ins[h] + outs[h] if _empty_data(e))
+        if empty:
+            log.info("%s/%s: %d Transfer log(s) with EMPTY data ('0x') read as zero value (token %s)",
+                     name, key, empty, token)
         for h in holders:
             ins[h], n_in = drop_poison(ins[h], 1, known)
             outs[h], n_out = drop_poison(outs[h], 2, known)
@@ -570,6 +597,7 @@ class LogScan:
                    + (f" Bought = a fill from a swap venue ({len(venues)}) or a transaction in which the holder paid "
                       f"another token out." if swap else "")
                    + (f" {poisoned} zero-value lookalike (address-poisoning) transfer(s) ignored." if poisoned else "")
+                   + (f" {empty} log(s) carried EMPTY data ('0x') — read as no value." if empty else "")
                    + rq_note + self._since_note(spec, counted, labels, scale))
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
