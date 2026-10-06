@@ -79,6 +79,15 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
             ours = _daily(h, name, spec["metric"])
         else:
             continue
+        basis = ""
+        if config.coingecko_is_free_float(name):
+            # CoinGecko's figure EXCLUDES staked/locked tokens (Pendle, Aerodrome; 2026-10-06): it is set against
+            # OUR free float — circulating − the locked tokens inside it — never against our circulating.
+            lock = _daily(h, name, "locked_tokens")
+            if config.circulating_excludes_declared(name):
+                lock = (lock - config.locked_excluded_from_circulating(name)).clip(lower=0)
+            ours = (ours - lock).dropna()
+            basis = " (ours as FREE FLOAT: CoinGecko's circulating excludes staked/locked tokens)"
         cg = _daily(h, name, "circulating_supply")
         both = pd.concat([ours.rename("ours"), cg.rename("cg")], axis=1).dropna()
         if both.empty:
@@ -95,7 +104,7 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
                             source=SOURCE if st != "first_party" else spec["metric"], tier=2,
                             basis=f"{st} on-chain circulating {row['ours']:,.0f} vs CoinGecko "
                                   f"{row['cg']:,.0f} on {day.date()}: {diff:+.2%}, beyond the "
-                                  f"±{tol:.0%} tolerance.{partial}")
+                                  f"±{tol:.0%} tolerance.{partial}{basis}")
 
 
 def report_lines() -> list[str]:

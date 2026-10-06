@@ -315,6 +315,12 @@ METRICS = {
     "ecosystem_rewards_cumulative_tokens": {"label": "Total Rewards Distributed — ecosystem page, ALL programmes (cumulative)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "supply_units_edge":     {"label": "Staked edge devices — a named supply component (GPU containers stay supply_units)", "kind": "stock", "unit": "units", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Aethir",)},
     "supply_units_checker_licences": {"label": "Delegated checker-node licences (numberDelegatedCheckers) — a named supply component", "kind": "stock", "unit": "units", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Aethir",)},
+    "noncirculating_holding_tokens": {
+        "label": "Tokens in the project's own NON-CIRCULATING wallets (docs / registry / explorer-labelled; team, "
+                 "foundation, ecosystem, converter reserves) — subtracted from on-chain circulating",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": 1e12, "view_only": True,
+        "only_projects": ("Pendle", "Aerodrome", "Chainlink", "Maple", "Fluid", "Sky")},
     "circulating_supply_onchain": {"label": "Circulating supply — on-chain total − the DOCUMENTED non-circulating set (CIRCULATING_ONCHAIN)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
@@ -539,6 +545,12 @@ METRICS = {
         "label": "ETHFI topped up into sETHFI with NO shares minted (rewards to stakers; deposits excluded) — log scan",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Ether.fi",)},
+    "sethfi_reward_tokens_reconciled": {
+        "label": "ETHFI gained by sETHFI holders, RECONCILED to the share price: every transaction's change in "
+                 "assets-per-share x shares (top-ups of every sender, burns without outflow, exit/entry fees) — "
+                 "the parts sum to the share-price change exactly (fetch/share_decompose.py)",
+        "kind": "flow", "unit": "tokens", "archetypes": [3],
+        "tiers": [2], "sanity_min": -1e8, "sanity_max": 1e9, "only_projects": ("Ether.fi",)},
     "pendle_distributed_tokens": {
         "label": "PENDLE distributed to sPENDLE per epoch (spendle/data sPendleHistoricalData.buybackAmounts)",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
@@ -16173,6 +16185,11 @@ PROJECTS = [
                                "source": "sETHFI is its own share token (contracts.sethfi_shares, verified "
                                          "2026-09-14): a mint is a Transfer from address(0) on it"},
                 "report_since": "2026-09-03",
+                # THE SHARE-PRICE DECOMPOSITION (Jake, 2026-10-06: realised 10.01% vs top-up-based 4.18%): the Q0
+                # change in assets-per-share split into identified top-ups, unclassified no-mint inflows, share
+                # burns without asset outflow (unstake fees / penalties) and entry/exit fees; the reconciled total
+                # per day is the token yield's numerator (PROTOCOL_YIELD["Ether.fi"]).
+                "decompose": {"metric": "sethfi_reward_tokens_reconciled", "window_days": 90},
                 "sender_labels": {
                     "0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD-programme buyback Safe — its top-ups are the "
                                                                   "old programme's distributions",
@@ -16710,6 +16727,85 @@ PROJECTS = [
 ]
 
 PROJECT_BY_NAME = {p["name"]: p for p in PROJECTS}
+
+
+# ===== NON-CIRCULATING WALLETS (credibility burn-down, 2026-10-06: "complete our exclusion list from those
+# sources, with each address sourced"). Each is read as token.balanceOf(wallet) and summed into
+# noncirculating_holding_tokens, which CIRCULATING_ONCHAIN subtracts. Code is NOT required at the address
+# (several are Safes, some may be EOAs); a wrong address reads 0 and leaves the figure HIGH, never low.
+_NC = "noncirculating_holding_tokens"
+_PENDLE_DOCS = ("https://github.com/pendle-finance/documentation/blob/3cc3658d43bb4086c99e7c19ebea1d9eb4056410/"
+                "docs/pendle-docs/ProtocolMechanics/Mechanisms/Tokenomics.md")
+_AERO_DOCS = ("https://github.com/aerodrome-finance/docs/blob/99680a7984da4bd98d4fb9adf8ca75b8f0a5a13d/"
+              "content/security.mdx")
+_MAPLE_REG = "https://github.com/maple-labs/address-registry/blob/main/MapleAddressRegistryETH.md"
+_SKY_ADDR = ("https://github.com/sky-ecosystem/spells-mainnet/blob/17926e1879ca79d017c7e42525825907d8f673b1/"
+             "src/test/addresses_mainnet.sol")
+_FLUID_IGP = ("https://github.com/Instadapp/fluid-governance/blob/8891f73d17887e272a5317065961269aee94f7cd/"
+              "contracts/payloads/IGP137/description.md")
+_NONCIRC_WALLETS = {
+    "Pendle": [
+        ("ecosystem_fund", "0x399Be606db281a054E359Eb709df9F21E922eC9a", "ethereum", "PENDLE", _PENDLE_DOCS,
+         "Pendle's Ecosystem Fund — excluded by Pendle's own circulating definition (Tokenomics.md L29)"),
+        ("governance_multisig", "0x8119EC16F0573B7dAc7C0CB94EB504FB32456ee1", "ethereum", "PENDLE", _PENDLE_DOCS,
+         "Pendle Governance multisig — excluded by Pendle's own definition (L30)"),
+        ("team_multisig", "0x918cF6b16D1426B5aA0Edf0492ced1Aa89f9659A", "ethereum", "PENDLE", _PENDLE_DOCS,
+         "Pendle Team multisig — excluded by Pendle's own definition (L31)"),
+    ],
+    "Aerodrome": [
+        ("foundation_multisig", "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a", "base", "AERO", _AERO_DOCS,
+         "Aerodrome Foundation and Incentives multisig — its LIQUID AERO (security.mdx:36)"),
+        ("public_goods_fund", "0x834C0DA026d5F933C2c18Fa9F8Ba7f1f792fDa52", "base", "AERO", _AERO_DOCS,
+         "Public Goods Fund multisig — its LIQUID AERO (security.mdx:37); its 105M veNFT stays pending"),
+        ("airdrop_distributor", "0xE4c69af018B2EA9e575026c0472B6531A2bC382F", "base", "AERO", _AERO_DOCS,
+         "AirdropDistributor — unclaimed airdrop AERO (security.mdx:72)"),
+    ],
+    "Maple": [
+        ("treasury_registry", "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19", "ethereum", "SYRUP", _MAPLE_REG,
+         "Maple `treasury` (registry L259): 'tokens that enter the Treasury come out of circulation'"),
+        ("migrator", "0x9c9499edD0cd2dCBc3C9Dd5070bAf54777AD8F2C", "ethereum", "SYRUP", _MAPLE_REG,
+         "SyrupToken Migrator (L293) — SYRUP reserved for unconverted MPL"),
+        ("syrup_drip", "0x509712F368255E92410893Ba2E488f40f7E986EA", "ethereum", "SYRUP", _MAPLE_REG,
+         "syrupDrip (L273) — undistributed rewards"),
+        ("recapitalization_module", "0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D", "ethereum", "SYRUP", _MAPLE_REG,
+         "RecapitalizationModule (L294) — inflation module balance"),
+        ("governor_timelock", "0x2eFFf88747EB5a3FF00d4d8d0f0800E306C0426b", "ethereum", "SYRUP", _MAPLE_REG,
+         "governor / governorTimelock (L5, L275)"),
+    ],
+    "Fluid": [
+        ("team_multisig", "0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e", "ethereum", "FLUID", _FLUID_IGP,
+         "Fluid Team Multisig (IGP137 description.md L5, L14) — team-controlled"),
+    ],
+    "Sky": [
+        ("mkr_sky_converter", "0xA1Ea1bA18E88C381C724a75F23a130420C403f9a", "ethereum", "SKY", _SKY_ADDR,
+         "MKR_SKY converter (L508): SKY PRE-MINTED for unconverted MKR (executive 2025-06-26) — MKR's claim, "
+         "not SKY in holders' hands"),
+        ("mkr_sky_legacy_converter", "0xBDcFCA946b6CDd965f99a839e4435Bcdc1bc470B", "ethereum", "SKY", _SKY_ADDR,
+         "MKR_SKY_LEGACY converter (L507) — mint/burn, normally ~0"),
+    ],
+    # Etherscan labels "Chainlink: Noncirculating Supply 1..24", read 2026-10-06 from search-result titles of
+    # https://etherscan.io/address/<address> (an explorer label — the class of source Jake named). Several hold 0.
+    "Chainlink": [(f"noncirculating_supply_{i}", a, "ethereum", "LINK", f"https://etherscan.io/address/{a}",
+                   f"Etherscan label 'Chainlink: Noncirculating Supply {i}'") for i, a in enumerate((
+        "0x5Eab1966D5F61E52C22D0279F06f175e36A7181E", "0x9c17f630DBde24eECe8fd248fAA2E51f690FF79B",
+        "0x7594Eb0ca0a7f313bEFD59AfE9e95c2201a443e4", "0x959815462EeC5fFf387A2e8a6871d94323D371de",
+        "0x2a6AB3B0C96377bd20AE47E50ae426A8546A4Ae9", "0xD48133C96C5FE8d41D0cbD598F65bf4548941e27",
+        "0x157235A3cc6011d9C26A010875c2550246aAbcCA", "0x9BBb46637A1Df7CADec2AFcA19C2920CdDCc8Db8",
+        "0x57Ec4745258e5A4C73d1A82636dc0FE291e3eE9F", "0x8652Fb672253607c0061677bDCaFb77a324DE081",
+        "0x4a87ecE3eFffCb012fbE491AA028032e07B6F6cF", "0x3264225f2Fd3bb8D5DC50587EA7506aA8638B966",
+        "0x35a5dc3FD1210Fe7173aDD3C01144Cf1693B5E45", "0xEc640A90e9A30072158115B7C0253f2689ee6547",
+        "0xD321948212663366503E8dCCDE39cc8e71C267c0", "0xe0b66bFc7344a80152BfeC954942E2926A6FcA80",
+        "0xa42D0A18B834F52e41bEDdEaA2940165db3DA9a3", "0x5A8e77bC30948cc9A51aE4E042d96e145648BB4C",
+        "0x55b0ba1994d68C2AB0C01C3332eC9473de296137", "0x76287e0F7b107d1C9f8f01D5aFac314Ea8461a04",
+        "0x0DFfD343C2D3460a7EAD2797a687304Beb394ce0", "0x8d34d66bDb2d1d6ACd788A2d73d68e62282332e7",
+        "0x276F695b3B2C7f24E7CF5b9d24e416a7f357aDb7", "0xfB682b0dE4e0093835EA21cfABb5449cA9ac9e5e"), start=1)],
+}
+for _name, _rows in _NONCIRC_WALLETS.items():
+    for _key, _addr, _chain, _sym, _url, _why in _rows:
+        PROJECT_BY_NAME[_name]["contracts"][f"noncirc_{_key}"] = _contract(
+            _addr, _chain, "treasury_holding", _sym, _url, verified="2026-10-06", purpose=_why,
+            provenance="read 2026-10-06 (credibility burn-down circulating research)", holder_has_code=False,
+            metric_override=_NC)
 
 
 # ===== "DefiLlama Pro tier only" WAS THE WRONG REASON ON NEARLY EVERY ROW. Added 2026-09-23. =====
@@ -17269,12 +17365,17 @@ PROTOCOL_YIELD = {
     # (Until 2026-10-06 the numerator was DefiLlama holders revenue and the cell carried "recipients
     # unconfirmed": the top-ups are now measured going INTO sETHFI, so the recipients are established.)
     "Ether.fi": {"revenue": "holders_revenue_usd_defillama", "lock": "locked_tokens_underlying",
-                 "token_yield": {"tokens": "sethfi_topup_tokens", "bought": "actual_buyback_tokens",
+                 # NUMERATOR = THE RECONCILED TOTAL (Jake, 2026-10-06): every transaction's change in sETHFI's
+                 # assets-per-share x shares — identified top-ups, unclassified no-mint inflows, burns without
+                 # outflow and entry/exit fees — so the yield agrees with the realised share price by construction.
+                 # sethfi_topup_tokens (top-ups only) stays stored beside it.
+                 "token_yield": {"tokens": "sethfi_reward_tokens_reconciled", "bought": "actual_buyback_tokens",
                                  "bought_share_alltime": "buyback_bought_share_alltime",
-                                 "note": "TOKEN YIELD — ETHFI topped up into sETHFI (no shares minted: rewards to "
-                                         "stakers, however funded), annualised over its covered days, over the "
-                                         "ETHFI sETHFI holds. Since 2026-08-13 paid by the top-up Safe 0x3fb6784e…; "
-                                         "before 2026-04 by the old buyback Safe. The dollar column beside it is "
+                                 "note": "TOKEN YIELD — ETHFI gained by sETHFI holders, RECONCILED to the share "
+                                         "price (top-ups of every sender + share burns without outflow + entry/exit "
+                                         "fees), annualised over its covered days, over the ETHFI sETHFI holds. "
+                                         "Top-ups since 2026-08-13 come from the top-up Safe 0x3fb6784e…; before "
+                                         "2026-04 from the old buyback Safe. The dollar column beside it is "
                                          "DefiLlama's, which misses this route — a cross-check only."}},
 }
 # ===== PENDLE'S sPENDLE STAKING PAGE, read by Jake 2026-09-29. Reference only. =====
@@ -19874,33 +19975,91 @@ CIRCULATING_ONCHAIN = {
                     # ratio with circulating as its denominator falls to x0.743.
                     "headline_change": {"coingecko_circulating": 222_000_000,
                                         "first_party_circulating": 298_667_946.69, "factor": 0.743}},
-    "Uniswap": {"status": "partial", "total": "total_supply_gross",
+    # ===== PER-PROJECT CIRCULATING DECISIONS (credibility burn-down, 2026-10-06). Each says which figure the
+    # ratios use (circulating, market cap = price x it, free float = it − locked) and why. `ratios_use`
+    # "onchain" makes the on-chain figure primary even where the set is not complete; `coingecko_basis`
+    # "free_float" says CoinGecko's circulating ALREADY excludes staked/locked tokens (so it is compared with
+    # OUR free float, never with our circulating). Decided by Claude Code 2026-10-06, pending Jake's review.
+    "Uniswap": {"status": "established", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
-                "missing": "Uniswap Foundation and other team/investor wallets are not documented "
-                           "in config; only the governance Timelock and 0x…dEaD are excluded"},
-    "Sky": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
-            "missing": "the MKR→SKY converter's reserve for unconverted MKR is not identified in "
-                       "config; only the Pause Proxy treasury is excluded"},
-    "Pendle": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
-               "missing": "team, investor and ecosystem vesting wallets are not documented in "
-                          "config; only the treasury is excluded"},
-    "Fluid": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
-              "missing": "team and investor vesting contracts are not documented in config; only "
-                         "the governance treasury is excluded"},
+                "method": "total − 0x…dEaD − the governance Timelock 0x1a9C…: CoinGecko's own method (its "
+                          "supply-breakdown docs name the 'UNI Timelock' as the non-circulating wallet), and it "
+                          "reproduces CoinGecko's 623.2M of 890.5M (2026-09-02)",
+                "decision": "ON-CHAIN — the set is complete: team/investor vesting ended Sep 2024, the "
+                            "Foundation custody wallet 0xe571dc7a… holds ~0 UNI, UNIVesting 0xCa046A83… draws "
+                            "from the Timelock by allowance (the UNI stays in the Timelock until claimed), "
+                            "Uniswap/protocol-fees README L285-292 + src/UNIVesting.sol L15 (main, 2026-10-06)",
+                "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+    "Sky": {"status": "established", "total": "total_supply",
+            "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+            "method": "SKY totalSupply − the Pause Proxy (treasury + every flapper buyback) − the MKR_SKY "
+                      "converters' SKY (pre-minted for unconverted MKR: MKR's claim, listed separately on "
+                      "CoinGecko as MKR) — spells-mainnet@17926e18 addresses_mainnet.sol L47, L507, L508",
+            "decision": "ON-CHAIN — Sky states no circulating definition; aggregators disagree by up to 2B and "
+                        "appear not to subtract the Pause Proxy's buyback stash or the converter reserve. Staked "
+                        "SKY (LockstakeEngine 0xCe01C90d…) counts as circulating, per the convention; the two "
+                        "rewards contracts' undistributed SKY is not subtracted (owed to stakers as it accrues)",
+            "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+    "Pendle": {"status": "established", "total": "total_supply",
+               "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+               "coingecko_basis": "free_float",
+               "method": "total − the fee wallet 0x8270… − Ecosystem Fund − Governance multisig − Team "
+                         "multisig (pendle-finance/documentation@3cc3658 Tokenomics.md L24-33). Pendle's OWN "
+                         "figure also excludes sPENDLE and vePENDLE: by the convention staked tokens are "
+                         "circulating and come out SEPARATELY as locked, so Pendle's figure (and CoinGecko's, "
+                         "read from Pendle's endpoint) is OUR FREE FLOAT",
+               "decision": "ON-CHAIN — Pendle documents the complete set (vesting ended Sep 2024). CoinGecko's "
+                           "~170M is the free-float quantity: used as circulating it subtracted sPENDLE twice "
+                           "in free float. Bridged PENDLE on L2s counts as circulating (Pendle excludes mainnet "
+                           "addresses only)",
+               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+    "Fluid": {"status": "partial", "total": "total_supply",
+              "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+              "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… (fluid-governance@8891f73d)",
+              "decision": "COINGECKO — the on-chain set is near-complete (vesting ended 2025) but the IGP-137 "
+                          "5M moves on from the Team Multisig to an unpublished 'dedicated wallet', and FLUID in "
+                          "the Merkle reward distributors is not classified; CoinGecko's ~79M stays primary",
+              "missing": "the IGP-137 dedicated custody wallet (address not published); FLUID held by the "
+                         "Merkle reward distributors",
+              "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Ether.fi": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
-                 "missing": "team, investor and foundation vesting wallets are not documented in "
-                            "config; only the treasury is excluded"},
-    "Maple": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens_chain",),
-              "missing": "Maple's other non-circulating wallets are not documented in config; "
-                         "only the DAO treasury is excluded"},
-    "Chainlink": {"status": "partial", "total": "total_supply", "subtract": ("buyback_fund_balance",),
-                  "missing": "Chainlink's non-circulating node-operator and team wallets are not "
-                             "documented in config; only the timelocked LINK Reserve is excluded"},
+                 "decision": "COINGECKO — ether.fi publishes no circulating method; investor/contributor vesting "
+                             "runs to 2027-02-18 and its contracts are not identified; the 'Foundation Multisig' "
+                             "0x7A6A41F3… is SECONDARY (a search snippet) and is not wired. sETHFI counts as "
+                             "circulating (a holder-owned vault)",
+                 "missing": "vesting contract addresses (to 2027-02-18); a primary source for the Foundation "
+                            "multisig 0x7A6A41F353B3002751d94118aA7f4935dA39bB53",
+                 "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+    "Maple": {"status": "partial", "total": "total_supply",
+              "subtract": ("treasury_holding_tokens_chain", "noncirculating_holding_tokens"),
+              "method": "total − DAO multisig − treasury − Migrator − syrupDrip − RecapitalizationModule − "
+                        "governor timelock (maple-labs/address-registry, main, 2026-10-06)",
+              "decision": "COINGECKO — Maple publishes no circulating figure; CoinGecko implies ~77.4M "
+                          "non-circulating while DefiLlama shows a 294.93M treasury — unreconciled. stSYRUP and "
+                          "the OFT adapter's balance count as circulating",
+              "missing": "the Syrup Strategic Fund address; why DefiLlama's treasury (294.93M) and CoinGecko's "
+                         "implied non-circulating (~77.4M) differ",
+              "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+    "Chainlink": {"status": "partial", "total": "total_supply",
+                  "subtract": ("buyback_fund_balance", "noncirculating_holding_tokens"),
+                  "method": "1B − the LINK Reserve − the 24 Etherscan-labelled 'Chainlink: Noncirculating "
+                            "Supply' wallets",
+                  "decision": "COINGECKO — CoinGecko's ~748M is Chainlink's own figure (DefiLlama: non-circulating "
+                              "addresses 'sourced from Chainlink's official supply API'; chain.link/economics "
+                              "'748M+'). The on-chain set is its cross-check; whether Chainlink's API also "
+                              "excludes the Reserve is not established. Staked LINK counts as circulating",
+                  "missing": "Chainlink's own API address list (chain.link/circulating-supply is unreadable from "
+                             "here) — the 24 labels may not be all of it",
+                  "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "GEODNET": {"status": "partial", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
+                "decision": "COINGECKO — the Team (~245M), Investor and Vendor/Marketing wallets that explain the "
+                            "−41% gap are listed in NONCIRCULATING_CANDIDATES but NOT wired: they were seen only in "
+                            "search summaries of docs.geodnet.com/geod-token/tokenomics",
                 "missing": "the mining, mining-distribution and ecosystem wallets and both burn "
-                           "accounts are excluded; team, investor and foundation allocation wallets "
-                           "are not documented in config"},
+                           "accounts are excluded; team, investor and vendor wallets await a direct read of "
+                           "GEODNET's tokenomics page (NONCIRCULATING_CANDIDATES)",
+                "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Morpho": {"status": "not_established",
                "why": "no Morpho DAO treasury, vesting or foundation address is documented in config"},
     # AERODROME (Jake's decision, 2026-09-30): the team's 95M in PERMANENT veNFTs is EXCLUDED from
@@ -19910,7 +20069,16 @@ CIRCULATING_ONCHAIN = {
     # multisig) and the Public Goods Fund's 105M are LISTED for Jake — whether they are still
     # team/foundation-held (Flight School's veNFTs may have been distributed to partner
     # protocols; the PGF is its own fund) is not established, so they are not excluded.
-    "Aerodrome": {"status": "partial", "total": "total_supply", "subtract": (),
+    "Aerodrome": {"status": "partial", "total": "total_supply", "subtract": ("noncirculating_holding_tokens",),
+                  "ratios_use": "onchain", "coingecko_basis": "free_float",
+                  "decision": "ON-CHAIN although partial — CoinGecko's ~970M excludes ALL veAERO (941.5M of 1.90B "
+                              "in one snapshot; ~51% locked), i.e. it is the FREE-FLOAT quantity, so using it as "
+                              "circulating subtracted veAERO twice in free float. Ours = total − the team's 95M "
+                              "(declared) − the Foundation, Public Goods Fund and AirdropDistributor LIQUID balances "
+                              "(docs@99680a79 security.mdx). It reads HIGH by at most Flight School's 50M + the "
+                              "PGF's 105M veNFTs (~8%) if those are still foundation-held. Aerodrome states no "
+                              "figure (its Minter's 'circulating' event emits totalSupply)",
+                  "decided_by": "Claude Code 2026-10-06, pending Jake's review",
                   "declared_exclusions": (
                       {"name": "Development Team Funding — 95,000,000 AERO in permanent veNFTs (Auto "
                                "Max-Locked at genesis)", "tokens": 95_000_000,
@@ -19931,9 +20099,8 @@ CIRCULATING_ONCHAIN = {
                       "foundation-held",
                       "Public Goods Fund 105M (permanent veNFT, 0x834C0DA026d5F933C2c18Fa9F8Ba7f1f792fDa52) "
                       "— a separate fund, not team/foundation by its label"),
-                  "missing": "the Foundation's LIQUID treasury (the 50M liquid AERO at genesis, "
-                             "0xBDE0…) is not read, so the figure reads high and CoinGecko's stays "
-                             "primary. FREE FLOAT = circulating − the locked tokens INSIDE "
+                  "missing": "Flight School's 50M and the Public Goods Fund's 105M permanent veNFTs (owners "
+                             "not established). FREE FLOAT = circulating − the locked tokens INSIDE "
                              "circulating: once this set is primary, the team's 95M is taken out of "
                              "the locked total before subtracting, so it is never counted twice "
                              "(config.locked_excluded_from_circulating)"},
@@ -19965,6 +20132,24 @@ CIRCULATING_ONCHAIN = {
 # third party's label, not the project's. Under the convention, staked/locked/ve balances are
 # circulating, so staking and ve contracts are listed only where they explain a balance.
 NONCIRCULATING_CANDIDATES = {
+    "GEODNET": {
+        "note": "the allocation wallets of GEODNET's tokenomics page, as search-engine summaries of "
+                "docs.geodnet.com/geod-token/tokenomics give them (the mining, distribution and ecosystem wallets "
+                "already wired match the same list). NOT subtracted until Jake opens the page and confirms "
+                "them — Claude Code 2026-10-06, pending Jake's review",
+        "addresses": [
+            {"role": "Team (25%, 244,142,392; coincarp's rich list shows 245,000,000 here)", "chain": "polygon",
+             "address": "0xca3E874Bc4e830796d822F529C29Df30302324b2",
+             "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
+            {"role": "Investor (25%, 244,142,392)", "chain": "polygon",
+             "address": "0x486559899e96981DFE55C4E6EBF5101A76BfAdfa",
+             "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
+            {"role": "Vendor / Marketing (3%)", "chain": "polygon",
+             "address": "0x82146cf0f350c241757660fd803c73313b06d75c",
+             "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
+        ],
+        "not_established": "the addresses themselves (page not opened); Solana-side allocation wallets after "
+                           "the migration; the burn-pending wallet"},
     "Morpho": {
         "note": "no Morpho docs or tokenomics repository exists (morpho-org's 71 public repos)",
         "addresses": [
@@ -20085,11 +20270,24 @@ def locked_excluded_from_circulating(project_name: str) -> float:
     return float(sum(e["tokens"] for e in spec.get("declared_exclusions") or () if e.get("locked")))
 
 
+def circulating_onchain_primary(project_name: str) -> bool:
+    """Whether the ratios use the on-chain / first-party circulating figure rather than CoinGecko's: an
+    established or first-party set, or a per-project decision (ratios_use "onchain", 2026-10-06)."""
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    return spec.get("status") in ("established", "first_party") or spec.get("ratios_use") == "onchain"
+
+
+def coingecko_is_free_float(project_name: str) -> bool:
+    """CoinGecko's circulating already excludes staked/locked tokens (Pendle, Aerodrome): compare it with
+    OUR free float, never with our circulating."""
+    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_basis") == "free_float"
+
+
 def circulating_excludes_declared(project_name: str) -> bool:
     """Whether the circulating figure the sheet USES already has the declared exclusions taken out:
     true only where the on-chain set is primary (established / first_party). A PARTIAL set is shown
     beside CoinGecko's, which stays primary and does not apply them."""
-    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("status") in ("established", "first_party")
+    return circulating_onchain_primary(project_name)
 
 
 # =======================================================================================
@@ -21417,6 +21615,19 @@ OPEN_QUESTIONS = [
                       "unreliable one, source total_supply elsewhere for this project rather than "
                       "silencing the comparison.",
     },
+    # ---------------------------------------------------------------- Ether.fi
+    {
+        "project": "Ether.fi", "status": "open", "severity": 3,
+        "topic": "OPEN NOTE (Jake, 2026-10-06) — was the 5,000,000 ETHFI into the top-up Safe BOUGHT ON A CEX?",
+        "reason": "0x83971edb… (an EOA) received 5,000,000 ETHFI from the Binance hot wallet 0x28c6c062… and sent it to "
+                  "the top-up Safe. check_offline_items.py etherfi_cex_test looks for ether.fi wallets paying "
+                  "USDC/USDT/ETH to Binance deposit addresses, one hop and (probes8) a second hop via the owner EOA "
+                  "0x000d4fdd… (2,250,000 USDC in 10 tx to 2026-08-11) and 0xb3fa262d… (104,000 USDC from the deployer, "
+                  "2026-08-02). Until a payment is traced the 5M counts as TRANSFERRED, never on-chain bought.",
+        "suggestion": "Run etherfi_cex_test; if a payment reaches a Binance deposit address, classify the 5M as "
+                      "'bought on a CEX (inferred)' with the implied price. It does not change a headline: the token "
+                      "yield's numerator is the reconciled share-price total either way.",
+        "recorded": "Claude Code 2026-10-06, pending Jake's review"},
 ]
 
 

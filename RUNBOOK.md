@@ -527,6 +527,62 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ah. Credibility burn-down 2026-10-06 (part 2): circulating decisions, Ether.fi decomposition, manual form
+
+**2. Circulating supply, per project.**
+
+- **New metric:** each project's own non-circulating wallets are read into `noncirculating_holding_tokens`
+  (`token.balanceOf`, summed), which the on-chain set subtracts.
+  - Every wallet carries its source and the date read: `config._NONCIRC_WALLETS`.
+- **New per-project switches:**
+  - `ratios_use: "onchain"` makes the on-chain figure primary even where the set is partial.
+  - `coingecko_basis: "free_float"` means CoinGecko's circulating already excludes staked/locked tokens. It is then
+    compared with OUR free float, never with our circulating.
+- **What the ratios use:**
+
+| Project | Ratios use | Why |
+|---|---|---|
+| Uniswap | on-chain (established) | CoinGecko's own method: total − dEaD − Timelock; set complete |
+| Sky | on-chain (established) | − Pause Proxy − the MKR_SKY converters' pre-minted SKY (MKR's claim) |
+| Pendle | on-chain (established) | Pendle's documented set minus staking. Pendle's own figure = our free float |
+| Aerodrome | on-chain (partial, by decision) | CoinGecko excludes ALL veAERO (= free float); ours reads high by ≤ ~8% |
+| Chainlink | CoinGecko | it IS Chainlink's API figure; 24 labelled wallets + Reserve are the cross-check |
+| Maple | CoinGecko | no Maple figure; registry wallets wired; SSF / DefiLlama 294.93M unexplained |
+| Fluid | CoinGecko | IGP-137 custody wallet and Merkle distributors unclassified |
+| Ether.fi | CoinGecko | vesting to 2027-02-18, contracts unknown; Foundation multisig secondary |
+| GEODNET | CoinGecko | team/investor/vendor wallets seen only in search summaries: candidates, unwired |
+
+- **Market cap** = price × the chosen circulating. **Free float** = it − locked.
+- **History:** a newly primary on-chain figure has history only from its first run. CoinGecko fills the days before.
+  To backfill: `python archive_backfill.py` for `noncirculating_holding_tokens`.
+- **`python headline_diff.py`:** every headline moving more than 10% because of these decisions (before vs after,
+  from your store).
+
+**5. Ether.fi: why sETHFI's share price moved.**
+
+- **The method:** the sETHFI scan rebuilds the vault's assets and shares from the full Transfer history and splits
+  the 90-day change in assets-per-share by transaction shape (`fetch/share_decompose.py`):
+  - identified top-ups;
+  - unclassified no-mint inflows;
+  - share burns without asset outflow (unstake fees / penalties);
+  - withdrawal and deposit fees;
+  - asset outflows.
+- **The identity:** the parts sum to the change exactly.
+- **Stored:** the reconciled reward tokens per day (`sethfi_reward_tokens_reconciled`), now the token yield's
+  numerator. `sethfi_topup_tokens` stays stored beside it.
+- **The run line:** prints each class.
+- **Open note:** did the 5M ETHFI arrive via a Binance hop (CEX test)? It does not change a headline.
+
+**4. Manual readings form.**
+
+- **`python manual_form.py make`** writes `manual_readings_form.csv`: every open row whose root fix is a manual
+  reading, with its URL, the exact tile, our value and the headline rows it clears. Monthly rows get one line per
+  month.
+- **Fill it in:** `value` and `read_on`.
+- **`python manual_form.py load manual_readings_form.csv`** validates, previews, takes one typed "yes", and writes
+  `manual_references.csv`. Credibility judges those rows from it on the next build.
+
+
 ## 11ag. Credibility burn-down 2026-10-06 (part 1): crash fix, NEAR protocol burn, root-cause map, Morpho interest
 
 **0. The crash.** In the 18:21 run, `explorer / None: adapter crashed: invalid literal for int() with base 16: '0x'`

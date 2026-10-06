@@ -177,6 +177,36 @@ class LogScan:
             self.cache.save(sid, events, to_block, st.get("proven_to"))
         return [e for e in events if int(e["blockNumber"]) <= to_block]
 
+    def _decompose(self, p, spec, dec, sm, chain_id, vault, ins, outs, to_block, labels, days, out) -> None:
+        """Q0 change in a share vault's assets-per-share, by transaction shape; stores the reconciled reward
+        tokens per day (dec["metric"]) — top-ups of every kind + fees and burns left with the holders."""
+        from .share_decompose import CLASSES, decompose
+        name, key = p["name"], spec["key"]
+        zero = pad_address(config.BURN_ADDRESSES["zero"])
+        try:
+            mints = self._tx_events(chain_id, {"address": sm["token"]}, to_block, [TRANSFER_TOPIC, zero])
+            burns = self._tx_events(chain_id, {"address": sm["token"]}, to_block, [TRANSFER_TOPIC, None, zero])
+        except ExplorerRefused as e:
+            out.fail(SOURCE, name, f"{key}: share burns could not be read for the decomposition — {e}", TIER)
+            return
+        since = today() - pd.Timedelta(days=int(dec.get("window_days", 90)))
+        r = decompose(ins[vault], outs[vault], mints, burns, int(since.timestamp()), set(labels))
+        if r["aps_end"] is None or not r["aps_start"]:
+            out.fail(SOURCE, name, f"{key}: no shares outstanding — nothing to decompose", TIER)
+            return
+        by, a0, a1 = r["by_class"], r["aps_start"], r["aps_end"]
+        parts = "; ".join(f"{c} {by[c]['aps']:+.6f}/share = {by[c]['tokens']:+,.2f} tokens ({by[c]['txs']} tx)"
+                          for c in CLASSES if by[c]["txs"])
+        span = max(int(dec.get("window_days", 90)), 1)
+        frame = tidy([(d, r["daily"].get(d, 0.0)) for d in days], name, dec["metric"],
+                     f"{SOURCE}:{key}.aps_walk", TIER)
+        out.add(frame, SOURCE, name,
+                f"{dec['metric']} — assets-per-share {a0:.6f} -> {a1:.6f} since {since.date()} "
+                f"({a1 / a0 - 1:+.3%}; {(a1 / a0) ** (365.0 / span) - 1:.2%}/yr), rebuilt from the Transfer logs "
+                f"(assets {r['assets_now']:,.2f}, shares {r['shares_now']:,.2f} at block {to_block:,}). BY CLASS: "
+                f"{parts}. The classes sum to the change exactly; the reconciled reward tokens per day are stored.",
+                TIER)
+
     def _classify_outside(self, chain_id: int, cls: dict, outside: list, holders: list,
                           to_block: int, spec: dict) -> str:
         """WHAT the transfers outside the named event are, from the pair's own logs (Sky, 2026-09-29).
@@ -682,6 +712,13 @@ class LogScan:
                 out.add(tidy([(today(), share)], name, bs["metric"], f"{SOURCE}:{key}", TIER), SOURCE, name,
                         f"{bs['metric']} = {share:.2%} — {hb} received {got_in / scale:,.2f} in all, "
                         f"{per_holder[hb][0] / scale:,.2f} of it bought on-chain (the rest transferred in)", TIER)
+
+        # WHY THE SHARE PRICE MOVED (Jake, 2026-10-06: realised 10.01% vs top-up-based 4.18%). The vault's
+        # assets and shares are rebuilt from the full Transfer history (fetch/share_decompose.py) and every
+        # transaction's change in assets-per-share is attributed by its shape; the parts sum to the change.
+        dec = spec.get("decompose")
+        if dec and sm and len(holders) == 1:
+            self._decompose(p, spec, dec, sm, chain_id, holders[0], ins, outs, to_block, labels, days, out)
 
         # THE LAST COUNTED INFLOW, STORED AS A VALUE. Added 2026-09-28. A window of zeros says
         # nothing about WHEN the program last moved; the run log did, as prose. Excel date serial

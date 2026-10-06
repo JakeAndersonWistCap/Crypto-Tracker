@@ -178,6 +178,40 @@ def _sum_month(p, rows, long, asof, metric="", month="", **_):
     return float(m.sum()), month, f"{metric} summed over {month} ({len(m)} day(s))"
 
 
+def _sum_months(p, rows, long, asof, metric="", months=(), **_):
+    """The daily series summed over exactly the listed months (manual monthly readings, manual_refs.py)."""
+    sr = _series(long, p, metric)
+    tot, seen = 0.0, []
+    for month in months:
+        per = pd.Period(month, "M")
+        m = sr[(sr.index >= per.start_time) & (sr.index <= per.end_time.normalize())]
+        if m.empty:
+            return None, None, f"no {metric} in {month}"
+        tot += float(m.sum())
+        seen.append(month)
+    return tot, ", ".join(seen), f"{metric} summed over {', '.join(seen)}"
+
+
+def _free_float_now(p, rows, long, asof, **_):
+    """OUR free float now: the circulating the ratios use − the locked tokens inside it (as A2 computes it)."""
+    from build_workbook import chosen_circulating_metric
+    proj = config.PROJECT_BY_NAME[p]
+    circ = _series(long, p, chosen_circulating_metric(proj))
+    if circ.empty:
+        circ = _series(long, p, "circulating_supply")
+    lock = 0.0 if proj.get("free_float_lock_zero") else None
+    if lock is None:
+        lk = _series(long, p, "locked_tokens")
+        if lk.empty:
+            return None, None, "no locked_tokens in the store"
+        lock = float(lk.iloc[-1])
+        if config.circulating_excludes_declared(p):
+            lock = max(0.0, lock - config.locked_excluded_from_circulating(p))
+    if circ.empty:
+        return None, None, "no circulating figure in the store"
+    return float(circ.iloc[-1]) - lock, str(circ.index[-1].date()), "our circulating − locked (A2 free float)"
+
+
 def _common_day(p, long, a, b, asof):
     """(day, a's value, b's value) on the latest COMPLETED day both series hold. Today is excluded: our
     newest CoinGecko point is taken at fetch time, not at 00:00, so it is never compared."""
@@ -265,7 +299,8 @@ def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
     return float(sr.sum()) * 365.0 / 30.0, str(sr.index[-1].date()), f"{metric}, last 30 days x 365/30"
 
 
-FORMULAS = {"eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
+FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now,
+            "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
             "value_on": _value_on, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
@@ -518,6 +553,13 @@ def circulating_input(name: str) -> dict:
     st = (config.circulating_onchain(name) or {}).get("status")
     what = f"Circulating supply as the ratios use it ({ours_m}; on-chain status '{st}')"
     base = {"what": what, "ours": {"metric": ours_m, "window": "now"}, "fmt": '#,##0;(#,##0);-'}
+    if config.coingecko_is_free_float(name):     # CoinGecko excludes staked/locked: it is OUR free float
+        return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT ({ours_m} − locked)",
+                "ours": {"py": "free_float_now", "args": {}}, "fmt": '#,##0;(#,##0);-',
+                "ref": {"metric": "circulating_supply", "window": "now", "tol": 5.0,
+                        "source": "CoinGecko circulating_supply — it excludes staked/locked tokens, so it is "
+                                  "compared with our circulating − locked",
+                        "note": (config.circulating_onchain(name) or {}).get("decision", "")}}
     if ours_m != "circulating_supply":           # first-party / on-chain chosen: CoinGecko is independent
         return {**base, "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
                                 "source": "CoinGecko circulating_supply (an aggregator's own count)"}}
@@ -535,7 +577,9 @@ def circulating_input(name: str) -> dict:
 
 def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None) -> list[dict]:
     """Every Credibility row, in project order: the headline cells (tab order), then the inputs."""
+    import manual_refs
     names = [n for n in config.CREDIBILITY_PROJECTS if projects is None or n in projects]
+    manual = manual_refs.by_row()
     out = []
     for name in names:
         spec_p = config.CREDIBILITY.get(name) or {}
@@ -565,6 +609,8 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             if spec is None:
                 spec = ({"verdict": "UNVERIFIABLE", "why": DERIVED_WHY} if hc["kind"] == "calc" else
                         {"verdict": "CHECK", "why": "no independent reference is wired for this figure yet."})
+            if (name, hc["id"]) in manual:           # Jake's reading (manual_form.py) replaces the reference
+                spec = manual_refs.reference_for(manual[(name, hc["id"])], None)[0]
             ref = reference(name, spec, rows, long, asof)
             out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
                         "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
@@ -580,6 +626,9 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             spec = spec(name) if callable(spec) else spec
             if spec is None:
                 continue
+            if (name, iid) in manual:                # Jake's reading (manual_form.py) replaces the reference
+                mref, mours = manual_refs.reference_for(manual[(name, iid)], spec.get("ours"))
+                spec = {**spec, "ref": mref, **({"ours": mours} if mours else {})}
             ref = reference(name, spec["ref"], rows, long, asof)
             ours = dict(spec["ours"])
             if "py" in ours:

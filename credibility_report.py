@@ -72,6 +72,31 @@ def read_tab(path: Path, evaluate: bool = True) -> tuple[list, list]:
     return summary, rows
 
 
+def evaluate(project: str | None = None, libreoffice: bool = False):
+    """(credibility rows, evaluated tab rows) from metrics.db — or (None, None) when there is no store."""
+    import store as store_mod
+    from build_workbook import CREDIBILITY_ROWS, build_workbook
+    if not Path(store_mod.DB_PATH).exists():
+        print(f"no {store_mod.DB_PATH} — run token_metrics.py first")
+        return None, None
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "credibility.xlsx"
+        st = store_mod.Store(store_mod.DB_PATH)
+        try:
+            build_workbook(st, path)
+        finally:
+            st.close()
+        _summary, tab = read_tab(path, evaluate=not libreoffice)
+    rows = list(CREDIBILITY_ROWS)
+    if len(rows) != len(tab):
+        print(f"the build kept {len(rows)} rows, the tab has {len(tab)} — cannot pair them")
+        return None, None
+    if project:
+        keep = [i for i, r in enumerate(rows) if r["project"].lower() == project.lower()]
+        tab = [t if i in keep else t[:10] + [""] + t[11:] for i, t in enumerate(tab)]
+    return rows, tab
+
+
 def print_roots(roots: list[dict]) -> None:
     """The root-cause map: each root, the headline rows it holds open, why, and the fix class; then the
     same roots grouped by input type across projects (one code fix often clears a type everywhere)."""

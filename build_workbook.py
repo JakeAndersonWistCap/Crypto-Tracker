@@ -1718,7 +1718,7 @@ def chosen_circulating_metric(p: dict) -> str:
     """The circulating series every token ratio uses (_circ): the first-party / on-chain one where the
     set is established, else CoinGecko's circulating_supply."""
     spec = config.circulating_onchain(p["name"]) or {}
-    if spec.get("status") in ("established", "first_party"):
+    if config.circulating_onchain_primary(p["name"]):
         return spec.get("metric") or "circulating_supply_onchain"
     return "circulating_supply"
 
@@ -3330,7 +3330,7 @@ def _circ(R: Refs, r, p: dict) -> str:
     # total supply, Hyperliquid's own tokenDetails.circulatingSupply. CoinGecko is the fallback
     # and the cross-check. A PARTIAL set never replaces CoinGecko — it reads high.
     spec = config.circulating_onchain(p["name"]) or {}
-    if spec.get("status") in ("established", "first_party"):
+    if config.circulating_onchain_primary(p["name"]):
         m = spec.get("metric") or "circulating_supply_onchain"
         own = R.D(r, m, "now")
         c = f"IF(ISNUMBER({own}),{own},{c})"
