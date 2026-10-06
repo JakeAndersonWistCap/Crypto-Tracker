@@ -527,6 +527,47 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11aa. Chainlink legacy CCIP: 168 days refused for an unpriced event (Jake, 2026-10-06)
+
+Problem: `customer_revenue_ccip_legacy_usd` refused 168 of 197 days because an event on each had no price. Customer revenue sums a day only when every leg is present, so those days went blank.
+
+**What the 1.2/1.5 lanes are paid in.** Chainlink's own docs repo (`chains.json` feeTokens and
+`tokens.json`, commit 2c185d06, read 2026-10-06) lists:
+
+| Chain | Fee tokens |
+|---|---|
+| Ethereum, Arbitrum, Base | GHO, LINK, WETH |
+| Polygon | LINK, WPOL |
+| Optimism | LINK, WETH |
+
+Their addresses are now in config (`chainlink_fee_lines.chains.*.fee_tokens`), each with a source.
+
+**Pricing.** Each token is priced by its own chain:address on DefiLlama coins. The search window is
+now ±12 h around 12:00 UTC, so it covers the whole day (DefiLlama's default is 6 h). Where the token's
+own address has no point that day, it is priced by its documented underlying:
+
+- WETH and WPOL → the chain's native coin
+- LINK on any chain → LINK
+- GHO on Arbitrum or Base → Ethereum GHO (the same token, bridged)
+
+The refused days are re-valued on the next routine run. The emit step re-reads the whole cached
+year, and failed prices are never cached, so they are asked for again.
+
+**Still unpriced → PARTIAL, not refused, when the share is small.**
+
+- **Rule:** the day is stored without the token only if the token's share is **≤ 5%** of the day's
+  value (`unpriced_partial_max_share`). The source is marked `:PARTIAL[unpriced excluded: <chain>
+  <symbol> <address> ~x%]`.
+- **How the share is estimated:** the token's amount at the nearest priced day within 7 days. That
+  estimate only decides the rule; it is never stored.
+- **Otherwise the day is refused:** a larger share, or no price within 7 days.
+- **Customer revenue** carries the PARTIAL marker on those days (see 11y).
+
+**The listing.** The run-log line for each line now ends `UNPRICED: <chain> <symbol> <address>: N
+event(s), D day(s) first..last`, and says whether DefiLlama answered without the token or the price
+call itself failed. From 2026-10-06 the cache counts events per token per day. Days seeded before
+then say "events not counted"; a re-seed would count them.
+
 ## 11z. Jake's run 2026-10-05 21:00: staked ETH, Sky minting, Chainlink prices, Ether.fi, Polygon, HL
 
 **1. Ethereum staked ETH: the 88,441,790 was never stake, and ~36M is out of date.**

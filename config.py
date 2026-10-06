@@ -4534,6 +4534,18 @@ PROJECTS = [
             # named, and the seed completes on the rest. Base and OP sit behind Blockscout's PRO API (Base:
             # paid plan only). Their share of the PLUS lines is estimated in RUNBOOK 11y.
             "optional_chains": ("base", "optimism"),
+            # FEE TOKENS AND THEIR UNDERLYING (Jake, 2026-10-06: 168 legacy-CCIP days refused for an unpriced
+            # event). Each chain's documented CCIP fee tokens — GHO, LINK, WETH (Ethereum/Arbitrum/Base), LINK,
+            # WPOL (Polygon), LINK, WETH (Optimism) — with addresses from Chainlink's own docs repo (chains.json
+            # feeTokens + tokens.json, commit 2c185d06, read 2026-10-06). Priced by the token's own chain:address
+            # first; where DefiLlama has no point that day, by its documented underlying: WETH/WPOL -> the chain's
+            # native coin, LINK -> LINK, GHO on an L2 -> Ethereum GHO (the same token, bridged). Ethereum GHO
+            # has no underlying beyond itself.
+            "fee_tokens_source": "https://github.com/smartcontractkit/documentation/blob/2c185d063e24e62e13e2827dfd5e5d7257466078/src/config/data/ccip/v1_2_0/mainnet/tokens.json",
+            # A DAY WITH AN UNPRICED TOKEN is stored without it, marked PARTIAL with the token named, only when
+            # the token's share — its amount at the nearest priced day within 7 days — is at most this of the
+            # day's value; otherwise the day is refused, as before.
+            "unpriced_partial_max_share": 0.05,
             "days": 365,
             "price_api": "https://coins.llama.fi",
             "link_coin": "coingecko:chainlink",
@@ -4541,23 +4553,28 @@ PROJECTS = [
                 "ethereum": {"chain_id": 1, "llama_chain": "ethereum", "native_coin": "coingecko:ethereum",
                              "ccip_router": "0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D",
                              "vrf_v2_5": "0xD7f86b4b8Cae7D942340FF628F82735b7a20893a",
-                             "automation_registry": "0x6593c7De001fC8542bB1703532EE1E5aA0D458fD"},
+                             "automation_registry": "0x6593c7De001fC8542bB1703532EE1E5aA0D458fD",
+                             "fee_tokens": {"0x514910771af9ca656af840dff83e8264ecf986ca": {"symbol": "LINK", "underlying": "link"}, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {"symbol": "WETH", "underlying": "native"}, "0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f": {"symbol": "GHO", "underlying": None}}},
                 "arbitrum": {"chain_id": 42161, "llama_chain": "arbitrum", "native_coin": "coingecko:ethereum",
                              "ccip_router": "0x141fa059441E0ca23ce184B6A78bafD2A517DdE8",
                              "vrf_v2_5": "0x3C0Ca683b403E37668AE3DC4FB62F4B29B6f7a3e",
-                             "automation_registry": "0x37D9dC70bfcd8BC77Ec2858836B923c560E891D1"},
+                             "automation_registry": "0x37D9dC70bfcd8BC77Ec2858836B923c560E891D1",
+                             "fee_tokens": {"0xf97f4df75117a78c1a5a0dbb814af92458539fb4": {"symbol": "LINK", "underlying": "link"}, "0x82af49447d8a07e3bd95bd0d56f35241523fbab1": {"symbol": "WETH", "underlying": "native"}, "0x7dff72693f6a4149b17e7c6314655f6a9f7c8b33": {"symbol": "GHO", "underlying": "ethereum:0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"}}},
                 "base": {"chain_id": 8453, "llama_chain": "base", "native_coin": "coingecko:ethereum",
                          "ccip_router": "0x881e3A65B4d4a04dD529061dd0071cf975F58bCD",
                          "vrf_v2_5": "0xd5D517aBE5cF79B7e95eC98dB0f0277788aFF634",
-                         "automation_registry": "0xf4bAb6A129164aBa9B113cB96BA4266dF49f8743"},
+                         "automation_registry": "0xf4bAb6A129164aBa9B113cB96BA4266dF49f8743",
+                         "fee_tokens": {"0x88fb150bdc53a65fe94dea0c9ba0a6daf8c6e196": {"symbol": "LINK", "underlying": "link"}, "0x4200000000000000000000000000000000000006": {"symbol": "WETH", "underlying": "native"}, "0x6bb7a212910682dcfdbd5bcbb3e28fb4e8da10ee": {"symbol": "GHO", "underlying": "ethereum:0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"}}},
                 "polygon": {"chain_id": 137, "llama_chain": "polygon", "native_coin": "coingecko:polygon-ecosystem-token",
                             "ccip_router": "0x849c5ED5a80F5B408Dd4969b78c2C8fdf0565Bfe",
                             "vrf_v2_5": "0xec0Ed46f36576541C75739E915ADbCb3DE24bD77",
-                            "automation_registry": "0x08a8eea76D2395807Ce7D1FC942382515469cCA1"},
+                            "automation_registry": "0x08a8eea76D2395807Ce7D1FC942382515469cCA1",
+                            "fee_tokens": {"0xb0897686c545045afc77cf20ec7a532e3120e0f1": {"symbol": "LINK", "underlying": "link"}, "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270": {"symbol": "WPOL", "underlying": "native"}}},
                 "optimism": {"chain_id": 10, "llama_chain": "optimism", "native_coin": "coingecko:ethereum",
                              "ccip_router": "0x3206695CaE29952f4b0c22a169725a865bc8Ce0f",
                              "vrf_v2_5": "0x5FE58960F730153eb5A84a47C51BD4E58302E1c8",
-                             "automation_registry": "0x4F70c323b8B72AeffAF633Aa4D5e8B6Be5df4AEf"},
+                             "automation_registry": "0x4F70c323b8B72AeffAF633Aa4D5e8B6Be5df4AEf",
+                             "fee_tokens": {"0x350a791bfc2c21f9ed5d10980dad2e2638ffa7f6": {"symbol": "LINK", "underlying": "link"}, "0x4200000000000000000000000000000000000006": {"symbol": "WETH", "underlying": "native"}}},
             },
             "not_routed": {
                 "bnb": "Etherscan V2's free tier serves no BSC logs and no Blockscout host is on file for BSC: "

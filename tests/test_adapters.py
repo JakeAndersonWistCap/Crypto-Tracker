@@ -24184,3 +24184,68 @@ def test_etherfi_safe_owner_probe_is_registered():
     """4: the 600K-ETHFI Safe's owners are read on Jake's machine (getOwners) and cross-matched."""
     import check_offline_items as coi
     assert coi._resolve_check("etherfi_safe_owners")[0] is coi.etherfi_safe_owners
+
+
+def test_chainlink_fee_tokens_priced_by_underlying_and_small_unpriced_share_excluded(tmp_path):
+    """Jake, 2026-10-06: 168 legacy-CCIP days refused for one unpriced event blanked customer revenue.
+    A fee token is priced by its own chain:address, else by its DOCUMENTED underlying (WETH -> ETH,
+    GHO on an L2 -> Ethereum GHO; Chainlink docs tokens.json). A token with no price at all is excluded
+    and the day stored PARTIAL, token named, when its share (nearest priced day within 7 days) is <= 5%;
+    larger, the day is refused. The run log lists each unpriced token: chain, address, events, days."""
+    import fetch.chainlink_fees as cf
+    from fetch.base import today
+    spec = config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]
+    assert spec["unpriced_partial_max_share"] == 0.05 and "tokens.json" in spec["fee_tokens_source"]
+    d1 = str((today() - pd.Timedelta(days=3)).date())
+    d2 = str((today() - pd.Timedelta(days=2)).date())
+    d0 = str((today() - pd.Timedelta(days=5)).date())
+    link, weth = 0x514910771AF9Ca656af840dff83E8264EcF986CA, 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+    gho = 0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f
+    E = 10 ** 18
+
+    def ev(tok, amt, ts, block, idx=0):
+        return _clf_log([0x20, 1, 2, 3, 4, 5, 0, 7, tok, amt] + [0] * 6, ts=ts, block=block, idx=idx)
+
+    class Ex:
+        def configured(self, cid):
+            return ["etherscan"]
+
+        def start_budget(self, s):
+            pass
+
+        def clear_budget(self):
+            pass
+
+        def block_at(self, cid, ts):
+            return 1000
+
+        def get_logs(self, cid, address, topics, frm, to):
+            t = topics[0]
+            if t == cf.TOPICS["onramp_set"]:
+                ramp = "0x" + "0" * 24 + "ab" * 20
+                return [_clf_log(data_hex=ramp, topics=[t, "0x" + "0" * 63 + "1"], block=900)], {}
+            if t == cf.TOPICS["ccip_legacy"] and cid == 1:
+                return [ev(link, 100 * E, d1, 1100), ev(weth, E, d1, 1101), ev(gho, 50 * E, d1, 1102),
+                        ev(link, 10 * E, d2, 1200), ev(gho, 5_000 * E, d2, 1201)], {}
+            return [], {}
+    prices = {(d1, "ethereum:0x514910771af9ca656af840dff83e8264ecf986ca"): (15.0, 18),
+              (d2, "ethereum:0x514910771af9ca656af840dff83e8264ecf986ca"): (15.0, 18),
+              (d1, "coingecko:ethereum"): (4000.0, 18),           # WETH's own address has no point: via ETH
+              (d0, "ethereum:0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"): (1.0, 18)}   # GHO only 2-3 days off
+    c = cf.ChainlinkFees(explorer=Ex(), prices=prices, cache_file=tmp_path / "clf.json")
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out, unbounded=True)
+    leg = out.frame()
+    leg = leg[leg.metric == "customer_revenue_ccip_legacy_usd"].set_index("date")
+    # d1: 100 LINK x 15 + 1 WETH x 4000 = 5,500; 50 GHO (~$50, 0.9%) excluded and named
+    assert leg.loc[pd.Timestamp(d1), "value"] == 5_500.0
+    assert ":PARTIAL" in leg.loc[pd.Timestamp(d1), "source"] and "ethereum GHO" in leg.loc[pd.Timestamp(d1), "source"]
+    # d2: 5,000 GHO (~$5,000) against $150 of LINK — far above 5%: refused, not understated
+    assert pd.Timestamp(d2) not in leg.index
+    msg = next(e.message for e in out.log if "UNPRICED:" in e.message and "ccip_legacy" in e.message)
+    assert "1 refused" in msg and "priced through the documented underlying: ethereum WETH" in msg
+    assert "ethereum GHO 0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f: 2 event(s), 2 day(s)" in msg, msg
+    # the cache now counts events: [amount, premium, count]
+    st = c._load("chainlink-fees.json")["streams"]
+    cell = next(v for k, v in st.items() if ":ccip_legacy" in k)["agg"][d1]["0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"]
+    assert len(cell) == 3 and cell[2] == "1"

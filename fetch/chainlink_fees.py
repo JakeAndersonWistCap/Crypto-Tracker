@@ -142,6 +142,7 @@ class ChainlinkFees:
         self.http = http or Http(min_interval=0.25)
         self.cache_file = cache_file
         self._targets: dict = {}                # seed progress: {stream key: (first block, last block)}
+        self._price_errors: dict = {}           # day -> why the price call failed (for the unpriced listing)
 
     # ---------------------------------------------------------------- state
     def _path(self, name: str):
@@ -372,8 +373,13 @@ class ChainlinkFees:
             else:                                   # vrf
                 amt, native = decode_vrf(e)
                 tok, prem = ("native" if native else "link"), 0
-            cell = agg.setdefault(day, {}).setdefault(tok, ["0", "0"])
+            # [amount, premium, EVENT COUNT] — the count since 2026-10-06; a cell first written before then
+            # keeps two elements and its count reads "not counted" rather than a partial number.
+            fresh = tok not in agg.setdefault(day, {})
+            cell = agg[day].setdefault(tok, ["0", "0", "0"] if fresh else ["0", "0"])
             cell[0], cell[1] = str(int(cell[0]) + int(amt)), str(int(cell[1]) + int(prem))
+            if len(cell) > 2:
+                cell[2] = str(int(cell[2]) + 1)
         if finished:
             if logs:
                 s["next"] = max(int(s["next"]), max(int(e["blockNumber"]) for e in logs) + 1)
@@ -425,9 +431,12 @@ class ChainlinkFees:
                 continue
             ts = int((pd.Timestamp(day) + pd.Timedelta(hours=12)).timestamp())
             try:
-                j = self.http.get(f"{api}/prices/historical/{ts}/{','.join(missing)}")
+                # searchWidth 12h either side of 12:00 UTC: any point INSIDE the day (the default is 6h)
+                j = self.http.get(f"{api}/prices/historical/{ts}/{','.join(missing)}",
+                                  params={"searchWidth": "12h"})
             except Exception as e:  # noqa: BLE001 — an unpriced day is refused, not guessed
                 log.info("chainlink_fees: prices for %s unavailable (%s)", day, e)
+                self._price_errors[day] = str(e)[:120]
                 continue
             for coin, v in ((j or {}).get("coins") or {}).items():
                 if isinstance(v, dict) and v.get("price") is not None:
@@ -443,6 +452,20 @@ class ChainlinkFees:
             return spec["link_coin"]
         return f"{c['llama_chain']}:{token}"
 
+    def _alias(self, spec: dict, chain: str, token: str) -> str | None:
+        """The DOCUMENTED UNDERLYING of a fee token (config chainlink_fee_lines.fee_tokens, Chainlink's own
+        CCIP tokens.json): WETH -> ETH, WPOL -> POL, LINK on any chain -> LINK, GHO on an L2 -> Ethereum GHO.
+        Used only where the token's own chain:address has no price that day."""
+        ft = ((spec["chains"][chain].get("fee_tokens") or {}).get(str(token).lower()) or {})
+        u = ft.get("underlying")
+        if not u:
+            return None
+        return self._coin(spec, chain, u) if u in ("native", "link") else u
+
+    def _label(self, spec: dict, chain: str, token: str) -> str:
+        ft = (spec["chains"][chain].get("fee_tokens") or {}).get(str(token).lower()) or {}
+        return f"{chain} {ft.get('symbol', '?')} {token}"
+
     # ---------------------------------------------------------------- emit
     def _emit(self, name, spec, streams, complete, why, start_day, out, failed=None) -> None:
         failed = failed or defaultdict(set)
@@ -450,53 +473,145 @@ class ChainlinkFees:
         last = today().normalize() - pd.Timedelta(days=1)
         days = [str(d.date()) for d in pd.date_range(start_day, last)]
         needs: dict = defaultdict(set)
-        for key, s in streams.items():
+        for key, st in streams.items():
             chain, kind = key.split(":")[:2]
             if chain not in spec["chains"]:
                 continue
-            self._migrate(s)
-            for day, toks in (s.get("agg") or {}).items():
+            self._migrate(st)
+            for day, toks in (st.get("agg") or {}).items():
                 for tok in toks:
                     if tok != "usd":
                         needs[day].add(self._coin(spec, chain, tok))
+                        a = self._alias(spec, chain, tok)
+                        if a:
+                            needs[day].add(a)
         prices = self._price_map(needs) if needs else {}
         totals: dict = {k: defaultdict(float) for k in METRIC}
-        unpriced: dict = defaultdict(set)
-        for key, s in streams.items():
+        # (kind, day) -> [(chain, token, amount, events or None, decimals-guess)]
+        unpriced: dict = defaultdict(list)
+        aliased: dict = defaultdict(set)            # kind -> labels priced through their underlying
+
+        def price_of(day, chain, tok):
+            pr = prices.get((day, self._coin(spec, chain, tok)))
+            if pr is not None:
+                return pr, False
+            a = self._alias(spec, chain, tok)
+            pr = prices.get((day, a)) if a else None
+            return pr, pr is not None
+
+        for key, st in streams.items():
             chain, kind = key.split(":")[:2]
             if chain not in spec["chains"] or chain in failed[kind]:
                 continue                            # a chain not read through never contributes part-days
-            for day, toks in (s.get("agg") or {}).items():
-                for tok, (amt, prem) in toks.items():
+            for day, toks in (st.get("agg") or {}).items():
+                for tok, cell in toks.items():
+                    amt, prem = cell[0], cell[1]
                     if tok == "usd":
                         totals[kind][day] += float(amt)
                         continue
-                    pr = prices.get((day, self._coin(spec, chain, tok)))
+                    pr, via = price_of(day, chain, tok)
                     if pr is None:
-                        unpriced[kind].add(day)
+                        unpriced[(kind, day)].append((chain, tok, int(amt), int(cell[2]) if len(cell) > 2 else None))
                         continue
+                    if via:
+                        aliased[kind].add(self._label(spec, chain, tok))
                     px, dec = pr
                     totals[kind][day] += int(amt) / 10 ** dec * px
                     if kind == "ccip_v2":
                         totals["ccip_v2_premium"][day] += int(prem) / 10 ** dec * px
+        cap = float(spec.get("unpriced_partial_max_share", 0.05))
         for kind, metric in METRIC.items():
             base = "ccip_v2" if kind == "ccip_v2_premium" else kind
             missing = failed[base]
             if missing - optional:
                 out.fail(SOURCE, name, f"{metric}: NOT STORED this run — " + "; ".join(why[base][:6]), TIER)
                 continue
-            bad = unpriced[base]
-            rows = [(pd.Timestamp(d), totals[kind].get(d, 0.0)) for d in days if d not in bad]
-            if not rows:
-                continue
             chains = ",".join(c for c in spec["chains"] if c not in missing)
-            src = f"{SOURCE}:{kind}[{chains}]"
+            src0 = f"{SOURCE}:{kind}[{chains}]"
             if missing:
                 # STORED, MARKED: the optional chains' share is missing and named on the cell.
-                src = config.mark_source(src, "PARTIAL") + f"[{', '.join(sorted(missing))} not covered]"
-            frame = tidy(rows, name, metric, src, TIER)
-            out.add(frame, SOURCE, name, f"{metric}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} "
-                                         f"over {chains}" + (f" — PARTIAL, missing: {', '.join(sorted(missing))}"
-                                                             if missing else "")
-                                         + (f"; {len(bad)} day(s) refused — an event on them has no price"
-                                            if bad else ""), TIER)
+                src0 = config.mark_source(src0, "PARTIAL") + f"[{', '.join(sorted(missing))} not covered]"
+            rows, refused, excluded = [], [], []
+            for d in days:
+                gone = unpriced.get((base, d)) or []
+                if not gone:
+                    rows.append((pd.Timestamp(d), totals[kind].get(d, 0.0), src0))
+                    continue
+                # A TOKEN WITH NO PRICE ON THE DAY (Jake, 2026-10-06): the day is stored WITHOUT it, marked
+                # PARTIAL with the token named — but only when its share is estimably small: its amount at the
+                # nearest priced day (within 7 days, own address or underlying) is <= `cap` of the day's value.
+                # That estimate only decides; it is never stored. Not estimable, or larger: refused, as before.
+                est = self._estimate(spec, prices, d, gone, base == "ccip_v2" and kind == "ccip_v2_premium")
+                day_val = totals[kind].get(d, 0.0)
+                if est is not None and (day_val + est) > 0 and est / (day_val + est) <= cap:
+                    share = est / (day_val + est)
+                    names = ", ".join(sorted({self._label(spec, c, t) for c, t, _a, _n in gone}))
+                    src = config.mark_source(src0, "PARTIAL") + f"[unpriced excluded: {names} ~{share:.1%}]"
+                    rows.append((pd.Timestamp(d), day_val, src))
+                    excluded.append(d)
+                else:
+                    refused.append(d)
+            if not rows:
+                if refused:
+                    out.fail(SOURCE, name, f"{metric}: every day refused — " + self._unpriced_listing(spec, unpriced, base, refused), TIER)
+                continue
+            for src, grp in pd.DataFrame(rows, columns=["d", "v", "s"]).groupby("s", sort=False):
+                frame = tidy(list(zip(grp["d"], grp["v"])), name, metric, src, TIER)
+                out.add(frame, SOURCE, name, f"{metric}: {len(grp)} day(s) {grp['d'].min().date()}..{grp['d'].max().date()} "
+                                             f"over {chains}" + (f" — PARTIAL, missing: {', '.join(sorted(missing))}"
+                                                                 if missing else "")
+                                             + (" — an unpriced token EXCLUDED on these days (named on the cell)"
+                                                if "unpriced excluded" in src else ""), TIER)
+            if refused or excluded or aliased[kind]:
+                out.skipped(SOURCE, name, f"{metric}: {len(rows)} day(s) stored, {len(excluded)} of them with an unpriced "
+                                          f"token excluded (<= {cap:.0%} each), {len(refused)} refused"
+                                          + (f"; priced through the documented underlying: {', '.join(sorted(aliased[kind]))}"
+                                             if aliased[kind] else "")
+                                          + (" — UNPRICED: " + self._unpriced_listing(spec, unpriced, base, refused + excluded)
+                                             if refused or excluded else ""), TIER)
+
+    def _estimate(self, spec, prices, day, gone, premium=False) -> float | None:
+        """USD of the unpriced tokens at the NEAREST priced day within 7 days — to judge their share only."""
+        tot = 0.0
+        d0 = pd.Timestamp(day)
+        for chain, tok, amt, _n in gone:
+            keys = [self._coin(spec, chain, tok)] + ([self._alias(spec, chain, tok)] if self._alias(spec, chain, tok) else [])
+            near = None
+            for off in range(1, 8):
+                for dd in (d0 - pd.Timedelta(days=off), d0 + pd.Timedelta(days=off)):
+                    for k in keys:
+                        pr = prices.get((str(dd.date()), k))
+                        if pr is not None:
+                            near = pr
+                            break
+                    if near:
+                        break
+                if near:
+                    break
+            if near is None:
+                return None
+            px, dec = near
+            tot += amt / 10 ** dec * px
+        return tot
+
+    def _unpriced_listing(self, spec, unpriced, base, days) -> str:
+        """chain, token, events, days affected — one entry per unpriced token over `days`."""
+        agg: dict = {}
+        for d in days:
+            for chain, tok, amt, n in unpriced.get((base, d)) or []:
+                a = agg.setdefault((chain, tok), {"days": [], "events": 0, "uncounted": False})
+                a["days"].append(d)
+                if n is None:
+                    a["uncounted"] = True
+                else:
+                    a["events"] += n
+        parts = []
+        for (chain, tok), a in sorted(agg.items(), key=lambda kv: -len(kv[1]["days"])):
+            ev = (f"{a['events']} event(s)" + (" + days seeded before counts were kept" if a["uncounted"] else "")
+                  if a["events"] or not a["uncounted"] else "events not counted (seeded before 2026-10-06)")
+            errs = sorted({self._price_errors[d] for d in a["days"] if d in self._price_errors})
+            parts.append(f"{self._label(spec, chain, tok)}: {ev}, {len(a['days'])} day(s) "
+                         f"{min(a['days'])}..{max(a['days'])}"
+                         + (f" (price call failed: {errs[0]})" if errs else " (DefiLlama answered without it)"))
+        return "; ".join(parts)
+
