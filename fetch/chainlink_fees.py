@@ -42,7 +42,7 @@ import pandas as pd
 
 import config
 from .base import Http, Progress, tidy, today
-from .explorer import ExplorerLogs, ExplorerRefused, ExplorerTimeout
+from .explorer import ExplorerLogs, ExplorerRefused, ExplorerTimeout, pad_address
 from .logcache import LogCache, atomic_write_text, file_lock
 
 log = logging.getLogger("token_metrics.fetch.chainlink_fees")
@@ -57,6 +57,9 @@ TOPICS = {
     "ccip_v2": "0x371bc2ff0a006f4ef863b1d27a065d4e9f938b6d883eb154572b4aea593b32cc",
     "vrf": "0xaeb4b4786571e184246d39587f659abf0e26f41f6a3358692250382c0cdb47b7",
     "automation": "0x801ba6ed51146ffe3e99d1dbd9dd0f4de6292e78a9a34c39c0183de17b3f40fc",
+    # ERC-20 Transfer: the AGGREGATOR INTAKE (overnight 2026-10-06, B4) — every token received by the fee aggregator,
+    # read by topic (any token contract, `to` = the aggregator): our own measure of DefiLlama's chainlink dailyFees
+    "aggregator": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
 }
 # which stored metric each line writes
 METRIC = {
@@ -65,6 +68,7 @@ METRIC = {
     "automation": "customer_revenue_automation_premium_usd",
     "ccip_v2": "ccip_v2_fees_usd",
     "ccip_v2_premium": "ccip_v2_premium_usd",
+    "aggregator": "fees_usd_aggregator_scan",
 }
 STREAM_BUDGET_S = 120         # routine runs (after the seed): one stream's day or two of logs
 PRICE_BUDGET_S = 90          # coins.llama.fi calls per run before pricing pauses (it resumes next run)
@@ -188,7 +192,7 @@ class ChainlinkFees:
             return
         streams = state.setdefault("streams", {})
         start_day = (today().normalize() - pd.Timedelta(days=int(spec.get("days", 365))))
-        complete: dict = {k: True for k in ("ccip_legacy", "ccip_v2", "vrf", "automation")}
+        complete: dict = {k: True for k in ("ccip_legacy", "ccip_v2", "vrf", "automation", "aggregator")}
         why: dict = defaultdict(list)
         failed: dict = defaultdict(set)            # line -> chains not read through
         prog = None
@@ -213,6 +217,15 @@ class ChainlinkFees:
                     failed[k].add(chain)
                     why[k].append(f"{chain}: start block not found ({e})")
                 continue
+            # THE AGGREGATOR INTAKE (B4, 2026-10-06): Ethereum only, where the fee aggregator lives
+            agg_addr = c.get("fee_aggregator")
+            if agg_addr:
+                ok = self._stream(streams, f"{chain}:aggregator:{agg_addr.lower()}", "aggregator", cid,
+                                  agg_addr, wstart, None, out, name, prog, head)
+                if not ok:
+                    complete["aggregator"] = False
+                    failed["aggregator"].add(chain)
+                    why["aggregator"].append(f"{chain} aggregator intake scan incomplete")
             # single-address lines
             for kind, addr_key in (("vrf", "vrf_v2_5"), ("automation", "automation_registry")):
                 ok = self._stream(streams, f"{chain}:{kind}:{c[addr_key].lower()}", kind, cid,
@@ -345,7 +358,11 @@ class ChainlinkFees:
         resume = None
         self.explorer.start_budget(budget_s)
         try:
-            logs, _meta = self.explorer.get_logs(cid, address, [TOPICS[kind]], s["next"], to)
+            if kind == "aggregator":                # by topic: any token contract, `to` = the aggregator
+                logs, _meta = self.explorer.get_logs(cid, None, [TOPICS[kind], None, pad_address(address)],
+                                                     s["next"], to)
+            else:
+                logs, _meta = self.explorer.get_logs(cid, address, [TOPICS[kind]], s["next"], to)
             finished = True
         except ExplorerTimeout as e:
             logs, finished, resume = (e.partial or []), False, e.resume_from
@@ -367,7 +384,12 @@ class ChainlinkFees:
                 cell = agg.setdefault(day, {}).setdefault("usd", ["0", "0"])
                 cell[0] = repr(float(cell[0]) + decode_automation(e))
                 continue
-            if kind == "ccip_legacy":
+            if kind == "aggregator":
+                d = str(e.get("data") or "0x")
+                if len(d) <= 2 or len(e.get("topics") or []) != 3:
+                    continue                        # an empty word or an ERC-721 shape: no ERC-20 amount
+                tok, amt, prem = str(e["address"]).lower(), int(d[2:66], 16), 0
+            elif kind == "ccip_legacy":
                 tok, amt = decode_ccip_legacy(e)
                 prem = 0
             elif kind == "ccip_v2":
@@ -546,10 +568,14 @@ class ChainlinkFees:
         for kind, metric in METRIC.items():
             base = "ccip_v2" if kind == "ccip_v2_premium" else kind
             missing = failed[base]
+            line_chains = [c for c in spec["chains"] if kind != "aggregator" or spec["chains"][c].get("fee_aggregator")]
+            if not line_chains:
+                continue
+            missing = missing & set(line_chains)
             if missing - optional:
                 out.fail(SOURCE, name, f"{metric}: NOT STORED this run — " + "; ".join(why[base][:6]), TIER)
                 continue
-            chains = ",".join(c for c in spec["chains"] if c not in missing)
+            chains = ",".join(c for c in line_chains if c not in missing)
             src0 = f"{SOURCE}:{kind}[{chains}]"
             if missing:
                 # STORED, MARKED: the optional chains' share is missing and named on the cell.
@@ -557,6 +583,13 @@ class ChainlinkFees:
             rows, refused, excluded = [], [], []
             for d in days:
                 gone = unpriced.get((base, d)) or []
+                if kind == "aggregator" and gone:
+                    # LIKE FOR LIKE WITH DEFILLAMA: its addTokensReceived values only tokens it can price, so an
+                    # unpriced receipt (spam airdrops land here too) is left out of BOTH sides; counted, not refused.
+                    rows.append((pd.Timestamp(d), totals[kind].get(d, 0.0),
+                                 src0 + "[unpriced receipts left out, as DefiLlama's adapter does]"))
+                    excluded.append(d)
+                    continue
                 if not gone:
                     rows.append((pd.Timestamp(d), totals[kind].get(d, 0.0), src0))
                     continue

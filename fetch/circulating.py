@@ -80,10 +80,19 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
         else:
             continue
         basis = ""
-        if config.coingecko_is_free_float(name):
+        if config.coingecko_counts_total(name):
+            # CoinGecko counts (almost) every token (Sky, 2026-10-06): set against our on-chain TOTAL; ours is stricter
+            # by exactly the subtracted balances, which the basis names.
+            ours = _daily(h, name, spec["total"])
+            basis = (" (ours as the on-chain TOTAL: CoinGecko counts every token; our circulating is stricter by "
+                     + " + ".join(spec.get("subtract") or ()) + ")")
+        elif config.coingecko_is_free_float(name):
             # CoinGecko's figure EXCLUDES staked/locked tokens (Pendle, Aerodrome; 2026-10-06): it is set against
             # OUR free float — circulating − the locked tokens inside it — never against our circulating.
-            lock = _daily(h, name, "locked_tokens")
+            legs = config.free_float_lock_metrics(name)                 # the lock SHOWN, then extra legs
+            lock = _daily(h, name, legs[0])
+            for extra in legs[1:]:                                      # Pendle's legacy vePENDLE leg
+                lock = lock.add(_daily(h, name, extra), fill_value=0.0)
             if config.circulating_excludes_declared(name):
                 lock = (lock - config.locked_excluded_from_circulating(name)).clip(lower=0)
             ours = (ours - lock).dropna()

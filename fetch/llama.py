@@ -1259,6 +1259,7 @@ class MorphoBlueApi:
         spec = api["interest"]
         apy_f, bf, verify = spec["apy_field"], api["borrow_field"], api.get("verify_field")
         per_day, seen, skip, no_apy, unfiltered, priced = 0.0, 0, 0, [], 0, 0
+        borrow_all, borrow_unrated = 0.0, 0.0
         try:
             while True:
                 page = self._query(api["endpoint"], spec["query"],
@@ -1276,8 +1277,10 @@ class MorphoBlueApi:
                     bv, apy = st.get(bf), st.get(apy_f)
                     if not bv:
                         continue                      # nothing borrowed: no interest either way
+                    borrow_all += float(bv)
                     if apy is None:
                         no_apy.append(str(it.get("marketId"))[:18])
+                        borrow_unrated += float(bv)
                         continue
                     per_day += float(bv) * ((1.0 + float(apy)) ** (1.0 / 365.0) - 1.0)
                     priced += 1
@@ -1292,9 +1295,14 @@ class MorphoBlueApi:
             out.fail(self.SOURCE, name, f"{spec['metric']}: THE LISTED FILTER DID NOT APPLY ({unfiltered} of "
                                         f"{seen} market(s) not listed) — NOTHING STORED", self.TIER)
             return
-        if no_apy:
-            out.fail(self.SOURCE, name, f"{spec['metric']}: {len(no_apy)} market(s) carry {bf} but no {apy_f} "
-                                        f"({', '.join(no_apy[:5])}) — NOTHING STORED (no safe default)", self.TIER)
+        # UNRATED MARKETS (overnight 2026-10-06, A4: the reference stored nothing on Jake's run): a market with a
+        # borrow and no borrowApy is LEFT OUT and said, as long as such markets hold at most 1% of the listed borrow
+        # — the figure then reads low by at most that share. Beyond 1% nothing is stored.
+        share = borrow_unrated / borrow_all if borrow_all else 0.0
+        if no_apy and share > float(spec.get("max_unrated_share", 0.01)):
+            out.fail(self.SOURCE, name, f"{spec['metric']}: {len(no_apy)} market(s) holding {share:.2%} of the listed "
+                                        f"borrow carry {bf} but no {apy_f} ({', '.join(no_apy[:5])}) — NOTHING STORED "
+                                        f"(above the 1% that may be left out)", self.TIER)
             return
         if priced == 0:
             out.fail(self.SOURCE, name, f"{spec['metric']}: no listed market carried a borrow — nothing to sum",
@@ -1303,5 +1311,7 @@ class MorphoBlueApi:
         out.add(point(name, spec["metric"], per_day, f"{self.SOURCE}:markets.{apy_f}", self.TIER, when),
                 self.SOURCE, name,
                 f"{spec['metric']} = ${per_day:,.0f}/day from {priced} listed market(s) with a borrow "
-                f"(sum {bf} x ((1 + {apy_f})^(1/365) - 1)) — the credibility reference for DefiLlama's fees",
+                f"(sum {bf} x ((1 + {apy_f})^(1/365) - 1)) — the credibility reference for DefiLlama's fees"
+                + (f"; {len(no_apy)} market(s) with no {apy_f} left out ({share:.2%} of the borrow: the figure reads "
+                   f"LOW by at most that)" if no_apy else ""),
                 self.TIER)

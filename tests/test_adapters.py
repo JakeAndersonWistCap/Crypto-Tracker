@@ -8517,7 +8517,7 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
     ref_only = [(p["name"], k) for p in config.PROJECTS
                 for k, c in (p.get("contracts") or {}).items()
                 if c["kind"] in REFERENCE_ONLY_KINDS]
-    assert len(ref_only) == 13, ref_only    # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24
+    assert len(ref_only) == 14, ref_only    # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24; +veaethir_token 2026-10-06
     for name, key in ref_only:
         for (pn, _), d in change.items():
             assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"
@@ -13693,7 +13693,10 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
     # none of the 2026-09-23 CANDIDATES became a contract; the pools wired on 2026-09-24, then
     # retired the same day once the wrapper three-way match proved them a subset of it
     assert set(a["contracts"]) == {"token_arbitrum", "token_ethereum", "staking_gaming_pool",
-                                    "staking_ai_pool", "staking_wrapper"}
+                                    "staking_ai_pool", "staking_wrapper",
+                                    # B6 (2026-10-06): the two pools read as their OWN metrics (a check on the
+                                    # dashboard's split), never locked_tokens; veAethir as their balanceOf target
+                                    "veaethir_token", "staking_ai_pool_balance", "staking_gaming_pool_balance"}
     assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
     g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_resolved"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
@@ -14508,7 +14511,8 @@ def test_nearblocks_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch):
     monkeypatch.delenv("NEARBLOCKS_API_KEY", raising=False)
     out = FetchOutput()
     nearblocks.NearBlocks(http=_NearBlocksHttp({})).run([config.PROJECT_BY_NAME["Near"]], None, out)
-    assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses", "actual_buyback_tokens"}
+    assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses", "fees_native_tokens",
+                                               "actual_buyback_tokens"}
     assert all("NEARBLOCKS_API_KEY" in g["reason"] for g in out.gaps)
 
 
@@ -15036,6 +15040,10 @@ def test_a4_headline_reads_the_stage2_flow_for_sky_and_gross_burn_for_everyone_e
                 assert "no issuance — burn only" in s and "BLOCKED" in s, (head, s)
                 continue
             assert '|sky_stage2_burn_tokens"' in s and '|gross_burn_tokens"' not in s, (head, s)
+            if head.startswith("NET SUPPLY CHANGE"):
+                # Ethereum's net change reads the common-days view (overnight 2026-10-06, A5)
+                assert "net_supply_change_tokens" in u and "sky_stage2" not in u, (head, u)
+                continue
             assert '|gross_burn_tokens"' in u and "sky_stage2" not in u, (head, u)
     yield_meta = specs[0][5]
     assert yield_meta["metric_fn"]("Sky") == "sky_stage2_burn_tokens"
@@ -16138,12 +16146,13 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
     yesterday = today() - pd.Timedelta(days=1)
     out2 = FetchOutput()
     nearblocks.NearBlocks(http=h2, last_dates={("Near", "tx_count"): yesterday,
-                                                ("Near", "active_addresses"): yesterday}).run([near], 35, out2)
+                                                ("Near", "active_addresses"): yesterday,
+                                                ("Near", "fees_native_tokens"): yesterday}).run([near], 35, out2)
     assert len(h2.calls) == 1, f"a routine run makes ONE call: {h2.calls}"
     got2 = out2.frame().query("metric == 'actual_buyback_tokens'")
     import pytest
     assert sorted(got2.value) == pytest.approx([1.0, 2.0, 3.0, 7.0]), "the window is re-emitted from kept totals"
-    assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses")}
+    assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses"), ("Near", "fees_native_tokens")}
     from fetch.gaps import detect
     gaps = detect([near], out2.frame(), out2.current, {}, [])
     assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
@@ -17249,7 +17258,7 @@ def test_sky_buyback_counts_every_sky_bought_and_the_burn_relabel_never_overwrit
     the Pause Proxy from the Flapper (all purchases); the split route's relabel view must not
     replace a measured series. A4 keeps the burn-only metric."""
     import build_workbook as bw
-    scan = config.PROJECT_BY_NAME["Sky"]["log_scans"][0]
+    scan = next(s for s in config.PROJECT_BY_NAME["Sky"]["log_scans"] if s["key"] == "flapper_purchases")
     assert scan["metric"] == "actual_buyback_tokens" and scan["direction"] == "in"
     assert scan["holders"] == [config.PROJECT_BY_NAME["Sky"]["contracts"]["pause_proxy"]["address"]]
     # 2026-09-29: the bought SKY arrives FROM THE PAIR, inside the flapper's Exec transactions.
@@ -18065,9 +18074,15 @@ def test_ratios_of_flows_divide_rates_over_each_sides_own_covered_days_or_block(
     for m in (bm, im):
         assert f"D[{m}:q0_covered_days]<{bw.RATE_MIN_DAYS}" in f and f"D[{m}:q0]" in f
     assert f"D[{bm}:q0])/IF(ISNUMBER(D[{bm}:q0_covered_days])" in f, "a rate, not a window sum"
-    net = heads["NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left"][1](5, eth)
+    # ETHEREUM's net change (overnight 2026-10-06, A5) is issuance - burn over the days BOTH hold
+    # (net_supply_change_tokens): equal spans by construction. The span guard is checked on NEAR.
+    nk = "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left"
+    assert "D[net_supply_change_tokens:q0]" in heads[nk][1](5, eth)
+    near = config.PROJECT_BY_NAME["Near"]
+    bm, im = config.a4_burn_metric("Near"), config.issuance_basis("Near")
+    net = heads[nk][1](5, near)
     assert "ABS(" in net and "BLOCKED" in net, "a difference of sums blocks on unequal spans"
-    pct = heads["NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)"][1](5, eth)
+    pct = heads["NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)"][1](5, near)
     assert "BLOCKED" in pct and f"/D[{im}:q0_covered_days]" in pct and f"/D[{bm}:q0_covered_days]" in pct, \
         "each side annualised over its own covered days, not the difference x365/90"
 
@@ -20329,7 +20344,7 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
     five projects' own-source addresses are LISTED, not subtracted (status stays not_established)."""
     from fetch import circulating as C
     lines = C.report_lines()
-    assert lines[0].startswith("CONVENTION (DEFAULT — Jake to confirm")
+    assert lines[0].startswith("CONVENTION (CONFIRMED by Jake, 2026-10-06")
     n_projects = len(config.CIRCULATING_ONCHAIN)
     assert sum("convention: staked/locked count as circulating" in ln for ln in lines) == n_projects
     for name in ("Morpho", "Aerodrome", "Aethir", "Plume", "Near"):
@@ -20852,7 +20867,8 @@ def test_free_float_subtracts_locked_tokens_already_out_of_circulating_only_once
     assert "MAX(0" not in (ff(5, aero) or ""), "partial set: CoinGecko circulating, no adjustment"
     monkeypatch.undo()                                 # as configured (2026-10-06): on-chain primary
     cell = ff(5, aero)
-    assert "MAX(0,D[locked_tokens:now]-95000000)" in cell, cell
+    # the lock subtracted is the lock SHOWN: veAERO.supply() for Aerodrome (overnight 2026-10-06)
+    assert "MAX(0,D[ve_locked_supply_tokens:now]-95000000)" in cell, cell
     assert config.locked_excluded_from_circulating("Uniswap") == 0.0
 
 
@@ -21155,8 +21171,10 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
 
     spec = copy.deepcopy(config.PROJECT_BY_NAME["Near"]["near_bigquery"])
     # APPROVED by Jake (2026-10-01); ft_balances_daily stays unwired
-    assert spec["approved"] == {"circulating": True, "p2p": True, "balances": False, "activity_ex": True}
+    assert spec["approved"] == {"circulating": True, "p2p": True, "balances": False, "activity_ex": True,
+                                "supply_flows": True}
     spec["approved"]["activity_ex"] = False               # its own test: test_near_ex_kaiching_activity...
+    spec["approved"]["supply_flows"] = False              # its own test: test_near_burn_and_issuance_from_block...
     spec["approved"]["p2p"] = False                       # first: the unapproved behaviour
     proj = {"name": "Near", "near_bigquery": spec}
     px = pd.DataFrame({"date": pd.date_range(yday - pd.Timedelta(days=40), yday), "project": "Near",
@@ -23444,7 +23462,7 @@ def test_chainlink_fee_seed_reads_in_passes_saving_after_each_and_resumes(tmp_pa
             return 1000
 
         def get_logs(self, cid, address, topics, frm, to):
-            if cid == 1 and address.lower() == vrf_addr and topics[0] == cf.TOPICS["vrf"]:
+            if cid == 1 and (address or "").lower() == vrf_addr and topics[0] == cf.TOPICS["vrf"]:
                 Ex.calls.append(frm)
                 rows = [x for x in vrf_logs if x["blockNumber"] >= frm]
                 if len(Ex.calls) == 1:              # the first pass runs out of time after block 1100
@@ -25192,25 +25210,38 @@ def test_morpho_interest_reference_is_its_own_query_and_judges_the_four_a2_reven
     msgs = [str(e.message) for e in out.log]
     assert any("interest query failed" in m and "borrowApy" in m for m in msgs), msgs
 
-    # A market with borrow but no rate: nothing stored, no default.
+    # Unrated markets: left out (and said) up to 1% of the listed borrow; beyond that nothing is stored.
     bad = {"data": {"markets": {"pageInfo": {"countTotal": 1}, "items": [
         {"marketId": "0xa", "listed": True, "state": {"borrowAssetsUsd": 5.0, "borrowApy": None}}]}}}
     a.http = stub(bad)
     out = FetchOutput()
     a.run([config.PROJECT_BY_NAME["Morpho"]], None, out)
     assert "borrow_interest_usd_day_morpho_api" not in set(out.frame().metric)
+    small = {"data": {"markets": {"pageInfo": {"countTotal": 2}, "items": [
+        {"marketId": "0xa", "listed": True, "state": {"borrowAssetsUsd": 1_000_000.0, "borrowApy": 0.0365}},
+        {"marketId": "0xc", "listed": True, "state": {"borrowAssetsUsd": 5_000.0, "borrowApy": None}}]}}}
+    a.http = stub(small)
+    out = FetchOutput()
+    a.run([config.PROJECT_BY_NAME["Morpho"]], None, out)
+    assert "borrow_interest_usd_day_morpho_api" in set(out.frame().metric)
+    assert any("left out (0.50% of the borrow" in str(e.message) for e in out.log)
 
-    # The headline is judged by the input row: agreement on a common completed day passes.
-    days = pd.to_datetime(["2026-10-04", "2026-10-05"])
+    # The headline is judged by the input row over a 7-COMPLETE-DAY window (A4, overnight 2026-10-06).
+    days = pd.date_range("2026-09-29", "2026-10-05")
     long = pd.DataFrame({"date": list(days) * 2, "project": "Morpho",
-                         "metric": ["fees_usd"] * 2 + ["borrow_interest_usd_day_morpho_api"] * 2,
-                         "value": [1_000.0, 1_020.0, 990.0, 1_000.0]})
+                         "metric": ["fees_usd"] * 7 + ["borrow_interest_usd_day_morpho_api"] * 7,
+                         "value": [1_000.0] * 7 + [990.0] * 6 + [1_050.0]})
     spec = config.CREDIBILITY["Morpho"]
     assert spec["a2_customer_revenue"]["inputs"] == ("in_interest_day",)
     ref = cred.reference("Morpho", spec["in_interest_day"]["ref"], {}, long, pd.Timestamp("2026-10-06"))
     ours = cred.ours_value("Morpho", spec["in_interest_day"]["ours"], {}, long, pd.Timestamp("2026-10-06"))
-    assert ref["value"] == 1_000.0 and ours == 1_020.0 and ref["date"] == "2026-10-05"
+    assert ours == 7_000.0 and abs(ref["value"] - (990.0 * 6 + 1_050.0)) < 1e-9
     assert abs(ours - ref["value"]) / ref["value"] <= spec["in_interest_day"]["ref"]["tol"] / 100
+    # one reading only (the first runs): the latest reading x 7; a short fee window reads nothing
+    one = long[~((long.metric == "borrow_interest_usd_day_morpho_api") & (long.date < pd.Timestamp("2026-10-05")))]
+    assert cred.reference("Morpho", spec["in_interest_day"]["ref"], {}, one, pd.Timestamp("2026-10-06"))["value"] == 7_350.0
+    short = long[~((long.metric == "fees_usd") & (long.date == pd.Timestamp("2026-10-01")))]
+    assert cred.ours_value("Morpho", spec["in_interest_day"]["ours"], {}, short, pd.Timestamp("2026-10-06")) is None
 
 
 def test_sethfi_share_price_change_decomposes_exactly_by_transaction_shape():
@@ -25349,3 +25380,374 @@ def test_headline_diff_and_manual_form_make_run_on_a_store(tmp_path, monkeypatch
     assert cl and cl[0]["url"] == "https://staking.chain.link" and int(cl[0]["clears_headline_rows"]) >= 1
     sky = [x for x in lines if x["project"] == "Sky" and x["row"] == "in_buyback"]
     assert len(sky) == 3 and all(len(x["period"]) == 7 for x in sky), "monthly: one line per complete month"
+
+
+def test_free_float_never_subtracts_the_lock_twice_from_coingeckos_free_float_basis():
+    """Overnight A1/A2 (Jake's run 2026-10-06 20:22): Pendle's free float read 142.3M = CoinGecko 173.7M − sPENDLE
+    31.4M, Aerodrome's ~102M = CoinGecko − (veAERO − 95M). The on-chain circulating is a read-time view, absent from
+    the raw store, so the credibility row fell back to CoinGecko — already net of staked tokens — and subtracted the
+    lock again. It now reads the built rows; the workbook's fallback adds the lock back, so free float = CoinGecko."""
+    import build_workbook as bw
+    import credibility as cred
+    rows = {"Pendle|circulating_supply_onchain": {"now": 260e6, "latest_date": "2026-10-06"},
+            "Pendle|locked_tokens": {"now": 31.4e6}, "Pendle|locked_tokens_legacy_vependle": {"now": 63.5e6},
+            "Pendle|circulating_supply": {"now": 173.7e6}}
+    v, d, how = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"))
+    assert v == 260e6 - 31.4e6 - 63.5e6 and d == "2026-10-06" and "locked_tokens_legacy_vependle" in how
+    # no on-chain figure: no free float (CoinGecko is the reference, never the fallback)
+    v, _d, how = cred.FORMULAS["free_float_now"]("Pendle", {"Pendle|circulating_supply": {"now": 173.7e6},
+                                                            "Pendle|locked_tokens": {"now": 31.4e6}}, None,
+                                                 pd.Timestamp("2026-10-07"))
+    assert v is None and "not computed" in how
+    # Aerodrome: the team's 95M leaves the lock once (it is out of circulating already)
+    # (the lock subtracted is the one the sheet shows: veAERO.supply(), LOCK_DISPLAY_METRIC)
+    rows = {"Aerodrome|circulating_supply_onchain": {"now": 1.85e9}, "Aerodrome|ve_locked_supply_tokens": {"now": 0.99e9},
+            "Aerodrome|locked_tokens": {"now": 0.93e9}}
+    v, _d, _h = cred.FORMULAS["free_float_now"]("Aerodrome", rows, None, pd.Timestamp("2026-10-07"))
+    assert v == 1.85e9 - (0.99e9 - 95e6)
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}]"
+    pend = config.PROJECT_BY_NAME["Pendle"]
+    assert bw._ff_lock(R(), 5, pend) == "(D[locked_tokens]+D[locked_tokens_legacy_vependle])"
+    # a day with no on-chain figure: circulating = CoinGecko + the lock, so free float = CoinGecko exactly
+    assert bw._circ(R(), 5, pend) == ("IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],"
+                                      "D[circulating_supply]+(D[locked_tokens]+D[locked_tokens_legacy_vependle]))")
+    assert config.CIRCULATING_CONVENTION["status"].startswith("CONFIRMED by Jake")
+
+
+
+def test_near_burn_and_issuance_from_block_header_total_supply(tmp_path, monkeypatch):
+    """Overnight B1 (2026-10-06): NEAR's own chain as the reference — within-epoch falls in block-header total_supply
+    are the burn, epoch-first rises the mint (BigQuery blocks table, 3 columns). First read = a backfill under the
+    top-up reserve rules; later runs read only the days after the last one stored."""
+    from types import SimpleNamespace
+    import copy
+    from fetch import near_bigquery as nbq
+    monkeypatch.setattr(nbq, "today", lambda: pd.Timestamp("2026-10-07"))
+
+    class Bq:
+        class QueryJobConfig:
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+                self.dry_run = kw.get("dry_run", False)
+        ScalarQueryParameter = staticmethod(lambda k, t, v: (k, t, v))
+        ArrayQueryParameter = staticmethod(lambda k, t, v: (k, t, tuple(v)))
+
+    class Client:
+        def __init__(self):
+            self.windows = []
+
+        def query(self, sql, job_config=None):
+            assert "blocks" in sql and "total_supply" in sql
+            p = {k: v for k, _, v in job_config.query_parameters}
+            if job_config.dry_run:
+                return SimpleNamespace(total_bytes_processed=3_000_000)
+            self.windows.append((str(p["d0"]), str(p["d1"])))
+            days = pd.date_range(p["d0"], p["d1"])
+            rows = [{"day": d, "n_blocks": 100_000, "n_epoch_starts": 2, "burn_near": 150.0, "issuance_near": 89_000.0}
+                    for d in days]
+            return SimpleNamespace(result=lambda: rows, total_bytes_billed=10 * 1024 ** 2)
+    spec = copy.deepcopy(config.PROJECT_BY_NAME["Near"]["near_bigquery"])
+    st = {"ledger": {}, "topup_bytes": {"bytes": 3e6, "on": "2026-10-07", "source": "t"}}
+    a = nbq.NearBigQuery(client=Client(), bq=Bq, cache_file=tmp_path / "c.json", csv_dir=tmp_path / "none")
+    a._run_bytes = a._backfill_bytes = 0
+    out = FetchOutput()
+    a._supply_flows(a._client_obj, spec, st, out, "Near")
+    f = out.frame()
+    burn = f[f.metric == "gross_burn_tokens_bigquery"]
+    assert len(burn) == 365 and burn["value"].iloc[0] == 150.0 and str(burn["date"].max().date()) == "2026-10-06"
+    assert set(f[f.metric == "gross_issuance_tokens_bigquery"]["value"]) == {89_000.0}
+    assert st["supply_flows_through"] == "2026-10-06" and st["ledger"]["2026-10"] == 10 * 1024 ** 2
+    # the next day reads one day only
+    monkeypatch.setattr(nbq, "today", lambda: pd.Timestamp("2026-10-08"))
+    cl = a._client_obj
+    a._supply_flows(cl, spec, st, FetchOutput(), "Near")
+    assert cl.windows[-1] == ("2026-10-07", "2026-10-07")
+    ref = config.CREDIBILITY["Near"]
+    assert ref["a4_gross_burn"]["metric"] == "gross_burn_tokens_bigquery" and ref["a4_gross_burn"]["tol"] == 10.0
+    assert ref["a4_gross_issuance"]["metric"] == "gross_issuance_tokens_bigquery"
+
+
+# ===================================================================== overnight round 2026-10-06
+def test_chainlink_aggregator_intake_scan_reads_every_token_received_and_leaves_unpriced_out(tmp_path):
+    """B4: DefiLlama's chainlink fees are every token the fee aggregator receives on Ethereum. Our own scan reads
+    Transfer(any token -> aggregator) by topic (address None), prices each token per day, and — like DefiLlama's
+    adapter — leaves an unpriced receipt (spam lands here too) out instead of refusing the day."""
+    import fetch.chainlink_fees as cf
+    from fetch.base import today
+    from fetch.explorer import pad_address
+    d1 = str((today() - pd.Timedelta(days=2)).date())
+    link = "0x514910771af9ca656af840dff83e8264ecf986ca"
+    agg = config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["chains"]["ethereum"]["fee_aggregator"]
+    seen = []
+
+    class Ex:
+        def configured(self, cid):
+            return ["etherscan"]
+
+        def start_budget(self, s):
+            pass
+
+        def clear_budget(self):
+            pass
+
+        def block_at(self, cid, ts):
+            return 1000
+
+        def get_logs(self, cid, address, topics, frm, to):
+            if topics[0] == cf.TOPICS["aggregator"]:
+                seen.append((cid, address, topics))
+                if cid != 1:
+                    return [], {}
+                good = _clf_log([3 * 10 ** 18], ts=d1, block=1100, topics=[topics[0], "0x" + "0" * 64, topics[2]])
+                good["address"] = link
+                spam = _clf_log([10 ** 30], ts=d1, block=1101, idx=1, topics=[topics[0], "0x" + "0" * 64, topics[2]])
+                spam["address"] = "0x" + "99" * 20
+                return [good, spam], {}
+            return [], {}
+    prices = {(d1, f"ethereum:{link}"): (15.0, 18)}
+    c = cf.ChainlinkFees(explorer=Ex(), prices=prices, cache_file=tmp_path / "clf.json")
+    out = FetchOutput()
+    c.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out, unbounded=True)
+    assert seen and all(cid == 1 for cid, _a, _t in seen), "the aggregator lives on Ethereum only"
+    assert seen[0][1] is None and seen[0][2][2] == pad_address(agg), "by topic: any token, `to` = the aggregator"
+    f = out.frame()
+    s = f[f.metric == "fees_usd_aggregator_scan"].set_index("date")
+    assert s.loc[pd.Timestamp(d1), "value"] == 45.0, "3 LINK at $15; the unpriced spam token left out"
+    assert "unpriced receipts left out" in s.loc[pd.Timestamp(d1), "source"]
+    assert "[ethereum]" in s["source"].iloc[0], "the line names only the chain it reads"
+    ref = config.CREDIBILITY["Chainlink"]["in_fees"]["ref"]
+    assert ref["formula"] == "common_days_sum" and ref["args"]["b"] == "fees_usd_aggregator_scan"
+
+
+def test_common_days_sum_compares_two_flows_over_exactly_the_days_both_hold():
+    """B4/B11: each side summed over the days both series hold in the window; native x same-day price on demand."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-10-07")
+    days = pd.date_range("2026-09-07", "2026-10-06")
+    a = pd.DataFrame({"date": days, "project": "Ethereum", "metric": "fees_usd", "value": 1_000.0})
+    b = pd.DataFrame({"date": days[-25:], "project": "Ethereum", "metric": "fees_native_tokens", "value": 0.25})
+    px = pd.DataFrame({"date": days, "project": "Ethereum", "metric": "price_usd", "value": 4_000.0})
+    long = pd.concat([a, b, px], ignore_index=True)
+    f = cred.FORMULAS["common_days_sum"]
+    ours, d, how = f("Ethereum", {}, long, asof, a="fees_usd", b="fees_native_tokens", side="ours", b_times_price=True)
+    ref, _d, _h = f("Ethereum", {}, long, asof, a="fees_usd", b="fees_native_tokens", side="ref", b_times_price=True)
+    assert ours == 25_000.0 and ref == 25_000.0 and d == "2026-10-06" and "25 day(s)" in how
+    short = long[~((long.metric == "fees_native_tokens") & (long.date < pd.Timestamp("2026-09-20")))]
+    short = short[~((short.metric == "fees_native_tokens") & (short.date > pd.Timestamp("2026-09-30")))]
+    v, _d, why = f("Ethereum", {}, short, asof, a="fees_usd", b="fees_native_tokens", side="ours", b_times_price=True)
+    assert v is None and "20 needed" in why
+    for p in ("Ethereum", "Near"):
+        spec = config.CREDIBILITY[p]["in_fees"]
+        assert spec["ours"]["py"] == "common_days_sum" and spec["ref"]["args"]["b_times_price"] is True
+    assert config.PROJECT_BY_NAME["Near"]["nearblocks"]["metrics"]["fees_native_tokens"]["field"] == "txn_fee"
+    assert config.PROJECT_BY_NAME["Ethereum"]["blockscout_stats"]["lines"] == {"fees_native_tokens": "txnsFee"}
+
+
+def test_ethereum_blockscout_fee_view_lands_beside_defillama_never_in_place_of_it():
+    """B11: the native-fee view writes fees_usd_blockscout for Ethereum; Plume's (fees_usd) is unchanged."""
+    import build_workbook as bw
+    d = pd.Timestamp("2026-10-05")
+    row = lambda m, v, src: pd.DataFrame({"date": [d], "project": ["Ethereum"], "metric": [m], "value": [v],  # noqa: E731
+                                          "source": [src], "tier": [1]})
+    groups = {("Ethereum", "fees_native_tokens"): row("fees_native_tokens", 250.0, "blockscout_stats:txnsFee"),
+              ("Ethereum", "price_usd"): row("price_usd", 4_000.0, "coingecko"),
+              ("Ethereum", "fees_usd"): row("fees_usd", 990_000.0, "defillama")}
+    bw._native_fee_usd_views(groups)
+    assert groups[("Ethereum", "fees_usd")]["value"].iloc[0] == 990_000.0
+    assert groups[("Ethereum", "fees_usd_blockscout")]["value"].iloc[0] == 1_000_000.0
+
+
+def test_aethir_pool_balances_are_read_on_chain_as_their_own_metrics_and_checked_against_the_dashboard():
+    """B6: veAethir.balanceOf(AI pool) and (Gaming pool) as their own metrics, compared with aiStaked + gamingStaked
+    on the latest day all four are stored. Never locked_tokens (the wrapper read already contains them)."""
+    import credibility as cred
+    c = config.PROJECT_BY_NAME["Aethir"]["contracts"]
+    assert c["staking_ai_pool_balance"]["metric_override"] == "locked_tokens_ai_onchain"
+    assert c["staking_gaming_pool_balance"]["metric_override"] == "locked_tokens_gaming_onchain"
+    assert c["staking_ai_pool_balance"]["underlying"] == "veaethir_token"
+    assert c["veaethir_token"]["kind"] == "bridged_representation", "reference only: never a supply"
+    days = pd.to_datetime(["2026-10-04", "2026-10-05"])
+    long = pd.concat([pd.DataFrame({"date": days, "project": "Aethir", "metric": m, "value": v})
+                      for m, v in (("locked_tokens_ai", 416e6), ("locked_tokens_gaming", 369e6),
+                                   ("locked_tokens_ai_onchain", 415e6))] +
+                     [pd.DataFrame({"date": days[:1], "project": "Aethir", "metric": "locked_tokens_gaming_onchain",
+                                    "value": 368e6})], ignore_index=True)
+    f = cred.FORMULAS["sums_on_common_day"]
+    args = config.CREDIBILITY["Aethir"]["in_locked_pools"]["ref"]["args"]
+    ours, d, _h = f("Aethir", {}, long, pd.Timestamp("2026-10-06"), **{**args, "side": "ours"})
+    ref, _d, _h = f("Aethir", {}, long, pd.Timestamp("2026-10-06"), **args)
+    assert d == "2026-10-04" and ours == 785e6 and ref == 783e6, "the latest day ALL FOUR hold"
+
+
+def test_chainlink_issuance_is_checked_against_the_24_wallets_outflow():
+    """B5: CoinGecko's pool release vs the fall in the 24 non-circulating wallets' balance across Q0."""
+    import credibility as cred
+    spec = config.CREDIBILITY["Chainlink"]["in_issuance"]
+    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["scale"] == -1.0
+    asof = pd.Timestamp("2026-10-07")
+    lo, _hi = cred._q0(asof)
+    long = pd.DataFrame({"date": [lo - pd.Timedelta(days=1), asof - pd.Timedelta(days=1)], "project": "Chainlink",
+                         "metric": "noncirculating_holding_tokens", "value": [250e6, 230e6]})
+    got = cred.reference("Chainlink", spec["ref"], {}, long, asof)
+    assert got["value"] == 20e6, "20M LINK left the wallets = 20M released"
+
+
+def test_aerodrome_rebase_reference_follows_the_minters_formula():
+    """B3: calculateGrowth(E) = E x ((T - V) / T)^2 / 2 summed over the last 4 epochs vs tokensPerWeek."""
+    import credibility as cred
+    epochs = pd.to_datetime(["2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01"])
+    rows = []
+    for d in epochs:
+        rows += [(d, "gross_issuance_tokens", 10e6), (d, "emissions_tokens", 10e6 * 0.25 ** 2 / 2),
+                 (d, "ve_voting_power_tokens", 750e6), (d, "total_supply", 1_000e6)]
+    long = pd.DataFrame(rows, columns=["date", "metric", "value"]).assign(project="Aerodrome")
+    f = cred.FORMULAS["aero_rebase_formula"]
+    ref, d, how = f("Aerodrome", {}, long, pd.Timestamp("2026-10-06"), epochs=4, side="ref")
+    ours, _d, _h = f("Aerodrome", {}, long, pd.Timestamp("2026-10-06"), epochs=4, side="ours")
+    assert abs(ref - 4 * 312_500.0) < 1e-6 and abs(ours - ref) < 1e-6 and d == "2026-10-01"
+    assert config.CREDIBILITY["Aerodrome"]["in_emissions"]["ref"]["formula"] == "aero_rebase_formula"
+
+
+def test_window_vs_rate_needs_every_day_and_averages_the_rate():
+    """A4: Morpho's interest — fees summed over the last 7 complete days vs the mean daily rate reading x 7."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-10-07")
+    days = pd.date_range("2026-09-30", "2026-10-06")
+    long = pd.concat([pd.DataFrame({"date": days, "project": "Morpho", "metric": "fees_usd", "value": 100.0}),
+                      pd.DataFrame({"date": days[-2:], "project": "Morpho", "metric": "rate", "value": [90.0, 110.0]})],
+                     ignore_index=True)
+    f = cred.FORMULAS["window_vs_rate"]
+    assert f("Morpho", {}, long, asof, rate="rate", side="ours")[0] == 700.0
+    assert f("Morpho", {}, long, asof, rate="rate", side="ref")[0] == 700.0
+    gap = long.drop(index=0)
+    v, _d, why = f("Morpho", {}, gap, asof, rate="rate", side="ours")
+    assert v is None and "6 of 7" in why
+    spec = config.CREDIBILITY["Morpho"]["in_interest_day"]
+    assert spec["ref"]["tol"] == 10.0 and spec["ours"]["args"]["days"] == 7
+
+
+def test_ethereum_net_supply_change_is_computed_over_the_days_both_series_hold():
+    """A5: issuance and burn are both forward-only from late September; Q0 net change = issuance - burn over the
+    COMMON days only (a full-window burn against a short issuance would read a false deflation)."""
+    spec = config.PROJECT_BY_NAME["Ethereum"]["net_change_common_days"]
+    assert spec == {"issuance": "gross_issuance_tokens", "burn": "gross_burn_tokens", "metric": "net_supply_change_tokens"}
+    import build_workbook as bw
+    days = pd.date_range("2026-09-01", "2026-10-05")
+    mk = lambda m, ds, v: pd.DataFrame({"date": ds, "project": "Ethereum", "metric": m, "value": v,  # noqa: E731
+                                        "source": "x", "tier": 1})
+    groups = {("Ethereum", "gross_burn_tokens"): mk("gross_burn_tokens", days, 100.0),
+              ("Ethereum", "gross_issuance_tokens"): mk("gross_issuance_tokens", days[-7:], 2_700.0)}
+    bw._net_common_views(groups)
+    net = groups[("Ethereum", "net_supply_change_tokens")]
+    assert len(net) == 7 and (net["value"] == 2_600.0).all()
+
+
+def test_fluid_buyback_input_is_wired_to_the_halt_and_l2_distributors_are_scanned_where_free():
+    """A6 + B8: the halted programme's 0 is a reference met only by a measured 0; Arbitrum's three distributors are
+    scanned (L2 FLUID 0x61E030A5…); Base (no free logs) and Plasma (no primary RPC on file) are not."""
+    ref = config.CREDIBILITY["Fluid"]["in_buyback"]["ref"]
+    assert ref["manual"]["value"] == 0.0 and ref["tol"] == 0.0
+    scans = {s["key"]: s for s in config.PROJECT_BY_NAME["Fluid"]["log_scans"]}
+    arb = scans["merkle_rewards_out_arbitrum"]
+    assert arb["chain"] == "arbitrum" and arb["token"] == "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd"
+    assert len(arb["holders"]) == 3 and arb["metric"] == "emissions_tokens_arbitrum"
+    assert "merkle_rewards_out_plasma" not in scans and "plasma" not in config.CHAIN_IDS
+    assert scans["merkle_rewards_out"]["metric"] == "emissions_tokens", "the mainnet series is unchanged"
+
+
+def test_sky_circulating_is_compared_like_for_like_with_coingeckos_total():
+    """A3: CoinGecko counts every SKY; ours is stricter by the Pause Proxy + MKR converters. The input row compares
+    OUR TOTAL with CoinGecko's figure, and supply_components prints the amount ours is stricter by."""
+    import credibility as cred
+    import supply_components as sc
+    assert config.coingecko_counts_total("Sky") and not config.coingecko_counts_total("Pendle")
+    spec = cred.circulating_input("Sky")
+    assert spec["ours"]["metric"] == config.circulating_onchain("Sky")["total"]
+    assert spec["ref"]["metric"] == "circulating_supply" and spec["ref"]["tol"] == 2.0
+    rows = {"Sky|total_supply_protocol": {"now": 23.46e9}, "Sky|circulating_supply_onchain": {"now": 21.37e9},
+            "Sky|circulating_supply": {"now": 23.43e9}, "Sky|total_supply": {"now": 23.46e9}}
+    for m in config.circulating_onchain("Sky").get("subtract") or ():
+        rows.setdefault(f"Sky|{m}", {"now": 1.0})
+    text = "\n".join(sc.report("Sky", rows, None))
+    assert "STRICTER by 2,090,000,000" in text and "CoinGecko counts every token" in text
+
+
+def test_aerodrome_buyback_input_is_a_declared_na_so_net_absorption_is_checkable():
+    """No AERO is ever bought (BUYBACK_ROUTE_OVERRIDE 'none'): the buyback input is an N/A row that stands for the
+    declared zero, so a3_net_absorption no longer reads 'input buyback has no row'."""
+    import credibility as cred
+    row = config.CREDIBILITY["Aerodrome"]["in_buyback"]                 # declared in config, N/A by design
+    assert row["ref"]["verdict"] == "N/A"
+    built = {"in_buyback": {"verdict": "N/A"}}                          # a built row carries its verdict on top
+    assert cred.resolve_alias("Aerodrome", "@buyback", built) == "in_buyback", \
+        "an N/A buyback row stands for the declared zero when nothing is bought by design"
+    assert cred.resolve_alias("Pendle", "@buyback", built) is None, "elsewhere an N/A row is skipped"
+    eth = cred.generic_inputs("Ethereum")             # Ethereum: no config row, so the generic N/A is added
+    assert "in_buyback" not in eth or eth["in_buyback"]["ref"]["verdict"] == "N/A"
+
+
+def test_geodnet_candidate_wallets_are_one_switch_away_and_off_by_default(monkeypatch):
+    """C: the three candidate wallets join the exclusion list only when confirm_candidates is True."""
+    cand = config.NONCIRCULATING_CANDIDATES["GEODNET"]
+    assert cand["confirm_candidates"] is False
+    assert not any(k.startswith("noncirc_candidate_") for k in config.PROJECT_BY_NAME["GEODNET"]["contracts"])
+    assert "noncirculating_holding_tokens" not in config.CIRCULATING_ONCHAIN["GEODNET"]["subtract"]
+    import copy
+    contracts = copy.deepcopy(config.PROJECT_BY_NAME["GEODNET"]["contracts"])
+    circ = copy.deepcopy(config.CIRCULATING_ONCHAIN["GEODNET"])
+    monkeypatch.setitem(config.PROJECT_BY_NAME["GEODNET"], "contracts", contracts)
+    monkeypatch.setitem(config.CIRCULATING_ONCHAIN, "GEODNET", circ)
+    monkeypatch.setitem(cand, "confirm_candidates", True)
+    config._apply_confirmed_candidates()
+    new = [v for k, v in contracts.items() if k.startswith("noncirc_candidate_")]
+    assert len(new) == 3 and all(v["metric_override"] == "noncirculating_holding_tokens" and v["chain"] == "polygon"
+                                 for v in new)
+    assert circ["subtract"][-1] == "noncirculating_holding_tokens"
+
+
+def test_daily_summary_reports_counts_against_yesterday_trouble_actions_and_new_checks(tmp_path):
+    """E2: the plain summary the daily log ends with."""
+    import daily_summary as ds
+    prev = {"Sky|a": "PASS", "Sky|b": "CHECK", "Sky|c": "PASS"}
+    now = {"Sky|a": "PASS", "Sky|b": "CHECK", "Sky|c": "CHECK", "Sky|d": "UNVERIFIABLE (awaiting x)"}
+    log = ("[06:31:02] NETWORK-WIDE TROUBLE — 4 sources timed out\n"
+           "[06:40:00] NETWORK-WIDE TROUBLE in the summary - rerunning once in 15 minute(s)\n"
+           "ACTION NEEDED — NEAR BigQuery: Google login expired\n[07:00:00] NOTIFIED: Crypto-Tracker: run exited 1\n")
+    out = "\n".join(ds.summarise(now, prev, "2026-10-06", log, {"Sky|c": "Burn Q0"}))
+    assert "PASS             1  (-1)" in out and "CHECK            2  (+1)" in out and "UNVERIFIABLE     1  (+1)" in out
+    assert "NETWORK-WIDE TROUBLE — 4 sources timed out" in out and "rerunning" not in out
+    assert "ACTION NEEDED — NEAR BigQuery" in out and "NOTIFIED: Crypto-Tracker: run exited 1" in out
+    assert "4. NEW CHECKs (1)" in out and "Sky|c — Burn Q0 (was PASS)" in out
+    clean = "\n".join(ds.summarise(now, None, None, ""))
+    assert "no previous run on file" in clean and "2. NETWORK-WIDE TROUBLE\n   none" in clean
+    state = {"days": {"2026-10-05": prev, "2026-10-07": now}}
+    assert ds.previous(state, "2026-10-07") == ("2026-10-05", prev), "a second run the same day still compares with yesterday"
+    ps1 = (Path(__file__).resolve().parent.parent / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
+    assert "daily_summary.py" in ps1 and "&&" not in ps1 and "OutputEncoding" in ps1
+    assert ps1.rstrip().splitlines()[-1].startswith('[void](Invoke-Step "daily summary"'), "the summary is LAST"
+
+
+def test_manual_form_pages_cover_the_new_readings_and_never_override_a_formula_reference():
+    """D: Sky's Stage 2 burns (monthly), Pendle's AIM totals (monthly), Morpho's stated circulating, the Aethir docs
+    page; Aerodrome's emissions row now has a formula reference, so no manual page may replace it."""
+    import manual_refs as mr
+    assert mr.PAGES[("Sky", "a4_gross_burn")]["monthly_metric"] == "sky_stage2_burn_tokens"
+    assert mr.PAGES[("Pendle", "in_emissions")]["monthly_metric"] == "emissions_tokens"
+    assert ("Morpho", "in_circ") in mr.PAGES
+    assert mr.PAGES[("Aethir", "in_circ")]["url"].endswith("/aethir-tokenomics/ath-circulating-supply")
+    assert ("Aerodrome", "in_emissions") not in mr.PAGES
+
+
+def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
+    """B9/B10/B13/B14: research recorded where the rows read it; the wrong holders-share factor removed."""
+    assert config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["verdict"] == "CHECK"
+    assert "CEILING" in config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["why"]
+    assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["verdict"] == "UNVERIFIABLE"
+    assert "do not wire" in config.SOURCE_REGISTER["api.merkl.xyz"]["licence"]
+    why = config.CREDIBILITY["Maple"]["in_revenue"]["ref"]["why"]
+    assert "GROSS" in why and "nets a holders" not in why
+    import check_offline_items as coi
+    assert coi.geod_candidate_wallets in coi.CHECKS and coi.chainlink_revenue_coverage in coi.CHECKS

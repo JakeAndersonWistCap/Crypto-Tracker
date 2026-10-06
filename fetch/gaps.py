@@ -305,6 +305,10 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric in (bs.get("lines") or {}):
         dedicated.append((f"the explorer stats service {bs.get('base')} chart {bs['lines'][metric]!r} "
                           f"(fetch/blockscout_stats.py)", "plume_sources"))
+    nb = project.get("nearblocks") or {}
+    if metric == "fees_native_tokens" and metric in (nb.get("metrics") or {}):   # 2026-10-06: NEAR's txn_fee
+        dedicated.append((f"NearBlocks {nb['metrics'][metric]['path']} field {nb['metrics'][metric]['field']!r} "
+                          f"(fetch/nearblocks.py; needs {nb.get('key_env')})", "near"))
     gp = project.get("growthepie") or {}
     if metric in (gp.get("metrics") or {}):
         dedicated.append((f"growthepie fundamentals.json ({gp.get('origin_key')!r}, "

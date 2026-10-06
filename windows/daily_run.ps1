@@ -3,6 +3,12 @@
 #   1. adc_check.py      - NEAR's Google login; a desktop notification if Jake must re-login
 #   2. token_metrics.py  - the run; RERUN ONCE, after a pause, if its summary shows NETWORK-WIDE TROUBLE
 #   3. credibility_report.py --roots, then the full report
+#   4. daily_summary.py  - the PLAIN SUMMARY the log ends with: counts vs the previous day, NETWORK-WIDE TROUBLE,
+#                          ACTION NEEDED, new CHECKs (overnight 2026-10-06, E2)
+#
+# Windows PowerShell 5.1 compatible (no pipeline-chain operators, no ?? or ternaries). Reviewed overnight 2026-10-06 (E1): Python's
+# output is decoded as UTF-8 (5.1 otherwise uses the OEM code page and mangles non-ASCII text); the interpreter
+# is .venv, then venv, then the py launcher, then python on PATH; a missing interpreter is logged, not thrown.
 #
 # Everything goes to logs\run_YYYY-MM-DD.log (appended if the task runs twice in a day).
 # Run by hand to test:  powershell -ExecutionPolicy Bypass -File windows\daily_run.ps1
@@ -16,10 +22,20 @@ $ErrorActionPreference = "Continue"
 $Repo = Split-Path -Parent $PSScriptRoot
 Set-Location $Repo
 $env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }   # no console: nothing to set
 
+$PyArgs = @()                             # extra leading arguments (the py launcher's -3)
 if (-not $Python) {
-    $venv = Join-Path $Repo ".venv\Scripts\python.exe"
-    $Python = if (Test-Path $venv) { $venv } else { "python" }
+    $Python = "python"
+    foreach ($cand in @((Join-Path $Repo ".venv\Scripts\python.exe"), (Join-Path $Repo "venv\Scripts\python.exe"))) {
+        if (Test-Path $cand) { $Python = $cand; break }
+    }
+    if ($Python -eq "python" -and -not (Get-Command python -ErrorAction SilentlyContinue) -and
+        (Get-Command py -ErrorAction SilentlyContinue)) {
+        $Python = "py"
+        $PyArgs = @("-3")
+    }
 }
 $LogDir = Join-Path $Repo "logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -51,8 +67,13 @@ function Show-Toast([string]$title, [string]$body) {
 function Invoke-Step([string]$label, [string[]]$arguments) {
     # Runs one Python step, appends its output to the log, returns (exit code, output text).
     Write-Log "=== $label : $Python $($arguments -join ' ')"
-    $out = & $Python @arguments 2>&1 | ForEach-Object { "$_" }
-    $code = $LASTEXITCODE
+    try {
+        $out = & $Python @PyArgs @arguments 2>&1 | ForEach-Object { "$_" }
+        $code = $LASTEXITCODE
+    } catch {
+        $out = @("could not start ${Python}: $($_.Exception.Message)")
+        $code = 9009
+    }
     Add-Content -Path $Log -Value $out -Encoding UTF8
     Write-Log "=== $label exited $code"
     return @($code, ($out -join "`n"))
@@ -86,4 +107,6 @@ if ($run[0] -ne 0) {
 [void](Invoke-Step "credibility roots" @("credibility_report.py", "--roots"))
 [void](Invoke-Step "credibility report" @("credibility_report.py"))
 
+# 4. The plain summary, LAST, so the log ends with it.
 Write-Log "daily run end"
+[void](Invoke-Step "daily summary" @("daily_summary.py", "--log", $Log))

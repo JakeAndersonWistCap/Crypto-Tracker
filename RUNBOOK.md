@@ -527,6 +527,65 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ai. Overnight round 2026-10-06: wrong figures fixed, independent references, ops
+
+**Decisions recorded (Jake):** the circulating convention is CONFIRMED — staked tokens count as circulating
+and are subtracted only for free float. Morpho's 10% interest tolerance is accepted.
+
+**Wrong figures (A1-A3), and how to see every term.** `python supply_components.py Aerodrome Pendle Sky`
+prints the total, each subtracted balance with its wallets, declared exclusions, the locked legs, the
+circulating the ratios use, our free float and CoinGecko's figures.
+- Aerodrome / Pendle free float read the lock TWICE: the Credibility check read the raw store, which has no
+  on-chain view, fell back to CoinGecko's circulating, which already excludes staked or locked tokens, and
+  subtracted the lock again. Fixed in `credibility._free_float_now`. It reads the views and never falls back
+  to CoinGecko. With no on-chain figure, CoinGecko's free-float basis is restored as circulating =
+  CoinGecko + the lock.
+- Pendle's free float also subtracts the legacy vePENDLE lock (`free_float_lock_extra`).
+- Sky: CoinGecko counts every SKY. The input row now compares OUR TOTAL with it, and the Pause Proxy plus
+  MKR converters are printed as the amount ours is stricter by.
+
+**New independent references.** Each is empty until its data has accumulated.
+
+| Row | Ours | Reference | Fills when |
+|---|---|---|---|
+| Chainlink in_fees | DefiLlama fees | our scan of every ERC-20 into the fee aggregator (`fees_usd_aggregator_scan`; unpriced receipts left out, as DefiLlama does) | 20 shared days; routine runs read 120 s a day, or `--seed chainlink_fees` |
+| Ethereum in_fees | DefiLlama fees | Blockscout stats `txnsFee` × price (no blob fees: expect ours a little above) | first read takes 365 days |
+| Near in_fees | DefiLlama fees | NearBlocks `txn_fee` × price (gross gas) | first read takes 100 days |
+| Chainlink in_issuance | CoinGecko pool release | fall in the 24 wallets' balance over Q0 | `python archive_backfill.py --run --project Chainlink` |
+| Aethir in_locked_pools | dashboard aiStaked + gamingStaked | veAethir.balanceOf(each pool), read on-chain | next run |
+| Aerodrome in_emissions | RewardsDistributor rebase | Minter growth formula over 4 epochs | stored epochs |
+| Sky in_emissions | — | LSSKY rewards released (log scan) | — |
+| Near A4 burn / issuance | — | BigQuery `blocks.total_supply` (dry run first; 365 days once, then top-ups) | — |
+| Ethereum | — | net supply change over the days issuance and burn share (A5) | — |
+
+- Fluid: Arbitrum distributors are scanned into `emissions_tokens_arbitrum`. Base (no free logs) and Plasma
+  (no primary-source RPC on file) are not; see config.
+
+**Rows that stay open, by design.**
+- The Pendle schedule is a ceiling (AIM pays less), so that row stays CHECK.
+- Plume has no primary emission schedule; an unlock table would not confirm minting anyway.
+- Merkl: unclear terms, so not wired; email contact@merkl.xyz.
+- Maple: the holders-share factor cited earlier was wrong. DefiLlama's dailyRevenue is gross of it.
+
+**GEODNET candidates (C).** `python check_offline_items.py geod_candidate_wallets` prints each candidate wallet's
+Polygon balance, its in and out transfers, and what the exclusion would subtract. Flip
+`NONCIRCULATING_CANDIDATES["GEODNET"]["confirm_candidates"]` only after opening GEODNET's tokenomics page.
+
+**A7.** `python check_offline_items.py chainlink_revenue_coverage` shows each component's year coverage, the
+days refused, Q0, ARR and free float / ARR.
+
+**Manual form (D).** `manual_readings_form.csv` is regenerated and sorted by what a reading clears. The
+committed copy has no `our_value`, because it was built without a store; `python manual_form.py make`
+refills it. Load it with `python manual_form.py load manual_readings_form.csv`.
+
+**Windows (E1/E2).** `daily_run.ps1` now handles three Windows details:
+- It decodes Python's output as UTF-8; PowerShell 5.1 otherwise uses the OEM code page.
+- It finds the interpreter in order: .venv, venv, the `py` launcher, `python`.
+- It logs a missing interpreter instead of throwing.
+
+The log ends with `daily_summary.py`: counts against the previous day, NETWORK-WIDE TROUBLE, ACTION NEEDED and
+new CHECKs (state in `logs/credibility_state.json`).
+
 ## 11ah. Credibility burn-down 2026-10-06 (part 2): circulating decisions, Ether.fi decomposition, manual form
 
 **2. Circulating supply, per project.**

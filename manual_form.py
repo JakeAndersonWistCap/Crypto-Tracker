@@ -58,15 +58,18 @@ def make(args) -> int:
         i = next(k for k, r in enumerate(rows) if r["project"] == project and r["id"] == rid)
         base = {"project": project, "row": rid, "unit": pg.get("unit", ""), "url": pg["url"],
                 "tile": pg.get("tile", ""), "tol_pct": pg.get("tol_pct", 10.0), "read_by": "Jake",
-                "our_value": fmt(tab[i][4]), "clears_headline_rows": d["headline_rows"],
+                "our_value": fmt(tab[i][4]), "clears_headline_rows": d["headline_rows"], "clears_rows": d["rows"],
                 "what": rows[i]["what"], "resolve": d["fix"].split(":", 1)[-1].strip()}
         periods = _recent_months() if pg.get("monthly_metric") else [""]
         for per in periods:
             done = [r for r in have.get((project, rid), []) if (r.get("period") or "") == per]
             lines.append({**base, "period": per, "value": done[0]["value"] if done else "",
                           "read_on": done[0].get("read_on", "") if done else ""})
+    # SORTED BY WHAT A READING CLEARS (overnight 2026-10-06, D): headline rows first, then all rows, then the name
+    lines.sort(key=lambda x: (-int(x["clears_headline_rows"]), -int(x["clears_rows"]), x["project"], x["row"],
+                              x["period"]))
     cols = ["project", "row", "what", "period", "url", "tile", "unit", "our_value", "clears_headline_rows",
-            "value", "read_on", "read_by", "tol_pct", "note", "resolve"]
+            "clears_rows", "value", "read_on", "read_by", "tol_pct", "note", "resolve"]
     out = args.out or str(mr.FORM)
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")

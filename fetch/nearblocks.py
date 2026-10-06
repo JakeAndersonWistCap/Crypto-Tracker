@@ -237,6 +237,7 @@ class NearBlocks:
         from .scrape import robots_verdict
 
         yesterday = today() - pd.Timedelta(days=1)
+        bodies: dict = {}             # ONE CALL PER PATH: txn-stats serves txns AND txn_fee (2026-10-06)
         for metric, m in spec["metrics"].items():
             url = spec["base_url"].rstrip("/") + m["path"]
             # ONCE A DAY (2026-09-28). txn-stats and address-stats are DAILY aggregates and today
@@ -247,6 +248,9 @@ class NearBlocks:
                                  f"{metric}: NOT re-fetched — yesterday ({yesterday.date()}) is "
                                  f"already stored and {m['path']} is a daily aggregate; the next "
                                  f"complete day arrives tomorrow.", TIER)
+                continue
+            if m["path"] in bodies:
+                self._store(name, metric, m, bodies[m["path"]], window_days, out)
                 continue
             allowed, why = robots_verdict(url)
             if not allowed:
@@ -262,6 +266,7 @@ class NearBlocks:
                 out.gap(name, metric, reason=f"NearBlocks {m['path']} did not answer: {msg}",
                         tiers_attempted="1", suggestion="Read the status above; a 401 is the key.")
                 continue
+            bodies[m["path"]] = body
             self._store(name, metric, m, body, window_days, out)
 
     def _store(self, name: str, metric: str, m: dict, body, window_days, out):

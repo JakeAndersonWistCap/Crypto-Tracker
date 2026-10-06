@@ -32,8 +32,6 @@ PAGES: dict = {
                                          "tol_pct": 15.0},
     ("Aerodrome", "in_locked"): {"url": "https://aerodrome.finance/vote", "tile": "total locked veAERO",
                                  "unit": "AERO", "tol_pct": 2.0},
-    ("Aerodrome", "in_emissions"): {"url": "https://aerodrome.finance (page not pinned)", "tile": "rebase per epoch (AERO)",
-                                    "unit": "AERO per week", "tol_pct": 5.0},
     ("Sky", "a3_protocol_yield"): {"url": "https://sky.money (page not pinned)", "tile": "SKY staking rewards rate",
                                    "unit": "fraction", "tol_pct": 15.0},
     ("Sky", "in_buyback"): {"url": "https://forum.sky.money (monthly settlement posts)",
@@ -49,11 +47,22 @@ PAGES: dict = {
     ("Near", "a1_validator_yield"): {"url": "URL not on file — NEAR's published staking APR (near.org staking page "
                                      "or a validator explorer)", "tile": "staking APR", "unit": "fraction",
                                      "tol_pct": 15.0},
-    ("Aethir", "in_circ"): {"url": "https://docs.aethir.com (page 'ATH Circulating Supply')",
-                            "tile": "the October 2026 step", "unit": "ATH", "tol_pct": 2.0},
+    # B7 (overnight 2026-10-06): the page is docs.aethir.com/aethir-tokenomics/ath-circulating-supply (a .md
+    # variant exists); its robots.txt could not be read from here, so it stays a reading by hand, not a fetch.
+    ("Aethir", "in_circ"): {"url": "https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply",
+                            "tile": "the October 2026 step of the monthly table", "unit": "ATH", "tol_pct": 2.0},
     ("GEODNET", "a2_customer_revenue"): {"url": "URL not on file — GEODNET's own monthly revenue reports",
                                          "tile": "revenue in the month ($)", "unit": "USD", "tol_pct": 10.0,
                                          "monthly_metric": "customer_revenue_usd"},
+    # Sky's Stage 2 burns (overnight 2026-10-06, D): the monthly settlement post's burned SKY, month by month.
+    ("Sky", "a4_gross_burn"): {"url": "https://forum.sky.money (monthly settlement posts)",
+                               "tile": "SKY burned in the month (Stage 2, Sky.burn)", "unit": "SKY", "tol_pct": 10.0,
+                               "monthly_metric": "sky_stage2_burn_tokens"},
+    ("Pendle", "in_emissions"): {"url": "URL not on file — Pendle's own weekly AIM incentive totals",
+                                 "tile": "PENDLE emitted in the month (weeks summed)", "unit": "PENDLE",
+                                 "tol_pct": 10.0, "monthly_metric": "emissions_tokens"},
+    ("Morpho", "in_circ"): {"url": "URL not on file — Morpho's own stated circulating supply",
+                            "tile": "circulating supply (MORPHO)", "unit": "MORPHO", "tol_pct": 2.0},
     ("Ether.fi", "in_buyback"): {"url": "URL not on file — Ether.fi's weekly buyback posts",
                                  "tile": "ETHFI bought in the month (weeks summed)", "unit": "ETHFI",
                                  "tol_pct": 10.0, "monthly_metric": "actual_buyback_tokens"},

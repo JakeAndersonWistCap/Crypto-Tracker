@@ -3141,6 +3141,58 @@ def geodnet_staking_candidates(days: int = 30):
     print("  contract (per-hex, or custodial in GEODNET's console) — say so and stop hunting.")
 
 
+# ===== GEODNET'S CANDIDATE NON-CIRCULATING WALLETS (overnight 2026-10-06, C). =====
+# The three allocation wallets in config.NONCIRCULATING_CANDIDATES["GEODNET"] — seen only in search summaries of
+# GEODNET's tokenomics page, so NOT subtracted. This prints, per wallet: its GEOD balance on Polygon now, its
+# Transfer history over `days` (in/out, counterparties), and what our on-chain circulating would become if all
+# three were excluded. Reads only. The switch is config `confirm_candidates` — Jake flips it after reading the page.
+def geod_candidate_wallets(days: int = 180):
+    import config                                          # noqa: PLC0415
+    head(f"GEODNET — candidate non-circulating wallets (Polygon): balances, last {days} days of transfers")
+    cand = config.NONCIRCULATING_CANDIDATES["GEODNET"]
+    print(f"  confirm_candidates = {cand.get('confirm_candidates')} (config.NONCIRCULATING_CANDIDATES['GEODNET'])")
+    head_hex = None
+    for url in _rpcs_for("polygon"):
+        try:
+            head_hex = rpc(url, "eth_blockNumber").get("result")
+            if head_hex:
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if not head_hex:
+        print("  UNREACHABLE — no Polygon RPC answered eth_blockNumber.")
+        return
+    from_block = int(head_hex, 16) - days * 43_200          # ~2s Polygon blocks
+    total = 0.0
+    for a in cand["addresses"]:
+        addr = a["address"]
+        bal = _bal(GEOD_POLYGON, addr, "polygon")
+        b = None if bal is None else bal / 1e18
+        total += b or 0.0
+        print(f"\n  {a['role']}\n    {addr}  ({_code(addr, 'polygon')})  balance: "
+              f"{'UNREADABLE' if b is None else f'{b:,.0f} GEOD'}")
+        for label, topics in (("OUT", [TRANSFER_TOPIC, _pad(addr)]), ("IN ", [TRANSFER_TOPIC, None, _pad(addr)])):
+            logs, detail = explorer_logs(137, GEOD_POLYGON, topics, from_block)
+            if logs is None:
+                print(f"    {label}: UNAVAILABLE — {detail}")
+                continue
+            amt = sum(_hexint(lg["data"]) for lg in logs) / 1e18
+            peers = {}
+            for lg in logs:
+                peer = "0x" + lg["topics"][2 if label == "OUT" else 1][-40:].lower()
+                peers[peer] = peers.get(peer, 0.0) + _hexint(lg["data"]) / 1e18
+            top = sorted(peers.items(), key=lambda kv: -kv[1])[:4]
+            print(f"    {label}: {len(logs)} transfer(s), {amt:,.0f} GEOD"
+                  + ("; top counterparties " + ", ".join(f"{p[:10]}… {v:,.0f}" for p, v in top) if top else ""))
+    supply = _uint(GEOD_POLYGON, "0x18160ddd", "polygon")
+    print(f"\n  the three together: {total:,.0f} GEOD"
+          + (f" = {total / (supply / 1e18):.1%} of Polygon totalSupply {supply / 1e18:,.0f}" if supply else ""))
+    print("  IF CONFIRMED, our on-chain circulating falls by that sum (each wallet's balance on the day of the read).")
+    print("  READING IT: a vesting / allocation wallet sends out in steps to a few recipients (exchanges, OTC);")
+    print("  one that never moves is locked in practice. Tokens moved to Solana after the migration are NOT here.")
+    print("  Nothing was stored. PASTE BACK the section.")
+
+
 # ===== MAPLE — robots.txt FIRST, then the transparency page. 2026-09-24. =====
 # The only record of Maple's robots.txt is run 20260921T100546Z's "robots.txt disallows
 # https://maple.finance/transparency", and that line could not tell a Disallow rule from a
@@ -5664,6 +5716,52 @@ def _spot_ours():
         return None, {}, asof
 
 
+def chainlink_revenue_coverage():
+    """A7 (overnight 2026-10-06): Chainlink's customer revenue over the full year — per component, how many of the
+    last 365 complete days are stored (a day missing from ANY component is refused from the sum); then Q0, Q0
+    annualised over its covered days, and free float / ARR. From metrics.db only; stores nothing."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head("CHAINLINK — customer revenue: full-year coverage, Q0, annualised, free float / ARR")
+    long, rows, asof = _spot_ours()
+    if long is None:
+        return
+    spec = config.PROJECT_BY_NAME["Chainlink"]["customer_revenue_components"]
+    comps = (spec["core"], *spec["plus"])
+    end = asof - pd.Timedelta(days=1)
+    days = pd.date_range(end - pd.Timedelta(days=364), end)
+    have = {}
+    g = long[long.project == "Chainlink"]
+    for m in comps:
+        s = g[g.metric == m]
+        have[m] = set(s["date"].dt.normalize())
+        miss = [d for d in days if d not in have[m]]
+        print(f"  {m:<44} {len(days) - len(miss):>4} of 365 days"
+              + (f"; missing {len(miss)}: first {miss[0].date()}, last {miss[-1].date()}" if miss else " — complete"))
+    full = [d for d in days if all(d in have[m] for m in comps)]
+    print(f"  ALL components present on {len(full)} of 365 days" + ("" if len(full) == 365 else
+          " — the summed series refuses the other days (a partial day is never stored)"))
+    r = rows.get("Chainlink|customer_revenue_usd") or {}
+    q0, cov = _row(rows, "Chainlink|customer_revenue_usd", "q0"), _row(rows, "Chainlink|customer_revenue_usd",
+                                                                       "q0_covered_days")
+    if q0 is None:
+        print("  Q0: not computed (customer_revenue_usd has no Q0 value)")
+        return
+    cov = cov or 90.0
+    arr = q0 * 365.0 / cov
+    print(f"  Q0 customer revenue: ${q0:,.0f} over {cov:.0f} covered day(s) (latest {r.get('latest_date')})")
+    print(f"  annualised (ARR): ${arr:,.0f}  = Q0 x 365 / {cov:.0f}")
+    circ, lock, px = (_row(rows, "Chainlink|circulating_supply"), _row(rows, "Chainlink|locked_tokens"),
+                      _row(rows, "Chainlink|price_usd"))
+    if None in (circ, lock, px) or not arr:
+        print("  free float / ARR: not computed (circulating, locked or price missing)")
+        return
+    ff = (circ - lock) * px
+    print(f"  free float: ({circ:,.0f} circulating - {lock:,.0f} staked) x ${px:,.4f} = ${ff:,.0f}")
+    print(f"  FREE FLOAT / ARR: {ff / arr:,.1f}x")
+    print("  Nothing was stored.")
+
+
 def _row(rows, key, field="now"):
     r = rows.get(key) or {}
     v = r.get(field)
@@ -6046,7 +6144,7 @@ CHECKS = (
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
     uniswap_firepit_threshold, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
-    aethir_veaethir_probe, geodnet_staking_candidates,
+    aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,

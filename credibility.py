@@ -194,22 +194,39 @@ def _sum_months(p, rows, long, asof, metric="", months=(), **_):
 
 def _free_float_now(p, rows, long, asof, **_):
     """OUR free float now: the circulating the ratios use − the locked tokens inside it (as A2 computes it)."""
+    # FROM THE BUILT ROWS (2026-10-06 overnight, A1/A2): the on-chain circulating is a READ-TIME view, absent from
+    # the raw store — reading the store fell back to CoinGecko's circulating, which for Pendle / Aerodrome already
+    # excludes staked tokens, and subtracted the lock a second time (Pendle 173.7M − 31.4M = 142.3M; Aerodrome
+    # ~102M). CoinGecko is never the fallback here: it is the reference this row is judged against.
     from build_workbook import chosen_circulating_metric
     proj = config.PROJECT_BY_NAME[p]
-    circ = _series(long, p, chosen_circulating_metric(proj))
-    if circ.empty:
-        circ = _series(long, p, "circulating_supply")
-    lock = 0.0 if proj.get("free_float_lock_zero") else None
-    if lock is None:
-        lk = _series(long, p, "locked_tokens")
-        if lk.empty:
-            return None, None, "no locked_tokens in the store"
-        lock = float(lk.iloc[-1])
+    m = chosen_circulating_metric(proj)
+
+    def now(metric):
+        r = (rows or {}).get(f"{p}|{metric}") or {}
+        v = _num(r.get("now"))
+        if v is None and long is not None:
+            s = _series(long, p, metric)
+            v = float(s.iloc[-1]) if len(s) else None
+        return v, r.get("latest_date")
+    circ, day = now(m)
+    if circ is None or m == "circulating_supply":
+        return None, None, f"no {m} figure — the on-chain set was not computed on the latest day"
+    lock, parts = 0.0, []
+    if not proj.get("free_float_lock_zero"):
+        for lm in config.free_float_lock_metrics(p):
+            v, _d = now(lm)
+            if v is None and lm == config.lock_display_metric(p):
+                return None, None, f"no {lm} figure"
+            lock += v or 0.0
+            parts.append(f"{lm} {v or 0:,.0f}")
         if config.circulating_excludes_declared(p):
-            lock = max(0.0, lock - config.locked_excluded_from_circulating(p))
-    if circ.empty:
-        return None, None, "no circulating figure in the store"
-    return float(circ.iloc[-1]) - lock, str(circ.index[-1].date()), "our circulating − locked (A2 free float)"
+            x = config.locked_excluded_from_circulating(p)
+            lock = max(0.0, lock - x)
+            if x:
+                parts.append(f"less {x:,.0f} declared locked exclusion")
+    return circ - lock, None if day is None else str(day)[:10], \
+        f"{m} {circ:,.0f} − locked ({'; '.join(parts) or '0'}) = A2 free float"
 
 
 def _common_day(p, long, a, b, asof):
@@ -229,6 +246,23 @@ def _common_day_value(p, rows, long, asof, metric="price_usd", ref="price_usd_co
     if d is None:
         return None, None, f"no completed day on which both {metric} and {ref} have a 00:00 point"
     return (va if side == "ours" else vb), str(d.date()), f"{metric if side == 'ours' else ref} on {d.date()} (00:00 UTC)"
+
+
+def _sums_on_common_day(p, rows, long, asof, a=(), b=(), side="ours", **_):
+    """Two SUMS OF STOCKS on the latest day every one of their series holds (overnight 2026-10-06, B6: the dashboard's
+    aiStaked + gamingStaked vs the two pools' on-chain balances, read on the same day)."""
+    series = {m: _series(long, p, m) for m in (*a, *b)}
+    if any(s.empty for s in series.values()):
+        return None, None, "not stored: " + ", ".join(m for m, s in series.items() if s.empty)
+    common = None
+    for s in series.values():
+        idx = s.index[s.index <= asof]
+        common = idx if common is None else common.intersection(idx)
+    if common is None or common.empty:
+        return None, None, f"no day on which all of {', '.join(series)} are stored"
+    d = common.max()
+    legs = a if side == "ours" else b
+    return float(sum(series[m].loc[d] for m in legs)), str(d.date()), f"{' + '.join(legs)} on {d.date()}"
 
 
 def _months_match(p, rows, long, asof, daily="gross_burn_tokens", monthly="gross_burn_tokens_dune_monthly",
@@ -299,7 +333,87 @@ def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
     return float(sr.sum()) * 365.0 / 30.0, str(sr.index[-1].date()), f"{metric}, last 30 days x 365/30"
 
 
-FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now,
+def _window_vs_rate(p, rows, long, asof, flow="fees_usd", rate="", days=7, side="ours", **_):
+    """A FLOW SUMMED OVER THE LAST `days` COMPLETE DAYS vs A PER-DAY RATE x `days` (overnight 2026-10-06, A4): Morpho's
+    one-day comparison read nothing — a rate read at one instant against one day's fees. ours = the flow summed over
+    the window (every day present, or nothing); ref = the mean of the rate's daily readings inside the window (the
+    latest within 14 days if none falls inside) x days, so read-time effects average out."""
+    end = asof.normalize() - pd.Timedelta(days=1)
+    start = end - pd.Timedelta(days=int(days) - 1)
+    f = _series(long, p, flow)
+    f = f[(f.index >= start) & (f.index <= end)]
+    label = f"{start.date()}..{end.date()}"
+    if side == "ours":
+        if len(f) < int(days):
+            return None, None, f"{flow}: {len(f)} of {days} complete days in {label}"
+        return float(f.sum()), str(end.date()), f"{flow} summed over {label}"
+    r = _series(long, p, rate)
+    inside = r[(r.index >= start) & (r.index <= asof.normalize())]
+    if inside.empty:
+        recent = r[r.index >= asof.normalize() - pd.Timedelta(days=14)]
+        if recent.empty:
+            return None, None, f"no {rate} reading in the last 14 days"
+        return float(recent.iloc[-1]) * int(days), str(recent.index[-1].date()), \
+            f"{rate} latest reading ({recent.index[-1].date()}) x {days} days"
+    return float(inside.mean()) * int(days), str(inside.index[-1].date()), \
+        f"{rate}: mean of {len(inside)} reading(s) in {label} x {days} days"
+
+
+def _common_days_sum(p, rows, long, asof, a="", b="", days=30, side="ours", min_days=20, b_times_price=False, **_):
+    """TWO DAILY FLOWS OVER THE SAME DAYS (overnight 2026-10-06, B4/B11): each side summed over exactly the days in the
+    last `days` complete days on which BOTH are stored — so a series still filling (a scan seeded forward) is never
+    set against a full window of the other. Fewer than `min_days` shared days: nothing. `b_times_price`: b is in the
+    native coin and is valued at the same-day price_usd (a day without a price is not shared)."""
+    end = asof.normalize() - pd.Timedelta(days=1)
+    start = end - pd.Timedelta(days=int(days) - 1)
+    sa, sb = _series(long, p, a), _series(long, p, b)
+    if b_times_price:
+        px = _series(long, p, "price_usd")
+        sb = (sb * px.reindex(sb.index)).dropna()
+    sa, sb = sa[(sa.index >= start) & (sa.index <= end)], sb[(sb.index >= start) & (sb.index <= end)]
+    common = sa.index.intersection(sb.index)
+    if len(common) < int(min_days):
+        return None, None, f"{a} / {b}: {len(common)} shared day(s) in {start.date()}..{end.date()}, {min_days} needed"
+    s = (sa if side == "ours" else sb).loc[common]
+    return float(s.sum()), str(common.max().date()), \
+        f"{a if side == 'ours' else b} summed over the {len(common)} day(s) both hold in {start.date()}..{end.date()}"
+
+
+def _aero_rebase_formula(p, rows, long, asof, epochs=4, side="ref", **_):
+    """THE REBASE FROM THE MINTER'S OWN FORMULA (overnight 2026-10-06, B3): Minter.calculateGrowth(E) =
+    E x ((T - V) / T)^2 / 2 (aerodrome-finance/contracts@1ba30815 Minter.sol L135-139), with E the epoch's emission
+    (our Minter read), V the veAERO voting supply and T the AERO total supply at the flip (our daily reads, latest on
+    or before the epoch date). Summed over the last `epochs` epochs and set against the RewardsDistributor's own
+    tokensPerWeek over the same epochs — summed because the distributor may book a flip's rebase to the week
+    before it (a one-epoch offset cancels in a sum, all but one edge week)."""
+    e = _series(long, p, "gross_issuance_tokens")
+    r = _series(long, p, "emissions_tokens")
+    v, t = _series(long, p, "ve_voting_power_tokens"), _series(long, p, "total_supply")
+    if side == "ours":
+        r = r[r.index < asof.normalize()]
+        if len(r) < int(epochs):
+            return None, None, f"emissions_tokens (rebase): {len(r)} epoch(s) stored, {epochs} needed"
+        last = r.iloc[-int(epochs):]
+        return float(last.sum()), str(last.index[-1].date()), f"RewardsDistributor tokensPerWeek, last {epochs} epochs"
+    e = e[e.index < asof.normalize()]
+    if len(e) < int(epochs) or v.empty or t.empty:
+        return None, None, "Minter emission / veAERO voting supply / total supply not all stored"
+    tot, used = 0.0, []
+    for d, em in e.iloc[-int(epochs):].items():
+        vv, tt = v[v.index <= d], t[t.index <= d]
+        if vv.empty or tt.empty:
+            return None, None, f"no veAERO voting supply / total supply on or before {d.date()}"
+        T, V = float(tt.iloc[-1]), float(vv.iloc[-1])
+        if T <= 0 or V > T:
+            return None, None, f"inconsistent supplies on {d.date()} (V {V:,.0f} > T {T:,.0f})"
+        tot += float(em) * ((T - V) / T) ** 2 / 2
+        used.append(str(d.date()))
+    return tot, used[-1], f"Minter.calculateGrowth over epochs {', '.join(used)}"
+
+
+FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
+            "aero_rebase_formula": _aero_rebase_formula, "common_days_sum": _common_days_sum,
+            "sums_on_common_day": _sums_on_common_day,
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
@@ -451,6 +565,9 @@ def resolve_alias(name: str, alias: str, have: dict) -> str | None:
         return next((c for c in ALIASES[alias] if c in have), None)
     if alias == "@locked" and p.get("free_float_lock_zero"):
         return next((c for c in ALIASES[alias] if c in have), None)
+    # NOTHING IS BOUGHT BY DESIGN (config.BUYBACK_ROUTE_OVERRIDE "none": Aerodrome, Ethereum) — overnight 2026-10-06
+    if alias == "@buyback" and (config.BUYBACK_ROUTE_OVERRIDE.get(name) or ("",))[0] == "none":
+        return "in_buyback" if "in_buyback" in have else None
     return None
 
 
@@ -464,6 +581,13 @@ def generic_inputs(name: str) -> dict:
     has = lambda *ids: any(i in spec_p for i in ids)  # noqa: E731
     route = ((p.get("actual_buyback") or {}).get("destination") or p.get("buyback_destination"))
     out = {}
+    override = config.BUYBACK_ROUTE_OVERRIDE.get(name)
+    if override and override[0] == "none" and not has("in_buyback"):
+        # A DECLARED ZERO IS A CHECKED INPUT (overnight 2026-10-06: Aerodrome's a3_net_absorption read "input
+        # 'buyback' has no row" although no token is bought by design) — the N/A row stands for it.
+        out["in_buyback"] = {"what": "Buyback (tokens)", "ours": {"metric": "actual_buyback_tokens", "window": "q0"},
+                             "fmt": '#,##0;(#,##0);-',
+                             "ref": {"verdict": "N/A", "why": f"nothing is bought by design: {override[1]}"}}
     if 3 in arch and "revenue_usd" in ms and not has("in_revenue"):
         out["in_revenue"] = {"what": "Revenue Q0 (DefiLlama)", "ours": {"metric": "revenue_usd", "window": "q0"},
                              "fmt": '$#,##0;($#,##0);-', "ref": {
@@ -471,7 +595,7 @@ def generic_inputs(name: str) -> dict:
                                  "why": "DefiLlama is the only free aggregate of this protocol's revenue (Token Terminal "
                                         "is paid).",
                                  "resolve": "the protocol's own reported revenue (dashboard / reports) by hand"}}
-    if 3 in arch and "actual_buyback_tokens" in ms and route != "burn" and \
+    if 3 in arch and "actual_buyback_tokens" in ms and route != "burn" and "in_buyback" not in out and \
             not has("in_buyback", "in_reserve_month", "in_buyback_july"):
         out["in_buyback"] = {"what": "Actual buyback Q0 (tokens)",
                              "ours": {"metric": "actual_buyback_tokens", "window": "q0"}, "fmt": '#,##0;(#,##0);-',
@@ -553,6 +677,15 @@ def circulating_input(name: str) -> dict:
     st = (config.circulating_onchain(name) or {}).get("status")
     what = f"Circulating supply as the ratios use it ({ours_m}; on-chain status '{st}')"
     base = {"what": what, "ours": {"metric": ours_m, "window": "now"}, "fmt": '#,##0;(#,##0);-'}
+    if config.coingecko_counts_total(name):      # CoinGecko counts every token: like-for-like is our TOTAL
+        spec = config.circulating_onchain(name) or {}
+        return {"what": f"Circulating as CoinGecko counts it = OUR TOTAL ({spec['total']}); ours ({ours_m}) is stricter "
+                        f"by {' + '.join(spec.get('subtract') or ())}",
+                "ours": {"metric": spec["total"], "window": "now"}, "fmt": '#,##0;(#,##0);-',
+                "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
+                        "source": "CoinGecko circulating_supply — it counts (almost) every token, so it is compared "
+                                  "with our on-chain total, not with our stricter circulating",
+                        "note": spec.get("decision", "")}}
     if config.coingecko_is_free_float(name):     # CoinGecko excludes staked/locked: it is OUR free float
         return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT ({ours_m} − locked)",
                 "ours": {"py": "free_float_now", "args": {}}, "fmt": '#,##0;(#,##0);-',

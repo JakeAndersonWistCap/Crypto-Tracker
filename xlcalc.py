@@ -26,7 +26,7 @@ import sys
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 SUPPORTED = {"INDEX", "MATCH", "IF", "IFERROR", "ISNUMBER", "AND", "OR", "NOT", "LEFT", "ABS", "ROUND",
-             "SQRT", "NA", "COUNTIF", "COUNTIFS", "COUNTA", "TEXT"}
+             "SQRT", "NA", "COUNTIF", "COUNTIFS", "COUNTA", "TEXT", "MAX", "MIN"}
 
 
 class XLError(Exception):
@@ -482,6 +482,13 @@ class Workbook:
         x, d = _num(self._val(args[0], sheet)), int(_num(self._val(args[1], sheet)))
         q = 10.0 ** d
         return math.floor(abs(x) * q + 0.5) / q * (1 if x >= 0 else -1)    # half away from zero
+
+    def _f_MAX(self, args, sheet):
+        """Scalar arguments only (what build_workbook writes: MAX(0, x)); an error argument propagates."""
+        return max(_num(self._val(a, sheet)) for a in args)
+
+    def _f_MIN(self, args, sheet):
+        return min(_num(self._val(a, sheet)) for a in args)
 
     def _f_NA(self, args, sheet):
         raise XLError("#N/A")

@@ -242,6 +242,9 @@ METRICS = {
     # locked_tokens = the on-chain page's totalStaked; these are the parts it shows beside it, and
     # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
     "locked_tokens_ai":      {"label": "Staked — AI pool (Aethir dashboard aiStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "emissions_tokens_arbitrum":    {"label": "FLUID claimed out of Fluid's ARBITRUM MerkleDistributors (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Fluid",)},
+    "locked_tokens_ai_onchain":     {"label": "Staked — AI pool, ON-CHAIN (veAethir.balanceOf(AI Pool)) — check on aiStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "locked_tokens_gaming_onchain": {"label": "Staked — Gaming pool, ON-CHAIN (veAethir.balanceOf(Gaming Pool)) — check on gamingStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_gaming":  {"label": "Staked — Gaming pool (Aethir dashboard gamingStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_edge":    {"label": "Staked — Edge (Aethir dashboard edgeStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_idc":     {"label": "Staked — compute providers / Cloud Hosts (Aethir dashboard idcStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
@@ -340,9 +343,10 @@ METRICS = {
     "staking_yield_net_pct":      {"label": "Staking yield NET of validator commission (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Plume",)},
     # Plume (Jake's probe 4c, 2026-09-30): the explorer stats service's own series, and
     # growthepie's kept as cross-checks under their own names (never mixed into the primaries).
-    "fees_native_tokens":         {"label": "Fees paid per day in the native coin (explorer txnsFee)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume",)},
+    "fees_native_tokens":         {"label": "Fees paid per day in the native coin (explorer txnsFee; NearBlocks txn_fee)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume", "Ethereum", "Near")},
     "tx_count_growthepie":        {"label": "Transactions per day — growthepie txcount (cross-check)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume",)},
     "active_addresses_growthepie": {"label": "Daily active addresses — growthepie daa (cross-check)", "kind": "stock", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume",)},
+    "fees_usd_blockscout":        {"label": "Fees paid per day ($) — Blockscout txnsFee (ETH) x same-day price (a reference beside DefiLlama's fees)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Ethereum",), "view_only": True},
     "fees_usd_growthepie":        {"label": "Fees paid per day ($) — growthepie fees_paid_usd (cross-check)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Plume",)},
     # Maple (Jake's probe 5, 2026-09-30): the SYRUP Strategic Fund's daily balance from the
     # transparency page's chart data (island props), unrounded.
@@ -545,6 +549,30 @@ METRICS = {
         "label": "ETHFI topped up into sETHFI with NO shares minted (rewards to stakers; deposits excluded) — log scan",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
         "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Ether.fi",)},
+    "gross_burn_tokens_bigquery": {
+        "label": "NEAR burned — within-epoch falls in block-header total_supply (BigQuery blocks table) — CREDIBILITY "
+                 "reference for the protocol-rule burn", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4],
+        "tiers": [1], "sanity_min": 0, "sanity_max": 1e7, "only_projects": ("Near",), "view_only": True},
+    "gross_issuance_tokens_bigquery": {
+        "label": "NEAR minted — epoch-first blocks' rise in block-header total_supply (BigQuery blocks table) — "
+                 "CREDIBILITY reference for the declared issuance", "kind": "flow", "unit": "tokens",
+        "archetypes": [1, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Near",),
+        "view_only": True},
+    "emissions_tokens_scan": {
+        "label": "SKY staking rewards RELEASED to the lsSKY farm — SKY Transfer events from REWARDS_DIST_LSSKY_SKY "
+                 "(log scan) — CREDIBILITY reference for the declared vest stream", "kind": "flow", "unit": "tokens",
+        "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",),
+        "view_only": True},
+    "fees_usd_aggregator_scan": {
+        "label": "Chainlink fee aggregator intake — every ERC-20 the aggregator 0xd6e39d42… received, priced per day "
+                 "(our own log scan) — CREDIBILITY reference for DefiLlama's chainlink fees", "kind": "flow",
+        "unit": "usd", "archetypes": [1, 2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Chainlink",), "view_only": True},
+    "net_supply_change_tokens": {
+        "label": "Net supply change — gross issuance − burn on the days BOTH are measured (read-time view; Ethereum's "
+                 "issuance is forward-only from 2026-09-30, so Q0 covers those days and the caveat says how many)",
+        "kind": "flow", "unit": "tokens", "archetypes": [1, 4], "tiers": [2], "sanity_min": -1e9, "sanity_max": 1e9,
+        "only_projects": ("Ethereum",), "view_only": True},
     "sethfi_reward_tokens_reconciled": {
         "label": "ETHFI gained by sETHFI holders, RECONCILED to the share price: every transaction's change in "
                  "assets-per-share x shares (top-ups of every sender, burns without outflow, exit/entry fees) — "
@@ -2642,6 +2670,22 @@ PROJECTS = [
                            "(~2026-10-06); its history is FORWARD-ONLY from 2026-09-29 (HISTORY_FORWARD_ONLY)",
         },
         "name": "Ethereum", "symbol": "ETH",
+        # ===== FEES, A SECOND SOURCE (overnight 2026-10-06, B11). The Blockscout stats service on eth.blockscout.com
+        # serves txnsFee (fees paid per day, in ETH). Definition read 2026-10-06 in blockscout/blockscout-rs@main
+        # stats/stats/src/charts/lines/blockscout_instance/transactions/txns_fee.rs: SUM(gas_used x effective gas
+        # price) / 1e18 — base + priority fee, NO BLOB FEES (blob gas is not in gas_used). Valued at the same-day ETH price into
+        # fees_usd_blockscout and set against DefiLlama's fees_usd on the Credibility tab over the days both hold.
+        # It is NOT fees_usd: DefiLlama stays primary. Once a day, 30 days after the first year (DailyChecks).
+        "blockscout_stats": {
+            "base": "https://eth.blockscout.com/stats-service",
+            "lines": {"fees_native_tokens": "txnsFee"},
+            "unit_note": {"fees_native_tokens": "ETH"},
+            "days": 365,
+            "source_url": "https://eth.blockscout.com/stats-service",
+            "read_on": "2026-10-06",
+        },
+        "fees_usd_from_native": {"native_metric": "fees_native_tokens", "usd_metric": "fees_usd_blockscout",
+                                 "source": "derived:blockscout_stats:txnsFee*price"},
         # ===== MEV IN THE STAKING YIELD (Jake, 2026-10-02). fetch/mev_relays.py. =====
         # Execution reward per day = relay-delivered value (relay blocks; it already holds their priority
         # fees) + priority fees of NON-relay blocks only — never both for one block. Relays from
@@ -2901,6 +2945,11 @@ PROJECTS = [
         # Net deflation resumes ONLY above ~16 gwei average gas. So the sign of Ethereum's net
         # supply change is a function of network activity and must be MODELLED AS VARIABLE. A
         # config that hardcoded either sign would be wrong half the time.
+        # A5 (overnight 2026-10-06): A4's NET SUPPLY CHANGE read "our own figure is empty" — the coverage guard
+        # blocked issuance (forward-only from 2026-09-30) − burn (the full window). The net change is computed on the
+        # days BOTH are measured, annualised over those days (build_workbook._net_common_views).
+        "net_change_common_days": {"issuance": "gross_issuance_tokens", "burn": "gross_burn_tokens",
+                                   "metric": "net_supply_change_tokens"},
         "net_supply_regime": {
             "current": "mildly inflationary",
             "annual_supply_growth_pct": [0.0083, 0.0085],
@@ -3133,7 +3182,12 @@ PROJECTS = [
             # (*.kaiching) counted apart — the ex-Kai-Ching series beside NearBlocks' raw tx_count. The year
             # is one backfill query (block_date + signer_account_id; the probes' two weeks of two columns
             # billed 0.99 GB, so ~25 GB is expected — the dry run decides), then a daily top-up (~0.07 GB).
-            "approved": {"circulating": True, "p2p": True, "balances": False, "activity_ex": True},
+            "approved": {"circulating": True, "p2p": True, "balances": False, "activity_ex": True,
+                         # B1 (overnight 2026-10-06): 3 columns of the blocks table, MBs a day (~1 GB for the year's
+                         # backfill, under the top-up reserve rules) — within the standing 900 GB budget.
+                         "supply_flows": True},
+            "supply_flows": {"burn_metric": "gross_burn_tokens_bigquery",
+                             "issuance_metric": "gross_issuance_tokens_bigquery", "days": 365},
             "activity_ex": {"metric": "tx_count_ex_kaiching", "excluded_metric": "tx_count_kaiching",
                             "signer_suffix": ".kaiching"},
             "monthly_budget_bytes": 900 * 10 ** 9,        # of the free 1 TB, leaving room for console use
@@ -3181,6 +3235,11 @@ PROJECTS = [
             "metrics": {
                 "tx_count": {"path": "/v3/txn-stats", "field": "txns"},
                 "active_addresses": {"path": "/v3/address-stats", "field": "active_accounts"},
+                # B (overnight 2026-10-06): fees paid per day IN NEAR — txn.sql (main, read 2026-10-06):
+                # (transaction_stats.tokens_burnt + outcome_stats.tokens_burnt) / 1e24 AS txn_fee, i.e. gas_burnt x
+                # gas price over every transaction and receipt outcome (the GROSS fee, before the 30% contract
+                # reward). A reference beside DefiLlama's fees_usd on the Credibility tab, never fees_usd itself.
+                "fees_native_tokens": {"path": "/v3/txn-stats", "field": "txn_fee"},
             },
             "field_source": [
                 "https://github.com/Nearblocks/nearblocks/blob/main/apps/api/src/sql/queries/stats/txn.sql",
@@ -4645,6 +4704,10 @@ PROJECTS = [
             "link_coin": "coingecko:chainlink",
             "chains": {
                 "ethereum": {"chain_id": 1, "llama_chain": "ethereum", "native_coin": "coingecko:ethereum",
+                             # B4 (overnight 2026-10-06): the fee aggregator whose every receipt is DefiLlama's
+                             # chainlink dailyFees (dimension-adapters fees/chainlink/index.ts L7, master, read
+                             # 2026-10-06) — scanned as our own measure of the same quantity.
+                             "fee_aggregator": "0xd6e39d42AceE7Abcc460E6Ea78a0844A0980E78f",
                              "ccip_router": "0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D",
                              "vrf_v2_5": "0xD7f86b4b8Cae7D942340FF628F82735b7a20893a",
                              "automation_registry": "0x6593c7De001fC8542bB1703532EE1E5aA0D458fD",
@@ -8274,6 +8337,37 @@ PROJECTS = [
                 token_standard="erc20",
                 purpose="Aethir AI Pool — a Curve-style vote escrow locking veAethir, up to 4 "
                         "years. RETIRED from locked_tokens 2026-09-24 — see staking_gaming_pool."),
+            # ===== B6 (overnight 2026-10-06): THE TWO POOLS READ ON-CHAIN AS A CHECK ON THE DASHBOARD. =====
+            # The dashboard's aiStaked + gamingStaked (locked_tokens_ai / _gaming) are its own figures; the
+            # pools' veAethir balances are the on-chain count of the same stake. Read as their own metrics
+            # (never locked_tokens, never summed into it — the wrapper read already contains them). IDC and
+            # edge stake are not on these pools and stay dashboard-only.
+            "veaethir_token": _contract(
+                "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490", "ethereum", "bridged_representation", "veATH",
+                "https://aethir.com/",
+                verified="2026-09-24",
+                provenance="pool.token() on both pools (Jake's read, 2026-09-24; "
+                           "aethir_staking.veAethir_token_2026_09_24)",
+                token_standard="erc20",
+                purpose="veAethir — the token the AI and Gaming pools lock. REFERENCE ONLY: the balanceOf "
+                        "target (and decimals) for the two pool reads below; never a supply."),
+            "staking_ai_pool_balance": _contract(
+                "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4", "ethereum", "ve_total_supply", "veATH",
+                "https://aethir.com/",
+                verified="2026-09-24", metric_override="locked_tokens_ai_onchain",
+                provenance="the AI Pool address above (staking_ai_pool); veAethir per pool.token()",
+                read_method="escrow_balance_of", underlying="veaethir_token", token_standard="erc20",
+                holder_has_code=True,
+                purpose="veAethir.balanceOf(AI Pool) — the on-chain count behind the dashboard's aiStaked."),
+            "staking_gaming_pool_balance": _contract(
+                "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31", "ethereum", "ve_total_supply", "veATH",
+                "https://aethir.com/",
+                verified="2026-09-24", metric_override="locked_tokens_gaming_onchain",
+                provenance="the Gaming Pool address above (staking_gaming_pool); veAethir per pool.token()",
+                read_method="escrow_balance_of", underlying="veaethir_token", token_standard="erc20",
+                holder_has_code=True,
+                purpose="veAethir.balanceOf(Gaming Pool) — the on-chain count behind the dashboard's "
+                        "gamingStaked."),
         },
         "buyback_destination": "n/a", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "none",
@@ -9197,9 +9291,12 @@ PROJECTS = [
                               "MapleAddressRegistryETH.md:25) is not read — only Aave and Sky are",
                               "Maple's Base deployment (feeManager 0xc4D7…99b0, "
                               "MapleAddressRegistryBASEL2.md:109-110) is not read",
-                              "compare like with like: DefiLlama's protocol revenue nets a holders "
-                              "share (25% from 2025-11 under e4cb48f9; 10% from 2026-07) — 1.33x / 1.11x "
-                              "by itself, not the whole 1.24-2.23x"),
+                              # CORRECTED overnight 2026-10-06 (B14): this line said DefiLlama NETS a holders
+                              # share (1.33x / 1.11x). It does not — fees/maple-finance.ts reports dailyRevenue
+                              # GROSS of the holders share and of delegate fees; the factor explains nothing.
+                              "NOT the holders share: DefiLlama's dailyRevenue is GROSS of it and of delegate "
+                              "fees (fees/maple-finance.ts), so no 1.33x / 1.11x factor applies; OTC fees read "
+                              "near zero before DefiLlama's 2026-08-22 fix"),
             "status": "RECORDED — Maple's own figure stays primary (revenue_usd); DefiLlama's is "
                       "revenue_usd_defillama, the cross-check. Not reconciled month by month.",
             "source": "DefiLlama/dimension-adapters@8f969826 fees/maple-finance.ts and git log -- that file",
@@ -12659,6 +12756,26 @@ PROJECTS = [
         # balanceOf like every scan. A4 keeps the burn-only figure (a4_burn_metric).
         # SANITY: 27.5% x monthly NPS (~$10M) ~ $2.75M/month, ~1.8% of market cap annualised.
         "log_scans": [
+            # ===== B2 (overnight 2026-10-06): lsSKY STAKING REWARDS RELEASED, MEASURED. =====
+            # SKY Transfer events from REWARDS_DIST_LSSKY_SKY 0x675671A8… into the lsSKY farm REWARDS_LSSKY_SKY
+            # 0xB44C2Fb4… (sky-ecosystem/spells-mainnet master src/test/addresses_mainnet.sol L594-595, read
+            # 2026-10-06): the release the declared vest stream says should happen (143,208,393 SKY / 90 days from the
+            # 2026-09-10 spell; 96,903,706 / 90 days before it). A REFERENCE series, not the emissions column.
+            {
+                "key": "lssky_rewards_released",
+                "metric": "emissions_tokens_scan",
+                "chain": "ethereum",
+                "token": "0x56072C95FAA701256059aa122697B133aDEd9279",
+                "holders": ["0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc"],
+                "direction": "in",
+                "store": True,
+                "attribution": "count_from",
+                "count_from": ["0x675671A8756dDb69F7254AFB030865388Ef699Ee"],
+                "count_from_source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/src/test/"
+                                     "addresses_mainnet.sol L594-595 (REWARDS_LSSKY_SKY, REWARDS_DIST_LSSKY_SKY), "
+                                     "read 2026-10-06",
+                "wired_on": "2026-10-06",
+            },
             {"key": "flapper_purchases", "metric": "actual_buyback_tokens", "chain": "ethereum",
              "token": "0x56072C95FAA701256059aa122697B133aDEd9279",
              "holders": ["0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB"],
@@ -15224,6 +15341,28 @@ PROJECTS = [
                                         "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"],
              "partial_reason": "mainnet distributors only: Arbitrum/Base/Plasma pay bridged FLUID",
              "wired_on": "2026-09-30"},
+            # B8 (overnight 2026-10-06): the L2 MerkleDistributors paying the L2 FLUID token
+            # 0x61E030A5… (rewardToken in each constructor), same deployments.md. Stored as their own metrics —
+            # the mainnet series above stays emissions_tokens. BASE is not scanned: no free log route
+            # (Etherscan free excludes Base; Blockscout's PRO API is paid on Base).
+            {"key": "merkle_rewards_out_arbitrum", "metric": "emissions_tokens_arbitrum", "chain": "arbitrum",
+             "token": "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd",
+             "holders": ["0x94312a608246Cecfce6811Db84B3Ef4B2619054E",   # $FLUID rewards - Jul 2025
+                         "0xF36029358A684CdDD5103A4b84dC8a832c6e5b40",   # $FLUID rewards GHO - Jul 2025
+                         "0xB044433fdDCE4DabA3b24aC7Af464fd3f67aa154"],  # ETH-USDC LP $FLUID rewards - Jul 2025
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/Instadapp/fluid-contracts-public/blob/main/deployments/deployments.md "
+                 "(## MerkleDistributors, @9496626, read 2026-10-06)"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
+                                        "0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e",
+                                        "0x9800020b610194dBa52CF606E8Aa142F9F256166"],
+             "wired_on": "2026-10-06"},
+            # PLASMA — NOT WIRED (B8): Fluid's Plasma distributor 0x3413D18500D5140095513d57a9Fcd9D882CbD064
+            # ("$FLUID rewards - Oct 2025", same deployments.md) is ready to scan, but a log scan pins its block and
+            # reads decimals from an RPC, and no Plasma RPC from Plasma's OWN docs is on file — rpc.plasma.to is
+            # named only by Chainstack's docs (secondary, searched 2026-10-06). Add CHAIN_IDS["plasma"] = 9745, an
+            # RPC, and the route once docs.plasma.to is read.
         ],
         # ===== A DECLARED ZERO IS A FIGURE, AND IT SAYS WHO DECLARED IT. Added 2026-09-22. =====
         # A gap reading "THE EMISSION HAS FINISHED" is an ANSWER wearing a question's clothes:
@@ -19931,7 +20070,7 @@ EMISSIONS_ALIAS_DECLINED = {
 #                    CoinGecko's, and does not replace it
 #   not_established  no documented set: CoinGecko stays, and `why` says what is missing
 #
-# THE CONVENTION (CIRCULATING_CONVENTION below; Jake to confirm, implemented as the default
+# THE CONVENTION (CIRCULATING_CONVENTION below; CONFIRMED by Jake 2026-10-06, implemented as the default
 # 2026-09-30) is applied to every project and printed on each one's exclusion list.
 # Differences from CoinGecko beyond CIRCULATING_TOLERANCE go to the Review Queue.
 # =======================================================================================
@@ -19942,7 +20081,8 @@ CIRCULATING_CONVENTION = {
     "excluded": "treasury, foundation, team, unvested / vesting, and burned tokens",
     "standard_case": "Ethereum's empty exclusion set is the reference: no protocol-held, "
                      "treasury or vesting supply, burned ETH already out of the total",
-    "status": "DEFAULT — Jake to confirm (2026-09-30)",
+    "status": "CONFIRMED by Jake, 2026-10-06 (overnight round): staked tokens COUNT as circulating; they are "
+              "subtracted only for free float",
 }
 CIRCULATING_TOLERANCE = 0.02
 CIRCULATING_ONCHAIN = {
@@ -19950,7 +20090,7 @@ CIRCULATING_ONCHAIN = {
                  "why": "ETH has no protocol-held, vesting or treasury supply outside holders' "
                         "hands: burned ETH is already out of the total. The empty set is a "
                         "CONVENTION (foundation and exchange balances count as circulating, as "
-                        "CoinGecko counts them) — Jake to confirm"},
+                        "CoinGecko counts them) — confirmed by Jake, 2026-10-06"},
     "Hyperliquid": {"status": "first_party", "metric": "circulating_supply_first_party",
                     "why": "tokenDetails.circulatingSupply — Hyperliquid's own figure; its "
                            "nonCirculatingUserBalances is the documented set (logged each run)",
@@ -19992,6 +20132,10 @@ CIRCULATING_ONCHAIN = {
                 "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Sky": {"status": "established", "total": "total_supply",
             "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+            # A3 (overnight 2026-10-06): ours 21.37bn vs CoinGecko 23.43bn — the 2.06bn is OUR exclusions (Pause Proxy
+            # + the MKR_SKY converter reserves); aggregators count ~every SKY (CMC 23.42B of 23.46B). The check is
+            # therefore like-for-like: CoinGecko vs our TOTAL; ours is recorded as the stricter definition.
+            "coingecko_basis": "total",
             "method": "SKY totalSupply − the Pause Proxy (treasury + every flapper buyback) − the MKR_SKY "
                       "converters' SKY (pre-minted for unconverted MKR: MKR's claim, listed separately on "
                       "CoinGecko as MKR) — spells-mainnet@17926e18 addresses_mainnet.sol L47, L507, L508",
@@ -20003,6 +20147,9 @@ CIRCULATING_ONCHAIN = {
     "Pendle": {"status": "established", "total": "total_supply",
                "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
                "coingecko_basis": "free_float",
+               # Free float subtracts BOTH lock legs: sPENDLE (locked_tokens) and the legacy vePENDLE balance —
+               # Pendle's own circulating excludes both (Tokenomics.md L26-27).
+               "free_float_lock_extra": ("locked_tokens_legacy_vependle",),
                "method": "total − the fee wallet 0x8270… − Ecosystem Fund − Governance multisig − Team "
                          "multisig (pendle-finance/documentation@3cc3658 Tokenomics.md L24-33). Pendle's OWN "
                          "figure also excludes sPENDLE and vePENDLE: by the convention staked tokens are "
@@ -20149,7 +20296,12 @@ NONCIRCULATING_CANDIDATES = {
              "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
         ],
         "not_established": "the addresses themselves (page not opened); Solana-side allocation wallets after "
-                           "the migration; the burn-pending wallet"},
+                           "the migration; the burn-pending wallet",
+        # THE ONE-LINE SWITCH (overnight 2026-10-06, C). False: listed only. True — set ONLY after Jake opens
+        # docs.geodnet.com/geod-token/tokenomics and confirms the three addresses — reads each wallet's GEOD on
+        # Polygon into noncirculating_holding_tokens and subtracts it from GEODNET's on-chain circulating (below).
+        # `python check_offline_items.py geod_candidate_wallets` prints their balances, behaviour and the result first.
+        "confirm_candidates": False},
     "Morpho": {
         "note": "no Morpho docs or tokenomics repository exists (morpho-org's 71 public repos)",
         "addresses": [
@@ -20254,6 +20406,26 @@ NONCIRCULATING_CANDIDATES = {
         "not_established": "other Foundation treasury/ecosystem/grant accounts; whether lockup.near "
                            "and contributors.near still hold material balances"},
 }
+
+
+def _apply_confirmed_candidates() -> None:
+    """GEODNET's candidate wallets join the exclusion list only when `confirm_candidates` is True (C, 2026-10-06)."""
+    cand = NONCIRCULATING_CANDIDATES["GEODNET"]
+    if not cand.get("confirm_candidates"):
+        return
+    p = PROJECT_BY_NAME["GEODNET"]
+    for n, a in enumerate(cand["addresses"], start=1):
+        p["contracts"][f"noncirc_candidate_{n}"] = _contract(
+            a["address"], a["chain"], "treasury_holding", "GEOD",
+            "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-10-06", purpose=a["role"],
+            provenance="CONFIRMED by Jake (confirm_candidates) — " + a["source"], holder_has_code=False,
+            metric_override=_NC)
+    spec = CIRCULATING_ONCHAIN["GEODNET"]
+    if _NC not in spec["subtract"]:
+        spec["subtract"] = tuple(spec["subtract"]) + (_NC,)
+
+
+_apply_confirmed_candidates()
 METRICS["circulating_supply_onchain"]["only_projects"] = tuple(
     n for n, s in CIRCULATING_ONCHAIN.items() if s["status"] in ("established", "partial"))
 
@@ -20275,6 +20447,23 @@ def circulating_onchain_primary(project_name: str) -> bool:
     established or first-party set, or a per-project decision (ratios_use "onchain", 2026-10-06)."""
     spec = CIRCULATING_ONCHAIN.get(project_name) or {}
     return spec.get("status") in ("established", "first_party") or spec.get("ratios_use") == "onchain"
+
+
+def free_float_lock_metrics(project_name: str) -> tuple:
+    """The locked-token series subtracted for FREE FLOAT: locked_tokens plus any declared extra lock leg
+    (Pendle's legacy vePENDLE, 2026-10-06 overnight: Pendle's own circulating excludes it and, under the
+    confirmed convention, a ve-lock is a staked/locked token)."""
+    # THE LOCK SHOWN IS THE LOCK SUBTRACTED: lock_display_metric — Aerodrome's veAERO.supply() (the locked
+    # principal, LOCK_DISPLAY_METRIC), everyone else's custody read. A free float that subtracted a different
+    # lock from the one printed beside it would not be the column's own figure.
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    return (lock_display_metric(project_name), *spec.get("free_float_lock_extra", ()))
+
+
+def coingecko_counts_total(project_name: str) -> bool:
+    """CoinGecko's circulating counts (almost) the whole supply (Sky): compare it with our on-chain TOTAL; our
+    circulating is the stricter figure by exactly the subtracted balances."""
+    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_basis") == "total"
 
 
 def coingecko_is_free_float(project_name: str) -> bool:
@@ -22068,11 +22257,18 @@ SOURCE_REGISTER = {
         "key": "NEARBLOCKS_API_KEY",
     },
     "api.merkl.xyz": {
-        "used_for": "probe only (live MORPHO campaigns)",
+        "used_for": "probe only (live MORPHO campaigns) — NOT WIRED: the candidate second source for Morpho's "
+                    "supplier emissions (campaign amounts) beside our claims scan of the Merkl distributor",
         "paths": ["/v4/campaigns"],
         "robots": "NOT CHECKED FROM HERE",
-        "terms": {"url": "https://merkl.xyz/", "status": "REACHABLE (Jake's probe 2026-09-30) — NOT YET READ: Jake to read"},
-        "licence": "public API used by Morpho's own recipe (merkl-morpho-recipe constants.ts:3)",
+        "terms": {"url": "https://merkl.xyz/ (Terms & Conditions PDF linked there; merkl-app frontend LICENSE)",
+                  "status": "B13, overnight 2026-10-06: the API docs state a 10 requests/second limit. The T&C PDF did "
+                            "not render from here (UNREAD). The frontend repository's licence restricts 'unauthorized "
+                            "scraping, bulk data extraction' and says commercial use requires written approval. "
+                            "Whether that covers the documented public API is NOT established."},
+        "licence": "public API used by Morpho's own recipe (merkl-morpho-recipe constants.ts:3) — UNCLEAR for daily "
+                   "use: do not wire. Recommended: Jake emails contact@merkl.xyz asking whether one daily "
+                   "/v4/campaigns call (MORPHO campaigns only) for internal research is permitted.",
         "key": None,
     },
     "app.blockworks.com": {
@@ -22176,6 +22372,18 @@ _C_DEX_ONLY = _c_unv(
 CREDIBILITY: dict = {
     # ---------------------------------------------------------------- Ethereum
     "Ethereum": {
+        # B11 (overnight 2026-10-06): DefiLlama's Ethereum fees beside Blockscout's own txnsFee (ETH x same-day price).
+        "in_fees": _c_in_py("Fees, last 30 days (DefiLlama)", "common_days_sum",
+                            {"a": "fees_usd", "b": "fees_native_tokens", "days": 30, "side": "ours", "b_times_price": True},
+                            {"formula": "common_days_sum",
+                             "args": {"a": "fees_usd", "b": "fees_native_tokens", "days": 30, "side": "ref",
+                                      "b_times_price": True},
+                             "tol": 10.0,
+                             "source": "eth.blockscout.com stats-service txnsFee (ETH per day) x same-day ETH price",
+                             "note": "Blockscout's txnsFee is gas_used x effective gas price — it has NO blob fees; "
+                                     "DefiLlama's Ethereum fees include them, so expect ours a little ABOVE. Empty "
+                                     "until 20 shared days are stored (the first read takes 365)."},
+                            fmt=_C_USD),
         "a4_gross_burn": {"formula": "flow_usd_over_price", "args": {"metrics": ("revenue_usd",)}, "tol": 10.0,
                           "source": "DefiLlama Ethereum revenue (burned base + blob fees) / same-day price — ours is "
                                     "Etherscan ethsupply2 BurntFees, daily change"},
@@ -22236,6 +22444,36 @@ CREDIBILITY: dict = {
         "in_locked": _c_in("LINK staked (both v0.2 pools)", "locked_tokens", "now", _c_chk(
             "staking.chain.link's 'Total staked' is the independent figure; metrics.chain.link is robots-blocked.",
             "read staking.chain.link 'Total staked' by hand and record it here as a manual reference")),
+        # B5 (overnight 2026-10-06): CoinGecko's pool release (d circulating - d total, Q0) against LINK actually
+        # leaving the 24 Etherscan-labelled 'Chainlink: Noncirculating Supply' wallets over the same window — their
+        # summed balance (noncirculating_holding_tokens, our daily read) fell by exactly what was released.
+        "in_issuance": _c_in("Issuance Q0 (pool_release_tokens: CoinGecko d circulating - d total)",
+                             "pool_release_tokens", "q0",
+                             {"formula": "delta_q0", "args": {"metric": "noncirculating_holding_tokens"},
+                              "scale": -1.0, "tol": 10.0,
+                              "source": "the 24 non-circulating wallets' summed LINK balance: its fall across Q0 "
+                                        "(our on-chain read)",
+                              "note": "The 24 labels are confirmed by three Etherscan label pages and the Dune "
+                                      "spellbook; Chainlink's 2022 post lists 27 — three more (0xb9b012ca…, "
+                                      "0xa71bbBd2…, 0x37398A32…) are NOT verified and not read, and the legacy Node "
+                                      "Operator / Team wallets on chain.link/circulating-supply were not read. A "
+                                      "release from any of those would show here as ours ABOVE the reference. Needs "
+                                      "the balance series back to the Q0 start: `python archive_backfill.py --run "
+                                      "--project Chainlink` fills it from archive reads."}),
+        # B4 (overnight 2026-10-06): DefiLlama's chainlink fees ARE every token the fee aggregator receives on Ethereum
+        # (dimension-adapters fees/chainlink, addTokensReceived to 0xd6e39d42…) — our own log scan of the same
+        # receipts, priced by us, is an independent measurement of the same quantity over the same days.
+        "in_fees": _c_in_py("Fees, last 30 days (DefiLlama: tokens received by the fee aggregator)", "common_days_sum",
+                            {"a": "fees_usd", "b": "fees_usd_aggregator_scan", "days": 30, "side": "ours"},
+                            {"formula": "common_days_sum",
+                             "args": {"a": "fees_usd", "b": "fees_usd_aggregator_scan", "days": 30, "side": "ref"},
+                             "tol": 10.0,
+                             "source": "our own scan of every ERC-20 Transfer into the fee aggregator 0xd6e39d42… "
+                                       "(Etherscan V2 logs), priced per day via coins.llama.fi",
+                             "note": "Same receipts, two readers: a gap is a missed transfer, a token one side "
+                                     "cannot price, or a day boundary. Empty until the aggregator line has 20 shared "
+                                     "days (it fills from the routine runs, or `--seed chainlink_fees`)."},
+                            fmt=_C_USD),
     },
     # ---------------------------------------------------------------- Hyperliquid
     "Hyperliquid": {
@@ -22283,16 +22521,32 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Near
     "Near": {
-        "a4_gross_burn": _c_unv(
-            "The burn is DefiLlama fees x 70% (the protocol's burn share) / price; NEAR publishes no burn series "
-            "and NearBlocks' charts are disabled (robots).",
-            "derive burn from block-header total_supply changes net of epoch rewards (needs epoch reward reads)"),
-        "a4_gross_issuance": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
-                                                              "plus": "gross_burn_tokens"}, "tol": 20.0,
-                              "source": "observed: d(block-header total_supply) + burn across Q0 — ours is the DECLARED "
-                                        "2.5% x total supply",
-                              "note": "The same comparison guards the yield (max_ratio 10); within 20% means the "
-                                      "declared rate is what the chain mints."},
+        # (overnight 2026-10-06): DefiLlama's NEAR fees beside NearBlocks' own txn_fee (NEAR x same-day price).
+        "in_fees": _c_in_py("Fees, last 30 days (DefiLlama)", "common_days_sum",
+                            {"a": "fees_usd", "b": "fees_native_tokens", "days": 30, "side": "ours", "b_times_price": True},
+                            {"formula": "common_days_sum",
+                             "args": {"a": "fees_usd", "b": "fees_native_tokens", "days": 30, "side": "ref",
+                                      "b_times_price": True},
+                             "tol": 15.0,
+                             "source": "NearBlocks /v3/txn-stats txn_fee (tokens_burnt of transactions + receipt "
+                                       "outcomes, NEAR per day) x same-day NEAR price",
+                             "note": "Gross gas cost on both sides as far as read; a persistent ~30% gap would mean "
+                                     "one side nets out the contract-reward share. Empty until 20 shared days are "
+                                     "stored (the first read takes 100)."},
+                            fmt=_C_USD),
+        # B1 (overnight 2026-10-06): NEAR'S OWN CHAIN as the reference — BigQuery's blocks table, block-header
+        # total_supply: within-epoch falls = the burn, epoch-first rises = the mint (fetch/near_bigquery._supply_flows).
+        "a4_gross_burn": {"metric": "gross_burn_tokens_bigquery", "window": "q0", "tol": 10.0,
+                          "source": "NEAR block headers (BigQuery crypto_near_mainnet_us.blocks.total_supply): the "
+                                    "within-epoch falls, summed over Q0",
+                          "note": "Ours is DefiLlama fees x the burned share in force (0.70 before v87). Tolerance 10%: "
+                                  "the chain's burn also carries failed-refund deposits and slashing, and each "
+                                  "epoch-first block's burn is estimated (~1 block in 43,000)."},
+        "a4_gross_issuance": {"metric": "gross_issuance_tokens_bigquery", "window": "q0", "tol": 5.0,
+                              "source": "NEAR block headers (BigQuery): the epoch-first blocks' rise in total_supply, "
+                                        "summed over Q0 — what the chain actually minted",
+                              "note": "Ours is the DECLARED 2.5% x total supply. Tolerance 5%: offline validators make "
+                                      "the actual mint fall short of the maximum (reward_calculator.rs)."},
         "a4_net_change": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol"}, "tol": 15.0,
                           "source": "d(block-header total_supply) across Q0 — on-chain, independent of the declared "
                                     "issuance and DefiLlama-derived burn"},
@@ -22318,6 +22572,14 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Plume
     "Plume": {
+        # B10 (overnight 2026-10-06): no primary unlock schedule exists to set against our issuance.
+        "in_issuance": _c_in("Issuance Q0 (gross_issuance_tokens: PLUME totalSupply increases)", "gross_issuance_tokens",
+                             "q0", _c_unv(
+            "Measured from the token contract's totalSupply. Plume publishes no monthly unlock table (docs / blog "
+            "searched 2026-10-06); the aggregator unlock tables found disagree with each other and cite no primary. NOTE the quantities differ anyway: an UNLOCK moves already-minted PLUME out of a "
+            "vesting wallet (it changes circulating, not totalSupply), while this row counts MINTING (the 10B supply "
+            "is a MINTER_ROLE mint with no cap in the source), so an unlock table could not confirm it.",
+            "a primary Plume emission / mint schedule — none is published")),
         "a1_validator_yield": {"metric": "staking_apy_published", "window": "now", "tol": 5.0,
                                "source": "staking.plume.org net APY 4.5% (manual, Jake 2026-09-30) — the app",
                                "note": "Ours is the contract's gross rate x (1 - stake-weighted commission): 4.497% "
@@ -22365,8 +22627,23 @@ CREDIBILITY: dict = {
         "in_locked": _c_in("ATH staked (dashboard totalStaked)", "locked_tokens", "now", {
             "verdict": "FRESH-only",
             "why": "Only Aethir's dashboard reports all four pools; spot_checks re-read it live on 2026-10-05.",
-            "resolve": "read the on-chain AI pool 0x784BC33B… and Gaming pool 0x6F5c81fe… (veAethir locks) and compare "
-                       "with locked_tokens_ai + locked_tokens_gaming — covers 2 of the 4 parts"}),
+            "resolve": "IDC and edge stake (about 56% of the total) are on no pool we can read; the AI + Gaming part is "
+                       "checked on-chain in in_locked_pools"}),
+        # B6 (overnight 2026-10-06): 2 of the 4 parts, on-chain — the dashboard's own split vs the pools' balances.
+        "in_locked_pools": _c_in_py("ATH staked in the AI + Gaming pools (dashboard aiStaked + gamingStaked)",
+                                    "sums_on_common_day",
+                                    {"a": ("locked_tokens_ai", "locked_tokens_gaming"),
+                                     "b": ("locked_tokens_ai_onchain", "locked_tokens_gaming_onchain"), "side": "ours"},
+                                    {"formula": "sums_on_common_day",
+                                     "args": {"a": ("locked_tokens_ai", "locked_tokens_gaming"),
+                                              "b": ("locked_tokens_ai_onchain", "locked_tokens_gaming_onchain"),
+                                              "side": "ref"},
+                                     "tol": 2.0,
+                                     "source": "veAethir.balanceOf(AI Pool 0x784BC33B…) + balanceOf(Gaming Pool "
+                                               "0x6F5c81fe…), Ethereum, read the same day",
+                                     "note": "The pools' supply() summed 785.39M on 2026-09-24; the dashboard's aiStaked + gamingStaked read "
+                                             "785.74M in probes4 (a later day): expect a PASS. The pools lock "
+                                             "veAethir 1:1 against ATH (wrapper_three_way_match_2026_09_24)."}),
         "in_arr": _c_in("ARR (Aethir demand-metric)", "arr_usd", "now", {
             "verdict": "FRESH-only",
             "why": "First-party only; the last reported ARR elsewhere is $166M (Q3-2025 blog) — too old to compare.",
@@ -22394,10 +22671,13 @@ CREDIBILITY: dict = {
                                      "(fees/maple-finance.ts @c9ff7c2); its July read $1,024,386 vs Maple's "
                                      "$1,367,683 (PR #8936 body).",
                              "why": "UNEXPLAINED: 0.99-1.01x through 2025-09, then 1.24-2.23x from 2025-10 with Maple's "
-                                    "figure now primary. Partly explained only: DefiLlama nets a holders share (25% from "
-                                    "2025-11, 10% from 2026-07 = 1.33x / 1.11x on its own), misses the "
-                                    "basicStrategyFactory and the Base deployment, and its 2025-08..2026-02 history came "
-                                    "from narrow adapter versions.",
+                                    "figure now primary. Partly explained only: DefiLlama misses the basicStrategyFactory "
+                                    "(0x876D54…) and the Base deployment, read OTC fees near zero before its 2026-08-22 "
+                                    "fix, and its 2025-08..2026-02 history came from narrow adapter versions. (The "
+                                    "holders-share factor cited here before 2026-10-06 was wrong: DefiLlama's "
+                                    "dailyRevenue is GROSS of it.) Maple's own revenueUsd definition is not published; "
+                                    "the MIP-021 buyback executor and the SSF address are not established either — "
+                                    "Blockworks' filing says repurchased SYRUP is held in the DAO treasury.",
                              "resolve": "Maple's own definition of revenueUsd (which pools, chains, gross or net of the "
                                         "holders share) from its docs/methodology, then a month-by-month reconciliation"},
                             fmt=_C_USD),
@@ -22415,16 +22695,19 @@ CREDIBILITY: dict = {
         "a2_customer_revenue": {"inputs": ("in_interest_day",),
                                 "why": "Q0 is DefiLlama's daily fees summed; each day is checked against Morpho's "
                                        "own API in the input row."},
+        # A4 (overnight 2026-10-06): a 7-COMPLETE-DAY window, not one day — DefiLlama's fees summed vs the API's
+        # per-day interest (mean of the readings in the window) x 7, so read-time effects average out.
         "in_interest_day": _c_in_py(
-            "Borrower interest, one day: DefiLlama fees vs Morpho API sum(borrowAssetsUsd x daily rate from borrowApy)",
-            "common_day_value", {"metric": "fees_usd", "ref": "borrow_interest_usd_day_morpho_api", "side": "ours"},
-            {"formula": "common_day_value", "tol": 10.0,
-             "args": {"metric": "fees_usd", "ref": "borrow_interest_usd_day_morpho_api", "side": "ref"},
+            "Borrower interest, last 7 complete days: DefiLlama fees vs Morpho API sum(borrowAssetsUsd x daily rate) x 7",
+            "window_vs_rate", {"flow": "fees_usd", "rate": "borrow_interest_usd_day_morpho_api", "days": 7,
+                               "side": "ours"},
+            {"formula": "window_vs_rate", "tol": 10.0,
+             "args": {"flow": "fees_usd", "rate": "borrow_interest_usd_day_morpho_api", "days": 7, "side": "ref"},
              "source": "Morpho's own API (blue-api markets, listed only): sum over markets of "
                        "borrowAssetsUsd x ((1 + borrowApy)^(1/365) - 1), read once a day",
-             "note": "Tolerance 10% is a judgment, pending Jake's review: the API figure is the rate at the moment "
-                     "of the read and covers LISTED markets only; DefiLlama sums the whole day over every market. "
-                     "A CHECK beyond 10% is a real question about one of the two."},
+             "note": "Tolerance 10%, ACCEPTED by Jake 2026-10-06: the API figure is the rate at the moment of the "
+                     "read and covers LISTED markets only; DefiLlama sums every market. A CHECK beyond 10% is a real "
+                     "question about one of the two."},
             fmt=_C_USD),
         "a2_emissions": _c_chk(
             "Merkl distributor outflows on Ethereum only (PARTIAL — URDs and other chains unscanned).",
@@ -22444,10 +22727,17 @@ CREDIBILITY: dict = {
             "DefiLlama's Aerodrome 'staking' TVL / price, or the vote page's total locked, by hand")),
         "in_buyback": _c_in("Buyback", "actual_buyback_tokens", "q0", _c_na(
             "no buyback by design — 100% of fees go to veAERO voters in the pairs' own tokens")),
-        "in_emissions": _c_in("Emissions Q0 (RewardsDistributor rebase)", "emissions_tokens", "q0", _c_chk(
-            "The RewardsDistributor's tokensPerWeek is the only read; Aerodrome's docs give the tail-emission rate "
-            "(~10.9%/yr annualised, April 2026), not the weekly rebase.",
-            "the rebase amount Aerodrome shows per epoch on its site, by hand")),
+        # B3 (overnight 2026-10-06): the rebase recomputed from the MINTER's own formula — no free log route serves
+        # Base (Etherscan's free tier excludes it; Blockscout's PRO API is paid there), so the Minter -> distributor
+        # transfers cannot be scanned; calculateGrowth over our emission / veAERO / supply reads is the check.
+        "in_emissions": _c_in_py(
+            "Rebase, last 4 epochs (RewardsDistributor tokensPerWeek) vs Minter.calculateGrowth from our reads",
+            "aero_rebase_formula", {"epochs": 4, "side": "ours"},
+            {"formula": "aero_rebase_formula", "args": {"epochs": 4, "side": "ref"}, "tol": 10.0,
+             "source": "Minter.calculateGrowth(E) = E x ((T - V)/T)^2 / 2 (contracts@1ba30815 Minter.sol L135-139) over "
+                       "our Minter emission, veAERO voting supply and AERO total supply",
+             "note": "Tolerance 10%: V is read daily, not at the flip instant, and a one-epoch booking offset leaves one "
+                     "edge week in four. A miss beyond it means the rebase read or the emission read is wrong."}),
     },
     # ---------------------------------------------------------------- Ether.fi
     "Ether.fi": {
@@ -22485,13 +22775,20 @@ CREDIBILITY: dict = {
         "in_circ": _c_in("Circulating supply (CoinGecko)", "circulating_supply", "now",
                          {"manual": {"value": 83_696_996, "read_on": "2026-09-23", "read_by": "Claude Code",
                                      "source": "Tokenomist's FLUID circulating figure"}, "tol": 1.0}),
-        "in_buyback": _c_in("FLUID bought Q0", "actual_buyback_tokens", "q0", _c_na(
-            "programme HALTED 2026-05-11 (governance post-mortem; IGP113-IGP140 carry no buyback) — the A3 rates are "
-            "checked against that in their own rows")),
+        # A6 (overnight 2026-10-06): an N/A row left A3's derived rows "UNCHECKED (buyback has no row)". The halt IS
+        # the reference: 0 FLUID bought in Q0, met only by 0 — ours is the buyback proxy's measured purchases.
+        "in_buyback": _c_in("FLUID bought Q0 (buyback proxy purchases, measured)", "actual_buyback_tokens", "q0",
+                            {"manual": {"value": 0.0, "read_on": "2026-09-24", "read_by": "Jake + Claude Code",
+                                        "source": "Fluid governance: buybacks HALTED 2026-05-11 (Resolv post-mortem); "
+                                                  "fluid-governance payloads IGP113-IGP140 carry no buyback"},
+                             "tol": 0.0, "note": "A halted programme: 0 is the reference, met only by a measured 0."}),
         "in_emissions": _c_in("FLUID emitted Q0 (mainnet Merkle claims)", "emissions_tokens", "q0", _c_chk(
-            "PARTIAL: Arbitrum, Base and Plasma distributors are not scanned. Governance funded 4,086,500 FLUID to the "
-            "rewards multisig across IGP101-IGP131 — order of magnitude only, not per window.",
-            "scan the three L2 distributors; then compare the funded total with all claims since IGP101")),
+            "PARTIAL: the Arbitrum distributors are scanned since 2026-10-06 (emissions_tokens_arbitrum, beside this "
+            "mainnet series); BASE is not (no free log route) and PLASMA is not (no Plasma RPC from a primary source "
+            "on file). Governance funded "
+            "4,086,500 FLUID to the rewards multisig across IGP101-IGP131 — order of magnitude only, not per window.",
+            "a paid Base log route (Blockscout PRO), then all four chains' claims since IGP101 against the funded "
+            "4,086,500")),
     },
     # ---------------------------------------------------------------- Sky
     "Sky": {
@@ -22523,12 +22820,15 @@ CREDIBILITY: dict = {
             "The manual NPS rows ARE Sky's own figures (insights.skyeco.com / financial.skyeco.com); there is no "
             "second publisher of NPS."), fmt=_C_USD),
         "in_emissions": _c_in("Emissions Q0 — staking rewards RELEASED from treasury SKY (declared vest streams)",
-                              "emissions_tokens", "q0", _c_chk(
-            "NOT minting (2026-10-05): the rewards are SKY the Pause Proxy already holds, released through "
-            "MCD_VEST_SKY_TREASURY, so d(totalSupply) says nothing about them. The release itself is on-chain "
-            "but not yet read.",
-            "scan SKY Transfer logs from REWARDS_DIST_LSSKY_SKY 0x675671A8… to REWARDS_LSSKY_SKY 0xB44C2Fb4… (chainlog "
-            "addresses, spells-mainnet addresses_mainnet.sol) and sum them over Q0")),
+                              "emissions_tokens", "q0",
+                              # B2 (overnight 2026-10-06): the release MEASURED on-chain (log_scans
+                              # .lssky_rewards_released) against our declared streams.
+                              {"metric": "emissions_tokens_scan", "window": "q0", "tol": 10.0,
+                               "source": "SKY Transfer events REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY summed over Q0 "
+                                         "(spells-mainnet addresses_mainnet.sol L594-595)",
+                               "note": "Ours is the declared vest streams (143,208,393 SKY / 90 days from the 2026-09-10 "
+                                       "spell; 96,903,706 / 90 days before). Tolerance 10%: the distributor releases "
+                                       "when distribute() is called, so a window edge can shift a few days' release."}),
     },
     # ---------------------------------------------------------------- Uniswap
     "Uniswap": {
@@ -22568,6 +22868,16 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Pendle
     "Pendle": {
+        # B9 (overnight 2026-10-06): THE SCHEDULE IS A CEILING, NOT A REFERENCE. Pendle's docs (sPENDLE / tokenomics,
+        # read 2026-10-06): weekly emission decays 1.1%/week (x0.989) to week 259, then a terminal 2%/yr of total supply
+        # (379,848,538e-12 x totalSupply per week ~ 110K PENDLE/week, ~1.42M over a 91-day Q0). Since April 2026 the
+        # Algorithmic Incentive Model pays FIXED DOLLAR incentives, so actual emissions sit at or below that ceiling by
+        # design — a two-sided tolerance against it would CHECK whenever AIM pays less, which is not an error.
+        "in_emissions": _c_in("Emissions Q0 (tokens)", "emissions_tokens", "q0", _c_chk(
+            "Our emissions series is the only measure wired. Pendle's schedule gives only a CEILING (~1.42M PENDLE over "
+            "Q0 at the terminal 2%/yr; the decay-phase start time must be read from the contract) and AIM pays less by "
+            "design, so the schedule cannot confirm the figure.",
+            "Pendle's own reported weekly AIM incentive totals (its dashboard or governance posts), summed over Q0")),
         "a3_protocol_yield": {"metric": "staking_apr_published", "window": "now", "tol": 25.0, "same_source": True,
                               "zero_is_missing": True,
                               "source": "Pendle's lastEpochApr (spendle/data)",

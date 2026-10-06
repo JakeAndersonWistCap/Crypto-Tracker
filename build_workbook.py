@@ -1771,6 +1771,29 @@ def _market_cap_views(groups: dict) -> None:
         groups[(name, "market_cap_usd")] = _as_stored(view, cols)
 
 
+def _net_common_views(groups: dict) -> None:
+    """NET SUPPLY CHANGE ON THE DAYS BOTH SIDES ARE MEASURED (overnight 2026-10-06, A5): issuance − burn per day, only
+    where both hold a row (config net_change_common_days). Q0 then sums those days, and the annualised % divides by
+    the days actually covered (_annualise) — the coverage guard's mismatch cannot arise."""
+    for p in scoped_projects():
+        spec = p.get("net_change_common_days")
+        if not spec:
+            continue
+        name = p["name"]
+        gi, gb = groups.get((name, spec["issuance"])), groups.get((name, spec["burn"]))
+        if gi is None or gi.empty or gb is None or gb.empty:
+            continue
+        s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
+                       .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        both = pd.concat([s(gi).rename("i"), s(gb).rename("b")], axis=1).dropna()
+        if both.empty:
+            continue
+        view = pd.DataFrame({"date": both.index, "project": name, "metric": spec["metric"],
+                             "value": (both["i"] - both["b"]).values,
+                             "source": f"derived:{spec['issuance']}-{spec['burn']}(common days)", "tier": 2})
+        groups[(name, spec["metric"])] = _as_stored(view, gi.columns)
+
+
 def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
     """The PRIMARY issuance series, for every consumer. See config.ISSUANCE_PRIMARY.
 
@@ -1938,6 +1961,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _emissions_model_views(groups)
     _issuance_views(groups, asof)
     _reward_end_views(groups, asof)
+    _net_common_views(groups)     # AFTER the issuance views it differences
     _circulating_views(groups)
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _settlement_views(groups)
@@ -2965,6 +2989,9 @@ def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
     """_net_change as a cell: a SELF-REPORTED figure as published; a derived one BLOCKED where
     issuance and burn cover materially different days of the window."""
     name = p["name"]
+    nc = p.get("net_change_common_days")
+    if nc:                                     # on the days BOTH sides are measured (A5, 2026-10-06)
+        return f"=IFERROR({R.D(r, nc['metric'], 'q0')},{NA})"
     guarded = _guarded_net(R, r, p, config.issuance_basis(name), config.a4_burn_metric(name),
                            total=f"{iss(r)}-{burn(r, p)}")
     if not p.get("self_reported_net_mint"):
@@ -2983,6 +3010,10 @@ def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
     """Net supply change per year, % of circulating: each side annualised over ITS OWN covered
     days (was the Q0 difference x365/90, 2026-09-29), BLOCKED where either covers under a week."""
     name = p["name"]
+    nc = p.get("net_change_common_days")
+    if nc:                                     # annualised over the days both sides are measured (A5)
+        m = nc["metric"]
+        return f"=IFERROR({_annualise(R, r, p, m, R.D(r, m, 'q0'))}/({circ}),{NA})"
     im, bm = config.issuance_basis(name), config.a4_burn_metric(name)
     derived = (f"({_annualise(R, r, p, im, R.D(r, im, 'q0'))}-"
                f"{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))})/({circ})")
@@ -3314,6 +3345,20 @@ def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
     return " | ".join(x for x in (expired, stable) if x)
 
 
+def _ff_lock(R: Refs, r, p: dict) -> str:
+    """The locked tokens INSIDE the circulating in use (free float = circulating − this): locked_tokens plus any
+    declared extra lock leg (config.free_float_lock_metrics), less locked tokens already out of circulating."""
+    if p.get("free_float_lock_zero"):
+        return "0"
+    legs = [R.D(r, m, "now") for m in config.free_float_lock_metrics(p.get("name", ""))]
+    # a missing extra leg makes the cell n/a (an error propagates) — never a silent 0 that reads free float HIGH
+    base = legs[0] if len(legs) == 1 else "(" + "+".join(legs) + ")"
+    x = config.locked_excluded_from_circulating(p.get("name", ""))
+    if x and config.circulating_excludes_declared(p["name"]):
+        return f"MAX(0,{base}-{x:.0f})"
+    return base
+
+
 def _circ(R: Refs, r, p: dict) -> str:
     """circulating_supply "now" — NET of any burn the provider has not netted, where declared.
 
@@ -3333,7 +3378,11 @@ def _circ(R: Refs, r, p: dict) -> str:
     if config.circulating_onchain_primary(p["name"]):
         m = spec.get("metric") or "circulating_supply_onchain"
         own = R.D(r, m, "now")
-        c = f"IF(ISNUMBER({own}),{own},{c})"
+        # COINGECKO'S FIGURE IS FREE FLOAT for Pendle / Aerodrome (2026-10-06 overnight, A1/A2): on a day with no
+        # on-chain figure, circulating falls back to CoinGecko + the locked tokens inside it — so free float
+        # (circulating − locked) is CoinGecko's own figure, never CoinGecko − locked a SECOND time.
+        fb = f"{c}+{_ff_lock(R, r, p)}" if config.coingecko_is_free_float(p["name"]) else c
+        c = f"IF(ISNUMBER({own}),{own},{fb})"
     if not config.supply_unnetted_burn(p["name"]):
         return c
     tot, gross, burned = (R.D(r, m, "now") for m in ("total_supply", "total_supply_gross",
@@ -3408,14 +3457,7 @@ def _a2_headline(R: Refs) -> list[tuple]:
     # the declared locked exclusions taken out (Aerodrome's team 95M, once its on-chain set is
     # primary), they leave the locked total too.
     def lock(r, p=None):
-        p = p or {}
-        if p.get("free_float_lock_zero"):
-            return "0"
-        base = R.D(r, "locked_tokens", "now")
-        x = config.locked_excluded_from_circulating(p.get("name", ""))
-        if x and config.circulating_excludes_declared(p["name"]):
-            return f"MAX(0,{base}-{x:.0f})"
-        return base
+        return _ff_lock(R, r, p or {})
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     # OVER COVERED DAYS (2026-09-28): a young customer-revenue series is not divided as if it
     # were 90 days old — see _annualise.
@@ -3825,8 +3867,9 @@ def _native_fee_usd_views(groups: dict) -> None:
         nat, px = groups.get((name, spec.get("native_metric"))), groups.get((name, "price_usd"))
         if not spec or nat is None or nat.empty or px is None or px.empty:
             continue
-        held = groups.get((name, "fees_usd"))
-        if held is not None and not held.empty:
+        target = spec.get("usd_metric", "fees_usd")   # Ethereum (B11): a reference series beside DefiLlama's
+        held = groups.get((name, target))
+        if target == "fees_usd" and held is not None and not held.empty:
             src = held["source"].astype(str)
             if (~src.str.startswith("growthepie") & (src != spec["source"])).any():
                 continue
@@ -3836,8 +3879,8 @@ def _native_fee_usd_views(groups: dict) -> None:
         if usd.empty:
             continue
         usd["value"] = usd["value"].astype(float) * usd["date"].map(price_on)
-        usd["metric"], usd["source"] = "fees_usd", spec["source"]
-        groups[(name, "fees_usd")] = _as_stored(usd, nat.columns)
+        usd["metric"], usd["source"] = target, spec["source"]
+        groups[(name, target)] = _as_stored(usd, nat.columns)
 
 
 DERIVED_USD_OVER_PRICE = "derived:usd/price"

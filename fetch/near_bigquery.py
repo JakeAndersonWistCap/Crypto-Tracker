@@ -323,6 +323,8 @@ class NearBigQuery:
                 ok = spec.get("approved") or {}
                 if ok.get("circulating"):
                     self._circulating(client, spec, st, out, name)
+                if ok.get("supply_flows") and spec.get("supply_flows"):
+                    self._supply_flows(client, spec, st, out, name)
                 self._dry_estimates(client, spec, st, out, name)
                 if ok.get("activity_ex") and spec.get("activity_ex"):
                     self._activity_ex(client, spec, st, out, name)
@@ -383,6 +385,47 @@ class NearBigQuery:
             v = float(cg.iloc[-1])
             msg += f"; CoinGecko's latest {v:,.0f} ({pts[-1][1] / v - 1:+.2%} ours vs CoinGecko)"
         out.add(frame, SOURCE, name, msg, TIER)
+
+    def _supply_flows(self, client, spec, st, out, name) -> None:
+        """NEAR's daily BURN and ISSUANCE from block-header total_supply (overnight 2026-10-06, B1;
+        sql/near/bigquery_supply_flows.sql): within an epoch the supply only falls (the burn); an epoch's first block
+        rises by the mint. The independent reference for the burn (ours: DefiLlama fees x the protocol's burned share)
+        and the issuance (ours: declared 2.5%). The first read is a BACKFILL of `days` (top-up reserve rules); then
+        each run reads only the days after the last one stored. ~3 columns x ~100k blocks/day: MBs a day."""
+        fs = spec["supply_flows"]
+        yday = (today() - pd.Timedelta(days=1)).normalize()
+        through = st.get("supply_flows_through")
+        if through and pd.Timestamp(through) >= yday:
+            out.mark_current(SOURCE, name, fs["burn_metric"], "supply flows read through yesterday already", TIER)
+            return
+        d0 = (pd.Timestamp(through) + pd.Timedelta(days=1)) if through else yday - pd.Timedelta(days=int(fs["days"]) - 1)
+        rows = self._run(client, f"supply flows {d0.date()}..{yday.date()}", _sql("bigquery_supply_flows.sql"),
+                         {"d0": d0.date(), "d1": yday.date()}, spec, st, out, name, backfill=not through)
+        if rows is None:
+            return
+        burn, iss, starts, blocks = [], [], 0, 0
+        for r in rows:
+            try:
+                day = pd.Timestamp(r["day"])
+                burn.append((day, float(r["burn_near"])))
+                iss.append((day, float(r["issuance_near"])))
+                starts += int(r.get("n_epoch_starts") or 0)
+                blocks += int(r.get("n_blocks") or 0)
+            except (TypeError, ValueError, KeyError):
+                continue
+        if not burn:
+            out.fail(SOURCE, name, f"supply flows {d0.date()}..{yday.date()}: no rows (blocks table not up to date?)",
+                     TIER)
+            return
+        st["supply_flows_through"] = str(burn[-1][0].date())
+        src = f"{SOURCE}:blocks.total_supply"
+        out.add(tidy(burn, name, fs["burn_metric"], src, TIER), SOURCE, name,
+                f"{fs['burn_metric']} = within-epoch falls in block-header total_supply (+ each epoch-first block "
+                f"filled with the day's mean burn per block): {len(burn)} day(s) {burn[0][0].date()}..{burn[-1][0].date()},"
+                f" {sum(v for _, v in burn):,.0f} NEAR over {blocks:,} blocks", TIER)
+        out.add(tidy(iss, name, fs["issuance_metric"], src, TIER), SOURCE, name,
+                f"{fs['issuance_metric']} = the epoch-first blocks' rise in total_supply (+ their filled burn): "
+                f"{starts} epoch start(s), {sum(v for _, v in iss):,.0f} NEAR minted over {len(iss)} day(s)", TIER)
 
     def _dry_estimates(self, client, spec, st, out, name) -> None:
         """Once a day: what a year's backfill and one day's top-up would scan (free)."""
