@@ -1198,6 +1198,154 @@ def etherfi_safe_owners():
               "none = still unidentified (label stays 'owner unidentified').")
 
 
+def etherfi_sethfi_topups():
+    """Ether.fi (Jake's run 2026-10-06 15:33): does the new buyback programme pay INTO sETHFI? sETHFI's share
+    price rose 4.7%/yr, then 101.7%/yr over 2026-09-14..23, after the programme passed (2026-09-03).
+    Read-only, Etherscan V2 (ETHERSCAN_API_KEY) + the Ethereum RPC:
+      a) every ETHFI Transfer INTO sETHFI since 2026-08-01, each split by its transaction: sETHFI minted in the
+         same tx = an ordinary DEPOSIT; none = a TOP-UP (assets in, no shares: the share price rises);
+      b) the top-up senders, each checked as a Safe (getOwners) against the buyback Safe's owners and the
+         known ether.fi addresses;
+      c) where each top-up sender's own ETHFI came from since 2026-08-01 (CoW GPv2Settlement = BOUGHT;
+         known ether.fi wallets = treasury/internal; other);
+      d) top-ups x the day's stored price vs DefiLlama's ether.fi-stake holders revenue over the same days
+         (metrics.db, when present). Nothing is wired from this; it prints what the chain says."""
+    head("ETHER.FI — ETHFI into sETHFI since 2026-08-01: deposits vs top-ups, and who tops up")
+    import pandas as pd                                     # noqa: PLC0415
+    from collections import defaultdict                     # noqa: PLC0415
+    from fetch.base import redact                           # noqa: PLC0415
+    try:
+        from fetch.explorer import ExplorerLogs, ExplorerRefused   # noqa: PLC0415
+    except ImportError as e:
+        print(f"  fetch.explorer not importable: {e}")
+        return
+    ex = ExplorerLogs()
+    if not ex.configured(1):
+        print("  no Etherscan key in .env (ETHERSCAN_API_KEY) — nothing read")
+        return
+    zero = "0x" + "0" * 40
+    cow = "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
+    known = {"0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD-programme buyback Safe",
+             "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f": "ether.fi deployer EOA",
+             "0x01e42ad3acd58584ffc1d1982ecbbe758996d601": "ether.fi-controlled Safe (600K sender)",
+             "0x0c83eae1fe72c390a02e426572854931eeff93ba": "protocol treasury (DefiLlama adapter)",
+             cow: "CoW Protocol GPv2Settlement"}
+    since = pd.Timestamp("2026-08-01", tz="UTC")
+    try:
+        b0 = ex.block_at(1, int(since.timestamp()))
+        ins, m1 = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(SETHFI)], b0)
+        mints, m2 = ex.get_logs(1, SETHFI, [TRANSFER_TOPIC, _pad(zero)], b0)
+    except ExplorerRefused as e:
+        print(f"  explorer refused: {redact(str(e))[:200]}")
+        return
+    print(f"  from block {b0:,} (2026-08-01): {len(ins):,} ETHFI transfer(s) into sETHFI, {len(mints):,} sETHFI "
+          f"mint(s); served by {m1['explorer']} / {m2['explorer']}")
+    minted = {str(e["transactionHash"]).lower() for e in mints}
+    E = 10 ** 18
+
+    def amt(e):
+        return int(str(e.get("data") or "0x0"), 16)
+
+    def day(e):
+        return pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()
+    dep = [e for e in ins if str(e["transactionHash"]).lower() in minted]
+    top = [e for e in ins if str(e["transactionHash"]).lower() not in minted]
+    print(f"  DEPOSITS (shares minted in the tx): {len(dep):,} transfer(s), {sum(map(amt, dep)) / E:,.2f} ETHFI")
+    print(f"  TOP-UPS (no shares minted):         {len(top):,} transfer(s), {sum(map(amt, top)) / E:,.2f} ETHFI")
+    by = defaultdict(lambda: [0, 0, None, None])
+    for e in top:
+        r = by["0x" + e["topics"][1][-40:].lower()]
+        r[0] += amt(e)
+        r[1] += 1
+        r[2] = min(r[2] or day(e), day(e))
+        r[3] = max(r[3] or day(e), day(e))
+    print("\n  TOP-UP SENDERS:")
+    for a, (v, n, d0, d1) in sorted(by.items(), key=lambda kv: -kv[1][0]):
+        print(f"    {a}  {v / E:>16,.2f} ETHFI  {n:>4} tx  {d0}..{d1}  {known.get(a, '')}")
+    print("\n  TOP-UPS BY DAY (date, sender, ETHFI, tx):")
+    for e in sorted(top, key=lambda e: int(e.get("timeStamp") or 0)):
+        print(f"    {day(e)}  0x{e['topics'][1][-40:]}  {amt(e) / E:>14,.2f}  {e['transactionHash']}")
+
+    # b) Safes and owners
+    from fetch.chain import ChainReader                     # noqa: PLC0415
+    abi = [{"name": "getOwners", "type": "function", "stateMutability": "view", "inputs": [],
+            "outputs": [{"type": "address[]"}]},
+           {"name": "getThreshold", "type": "function", "stateMutability": "view", "inputs": [],
+            "outputs": [{"type": "uint256"}]}]
+    try:
+        r = ChainReader()
+        w3 = r.web3("ethereum")
+    except Exception as e:  # noqa: BLE001
+        print(f"\n  no Ethereum RPC — owners not read ({redact(str(e))[:160]})")
+        w3 = None
+
+    def owners(a):
+        try:
+            c = w3.eth.contract(address=r.checksum(a), abi=abi)
+            return {o.lower() for o in c.functions.getOwners().call()}, int(c.functions.getThreshold().call())
+        except Exception:  # noqa: BLE001
+            return None, None
+    if w3 is not None:
+        ref, _ = owners("0x2f5301a3D59388c509C65f8698f521377D41Fd0F")
+        print(f"\n  buyback Safe owners: {', '.join(sorted(ref or [])) or 'unreadable'}")
+        for a in sorted(by, key=lambda k: -by[k][0])[:6]:
+            code = len(w3.eth.get_code(r.checksum(a)))
+            own, thr = owners(a)
+            if own is None:
+                print(f"    {a}: {'contract (not a Safe, or unreadable)' if code else 'EOA'}"
+                      + (" — IS a buyback Safe owner" if ref and a in ref else ""))
+            else:
+                shared = own & (ref or set())
+                print(f"    {a}: Safe {thr}-of-{len(own)}; owners shared with the buyback Safe: "
+                      f"{len(shared)} of {len(own)}" + (f" ({', '.join(sorted(shared))})" if shared else ""))
+
+    # c) where the top-up senders' ETHFI came from
+    print("\n  WHERE EACH TOP-UP SENDER'S ETHFI CAME FROM (since 2026-08-01):")
+    for a in sorted(by, key=lambda k: -by[k][0])[:4]:
+        try:
+            src, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(a)], b0)
+        except ExplorerRefused as e:
+            print(f"    {a}: unreadable — {redact(str(e))[:120]}")
+            continue
+        cls = defaultdict(int)
+        for e in src:
+            frm = "0x" + e["topics"][1][-40:].lower()
+            cls[known.get(frm) or ("MINT" if frm == zero else frm)] += amt(e)
+        rows = ", ".join(f"{k} {v / E:,.2f}" for k, v in sorted(cls.items(), key=lambda kv: -kv[1])[:6])
+        bought = cls.get(known[cow], 0)
+        print(f"    {a}: in {sum(cls.values()) / E:,.2f} — BOUGHT via CoW {bought / E:,.2f}; {rows or 'no inflow'}")
+
+    # d) DefiLlama holders revenue over the same days
+    print("\n  vs DEFILLAMA ether.fi-stake HOLDERS REVENUE (metrics.db):")
+    try:
+        import sqlite3                                       # noqa: PLC0415
+        con = sqlite3.connect("metrics.db")
+        q = ("SELECT date, metric, value FROM metrics WHERE project = 'Ether.fi' AND metric IN "
+             "('holders_revenue_usd', 'price_usd') AND date >= '2026-09-03'")
+        rows = con.execute(q).fetchall()
+        con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"    metrics.db unreadable here ({e}) — compare by hand")
+        return
+    px = {str(d)[:10]: float(v) for d, m, v in rows if m == "price_usd"}
+    hr = {str(d)[:10]: float(v) for d, m, v in rows if m == "holders_revenue_usd"}
+    t_usd, unpriced = 0.0, 0
+    for e in top:
+        d = str(day(e))
+        if d < "2026-09-03":
+            continue
+        if d in px:
+            t_usd += amt(e) / E * px[d]
+        else:
+            unpriced += 1
+    print(f"    since 2026-09-03: top-ups x same-day price ${t_usd:,.0f}" + (f" ({unpriced} unpriced)" if unpriced else "")
+          + f"; DefiLlama holders revenue ${sum(hr.values()):,.0f} over {len(hr)} day(s)"
+          + (f" ({min(hr)}..{max(hr)})" if hr else " — none stored (parent id fixed this round; next run)"))
+    print("\n  PASTE BACK. Top-ups from an ether.fi Safe whose ETHFI came via CoW = the bought ETHFI paid to stakers "
+          "(wire as the buyback from 2026-09-03 + the yield numerator); from the treasury / unbought = rewards, not a "
+          "buyback.")
+
+
 GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
 GEOD_MINING_WALLETS = ("0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F",
                        "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478")
@@ -5566,7 +5714,7 @@ CHECKS = (
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
-    hl_af_fills_depth, etherfi_safe_owners, aethir_pin_keys,
+    hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,

@@ -241,11 +241,19 @@ def _issuance(out, h, p) -> int:
                       for d in pd.date_range(d0, d1 - pd.Timedelta(days=1)) if d not in burn_days}) \
         if rule == "add_burn" else []
     fees = _series(h, name, "fees_usd")
+    revs = _series(h, name, "revenue_usd")
+
+    def span(f):
+        return f" {f['date'].min().date()}..{f['date'].max().date()}" if len(f) else ""
+    # THE BURN'S INPUTS WITH THEIR SPANS (Jake's run 2026-10-06 15:33): a burn short of the year is either
+    # its inputs never re-read (fetch/backfill.py now re-asks them) or DefiLlama's own chart starting late —
+    # the revenue / fees first dates tell the two apart after one backfill run.
     _say(out, name, n,
         f"gross_issuance_tokens history INPUTS — {smetric} {len(kept)} reading(s) "
         f"{kept[0][0].date()}..{kept[-1][0].date()}; gross_burn_tokens {len(burn)} day(s)"
         + (f" {min(burn_days).date()}..{max(burn_days).date()}" if burn_days else "")
-        + f"; fees_usd {len(fees)} day(s) (the burn's 70% tripwire needs it on each day); "
+        + (f" (from revenue_usd {len(revs)} day(s){span(revs)} / price)" if rule == "add_burn" else "")
+        + f"; fees_usd {len(fees)} day(s){span(fees)} (the burn's 70% tripwire needs it on each day); "
         f"{n} row(s) written, {refused} interval(s) refused"
         + (f", {len(no_burn)} day(s) with no burn ({no_burn[0].date()}..{no_burn[-1].date()})"
            if no_burn else ""))

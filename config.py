@@ -511,6 +511,12 @@ METRICS = {
     "one_off_burn_tokens": {"label": "One-off burn (dated; EXCLUDED from every rate)", "kind": "flow", "unit": "tokens",
                             "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
                             "requires_flag": "one_off_flows", "view_only": True},
+    # ETHER.FI sETHFI TOP-UPS (Jake's run 2026-10-06 15:33): ETHFI added to the vault in a transaction that mints
+    # no sETHFI — the reward that lifts the share price. Deposits (shares minted) are not in it.
+    "sethfi_topup_tokens": {
+        "label": "ETHFI topped up into sETHFI with NO shares minted (rewards to stakers; deposits excluded) — log scan",
+        "kind": "flow", "unit": "tokens", "archetypes": [3],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Ether.fi",)},
     "pendle_distributed_tokens": {
         "label": "PENDLE distributed to sPENDLE per epoch (spendle/data sPendleHistoricalData.buybackAmounts)",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
@@ -15960,6 +15966,13 @@ PROJECTS = [
                                  "existing CoW-only scan picks them up; anywhere else, nothing "
                                  "reads them until an address is sourced and wired.",
                 "recorded_on": "2026-09-28",
+                # CANDIDATE ROUTE (Jake's run 2026-10-06 15:33): paid INTO sETHFI as top-ups (no shares minted),
+                # which is what lifted the share price from 2026-09-14. Measured as sethfi_topup_tokens
+                # (log_scans.sethfi_reward_topups); NOT yet actual_buyback_tokens or the yield numerator, pending
+                # who sends the top-ups and whether their ETHFI was bought (check_offline_items.py
+                # etherfi_sethfi_topups).
+                "candidate_route": "sETHFI top-ups — log_scans.sethfi_reward_topups (sethfi_topup_tokens)",
+                "candidate_recorded_on": "2026-10-06",
             },
         },
         "log_scans": [
@@ -16008,6 +16021,41 @@ PROJECTS = [
                 "wired_on": "2026-09-24",
                 "count_from_since": "2026-09-28",
             },
+            # ===== sETHFI TOP-UPS — Jake's run 2026-10-06 15:33. =====
+            # The credibility note saw sETHFI's share price jump (4.7%/yr, then 101.7%/yr over 2026-09-14..23) just
+            # after the new programme passed (2026-09-03, weekly TWAPs): the hypothesis is that bought ETHFI is now
+            # paid INTO the vault rather than through the old wallet. A share price rises only when assets arrive
+            # WITHOUT shares being minted, so every ETHFI inflow to the vault is split by its transaction:
+            # sETHFI minted in the same tx = a DEPOSIT (not counted); none = a TOP-UP (counted). Reconciled to the
+            # wei like every scan. STORED AS ITS OWN SERIES (sethfi_topup_tokens), NOT as actual_buyback_tokens and
+            # not in the yield yet: a top-up is a reward to stakers, but whether it was BOUGHT (vs treasury ETHFI —
+            # the programme lets up to 20M treasury ETHFI cover shortfalls) depends on who sends it and where that
+            # sender's ETHFI came from. check_offline_items.py etherfi_sethfi_topups answers that; the run line
+            # names the senders since 2026-09-03. The old buyback Safe's own top-ups (before 2026-04) are the OLD
+            # programme's distributions to sETHFI holders — the method's check against known history.
+            {
+                "key": "sethfi_reward_topups",
+                "metric": "sethfi_topup_tokens",
+                "chain": "ethereum",
+                "token": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB",
+                "holders": ["0x86B5780b606940Eb59A062aA85a07959518c0161"],
+                "direction": "in",
+                "store": True,
+                "share_mint": {"token": "0x86B5780b606940Eb59A062aA85a07959518c0161",
+                               "source": "sETHFI is its own share token (contracts.sethfi_shares, verified "
+                                         "2026-09-14): a mint is a Transfer from address(0) on it"},
+                "report_since": "2026-09-03",
+                "sender_labels": {
+                    "0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD-programme buyback Safe — its top-ups are the "
+                                                                  "old programme's distributions",
+                    "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f": "ether.fi deployer EOA (an owner of the buyback Safe)",
+                    "0x01e42ad3acd58584ffc1d1982ecbbe758996d601": "ether.fi-controlled Safe (same five owners as the "
+                                                                  "buyback Safe)",
+                    "0x0c83eae1fe72c390a02e426572854931eeff93ba": "protocol treasury (DefiLlama adapter)",
+                    "0x9008d19f58aabd9ed0d60971565aa8510560ab41": "CoW Protocol GPv2Settlement",
+                },
+                "wired_on": "2026-10-06",
+            },
         ],
         "coingecko_id": "ether-fi",
         "defillama_fees_slug": "ether.fi", "defillama_protocol": "ether.fi", "defillama_chain": None,
@@ -16022,7 +16070,9 @@ PROJECTS = [
         # programme (2026-09-03) or a TWAP/CoW executor.
         "defillama_sum_slugs": (
             {"metric": "holders_revenue_usd", "data_type": "dailyHoldersRevenue", "parent": "ether.fi",
-             "parent_id": "parent#ether.fi", "include_names": ("stake",), "retired_after_days": 30,
+             # parent#ether-fi (Jake's run 2026-10-06 15:33: the listing's own parentProtocol, which the run log
+             # read and named; parent#ether.fi matched nothing).
+             "parent_id": "parent#ether-fi", "include_names": ("stake",), "retired_after_days": 30,
              "why": "holders revenue lives in the ether.fi Stake child only since DefiLlama's 2026-08-04 split",
              "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/c9ff7c2da3f3cf8a2189826333013078f7fbcbb6/"
                            "fees/ether-fi-stake/index.ts",
@@ -22012,9 +22062,11 @@ CREDIBILITY: dict = {
         "in_buyback": _c_in("ETHFI bought Q0 (CoW fills into 0x2f53…)", "actual_buyback_tokens", "q0", _c_chk(
             "Silent since 2026-04-01 on the OLD programme's wallet. A NEW 'Programmatic ETHFI Buybacks' programme "
             "passed Snapshot 2026-08-30..09-03 (1,141,999 for, 0 against; The Defiant, secondary) with weekly TWAPs "
-            "— its receiving address is unknown, so its purchases would read as silence here.",
-            "the new programme's executor / receiving address from Ether.fi's buyback page or governance post, then "
-            "scan it")),
+            "— its receiving address is unknown, so its purchases would read as silence here. CANDIDATE (2026-10-06): "
+            "paid INTO sETHFI as top-ups (no shares minted), measured as sethfi_topup_tokens; wired as the buyback "
+            "only once the top-up senders' ETHFI is shown to be bought.",
+            "check_offline_items.py etherfi_sethfi_topups — top-up senders, their Safe owners, and how much of their "
+            "ETHFI came via CoW")),
     },
     # ---------------------------------------------------------------- Fluid
     "Fluid": {

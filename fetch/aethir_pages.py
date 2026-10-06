@@ -53,6 +53,7 @@ User-Agent. The monthly manual supply_units row stays as the fallback (a declare
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -513,7 +514,8 @@ class AethirPages:
         """The page's HTML, "DONE" when it was already read today, or None."""
         from .scrape import robots_verdict
         url = spec["base"].rstrip("/") + "/" + page.lstrip("/")
-        if not self.daily.due(f"aethir_page:{url}", day):
+        gate = self._gate_key(spec, url)
+        if not self.daily.due(gate, day):
             return "DONE"
         ok, why = robots_verdict(url)
         if not ok:
@@ -535,15 +537,27 @@ class AethirPages:
                                    f"(same day included) tries again.", TIER)
             return None
         log.info("aethir_page %s: %s bytes, %d numeric keys, %d RSC chunks", page, f"{size:,}", numeric, chunks)
-        self.daily.done(f"aethir_page:{url}", day)
+        self.daily.done(gate, day)
         return html
+
+    @staticmethod
+    def _gate_key(spec: dict, url: str) -> str:
+        """The once-a-day key for a page, CARRYING A FINGERPRINT OF THE PROJECT'S PAGE CONFIG (Jake's run
+        2026-10-06 15:33: the new ecosystem / APR / monthly-revenue pins did not run — "already read today" —
+        because this morning's read on the OLD config had marked the pages done). Any change to
+        dashboard_pages (fields, arrays, pins, derived sums, totals) makes a new key, so the next run reads
+        every page once on the new config; an unchanged config keeps the gate."""
+        fp = hashlib.sha1(json.dumps(spec, sort_keys=True, default=str).encode()).hexdigest()[:12]
+        return f"aethir_page:{url}#cfg={fp}"
 
     def _project(self, name: str, spec: dict, out) -> None:
         day = str(today().date())
         pages: dict = {}
+        self._done_pages: set = set()
         for page, m in spec["pages"].items():
             html = self._read_page(name, spec, page, day, out)
             if html == "DONE":
+                self._done_pages.add(page)
                 for metric in (m.get("fields") or {}).values():
                     out.mark_current(SOURCE, name, metric, f"{metric}: {page} already read today", TIER)
                 continue
@@ -580,6 +594,12 @@ class AethirPages:
         lacks is named on the cell (PARTIAL)."""
         for t in spec.get("series_totals") or ():
             pts = self._series.get(t["series"])
+            if not pts and getattr(self, "_done_pages", None):
+                # THE PAGE WAS READ EARLIER TODAY on this same config (the gate above): the total stored then
+                # stands — not a failure (Jake's run 2026-10-06 15:33 read this as one).
+                out.mark_current(SOURCE, name, t["metric"], f"{t['metric']}: the page carrying `{t['series']}` "
+                                                            f"was read earlier today — that total stands", TIER)
+                continue
             if not pts:
                 out.fail(SOURCE, name, f"{t['metric']}: `{t['series']}` not read this run. NOTHING STORED.", TIER)
                 continue

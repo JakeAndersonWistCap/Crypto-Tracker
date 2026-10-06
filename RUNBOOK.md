@@ -527,6 +527,55 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ad. Jake's run 2026-10-06 15:33: sETHFI top-ups, Aethir page gate, NEAR burn inputs
+
+**1. Ether.fi: does the new programme pay INTO sETHFI?**
+
+- **(a) The split:** every ETHFI inflow to the sETHFI vault is split by its own transaction.
+  - sETHFI minted in the same transaction = a staking **deposit**, not counted.
+  - No mint = a **top-up**: assets in, no new shares, so the share price rises.
+- **(a) Where it lives:** the new log scan `sethfi_reward_topups` (full history, reconciled to the wei).
+  - It stores `sethfi_topup_tokens` and labels known senders: the old buyback Safe, the deployer, the 600K Safe,
+    the treasury and CoW.
+  - Its run line ends `SINCE 2026-09-03: counted …` with the senders since the programme passed.
+  - The old buyback Safe's own top-ups before 2026-04 are the old programme's distributions, which checks the
+    method against known history.
+  - The first runs seed the vault's whole history over several budgets.
+- **(a)+(c) The probe:** `python check_offline_items.py etherfi_sethfi_topups` covers 2026-08-01 onward:
+  - deposits vs top-ups, and the top-up senders by day;
+  - each sender as a Safe, with owners shared with the buyback Safe;
+  - where each sender's ETHFI came from (CoW GPv2Settlement = **bought**);
+  - top-ups × same-day price vs DefiLlama's ether.fi-stake holders revenue over the same days, from metrics.db.
+- **(b) Not wired yet:** the top-ups are a reward to stakers. They are a **buyback** only if bought; the
+  programme lets up to 20M treasury ETHFI cover shortfalls. So `actual_buyback_tokens` (from 2026-09-03) and the
+  yield numerator are switched once the probe shows the senders' ETHFI came via CoW. The old 0x2f53 scan stays as
+  the dormant route until then; its status stays SILENT. Paste the probe output back.
+- **(d) Parent id:** `parent_id` is now `parent#ether-fi`, as the run log said.
+
+**2. Aethir pins did not run.**
+
+- **Cause:** the once-a-day key was the URL alone, so this morning's read on the old config marked the pages
+  done.
+- **Fix:** the key now carries a fingerprint of `dashboard_pages`. Any config change re-reads every page once,
+  that run.
+- **customer_revenue_cumulative_usd** failed for the same reason: the demand page was skipped, so the monthly list
+  was never parsed. When a page was read earlier today on the same config, the total now stands quietly instead of
+  failing.
+
+**3. NEAR burn history (the issuance cross-check).**
+
+- **Cause:** `revenue_usd` / `fees_usd` were stored from the store's first 100-day window (2026-06-19).
+  `fetch/backfill.py` skipped them because the derived burn's own unchanged first date marked it "limited", and
+  that skipped its inputs too.
+- **Fix:** short inputs are now re-asked over the year, and the run log says `Near/gross_burn_tokens: limited
+  itself …, but input(s) ['fees_usd', 'revenue_usd'] are short of the year — re-read`.
+- **The history rule:** `history_derive` then fills the burn (revenue / price, with the 70% tripwire) over
+  whatever span comes back.
+- **The cross-check line:** it now prints the revenue and fees spans. If they still start 2026-06-19 after that
+  run, DefiLlama's own chart starts there (its NEAR adapter reads Allium; `start: '2020-07-21'` is declared, the
+  served depth is not). A different source would be needed for the earlier year.
+
+
 ## 11ac. Jake's runs 2026-10-06 (14:07 good, 13:59 void): Sky Q0, Ether.fi parent, ETH coverage, Aethir pins, Chainlink pricing
 
 **Pendle 11.35%:** came from the void 13:59 run. Dropped, nothing changed.

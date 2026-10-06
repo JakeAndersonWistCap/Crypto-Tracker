@@ -187,6 +187,29 @@ class LogScan:
             for a, ts, h, k in top)) if top else ""
         return " OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — " + "; ".join(parts) + largest + "."
 
+    @staticmethod
+    def _since_note(spec: dict, counted: list, labels: dict, scale: int) -> str:
+        """Counted transfers ON OR AFTER spec["report_since"], by sender with first/last date — the window a
+        reader asked about (Ether.fi: sETHFI top-ups since the new programme passed, 2026-09-03)."""
+        since = spec.get("report_since")
+        if not since:
+            return ""
+        t0 = int(pd.Timestamp(since, tz="UTC").timestamp())
+        agg = defaultdict(lambda: [0, 0, 10 ** 12, 0])           # amount, n, first, last
+        for e in counted:
+            t = int(e.get("timeStamp") or 0)
+            if t < t0:
+                continue
+            r = agg[topic_address(e["topics"][1])]
+            r[0] += _amount(e)
+            r[1] += 1
+            r[2], r[3] = min(r[2], t), max(r[3], t)
+        tot = sum(v[0] for v in agg.values())
+        rows = "; ".join(f"{a} {v[0] / scale:,.2f} over {v[1]} transfer(s) {pd.Timestamp(v[2], unit='s').date()}.."
+                         f"{pd.Timestamp(v[3], unit='s').date()}" + (f" [{labels[a]}]" if a in labels else "")
+                         for a, v in sorted(agg.items(), key=lambda kv: -kv[1][0])[:8])
+        return f" SINCE {since}: counted {tot / scale:,.2f}" + (f" — {rows}." if rows else " (none).")
+
     # ------------------------------------------------------------------ one scan
     def _scan(self, p: dict, spec: dict, window_days, out) -> None:
         name, key, metric = p["name"], spec["key"], spec["metric"]
@@ -368,6 +391,30 @@ class LogScan:
                         uncounted[to] += _amount(e)
                     else:
                         counted.append(e)
+        # 4a. DEPOSITS vs TOP-UPS INTO A SHARE VAULT (Ether.fi sETHFI, Jake's run 2026-10-06 15:33). An inflow in
+        # a transaction where the vault's SHARE token was minted (Transfer from address(0)) is a staking DEPOSIT:
+        # it buys shares and leaves the share price where it was. An inflow with no share minted in its
+        # transaction is a TOP-UP: assets rise, shares do not, and every holder's share price rises — the
+        # reward. The mint events are read from the share token's own log, cached like any other stream.
+        sm = spec.get("share_mint")
+        sm_note = ""
+        if sm and direction == "in":
+            try:
+                mints = self._tx_events(chain_id, {"address": sm["token"]}, to_block,
+                                        [TRANSFER_TOPIC, pad_address(config.BURN_ADDRESSES["zero"])])
+            except ExplorerRefused as e:
+                out.fail(SOURCE, name, f"{key}: the share token's mint events could not be read — {e}", TIER)
+                out.gap(name, metric, reason=f"the {key} scan tells deposits from top-ups by the share mints in "
+                        f"each transaction, and those could not be read: {e}", tiers_attempted="2",
+                        suggestion="Re-run; the mint stream is cached like any other.")
+                return
+            minted_in = {str(e["transactionHash"]).lower() for e in mints}
+            dep = [e for e in counted if str(e["transactionHash"]).lower() in minted_in]
+            counted = [e for e in counted if str(e["transactionHash"]).lower() not in minted_in]
+            for e in dep:
+                uncounted["(deposits: shares minted in the same tx)"] += _amount(e)
+            sm_note = (f" Deposits (shares minted in the same transaction) not counted: {len(dep):,} transfer(s); "
+                       f"counted = top-ups, no shares minted ({len(mints):,} mint event(s) on {sm['token']}).")
         # 4b. ONLY TRANSFERS IN A TRANSACTION THAT EMITS A NAMED EVENT (Sky, 2026-09-29).
         # FlapperUniV2SwapOnly swaps on the Uniswap pair, so the SKY it buys reaches the Pause
         # Proxy FROM THE PAIR — and so does any other pair -> Pause Proxy transfer. A transfer is
@@ -422,14 +469,15 @@ class LogScan:
         c_total = sum(_amount(e) for e in counted) / scale
         # LABELLED where config names the sender (2026-09-28): an excluded inflow is recorded as
         # "other inflow, not counted" with what it is, not left as a bare address.
-        labels = {a.lower(): l for a, l in (spec.get("not_counted_labels") or {}).items()}
+        labels = {a.lower(): l for a, l in {**(spec.get("not_counted_labels") or {}),
+                                            **(spec.get("sender_labels") or {})}.items()}
         u_table = ", ".join(f"{a} {v / scale:,.2f}" + (f" [{labels[a]}]" if a in labels else "")
                             for a, v in sorted(uncounted.items(), key=lambda kv: -kv[1])[:8]) or "none"
         by_party = defaultdict(int)
         for e in counted:
             party = topic_address(e["topics"][1 if direction == "in" else 2])
             by_party[party] += _amount(e)
-        c_table = ", ".join(f"{a} {v / scale:,.2f}" for a, v in
+        c_table = ", ".join(f"{a} {v / scale:,.2f}" + (f" [{labels[a]}]" if a in labels else "") for a, v in
                             sorted(by_party.items(), key=lambda kv: -kv[1])[:8]) or "none"
         # WHEN THE COUNTED FLOW LAST MOVED, so a zero in the trailing window can be told apart
         # from a scan that put its transfers somewhere else. Ether.fi, 2026-09-24: 18,982,711.90
@@ -456,7 +504,8 @@ class LogScan:
                    + (f" after refusal(s): {'; '.join(refused)}" if refused else "")
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
                      f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "
-                     f"{u_table}. Not-counted inflow AFTER the last counted transfer: {late_table}." + rq_note)
+                     f"{u_table}. Not-counted inflow AFTER the last counted transfer: {late_table}." + sm_note
+                   + rq_note + self._since_note(spec, counted, labels, scale))
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
 

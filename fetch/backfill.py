@@ -95,6 +95,18 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
             if first is not None and pd.Timestamp(first) <= cutoff:
                 continue
             if limited(name, metric):
+                # A DERIVED SERIES' OWN MEMO DOES NOT SPEAK FOR ITS INPUTS (Jake's run 2026-10-06 15:33: NEAR's
+                # gross_burn_tokens held 108 days, 2026-06-19.., because its inputs revenue_usd / fees_usd were
+                # stored from the store's first 100-day window and never re-read: the burn's unchanged first
+                # date marked IT limited, and that skipped the inputs with it). Inputs still short of the year
+                # and not limited themselves are re-asked; the derived series is not.
+                short = {m for m in derived_inputs(p, metric) if not limited(name, m)
+                         and not (first_dates.get((name, m)) is not None
+                                  and pd.Timestamp(first_dates[(name, m)]) <= cutoff)}
+                if short:
+                    pairs |= {(name, m) for m in short}
+                    why.append(f"{name}/{metric}: limited itself (oldest {first}), but input(s) "
+                               f"{sorted(short)} are short of the year — re-read")
                 continue          # the source had nothing older last time; re-asked monthly
             # INPUTS ARE RE-READ EVEN WHEN THEIR OWN STORED HISTORY IS LONG: a derivation runs on
             # the in-run frame, which is otherwise trimmed to the routine window.

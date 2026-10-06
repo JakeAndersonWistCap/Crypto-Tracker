@@ -23974,9 +23974,9 @@ def test_defillama_include_names_and_no_main_slug_read_for_a_summed_metric():
     from fetch.llama import DefiLlama
     spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["defillama_sum_slugs"]
                 if s["metric"] == "holders_revenue_usd")
-    assert spec["include_names"] == ("stake",) and spec["parent_id"] == "parent#ether.fi"
-    listing = [{"name": "ether.fi Stake", "slug": "ether.fi-stake", "parentProtocol": "parent#ether.fi"},
-               {"name": "ether.fi Cash", "slug": "ether.fi-cash", "parentProtocol": "parent#ether.fi"}]
+    assert spec["include_names"] == ("stake",) and spec["parent_id"] == "parent#ether-fi"
+    listing = [{"name": "ether.fi Stake", "slug": "ether.fi-stake", "parentProtocol": "parent#ether-fi"},
+               {"name": "ether.fi Cash", "slug": "ether.fi-cash", "parentProtocol": "parent#ether-fi"}]
     tried = []
 
     def chart(slug, data_type="dailyHoldersRevenue"):
@@ -24442,6 +24442,8 @@ def test_defillama_summed_children_use_the_listing_parent_id_when_the_configured
     from fetch.llama import DefiLlama
     eth = config.PROJECT_BY_NAME["Ether.fi"]
     spec = next(s for s in eth["defillama_sum_slugs"] if s["metric"] == "holders_revenue_usd")
+    assert spec["parent_id"] == "parent#ether-fi"           # fixed from the run log (Jake, 2026-10-06 15:33)
+    spec = dict(spec, parent_id="parent#ether.fi")          # the stale id, to exercise the fallback
 
     def run(listing):
         tried = []
@@ -24489,3 +24491,175 @@ def test_a_differenced_flows_first_row_covers_the_day_before_its_date():
     assert bw._differenced_first(g.assign(source="chain:ethereum:burn_logs:delta"))
     assert not bw._differenced_first(g.assign(source="validatorqueue:staked_amount"))
     assert not bw._differenced_first(pd.DataFrame(columns=["date", "value", "source"]))
+
+
+def test_sethfi_scan_counts_top_ups_and_leaves_out_deposits_that_mint_shares(monkeypatch):
+    """Jake's run 2026-10-06 15:33: sETHFI's share price jumped after the new buyback programme passed. ETHFI
+    reaching the vault in a transaction that mints sETHFI is a DEPOSIT (not counted); with no mint it is a
+    TOP-UP — the reward that lifts the share price — counted and stored as sethfi_topup_tokens, senders
+    labelled, and the senders since 2026-09-03 listed. Reconciliation still covers every inflow."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    spec = dict(next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups"))
+    assert spec["metric"] == "sethfi_topup_tokens" and spec["store"] and spec["report_since"] == "2026-09-03"
+    assert spec["share_mint"]["token"].lower() == spec["holders"][0].lower() == "0x86b5780b606940eb59a062aa85a07959518c0161"
+    vault, share = "0x86b5780b606940eb59a062aa85a07959518c0161", "0xshare"
+    user, safe = "0x00000000000000000000000000000000000000a1", "0x00000000000000000000000000000000000000b2"
+    old = "0x2f5301a3d59388c509c65f8698f521377d41fd0f"
+    spec.update(token="0xtoken", share_mint={"token": share})
+    E, day = 10 ** 18, 86_400
+    t0 = int(pd.Timestamp("2026-03-01").timestamp())
+    t1 = int(pd.Timestamp("2026-09-15").timestamp())
+    h = pad_address(vault)
+    ins = [_elog(100, 0, [TRANSFER_TOPIC, pad_address(user), h], 5 * E, ts=t0, tx="0xdep1"),       # deposit
+           _elog(150, 0, [TRANSFER_TOPIC, pad_address(old), h], 2 * E, ts=t0 + day, tx="0xold1"),  # old programme
+           _elog(200, 0, [TRANSFER_TOPIC, pad_address(safe), h], 3 * E, ts=t1, tx="0xtop1"),       # new top-up
+           _elog(210, 0, [TRANSFER_TOPIC, pad_address(user), h], 1 * E, ts=t1 + day, tx="0xdep2")]  # deposit
+    mints = [_elog(100, 1, [TRANSFER_TOPIC, pad_address("0x0000000000000000000000000000000000000000"),
+                            pad_address(user)], 5 * E, ts=t0, tx="0xdep1"),
+             _elog(210, 1, [TRANSFER_TOPIC, pad_address("0x0000000000000000000000000000000000000000"),
+                            pad_address(user)], 1 * E, ts=t1 + day, tx="0xdep2")]
+    for m in mints:
+        m["address"] = share
+    logs = {("0xtoken", None, h): ins, ("0xtoken", h, None): [],
+            (share, pad_address("0x0000000000000000000000000000000000000000"), None): mints}
+    out = _run_scan(monkeypatch, spec, logs, {vault: 11 * E}, name="Ether.fi")
+    f = out.frame()
+    got = f[f.metric == "sethfi_topup_tokens"].set_index("date")["value"]
+    assert got.sum() == 5.0, got[got > 0]                                   # 2 (old programme) + 3 (new)
+    assert got[pd.Timestamp("2026-09-15")] == 3.0 and got[pd.Timestamp("2026-03-02")] == 2.0
+    assert got[pd.Timestamp("2026-03-01")] == 0.0, "the deposit day holds no top-up"
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert "Deposits (shares minted in the same transaction) not counted: 2 transfer(s)" in line, line
+    assert "(deposits: shares minted in the same tx) 6.00" in line
+    assert f"{old} 2.00 [OLD-programme buyback Safe" in line
+    assert f"SINCE 2026-09-03: counted 3.00 — {safe} 3.00 over 1 transfer(s) 2026-09-15..2026-09-15." in line
+    assert "buyback_last_inflow_date" not in set(f.metric), "not a buyback series"
+
+
+def test_a_limited_derived_burn_still_gets_its_short_inputs_re_read_over_the_year(monkeypatch, tmp_path):
+    """Jake's run 2026-10-06 15:33: NEAR's derived-issuance cross-check refused 264 intervals — gross_burn_tokens
+    held 108 days (2026-06-19..), because revenue_usd / fees_usd were stored from the store's first 100-day window
+    and the burn's own unchanged first date marked it 'limited', which skipped its inputs too. Short inputs are
+    now re-asked over the year (and said); once they are found limited too, the burn asks for nothing more."""
+    import pandas as pd
+    from fetch import backfill as bf
+    from fetch.base import today
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    t = today()
+    near = config.PROJECT_BY_NAME["Near"]
+    short = str((t - pd.Timedelta(days=108)).date())
+    first = {("Near", "gross_burn_tokens"): short, ("Near", "revenue_usd"): short, ("Near", "fees_usd"): short,
+             ("Near", "price_usd"): str((t - pd.Timedelta(days=400)).date())}
+    bf.record({("Near", "gross_burn_tokens")}, first)            # the burn found "nothing older" last time
+    pairs, why = bf.plan([near], first)
+    assert {("Near", "revenue_usd"), ("Near", "fees_usd")} <= pairs, (pairs, why)
+    line = next(w for w in why if w.startswith("Near/gross_burn_tokens"))
+    assert line == (f"Near/gross_burn_tokens: limited itself (oldest {short}), but input(s) ['fees_usd', "
+                    f"'revenue_usd'] are short of the year — re-read"), line
+    # once the inputs are found limited too, the burn asks for nothing more this month
+    bf.record({("Near", "revenue_usd"), ("Near", "fees_usd")}, first)
+    _, why2 = bf.plan([near], first)
+    assert not any(w.startswith("Near/gross_burn_tokens") for w in why2), why2
+
+
+def test_aethir_page_gate_reopens_when_the_page_config_changes(monkeypatch, tmp_path):
+    """Jake's run 2026-10-06 15:33: the new ecosystem / APR / monthly-revenue pins did not run — "already read
+    today" — because the morning's read on the OLD config had marked the pages done, and
+    customer_revenue_cumulative_usd then FAILED ("monthlyNetworkRevenue not read this run") for the same reason.
+    The once-a-day key carries a fingerprint of dashboard_pages: unchanged config, the page is skipped and the
+    total stands quietly; changed config, the page is read again the same day."""
+    import fetch.aethir_pages as apm
+    import fetch.scrape as scrape
+    from fetch.aethir_pages import AethirPages
+    from fetch.base import FetchOutput
+    from fetch.logcache import DailyChecks
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    monkeypatch.setattr(apm, "today", lambda: pd.Timestamp("2026-10-06"))
+    objs = [{"arr": 62_000_000.0, "a": 1.0, "b": 2.0, "c": 3.0}]
+    chunk = json.dumps("1a:" + json.dumps(objs))[1:-1]
+    html = f'<html><script>self.__next_f.push([1,"{chunk}"])</script></html>'
+    got = []
+
+    def get(url):
+        got.append(url)
+        return html
+    spec = {"base": "https://dashboard.aethir.com", "pages": {"protocol/demand-metric": {"fields": {"arr": "arr_usd"}}},
+            "series_totals": ({"series": "monthlyNetworkRevenue", "metric": "customer_revenue_cumulative_usd",
+                               "source": "aethir_page:protocol/demand-metric.sum(monthlyNetworkRevenue)"},)}
+    daily = DailyChecks(tmp_path)
+
+    def run(sp):
+        out = FetchOutput()
+        AethirPages(get=get, daily=daily)._project("Aethir", sp, out)
+        return out
+    run(spec)
+    assert len(got) == 1
+    out2 = run(spec)                                   # same day, same config: not re-read
+    assert len(got) == 1
+    msgs = " | ".join(e.message for e in out2.log)
+    assert "monthlyNetworkRevenue` was read earlier today — that total stands" in msgs, msgs
+    assert "not read this run" not in msgs
+    changed = {**spec, "pages": {"protocol/demand-metric": {"fields": {"arr": "arr_usd", "a": "arr_usd_alt"}}}}
+    run(changed)                                       # same day, new config: read again
+    assert len(got) == 2
+    k1 = AethirPages._gate_key(spec, "https://x/p")
+    assert k1 == AethirPages._gate_key(dict(spec), "https://x/p") != AethirPages._gate_key(changed, "https://x/p")
+    assert k1.startswith("aethir_page:https://x/p#cfg=")
+
+
+def test_etherfi_sethfi_topups_probe_splits_deposits_from_top_ups_and_traces_the_senders_funding(
+        monkeypatch, tmp_path, capsys):
+    """check_offline_items.py etherfi_sethfi_topups (Jake's run 2026-10-06 15:33): ETHFI into sETHFI since
+    2026-08-01, split by whether sETHFI was minted in the same transaction; top-up senders listed and labelled;
+    each sender's own ETHFI traced (CoW GPv2Settlement = bought); top-ups x same-day price vs DefiLlama holders
+    revenue from metrics.db. Read-only; no address is wired from it."""
+    import sqlite3
+    import check_offline_items as coi
+    import fetch.explorer as fx
+    import fetch.chain as fc
+    safe, user = "0x00000000000000000000000000000000000000b2", "0x00000000000000000000000000000000000000a1"
+    cow, zero = "0x9008d19f58aabd9ed0d60971565aa8510560ab41", "0x" + "0" * 40
+    E = 10 ** 18
+    t = int(pd.Timestamp("2026-09-15", tz="UTC").timestamp())
+
+    def lg(frm, to, v, tx, ts=t):
+        return {"topics": [coi.TRANSFER_TOPIC, coi._pad(frm), coi._pad(to)], "data": hex(v),
+                "transactionHash": tx, "timeStamp": ts, "blockNumber": 1}
+
+    class FakeEx:
+        def configured(self, chain_id):
+            return ["etherscan"]
+
+        def block_at(self, chain_id, ts):
+            return 100
+
+        def get_logs(self, chain_id, address, topics, from_block=0, to_block="latest"):
+            meta = {"explorer": "etherscan", "requests": 1, "refused": []}
+            if address.lower() == coi.ETHFI.lower() and topics[2] == coi._pad(coi.SETHFI):
+                return [lg(user, coi.SETHFI, 5 * E, "0xdep"), lg(safe, coi.SETHFI, 3 * E, "0xtop")], meta
+            if address.lower() == coi.SETHFI.lower():
+                return [lg(zero, user, 5 * E, "0xdep")], meta
+            if topics[2] == coi._pad(safe):
+                return [lg(cow, safe, 3 * E, "0xbuy")], meta
+            return [], meta
+    monkeypatch.setattr(fx, "ExplorerLogs", FakeEx)
+
+    class NoRpc:
+        def web3(self, chain):
+            raise RuntimeError("no rpc here")
+    monkeypatch.setattr(fc, "ChainReader", NoRpc)
+    monkeypatch.chdir(tmp_path)
+    con = sqlite3.connect("metrics.db")
+    con.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL)")
+    con.executemany("INSERT INTO metrics VALUES (?,?,?,?)",
+                    [("2026-09-15", "Ether.fi", "price_usd", 2.0), ("2026-09-15", "Ether.fi", "holders_revenue_usd", 7.0)])
+    con.commit()
+    con.close()
+    coi.etherfi_sethfi_topups()
+    text = capsys.readouterr().out
+    assert "DEPOSITS (shares minted in the tx): 1 transfer(s), 5.00 ETHFI" in text, text
+    assert "TOP-UPS (no shares minted):         1 transfer(s), 3.00 ETHFI" in text
+    assert f"{safe}              3.00 ETHFI     1 tx  2026-09-15..2026-09-15" in text
+    assert f"{safe}: in 3.00 — BOUGHT via CoW 3.00; CoW Protocol GPv2Settlement 3.00" in text
+    assert "top-ups x same-day price $6; DefiLlama holders revenue $7 over 1 day(s) (2026-09-15..2026-09-15)" in text
