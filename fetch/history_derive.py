@@ -121,8 +121,13 @@ def _chain_burn(out, h, p) -> int:
         # the days before the measured leg are still filled — standing down entirely left
         # Ethereum with no burn before 2026-09-29, and so no issuance history. Undeclared: stand
         # down, as before.
-        decl = config.declared_handover(name, "gross_burn_tokens") or {}
-        if (decl.get("ordered_points") or (None,))[0] != BURN_SOURCE:
+        hand = config.declared_handover(name, "gross_burn_tokens") or {}
+        if (hand.get("ordered_points") or (None,))[0] != BURN_SOURCE:
+            srcs = measured["source"].astype(str).value_counts()
+            _say(out, name, 0, f"gross_burn_tokens history NOT RUN — {len(measured)} stored row(s) are not this "
+                               f"derivation (" + ", ".join(f"{k} x{v}" for k, v in srcs.items())
+                               + f", {measured['date'].min().date()}..{measured['date'].max().date()}) and no "
+                               f"handover is declared")
             return 0
         rev = rev[rev["date"] < measured["date"].min()]
     px = _series(h, name, "price_usd").set_index("date")["value"].astype(float)
@@ -130,17 +135,37 @@ def _chain_burn(out, h, p) -> int:
     share, tol = decl.get("share_of_fees"), float(decl.get("share_tolerance") or 0.001)
     held = dict(zip(burn["date"], burn["value"]))
     rows = []
+    # EVERY REFUSAL COUNTED (Jake's run 2026-10-06 16:33: revenue and fees spanned 2,182 days, price a year, and the
+    # burn stayed at 108 days with nothing in the log to say which gate held the rest back).
+    no_fee, off, no_px = [], [], []
     for r in rev.itertuples(index=False):
         if share is not None:
             fee = fees.get(r.date)
-            if fee is None or fee <= 0 or abs(float(r.value) / float(fee) - share) > tol:
+            if fee is None or fee <= 0:
+                no_fee.append(r.date)
+                continue
+            ratio = float(r.value) / float(fee)
+            if abs(ratio - share) > tol:
+                off.append((r.date, ratio))
                 continue           # the methodology tripwire, exactly as at write time
         if r.date in px.index and px[r.date] > 0:
             v = float(r.value) / float(px[r.date])
             if _differs(held, r.date, v):
                 rows.append((r.date, v, BURN_SOURCE))
-    return _emit(out, name, "gross_burn_tokens", rows,
-                 f"revenue_usd / price_usd, DefiLlama burned-fee revenue ({decl.get('components', '')})")
+        else:
+            no_px.append(r.date)
+    n = _emit(out, name, "gross_burn_tokens", rows,
+              f"revenue_usd / price_usd, DefiLlama burned-fee revenue ({decl.get('components', '')})")
+
+    def span(ds):
+        return f"{len(ds)} day(s) {min(ds).date()}..{max(ds).date()}" if ds else "none"
+    ratios = sorted(x for _, x in off)
+    _say(out, name, n,
+         f"gross_burn_tokens history — revenue_usd {span(list(rev['date']))}; price_usd {span(list(px.index))}; "
+         f"{n} row(s) written (new or changed), {len(held)} held before; refused: no price {span(no_px)}, "
+         f"no fees {span(no_fee)}, share tripwire ({share} ± {tol}) {span([d for d, _ in off])}"
+         + (f" — ratios {ratios[0]:.4f}..{ratios[-1]:.4f}, median {ratios[len(ratios) // 2]:.4f}" if ratios else ""))
+    return n
 
 
 def _say(out, name, n, message) -> None:

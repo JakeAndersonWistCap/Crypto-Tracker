@@ -325,6 +325,65 @@ def key_scalar(html: str, key: str):
     return vals[0], ""
 
 
+def _enclosing_object(text: str, pos: int):
+    """The JSON object (dict) that encloses position `pos` in `text`, or None — braces matched, strings
+    respected going forward; the backward walk counts braces only and the result must parse."""
+    depth, i = 0, pos
+    while i >= 0:
+        c = text[i]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            if depth == 0:
+                break
+            depth -= 1
+        i -= 1
+    if i < 0:
+        return None
+    depth, in_str, esc = 0, False, False
+    for j in range(i, len(text)):
+        c = text[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[i:j + 1])
+                except ValueError:
+                    return None
+                return obj if isinstance(obj, dict) else None
+    return None
+
+
+def group_value(html: str, key: str, group: tuple):
+    """(value, why) for `key` read from the object that carries EVERY key in `group` as a number — the tile
+    (Jake's run 2026-10-06 16:33: the current aiStaked / gamingStaked / edgeStaked / idcStaked sit together in
+    one object, nested where the flat reader cannot see it, while stakeHistory's dated entries carry two of
+    them each). Objects at any depth; one distinct value or nothing."""
+    text = rsc_text(html)
+    vals = set()
+    for m in re.finditer(re.escape(f'"{key}"') + r"\s*:\s*-?\d", text):
+        obj = _enclosing_object(text, m.start())
+        if obj and all(isinstance(obj.get(k), (int, float)) and not isinstance(obj.get(k), bool) for k in group):
+            vals.add(float(obj[key]))
+    if not vals:
+        return None, f"no object carries all of {', '.join(group)} together"
+    if len(vals) > 1:
+        return None, f"{len(vals)} objects carry all of {', '.join(group)} with different `{key}` ({sorted(vals)[:4]})"
+    return vals.pop(), ""
+
+
 def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = None):
     """[day] for labels served as DD/MM with NO YEAR (weeklyNetworkRevenue "08/06"), or why not.
     The year is INFERRED FROM THE SEQUENCE, which ends at the current week (Jake's probes5): the last
@@ -566,7 +625,8 @@ class AethirPages:
             pages[page] = html
             for key, metric in (m.get("fields") or {}).items():
                 self._store(name, page, key, metric, html, out,
-                            history=key not in (m.get("current_only") or ()))
+                            history=key not in (m.get("current_only") or ()),
+                            group=tuple(m.get("current_group") or ()))
             for key, a in (m.get("arrays") or {}).items():
                 self._array(name, page, key, a, html, out)
             for key in m.get("report") or ():
@@ -586,7 +646,6 @@ class AethirPages:
         self._cross_checks(name, spec, pages, out)
         self._series_checks(name, spec, resolved, out)
         self._series_totals(name, spec, out)
-        self._apr_series(name, spec, pages, out)
 
     def _series_totals(self, name: str, spec: dict, out) -> None:
         """A cumulative figure DERIVED as the sum of a pinned series read this run (Jake's pins 2026-10-06:
@@ -610,59 +669,19 @@ class AethirPages:
                     f"{pts[-1][0].date()} = {total:,.2f}" + (f" — PARTIAL: {t['missing']}" if t.get("missing") else ""),
                     TIER)
 
-    def _apr_series(self, name: str, spec: dict, pages: dict, out) -> None:
-        """WHICH STATISTIC OF A DAILY APR SERIES IS THE PRINTED FIGURE (Jake, 2026-10-06): the onchain-metric
-        `ai` / `gaming` series (daily APR) against the labelled average Jake read on a date. Each candidate —
-        the point on that date, the mean of the series to that date, and its trailing 7/30/90-day means — is
-        computed AS OF THE READING DATE and compared with the reading. Exactly one within `tol`: that statistic
-        is pinned and stored today. None or several: nothing is stored, and every candidate is named."""
-        for fid, a in (spec.get("apr_series") or {}).items():
-            html = pages.get(a["page"])
-            if html is None:
-                continue
-            _cur, pts, why = current_and_series(html, a["key"])
-            if not pts:
-                out.fail(SOURCE, name, f"{a['metric']}: `{a['key']}` on {a['page']} is not a dated series "
-                                       f"({why or 'no points'}). NOTHING STORED.", TIER)
-                continue
-            s = pd.Series({d: v for d, v in pts}).sort_index()
-
-            def stats(at):
-                h = s[s.index <= at]
-                if h.empty:
-                    return {}
-                out_ = {"point": float(h.iloc[-1]), "mean_all": float(h.mean())}
-                for n in (7, 30, 90):
-                    w = h[h.index > at - pd.Timedelta(days=n)]
-                    if len(w) >= max(3, n // 2):
-                        out_[f"mean_{n}d"] = float(w.mean())
-                return out_
-            d0 = pd.Timestamp(a["read_on"])
-            then = stats(d0)
-            ok = [k for k, v in then.items() if abs(v / a["anchor"] - 1) <= a.get("tol", 0.01)]
-            listing = ", ".join(f"{k} {v:.4f} ({v / a['anchor'] - 1:+.1%})" for k, v in then.items())
-            if len(ok) != 1:
-                out.fail(SOURCE, name, f"{a['metric']}: \"{a['label']}\" read {a['anchor']} on {a['read_on']}; "
-                                       f"`{a['key']}` as of that date gives {listing or 'no points by then'} — "
-                                       + ("NONE" if not ok else f"{len(ok)} ({', '.join(ok)})")
-                                       + f" within {a.get('tol', 0.01):.0%}. Left UNPINNED; NOTHING STORED.", TIER)
-                continue
-            now = stats(s.index[-1])
-            if ok[0] not in now:
-                out.fail(SOURCE, name, f"{a['metric']}: pinned statistic {ok[0]} cannot be computed today", TIER)
-                continue
-            v = now[ok[0]]
-            out.add(point(name, a["metric"], v, f"{SOURCE}:{a['page']}.{a['key']}[{ok[0]}]", TIER, today()),
-                    SOURCE, name, f"{a['metric']} = {ok[0]} of `{a['key']}` = {v:.4f} as of {s.index[-1].date()} — "
-                                  f"PINNED: on {a['read_on']} it gave {then[ok[0]]:.4f} against the printed "
-                                  f"{a['anchor']} (candidates: {listing})", TIER)
-
     def _store(self, name: str, page: str, key: str, metric: str, html: str, out,
-               history: bool = True) -> None:
+               history: bool = True, group: tuple = ()) -> None:
         """The tile's CURRENT figure dated today, and — unless the field is current-only — the chart's
-        dated points before today as its history. Same source: one measuring point."""
+        dated points before today as its history. Same source: one measuring point. A key in the page's
+        `current_group` takes its current figure from the object holding the whole group (the tile)."""
         src = f"{SOURCE}:{page}.{key}"
         cur, pts, why = current_and_series(html, key)
+        if key in group:
+            gv, gwhy = group_value(html, key, group)
+            if gv is not None:
+                cur, why = gv, "current from the tile object carrying " + "/".join(group)
+            elif cur is None:
+                why = gwhy
         if cur is None and not pts:
             # A KEY BESIDE AN ARRAY (Jake's probes5: "arr"; the supply page's totalRewards sits with
             # weeklyData) is invisible to the flat-object reader: read by key name anywhere, ONE value.

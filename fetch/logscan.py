@@ -370,17 +370,42 @@ class LogScan:
         excluded = {a.lower() for a in spec.get("exclude_counterparties") or []}
         count_from = {a.lower() for a in spec["count_from"]} if spec.get("count_from") else None
         counted, uncounted, uncounted_ev = [], defaultdict(int), []
+        # SWAP ATTRIBUTION (Jake, 2026-10-06 16:33): "bought" means ANY DEX fill, not CoW only. An inflow counts when
+        # its sender is a declared swap venue (CoW GPv2Settlement, the Uniswap v4 PoolManager — native-ETH swaps
+        # pay no ERC-20 out) OR the holder paid ANOTHER token out in the same transaction (every router and
+        # aggregator: the wallet sells one token and receives this one). Read from the holder's outgoing Transfer
+        # events of every contract (a topic-only query, cached like any stream).
+        swap = spec.get("attribution") == "swap" and direction == "in"
+        paid_txs: dict = {}
+        if swap:
+            venues = {a.lower() for a in spec.get("swap_venues") or ()}
+            try:
+                for h in holders:
+                    sent = self._tx_events(chain_id, {"address": None}, to_block, [TRANSFER_TOPIC, pad_address(h)])
+                    paid_txs[h] = {str(e["transactionHash"]).lower() for e in sent
+                                   if str(e.get("address") or "").lower() != token.lower()}
+            except ExplorerRefused as e:
+                out.fail(SOURCE, name, f"{key}: the holders' outgoing transfers (any token) could not be read — {e}", TIER)
+                out.gap(name, metric, reason=f"the {key} scan counts an inflow as BOUGHT when the holder paid another "
+                        f"token out in the same transaction, and those transfers could not be read: {e}",
+                        tiers_attempted="2", suggestion="Re-run; the stream is cached like any other.")
+                return
+        per_holder = defaultdict(lambda: [0, 0])                 # counted wei, last timestamp
         if direction == "in":
             for h in holders:
                 for e in ins[h]:
                     frm = topic_address(e["topics"][1])
                     if frm in internal:
                         continue
-                    if frm in excluded or frm in MINT_SENDERS or (count_from is not None and frm not in count_from):
+                    bought = (not swap) or frm in venues or str(e["transactionHash"]).lower() in paid_txs.get(h, ())
+                    if (frm in excluded or frm in MINT_SENDERS or not bought
+                            or (count_from is not None and frm not in count_from)):
                         uncounted[frm] += _amount(e)
                         uncounted_ev.append((frm, e))
                     else:
                         counted.append(e)
+                        per_holder[h][0] += _amount(e)
+                        per_holder[h][1] = max(per_holder[h][1], int(e.get("timeStamp") or 0))
         else:
             for h in holders:
                 for e in outs[h]:
@@ -505,6 +530,12 @@ class LogScan:
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
                      f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "
                      f"{u_table}. Not-counted inflow AFTER the last counted transfer: {late_table}." + sm_note
+                   + (" BY HOLDER: " + "; ".join(
+                       f"{hh} {v[0] / scale:,.2f}" + (f" (last {pd.Timestamp(v[1], unit='s').date()})" if v[1] else "")
+                       + (f" [{labels[hh]}]" if hh in labels else "") for hh, v in per_holder.items()) + "."
+                      if len(holders) > 1 and per_holder else "")
+                   + (f" Bought = a fill from a swap venue ({len(venues)}) or a transaction in which the holder paid "
+                      f"another token out." if swap else "")
                    + rq_note + self._since_note(spec, counted, labels, scale))
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)

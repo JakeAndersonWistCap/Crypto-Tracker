@@ -513,6 +513,13 @@ METRICS = {
                             "requires_flag": "one_off_flows", "view_only": True},
     # ETHER.FI sETHFI TOP-UPS (Jake's run 2026-10-06 15:33): ETHFI added to the vault in a transaction that mints
     # no sETHFI — the reward that lifts the share price. Deposits (shares minted) are not in it.
+    # ETHER.FI'S DEFILLAMA HOLDERS REVENUE, A CROSS-CHECK ONLY (Jake, 2026-10-06 16:33): the ether.fi-stake adapter
+    # books DEX trades whose taker is the OLD buyback wallet; it reads $0 for the new programme's route.
+    "holders_revenue_usd_defillama": {"label": "DefiLlama ether.fi-stake holders revenue — trades by the OLD buyback "
+                                               "wallet only; misses the new top-up Safe route. Cross-check, not a figure",
+                                      "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1],
+                                      "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Ether.fi",),
+                                      "view_only": True},
     "sethfi_topup_tokens": {
         "label": "ETHFI topped up into sETHFI with NO shares minted (rewards to stakers; deposits excluded) — log scan",
         "kind": "flow", "unit": "tokens", "archetypes": [3],
@@ -8318,6 +8325,11 @@ PROJECTS = [
                     # The component TILES are current-only: their history comes from stakeHistory below,
                     # under the same measuring point (one source per component).
                     "current_only": ("totalStaked", "aiStaked", "gamingStaked", "edgeStaked", "idcStaked"),
+                    # THE TILE OBJECT (Jake's run 2026-10-06 16:33): the current component figures sit together
+                    # in one nested object (aiStaked 416,626,182.69, gamingStaked 371,377,113.56, edgeStaked
+                    # 136,696,638, idcStaked 866,896,004.12 = totalStaked 1,791,595,938) — read from the object
+                    # carrying all four, never from stakeHistory's dated entries (the monthly history).
+                    "current_group": ("aiStaked", "gamingStaked", "edgeStaked", "idcStaked"),
                     "components": {"total": "totalStaked",
                                    "parts": ("idcStaked", "aiStaked", "gamingStaked", "edgeStaked")},
                     # "Staking Rewards Emission Schedule" — paid to STAKERS, not A2's supplier emissions.
@@ -8436,16 +8448,9 @@ PROJECTS = [
                  "source": "aethir_page:protocol/demand-metric.sum(monthlyNetworkRevenue)",
                  "missing": "June-July 2024 not in the monthly list"},
             ),
-            # AVERAGE APR OF THE AI / GAMING POOL vs the onchain-metric `ai` / `gaming` daily APR series
-            # (~0.07-0.17): the statistic that reproduces Jake's 2026-10-01 reading is pinned, or none is.
-            "apr_series": {
-                "apr_ai": {"label": "Average APR of AI Pool", "metric": "staking_apr_ai",
-                           "page": "protocol/onchain-metric", "key": "ai", "anchor": 0.1249,
-                           "read_on": "2026-10-01", "tol": 0.01},
-                "apr_gaming": {"label": "Average APR of Gaming Pool", "metric": "staking_apr_gaming",
-                               "page": "protocol/onchain-metric", "key": "gaming", "anchor": 0.1408,
-                               "read_on": "2026-10-01", "tol": 0.01},
-            },
+            # (AVERAGE APR OF THE AI / GAMING POOL: the `ai` / `gaming` arrays carry NO DATES — 620 / 686 bare values
+            # in Jake's run 2026-10-06 16:33 — so which statistic the page prints cannot be established. Closed
+            # UNAVAILABLE (client-computed), Jake's 2026-10-01 reading the reference; the apr_series pin is removed.)
             "cross_checks": (
                 {"what": "idcStaked on the two pages",
                  "pair": (("protocol/onchain-metric", "idcStaked"), ("protocol/supply-metric", "idcStaked"))},
@@ -15941,7 +15946,8 @@ PROJECTS = [
                 "last_purchase_source": "log_scans.buyback_wallet_inflow, CoW settlements only "
                                         "(count_from GPv2Settlement), run 20260928T142424Z: "
                                         "1,099 transfers, 17,984,520.10 ETHFI",
-                "status": "SILENT since 2026-04-01 — the last CoW purchase (reconciled to the wei)",
+                "status": "DORMANT since 2026-04-01 — the last CoW purchase (reconciled to the wei); the programme "
+                          "continues through the new top-up Safe (see new)",
                 "sources": ["etherfi-protocol/smart-contracts script/deploys/Deployed.s.sol "
                             "(buyback wallet, PRIMARY)",
                             "etherfi.gitbook.io/gov/ethfi-buyback-program via aragon "
@@ -15961,8 +15967,20 @@ PROJECTS = [
                              "shortfalls; the Foundation can change the splits.",
                 "destination": "SPLIT hold/distribute. 'users' is NOT established to mean sETHFI "
                                "holders.",
-                "receiving_address": None,
-                "why_not_wired": "no source names it. If purchases land at 0x2f5301a3... the "
+                # ===== ACTIVE VIA THE TOP-UP SAFE — wired 2026-10-06 16:33 (Jake). =====
+                # 0x3fb6784e… (Safe 2-of-5, 4 of 5 owners shared with the buyback Safe) BUYS ETHFI on DEXs (Uniswap v4)
+                # and pays it INTO sETHFI as top-ups (no shares minted). actual_buyback_tokens = ETHFI bought into it
+                # via any DEX (log_scans.buyback_wallet_inflow, attribution "swap"); the staking yield's numerator =
+                # sethfi_topup_tokens (all rewards, however funded), shown with "of which bought / of which
+                # transferred". THE FIRST TOP-UP (2026-08-13) PREDATES the 2026-09-03 vote.
+                "receiving_address": "0x3fb6784e263643656f386a0371644931133d7b78",
+                "receiving_address_source": "Jake's check_offline_items.py etherfi_sethfi_topups, 2026-10-06: 535,069 of "
+                                            "535,092.59 ETHFI topped up into sETHFI since 2026-08-01; Safe getOwners "
+                                            "shares 4 of 5 owners with 0x2f5301a3…",
+                "status": "ACTIVE via the top-up Safe 0x3fb6784e… (first top-up 2026-08-13, before the vote)",
+                "first_topup": "2026-08-13",
+                "was_not_wired_because": "no source named an address until the 2026-10-06 probe.",
+                "why_not_wired": "(superseded 2026-10-06) no source names it. If purchases land at 0x2f5301a3... the "
                                  "existing CoW-only scan picks them up; anywhere else, nothing "
                                  "reads them until an address is sourced and wired.",
                 "recorded_on": "2026-09-28",
@@ -15981,18 +15999,36 @@ PROJECTS = [
                 "metric": "actual_buyback_tokens",
                 "chain": "ethereum",
                 "token": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB",
-                "holders": ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F"],
+                # TWO WALLETS, ONE SERIES (Jake, 2026-10-06 16:33). The old-programme buyback Safe (0x2f53…, dormant
+                # since 2026-04-01) and the top-up Safe 0x3fb6784e… — Safe 2-of-5, 4 of its 5 owners shared with the
+                # buyback Safe (Jake's etherfi_sethfi_topups probe, on-chain getOwners, 2026-10-06), which paid
+                # 535,069 of the 535,092.59 ETHFI topped up into sETHFI since 2026-08-01 (2026-08-13, 09-14, 09-26). A
+                # hop between the two is internal and never counts. https://etherscan.io/address/0x3fb6784e263643656f386a0371644931133d7b78
+                "holders": ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+                            "0x3fb6784e263643656f386a0371644931133d7b78"],
                 "direction": "in",
                 "store": True,
-                # ===== CoW PURCHASES ONLY — Jake's decision, 2026-09-28. =====
+                # ===== BOUGHT = ANY DEX FILL — Jake, 2026-10-06 16:33 (was CoW only, 2026-09-28). =====
+                # The top-up Safe buys through Uniswap v4 (1,047,757.47 ETHFI from the PoolManager since 08-01), which
+                # the CoW-only rule read as 0. An inflow counts when its sender is a swap venue below, OR the wallet
+                # paid ANOTHER token out in the same transaction (routers and aggregators: 1inch, 0x, Universal
+                # Router...). Treasury/foundation transfers (no payment out) are not purchases — named in the
+                # not-counted table. The old wallet's history is unchanged where every purchase was a CoW fill.
+                "attribution": "swap",
+                "swap_venues": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41",
+                                "0x000000000004444c5dc75cb358380d2e3de08a90"],
+                "swap_venues_source": "GPv2Settlement: cowprotocol/contracts networks.json (HEAD c07a93e, 2026-09-01), "
+                                      "chain 1. Uniswap v4 PoolManager: Uniswap/sdks main, "
+                                      "sdks/sdk-core/src/addresses.ts MAINNET_ADDRESSES.v4PoolManagerAddress, read "
+                                      "2026-10-06",
+                # ===== (superseded 2026-10-06) CoW PURCHASES ONLY — Jake's decision, 2026-09-28. =====
                 # Was "dedicated_wallet" (every non-mint inflow counted). Run 20260925T084404Z
                 # showed 18,982,711.90 counted, of which 996,510.67 came from two non-market
                 # senders. CoW Protocol is the documented execution venue for BOTH the old
                 # programme and the new one (weekly TWAPs), and the new programme's up-to-20M
                 # treasury ETHFI top-ups must never count as purchases if they pass through this
                 # wallet. Expected cumulative on the next run: 17,984,520.10.
-                "attribution": "count_from",
-                "count_from": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41"],
+                "count_from_was": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41"],
                 "count_from_source": "cowprotocol/contracts networks.json (HEAD c07a93e, "
                                      "2026-09-01), GPv2Settlement chain 1 = "
                                      "0x9008D19f58AAbD9eD0D60971565AA8510560ab41 — PRIMARY",
@@ -16010,6 +16046,16 @@ PROJECTS = [
                     "0x01e42ad3acd58584ffc1d1982ecbbe758996d601":
                         "ether.fi-controlled Safe (v1.4.1, 2-of-5, the SAME five owners as the buyback Safe, incl. "
                         "the deployer EOA; Jake's on-chain read 2026-10-06) — internal transfer, not a purchase",
+                    # 5,000,000.00 ETHFI into the top-up Safe since 2026-08-01 (Jake's probe, 2026-10-06). NOT YET
+                    # IDENTIFIED (not in ether.fi's Deployed.s.sol; no web hit): check_offline_items.py
+                    # etherfi_topup_safe reads it. A transfer either way — no token was paid out for it.
+                    "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd":
+                        "UNIDENTIFIED sender of 5,000,000 ETHFI to the top-up Safe — a transfer (treasury / "
+                        "reward-shortfall allowance?), not a purchase",
+                },
+                "sender_labels": {
+                    "0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD-programme buyback Safe (dormant since 2026-04-01)",
+                    "0x3fb6784e263643656f386a0371644931133d7b78": "NEW top-up Safe (4 of 5 owners shared with the buyback Safe)",
                 },
                 "attribution_sources": [
                     "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/script/deploys/Deployed.s.sol "
@@ -16053,6 +16099,8 @@ PROJECTS = [
                                                                   "buyback Safe)",
                     "0x0c83eae1fe72c390a02e426572854931eeff93ba": "protocol treasury (DefiLlama adapter)",
                     "0x9008d19f58aabd9ed0d60971565aa8510560ab41": "CoW Protocol GPv2Settlement",
+                    "0x3fb6784e263643656f386a0371644931133d7b78": "ether.fi top-up Safe (2-of-5; 4 of 5 owners shared "
+                                                                  "with the buyback Safe)",
                 },
                 "wired_on": "2026-10-06",
             },
@@ -16068,8 +16116,12 @@ PROJECTS = [
         # ETHFI only — plus ten hand-entered off-chain USDC buybacks 2024-07-31..2025-04-30 (~$1.31M). It is
         # BUY PRESSURE into the wallet, not a payment to sETHFI stakers; nothing in the adapter names the new
         # programme (2026-09-03) or a TWAP/CoW executor.
+        # A LABELLED CROSS-CHECK FROM 2026-10-06 (Jake): stored as holders_revenue_usd_defillama — the main slug's
+        # holders revenue too (defillama_metric_as) — because the adapter only sees the old wallet's trades and reads
+        # $0 for the new programme (2026-09-03..10-05) while the top-up Safe bought on Uniswap v4.
+        "defillama_metric_as": {"holders_revenue_usd": "holders_revenue_usd_defillama"},
         "defillama_sum_slugs": (
-            {"metric": "holders_revenue_usd", "data_type": "dailyHoldersRevenue", "parent": "ether.fi",
+            {"metric": "holders_revenue_usd_defillama", "data_type": "dailyHoldersRevenue", "parent": "ether.fi",
              # parent#ether-fi (Jake's run 2026-10-06 15:33: the listing's own parentProtocol, which the run log
              # read and named; parent#ether.fi matched nothing).
              "parent_id": "parent#ether-fi", "include_names": ("stake",), "retired_after_days": 30,
@@ -17120,12 +17172,22 @@ PROTOCOL_YIELD = {
                                "cross_check": "~2.68M PENDLE distributed Feb -> late Sep 2026 "
                                               "(Jake, from Pendle's staking page) ~ 4.6M/yr -> "
                                               "~2.2% on ~208M reward-bearing"}},
-    "Ether.fi": {"revenue": "holders_revenue_usd", "lock": "locked_tokens_underlying",
-                 # ** THE YIELD ASSUMES BUYBACKS REACH sETHFI HOLDERS. ** True of the old
-                 # programme (100% to sETHFI holders), UNCONFIRMED for the new one — see
-                 # Ether.fi.buyback_programmes. Shown on the A3 cell. Added 2026-09-28.
-                 "caveat": "new programme (passed 2026-09-03) splits purchases between treasury "
-                           "and user rewards; recipient class unconfirmed"},
+    # ===== ETHER.FI: WHAT STAKERS RECEIVE, IN TOKENS (Jake, 2026-10-06 16:33). =====
+    # The numerator is sethfi_topup_tokens — ETHFI paid INTO sETHFI with no shares minted, the reward that lifts the
+    # share price — whatever funded it. Beside it, "of which bought" = ETHFI bought on DEXs over the same window
+    # (actual_buyback_tokens), capped at the top-ups; the rest was transferred in (treasury / foundation — the
+    # top-up Safe received 5,000,000 from 0x83971edb…, unidentified). ETHFI is fungible, so the split ALLOCATES
+    # purchases first; it does not trace tokens. The dollar column reads DefiLlama's holders revenue, which misses
+    # this route ($0 over 2026-09-03..10-05) — a labelled cross-check, not the yield.
+    # (Until 2026-10-06 the numerator was DefiLlama holders revenue and the cell carried "recipients
+    # unconfirmed": the top-ups are now measured going INTO sETHFI, so the recipients are established.)
+    "Ether.fi": {"revenue": "holders_revenue_usd_defillama", "lock": "locked_tokens_underlying",
+                 "token_yield": {"tokens": "sethfi_topup_tokens", "bought": "actual_buyback_tokens",
+                                 "note": "TOKEN YIELD — ETHFI topped up into sETHFI (no shares minted: rewards to "
+                                         "stakers, however funded), annualised over its covered days, over the "
+                                         "ETHFI sETHFI holds. Since 2026-08-13 paid by the top-up Safe 0x3fb6784e…; "
+                                         "before 2026-04 by the old buyback Safe. The dollar column beside it is "
+                                         "DefiLlama's, which misses this route — a cross-check only."}},
 }
 # ===== PENDLE'S sPENDLE STAKING PAGE, read by Jake 2026-09-29. Reference only. =====
 PENDLE_STAKING_PAGE_2026_09_29 = {
@@ -19070,6 +19132,30 @@ UNAVAILABLE = [
            "inside edgeRewards (earnings + stipend), not separately"),
           ("edge_daily_reward_pool_tokens", "Edge Daily Reward Pool",
            "the daily rise of edgeRewards stands in for it in the supplier emissions"))),
+    # ===== AETHIR STAKING APRs (Jake, 2026-10-06 16:33). =====
+    *({"project": "Aethir", "metric": m, "closed_on": "2026-10-06",
+       "summary": f"\"Average APR of {pool} Pool\" is computed in the browser: the payload's `{key}` array is "
+                  f"{n} UNDATED values, so neither the window nor the statistic behind the printed figure can be "
+                  f"established.",
+       "what_was_tried": "matching the printed figure by value (2026-10-01); testing the point / mean / 7-30-90-day "
+                         "means of the series as of the reading date (2026-10-06) — the array has no dates to window.",
+       "impact": f"no stored APR; the REFERENCE is Jake's reading on the rendered page, {ref:.2%} on 2026-10-01.",
+       "reference": {"value": ref, "read_on": "2026-10-01", "read_by": "Jake",
+                     "source": f"dashboard.aethir.com/protocol/onchain-metric, \"Average APR of {pool} Pool\""},
+       "reopen_if": "the payload carries the printed APR under a key, or the array carries dates."}
+      for m, pool, key, n, ref in (("staking_apr_ai", "AI", "ai", 620, 0.1249),
+                                   ("staking_apr_gaming", "Gaming", "gaming", 686, 0.1408))),
+    # ===== ETHER.FI HOLDERS REVENUE IN DOLLARS (Jake, 2026-10-06 16:33). =====
+    {"project": "Ether.fi", "metric": "holders_revenue_usd", "closed_on": "2026-10-06",
+     "summary": "No source sees the new programme in dollars: DefiLlama's ether.fi-stake holders revenue books only the "
+                "OLD buyback wallet's trades and reads $0 over 2026-09-03..10-05, while the top-up Safe 0x3fb6784e… "
+                "bought on Uniswap v4 and paid sETHFI holders.",
+     "what_was_tried": "DefiLlama ether.fi-stake child via parent#ether-fi (read 2026-10-06 16:33); Jake's "
+                       "etherfi_sethfi_topups probe (same day) found the route it misses.",
+     "impact": "What holders receive is measured in TOKENS (sethfi_topup_tokens, the yield's numerator) and what is "
+               "bought in tokens (actual_buyback_tokens); DefiLlama's figure is kept as holders_revenue_usd_defillama, "
+               "a labelled cross-check.",
+     "reopen_if": "an aggregator or Ether.fi publishes the new programme's spend in dollars."},
     # ===== WORLD MOBILE'S TWO BUYBACK CLOSURES WERE REMOVED 2026-09-17, NOT SOFTENED. =====
     # actual_buyback_tokens and actual_buyback_usd were closed here on the grounds that "the
     # destination is undocumented, so a token figure cannot be given a meaning". The MiCA filing
@@ -22059,14 +22145,12 @@ CREDIBILITY: dict = {
                               "note": "What stakers actually earned on-chain vs DefiLlama holders revenue / stake. The "
                                       "share price jumped (4.7%/yr then 101.7%/yr, 2026-09-14..23) — unexplained and "
                                       "flagged; the app's own sETHFI APR is not read."},
-        "in_buyback": _c_in("ETHFI bought Q0 (CoW fills into 0x2f53…)", "actual_buyback_tokens", "q0", _c_chk(
-            "Silent since 2026-04-01 on the OLD programme's wallet. A NEW 'Programmatic ETHFI Buybacks' programme "
-            "passed Snapshot 2026-08-30..09-03 (1,141,999 for, 0 against; The Defiant, secondary) with weekly TWAPs "
-            "— its receiving address is unknown, so its purchases would read as silence here. CANDIDATE (2026-10-06): "
-            "paid INTO sETHFI as top-ups (no shares minted), measured as sethfi_topup_tokens; wired as the buyback "
-            "only once the top-up senders' ETHFI is shown to be bought.",
-            "check_offline_items.py etherfi_sethfi_topups — top-up senders, their Safe owners, and how much of their "
-            "ETHFI came via CoW")),
+        "in_buyback": _c_in("ETHFI bought Q0 (DEX fills into 0x2f53… + the top-up Safe 0x3fb6…)", "actual_buyback_tokens", "q0", _c_chk(
+            "OLD wallet dormant since 2026-04-01; the NEW programme (Snapshot passed 2026-09-03) is ACTIVE through the "
+            "top-up Safe 0x3fb6784e… (4 of 5 owners shared with the buyback Safe), which buys on Uniswap v4 and pays "
+            "INTO sETHFI. DefiLlama's ether.fi-stake holders revenue reads $0 over 2026-09-03..10-05 — it does not see "
+            "this route, so it is no reference for it.",
+            "Ether.fi publishing its weekly buyback amounts, to set against the DEX fills counted here")),
     },
     # ---------------------------------------------------------------- Fluid
     "Fluid": {

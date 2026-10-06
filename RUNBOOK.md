@@ -527,6 +527,61 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ae. Jake's probe + run 2026-10-06 16:33: Ether.fi's new route wired, NEAR burn gates, Aethir tile and APRs
+
+**1. Ether.fi.**
+
+- **(a) Bought = any DEX fill.** `log_scans.buyback_wallet_inflow` now uses attribution `swap`. An inflow counts
+  when either:
+  - its sender is a swap venue: CoW GPv2Settlement, or the Uniswap v4 PoolManager
+    `0x000000000004444c5dc75cB358380D2e3dE08A90` (Uniswap/sdks `sdk-core/src/addresses.ts`, read 2026-10-06); or
+  - the wallet paid ANOTHER token out in the same transaction (any router or aggregator).
+
+  The outgoing transfers come from a topic-only explorer query (every contract), cached. A transfer with nothing
+  paid out is not a purchase: 0x83971edb's 5M, the deployer, the 600K Safe.
+  - `check_offline_items.py etherfi_topup_safe` re-classifies the top-up Safe's inflows on that rule, bought vs
+    transferred by month and by sender.
+  - The `etherfi_sethfi_topups` line now counts v4 fills too.
+- **(b) 0x83971edb:** not in ether.fi's `Deployed.s.sol`, and no web hit. `etherfi_topup_safe` reads it on-chain:
+  code size, Safe owners vs the buyback Safe, VestingWallet getters, and where its ETHFI came from. Either way its
+  5M is counted as a transfer, never a buyback. Paste the probe output back to name it.
+- **(c) Wired:**
+  - **Buyback:** `actual_buyback_tokens` = DEX buys into the old wallet (dormant since 2026-04-01) plus the top-up
+    Safe `0x3fb6784e…` (4 of 5 owners shared with the buyback Safe). One series, the same source, a per-holder
+    line in the log.
+  - **Yield:** the token yield's numerator is `sethfi_topup_tokens` (all rewards, however funded). The new A3
+    column "of which BOUGHT" = Q0 buys ÷ Q0 top-ups, capped at 100%, with purchases allocated first; the rest was
+    transferred in.
+  - **Status:** ACTIVE via the top-up Safe. The first top-up (2026-08-13) predates the 2026-09-03 vote.
+- **(d) DefiLlama is a cross-check only:**
+  - DefiLlama's holders revenue is stored as `holders_revenue_usd_defillama`, a labelled cross-check. It reads $0
+    for this route.
+  - `holders_revenue_usd` is closed UNAVAILABLE for Ether.fi, and the dollar yield column reads the cross-check.
+  - **To move the stored rows:** run `python run_sql.py CD`, then `python run_sql.py --delete CD`.
+
+**2. NEAR burn.**
+
+- **Why:** the full-span rule existed and refused days silently.
+- **Fix:** `gross_burn_tokens history — …` now prints the revenue and price spans, the rows written, and every
+  refusal with its dates:
+  - no price;
+  - no fees;
+  - the 70% tripwire (0.7 ± 0.001), with the ratios it saw.
+- **Expected:** on synthetic data with the ratio holding, it fills every day that has a price (365). If DefiLlama's
+  older NEAR revenue was booked on a different methodology (ratio ≠ 0.7), the tripwire refuses those days and the
+  line shows the ratio. That is a methodology question for the burn, not something to loosen. The issuance history
+  then runs on whatever burn exists.
+
+**3. Aethir.**
+
+- **(a) Staked components:** the current `aiStaked` / `gamingStaked` / `edgeStaked` / `idcStaked` are read from
+  the object carrying all four (`current_group`, at any nesting). The flat reader could not see that nested tile,
+  and `stakeHistory` stays the monthly history.
+- **(b) APRs:** the `ai` / `gaming` arrays are undated, so `staking_apr_ai` / `staking_apr_gaming` are closed
+  UNAVAILABLE (client-computed). Your 2026-10-01 readings (12.49% / 14.08%) are the reference. The `apr_series`
+  pin is removed.
+
+
 ## 11ad. Jake's run 2026-10-06 15:33: sETHFI top-ups, Aethir page gate, NEAR burn inputs
 
 **1. Ether.fi: does the new programme pay INTO sETHFI?**

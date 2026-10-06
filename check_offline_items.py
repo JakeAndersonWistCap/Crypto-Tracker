@@ -1312,8 +1312,11 @@ def etherfi_sethfi_topups():
             frm = "0x" + e["topics"][1][-40:].lower()
             cls[known.get(frm) or ("MINT" if frm == zero else frm)] += amt(e)
         rows = ", ".join(f"{k} {v / E:,.2f}" for k, v in sorted(cls.items(), key=lambda kv: -kv[1])[:6])
-        bought = cls.get(known[cow], 0)
-        print(f"    {a}: in {sum(cls.values()) / E:,.2f} — BOUGHT via CoW {bought / E:,.2f}; {rows or 'no inflow'}")
+        # CoW AND UNISWAP v4 (Jake, 2026-10-06 16:33: "BOUGHT via CoW 0.00" missed the v4 PoolManager fills); the
+        # full any-DEX rule (another token paid out in the same tx) is etherfi_topup_safe's.
+        bought = cls.get(known[cow], 0) + sum(v for k, v in cls.items() if k == UNI_V4_POOL_MANAGER)
+        print(f"    {a}: in {sum(cls.values()) / E:,.2f} — BOUGHT via CoW + Uniswap v4 {bought / E:,.2f}; "
+              f"{rows or 'no inflow'}")
 
     # d) DefiLlama holders revenue over the same days
     print("\n  vs DEFILLAMA ether.fi-stake HOLDERS REVENUE (metrics.db):")
@@ -1343,7 +1346,144 @@ def etherfi_sethfi_topups():
           + (f" ({min(hr)}..{max(hr)})" if hr else " — none stored (parent id fixed this round; next run)"))
     print("\n  PASTE BACK. Top-ups from an ether.fi Safe whose ETHFI came via CoW = the bought ETHFI paid to stakers "
           "(wire as the buyback from 2026-09-03 + the yield numerator); from the treasury / unbought = rewards, not a "
-          "buyback.")
+          "buyback. For the any-DEX classification by month run etherfi_topup_safe.")
+
+
+ETHERFI_TOPUP_SAFE = "0x3fb6784e263643656f386a0371644931133d7b78"
+ETHERFI_5M_SENDER = "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd"
+UNI_V4_POOL_MANAGER = "0x000000000004444c5dc75cb358380d2e3de08a90"   # Uniswap/sdks sdk-core addresses.ts (mainnet)
+
+
+def etherfi_topup_safe():
+    """Ether.fi (Jake, 2026-10-06 16:33): the top-up Safe 0x3fb6784e… buys ETHFI and pays it into sETHFI.
+      a) every ETHFI inflow to it, classified on the pipeline's rule (log_scans.buyback_wallet_inflow,
+         attribution "swap"): BOUGHT when the sender is a swap venue (CoW GPv2Settlement, Uniswap v4 PoolManager)
+         or the Safe paid ANOTHER token out in the same transaction; otherwise TRANSFERRED — by month and sender;
+      b) who 0x83971edb… is (sender of 5,000,000 ETHFI): code size, Safe owners vs the buyback Safe's, the
+         OpenZeppelin VestingWallet getters (beneficiary/start/duration/owner), and where its own ETHFI came from.
+    Read-only, Etherscan V2 + the Ethereum RPC. Nothing is wired from it."""
+    head("ETHER.FI — the top-up Safe's ETHFI: bought vs transferred; who is 0x83971edb…")
+    import pandas as pd                                     # noqa: PLC0415
+    from collections import defaultdict                     # noqa: PLC0415
+    from fetch.base import redact                           # noqa: PLC0415
+    try:
+        from fetch.explorer import ExplorerLogs, ExplorerRefused   # noqa: PLC0415
+    except ImportError as e:
+        print(f"  fetch.explorer not importable: {e}")
+        return
+    ex = ExplorerLogs()
+    if not ex.configured(1):
+        print("  no Etherscan key in .env (ETHERSCAN_API_KEY) — nothing read")
+        return
+    safe, cow = ETHERFI_TOPUP_SAFE, "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
+    venues = {cow: "CoW GPv2Settlement", UNI_V4_POOL_MANAGER: "Uniswap v4 PoolManager"}
+    known = {"0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD buyback Safe",
+             "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f": "ether.fi deployer EOA",
+             "0x0c83eae1fe72c390a02e426572854931eeff93ba": "protocol treasury (Deployed.s.sol TREASURY)",
+             ETHERFI_5M_SENDER: "0x83971edb… (unidentified)", safe: "SELF", **venues}
+    E = 10 ** 18
+    try:
+        ins, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(safe)])
+        sent, _ = ex.get_logs(1, None, [TRANSFER_TOPIC, _pad(safe)])
+    except ExplorerRefused as e:
+        print(f"  explorer refused: {redact(str(e))[:200]}")
+        return
+    paid = {str(e["transactionHash"]).lower() for e in sent if str(e.get("address") or "").lower() != ETHFI.lower()}
+
+    def amt(e):
+        return int(str(e.get("data") or "0x0"), 16)
+    month = defaultdict(lambda: [0, 0])                    # bought, transferred
+    who = defaultdict(lambda: [0, 0, "", ""])              # amount, n, class, last
+    for e in ins:
+        frm = "0x" + e["topics"][1][-40:].lower()
+        if frm == safe:
+            cls = "self"
+        elif frm in venues or str(e["transactionHash"]).lower() in paid:
+            cls = "BOUGHT"
+        else:
+            cls = "transferred"
+        m = pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").strftime("%Y-%m")
+        if cls != "self":
+            month[m][0 if cls == "BOUGHT" else 1] += amt(e)
+        r = who[(frm, cls)]
+        r[0] += amt(e)
+        r[1] += 1
+        r[3] = max(r[3], str(pd.Timestamp(int(e.get("timeStamp") or 0), unit="s").date()))
+    print(f"  {len(ins):,} ETHFI inflow(s); the Safe sent another token out in {len(paid):,} transaction(s)")
+    print("\n  BY MONTH (ETHFI):            BOUGHT      TRANSFERRED")
+    for m in sorted(month):
+        b, t = month[m]
+        print(f"    {m}   {b / E:>16,.2f}   {t / E:>16,.2f}")
+    tb, tt = sum(v[0] for v in month.values()), sum(v[1] for v in month.values())
+    print(f"    TOTAL     {tb / E:>16,.2f}   {tt / E:>16,.2f}")
+    print("\n  BY SENDER:")
+    for (frm, cls), (v, n, _, last) in sorted(who.items(), key=lambda kv: -kv[1][0]):
+        print(f"    {frm}  {cls:<11} {v / E:>16,.2f}  {n:>4} tx  last {last}  {known.get(frm, '')}")
+
+    # b) 0x83971edb
+    print(f"\n  WHO IS {ETHERFI_5M_SENDER}?")
+    from fetch.chain import ChainReader                     # noqa: PLC0415
+    try:
+        r = ChainReader()
+        w3 = r.web3("ethereum")
+    except Exception as e:  # noqa: BLE001
+        print(f"    no Ethereum RPC — {redact(str(e))[:160]}")
+        w3 = None
+    if w3 is not None:
+        a = r.checksum(ETHERFI_5M_SENDER)
+        code = w3.eth.get_code(a)
+        print(f"    code: {len(code)} byte(s) — {'contract' if code else 'EOA'}")
+        abi = [{"name": n, "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": t}]}
+               for n, t in (("getOwners", "address[]"), ("getThreshold", "uint256"), ("VERSION", "string"),
+                            ("beneficiary", "address"), ("owner", "address"), ("start", "uint256"),
+                            ("duration", "uint256"))]
+        c = w3.eth.contract(address=a, abi=abi)
+        ref = None
+        try:
+            bs = w3.eth.contract(address=r.checksum("0x2f5301a3D59388c509C65f8698f521377D41Fd0F"), abi=abi)
+            ref = {o.lower() for o in bs.functions.getOwners().call()}
+        except Exception:  # noqa: BLE001
+            pass
+        for fn in ("getOwners", "getThreshold", "VERSION", "beneficiary", "owner", "start", "duration"):
+            try:
+                v = getattr(c.functions, fn)().call()
+            except Exception:  # noqa: BLE001
+                continue
+            if fn == "getOwners":
+                own = {o.lower() for o in v}
+                print(f"    Safe owners ({len(own)}): {', '.join(sorted(own))}")
+                if ref is not None:
+                    print(f"    owners shared with the buyback Safe: {len(own & ref)} of {len(own)}")
+            elif fn in ("start",) and isinstance(v, int):
+                print(f"    {fn}() = {v} ({pd.Timestamp(v, unit='s').date() if v > 0 else '-'})")
+            elif fn == "duration" and isinstance(v, int):
+                print(f"    duration() = {v} s ({v / 86_400:,.0f} days)")
+            else:
+                print(f"    {fn}() = {str(v).lower()}  {known.get(str(v).lower(), '')}")
+    try:
+        src, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, None, _pad(ETHERFI_5M_SENDER)])
+        out_, _ = ex.get_logs(1, ETHFI, [TRANSFER_TOPIC, _pad(ETHERFI_5M_SENDER), None])
+    except ExplorerRefused as e:
+        print(f"    its ETHFI flows unreadable — {redact(str(e))[:120]}")
+        return
+    agg = defaultdict(int)
+    for e in src:
+        agg["0x" + e["topics"][1][-40:].lower()] += amt(e)
+    print(f"    ETHFI IN: {sum(agg.values()) / E:,.2f} over {len(src)} transfer(s) — "
+          + ", ".join(f"{k} {v / E:,.2f}" + (f" [{known[k]}]" if k in known else "")
+                      for k, v in sorted(agg.items(), key=lambda kv: -kv[1])[:6]))
+    agg = defaultdict(int)
+    for e in out_:
+        agg["0x" + e["topics"][2][-40:].lower()] += amt(e)
+    print(f"    ETHFI OUT: {sum(agg.values()) / E:,.2f} over {len(out_)} transfer(s) — "
+          + ", ".join(f"{k} {v / E:,.2f}" + (f" [{known[k]}]" if k in known else "")
+                      for k, v in sorted(agg.items(), key=lambda kv: -kv[1])[:6]))
+    if src:
+        first = min(int(e.get("timeStamp") or 0) for e in src)
+        print(f"    first ETHFI in: {pd.Timestamp(first, unit='s').date()}"
+              + (" — a mint/allocation-era date" if first < int(pd.Timestamp('2024-04-01').timestamp()) else ""))
+    print("\n  PASTE BACK. A Safe sharing owners with the buyback Safe, or a vesting/treasury contract, makes the 5M a "
+          "TRANSFER (reward-shortfall allowance), never a buyback — the pipeline already counts it that way.")
 
 
 GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
@@ -5714,7 +5854,7 @@ CHECKS = (
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
-    hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, aethir_pin_keys,
+    hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,

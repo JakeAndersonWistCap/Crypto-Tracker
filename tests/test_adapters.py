@@ -13976,7 +13976,8 @@ def test_the_four_scans_are_declared_as_the_round_asked(monkeypatch):
     c = specs["Chainlink"]["reserve_inflow"]
     assert c["count_from"] == ["0x5680681ED3767B96914CE741a308155C7fB9171d"] and c["store"]
     e = specs["Ether.fi"]["buyback_wallet_inflow"]
-    assert e["holders"] == ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F"] and e["store"]
+    assert e["holders"] == ["0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+                            "0x3fb6784e263643656f386a0371644931133d7b78"] and e["store"]   # + top-up Safe, 2026-10-06
     m = specs["Maple"]["treasury_inflow"]
     assert m["holders"] == ["0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"] and m["store"] is False
     # B1 2026-09-28: the outflow scan is retired to a record; the release is a balance flow
@@ -15269,9 +15270,10 @@ def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
             assert "0x2f5301a3D59388c509C65f8698f521377D41Fd0F" in c.comment.text, head
             assert "restart at a different address would leave this flag and the zero" in c.comment.text
             if head == "PROTOCOL STAKING YIELD":
-                assert c.number_format.count("recipients unconfirmed"), c.number_format
-                assert ("new programme (passed 2026-09-03) splits purchases between treasury and "
-                        "user rewards; recipient class unconfirmed") in c.comment.text
+                # 2026-10-06 16:33: the TOKEN yield (top-ups into sETHFI) leads; recipients are established, so
+                # "recipients unconfirmed" is gone — the silence flag stays beside the token note.
+                assert "recipients unconfirmed" not in c.number_format and " · tokens" in c.number_format
+                assert "ETHFI topped up into sETHFI" in c.comment.text
     print("silence ok: Ether.fi 87d SILENT on five A3 cells; GEODNET staleness is not silence")
 
 
@@ -15351,10 +15353,14 @@ def test_ether_fi_counts_cow_settlements_only_and_labels_the_other_inflow(monkey
     senders (ether.fi deployer, unidentified Safe) are recorded as "other inflow, not counted",
     labelled, never summed. With run 20260925T084404Z's three senders that is 17,984,520.10."""
     spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "buyback_wallet_inflow")
-    assert spec["attribution"] == "count_from"
+    # 2026-10-06 16:33: CoW-only became ANY DEX fill (attribution "swap"); CoW is one of its venues, and on the old
+    # wallet's history (every purchase a CoW fill) the count is unchanged.
+    assert spec["attribution"] == "swap"
     cow = "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
     dep, safe = "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f", "0x01e42ad3acd58584ffc1d1982ecbbe758996d601"
-    assert spec["count_from"] == [cow] and set(spec["not_counted_labels"]) == {dep, safe}
+    assert spec["count_from_was"] == [cow] and cow in spec["swap_venues"]
+    assert {dep, safe} <= set(spec["not_counted_labels"])
+    spec = dict(spec, holders=spec["holders"][:1])                   # the old wallet alone
     wallet = spec["holders"][0].lower()
     t0 = int(pd.Timestamp("2026-06-30").timestamp())
     E = 10 ** 16                                      # 0.01 ETHFI, so two-decimal figures are exact
@@ -16462,7 +16468,7 @@ def test_ether_fi_silence_uses_the_scans_cow_only_date_not_older_stored_rows():
     assert r["last_nonzero_date"] == "2026-04-01", r["last_nonzero_date"]
     assert str(r["silence_flag"]).startswith("silent since 2026-04-01"), r["silence_flag"]
     old = config.PROJECT_BY_NAME["Ether.fi"]["buyback_programmes"]["old"]
-    assert old["last_purchase"] == "2026-04-01" and "SILENT since 2026-04-01" in old["status"]
+    assert old["last_purchase"] == "2026-04-01" and "DORMANT since 2026-04-01" in old["status"]
 
 
 def test_nearblocks_first_read_resumes_across_runs_instead_of_restarting(monkeypatch):
@@ -20598,13 +20604,11 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     # ARR PINNED BY KEY (probes5), the value as read kept as a cross-check
     assert float(one("arr_usd").value.iloc[0]) == 62_489_999.90221721
     assert "pinned by key; cross-check vs 62,490,000 as read 2026-10-01: -0.0%" in msgs
-    # APRs: the statistic of the `ai` / `gaming` series that reproduces Jake's 2026-10-01 reading is pinned
-    assert one("staking_apr_ai").value.iloc[0] == pytest.approx(0.1249)
-    assert one("staking_apr_ai").source.iloc[0] == "aethir_page:protocol/onchain-metric.ai[point]"
-    assert "staking_apr_ai = point of `ai` = 0.1249 as of 2026-10-01 — PINNED" in msgs
-    assert one("staking_apr_gaming").empty
-    assert "staking_apr_gaming: \"Average APR of Gaming Pool\" read 0.1408 on 2026-10-01" in msgs
-    assert "point 0.1000 (-29.0%)" in msgs and "NONE within 1%. Left UNPINNED; NOTHING STORED." in msgs
+    # APRs: the `ai` / `gaming` arrays are undated (Jake, 2026-10-06 16:33) — UNAVAILABLE, his reading the reference
+    assert one("staking_apr_ai").empty and one("staking_apr_gaming").empty
+    for m, ref in (("staking_apr_ai", 0.1249), ("staking_apr_gaming", 0.1408)):
+        u = config.unavailable_for("Aethir", m)
+        assert u and u["reference"]["value"] == ref and u["reference"]["read_on"] == "2026-10-01", m
     # ecosystem page, pinned by key; Total Rewards Distributed = the four components
     assert float(one("stath_sophon_pool_tokens").value.iloc[0]) == 592_517_997.39
     assert float(one("eco_checker_rewards_cumulative_tokens").value.iloc[0]) == 3_849_000_000.0
@@ -23956,7 +23960,8 @@ def test_logscan_names_not_counted_inflow_after_the_last_counted_transfer(monkey
     """B1: Ether.fi's CoW-only count went silent while DefiLlama kept booking buybacks; the run log now
     lists inflow from other senders AFTER the last counted transfer, by sender with its last date."""
     spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "buyback_wallet_inflow")
-    cow, other = spec["count_from"][0], "0x00000000000000000000000000000000000000cc"
+    cow, other = spec["swap_venues"][0], "0x00000000000000000000000000000000000000cc"
+    spec = dict(spec, holders=spec["holders"][:1])
     wallet = spec["holders"][0].lower()
     t0 = int(pd.Timestamp("2026-04-01").timestamp())
     E = 10 ** 18
@@ -23973,7 +23978,7 @@ def test_defillama_include_names_and_no_main_slug_read_for_a_summed_metric():
     from fetch.base import FetchOutput
     from fetch.llama import DefiLlama
     spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["defillama_sum_slugs"]
-                if s["metric"] == "holders_revenue_usd")
+                if s["metric"] == "holders_revenue_usd_defillama")
     assert spec["include_names"] == ("stake",) and spec["parent_id"] == "parent#ether-fi"
     listing = [{"name": "ether.fi Stake", "slug": "ether.fi-stake", "parentProtocol": "parent#ether-fi"},
                {"name": "ether.fi Cash", "slug": "ether.fi-cash", "parentProtocol": "parent#ether-fi"}]
@@ -24154,7 +24159,7 @@ def test_defillama_report_since_says_what_the_child_books_and_where():
     """4: Ether.fi's Stake child — holders revenue since 2026-09-03 and DefiLlama's methodology text."""
     from fetch.llama import DefiLlama
     spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["defillama_sum_slugs"]
-                if s["metric"] == "holders_revenue_usd")
+                if s["metric"] == "holders_revenue_usd_defillama")
     assert spec["report_since"] == "2026-09-03"
     ll = DefiLlama.__new__(DefiLlama)
     ll._summary = lambda slug, dt: {"methodology": {"HoldersRevenue": "aggregator trades by the buyback wallet"}}
@@ -24441,7 +24446,7 @@ def test_defillama_summed_children_use_the_listing_parent_id_when_the_configured
     from fetch.base import FetchOutput
     from fetch.llama import DefiLlama
     eth = config.PROJECT_BY_NAME["Ether.fi"]
-    spec = next(s for s in eth["defillama_sum_slugs"] if s["metric"] == "holders_revenue_usd")
+    spec = next(s for s in eth["defillama_sum_slugs"] if s["metric"] == "holders_revenue_usd_defillama")
     assert spec["parent_id"] == "parent#ether-fi"           # fixed from the run log (Jake, 2026-10-06 15:33)
     spec = dict(spec, parent_id="parent#ether.fi")          # the stale id, to exercise the fallback
 
@@ -24661,5 +24666,191 @@ def test_etherfi_sethfi_topups_probe_splits_deposits_from_top_ups_and_traces_the
     assert "DEPOSITS (shares minted in the tx): 1 transfer(s), 5.00 ETHFI" in text, text
     assert "TOP-UPS (no shares minted):         1 transfer(s), 3.00 ETHFI" in text
     assert f"{safe}              3.00 ETHFI     1 tx  2026-09-15..2026-09-15" in text
-    assert f"{safe}: in 3.00 — BOUGHT via CoW 3.00; CoW Protocol GPv2Settlement 3.00" in text
+    assert f"{safe}: in 3.00 — BOUGHT via CoW + Uniswap v4 3.00; CoW Protocol GPv2Settlement 3.00" in text
     assert "top-ups x same-day price $6; DefiLlama holders revenue $7 over 1 day(s) (2026-09-15..2026-09-15)" in text
+
+
+def test_aethir_staked_components_read_their_current_figure_from_the_tile_object():
+    """Jake's run 2026-10-06 16:33: "aiStaked IS in the payload ... but no reader takes it". The current
+    aiStaked / gamingStaked / edgeStaked / idcStaked sit together in one NESTED object (the tile) the flat reader
+    cannot see, while stakeHistory's dated entries carry two of them each — so the current-only components stored
+    nothing. The current figure is read from the object carrying all four; stakeHistory stays the history."""
+    import pytest
+    import fetch.aethir_pages as apm
+    from fetch.aethir_pages import AethirPages, group_value
+    from fetch.base import FetchOutput
+    group = tuple(config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["pages"]["protocol/onchain-metric"]["current_group"])
+    assert group == ("aiStaked", "gamingStaked", "edgeStaked", "idcStaked")
+    tile = {"aiStaked": 416_626_182.69, "gamingStaked": 371_377_113.56, "edgeStaked": 136_696_638,
+            "idcStaked": 866_896_004.12, "note": "a {brace} in a string", "meta": {"x": 1}}
+    blob = {"page": {"tiles": tile, "totalStaked": 1_791_595_938, "athCirculatingSupply": 24_053_550_151,
+                     "stakeHistory": [{"startTime": "2026-08-01T00:00:00.000Z", "aiStaked": 400e6, "gamingStaked": 360e6},
+                                      {"startTime": "2026-09-01T00:00:00.000Z", "aiStaked": 410e6, "gamingStaked": 365e6}]}}
+    chunk = json.dumps("1a:" + json.dumps(blob))[1:-1]
+    html = f'<html><script>self.__next_f.push([1,"{chunk}"])</script></html>'
+    assert sum(group_value(html, k, group)[0] for k in group) == pytest.approx(1_791_595_938.37)
+    assert group_value(html, "aiStaked", group + ("nope",))[0] is None
+    orig = apm.today
+    apm.today = lambda: pd.Timestamp("2026-10-06")
+    try:
+        out = FetchOutput()
+        ap = AethirPages(get=lambda u: html, daily=None)
+        for k, m in (("aiStaked", "locked_tokens_ai"), ("idcStaked", "locked_tokens_idc")):
+            ap._store("Aethir", "protocol/onchain-metric", k, m, html, out, history=False, group=group)
+    finally:
+        apm.today = orig
+    f = out.frame()
+    assert list(f[f.metric == "locked_tokens_ai"].value) == [416_626_182.69]
+    assert list(f[f.metric == "locked_tokens_idc"].value) == [866_896_004.12]
+    assert "current from the tile object carrying aiStaked/gamingStaked/edgeStaked/idcStaked" in \
+        " ".join(e.message for e in out.log)
+
+
+def test_ether_fi_buyback_counts_any_dex_fill_into_both_wallets_and_not_transfers(monkeypatch):
+    """Jake, 2026-10-06 16:33: "bought" means ANY DEX swap — the top-up Safe 0x3fb6784e… buys on Uniswap v4
+    (1,047,757.47 from the PoolManager) which the CoW-only rule read as 0. An inflow counts when its sender is a
+    swap venue (CoW, the v4 PoolManager) or the wallet paid ANOTHER token out in the same transaction (a router);
+    a transfer with nothing paid out (0x83971edb…'s 5M, the deployer) is not a purchase. One series over the old
+    and the new wallet, with a per-holder line."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    spec = dict(next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "buyback_wallet_inflow"))
+    old, safe = "0x2f5301a3d59388c509c65f8698f521377d41fd0f", "0x3fb6784e263643656f386a0371644931133d7b78"
+    cow, v4 = "0x9008d19f58aabd9ed0d60971565aa8510560ab41", "0x000000000004444c5dc75cb358380d2e3de08a90"
+    assert [h.lower() for h in spec["holders"]] == [old, safe] and spec["attribution"] == "swap"
+    assert set(spec["swap_venues"]) == {cow, v4} and "count_from" not in spec
+    dep, five_m = "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f", "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd"
+    router, vault = "0x00000000000000000000000000000000000000ee", "0x86b5780b606940eb59a062aa85a07959518c0161"
+    spec["token"] = "0xtoken"
+    E = 10 ** 18
+    t_old = int(pd.Timestamp("2026-03-20").timestamp())
+    t_new = int(pd.Timestamp("2026-09-10").timestamp())
+    ho, hs = pad_address(old), pad_address(safe)
+    usdc_out = _elog(400, 0, [TRANSFER_TOPIC, hs, pad_address(router)], 1_000 * 10 ** 6, ts=t_new, tx="0xsw1")
+    usdc_out["address"] = "0xusdc"
+    topup = _elog(500, 0, [TRANSFER_TOPIC, hs, pad_address(vault)], 3 * E, ts=t_new + 86_400, tx="0xtop")
+    logs = {("0xtoken", None, ho): [_elog(100, 0, [TRANSFER_TOPIC, pad_address(cow), ho], 5 * E, ts=t_old, tx="0xcow"),
+                                    _elog(110, 0, [TRANSFER_TOPIC, pad_address(dep), ho], 1 * E, ts=t_old, tx="0xdep")],
+            ("0xtoken", ho, None): [],
+            ("0xtoken", None, hs): [_elog(300, 0, [TRANSFER_TOPIC, pad_address(v4), hs], 2 * E, ts=t_new, tx="0xv4"),
+                                    _elog(310, 0, [TRANSFER_TOPIC, pad_address(five_m), hs], 5 * E, ts=t_new, tx="0x5m"),
+                                    _elog(400, 1, [TRANSFER_TOPIC, pad_address(router), hs], 1 * E, ts=t_new, tx="0xsw1")],
+            ("0xtoken", hs, None): [topup],
+            ("", ho, None): [],
+            ("", hs, None): [usdc_out, topup]}
+    out = _run_scan(monkeypatch, spec, logs, {old: 6 * E, safe: 5 * E}, name="Ether.fi")
+    f = out.frame()
+    got = f[f.metric == "actual_buyback_tokens"].set_index("date")["value"]
+    assert got.sum() == 8.0, got[got > 0]                          # 5 (CoW) + 2 (v4) + 1 (router swap)
+    assert got[pd.Timestamp("2026-09-10")] == 3.0 and got[pd.Timestamp("2026-03-20")] == 5.0
+    line = next(e.message for e in out.log if "RECONCILED" in e.message)
+    assert f"BY HOLDER: {old} 5.00 (last 2026-03-20) [OLD-programme buyback Safe" in line, line
+    assert f"{safe} 3.00 (last 2026-09-10) [NEW top-up Safe" in line
+    assert f"{five_m} 5.00 [UNIDENTIFIED sender of 5,000,000 ETHFI" in line
+    assert "Bought = a fill from a swap venue (2) or a transaction in which the holder paid another token out." in line
+    last = f[f.metric == "buyback_last_inflow_date"]
+    assert float(last.value.iloc[0]) == float((pd.Timestamp("2026-09-10") - pd.Timestamp("1899-12-30")).days)
+
+
+def test_ether_fi_yield_numerator_is_the_top_ups_with_the_bought_share_beside_it():
+    """Jake, 2026-10-06 16:33: the protocol staking yield's numerator is sethfi_topup_tokens (rewards to stakers,
+    however funded); beside it "of which bought" = DEX purchases over the top-ups in Q0, capped at 100%, purchases
+    allocated first. DefiLlama's holders revenue is a labelled cross-check (holders_revenue_usd_defillama); the
+    dollar figure is closed UNAVAILABLE for Ether.fi."""
+    import build_workbook as bw
+    y = config.PROTOCOL_YIELD["Ether.fi"]
+    assert y["token_yield"] == {**y["token_yield"], "tokens": "sethfi_topup_tokens", "bought": "actual_buyback_tokens"}
+    assert y["revenue"] == "holders_revenue_usd_defillama" and "caveat" not in y
+    eth = config.PROJECT_BY_NAME["Ether.fi"]
+    assert eth["defillama_metric_as"] == {"holders_revenue_usd": "holders_revenue_usd_defillama"}
+    assert eth["defillama_sum_slugs"][0]["metric"] == "holders_revenue_usd_defillama"
+    assert config.METRICS["holders_revenue_usd_defillama"]["view_only"]
+    assert "misses" in config.unavailable_for("Ether.fi", "holders_revenue_usd")["summary"] or \
+        "only the OLD buyback wallet" in config.unavailable_for("Ether.fi", "holders_revenue_usd")["summary"]
+    new = eth["buyback_programmes"]["new"]
+    assert new["receiving_address"] == "0x3fb6784e263643656f386a0371644931133d7b78" and new["status"].startswith("ACTIVE")
+    assert new["first_topup"] == "2026-08-13" and eth["buyback_programmes"]["old"]["status"].startswith("DORMANT")
+
+    class R:
+        def D(self, r, m, f):
+            return f"{m}@{f}"
+    label, build, *_ , meta = bw._topup_split(R())
+    cell = build(5, eth)
+    assert cell == bw.calc("IF(AND(ISNUMBER(sethfi_topup_tokens@q0),ISNUMBER(actual_buyback_tokens@q0),"
+                           "sethfi_topup_tokens@q0>0),IF(actual_buyback_tokens@q0<sethfi_topup_tokens@q0,"
+                           "actual_buyback_tokens@q0,sethfi_topup_tokens@q0)/sethfi_topup_tokens@q0," + bw.NA + ")")
+    assert build(5, config.PROJECT_BY_NAME["Pendle"]) == ""
+    assert meta["flag_fn"](eth)[1].startswith("OF WHICH BOUGHT")
+    assert "of which BOUGHT" in label
+
+
+def test_near_burn_history_says_which_gate_refused_each_day():
+    """Jake's run 2026-10-06 16:33: revenue_usd / fees_usd spanned 2,182 days and price a year, yet the burn stayed
+    at 108 days with nothing in the log to say why. The burn history (revenue / price, the 70% tripwire on fees)
+    now writes every day it can and names every refusal: no price, no fees, or the tripwire with the ratios seen."""
+    from fetch import history_derive as hd
+    from fetch.base import FetchOutput
+    days = pd.date_range("2025-09-01", "2026-10-04")
+    rows = []
+    for d in days:
+        old = d < pd.Timestamp("2026-06-19")
+        rows += [(d, "Near", "revenue_usd", 1_000.0 if old else 700.0, "defillama"),
+                 (d, "Near", "fees_usd", 1_000.0, "defillama")]
+    rows += [(d, "Near", "price_usd", 2.0, "coingecko") for d in days[-365:]]
+    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source"])
+    out = FetchOutput()
+    n = hd._chain_burn(out, hd._history(long, None), config.PROJECT_BY_NAME["Near"])
+    assert n == 108
+    line = out.log[-1].message
+    assert "revenue_usd 399 day(s) 2025-09-01..2026-10-04; price_usd 365 day(s) 2025-10-05..2026-10-04" in line, line
+    assert "share tripwire (0.7 ± 0.001) 291 day(s) 2025-09-01..2026-06-18 — ratios 1.0000..1.0000" in line
+    # where the ratio holds, the year is filled wherever a price exists
+    long2 = long.assign(value=[700.0 if m == "revenue_usd" else v for m, v in zip(long.metric, long.value)])
+    out2 = FetchOutput()
+    assert hd._chain_burn(out2, hd._history(long2, None), config.PROJECT_BY_NAME["Near"]) == 365
+    assert "no price 34 day(s) 2025-09-01..2025-10-04" in out2.log[-1].message
+
+
+def test_etherfi_topup_safe_probe_splits_bought_from_transferred_by_month(monkeypatch, capsys):
+    """check_offline_items.py etherfi_topup_safe (Jake, 2026-10-06 16:33): the top-up Safe's ETHFI inflows on the
+    pipeline's any-DEX rule — a venue fill (Uniswap v4 PoolManager, CoW) or a tx where the Safe paid another token
+    out is BOUGHT; anything else TRANSFERRED — by month and by sender; then who 0x83971edb… is."""
+    import check_offline_items as coi
+    import fetch.explorer as fx
+    import fetch.chain as fc
+    safe, five_m, router = coi.ETHERFI_TOPUP_SAFE, coi.ETHERFI_5M_SENDER, "0x00000000000000000000000000000000000000ee"
+    E = 10 ** 18
+    aug, sep = int(pd.Timestamp("2026-08-13").timestamp()), int(pd.Timestamp("2026-09-14").timestamp())
+
+    def lg(frm, to, v, tx, ts, addr=None):
+        return {"topics": [coi.TRANSFER_TOPIC, coi._pad(frm), coi._pad(to)], "data": hex(v), "transactionHash": tx,
+                "timeStamp": ts, "blockNumber": 1, "address": addr or coi.ETHFI}
+
+    class FakeEx:
+        def configured(self, chain_id):
+            return ["etherscan"]
+
+        def get_logs(self, chain_id, address, topics, from_block=0, to_block="latest"):
+            meta = {"explorer": "etherscan", "requests": 1, "refused": []}
+            if address is None:                                    # everything the Safe sent
+                return [lg(safe, router, 1000, "0xsw", sep, addr="0xusdc")], meta
+            if topics[2] == coi._pad(safe):
+                return [lg(coi.UNI_V4_POOL_MANAGER, safe, 2 * E, "0xv4", aug), lg(five_m, safe, 5 * E, "0x5m", aug),
+                        lg(router, safe, 1 * E, "0xsw", sep), lg(safe, safe, 4 * E, "0xself", sep)], meta
+            if topics[2] == coi._pad(five_m):
+                return [lg("0x" + "0" * 40, five_m, 9 * E, "0xmint", 1_700_000_000)], meta
+            return [], meta
+    monkeypatch.setattr(fx, "ExplorerLogs", FakeEx)
+
+    class NoRpc:
+        def web3(self, chain):
+            raise RuntimeError("no rpc here")
+    monkeypatch.setattr(fc, "ChainReader", NoRpc)
+    coi.etherfi_topup_safe()
+    text = capsys.readouterr().out
+    assert "2026-08               2.00               5.00" in text, text
+    assert "2026-09               1.00               0.00" in text
+    assert "TOTAL                 3.00               5.00" in text
+    assert f"{five_m}  transferred             5.00     1 tx  last 2026-08-13  0x83971edb… (unidentified)" in text
+    assert f"{coi.UNI_V4_POOL_MANAGER}  BOUGHT                  2.00     1 tx  last 2026-08-13  Uniswap v4" in text
+    assert f"{router}  BOUGHT                  1.00" in text and f"{safe}  self" in text
+    assert "ETHFI IN: 9.00 over 1 transfer(s)" in text and "first ETHFI in: 2023-11-14 — a mint/allocation-era date" in text

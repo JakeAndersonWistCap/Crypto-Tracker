@@ -209,8 +209,9 @@ class ExplorerLogs:
                to_block) -> tuple[list[dict], int]:
         max_n = int(config.EXPLORERS[name]["max_records"])
         cap = int(config.EXPLORER_MAX_REQUESTS_PER_SCAN)
-        params = {"module": "logs", "action": "getLogs", "address": address, "toBlock": to_block,
-                  "offset": max_n}
+        params = {"module": "logs", "action": "getLogs", "toBlock": to_block, "offset": max_n}
+        if address:                     # None: a topic-only query (every contract), e.g. all tokens a wallet sent
+            params["address"] = address
         set_topics = [i for i, t in enumerate(topics) if t]
         for i in set_topics:
             params[f"topic{i}"] = topics[i]

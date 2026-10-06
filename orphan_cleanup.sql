@@ -4343,3 +4343,29 @@ SELECT u.date, u.metric, ROUND(u.value, 2), u.source, u.fetched_at
 --                                              AND source LIKE '%as-buyback%');
 -- DELETE FROM metrics
 --  WHERE project = 'Sky' AND metric = 'actual_buyback_tokens' AND source LIKE '%as-buyback%';
+
+-- ========================================================================================
+-- CD. ETHER.FI holders_revenue_usd -> holders_revenue_usd_defillama (A CROSS-CHECK NOW)  2026-10-06
+--     Jake's run 2026-10-06 16:33: DefiLlama's ether.fi-stake holders revenue books only the OLD buyback wallet's
+--     trades and reads $0 over 2026-09-03..10-05, while the new programme's top-up Safe (0x3fb6784e...) buys on
+--     Uniswap v4 and pays sETHFI holders. From this commit DefiLlama's series is stored as
+--     holders_revenue_usd_defillama (a labelled cross-check) and holders_revenue_usd is closed UNAVAILABLE for
+--     Ether.fi. CD1 shows the stored DefiLlama rows still under the old name; CD2 moves them: first it deletes any
+--     old-name row whose date a new-name row already holds (a run after this commit re-fetched it), then renames
+--     the rest. Only rows whose source names DefiLlama move.
+--     Run: python run_sql.py CD, then python run_sql.py --delete CD.
+-- ========================================================================================
+-- CD1. WHAT MOVES: Ether.fi holders_revenue_usd rows from DefiLlama, and whether the new name holds the date.
+SELECT h.date, ROUND(h.value, 2) AS value, h.source, h.fetched_at,
+       (SELECT COUNT(*) FROM metrics n WHERE n.project = 'Ether.fi' AND n.metric = 'holders_revenue_usd_defillama'
+                                         AND n.date = h.date) AS already_under_new_name
+  FROM metrics h
+ WHERE h.project = 'Ether.fi' AND h.metric = 'holders_revenue_usd' AND h.source LIKE 'defillama%'
+ ORDER BY h.date;
+
+-- CD2. THE MOVE (two statements, in this order).
+-- DELETE FROM metrics
+--  WHERE project = 'Ether.fi' AND metric = 'holders_revenue_usd' AND source LIKE 'defillama%'
+--    AND date IN (SELECT date FROM metrics WHERE project = 'Ether.fi' AND metric = 'holders_revenue_usd_defillama');
+-- UPDATE metrics SET metric = 'holders_revenue_usd_defillama'
+--  WHERE project = 'Ether.fi' AND metric = 'holders_revenue_usd' AND source LIKE 'defillama%';
