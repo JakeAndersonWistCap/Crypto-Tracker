@@ -527,6 +527,90 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ac. Jake's runs 2026-10-06 (14:07 good, 13:59 void): Sky Q0, Ether.fi parent, ETH coverage, Aethir pins, Chainlink pricing
+
+**Pendle 11.35%:** came from the void 13:59 run. Dropped, nothing changed.
+
+**1. "SKY bought Q0 (flapper Exec)" n/a.**
+
+- **Cause:** in the 11:01 run the flapper_purchases log scan failed on the RPC fault. `_derive_buyback`'s
+  split-route relabel then wrote that run's Stage 2 burn into `actual_buyback_tokens` as
+  `…:as-buyback:PARTIAL`. That one row on the newest day sits beside the scan's rows, so the column has two
+  measuring points. Status became MEASURING_POINT_CHANGED and now/Q0 went blank, even though the 14:07 scan
+  reconciled (2,016,749,226.09 SKY over 17,863 transfers).
+- **Fix:** a declared log scan now owns its column, the same way a Dune query does
+  (`config.log_scan_declared`). When the scan produced nothing, the relabel stands down and logs:
+  `actual_buyback_tokens: NOT derived from split route — log scan flapper_purchases sources this column and
+  produced nothing this run …`.
+- **To restore Q0, remove the stray row:** run `python run_sql.py CC`, then `python run_sql.py --delete CC`.
+  The section removes the relabelled token row(s) and the USD row on the same date. Expect the
+  "written after this section was authored" note: the row is dated today.
+
+**2. Ether.fi holders revenue: "no protocol whose parentProtocol is parent#ether.fi".**
+
+- I could not read the DefiLlama listing from here, so the id is **read at run time**:
+  - **Configured id matches nothing:** the ONE parentProtocol carried by entries named like "ether.fi" is used,
+    and the line ends `(fix parent_id in config)`.
+  - **Two candidates:** nothing is stored, and both ids are named.
+  - **None:** the failure lists every ether.fi-named entry with its parentProtocol and slug, so the next run
+    answers the question either way.
+- **The include filter:** children under the id but none named "stake" are now reported as such, not as "no
+  protocol".
+- **Action:** paste the line back and the config id gets fixed.
+
+**3. Ethereum issuance +15.5% vs the curve.**
+
+- **Cause:** the first row of a differenced flow (`derived:d_…`, `…:delta`) is dated the day it was read but
+  holds the day before. Seven daily Eth2Staking steps were annualised over 6 covered days.
+- **Fix:** `_window_coverage` now starts such a series one day earlier when its last row is the as-of day
+  (covered_days and q0_covered_days).
+  - A differenced series read through yesterday already gets the last day from the lag allowance, so it is
+    unchanged.
+  - Plain daily series are unchanged.
+
+**4. Aethir pins** (from `aethir_pin_keys`):
+
+- **protocol/ecosystem, pinned by key:**
+
+  | Key | Metric |
+  |---|---|
+  | totalStaked | `stath_sophon_pool_tokens` |
+  | checkerRewards | `eco_checker_rewards_cumulative_tokens` |
+  | cloudHostRewards | `cloud_host_rewards_cumulative_tokens` |
+  | edgeRewards | `edge_rewards_cumulative_tokens` (earnings + stipend; declared handover from the old summed tiles) |
+  | stakingRewards | `staker_rewards_cumulative_tokens` |
+
+- **Total Rewards Distributed** (`ecosystem_rewards_cumulative_tokens`) is the sum of the four, from the same
+  run.
+- **Supplier emissions:** the day-on-day rise of checker + cloud host + edge. Each leg is shown beside the sum.
+  Staking is apart. The compute-rewards add-on (supply page totalRewards) is retired: cloud hosts are the
+  compute providers, so keeping both would very likely count that leg twice. totalRewards stays stored.
+- **Locked / circulating:** computed (totalStaked / athCirculatingSupply) and logged. It is no longer matched
+  by value.
+- **APRs:** each `ai` / `gaming` series is tested as of 2026-10-01. The candidates are the point, the mean
+  to date, and the 7/30/90-day means. Exactly one within 1% of 0.1249 / 0.1408 is pinned and stored. Otherwise
+  the APR is left **UNPINNED**, and the line lists every candidate.
+- **Total Network Revenue:** the sum of `monthlyNetworkRevenue`, marked PARTIAL `[June-July 2024 not in the
+  monthly list]`.
+- **UNAVAILABLE (client-loaded):** purchases, staked edge devices, edge stipend, edge earnings (separately),
+  edge daily pool.
+
+**5. Chainlink legacy pricing.**
+
+- **Why it never finished:**
+  - The price cache was written only after the loop, so a timed-out tier lost every price it had fetched.
+  - Tokens DefiLlama answers with no price were asked again on every run.
+- **Fix:**
+  - Days are priced newest first, so Q0 fills first.
+  - The cache is saved every 10 days.
+  - No new call is made after 90 s.
+  - An answer with no price is remembered (null). A failed call is not remembered and is asked again.
+- **When it stops early:** the run logs `pricing PAUSED at the 90s budget: N day(s) still to price`, and the
+  next run resumes from there.
+- **Refused-day count:** the `customer_revenue_ccip_legacy_usd` line gives the final refused-day count once
+  that pause line no longer appears.
+
+
 ## 11ab. Jake's run 2026-10-06 11:01: RPC fall-through, run banner, Aethir keys, Ether.fi Safe
 
 **1. The eth_blockNumber failure.** It was not the explorer change.

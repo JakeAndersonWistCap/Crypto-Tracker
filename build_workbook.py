@@ -341,7 +341,17 @@ def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> 
     return max(int((asof - end).days), 0)
 
 
-def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tuple[int, int]:
+def _differenced_first(g: pd.DataFrame) -> bool:
+    """True when the series' FIRST row is a difference of two readings (`derived:d_…` or a `:delta` source):
+    dated the day it was read, it holds the interval ENDING that day, so its coverage starts the day before."""
+    if g is None or g.empty or "source" not in g:
+        return False
+    src = str(g.sort_values("date")["source"].iloc[0])
+    return src.startswith("derived:d_") or ":delta" in src
+
+
+def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp,
+                     differenced: bool = False) -> tuple[int, int]:
     """(days the series actually covers inside the window, days the window asks for).
 
     A TRAILING-30-DAY SUM OVER A SERIES TEN DAYS OLD IS A TEN-DAY SUM, and until 2026-09-21 it was
@@ -363,7 +373,13 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tu
     span = max(int((end - start).days), 0)
     if s.empty:
         return 0, span
-    covered_from = max(start, s.index.min())
+    # A DIFFERENCED FLOW'S FIRST ROW COVERS THE DAY BEFORE ITS DATE (Jake's run 2026-10-06: Ethereum's issuance
+    # read 20,876 against the curve's 18,070, +15.5% — seven daily Eth2Staking steps summed over "6" covered
+    # days, because k daily deltas dated D1..asof were counted asof - D1 = k - 1 days). ONLY when the series
+    # reaches `end`: one whose last row is the day before already gets that day from the lag allowance below
+    # (not truncated at the last observation), and shifting it too would count k deltas over k + 1 days.
+    first = s.index.min() - (pd.Timedelta(days=1) if differenced and s.index.max() >= end else pd.Timedelta(0))
+    covered_from = max(start, first)
     if covered_from > end:
         return 0, span
     # A FIGURE IN THE WINDOW HAS COVERED AT LEAST ONE DAY (2026-09-29). A differenced flow is
@@ -1040,9 +1056,9 @@ def _emissions_basis(p: dict, data_by_key: dict) -> str:
             f"({rate * 90:,.0f} per 90 days)" if rate else "the declared schedule until then")
     if not have:
         return ("NOT YET MEASURED — the component series start with the SECOND consecutive day on which every "
-                "dashboard cumulative (checker, edge, compute) is read; " + decl)
+                "dashboard cumulative (ecosystem checker, cloud host, edge) is read; " + decl)
     first = min(d for _, d in have)
-    return (f"MEASURED from {first} (checker + edge + compute released); {decl} before it. Components from: "
+    return (f"MEASURED from {first} (ecosystem checker + cloud host + edge); {decl} before it. Components from: "
             + "; ".join(f"{lab} {d}" for lab, d in have))
 
 
@@ -1056,10 +1072,11 @@ def _revenue_legs(p: dict) -> list:
     return [spec["core"], *spec["plus"]] if spec else []
 
 
+# Aethir (Jake, 2026-10-06): the ecosystem page's three supplier legs; the compute-rewards add-on is retired
+# (cloudHostRewards is the compute providers' leg).
 _EMISSION_PARTS = (("emissions_checker_tokens", "checker-node rewards"),
-                   ("emissions_edge_tokens", "edge rewards"),
-                   ("emissions_compute_released_tokens", "compute rewards RELEASED (total - locked)"),
-                   ("emissions_compute_earned_tokens", "compute rewards EARNED (incl. vesting)"))
+                   ("emissions_cloud_host_tokens", "cloud host (compute provider) rewards"),
+                   ("emissions_edge_tokens", "edge rewards"))
 
 
 def _added_component(groups: dict, name: str, a: dict):
@@ -2086,13 +2103,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # flows: a monthly series reports a named month above and is not pretending to be
                 # a 30-day sum, so "covers 30 of 30" would be answering a question nobody asked.
                 w_start = asof - pd.Timedelta(days=short)
-                row["covered_days"], row["window_days"] = _window_coverage(s, w_start, asof)
+                diff_first = _differenced_first(g)
+                row["covered_days"], row["window_days"] = _window_coverage(s, w_start, asof, diff_first)
                 # THE SAME TWO QUESTIONS FOR THE Q0 WINDOW, which A4's headline annualises
                 # (x days_per_year / period_days). A Q0 sum over a series that began 42 days ago
                 # is a 42-day sum; a Q0 holding ONE discrete burn is an event, not a rate. Both
                 # are what A4's window caveat reads (_a4_window_caveat). Added 2026-09-25.
                 q_start = asof - pd.Timedelta(days=period)
-                row["q0_covered_days"], _ = _window_coverage(s, q_start, asof)
+                row["q0_covered_days"], _ = _window_coverage(s, q_start, asof, diff_first)
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
                 # The mirror of a part-filled window: after the declared end the true rate is zero,

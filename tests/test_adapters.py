@@ -13045,19 +13045,48 @@ def test_morphos_supply_units_passes_the_bound_that_used_to_reject_it_and_depin_
         "not a handover — two different quantities, and declaring one would stitch them"
 
 
-def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_leg_is_named():
+def test_skys_five_percent_burn_leg_relabels_as_a_partial_buyback_and_the_other_leg_is_named(monkeypatch):
     """A split destination's supply-reduction leg is a burn, so it re-labels like GEODNET's.
 
     22.5 of Stage 2's 27.5 points go to stakers (distributed — no stock, no burn); 5 points are
     bought and burned. The burn leg is sky_stage2_burn_tokens (repointed 2026-09-25 from
     gross_burn_tokens, the blocked Pause Proxy total) under a second name, marked PARTIAL so
     the sheet cannot read one leg as the whole buyback.
+
+    Jake's run 2026-10-06: Sky's flapper_purchases LOG SCAN owns actual_buyback_tokens. When it
+    produced nothing one run (RPC fault), this relabel wrote one row beside the scan's series and
+    blanked "SKY bought Q0" as MEASURING_POINT_CHANGED. With the scan declared the relabel stands
+    down and says why; the split mechanism is tested below with the scan removed.
     """
     import fetch
     from fetch.base import FetchOutput, point
 
     sky = config.PROJECT_BY_NAME["Sky"]
     assert config.buyback_route("Sky")["route"] == "split"
+    burn = pd.concat([point("Sky", "sky_stage2_burn_tokens", 300_000.0, "chain:ethereum:burn_logs[sky_stage2_burn_tokens]", 2,
+                            pd.Timestamp("2026-09-20"))], ignore_index=True)
+
+    # (0) THE SCAN IS DECLARED and stored nothing this run: no relabelled row, and the reason is logged
+    assert config.log_scan_declared("Sky", "actual_buyback_tokens") == "flapper_purchases"
+    assert config.log_scan_declared("Sky", "gross_burn_tokens") is None
+    down = FetchOutput()
+    down.add(burn, "chain", "Sky", "burn", 2)
+    fetch._derive_buyback(down, [sky])
+    assert down.frame().query("metric == 'actual_buyback_tokens'").empty
+    why = [e.message for e in down.log if e.message.startswith("actual_buyback_tokens: NOT derived")]
+    assert why and "log scan flapper_purchases sources this column and produced nothing this run" in why[0], why
+    assert "MEASURING_POINT_CHANGED" in why[0]
+    # ... and when the scan DID store this run, it stands with no relabel and no stand-down line
+    ran = FetchOutput()
+    ran.add(burn, "chain", "Sky", "burn", 2)
+    ran.add(point("Sky", "actual_buyback_tokens", 9_000_000.0, "chain:ethereum:logscan[flapper_purchases]", 2,
+                  pd.Timestamp("2026-09-20")), "chain", "Sky", "scan", 2)
+    fetch._derive_buyback(ran, [sky])
+    assert list(ran.frame().query("metric == 'actual_buyback_tokens'").value) == [9_000_000.0]
+
+    # THE SPLIT MECHANISM, with the scan taken away
+    monkeypatch.setitem(sky, "log_scans", [sp for sp in sky.get("log_scans") or ()
+                                           if sp.get("metric") != "actual_buyback_tokens"])
 
     # (1) WITH A BURN SERIES: re-labelled, PARTIAL, priced on the day.
     out = FetchOutput()
@@ -20484,6 +20513,15 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     hist = [{"startTime": f"{m}T00:00:00.000Z", "endTime": f"{(pd.Timestamp(m) + pd.DateOffset(months=1)).date()}T00:00:00.000Z",
              "aiStaked": 380.2e6 + i * 5e6, "gamingStaked": 287.6e6} for i, m in enumerate(months)]
     onchain += f'<script>self.__next_f.push([1,"{json.dumps(chr(34) + "stakeHistory" + chr(34) + ":" + json.dumps(hist))[1:-1]}"])</script>'
+    # the daily APR series `ai` / `gaming` (Jake's pin run, 2026-10-06): ai climbs to exactly 0.1249 on
+    # 2026-10-01, so only the POINT reproduces the printed "Average APR"; gaming sits at 0.10, so nothing does
+    aprd = pd.date_range("2026-07-04", "2026-10-01")
+    apr = [{"date": str(d.date()), "ai": round(0.05 + (0.1249 - 0.05) * i / (len(aprd) - 1), 6), "gaming": 0.10}
+           for i, d in enumerate(aprd)]
+    onchain += f'<script>self.__next_f.push([1,"{json.dumps("1d:" + json.dumps(apr))[1:-1]}"])</script>'
+    # protocol/ecosystem, pinned by key (Jake, 2026-10-06)
+    eco = page([{"totalStaked": 592_517_997.39, "checkerRewards": 3_849_000_000.0, "cloudHostRewards": 3_280_000_000.0,
+                 "edgeRewards": 2_408_340_163.0, "stakingRewards": 449_478_239.82}])
     # demand-metric (probes5): "arr" sits in an object that also holds the two revenue arrays — the
     # flat-object reader cannot see it; weekly labels are DD/MM with no year
     weeks = pd.date_range("2024-06-03", "2026-09-28", freq="7D")             # the last week is in progress
@@ -20528,6 +20566,8 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     def get(url):
         if "onchain" in url:
             return onchain
+        if "ecosystem" in url:
+            return eco
         if "supply" in url:
             return supply
         if "demand" in url:
@@ -20558,9 +20598,29 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     # ARR PINNED BY KEY (probes5), the value as read kept as a cross-check
     assert float(one("arr_usd").value.iloc[0]) == 62_489_999.90221721
     assert "pinned by key; cross-check vs 62,490,000 as read 2026-10-01: -0.0%" in msgs
-    # labelled, by value
+    # APRs: the statistic of the `ai` / `gaming` series that reproduces Jake's 2026-10-01 reading is pinned
     assert one("staking_apr_ai").value.iloc[0] == pytest.approx(0.1249)
-    assert one("staking_apr_gaming").value.iloc[0] == pytest.approx(0.1408)
+    assert one("staking_apr_ai").source.iloc[0] == "aethir_page:protocol/onchain-metric.ai[point]"
+    assert "staking_apr_ai = point of `ai` = 0.1249 as of 2026-10-01 — PINNED" in msgs
+    assert one("staking_apr_gaming").empty
+    assert "staking_apr_gaming: \"Average APR of Gaming Pool\" read 0.1408 on 2026-10-01" in msgs
+    assert "point 0.1000 (-29.0%)" in msgs and "NONE within 1%. Left UNPINNED; NOTHING STORED." in msgs
+    # ecosystem page, pinned by key; Total Rewards Distributed = the four components
+    assert float(one("stath_sophon_pool_tokens").value.iloc[0]) == 592_517_997.39
+    assert float(one("eco_checker_rewards_cumulative_tokens").value.iloc[0]) == 3_849_000_000.0
+    assert float(one("cloud_host_rewards_cumulative_tokens").value.iloc[0]) == 3_280_000_000.0
+    assert float(one("staker_rewards_cumulative_tokens").value.iloc[0]) == 449_478_239.82
+    assert float(one("ecosystem_rewards_cumulative_tokens").value.iloc[0]) == pytest.approx(
+        3_849_000_000.0 + 3_280_000_000.0 + 2_408_340_163.0 + 449_478_239.82)
+    # Total Network Revenue = the monthly list's sum, PARTIAL for June-July 2024
+    tot = one("customer_revenue_cumulative_usd")
+    assert float(tot.value.iloc[0]) == pytest.approx(sum(o["earning"] for o in mo))
+    assert tot.source.iloc[0] == ("aethir_page:protocol/demand-metric.sum(monthlyNetworkRevenue):PARTIAL"
+                                  "[June-July 2024 not in the monthly list]")
+    # the figures not in any payload are UNAVAILABLE, never value-matched
+    for m in ("compute_purchases_cumulative_tokens", "supply_units_edge", "edge_stipend_cumulative_tokens",
+              "edge_earnings_cumulative_tokens", "edge_daily_reward_pool_tokens"):
+        assert config.unavailable_for("Aethir", m) is not None and one(m).empty, m
     # WEEKLY REVENUE: DD/MM, year inferred from the sequence; the week in progress reported, not stored
     rv = one("customer_revenue_usd")
     assert len(rv) == len(weeks) - 1 and rv.date.iloc[0] == pd.Timestamp("2024-06-03")
@@ -20590,14 +20650,15 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert len(cr) == len(cweeks) - 1 and cr.date.iloc[0] == pd.Timestamp("2026-07-26") and cr.value.iloc[0] == 18_364_931.51
     assert len(one("compute_service_fee_tokens")) == len(cweeks) - 1
     assert config.series_granularity("Aethir", "compute_rewards_tokens") == "weekly"
-    assert float(one("supply_units_edge").value.iloc[0]) == 64_869
     # derived: supplier stocks, utilisation, the ratio check
     assert float(one("checker_rewards_cumulative_tokens").value.iloc[0]) == base + bonus + air
-    assert float(one("edge_rewards_cumulative_tokens").value.iloc[0]) == 2_363_422_512 + 44_917_651
+    assert float(one("edge_rewards_cumulative_tokens").value.iloc[0]) == 2_408_340_163.0     # = earnings + stipend
+    assert set(one("edge_rewards_cumulative_tokens").source) == {"aethir_page:protocol/ecosystem.edgeRewards"}
     assert float(one("utilisation_containers_pct").value.iloc[0]) == pytest.approx(22_089_416 / (433_704 * 168))
     assert "assumes every container available 24/7" in one("utilisation_containers_pct").source.iloc[0]
-    assert "vs the page's Total Locked ATH / Circulating Supply" in msgs
-    assert aeth["dashboard_pages"]["pages"]["protocol/ecosystem"] == {"fields": {}}   # pinned (Jake, 2026-10-01)
+    assert "locked / circulating = totalStaked / athCirculatingSupply = 0.0744" in msgs     # computed
+    assert aeth["dashboard_pages"]["pages"]["protocol/ecosystem"]["fields"]["edgeRewards"] == \
+        "edge_rewards_cumulative_tokens"                                                   # pinned (Jake, 2026-10-06)
     # ambiguity stores nothing
     two = page([{"a": 62_000_000, "b": 63_000_000}])
     unpinned = {**aeth["dashboard_pages"]["labelled"]["arr"], "key": None}
@@ -20605,72 +20666,46 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert resolve_scalar(aeth["dashboard_pages"]["labelled"]["arr"], {"protocol/demand-metric": two}).startswith(
         "pinned `arr` is not in the payload of protocol/demand-metric — `arr` is not in the payload")
 
-    # READ TIME: supplier emissions from the stocks' day-on-day rise; the schedule gives way
+    # READ TIME: supplier emissions = the day-on-day rise of the ecosystem page's checker + cloud host + edge
+    # cumulatives (Jake, 2026-10-06); the schedule gives way. No compute add-on, so no PARTIAL.
     d = pd.date_range("2026-09-25", "2026-10-03")
     sch = pd.DataFrame({"date": d, "project": "Aethir", "metric": "emissions_tokens", "value": 2.87e6,
                         "source": "schedule:config:PARTIAL", "tier": 1})
     days = pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-04"])
-    ck = pd.DataFrame({"date": days, "project": "Aethir", "metric": "checker_rewards_cumulative_tokens",
+    ck = pd.DataFrame({"date": days, "project": "Aethir", "metric": "eco_checker_rewards_cumulative_tokens",
                        "value": [3.849e9, 3.852e9, 3.858e9], "source": "x", "tier": 3})
+    ch = ck.assign(metric="cloud_host_rewards_cumulative_tokens", value=[3.28e9, 3.2826e9, 3.2826e9])
     eg = ck.assign(metric="edge_rewards_cumulative_tokens", value=[2.408e9, 2.409e9, 2.4114e9])
-    groups = {("Aethir", "emissions_tokens"): sch, ("Aethir", "checker_rewards_cumulative_tokens"): ck,
-              ("Aethir", "edge_rewards_cumulative_tokens"): eg}
+    stocks = {("Aethir", "eco_checker_rewards_cumulative_tokens"): ck,
+              ("Aethir", "cloud_host_rewards_cumulative_tokens"): ch, ("Aethir", "edge_rewards_cumulative_tokens"): eg}
+    groups = {("Aethir", "emissions_tokens"): sch, **stocks}
     bw._measured_emissions_views(groups)
     em = groups[("Aethir", "emissions_tokens")].sort_values("date")
     meas = em[em.source.str.startswith("aethir_page:supplier_rewards")]
-    # no compute-reward reading at all: checker + edge, marked PARTIAL with what is missing
-    assert list(meas.value) == pytest.approx([4e6, 8.4e6])
-    assert "[span=2d]" in meas.source.iloc[1] and ":PARTIAL" in meas.source.iloc[0]
-    assert meas.source.iloc[0].endswith("[compute rewards (PoRW + PoC) not covered]")
-    # COMPUTE REWARDS ADDED (Jake, 2026-10-02): the stock's rise where both ends are read (10-01 -> 10-02),
-    # else the week's `reward` spread over its days (10-03, 10-04 from the week labelled 09-28)
-    cstock = ck.assign(metric="compute_rewards_cumulative_tokens", value=[3.06e9, 3.0626e9, 3.0626e9])
-    cstock = cstock.iloc[:2]
-    cweek = pd.DataFrame({"date": pd.to_datetime(["2026-09-28"]), "project": "Aethir", "metric": "compute_rewards_tokens",
-                          "value": [18.2e6], "source": "x", "tier": 3})
-    g2 = {**groups, ("Aethir", "emissions_tokens"): sch, ("Aethir", "compute_rewards_cumulative_tokens"): cstock,
-          ("Aethir", "compute_rewards_tokens"): cweek}
-    bw._measured_emissions_views(g2)
-    # EARNED (a commitment: accrued, vesting) carries the whole compute reward
-    e2 = g2[("Aethir", "emissions_earned_tokens")].sort_values("date")
-    assert list(e2.value) == pytest.approx([4e6 + 2.6e6, 8.4e6 + 2 * 2.6e6])
-    assert not e2.source.str.contains("PARTIAL").any() and e2.source.str.contains("a commitment").all()
-    # RELEASED (Jake, 2026-10-02) — emissions_tokens, the supply trajectory — needs the locked split: with no
-    # totalLockedRewards read, the compute part is NOT guessed; checker + edge only, PARTIAL, saying why
-    m2 = g2[("Aethir", "emissions_tokens")]
-    m2 = m2[m2.source.str.startswith("aethir_page:supplier_rewards")].sort_values("date")
-    assert list(m2.value) == pytest.approx([4e6, 8.4e6])
-    assert m2.source.str.endswith("[compute rewards (PoRW + PoC) released (total - locked) not covered]").all()
-    # with the locked stock: released compute = rise of (totalRewards - totalLockedRewards)
-    lock = cstock.assign(metric="compute_rewards_locked_tokens", value=[2.04e9, 2.042e9])
-    g3 = {**g2, ("Aethir", "emissions_tokens"): sch, ("Aethir", "compute_rewards_locked_tokens"): lock}
-    bw._measured_emissions_views(g3)
-    r3 = g3[("Aethir", "emissions_released_tokens")].sort_values("date")
-    assert list(r3.value) == pytest.approx([4e6 + 0.6e6, 8.4e6])          # 10-04: no stock pair -> PARTIAL
-    assert "PARTIAL" not in r3.source.iloc[0] and "PARTIAL" in r3.source.iloc[1]
-    assert "[RELEASED: compute rewards net of locked" in r3.source.iloc[0]
-    m3 = g3[("Aethir", "emissions_tokens")]
-    assert list(m3[m3.source.str.startswith("aethir_page:supplier_rewards")].sort_values("date").value) == \
-        pytest.approx(list(r3.value)), "the supply trajectory reads RELEASED"
+    assert list(meas.value) == pytest.approx([3e6 + 2.6e6 + 1e6, 6e6 + 0 + 2.4e6])
+    assert "[span=2d]" in meas.source.iloc[1] and not meas.source.str.contains("PARTIAL").any()
+    # released = earned: none of the three carries a locked split
+    rel_ = groups[("Aethir", "emissions_released_tokens")].sort_values("date")
+    ear_ = groups[("Aethir", "emissions_earned_tokens")].sort_values("date")
+    assert list(rel_.value) == list(meas.value) == list(ear_.value)
+    assert "[RELEASED: checker + cloud host + edge carry no locked split" in meas.source.iloc[0]
     from fetch.base import _measuring_point
-    assert {_measuring_point(x) for x in m2.source} | {_measuring_point(x) for x in meas.source} == \
-        {"aethir_page:supplier_rewards"}, "the declared handover's measuring point is unchanged"
+    assert {_measuring_point(x) for x in meas.source} == {"aethir_page:supplier_rewards"}, \
+        "the declared handover's measuring point is unchanged"
     assert em[em.source.str.startswith("schedule")].date.max() == pd.Timestamp("2026-10-01")
     # TOTAL RELEASE = supplier + the staker schedule's rise in the same span (both pre-minted releases)
     stk = pd.DataFrame({"date": pd.to_datetime(["2026-09-24", "2026-10-01", "2026-10-03"]), "project": "Aethir",
                         "metric": "staker_rewards_emitted", "value": [630.4e6, 632.4e6, 634.4e6],
                         "source": "aethir_page:x", "tier": 3})
-    groups = {("Aethir", "emissions_tokens"): sch, ("Aethir", "checker_rewards_cumulative_tokens"): ck,
-              ("Aethir", "edge_rewards_cumulative_tokens"): eg, ("Aethir", "staker_rewards_emitted"): stk,
+    groups = {("Aethir", "emissions_tokens"): sch, **stocks, ("Aethir", "staker_rewards_emitted"): stk,
               ("Aethir", "gross_issuance_tokens"): pd.DataFrame({
                   "date": pd.to_datetime(["2026-09-30", "2026-10-01"]), "project": "Aethir",
                   "metric": "gross_issuance_tokens", "value": [2.87e6, 0.0],
                   "source": ["schedule:config", "schedule:config:declared"], "tier": 1})}
     bw._measured_emissions_views(groups)
     rel = groups[("Aethir", "pool_release_tokens")].sort_values("date")
-    assert list(rel.value) == pytest.approx([4e6, 8.4e6 + 2e6])            # the 10-03 step lands in (10-02, 10-04]
+    assert list(rel.value) == pytest.approx([6.6e6, 8.4e6 + 2e6])          # the 10-03 step lands in (10-02, 10-04]
     assert rel.source.iloc[0].startswith("aethir_page:release[supplier + staker rewards][RELEASED")
-    assert ":PARTIAL[compute rewards (PoRW + PoC) not covered]" in rel.source.iloc[0]
     assert "[span=2d]" in rel.source.iloc[1]
     assert list(groups[("Aethir", "gross_issuance_tokens")].value) == [0.0]   # the schedule's old rows hidden
     assert config.issuance_basis("Aethir") == "pool_release_tokens"
@@ -22989,16 +23024,18 @@ def test_hyperliquid_fee_per_transaction_divides_one_layer():
 
 
 def test_aethir_emissions_breakdown_sums_to_the_emissions_figure():
-    """E, Jake 2026-10-05: A2 read 4.71% where released was estimated ~7.5% and earned ~10%. Each
-    component is shown beside the sum: checker + edge + compute released = emissions_tokens, and
-    checker + edge + compute earned = emissions_earned_tokens, day by day."""
+    """E, Jake 2026-10-05: each component is shown beside the sum. From Jake's pin run (2026-10-06) the
+    supplier legs are the ecosystem page's checkerRewards + cloudHostRewards + edgeRewards: their daily
+    rises sum to emissions_tokens (released = earned: no locked split), day by day. stakingRewards and the
+    retired compute-rewards stock (totalRewards) are NOT in it."""
     import build_workbook as bw
     rows = []
     for i, d in enumerate(["2026-10-01", "2026-10-02", "2026-10-03"]):
-        rows += [(d, "Aethir", "checker_rewards_cumulative_tokens", 1_000_000.0 + 100.0 * i, "aethir_page"),
+        rows += [(d, "Aethir", "eco_checker_rewards_cumulative_tokens", 1_000_000.0 + 100.0 * i, "aethir_page"),
+                 (d, "Aethir", "cloud_host_rewards_cumulative_tokens", 4_000_000.0 + 50.0 * i, "aethir_page"),
                  (d, "Aethir", "edge_rewards_cumulative_tokens", 500_000.0 + 10.0 * i, "aethir_page"),
-                 (d, "Aethir", "compute_rewards_cumulative_tokens", 3_000_000.0 + 1_000.0 * i, "aethir_page"),
-                 (d, "Aethir", "compute_rewards_locked_tokens", 2_000_000.0 + 600.0 * i, "aethir_page")]
+                 (d, "Aethir", "staker_rewards_cumulative_tokens", 900_000.0 + 7_000.0 * i, "aethir_page"),
+                 (d, "Aethir", "compute_rewards_cumulative_tokens", 3_000_000.0 + 1_000.0 * i, "aethir_page")]
     g = _grp(rows)
     bw._measured_emissions_views(g)
     em = g[("Aethir", "emissions_tokens")].set_index("date")["value"]
@@ -23006,10 +23043,12 @@ def test_aethir_emissions_breakdown_sums_to_the_emissions_figure():
     parts = {m: g[("Aethir", m)].set_index("date")["value"] for m, _ in bw._EMISSION_PARTS}
     d = pd.Timestamp("2026-10-03")
     assert parts["emissions_checker_tokens"][d] == 100.0 and parts["emissions_edge_tokens"][d] == 10.0
-    assert parts["emissions_compute_earned_tokens"][d] == 1_000.0
-    assert parts["emissions_compute_released_tokens"][d] == 400.0
-    assert em[d] == 100.0 + 10.0 + 400.0, "released = checker + edge + compute released"
-    assert ea[d] == 100.0 + 10.0 + 1_000.0, "earned = checker + edge + compute earned"
+    assert parts["emissions_cloud_host_tokens"][d] == 50.0
+    assert em[d] == 100.0 + 50.0 + 10.0, "emissions = checker + cloud host + edge (no staking, no totalRewards)"
+    assert ea[d] == em[d]
+    src = g[("Aethir", "emissions_tokens")].source
+    assert not src.str.contains("PARTIAL").any()
+    assert src.str.startswith("aethir_page:supplier_rewards[ecosystem checker + cloud host + edge").all()
 
 
 def test_plume_tx_count_excludes_the_one_per_block_system_transaction():
@@ -24342,3 +24381,111 @@ def test_aethir_key_diagnosis_never_calls_a_present_key_absent():
     unpinned = [k for k, f in config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["labelled"].items()
                 if not f.get("key") and not f.get("granularity")]
     assert set(unpinned) <= set(coi.AETHIR_PIN_HINTS), "every value-matched figure has a name hint in the probe"
+
+
+def test_chainlink_fee_pricing_resumes_newest_first_and_remembers_tokens_with_no_price(tmp_path, monkeypatch):
+    """Jake's run 2026-10-06 14:07: chainlink_fees timed out 109 coins.llama.fi calls into pricing the legacy
+    fee tokens. The cache is now saved as it goes, pricing stops asking after PRICE_BUDGET_S (newest days
+    first, so Q0 fills first), the next run resumes where it stopped, and a token DefiLlama ANSWERS with no
+    price is remembered — never asked again — so pricing can complete."""
+    import fetch.chainlink_fees as cf
+    clock = [0.0]
+    calls = []
+
+    class H:
+        def get(self, url, params=None):
+            calls.append(url.rsplit("/", 2)[1])
+            clock[0] += 40.0                                   # each call "takes" 40 s
+            return {"coins": {"ethereum:0xa": {"price": 2.0, "decimals": 18}}}     # 0xb: answered, no price
+    monkeypatch.setattr(cf.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(cf, "PRICE_BUDGET_S", 90)
+    days = [str(d.date()) for d in pd.date_range("2026-09-01", periods=5)]
+    needs = {d: {"ethereum:0xa", "ethereum:0xb"} for d in days}
+    ts = {str(int((pd.Timestamp(d) + pd.Timedelta(hours=12)).timestamp())): d for d in days}
+
+    c1 = cf.ChainlinkFees(explorer=object(), http=H(), cache_file=tmp_path / "clf.json")
+    p1 = c1._price_map(needs)
+    assert [ts[t] for t in calls] == days[::-1][:3], "newest first, three calls inside the 90 s budget"
+    assert c1._price_pending == 2
+    assert set(p1) == {(d, "ethereum:0xa") for d in days[2:]} and ("2026-09-05", "ethereum:0xb") not in p1
+    # RESUMES: a new run asks only the two days still unpriced
+    calls.clear()
+    c2 = cf.ChainlinkFees(explorer=object(), http=H(), cache_file=tmp_path / "clf.json")
+    p2 = c2._price_map(needs)
+    assert [ts[t] for t in calls] == days[1::-1] and c2._price_pending == 0
+    assert set(p2) == {(d, "ethereum:0xa") for d in days}
+    # COMPLETE: nothing is asked again — 0xb's "no price" answer is remembered
+    calls.clear()
+    c3 = cf.ChainlinkFees(explorer=object(), http=H(), cache_file=tmp_path / "clf.json")
+    assert c3._price_map(needs) == p2 and calls == [] and c3._price_pending == 0
+    cached = json.loads((tmp_path / "clf-chainlink-fee-prices.json").read_text())
+    assert cached["2026-09-05"] == {"ethereum:0xa": [2.0, 18], "ethereum:0xb": None}
+
+    # A FAILED CALL is not remembered: asked again next run
+    class Down:
+        def get(self, url, params=None):
+            calls.append(url)
+            raise RuntimeError("HTTP 502")
+    calls.clear()
+    c4 = cf.ChainlinkFees(explorer=object(), http=Down(), cache_file=tmp_path / "clf4.json")
+    c4._price_map({"2026-09-01": {"ethereum:0xa"}})
+    c4._price_map({"2026-09-01": {"ethereum:0xa"}})
+    assert len(calls) == 2
+
+
+def test_defillama_summed_children_use_the_listing_parent_id_when_the_configured_one_matches_nothing():
+    """Jake's run 2026-10-06: "/overview/fees lists no protocol whose parentProtocol is parent#ether.fi —
+    NOTHING STORED". The parent id is READ from the listing: the one parentProtocol carried by entries named
+    like the parent is used and the line says to fix config; two candidates store nothing; none at all fails
+    naming every entry that looks like the parent, with its parentProtocol and slug."""
+    from fetch.base import FetchOutput
+    from fetch.llama import DefiLlama
+    eth = config.PROJECT_BY_NAME["Ether.fi"]
+    spec = next(s for s in eth["defillama_sum_slugs"] if s["metric"] == "holders_revenue_usd")
+
+    def run(listing):
+        tried = []
+        ll = DefiLlama.__new__(DefiLlama)
+        ll.stored_long = None
+        ll._fees_listing = lambda: listing
+        ll._summary_chart = lambda slug, data_type=None: tried.append(slug) or [(pd.Timestamp("2026-10-01"), 100.0)]
+        out = FetchOutput()
+        ll._sum_slugs(eth, spec, None, out)
+        return tried, " | ".join(e.message for e in out.log)
+    listing = [{"name": "ether.fi Stake", "slug": "ether.fi-stake", "parentProtocol": "parent#etherfi"},
+               {"name": "ether.fi Cash", "slug": "ether.fi-cash", "parentProtocol": "parent#etherfi"},
+               {"name": "Lido", "slug": "lido", "parentProtocol": "parent#lido"}]
+    tried, msgs = run(listing)
+    assert tried == ["ether.fi-stake"], (tried, msgs)
+    assert "the listing's own parentProtocol for ether.fi is parent#etherfi — used (fix parent_id in config)" in msgs
+    tried, msgs = run(listing + [{"name": "ether.fi Liquid", "slug": "ether.fi-liquid", "parentProtocol": "parent#ether-fi"}])
+    assert tried == [] and "2 candidate parent ids in the listing (parent#ether-fi, parent#etherfi) — NOTHING STORED" in msgs
+    tried, msgs = run([{"name": "ether.fi Stake", "slug": "ether.fi-stake"}, {"name": "Lido", "slug": "lido"}])
+    assert tried == [] and "/overview/fees lists no protocol whose parentProtocol is parent#ether.fi" in msgs
+    assert "ether.fi Stake (parentProtocol=None, slug='ether.fi-stake')" in msgs and "Lido" not in msgs
+    # children under the id but none named 'stake': said as such, not as "no protocol"
+    tried, msgs = run([{"name": "ether.fi Cash", "slug": "ether.fi-cash", "parentProtocol": "parent#ether.fi"}])
+    assert "1 child(ren) under parent#ether.fi but none named with ['stake']: ether.fi Cash" in msgs, msgs
+
+
+def test_a_differenced_flows_first_row_covers_the_day_before_its_date():
+    """Jake's run 2026-10-06: Ethereum issuance read 20,876 against the curve's 18,070 (+15.5%). Seven daily
+    Eth2Staking deltas dated D1..asof hold seven days, but coverage counted asof - D1 = six, so the
+    annualised rate was 7/6 too high. A first row that is a difference (derived:d_… or :delta) now covers
+    the day before its date; a plain daily series is unchanged."""
+    import build_workbook as bw
+    asof = pd.Timestamp("2026-10-06")
+    s = pd.Series(2_980.0, index=pd.date_range("2026-09-30", asof))
+    assert len(s) == 7
+    assert bw._window_coverage(s, asof - pd.Timedelta(days=90), asof) == (6, 90)
+    assert bw._window_coverage(s, asof - pd.Timedelta(days=90), asof, differenced=True) == (7, 90)
+    assert bw._window_coverage(s, asof - pd.Timedelta(days=3), asof, differenced=True) == (3, 3), "window-capped"
+    # read through YESTERDAY: the lag allowance already counts the last day — k deltas are k days, not k + 1
+    y = s.iloc[:-1]
+    assert bw._window_coverage(y, asof - pd.Timedelta(days=90), asof, differenced=True) == (6, 90) == \
+        bw._window_coverage(y, asof - pd.Timedelta(days=90), asof)
+    g = pd.DataFrame({"date": s.index, "value": s.values, "source": "derived:d_consensus_rewards_cumulative"})
+    assert bw._differenced_first(g)
+    assert bw._differenced_first(g.assign(source="chain:ethereum:burn_logs:delta"))
+    assert not bw._differenced_first(g.assign(source="validatorqueue:staked_amount"))
+    assert not bw._differenced_first(pd.DataFrame(columns=["date", "value", "source"]))

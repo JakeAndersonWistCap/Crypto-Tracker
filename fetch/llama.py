@@ -12,6 +12,7 @@ Both are written to the Gap Report rather than approximated.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -407,9 +408,30 @@ class DefiLlama:
         pid = str(spec["parent_id"]).lower()
         excluded = {x.lower() for x in spec.get("exclude_slugs", ())}
         kids = [k for k in listing if str(k.get("parentProtocol") or "").lower() == pid]
+        # THE PARENT ID AS THE LISTING SPELLS IT (Jake's run 2026-10-06: "lists no protocol whose
+        # parentProtocol is parent#ether.fi"). Read, not guessed: where the configured id matches nothing,
+        # the ONE parentProtocol shared by listings named like the parent (dots and spaces ignored) is used,
+        # and said; none, or more than one, and nothing is stored.
+        if not kids:
+            norm = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower())  # noqa: E731
+            want = norm(spec.get("parent") or pid.replace("parent#", ""))
+            ids = sorted({str(k.get("parentProtocol")) for k in listing
+                          if k.get("parentProtocol") and (norm(k.get("name")).startswith(want)
+                                                          or norm(k.get("parentProtocol")).endswith(want))})
+            if len(ids) == 1:
+                out.skipped(SOURCE, name, f"{metric}: no child under {spec['parent_id']}; the listing's own "
+                                          f"parentProtocol for {spec.get('parent')} is {ids[0]} — used (fix "
+                                          f"parent_id in config)", TIER)
+                pid = ids[0].lower()
+                kids = [k for k in listing if str(k.get("parentProtocol") or "").lower() == pid]
+            elif ids:
+                out.fail(SOURCE, name, f"{metric}: no child under {spec['parent_id']}, and {len(ids)} candidate "
+                                       f"parent ids in the listing ({', '.join(ids)}) — NOTHING STORED", TIER)
+                return
         # ONLY THE NAMED CHILDREN where the spec says so (include_names: substrings of the listing name,
         # case-insensitive) — the children that do not carry the series are not asked for it.
         inc = [x.lower() for x in spec.get("include_names", ())]
+        before_inc = list(kids)
         if inc:
             kids = [k for k in kids if any(x in str(k.get("name") or "").lower() for x in inc)]
         listed = "; ".join(f"{k.get('name')} = {k.get('slug') or '(no slug)'}"
@@ -437,8 +459,18 @@ class DefiLlama:
                     seen[day] = float(v)
             per[label] = seen
         if not kids:
-            out.fail(SOURCE, name, f"{metric}: /overview/fees lists no protocol whose parentProtocol is "
-                                   f"{spec['parent_id']} — NOTHING STORED", TIER)
+            # SAY WHAT THE LISTING DOES HOLD (2026-10-06), so the next run answers the question: the
+            # entries named like the parent, each with the parentProtocol and slug DefiLlama gives it.
+            norm = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower())  # noqa: E731
+            want = norm(spec.get("parent") or pid.replace("parent#", ""))
+            alike = [k for k in listing if want and want in norm(k.get("name"))]
+            seen_as = "; ".join(f"{k.get('name')} (parentProtocol={k.get('parentProtocol')!r}, slug={k.get('slug')!r})"
+                                for k in alike[:12]) or "none"
+            why = (f"{len(before_inc)} child(ren) under {pid} but none named with {list(inc)}: "
+                   + ", ".join(str(k.get("name")) for k in before_inc) if before_inc
+                   else f"/overview/fees lists no protocol whose parentProtocol is {pid}")
+            out.fail(SOURCE, name, f"{metric}: {why} — NOTHING STORED. The listing's entries named like "
+                                   f"{spec.get('parent') or pid}: {seen_as}", TIER)
             return
         if not per:
             out.fail(SOURCE, name, f"{metric}: no service adapter answered — " + "; ".join(unresolved), TIER)

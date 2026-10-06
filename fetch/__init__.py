@@ -725,6 +725,16 @@ def _derive_buyback(out: FetchOutput, projects: list[dict], stored_long=None) ->
                         f"{config.dune_query_declared(name, m)} sources this column. A derivation "
                         f"beside a measurement is a second measuring point, and the two "
                         f"alternating blank the series.", tier=2)
+        # A DECLARED LOG SCAN OWNS ITS COLUMN TOO (Jake's run 2026-10-06, Sky): when it did not produce this
+        # run, the burn/split relabel is NOT written in its place — said, with the scan named.
+        scan = config.log_scan_declared(name, "actual_buyback_tokens")
+        if scan and "actual_buyback_tokens" not in {m for n, m in have if n == name}:
+            sourced.add("actual_buyback_tokens")
+            out.skipped(SOURCE_DERIVED, name,
+                        f"actual_buyback_tokens: NOT derived from {route.get('route')} route — log scan {scan} "
+                        f"sources this column and produced nothing this run (see its line); a relabelled "
+                        f"row beside the scan's rows would blank the series as MEASURING_POINT_CHANGED. "
+                        f"The stored scan series stands.", tier=2)
         # NO AUTOMATIC CROSS-CHECK AGAINST IT, and that is a refusal rather than an omission.
         # GEODNET's sourced figure is MONTHLY and priced per transaction inside the query; the
         # derivation would price a month's tokens at one day's price. The two disagreeing would

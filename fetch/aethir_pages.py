@@ -59,6 +59,8 @@ import re
 
 import pandas as pd
 
+import config
+
 from .base import USER_AGENT, point, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.aethir_pages")
@@ -569,6 +571,71 @@ class AethirPages:
         self._derived(name, spec, pages, resolved, out)
         self._cross_checks(name, spec, pages, out)
         self._series_checks(name, spec, resolved, out)
+        self._series_totals(name, spec, out)
+        self._apr_series(name, spec, pages, out)
+
+    def _series_totals(self, name: str, spec: dict, out) -> None:
+        """A cumulative figure DERIVED as the sum of a pinned series read this run (Jake's pins 2026-10-06:
+        Total Network Revenue is not in the payload; the monthly list from Aug 2024 is). What the list
+        lacks is named on the cell (PARTIAL)."""
+        for t in spec.get("series_totals") or ():
+            pts = self._series.get(t["series"])
+            if not pts:
+                out.fail(SOURCE, name, f"{t['metric']}: `{t['series']}` not read this run. NOTHING STORED.", TIER)
+                continue
+            total = float(sum(v for _d, v in pts))
+            src = (config.mark_source(t["source"], "PARTIAL") + f"[{t['missing']}]") if t.get("missing") else t["source"]
+            out.add(point(name, t["metric"], total, src, TIER, today()), SOURCE, name,
+                    f"{t['metric']} = sum of `{t['series']}` over {len(pts)} point(s) {pts[0][0].date()}.."
+                    f"{pts[-1][0].date()} = {total:,.2f}" + (f" — PARTIAL: {t['missing']}" if t.get("missing") else ""),
+                    TIER)
+
+    def _apr_series(self, name: str, spec: dict, pages: dict, out) -> None:
+        """WHICH STATISTIC OF A DAILY APR SERIES IS THE PRINTED FIGURE (Jake, 2026-10-06): the onchain-metric
+        `ai` / `gaming` series (daily APR) against the labelled average Jake read on a date. Each candidate —
+        the point on that date, the mean of the series to that date, and its trailing 7/30/90-day means — is
+        computed AS OF THE READING DATE and compared with the reading. Exactly one within `tol`: that statistic
+        is pinned and stored today. None or several: nothing is stored, and every candidate is named."""
+        for fid, a in (spec.get("apr_series") or {}).items():
+            html = pages.get(a["page"])
+            if html is None:
+                continue
+            _cur, pts, why = current_and_series(html, a["key"])
+            if not pts:
+                out.fail(SOURCE, name, f"{a['metric']}: `{a['key']}` on {a['page']} is not a dated series "
+                                       f"({why or 'no points'}). NOTHING STORED.", TIER)
+                continue
+            s = pd.Series({d: v for d, v in pts}).sort_index()
+
+            def stats(at):
+                h = s[s.index <= at]
+                if h.empty:
+                    return {}
+                out_ = {"point": float(h.iloc[-1]), "mean_all": float(h.mean())}
+                for n in (7, 30, 90):
+                    w = h[h.index > at - pd.Timedelta(days=n)]
+                    if len(w) >= max(3, n // 2):
+                        out_[f"mean_{n}d"] = float(w.mean())
+                return out_
+            d0 = pd.Timestamp(a["read_on"])
+            then = stats(d0)
+            ok = [k for k, v in then.items() if abs(v / a["anchor"] - 1) <= a.get("tol", 0.01)]
+            listing = ", ".join(f"{k} {v:.4f} ({v / a['anchor'] - 1:+.1%})" for k, v in then.items())
+            if len(ok) != 1:
+                out.fail(SOURCE, name, f"{a['metric']}: \"{a['label']}\" read {a['anchor']} on {a['read_on']}; "
+                                       f"`{a['key']}` as of that date gives {listing or 'no points by then'} — "
+                                       + ("NONE" if not ok else f"{len(ok)} ({', '.join(ok)})")
+                                       + f" within {a.get('tol', 0.01):.0%}. Left UNPINNED; NOTHING STORED.", TIER)
+                continue
+            now = stats(s.index[-1])
+            if ok[0] not in now:
+                out.fail(SOURCE, name, f"{a['metric']}: pinned statistic {ok[0]} cannot be computed today", TIER)
+                continue
+            v = now[ok[0]]
+            out.add(point(name, a["metric"], v, f"{SOURCE}:{a['page']}.{a['key']}[{ok[0]}]", TIER, today()),
+                    SOURCE, name, f"{a['metric']} = {ok[0]} of `{a['key']}` = {v:.4f} as of {s.index[-1].date()} — "
+                                  f"PINNED: on {a['read_on']} it gave {then[ok[0]]:.4f} against the printed "
+                                  f"{a['anchor']} (candidates: {listing})", TIER)
 
     def _store(self, name: str, page: str, key: str, metric: str, html: str, out,
                history: bool = True) -> None:
@@ -795,7 +862,12 @@ class AethirPages:
             if "#" not in ref:
                 return None
             page, key = ref.split("#")
-            return current_and_series(pages[page], key)[0] if page in pages else None
+            if page not in pages:
+                return None
+            cur, pts, _ = current_and_series(pages[page], key)
+            if cur is None and not pts:
+                cur, _ = key_scalar(pages[page], key)      # beside an array: read by key name anywhere
+            return cur
         for d in spec.get("derived") or ():
             vals = {ref: val(ref) for ref in d["inputs"]}
             missing = [ref for ref, v in vals.items() if v is None]

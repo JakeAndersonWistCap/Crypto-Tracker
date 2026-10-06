@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import defaultdict
 
 import pandas as pd
@@ -66,6 +67,7 @@ METRIC = {
     "ccip_v2_premium": "ccip_v2_premium_usd",
 }
 STREAM_BUDGET_S = 120         # routine runs (after the seed): one stream's day or two of logs
+PRICE_BUDGET_S = 90          # coins.llama.fi calls per run before pricing pauses (it resumes next run)
 SEED_PASS_S = 120             # --seed: each pass of a stream, then the state is saved and it continues
 SEED_MAX_STALLS = 3           # --seed: passes in a row that read nothing new before a stream is stopped
 
@@ -424,11 +426,23 @@ class ChainlinkFees:
             return self._prices_injected
         cache = self._load("chainlink-fee-prices.json")
         api = config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["price_api"]
-        for day, coins in sorted(needs.items()):
+        # RESUMABLE (Jake's run 2026-10-06 14:07: the tier timed out 109 calls into pricing the legacy fee tokens,
+        # and the cache was only written after the loop — so every run restarted from nothing). Saved every 10
+        # days priced, and no new call after PRICE_BUDGET_S: the days still unpriced are refused THIS run and
+        # asked for on the next, from where this one stopped.
+        t0, asked, pending = time.monotonic(), 0, 0
+        self._price_pending = 0
+        for day, coins in sorted(needs.items(), reverse=True):        # newest first: Q0 fills first
             have = cache.setdefault(day, {})
             missing = sorted(c for c in coins if c not in have)
             if not missing:
                 continue
+            if time.monotonic() - t0 > PRICE_BUDGET_S:
+                pending += 1
+                continue
+            asked += 1
+            if asked % 10 == 0:
+                self._save("chainlink-fee-prices.json", cache)
             ts = int((pd.Timestamp(day) + pd.Timedelta(hours=12)).timestamp())
             try:
                 # searchWidth 12h either side of 12:00 UTC: any point INSIDE the day (the default is 6h)
@@ -438,11 +452,20 @@ class ChainlinkFees:
                 log.info("chainlink_fees: prices for %s unavailable (%s)", day, e)
                 self._price_errors[day] = str(e)[:120]
                 continue
-            for coin, v in ((j or {}).get("coins") or {}).items():
-                if isinstance(v, dict) and v.get("price") is not None:
-                    have[coin] = [float(v["price"]), int(v.get("decimals") or 18)]
+            got = (j or {}).get("coins") or {}
+            for coin in missing:
+                v = got.get(coin)
+                # ANSWERED WITH NO PRICE is remembered (null), so a token DefiLlama cannot price is not asked
+                # again on every run — those calls are what kept pricing from ever completing. A failed CALL
+                # (above) is not remembered and is asked again.
+                have[coin] = ([float(v["price"]), int(v.get("decimals") or 18)]
+                              if isinstance(v, dict) and v.get("price") is not None else None)
         self._save("chainlink-fee-prices.json", cache)
-        return {(d, c): tuple(v) for d, m in cache.items() for c, v in m.items()}
+        self._price_pending = pending
+        if pending:
+            log.info("chainlink_fees: pricing paused after %.0fs — %d day(s) still to price, next run resumes",
+                     PRICE_BUDGET_S, pending)
+        return {(d, c): tuple(v) for d, m in cache.items() for c, v in m.items() if v}
 
     def _coin(self, spec: dict, chain: str, token: str) -> str:
         c = spec["chains"][chain]
@@ -569,6 +592,11 @@ class ChainlinkFees:
                                              if aliased[kind] else "")
                                           + (" — UNPRICED: " + self._unpriced_listing(spec, unpriced, base, refused + excluded)
                                              if refused or excluded else ""), TIER)
+
+        if getattr(self, "_price_pending", 0):
+            out.skipped(SOURCE, name, f"pricing PAUSED at the {PRICE_BUDGET_S}s budget: {self._price_pending} day(s) "
+                                      f"still to price (newest first) — their days are refused this run and priced "
+                                      f"on the next; the refused-day counts above fall as pricing completes", TIER)
 
     def _estimate(self, spec, prices, day, gone, premium=False) -> float | None:
         """USD of the unpriced tokens at the NEAREST priced day within 7 days — to judge their share only."""

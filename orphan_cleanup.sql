@@ -4308,3 +4308,38 @@ SELECT s.date, s.fetched_at, ROUND(s.value, 1) AS eth2staking,
 -- CB2. THE DELETE.
 -- DELETE FROM metrics
 --  WHERE project = 'Ethereum' AND metric = 'beacon_chain_eth' AND source LIKE '%deposit_contract%';
+
+-- ========================================================================================
+-- CC. SKY actual_buyback_tokens: A RELABELLED STAGE 2 BURN ROW BLANKED "SKY BOUGHT Q0"  2026-10-06
+--     Jake's run 2026-10-06 11:01: the flapper_purchases log scan failed on an RPC fault, and the split-route
+--     relabel (fetch._derive_buyback) wrote that run's sky_stage2_burn_tokens into actual_buyback_tokens as
+--     "...:as-buyback:PARTIAL". One such row beside the scan's series is a second measuring point, so the
+--     14:07 run read the column as MEASURING_POINT_CHANGED and "SKY bought Q0 (flapper Exec)" showed n/a
+--     although the scan reconciled (2,016,749,226.09 SKY over 17,863 transfers). The relabel now stands down
+--     whenever a log scan is declared for the column, and logs why. CC1 shows the relabelled rows (expected:
+--     one or a few, dated 2026-10-06 or near it; the scan's rows carry logscan in their source and are NOT
+--     matched); CC2 removes ONLY them. The USD twin of such a row is "derived:tokens*price" like the scan's
+--     own valuations, so it is matched BY DATE: the actual_buyback_usd row on a day whose token row is
+--     relabelled (the Stage 2 burn x price, not purchases x price). Delete the USD rows first (CC2a), then the
+--     token rows (CC2b) — CC2a finds its dates through them.
+--     Run: python run_sql.py CC, then python run_sql.py --delete CC.
+-- ========================================================================================
+-- CC1. WHAT GOES: Sky buyback token rows relabelled from the Stage 2 burn, and the USD rows on their dates.
+SELECT t.date, t.metric, ROUND(t.value, 2) AS value, t.source, t.fetched_at
+  FROM metrics t
+ WHERE t.project = 'Sky' AND t.metric = 'actual_buyback_tokens' AND t.source LIKE '%as-buyback%'
+UNION ALL
+SELECT u.date, u.metric, ROUND(u.value, 2), u.source, u.fetched_at
+  FROM metrics u
+ WHERE u.project = 'Sky' AND u.metric = 'actual_buyback_usd'
+   AND u.date IN (SELECT date FROM metrics WHERE project = 'Sky' AND metric = 'actual_buyback_tokens'
+                                             AND source LIKE '%as-buyback%')
+ ORDER BY 2, 1;
+
+-- CC2. THE DELETE (two statements, in this order).
+-- DELETE FROM metrics
+--  WHERE project = 'Sky' AND metric = 'actual_buyback_usd'
+--    AND date IN (SELECT date FROM metrics WHERE project = 'Sky' AND metric = 'actual_buyback_tokens'
+--                                              AND source LIKE '%as-buyback%');
+-- DELETE FROM metrics
+--  WHERE project = 'Sky' AND metric = 'actual_buyback_tokens' AND source LIKE '%as-buyback%';

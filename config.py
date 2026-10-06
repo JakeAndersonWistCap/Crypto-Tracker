@@ -272,9 +272,15 @@ METRICS = {
     "revenue_annualised_usd_asxn": {"label": "Revenue, annualised ($, ASXN revenue metrics) — CROSS-CHECK, forward-only", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Hyperliquid",)},
     "tx_count_ex_kaiching": {"label": "Transactions per day EXCLUDING Kai-Ching's signers (*.kaiching) — NEAR's organic activity across the April 2026 break (BigQuery)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     "tx_count_kaiching": {"label": "Transactions per day SIGNED by Kai-Ching accounts (*.kaiching) — the payouts excluded above (BigQuery)", "kind": "flow", "unit": "count", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
-    "emissions_released_tokens": {"label": "Supplier emissions RELEASED to holders (ATH per day) — Aethir: checker + edge (no locked split: treated as released) + compute rewards net of locked; feeds supply trajectory", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
-    "emissions_checker_tokens": {"label": "Supplier emissions — CHECKER-NODE rewards (ATH per day, rise of base + bonus + airdrop; no locked split, counted as released) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
-    "emissions_edge_tokens": {"label": "Supplier emissions — EDGE rewards (ATH per day, rise of earnings + stipend; no locked split, counted as released) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_released_tokens": {"label": "Supplier emissions RELEASED to holders (ATH per day) — Aethir: ecosystem checker + cloud host + edge (no locked split: treated as released); feeds supply trajectory", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_checker_tokens": {"label": "Supplier emissions — CHECKER-NODE rewards (ATH per day, rise of the ecosystem page's checkerRewards; no locked split, counted as released) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    "emissions_cloud_host_tokens": {"label": "Supplier emissions — CLOUD HOST (compute provider) rewards (ATH per day, rise of the ecosystem page's cloudHostRewards) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
+    # THE ECOSYSTEM PAGE'S REWARD CUMULATIVES, pinned by key (Jake's aethir_pin_keys run, 2026-10-06). Their sum is
+    # "Total Rewards Distributed"; checker + cloud host + edge are the SUPPLIER legs, staking is apart.
+    "eco_checker_rewards_cumulative_tokens": {"label": "Checker-node rewards distributed, cumulative ATH (ecosystem page checkerRewards)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "cloud_host_rewards_cumulative_tokens": {"label": "Cloud host (compute provider) rewards distributed, cumulative ATH (ecosystem page cloudHostRewards)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "staker_rewards_cumulative_tokens": {"label": "Staking rewards distributed, cumulative ATH (ecosystem page stakingRewards) — NOT supplier emissions", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "emissions_edge_tokens": {"label": "Supplier emissions — EDGE rewards (ATH per day, rise of the ecosystem page's edgeRewards = earnings + stipend; no locked split, counted as released) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "emissions_compute_released_tokens": {"label": "Supplier emissions — COMPUTE rewards RELEASED (ATH per day, rise of totalRewards - totalLockedRewards) — breakdown of emissions_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "emissions_compute_earned_tokens": {"label": "Supplier emissions — COMPUTE rewards EARNED (ATH per day, rise of totalRewards, incl. vesting) — breakdown of emissions_earned_tokens", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
     "emissions_earned_tokens": {"label": "Supplier emissions EARNED (ATH per day) — accrued, still vesting: a COMMITMENT, not supply reaching holders", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aethir",), "view_only": True},
@@ -1519,6 +1525,18 @@ def chain_burn_from_revenue(project_name: str) -> dict | None:
     if not decl or decl.get("status") != "confirmed":
         return None
     return decl
+
+
+def log_scan_declared(project_name: str, metric: str) -> str | None:
+    """The key of a STORING log scan that sources this metric, or None (Jake's run 2026-10-06: Sky's
+    flapper_purchases scan failed one run on an RPC fault, the split-route relabel wrote the Stage 2 burn
+    into actual_buyback_tokens in its place, and the one relabelled row left on the newest day blanked the
+    measured series as MEASURING_POINT_CHANGED). Like a Dune query, a declared scan owns its column
+    whether or not it ran this morning."""
+    for sp in (PROJECT_BY_NAME.get(project_name) or {}).get("log_scans") or ():
+        if sp.get("metric") == metric and sp.get("store"):
+            return sp.get("key")
+    return None
 
 
 def dune_query_declared(project_name: str, metric: str) -> int | None:
@@ -7992,21 +8010,20 @@ PROJECTS = [
             # day the schedule's emissions rows give way (declared handover, series_handover below);
             # before it they stand as the PARTIAL checker-base history. gross_issuance_tokens stays on
             # the schedule. Forward-only: two runs on different days make the first measured row.
-            "emissions_measured_from": {"stocks": ("checker_rewards_cumulative_tokens",
+            # SUPPLIER EMISSIONS = the daily rise of the ecosystem page's checker + cloud host + edge reward
+            # cumulatives (Jake, 2026-10-06); staking rewards (stakingRewards) are stored apart, never in it. The
+            # compute-rewards add-on (supply page totalRewards) is retired with it: cloud hosts ARE the compute
+            # providers, so keeping both would very likely count that leg twice. totalRewards stays stored.
+            "emissions_measured_from": {"stocks": ("eco_checker_rewards_cumulative_tokens",
+                                                   "cloud_host_rewards_cumulative_tokens",
                                                    "edge_rewards_cumulative_tokens"),
-                                        "source": "aethir_page:supplier_rewards[checker + edge + compute, day-on-day rise]",
-                                        # COMPUTE REWARDS, the third supplier component (Jake, 2026-10-02): the
-                                        # rise of totalRewards over the row's span where both ends are read,
-                                        # else the weekly `reward` spread evenly over its week's days; a span
-                                        # neither covers is marked PARTIAL[compute rewards not covered].
-                                        "adds": ({"what": "compute rewards (PoRW + PoC)",
-                                                  "stock": "compute_rewards_cumulative_tokens",
-                                                  "weekly_flow": "compute_rewards_tokens", "tag": "compute",
-                                                  "locked_stock": "compute_rewards_locked_tokens",
-                                                  "earned_metric": "emissions_compute_earned_tokens",
-                                                  "released_metric": "emissions_compute_released_tokens"},),
+                                        "source": "aethir_page:supplier_rewards[ecosystem checker + cloud host + edge, day-on-day rise]",
+                                        # (The compute-rewards add-on of 2026-10-02 — totalRewards' rise — is
+                                        # retired 2026-10-06: cloudHostRewards above is that leg.)
+                                        "adds": (),
                                         # THE BREAKDOWN beside the sum (Jake, 2026-10-05, E).
-                                        "component_metrics": {"checker_rewards_cumulative_tokens": "emissions_checker_tokens",
+                                        "component_metrics": {"eco_checker_rewards_cumulative_tokens": "emissions_checker_tokens",
+                                                              "cloud_host_rewards_cumulative_tokens": "emissions_cloud_host_tokens",
                                                               "edge_rewards_cumulative_tokens": "emissions_edge_tokens"},
                                         # RELEASED vs EARNED (Jake, 2026-10-02): node rewards are "accrued and
                                         # earned upon a vesting logic" (node-sale terms, Feb 2024) and the 50%
@@ -8017,8 +8034,8 @@ PROJECTS = [
                                         # the node-sale terms suggest checker rewards vest too, so the released
                                         # figure may read HIGH by their unvested part. emissions_earned_tokens
                                         # keeps the earned figure, labelled a commitment.
-                                        "released": "RELEASED: compute rewards net of locked; checker + edge carry "
-                                                    "no locked split and are treated as released",
+                                        "released": "RELEASED: checker + cloud host + edge carry no locked split "
+                                                    "and are treated as released",
                                         # TOTAL RELEASE (Jake, 2026-10-01): ATH is pre-minted, so neither
                                         # supplier nor staker rewards are minting — both are releases from
                                         # pools into circulation, diluting non-recipients. pool_release_tokens
@@ -8321,7 +8338,16 @@ PROJECTS = [
                 },
                 "protocol/overview": {"fields": {}},
                 # https://dashboard.aethir.com/protocol/ecosystem — pinned from Jake's PDF (2026-10-01).
-                "protocol/ecosystem": {"fields": {}},
+                # PINNED BY KEY (Jake's aethir_pin_keys run, 2026-10-06): totalStaked here is the Sophon stATH pool
+                # (592,517,997.39 — exact; NOT onchain-metric's totalStaked, which is all staking); the four reward
+                # cumulatives sum to "Total Rewards Distributed" (9,986,818,402.82 on 10-06, +0.3% on the 10-01
+                # reading = five days' accrual). edgeRewards = Edge Total Earnings + Total Stipend Reward
+                # (2,363,422,512 + 44,917,651 on 10-01).
+                "protocol/ecosystem": {"fields": {"totalStaked": "stath_sophon_pool_tokens",
+                                                  "checkerRewards": "eco_checker_rewards_cumulative_tokens",
+                                                  "cloudHostRewards": "cloud_host_rewards_cumulative_tokens",
+                                                  "edgeRewards": "edge_rewards_cumulative_tokens",
+                                                  "stakingRewards": "staker_rewards_cumulative_tokens"}},
             },
             # ===== LABELLED FIGURES — Jake's PDFs of the rendered pages, 2026-10-01. =====
             # anchor = the value as Jake read it beside its label; within = how far today's figure may
@@ -8333,13 +8359,13 @@ PROJECTS = [
                 "arr": {"label": "Annual Recurring Revenue (ARR) (1d)", "metric": "arr_usd",
                         "pages": ("protocol/demand-metric",), "key": "arr", "anchor": 62_490_000,
                         "within": 0.30, "read_on": "2026-10-01"},
-                "revenue_total": {"label": "Total Network Revenue (Since June 2024)",
-                                  "metric": "customer_revenue_cumulative_usd", "pages": ("protocol/demand-metric",),
-                                  "key": None, "anchor": 192_220_803, "within": 0.05, "read_on": "2026-10-01"},
-                "purchases_total": {"label": "Onchain Compute Purchases (ATH)",
-                                    "metric": "compute_purchases_cumulative_tokens",
-                                    "pages": ("protocol/demand-metric",), "key": None,
-                                    "anchor": 11_182_170_271, "within": 0.05, "read_on": "2026-10-01"},
+                # (revenue_total, purchases_total, apr_*, locked_ratio, sophon_stath, eco_rewards_total and the edge
+                # figures were matched BY VALUE and failed by design once values moved. RESOLVED 2026-10-06 from
+                # Jake's aethir_pin_keys run: sophon_stath, the reward components and edge rewards are pinned
+                # fields (protocol/ecosystem above); locked/circulating is COMPUTED (derived); the APRs are tested
+                # against the `ai` / `gaming` series (apr_series); Total Network Revenue is the monthly list's sum
+                # (series_totals); purchases, edge devices, stipend and daily pool are not in the payload
+                # (UNAVAILABLE).)
                 "hours_total": {"label": "Total Compute Hours Delivered", "metric": "compute_hours_cumulative",
                                 "pages": ("protocol/demand-metric",), "key": "totalComputeHoursDelivered",
                                 "anchor": 2_433_230_876,
@@ -8348,38 +8374,6 @@ PROJECTS = [
                                     "metric": "compute_hours_last_week", "pages": ("protocol/demand-metric",),
                                     "key": "totalComputeHoursDeliveredLastWeek", "anchor": 22_089_416, "within": 0.30,
                                     "read_on": "2026-10-01"},
-                "apr_ai": {"label": "Average APR of AI Pool", "metric": "staking_apr_ai", "pct": True,
-                           "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.1249,
-                           "within": 0.05, "read_on": "2026-10-01"},
-                "apr_gaming": {"label": "Average APR of Gaming Pool", "metric": "staking_apr_gaming", "pct": True,
-                               "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.1408,
-                               "within": 0.05, "read_on": "2026-10-01"},
-                "locked_ratio": {"label": "Total Locked ATH / Circulating Supply", "metric": None, "pct": True,
-                                 "pages": ("protocol/onchain-metric",), "key": None, "anchor": 0.0744,
-                                 "within": 0.05, "read_on": "2026-10-01"},
-                # INSIDE OR ON TOP? stATH is a staked-ATH receipt; 592.5M < the wrapper's 809.5M ATH,
-                # which already funds the AI/Gaming pools inside totalStaked — so it is LIKELY the same
-                # ATH counted once, but NOT ESTABLISHED (no stATH contract address on file, and the
-                # Sophon side is on Sophon's chain). Stored as a named component; never added.
-                "sophon_stath": {"label": "Total stATH staked in Sophon pool", "metric": "stath_sophon_pool_tokens",
-                                 "pages": ("protocol/ecosystem",), "key": None, "anchor": 592_517_997, "within": 0.05,
-                                 "read_on": "2026-10-01"},
-                "eco_rewards_total": {"label": "Total Rewards Distributed (ecosystem, all)",
-                                      "metric": "ecosystem_rewards_cumulative_tokens", "pages": ("protocol/ecosystem",),
-                                      "key": None, "anchor": 9_953_393_375, "within": 0.03, "read_on": "2026-10-01"},
-                # 1.5%: baseRewardDistributed (2.418bn) sits 2.3% away on the on-chain page.
-                "edge_earnings": {"label": "Edge Total Earnings", "metric": "edge_earnings_cumulative_tokens",
-                                  "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
-                                  "anchor": 2_363_422_512, "within": 0.015, "read_on": "2026-10-01"},
-                "edge_stipend": {"label": "Edge Total Stipend Reward", "metric": "edge_stipend_cumulative_tokens",
-                                 "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
-                                 "anchor": 44_917_651, "within": 0.05, "read_on": "2026-10-01"},
-                "edge_daily_pool": {"label": "Edge Daily Reward Pool", "metric": "edge_daily_reward_pool_tokens",
-                                    "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
-                                    "anchor": 1_184_420, "within": 0.10, "read_on": "2026-10-01"},
-                "edge_devices": {"label": "Staked edge devices", "metric": "supply_units_edge",
-                                 "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "key": None,
-                                 "anchor": 64_869, "within": 0.10, "read_on": "2026-10-01"},
                 # CHARTS. Weekly revenue, weekly compute hours and the two stake-duration charts are no
                 # longer matched by value: revenue is pinned by key (demand-metric `arrays`), and hours and
                 # durations are NOT in the server payload — client-loaded (Jake's probes5): UNAVAILABLE.
@@ -8397,10 +8391,13 @@ PROJECTS = [
                             "protocol/onchain-metric#airdropRewardDistributed"),
                  "metric": "checker_rewards_cumulative_tokens",
                  "source": "aethir_page:protocol/onchain-metric.base+bonus+airdropRewardDistributed"},
-                # SUPPLIER EMISSIONS, part 2: Edge "Total Earnings" + "Total Stipend Reward".
-                {"what": "edge rewards, cumulative (earnings + stipend)", "op": "sum",
-                 "inputs": ("edge_earnings", "edge_stipend"), "metric": "edge_rewards_cumulative_tokens",
-                 "source": "aethir_page:edge.earnings+stipend"},
+                # (Edge earnings + stipend is now the page's own edgeRewards — a pinned field, 2026-10-06.)
+                # TOTAL REWARDS DISTRIBUTED (ecosystem) = the four pinned components, same run (Jake, 2026-10-06).
+                {"what": "ecosystem rewards distributed = checker + cloud host + edge + staking", "op": "sum",
+                 "inputs": ("protocol/ecosystem#checkerRewards", "protocol/ecosystem#cloudHostRewards",
+                            "protocol/ecosystem#edgeRewards", "protocol/ecosystem#stakingRewards"),
+                 "metric": "ecosystem_rewards_cumulative_tokens",
+                 "source": "aethir_page:protocol/ecosystem.checker+cloudHost+edge+stakingRewards"},
                 # UTILISATION, LOWER BOUND (Jake's probes8, 2026-10-02): compute hours delivered last week /
                 # (GPU containers x 168h) assumes every container online all week, so it reads LOW (~30%). The
                 # PRIMARY utilisation is delivered / ONLINE hours (utilisation_view below, ~69% cumulative).
@@ -8409,29 +8406,40 @@ PROJECTS = [
                  "metric": "utilisation_containers_pct",
                  "source": "aethir_page:derived.compute_hours_last_week/nodes_x_168[assumes every container available 24/7]",
                  "label": "derived: assumes every container available 24/7"},
-                {"what": "our locked / circulating (totalStaked / athCirculatingSupply)", "op": "ratio",
-                 "inputs": ("protocol/onchain-metric#totalStaked", "protocol/onchain-metric#athCirculatingSupply"),
-                 "compare": {"against": "locked_ratio", "label": "the page's Total Locked ATH / Circulating Supply"}},
+                # "Total Locked ATH / Circulating Supply" COMPUTED, never value-matched (Jake, 2026-10-06):
+                # 1,791,595,938 / 24.05bn = 7.44%.
+                {"what": "locked / circulating = totalStaked / athCirculatingSupply", "op": "ratio",
+                 "inputs": ("protocol/onchain-metric#totalStaked", "protocol/onchain-metric#athCirculatingSupply")},
                 {"what": "Total veATH Staked (native) = aiStaked + gamingStaked (785,736,919 on 2026-10-01)",
                  "op": "sum", "inputs": ("protocol/onchain-metric#aiStaked", "protocol/onchain-metric#gamingStaked")},
-                # What the ecosystem total holds beyond checker + edge (cloud hosts? stakers? airdrops?) is
-                # NOT LABELLED — logged, never used as emissions.
-                {"what": "ecosystem rewards NOT accounted for by checker + edge (unlabelled remainder)",
-                 "op": "minus", "inputs": ("eco_rewards_total", "protocol/onchain-metric#baseRewardDistributed",
-                                           "protocol/onchain-metric#bonusRewardDistributed",
-                                           "protocol/onchain-metric#airdropRewardDistributed",
-                                           "edge_earnings", "edge_stipend")},
             ),
             # THE PINNED REVENUE SERIES, CHECKED (logged). The monthly list starts August 2024, so its sum
             # should fall short of the since-June-2024 total by June and July 2024.
             "series_checks": (
                 {"kind": "sum_vs", "series": "monthlyNetworkRevenue", "against": "revenue_total",
                  "anchor": 192_220_803, "read_on": "2026-10-01",
-                 "what": "monthlyNetworkRevenue summed vs Total Network Revenue (Since June 2024)",
+                 "what": "monthlyNetworkRevenue summed vs Total Network Revenue (Since June 2024) as Jake read it",
                  "note": "the monthly list starts Aug 2024; June-July 2024 are in the total only"},
                 {"kind": "weekly_vs_monthly", "weekly": "weeklyNetworkRevenue", "monthly": "monthlyNetworkRevenue",
                  "what": "weeklyNetworkRevenue (pro rata by day) vs monthlyNetworkRevenue"},
             ),
+            # TOTAL NETWORK REVENUE (Since June 2024) is not in the payload (Jake's pin run, 2026-10-06): the sum of
+            # the pinned monthly list, which starts August 2024 — June and July 2024 are missing, and said.
+            "series_totals": (
+                {"series": "monthlyNetworkRevenue", "metric": "customer_revenue_cumulative_usd",
+                 "source": "aethir_page:protocol/demand-metric.sum(monthlyNetworkRevenue)",
+                 "missing": "June-July 2024 not in the monthly list"},
+            ),
+            # AVERAGE APR OF THE AI / GAMING POOL vs the onchain-metric `ai` / `gaming` daily APR series
+            # (~0.07-0.17): the statistic that reproduces Jake's 2026-10-01 reading is pinned, or none is.
+            "apr_series": {
+                "apr_ai": {"label": "Average APR of AI Pool", "metric": "staking_apr_ai",
+                           "page": "protocol/onchain-metric", "key": "ai", "anchor": 0.1249,
+                           "read_on": "2026-10-01", "tol": 0.01},
+                "apr_gaming": {"label": "Average APR of Gaming Pool", "metric": "staking_apr_gaming",
+                               "page": "protocol/onchain-metric", "key": "gaming", "anchor": 0.1408,
+                               "read_on": "2026-10-01", "tol": 0.01},
+            },
             "cross_checks": (
                 {"what": "idcStaked on the two pages",
                  "pair": (("protocol/onchain-metric", "idcStaked"), ("protocol/supply-metric", "idcStaked"))},
@@ -8464,6 +8472,13 @@ PROJECTS = [
             # emissions_tokens: the declared Checker Node BASE schedule (PARTIAL) until the first day
             # supplier rewards are measured from the dashboard's cumulatives, then the measurement.
             # A CHANGE OF DEFINITION on the handover day (it adds bonus, airdrop and edge rewards).
+            # edge rewards: the sum of the two value-matched tiles (earnings + stipend) until the page's own
+            # edgeRewards was pinned (Jake, 2026-10-06) — the same quantity read in one key.
+            "edge_rewards_cumulative_tokens": {"ordered_points": ("aethir_page:edge.earnings+stipend",
+                                                                  "aethir_page:protocol/ecosystem.edgeRewards"),
+                                               "why": "Edge Total Earnings + Total Stipend Reward until the "
+                                                      "ecosystem page's edgeRewards (their sum, one key) was pinned",
+                                               "declared_on": "2026-10-06"},
             "emissions_tokens": {"ordered_points": ("schedule:config", "aethir_page:supplier_rewards"),
                                  "why": "the declared Checker Node base schedule (2,874,743 ATH/day, PARTIAL) "
                                         "until supplier rewards are measured, then checker (base + bonus + "
@@ -18988,6 +19003,23 @@ UNAVAILABLE = [
                  "components) and APR only.",
        "reopen_if": "Aethir prints the figure as a number, or the chart's series appears in a readable payload."}
       for m, pool in (("avg_lock_duration_days_ai", "AI"), ("avg_lock_duration_days_gaming", "Gaming"))),
+    # ===== AETHIR FIGURES NOT IN ANY READABLE PAYLOAD (Jake's aethir_pin_keys run, 2026-10-06). =====
+    *({"project": "Aethir", "metric": m, "closed_on": "2026-10-06",
+       "summary": f"{label} is printed on the dashboard but is not in its server payload (client-loaded).",
+       "what_was_tried": "aethir_pin_keys (Jake, 2026-10-06): no key near the printed value or named for it on "
+                         "the pages' server payload; earlier, value-matching against Jake's 2026-10-01 readings.",
+       "impact": impact,
+       "reopen_if": "the figure appears in a readable payload under a key."}
+      for m, label, impact in (
+          ("compute_purchases_cumulative_tokens", "Onchain Compute Purchases (ATH)",
+           "no on-page purchases total; customer revenue is measured in USD (weekly / monthly lists, ARR)"),
+          ("supply_units_edge", "Staked edge devices", "edge supply is counted in ATH (edgeStaked), not devices"),
+          ("edge_stipend_cumulative_tokens", "Edge Total Stipend Reward",
+           "inside edgeRewards (earnings + stipend), not separately"),
+          ("edge_earnings_cumulative_tokens", "Edge Total Earnings",
+           "inside edgeRewards (earnings + stipend), not separately"),
+          ("edge_daily_reward_pool_tokens", "Edge Daily Reward Pool",
+           "the daily rise of edgeRewards stands in for it in the supplier emissions"))),
     # ===== WORLD MOBILE'S TWO BUYBACK CLOSURES WERE REMOVED 2026-09-17, NOT SOFTENED. =====
     # actual_buyback_tokens and actual_buyback_usd were closed here on the grounds that "the
     # destination is undocumented, so a token figure cannot be given a meaning". The MiCA filing
