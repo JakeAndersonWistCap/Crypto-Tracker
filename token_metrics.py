@@ -558,6 +558,9 @@ def main(argv=None) -> int:
     # tier-4 run is Dune; they have nothing in common and the remedy for one does nothing for the
     # other. The row count beside the time is what separates "slow" from "doing a lot".
     elapsed = time.monotonic() - started
+    # ===== ACTION FIRST (Jake's run 2026-10-06 11:01): what needs a human goes at the TOP of the summary.
+    for line in run_banner(out.log):
+        log.warning(line)
     rows_by_source, fails_by_source, skips_by_source = {}, {}, {}
     for e in out.log:
         rows_by_source[e.source] = rows_by_source.get(e.source, 0) + int(e.rows or 0)
@@ -604,6 +607,49 @@ def main(argv=None) -> int:
                   f"redrawn by --all")
     st.close()
     return 0
+
+
+NETWORK_SIGNS = ("timed out", "timeout", "connection", "could not connect", "couldn't connect", "refused",
+                 "reset by peer", "temporarily unavailable", "max retries", "nameresolution", "name resolution",
+                 "failed to resolve", "502", "503", "504", "remote end closed", "remotedisconnected")
+NETWORK_WIDE_MIN_SOURCES = 4
+
+
+def run_banner(log_entries) -> list[str]:
+    """The lines that need Jake BEFORE anything else in the run summary (2026-10-06):
+
+    1. NEAR's Google login expired — his org's policy forces re-authentication about daily — with the two
+       gcloud lines to paste.
+    2. FAILURES THAT LOOK NETWORK-WIDE: when sources on at least NETWORK_WIDE_MIN_SOURCES different
+       adapters timed out or could not connect in one run, it is said plainly — likely the connection, so
+       rerun — rather than left as N unrelated-looking failures. A tier that times out keeps what it had
+       already produced, and the store is only ever upserted, so earlier values stand either way."""
+    out = []
+    reauth = [e for e in log_entries if e.source == "near_bigquery" and e.status == "failed"
+              and "re-authentication" in e.message.lower()]
+    if reauth:
+        proj = (config.PROJECT_BY_NAME.get("Near") or {}).get("near_bigquery", {}).get("project", "near-data-510309")
+        out += ["=" * 78,
+                "ACTION NEEDED — NEAR BigQuery: Google login expired (your org forces re-auth about daily). Paste:",
+                "    gcloud auth application-default login",
+                f"    gcloud auth application-default set-quota-project {proj}",
+                "  then rerun. Every NEAR BigQuery read was skipped this run; stored values stand."]
+    net = {}
+    for e in log_entries:
+        if e.status != "failed":
+            continue
+        m = e.message.lower()
+        if "tier timed out" in m or any(k in m for k in NETWORK_SIGNS):
+            net.setdefault(e.source, e.message)
+    if len(net) >= NETWORK_WIDE_MIN_SOURCES:
+        out += ["=" * 78,
+                f"NETWORK-WIDE TROUBLE — {len(net)} sources timed out or could not connect this run: "
+                f"{', '.join(sorted(net))}.",
+                "  That pattern is usually the connection, not the sources: RERUN when the network is steady. "
+                "Stored values stand — a timed-out tier keeps what it read and nothing is deleted."]
+    if out:
+        out.append("=" * 78)
+    return out
 
 
 if __name__ == "__main__":

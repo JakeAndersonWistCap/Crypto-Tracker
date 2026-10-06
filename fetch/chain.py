@@ -346,6 +346,7 @@ class ChainReader:
 
     def __init__(self):
         self._w3: dict[str, object] = {}
+        self._w3_url: dict[str, str] = {}       # which endpoint each kept Web3 talks to (never logged with its key)
         self._failed: dict[str, str] = {}
         # The eth_getLogs chunk size that actually worked, per chain. Reported rather than
         # assumed: the configured size is a request, and a provider that narrows it silently
@@ -396,16 +397,46 @@ class ChainReader:
         for url in endpoints:
             try:
                 w3 = self.make_web3(chain, url, 30)
-                if w3.is_connected():
-                    # HOST ONLY — see rpc_host. A keyed endpoint carries its key in the path.
-                    log.info("chain %s connected via %s", chain, rpc_host(url))
-                    self._w3[chain] = w3
-                    return w3
-                errors.append(f"{rpc_host(url)}: not connected")
+                # AN ANSWER, NOT A HANDSHAKE (Jake's run 2026-10-06 11:01): Cloudflare's public endpoint
+                # passed is_connected() and then refused eth_blockNumber with -32046 "Cannot fulfill
+                # request", and every Ethereum log scan died on it while the next endpoint worked. An
+                # endpoint is kept only once it has answered the cheapest real call.
+                int(w3.eth.block_number)
+                # HOST ONLY — see rpc_host. A keyed endpoint carries its key in the path.
+                log.info("chain %s connected via %s", chain, rpc_host(url))
+                self._w3[chain] = w3
+                self._w3_url[chain] = url
+                return w3
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
         self._failed[chain] = f"all RPC endpoints failed for {chain}: {'; '.join(errors)}"
         raise RuntimeError(self._failed[chain])
+
+    def block_number(self, chain: str) -> int:
+        """The chain's head block, FALLING THROUGH THE ENDPOINT LIST on failure (ETHEREUM_RPC_URL first,
+        then config.DEFAULT_RPC): the endpoint kept at connect time can stop answering mid-run, and one
+        public endpoint's refusal must not fail every scan on the chain. The endpoint that answers is
+        kept for the rest of the run."""
+        errors = []
+        try:
+            return int(self.web3(chain).eth.block_number)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{rpc_host(self._w3_url.get(chain, '?'))}: {redact_urls(e)}")
+        bad = self._w3_url.get(chain)
+        for url in rpc_endpoints(chain):
+            if url == bad:
+                continue
+            try:
+                w3 = self.make_web3(chain, url, 30)
+                head = int(w3.eth.block_number)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
+                continue
+            log.info("chain %s: eth_blockNumber moved to %s after %s", chain, rpc_host(url), "; ".join(errors))
+            self._w3[chain], self._w3_url[chain] = w3, url
+            self._failed.pop(chain, None)
+            return head
+        raise RuntimeError(f"no RPC answered eth_blockNumber on {chain}: {'; '.join(errors)}")
 
     @staticmethod
     def make_web3(chain: str, url: str, read_timeout: float = 30):

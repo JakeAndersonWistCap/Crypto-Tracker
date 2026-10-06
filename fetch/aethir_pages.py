@@ -289,6 +289,19 @@ def key_diagnosis(html: str, key: str) -> str:
     if re.search(re.escape(f'"{key}"') + r'\s*:\s*(null|\{|\[)', text):
         return f"`{key}` is present but null / an object / a list"
     keys = sorted(set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:', text)))
+    # PRESENT, IN A FORM NONE OF THE READERS TAKES (Jake's run 2026-10-06: "`aiStaked` is not in the payload —
+    # keys like it: ['aiStaked', ...]"). Say it is present, quote what follows it, and give the page's health,
+    # so the next run shows whether it is a partial load or a parse change.
+    if key in keys:
+        nums = sorted({m.group(1) for m in re.finditer(re.escape(f'"{key}"') + r"\s*:\s*(-?[\d.eE+]+)", text)})
+        snips = [text[m.end():m.end() + 40].replace("\n", " ")
+                 for m in list(re.finditer(re.escape(f'"{key}"') + r"\s*:", text))[:3]]
+        size, numeric, chunks = payload_health(html)
+        return (f"`{key}` IS in the payload ({len(snips)} occurrence(s) shown"
+                + (f"; numbers {nums[:4]}" if nums else "") + f"; followed by {snips}) but no reader takes it"
+                + (f" — {len(nums)} different values, so which is current is not established" if len(nums) > 1 else
+                   " — inside a dated chart point only, or a form the readers do not parse")
+                + f"; page {size:,} bytes, {numeric} numeric keys, {chunks} RSC chunks")
     close = difflib.get_close_matches(key, keys, n=4, cutoff=0.6)
     return (f"`{key}` is not in the payload" + (f" — keys like it: {close} (renamed?)" if close else
                                                 f" ({len(keys)} keys on the page, none like it)"))

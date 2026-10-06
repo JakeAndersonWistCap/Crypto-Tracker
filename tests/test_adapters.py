@@ -14732,7 +14732,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'aethir' matches 6 checks" in out
+    assert "'aethir' matches 7 checks" in out
     for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
         assert name in out
     assert "Done." not in out, "a refusal must not claim anything ran"
@@ -15341,7 +15341,7 @@ def test_ether_fi_counts_cow_settlements_only_and_labels_the_other_inflow(monkey
     assert abs(flow.value.sum() - 17_984_520.10) < 1e-6, flow.value.sum()
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert "Other inflow, not counted:" in line
-    assert f"{safe} 600,000.00 [a Safe, owner unidentified" in line, line
+    assert f"{safe} 600,000.00 [ether.fi-controlled Safe" in line and "internal transfer" in line, line
     assert f"{dep} 396,510.67 [ether.fi deployer EOA" in line, line
     # The last-inflow date is the last CoW settlement, not the last transfer of any kind.
     last = got[got.metric == "buyback_last_inflow_date"]
@@ -24249,3 +24249,96 @@ def test_chainlink_fee_tokens_priced_by_underlying_and_small_unpriced_share_excl
     st = c._load("chainlink-fees.json")["streams"]
     cell = next(v for k, v in st.items() if ":ccip_legacy" in k)["agg"][d1]["0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"]
     assert len(cell) == 3 and cell[2] == "1"
+
+
+# ===================================================================================
+# Jake's run 2026-10-06 11:01
+# ===================================================================================
+def test_eth_block_number_falls_through_rpc_endpoints_keyed_first(monkeypatch):
+    """1: every Ethereum log scan died on Cloudflare's -32046 'Cannot fulfill request' to eth_blockNumber
+    while the chain tier was connected to Alchemy. An endpoint is kept only once it ANSWERS
+    eth_blockNumber (not just is_connected), and the head-block read falls through the list —
+    ETHEREUM_RPC_URL first — when the kept endpoint stops answering. The key is never logged."""
+    import fetch.chain as ch
+    monkeypatch.delenv("RPC_ETHEREUM", raising=False)
+    monkeypatch.setenv("ETHEREUM_RPC_URL", "https://eth-mainnet.g.alchemy.com/v2/SECRETKEY")
+    monkeypatch.setitem(config.DEFAULT_RPC, "ethereum", ["https://cloudflare-eth.com", "https://eth.llamarpc.com"])
+    state = {"alchemy_up": False}
+
+    class Eth:
+        def __init__(self, url):
+            self.url = url
+
+        @property
+        def block_number(self):
+            if "cloudflare" in self.url:
+                raise ValueError({"code": -32046, "message": "Cannot fulfill request"})
+            if "alchemy" in self.url and not state["alchemy_up"]:
+                raise ConnectionError("read timed out")
+            return 21_000_000
+
+    class W:
+        def __init__(self, url):
+            self.eth = Eth(url)
+
+        def is_connected(self):
+            return True                                  # Cloudflare passes the handshake
+
+    monkeypatch.setattr(ch.ChainReader, "make_web3", staticmethod(lambda chain, url, t=30: W(url)))
+    r = ch.ChainReader()
+    w3 = r.web3("ethereum")
+    assert "llamarpc" in w3.eth.url, "Cloudflare answered the handshake but not eth_blockNumber: skipped"
+    assert r.block_number("ethereum") == 21_000_000
+    # the kept endpoint stops answering mid-run: the keyed one (now up) is tried first, and kept
+    state["alchemy_up"] = True
+    w3.eth.__class__ = type("Dead", (Eth,), {"block_number": property(lambda s: (_ for _ in ()).throw(OSError("reset")))})
+    assert r.block_number("ethereum") == 21_000_000 and "alchemy" in r._w3_url["ethereum"]
+    # nothing answers: one error naming every host, no key
+    state["alchemy_up"] = False
+    r2 = ch.ChainReader()
+    monkeypatch.setitem(config.DEFAULT_RPC, "ethereum", ["https://cloudflare-eth.com"])
+    with _pytest.raises(RuntimeError) as e:
+        r2.block_number("ethereum")
+    assert "SECRETKEY" not in str(e.value) and "cloudflare-eth.com" in str(e.value)
+    # logscan pins its head through the fall-through
+    import inspect
+    from fetch.logscan import LogScan
+    assert "self.reader.block_number(chain)" in inspect.getsource(LogScan)
+
+
+def test_run_banner_puts_near_reauth_and_network_wide_failures_first():
+    """2 + 5: the run summary STARTS with what needs Jake — NEAR's expired Google login with the two gcloud
+    lines, and a plain NETWORK-WIDE line when 4+ sources timed out or could not connect in one run."""
+    import token_metrics as tm
+    from fetch.base import LogEntry
+    log = [LogEntry("near_bigquery", "Near", 0, "failed", "NOT READ — Application Default Credentials need "
+                    "re-authentication (\"Reauthentication is needed\")", 1)]
+    for src, msg in (("defillama", "TIER TIMED OUT after 150s"), ("chain", "TIER TIMED OUT after 240s"),
+                     ("plume_staking", "could not connect to rpc.plume.org"), ("aethir_page", "Read timed out"),
+                     ("coingecko", "HTTP 404 Not Found")):
+        log.append(LogEntry(src, "x", 0, "failed", msg, 1))
+    b = tm.run_banner(log)
+    txt = "\n".join(b)
+    assert "gcloud auth application-default login" in txt
+    assert "gcloud auth application-default set-quota-project near-data-510309" in txt
+    assert "NETWORK-WIDE TROUBLE — 4 sources" in txt and "coingecko" not in txt and "RERUN" in txt
+    assert txt.index("ACTION NEEDED") < txt.index("NETWORK-WIDE")
+    assert tm.run_banner(log[1:3]) == [], "two slow sources is not network-wide"
+    src = open(tm.__file__, encoding="utf-8").read()
+    assert src.index("for line in run_banner(out.log)") < src.index('log.info("fetch took')
+
+
+def test_aethir_key_diagnosis_never_calls_a_present_key_absent():
+    """3: "`aiStaked` is not in the payload — keys like it: ['aiStaked', ...]" contradicted itself. A key that
+    IS present says so, quotes what follows it and gives the page's health; an absent one is absent."""
+    import fetch.aethir_pages as ap
+    html = '{"stakeHistory":[{"startTime":"2025-10-01","aiStaked":1},{"startTime":"2025-11-01","aiStaked":2}]}'
+    d = ap.key_diagnosis(html, "aiStaked")
+    assert d.startswith("`aiStaked` IS in the payload") and "not in the payload" not in d
+    assert "2 different values" in d and "numeric keys" in d
+    assert ap.key_diagnosis('{"other":1}', "aiStaked").startswith("`aiStaked` is not in the payload")
+    import check_offline_items as coi
+    assert coi._resolve_check("aethir_pin_keys")[0] is coi.aethir_pin_keys
+    unpinned = [k for k, f in config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["labelled"].items()
+                if not f.get("key") and not f.get("granularity")]
+    assert set(unpinned) <= set(coi.AETHIR_PIN_HINTS), "every value-matched figure has a name hint in the probe"

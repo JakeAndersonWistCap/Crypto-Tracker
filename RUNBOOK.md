@@ -527,6 +527,52 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ab. Jake's run 2026-10-06 11:01: RPC fall-through, run banner, Aethir keys, Ether.fi Safe
+
+**1. The eth_blockNumber failure.** It was not the explorer change.
+
+- **Where it failed:** `logscan.py` pins its head block through its own ChainReader. `ChainReader.web3()`
+  kept the first endpoint that passed `is_connected()`. Cloudflare passes that handshake, then refuses
+  `eth_blockNumber` with −32046. In this run the keyed endpoint and the three public endpoints before
+  Cloudflare failed the handshake, probably on the same flaky network. So the scan reader settled on
+  Cloudflare, while the chain tier's own reader got Alchemy.
+- **Fix, connect:** an endpoint is kept only after it answers `eth_blockNumber`.
+- **Fix, head-block read:** `ChainReader.block_number()` falls through the list (ETHEREUM_RPC_URL first, then
+  `DEFAULT_RPC`) when the kept endpoint stops answering, and keeps the one that answers.
+- Error lines name hosts only, never keys.
+
+**2. Run health.**
+
+- **(a) Earlier values survive a timeout.** A timed-out tier keeps the frames it had already produced
+  (`_abandon`). The store only upserts the (date, project, metric) rows that were written; nothing is
+  deleted.
+- **(b) Network-wide failures are named.** When sources on **4 or more** adapters time out or cannot connect
+  in one run, the summary now **starts** with `NETWORK-WIDE TROUBLE — N sources …: RERUN when the network is
+  steady`.
+
+**3. Aethir.**
+
+- **The contradiction:** `key_diagnosis` never checked for a key present with a number, so a present key fell
+  through to "not in the payload". It now says `IS in the payload`, quotes what follows the key (values and
+  context), and gives the page's bytes, numeric keys and RSC chunks. The next run shows whether it was a
+  partial load or a parse change.
+- **Still matched by value:** Total Network Revenue, Onchain Compute Purchases, both APRs, locked/circulating,
+  Sophon stATH, ecosystem rewards and the edge figures. Their keys were never recorded.
+- **To pin them:** run `python check_offline_items.py aethir_pin_keys`. For each one it prints the nearest
+  keys by current value and the keys named like its label. Paste it back and each gets its `key`, the way
+  `arr` is pinned.
+
+**4. Ether.fi.** 0x01e42ad3… is a Safe v1.4.1, 2-of-5, with the **same five owners** as the buyback Safe
+0x2f5301a3…, including the deployer EOA 0x9eac7114… (Jake's `etherfi_safe_owners` read, 2026-10-06). It is now
+labelled ether.fi-controlled, an internal transfer. **No ETHFI was bought into the buyback wallet after
+2026-04-01.**
+
+**5. NEAR re-auth.** The summary now starts with `ACTION NEEDED — NEAR BigQuery: Google login expired (your
+org forces re-auth about daily)` and the two lines to paste:
+
+    gcloud auth application-default login
+    gcloud auth application-default set-quota-project near-data-510309
+
 ## 11aa. Chainlink legacy CCIP: 168 days refused for an unpriced event (Jake, 2026-10-06)
 
 Problem: `customer_revenue_ccip_legacy_usd` refused 168 of 197 days because an event on each had no price. Customer revenue sums a day only when every leg is present, so those days went blank.

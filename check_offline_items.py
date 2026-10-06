@@ -1092,6 +1092,64 @@ def etherscan_ethsupply2():
           "and BurntFees in the millions.")
 
 
+AETHIR_PIN_HINTS = {
+    "revenue_total": r"(?i)revenue|earning", "purchases_total": r"(?i)purchas|compute.*(ath|token)|spent",
+    "apr_ai": r"(?i)apr|apy|yield", "apr_gaming": r"(?i)apr|apy|yield", "locked_ratio": r"(?i)ratio|locked|percent",
+    "sophon_stath": r"(?i)sophon|stath", "eco_rewards_total": r"(?i)reward|distribut",
+    "edge_earnings": r"(?i)edge|earning", "edge_stipend": r"(?i)stipend", "edge_daily_pool": r"(?i)daily|pool",
+    "edge_devices": r"(?i)device|edge|count|node"}
+
+
+def aethir_pin_keys():
+    """Aethir (Jake's run 2026-10-06): the labelled figures without a pinned `key` are matched BY VALUE to
+    Jake's 2026-10-01 readings and fail by design once the values move. For each, this prints the page's
+    candidate keys with their CURRENT values — the nearest by value (any distance) and every key whose NAME
+    fits the label — so the right key can be pinned in config (dashboard_pages.labelled.<id>.key) like `arr`.
+    Read-only: one polite GET per page (robots.txt first), nothing stored."""
+    import re as _re
+    import config
+    from fetch import aethir_pages as ap
+    from fetch.scrape import robots_verdict
+    head("AETHIR — candidate keys for the value-matched labelled figures")
+    spec = config.PROJECT_BY_NAME["Aethir"]["dashboard_pages"]
+    todo = {fid: f for fid, f in spec["labelled"].items() if not f.get("key") and not f.get("granularity")}
+    pages = {}
+    for page in sorted({pg for f in todo.values() for pg in f["pages"]}):
+        url = spec["base"].rstrip("/") + "/" + page
+        ok, why = robots_verdict(url)
+        if not ok:
+            print(f"  {page}: robots.txt disallows — {why}")
+            continue
+        try:
+            pages[page] = ap.AethirPages(daily=object())._fetch(url)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {page}: not read — {e}")
+            continue
+        size, numeric, chunks = ap.payload_health(pages[page])
+        print(f"  {page}: {size:,} bytes, {numeric} numeric keys, {chunks} RSC chunks")
+    for fid, f in todo.items():
+        cands = []
+        for pg in f["pages"]:
+            html = pages.get(pg)
+            if html is None:
+                continue
+            for k, vals in ap.fields(html).items():
+                for v in vals:
+                    for scale in ((1.0, 100.0) if f.get("pct") else (1.0,)):
+                        if v and f["anchor"]:
+                            cands.append((abs(v / scale / f["anchor"] - 1), pg, k, v / scale))
+        cands.sort()
+        hint = AETHIR_PIN_HINTS.get(fid)
+        named = sorted({(pg, k, v) for _d, pg, k, v in cands if hint and _re.search(hint, k)}, key=lambda x: x[1])
+        print(f"\n  {fid} — \"{f['label']}\" (read {f['anchor']:,} on {f['read_on']}):")
+        print("    nearest by value: " + ("; ".join(f"{pg} `{k}` {v:,.4f} ({d:+.1%})" for d, pg, k, v in cands[:5])
+                                          or "no numeric key on its pages"))
+        if named:
+            print("    keys whose name fits: " + "; ".join(f"{pg} `{k}` {v:,.4f}" for pg, k, v in named[:8]))
+    print("\n  PASTE BACK. Each figure gets the key that is BOTH near its reading and named for it; a figure with "
+          "no such key stays matched by value (and says so).")
+
+
 def etherfi_safe_owners():
     """Ether.fi (Jake, 2026-10-05 21:00): WHO OWNS the Safe that sent 600,000 ETHFI into the buyback wallet
     (0x01e42ad3…, last 2026-05-20)? Read-only: getOwners() / getThreshold() / VERSION() on it and on the
@@ -5508,7 +5566,7 @@ CHECKS = (
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
-    hl_af_fills_depth, etherfi_safe_owners,
+    hl_af_fills_depth, etherfi_safe_owners, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,

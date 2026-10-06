@@ -214,7 +214,10 @@ class LogScan:
 
         # 1. PIN THE UPPER BLOCK. Everything below is read at or before it.
         try:
-            head = int(self.reader.web3(chain).eth.block_number)
+            # FALLS THROUGH THE ENDPOINT LIST (ChainReader.block_number): Jake's run 2026-10-06 lost every
+            # Ethereum scan to one public endpoint's -32046 while the keyed one answered elsewhere.
+            head = (int(self.reader.block_number(chain)) if hasattr(self.reader, "block_number")
+                    else int(self.reader.web3(chain).eth.block_number))
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             out.fail(SOURCE, name, f"{key}: no RPC answered eth_blockNumber on {chain}: {e}", TIER)
             out.gap(name, metric, reason=f"the {key} scan needs a pinned block from a {chain} RPC "

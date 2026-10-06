@@ -15974,9 +15974,14 @@ PROJECTS = [
                     "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f":
                         "ether.fi deployer EOA and an owner of this 1-of-5 buyback Safe — internal "
                         "transfer (396,510.67 as of 2026-09-25; l2beat, safeprotocollib, vera)",
+                    # IDENTIFIED (Jake's probe etherfi_safe_owners, 2026-10-06): Safe v1.4.1, 2-of-5, with EXACTLY
+                    # the same five owners as the buyback Safe 0x2f5301a3… — including the ether.fi deployer EOA
+                    # 0x9eac7114…. An ether.fi-controlled wallet: an internal transfer, never a purchase. So no
+                    # ETHFI was BOUGHT into the buyback wallet after 2026-04-01 (the last CoW settlement); the
+                    # later inflows are this Safe (600,000, last 2026-05-20) and the deployer (2026-06-30).
                     "0x01e42ad3acd58584ffc1d1982ecbbe758996d601":
-                        "a Safe, owner unidentified (600,000.00 as of 2026-09-25; "
-                        "safe-research/safenet-proxy enabledSafes)",
+                        "ether.fi-controlled Safe (v1.4.1, 2-of-5, the SAME five owners as the buyback Safe, incl. "
+                        "the deployer EOA; Jake's on-chain read 2026-10-06) — internal transfer, not a purchase",
                 },
                 "attribution_sources": [
                     "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/script/deploys/Deployed.s.sol "
