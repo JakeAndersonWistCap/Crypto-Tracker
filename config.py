@@ -7847,6 +7847,29 @@ PROJECTS = [
             "note": "released from a pre-minted allocation.",
         },
         "name": "Aethir", "symbol": "ATH",
+        # ===== THE BRIDGES AS AETHIR DOCUMENTS THEM (Jake, 2026-10-07: docs Token Overview + Official ATH Bridges).
+        # One 42bn supply on several chains, never summed: Axelar LOCKS ATH on Ethereum against the Arbitrum interchain
+        # token, Stargate backs Solana ATH, LayerZero's eATH is a third wrapper. The Arbitrum read stays THE supply read;
+        # the bridge balances are reported, never added. Aethir's rewards API is partner-only — not usable.
+        "bridges": {
+            "source": "docs.aethir.com Token Overview + Official ATH Bridges (read by Jake, 2026-10-07)",
+            "ethereum_canonical": {"address": "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B",
+                                   "use": "airdrop, staking, CEXs"},
+            "arbitrum_interchain": {"address": "0xc87B37a581ec3257B734886d9d3a581F5A9d056c",
+                                    "use": "checker node rewards and compute rewards"},
+            "axelar_eth_arbitrum": {"address": "0x148F010746c2999Abc3fD5533746632AD9771948", "status": "active",
+                                    "model": "lock on Ethereum, backing the Arbitrum supply"},
+            "axelar_deprecated": {"address": "0x5786c150609a4ef8957bc614a13e8e29558eaba4", "status": "deprecated"},
+            "solana_stargate": {"address": "Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7",
+                                "model": "Stargate-bridged ATH on Solana"},
+            "eath_layerzero": {"arbitrum": "0x1903aa5b603819b9debd2f4b202b686e9e393aff",
+                               "ethereum": "0x68ff002b30360d3c613c2d6bc7e8c3e1f94883b9"},
+            "never_double_count": "the Arbitrum totalSupply is the one supply read; Ethereum ATH locked in the "
+                                  "Axelar manager and Solana ATH are the SAME tokens on other chains",
+            "rewards_api": "partner-only — not usable",
+            "reward_distributors": "not identified — aethir_reward_distributors scans ATH Transfer logs on "
+                                   "Arbitrum for them",
+        },
         "extra_metrics": ("gross_issuance_tokens",),
         # ===== NO MINTING: gross_issuance_tokens = 0 (Jake's decision, 2026-10-01). =====
         # 42bn ATH are pre-minted; supplier and staker rewards are RELEASES (pool_release_tokens),
@@ -9374,7 +9397,10 @@ PROJECTS = [
                 "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196", "ethereum", "treasury_holding", "SYRUP",
                 "https://etherscan.io/address/0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196",
                 verified="2026-09-18", provenance="Etherscan address label 'Maple Finance: DAO', matching "
-                                                  "the daoMultisig entry in maple-labs/address-registry",
+                                                  "the daoMultisig entry in maple-labs/address-registry; FIRST-PARTY "
+                                                  "since 2026-10-07: Maple's own Blockworks Token Transparency "
+                                                  "filing labels it 'Primary DAO address (manages stablecoins and "
+                                                  "SYRUP)', a 4-of-7 multisig (read by Jake)",
                 holder_has_code=True, token_standard="erc20", underlying="token",
                 # DEMOTED 2026-09-24: the page is fetchable (robots.txt "Allow: /", Jake's run)
                 # and serves treasury_holding_tokens. This read moves to its own name as the
@@ -16437,6 +16463,24 @@ PROJECTS = [
                          "rather than the eETH and EIGEN this address is described as receiving.",
         },
         "name": "Ether.fi", "symbol": "ETHFI",
+        # ===== THE BUYBACK PROGRAMME AS ETHER.FI DOCUMENTS IT (Jake, 2026-10-07). =====
+        "buyback_programme": {
+            "source": "https://etherfi.gitbook.io/gov/ethfi-buyback-program (read by Jake, 2026-10-07)",
+            "streams": {
+                "weekly": "100% of eETH withdrawal-fee revenue (implicit + explicit exits) -> ETHFI buybacks "
+                          "(governance proposal #11)",
+                "monthly": "a portion of Stake / Liquid / Cash revenue (governance proposal #8)",
+            },
+            "destination": "both remitted to sETHFI holders — a yield payout, not a burn and not a hold",
+            "announced_on": "https://x.com/ether_fi_Fdn ('All buybacks will be announced on' it)",
+            "declared_wallet": "0x2f5301a3D59388c509C65f8698f521377D41Fd0F — the Foundation wallet; our OLD buyback "
+                               "Safe, silent since 2026-04-01",
+            "observed_since_2026_08": "staker rewards came from the operating top-up Safe 0x3FB6784E…: mostly "
+                                      "treasury / custodian-funded transfers, with 1.05M ETHFI bought on Uniswap v4 "
+                                      "in 2026-09",
+            "what_should_have_been_bought": "eETH withdrawal fees are on-chain (the withdrawal / liquidity-pool "
+                                            "contracts) — not measured yet: the weekly stream's reference",
+        },
         # ===== actual_buyback_tokens — WIRED 2026-09-24 ON AN EXPLORER SCAN. =====
         # Was blocked 2026-09-23 by the RPC range cap (Alchemy free: 10 blocks per eth_getLogs).
         # The wallet is named by THREE sources — DefiLlama's ether-fi-stake adapter (the taker on
@@ -17280,8 +17324,10 @@ _NONCIRC_WALLETS_FIRST_PARTY = {
                        "paid into the vault"),
         ("buyback_safe_old", "0x2f5301a3D59388c509C65f8698f521377D41Fd0F", "ethereum", "ETHFI",
          "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/script/deploys/Deployed.s.sol",
-         "2026-10-07", "OLD-programme buyback Safe (WITHDRAW_REQUEST_NFT_BUYBACK_SAFE) — bought ETHFI held by the "
-                       "protocol is out of circulation"),
+         "2026-10-07", "the Foundation wallet — the DECLARED buyback wallet of ether.fi's buyback programme page "
+                       "(etherfi.gitbook.io/gov/ethfi-buyback-program; was the OLD-programme Safe "
+                       "WITHDRAW_REQUEST_NFT_BUYBACK_SAFE, silent since 2026-04-01): bought ETHFI it holds is out "
+                       "of circulation until remitted to sETHFI"),
     ],
 }
 _MORPHO_ORG = "https://docs.morpho.org/governance/organization/"
@@ -17341,6 +17387,16 @@ _NONCIRC_WALLETS_FIRST_PARTY["Chainlink"] = [
      "non-circulating wallet listed in Chainlink's 2022 post (7,000,000 LINK then)"),
     ("blog_2022_400k", "0x37398A324d35c942574650B9eD2987BC640BAD76", "ethereum", "LINK", _LINK_BLOG, "2026-10-07",
      "non-circulating wallet listed in Chainlink's 2022 post (400,000 LINK then)"),
+]
+# Maple's own Blockworks Token Transparency filing, "Labelled Unissued & Operational Token Wallets" (read by Jake,
+# 2026-10-07): beside the Primary DAO address 0xd6d4… (already contracts.treasury), two operational multisigs. Their
+# SYRUP is read daily and subtracted; maple_dao_vs_ssf prints what they hold.
+_MAPLE_FILING = "https://blockworks.com/token-transparency (Maple's filing; read by Jake 2026-10-07)"
+_NONCIRC_WALLETS_FIRST_PARTY["Maple"] = [
+    ("operational_admin", "0xCe1cE7c7F436DCc4E28Bc8bf86115514d3DC34E8", "ethereum", "SYRUP", _MAPLE_FILING,
+     "2026-10-07", "Operational Admin, 3-of-5 multisig (Maple's Blockworks filing)"),
+    ("security_admin", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818", "ethereum", "SYRUP", _MAPLE_FILING,
+     "2026-10-07", "Security Admin, 3-of-6 multisig (Maple's Blockworks filing)"),
 ]
 for _name, _rows in _NONCIRC_WALLETS_FIRST_PARTY.items():
     for _key, _addr, _chain, _sym, _url, _date, _why in _rows:
@@ -20643,13 +20699,18 @@ CIRCULATING_ONCHAIN = {
                  "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Maple": {"status": "partial", "total": "total_supply",
               "subtract": ("treasury_holding_tokens_chain", "noncirculating_holding_tokens"),
-              "method": "total − DAO multisig − treasury − Migrator − syrupDrip − RecapitalizationModule − "
-                        "governor timelock (maple-labs/address-registry, main, 2026-10-06)",
+              "method": "total − DAO multisig (the filing's Primary DAO address) − treasury − Migrator − syrupDrip "
+                        "− RecapitalizationModule − governor timelock (maple-labs/address-registry, main, "
+                        "2026-10-06) − the filing's Operational and Security Admin multisigs (2026-10-07)",
               "decision": "COINGECKO — Maple publishes no circulating figure; CoinGecko implies ~77.4M "
-                          "non-circulating while DefiLlama shows a 294.93M treasury — unreconciled. stSYRUP and "
-                          "the OFT adapter's balance count as circulating",
-              "missing": "the Syrup Strategic Fund address; why DefiLlama's treasury (294.93M) and CoinGecko's "
-                         "implied non-circulating (~77.4M) differ",
+                          "non-circulating while DefiLlama shows a 294.93M treasury — unreconciled. Maple's own "
+                          "Blockworks filing (2026-10-07) labels only three unissued/operational wallets (0xd6d4 and "
+                          "two admins), all now subtracted; whether 0xd6d4 IS the Syrup Strategic Fund (page "
+                          "77.66-79.21M vs 23.09M read on-chain 2026-10-05) is settled by maple_dao_vs_ssf — on a "
+                          "MATCH the set is complete and on-chain becomes primary. Staked SYRUP: n/a (staking ended); "
+                          "stSYRUP and the OFT adapter's balance count as circulating",
+              "missing": "confirmation that 0xd6d4 is the SSF (maple_dao_vs_ssf); why DefiLlama's treasury "
+                         "(294.93M) and CoinGecko's implied non-circulating (~77.4M) differ",
               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Chainlink": {"status": "partial", "total": "total_supply",
                   "subtract": ("buyback_fund_balance", "noncirculating_holding_tokens"),
@@ -21103,10 +21164,11 @@ NONCIRCULATING_CANDIDATES = {
         "note": "no Aethir-owned token, allocation or docs repository exists on GitHub "
                 "(AethirCloud: checker-client, HostAgent, metamask_demo, client-sdk-js)",
         "addresses": [
-            {"role": "Axelar ITS lockUnlock token manager (backs Arbitrum ATH) — SECONDARY; a "
-                     "double-count if chains are summed", "chain": "ethereum",
-             "address": "0x148F010746c2999Abc3fD5533746632AD9771948",
-             "source": "axelarnetwork/axelar-configs@f28083f0 registry/mainnet/interchain/squid.tokenlist.json:1733-1737"},
+            {"role": "Axelar ITS lockUnlock token manager (backs Arbitrum ATH) — FIRST-PARTY since 2026-10-07 "
+                     "(Aethir's Official ATH Bridges page, read by Jake); a double-count if chains are summed",
+             "chain": "ethereum", "address": "0x148F010746c2999Abc3fD5533746632AD9771948",
+             "source": "axelarnetwork/axelar-configs@f28083f0 registry/mainnet/interchain/squid.tokenlist.json:1733-1737; "
+                       "docs.aethir.com Official ATH Bridges (Jake, 2026-10-07)"},
             {"role": "staking contract — SECONDARY; circulating under the convention", "chain": "ethereum",
              "address": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE",
              "source": "DefiLlama/DefiLlama-Adapters@0703eb6c registries/sumTokens/data3.js:401"},
@@ -23519,9 +23581,11 @@ CREDIBILITY: dict = {
     "Maple": {
         "a3_buyback_locked": {"verdict": "UNVERIFIABLE (awaiting the SSF address)",
                               "why": "NOT a disagreement (Jake, 2026-10-05): the page's 77.66-79.21M SYRUP is the "
-                                     "Syrup Strategic Fund, a DIFFERENT wallet from the DAO multisig (23.09M "
-                                     "on-chain); the SSF's address is unpublished — Jake has asked Maple.",
-                              "resolve": "the SSF address from Maple, then read its SYRUP balance on-chain"},
+                                     "Syrup Strategic Fund; the DAO multisig read 23.09M on-chain. Maple's Blockworks "
+                                     "filing (2026-10-07) names 0xd6d4 the Primary DAO address managing stablecoins "
+                                     "and SYRUP, and lists no separate SSF wallet.",
+                              "resolve": "python check_offline_items.py maple_dao_vs_ssf — a MATCH makes 0xd6d4 the "
+                                         "SSF and this row compares its balance with the page"},
         "in_revenue": _c_in_py("Revenue, latest 3 complete months (Maple transparency page, monthly rows)",
                                "months_match", {"daily": "revenue_usd_defillama", "monthly": "revenue_usd",
                                                 "side": "ref"},
@@ -23668,8 +23732,10 @@ CREDIBILITY: dict = {
             "OLD wallet dormant since 2026-04-01; the NEW programme (Snapshot passed 2026-09-03) is ACTIVE through the "
             "top-up Safe 0x3fb6784e… (4 of 5 owners shared with the buyback Safe), which buys on Uniswap v4 and pays "
             "INTO sETHFI. DefiLlama's ether.fi-stake holders revenue reads $0 over 2026-09-03..10-05 — it does not see "
-            "this route, so it is no reference for it.",
-            "Ether.fi publishing its weekly buyback amounts, to set against the DEX fills counted here")),
+            "this route, so it is no reference for it. The programme page (2026-10-07) says every buyback is "
+            "announced on x.com/ether_fi_Fdn and names the Foundation wallet 0x2f53… as the buyback wallet.",
+            "Jake's monthly readings of the Foundation's announced buybacks (x.com/ether_fi_Fdn), set against the "
+            "DEX fills counted here month by month")),
     },
     # ---------------------------------------------------------------- Fluid
     "Fluid": {

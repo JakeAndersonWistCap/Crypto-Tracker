@@ -3329,6 +3329,164 @@ def near_buyback_wallets():
     print("  Nothing was stored. PASTE BACK the section.")
 
 
+# ===== MAPLE — IS THE DAO ADDRESS THE SYRUP STRATEGIC FUND? (Jake, 2026-10-07: Maple's Blockworks filing) =====
+# The filing's "Labelled Unissued & Operational Token Wallets" names three: the Primary DAO address 0xd6d4… (manages
+# stablecoins and SYRUP, 4 of 7), Operational Admin 0xCe1cE7c7… (3 of 5) and Security Admin 0x6b1A78C1… (3 of 6). The
+# transparency page's SSF held ~77.66-79.21M SYRUP; our on-chain read of 0xd6d4 was 23.09M (2026-10-05). The rule:
+# 0xd6d4 IS the SSF only if its SYRUP (plus stSYRUP, as SYRUP) sits within MAPLE_SSF_MATCH_PCT of the page's
+# syrupHoldings on the same days.
+MAPLE_DAO = "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"
+MAPLE_ADMINS = {"Operational Admin": "0xCe1cE7c7F436DCc4E28Bc8bf86115514d3DC34E8",
+                "Security Admin": "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818"}
+MAPLE_STABLES = {"USDC": ("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", 6),
+                 "USDT": ("0xdAC17F958D2ee523a2206206994597C13D831ec7", 6)}
+MAPLE_SSF_MATCH_PCT = 2.0
+SEL_CONVERT_TO_ASSETS = "0x07a2d13a"                      # convertToAssets(uint256)
+
+
+def maple_dao_vs_ssf(days: int = 180):
+    """Maple's filing wallets: 0xd6d4's SYRUP, stSYRUP (as SYRUP) and stablecoins now; the same SYRUP series we store
+    (treasury_holding_tokens_chain) against the page's SSF syrupHoldings on every shared day; the two admins'
+    balances; and every SYRUP sender into 0xd6d4 over `days`, so a buyback executor (repeated inflows from a contract)
+    stands out. Reads only; nothing is stored."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch import maple_transparency as mt             # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("MAPLE — the DAO address 0xd6d4 against the transparency page's Syrup Strategic Fund")
+    c = config.PROJECT_BY_NAME["Maple"]["contracts"]
+    syrup, stsyrup = c["token"]["address"], c["stsyrup"]["address"]
+    s = _bal(syrup, MAPLE_DAO, "ethereum")
+    sh = _bal(stsyrup, MAPLE_DAO, "ethereum")
+    st_assets = _uint(stsyrup, SEL_CONVERT_TO_ASSETS + hex(sh)[2:].rjust(64, "0"), "ethereum") if sh else 0
+    syr = None if s is None else s / 1e18
+    st = None if st_assets is None else st_assets / 1e18
+    print(f"  0xd6d4 SYRUP {syr:,.2f}" if syr is not None else "  0xd6d4 SYRUP UNREACHABLE")
+    print(f"  0xd6d4 stSYRUP shares {(sh or 0) / 1e18:,.2f} = {st:,.2f} SYRUP" if st is not None else
+          "  0xd6d4 stSYRUP UNREACHABLE")
+    for sym, (addr, dec) in MAPLE_STABLES.items():
+        b = _bal(addr, MAPLE_DAO, "ethereum")
+        print(f"  0xd6d4 {sym} {b / 10 ** dec:,.2f}" if b is not None else f"  0xd6d4 {sym} UNREACHABLE")
+    for label, addr in MAPLE_ADMINS.items():
+        b = _bal(syrup, addr, "ethereum")
+        print(f"  {label} {addr}: {_code(addr, 'ethereum')}, SYRUP "
+              + (f"{b / 1e18:,.2f}" if b is not None else "UNREACHABLE"))
+    # the page's SSF series, and the same days of our stored 0xd6d4 series
+    url = "https://maple.finance/transparency"
+    ok, why = robots_verdict(url)
+    print(f"  robots for {url}: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+    ssf = None
+    if ok:
+        df = mt.ssf_frame(requests.get(url, headers=_ua(), timeout=TIMEOUT).text)
+        if isinstance(df, str):
+            print(f"  SSF series: {df}")
+        else:
+            ssf = df.set_index("day")["syrup"]
+            print(f"  SSF syrupHoldings: {len(ssf)} day(s) {ssf.index[0].date()}..{ssf.index[-1].date()}, last "
+                  f"{ssf.iloc[-1]:,.2f}")
+    if ssf is not None and syr is not None:
+        now = syr + (st or 0.0)
+        gap = (now / ssf.iloc[-1] - 1) * 100
+        print(f"  TODAY: 0xd6d4 SYRUP + stSYRUP {now:,.2f} vs the page's latest {ssf.iloc[-1]:,.2f}: {gap:+.2f}%")
+    try:
+        db = pd.read_sql_query("SELECT date, value FROM metrics WHERE project='Maple' AND "
+                               "metric='treasury_holding_tokens_chain'", sqlite3.connect("metrics.db"))
+        ours = db.assign(date=pd.to_datetime(db["date"]).dt.normalize()).groupby("date")["value"].last()
+    except Exception as e:  # noqa: BLE001
+        ours = pd.Series(dtype=float)
+        print(f"  stored 0xd6d4 series unreadable — {e}")
+    verdict = None
+    if ssf is not None and not ours.empty:
+        common = ours.index.intersection(ssf.index)
+        if len(common):
+            pct = (ours.loc[common] / ssf.loc[common] - 1) * 100
+            within = int((pct.abs() <= MAPLE_SSF_MATCH_PCT).sum())
+            verdict = within == len(common)
+            print(f"  STORED 0xd6d4 SYRUP vs SSF on {len(common)} shared day(s) {common.min().date()}..{common.max().date()}: "
+                  f"median {pct.median():+.2f}%, {within} within {MAPLE_SSF_MATCH_PCT}% (SYRUP only — stSYRUP is "
+                  f"not in the stored series)")
+        else:
+            print("  no day both the stored 0xd6d4 series and the SSF series hold")
+    # SYRUP into 0xd6d4: by sender, contract or not
+    t0 = TRANSFER_TOPIC
+    logs, detail = explorer_logs(1, syrup, [t0, None, _pad(MAPLE_DAO)])
+    print(f"  SYRUP transfers INTO 0xd6d4: {detail}")
+    if logs:
+        cut = time.time() - days * 86400
+        rows = [("0x" + lg["topics"][1][-40:], int(lg["data"], 16) / 1e18, int(lg["timeStamp"]))
+                for lg in logs if int(lg["timeStamp"]) >= cut]
+        by = {}
+        for frm, amt, ts in rows:
+            n, tot, last = by.get(frm, (0, 0.0, 0))
+            by[frm] = (n + 1, tot + amt, max(last, ts))
+        known = {v["address"].lower(): k for k, v in c.items()}
+        print(f"  last {days} days: {len(rows)} inflow(s) from {len(by)} sender(s); largest first:")
+        for frm, (n, tot, last) in sorted(by.items(), key=lambda kv: -kv[1][1])[:15]:
+            print(f"    {frm}  {n:>4} transfer(s)  {tot:>16,.2f} SYRUP  last {pd.Timestamp(last, unit='s').date()}  "
+                  f"{_code(frm, 'ethereum')}  {known.get(frm.lower(), '')}")
+        print("  A CONTRACT sending SYRUP in many small transfers on a schedule is the buyback executor candidate.")
+    word = {True: "MATCH — 0xd6d4 tracks the SSF: it IS the Syrup Strategic Fund",
+            False: "NO MATCH — 0xd6d4 is not the SSF (or holds only part of it)", None: "NOT DECIDED"}
+    print(f"\n  VERDICT (stored series, every shared day within {MAPLE_SSF_MATCH_PCT}%): {word[verdict]}")
+    print("  PASTE BACK the section. On a MATCH the SSF is recorded as 0xd6d4 and its 365-day SYRUP history comes")
+    print("  from `python archive_backfill.py --run --project Maple`; the SSF LP/selling test then runs on its flows.")
+
+
+# ===== AETHIR — WHO PAYS CHECKER AND COMPUTE REWARDS ON ARBITRUM? (Jake, 2026-10-07) =====
+# The docs: the Arbitrum interchain ATH 0xc87B37a5… is "for checker node rewards and compute rewards". A reward
+# distributor is a sender paying MANY recipients every day. One day of ATH Transfer logs (Etherscan V2, free key),
+# grouped by sender; the dashboard's daily rises (checkerRewards, cloudHostRewards) printed beside them.
+AETHIR_ARB_ATH = "0xc87B37a581ec3257B734886d9d3a581F5A9d056c"
+ARBITRUM_BLOCKS_PER_DAY = 345_600                         # ~0.25 s blocks
+
+
+def aethir_reward_distributors(days: float = 1.0, top: int = 15):
+    """ATH Transfer logs on Arbitrum over the last `days`, grouped by sender: transfers, distinct recipients, ATH sent,
+    contract or not. A contract paying hundreds of recipients is a distributor candidate; its daily total is set
+    against the dashboard's daily rise in checkerRewards / cloudHostRewards (this store). Reads only."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head("AETHIR — reward distributors on Arbitrum (ATH Transfer logs, grouped by sender)")
+    head_blk = None
+    for url in _rpcs_for("arbitrum"):
+        try:
+            j = rpc(url, "eth_blockNumber", [])
+            head_blk = int(j["result"], 16)
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    if head_blk is None:
+        print("  Arbitrum head block UNREACHABLE")
+        return
+    start = head_blk - int(days * ARBITRUM_BLOCKS_PER_DAY)
+    logs, detail = explorer_logs(42161, AETHIR_ARB_ATH, [TRANSFER_TOPIC], start, head_blk)
+    print(f"  blocks {start:,}..{head_blk:,} (~{days:g} day): {detail}")
+    if not logs:
+        print("  no logs read — set ETHERSCAN_API_KEY in .env (Etherscan V2 covers Arbitrum on the free key)")
+        return
+    by = {}
+    for lg in logs:
+        frm, to = "0x" + lg["topics"][1][-40:], "0x" + lg["topics"][2][-40:]
+        n, rec, tot = by.get(frm, (0, set(), 0.0))
+        rec.add(to)
+        by[frm] = (n + 1, rec, tot + int(lg["data"], 16) / 1e18)
+    print(f"  {len(logs):,} transfer(s) from {len(by):,} sender(s); by distinct recipients:")
+    for frm, (n, rec, tot) in sorted(by.items(), key=lambda kv: -len(kv[1][1]))[:top]:
+        print(f"    {frm}  {n:>6} transfer(s)  {len(rec):>6} recipient(s)  {tot:>16,.2f} ATH  {_code(frm, 'arbitrum')}")
+    try:
+        db = pd.read_sql_query("SELECT date, metric, value FROM metrics WHERE project='Aethir' AND metric IN "
+                               "('emissions_checker_tokens','emissions_cloud_host_tokens')",
+                               sqlite3.connect("metrics.db"))
+        for m, g in db.groupby("metric"):
+            g = g.sort_values("date").tail(3)
+            print(f"  dashboard {m}, last days: " + ", ".join(f"{d[:10]} {v:,.0f}" for d, v in zip(g.date, g.value)))
+    except Exception as e:  # noqa: BLE001
+        print(f"  dashboard daily rises unreadable — {e}")
+    print("  PASTE BACK the section: a contract whose daily ATH matches a dashboard rise is that reward stream's\n"
+          "  distributor, and its outflow becomes the on-chain measure of it.")
+
+
 # ===== BLOCKWORKS TOKEN TRANSPARENCY FILINGS — THE PROJECTS' OWN LABELLED WALLETS (Jake, 2026-10-07 sweep). =====
 # Filings are prepared by the projects and carry a "Labelled Unissued & Operational Token Wallets" question. Blockworks'
 # documented, keyless API: GET https://api.blockworks.com/v1/ttf/filings?tickers=<T>&latest=true lists a project's
@@ -3342,6 +3500,10 @@ BLOCKWORKS_TICKERS = {
     "Pendle": "PENDLE", "Aerodrome": "AERO", "Sky": "SKY", "Uniswap": "UNI", "Chainlink": "LINK", "Morpho": "MORPHO",
     "Maple": "SYRUP", "Ether.fi": "ETHFI", "Fluid": "FLUID",
 }
+# Project slugs (app.blockworks.com/projects/<slug>), asked by the same documented listing when a ticker lists
+# nothing. Aerodrome's (Jake, 2026-10-07; project id 36aae2e1-9f91-45a7-b97b-27b3fa1f3d49 — the id is NOT queried:
+# app.blockworks.com research data is subscription, so only the open filings API is used).
+BLOCKWORKS_SLUGS = {"Aerodrome": "aerodrome-finance", "Maple": "maple-finance", "Ether.fi": "ether-fi"}
 BLOCKWORKS_WALLET_QUESTION = "wallet"            # matched case-insensitively against each question's label
 BLOCKWORKS_CACHE = os.path.join(".cache", "blockworks")
 
@@ -3401,6 +3563,12 @@ def blockworks_filings(only: str | None = None):
             print(f"\n  {proj} [{ticker}]: listing {note}")
             continue
         filings = [f for d in listing.get("data") or [] for f in d.get("filings") or []]
+        if not filings and proj in BLOCKWORKS_SLUGS:
+            slug = BLOCKWORKS_SLUGS[proj]
+            listing, note = _blockworks_get(f"{BLOCKWORKS_API}/filings", {"project_slugs": slug, "latest": "true"},
+                                            f"list-{slug}.json")
+            filings = [f for d in (listing or {}).get("data") or [] for f in d.get("filings") or []]
+            print(f"\n  {proj} [{ticker}]: nothing by ticker; by project slug {slug}: {len(filings)} filing(s) ({note})")
         if not filings:
             print(f"\n  {proj} [{ticker}]: no filing listed")
             continue
@@ -6618,7 +6786,7 @@ CHECKS = (
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
-    robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings,
+    robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

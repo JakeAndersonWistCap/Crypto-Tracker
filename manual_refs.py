@@ -93,8 +93,10 @@ PAGES: dict = {
                                       "NEAR of the three wallets", "unit": "NEAR", "tol_pct": 5.0},
     ("Aerodrome", "in_voting_power"): {"url": "https://aerodrome.finance", "tile": "total veAERO (voting power — "
                                        "decays with lock time; NOT AERO locked)", "unit": "veAERO", "tol_pct": 2.0},
-    ("Ether.fi", "in_buyback"): {"url": "URL not on file — Ether.fi's weekly buyback posts",
-                                 "tile": "ETHFI bought in the month (weeks summed)", "unit": "ETHFI",
+    # The programme page (etherfi.gitbook.io/gov/ethfi-buyback-program, Jake 2026-10-07): "All buybacks will be
+    # announced on" the Foundation's X account.
+    ("Ether.fi", "in_buyback"): {"url": "https://x.com/ether_fi_Fdn (the Foundation's buyback announcements)",
+                                 "tile": "ETHFI bought in the month (announcements summed)", "unit": "ETHFI",
                                  "tol_pct": 10.0, "monthly_metric": "actual_buyback_tokens"},
 }
 STAKING_PAGE = {"tile": "total staked", "unit": "tokens", "tol_pct": 2.0}

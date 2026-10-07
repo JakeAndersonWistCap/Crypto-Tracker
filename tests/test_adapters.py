@@ -14785,7 +14785,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'aethir' matches 7 checks" in out
+    assert "'aethir' matches 8 checks" in out        # + aethir_reward_distributors (2026-10-07)
     for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
         assert name in out
     assert "Done." not in out, "a refusal must not claim anything ran"
@@ -14794,9 +14794,9 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 6 checks" in out2
+    assert "'maple' matches 7 checks" in out2      # + maple_dao_vs_ssf (2026-10-07)
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
-                                   "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips"))
+                                   "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips", "maple_dao_vs_ssf"))
 
 
 def test_offline_checks_unmatched_name_refuses_and_points_at_list(monkeypatch, capsys):
@@ -25381,7 +25381,8 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     for n, (cnt, sym, src) in {"Ether.fi": (7, "ETHFI", "https://"), "Morpho": (2, "MORPHO", "https://docs.morpho.org/"),
                                "Uniswap": (5, "UNI", "https://github.com/Uniswap/docs/blob/1c7597d7"),
                                "Fluid": (8, "FLUID", "https://github.com/Instadapp/"),
-                               "Chainlink": (3, "LINK", "https://blog.chain.link/")}.items():
+                               "Chainlink": (3, "LINK", "https://blog.chain.link/"),
+                               "Maple": (2, "SYRUP", "https://blockworks.com/")}.items():
         rows = config._NONCIRC_WALLETS_FIRST_PARTY[n]
         assert len(rows) == cnt, n
         cs = {f"noncirc_{r[0]}": config.PROJECT_BY_NAME[n]["contracts"][f"noncirc_{r[0]}"] for r in rows}
@@ -26644,3 +26645,68 @@ def test_completion_sweep_closes_three_static_checks_with_free_second_sources():
     none = fn("Morpho", {}, long[long.metric != "borrowed_usd_llama"], asof, a="supply_units", b="utilisation_pct",
               ref="borrowed_usd_llama")
     assert none[0] is None and "borrowed_usd_llama" in none[2]
+
+
+def test_new_first_party_sources_of_2026_10_07_are_recorded():
+    """Jake (2026-10-07): Maple's filing (0xd6d4 = Primary DAO address; two admin multisigs subtracted), ether.fi's
+    buyback programme page (two streams to sETHFI, Foundation wallet 0x2f53… declared, announcements on X), Aethir's
+    bridges (never summed; rewards API partner-only), Aerodrome's Blockworks slug (the project id is not queried)."""
+    import check_offline_items as coi
+    import manual_refs as mr
+    mp = config.PROJECT_BY_NAME["Maple"]["contracts"]
+    assert "Primary DAO address" in mp["treasury"]["provenance"]
+    assert {mp["noncirc_operational_admin"]["address"], mp["noncirc_security_admin"]["address"]} == {
+        "0xCe1cE7c7F436DCc4E28Bc8bf86115514d3DC34E8", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818"}
+    assert "maple_dao_vs_ssf" in config.CREDIBILITY["Maple"]["a3_buyback_locked"]["resolve"]
+    assert config.circulating_onchain("Maple")["status"] == "partial", "on-chain primary only after a MATCH"
+    bp = config.PROJECT_BY_NAME["Ether.fi"]["buyback_programme"]
+    assert set(bp["streams"]) == {"weekly", "monthly"} and "sETHFI" in bp["destination"]
+    assert bp["declared_wallet"].startswith("0x2f5301a3D59388c509C65f8698f521377D41Fd0F")
+    assert mr.page_for("Ether.fi", "in_buyback")["url"].startswith("https://x.com/ether_fi_Fdn")
+    assert mr.page_for("Ether.fi", "in_buyback")["monthly_metric"] == "actual_buyback_tokens"
+    br = config.PROJECT_BY_NAME["Aethir"]["bridges"]
+    assert br["axelar_eth_arbitrum"]["address"] == "0x148F010746c2999Abc3fD5533746632AD9771948"
+    assert "partner-only" in br["rewards_api"] and "never" not in br["arbitrum_interchain"]["use"]
+    # the Arbitrum read stays the ONE supply read: no other ATH deployment serves total_supply
+    sup = [c for c in config.PROJECT_BY_NAME["Aethir"]["contracts"].values()
+           if c.get("kind") == "erc20_total_supply" and not c.get("metric_override")]
+    assert [c["chain"] for c in sup] == ["arbitrum"]
+    assert coi.BLOCKWORKS_SLUGS["Aerodrome"] == "aerodrome-finance"
+    assert {coi.maple_dao_vs_ssf, coi.aethir_reward_distributors} <= set(coi.CHECKS)
+
+
+def test_maple_dao_vs_ssf_probe_matches_on_every_shared_day_and_ranks_senders(tmp_path, monkeypatch, capsys):
+    """The MATCH rule: the stored 0xd6d4 SYRUP series within 2% of the page's SSF syrupHoldings on EVERY shared day;
+    senders into 0xd6d4 are ranked by SYRUP with contract / no code shown."""
+    import sqlite3
+    import check_offline_items as coi
+    from fetch import maple_transparency as mt
+    from fetch import scrape
+    monkeypatch.chdir(tmp_path)
+    con = sqlite3.connect("metrics.db")
+    con.execute("CREATE TABLE metrics (date TEXT, project TEXT, metric TEXT, value REAL)")
+    con.executemany("INSERT INTO metrics VALUES (?,?,?,?)", [
+        ("2026-10-05", "Maple", "treasury_holding_tokens_chain", 78.0e6),
+        ("2026-10-06", "Maple", "treasury_holding_tokens_chain", 78.5e6)])
+    con.commit()
+    con.close()
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    monkeypatch.setattr(coi.requests, "get", lambda *a, **k: type("R", (), {"text": "<html/>"})())
+    monkeypatch.setattr(mt, "ssf_frame", lambda html: pd.DataFrame(
+        {"day": [pd.Timestamp("2026-10-05"), pd.Timestamp("2026-10-06")], "syrup": [78.4e6, 78.9e6], "usd": [1, 1]}))
+    monkeypatch.setattr(coi, "_bal", lambda token, holder, chain: 79_000_000 * 10 ** 18
+                        if holder == coi.MAPLE_DAO and token.lower().startswith("0x643c") else 0)
+    monkeypatch.setattr(coi, "_uint", lambda to, data, chain: 0)
+    monkeypatch.setattr(coi, "_code", lambda addr, chain: "CODE" if addr.endswith("aa") else "no code")
+    now = int(pd.Timestamp.now().timestamp())
+    logs = [{"topics": [coi.TRANSFER_TOPIC, "0x" + "0" * 24 + "aa" * 20, coi._pad(coi.MAPLE_DAO)],
+             "data": hex(10 ** 24), "timeStamp": now - 86400} for _ in range(3)]
+    logs.append({"topics": [coi.TRANSFER_TOPIC, "0x" + "0" * 24 + "bb" * 20, coi._pad(coi.MAPLE_DAO)],
+                 "data": hex(5 * 10 ** 23), "timeStamp": now - 86400})
+    monkeypatch.setattr(coi, "explorer_logs", lambda *a, **k: (logs, "4 logs"))
+    coi.maple_dao_vs_ssf()
+    out = capsys.readouterr().out
+    assert "on 2 shared day(s)" in out and "2 within 2.0%" in out
+    assert "VERDICT (stored series, every shared day within 2.0%): MATCH" in out
+    first = [ln for ln in out.splitlines() if "transfer(s)" in ln and "SYRUP" in ln][0]
+    assert "0x" + "aa" * 20 in first and "3 transfer(s)" in first and "CODE" in first

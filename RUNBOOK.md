@@ -580,6 +580,31 @@ source.
 - What remains, and why, is in the sweep report. In short: DefiLlama-only TVL/DEX and settlement rows need a paid
   source; several rows need a project to publish a figure, or Jake's reading.
 
+**New first-party sources (Jake, 2026-10-07, evening):**
+- **Maple** (its Blockworks filing): 0xd6d4 is the "Primary DAO address (manages stablecoins and SYRUP)", already
+  subtracted. The Operational Admin (0xCe1cE7c7…) and Security Admin (0x6b1A78C1…) are now subtracted too. Run
+  `python check_offline_items.py maple_dao_vs_ssf`. It reads 0xd6d4's SYRUP, stSYRUP and stablecoins plus both admins'
+  SYRUP, sets the stored 0xd6d4 series against the page's SSF on every shared day (MATCH = all within 2%), and ranks
+  SYRUP senders into 0xd6d4 (the buyback executor candidate). On a MATCH:
+  - 0xd6d4 is recorded as the SSF;
+  - `python archive_backfill.py --run --project Maple` fills its 365 days;
+  - Maple's set is complete, so on-chain becomes primary.
+- **Ether.fi** (etherfi.gitbook.io/gov/ethfi-buyback-program): recorded in `buyback_programme`.
+  - Streams: weekly = 100% of eETH withdrawal fees (proposal #11); monthly = part of Stake/Liquid/Cash revenue
+    (proposal #8).
+  - Both are remitted to sETHFI.
+  - The Foundation wallet 0x2f53… is the declared buyback wallet.
+  - `in_buyback` now takes Jake's monthly readings of x.com/ether_fi_Fdn.
+  - Withdrawal-fee revenue is noted but not yet measured.
+- **Aethir** (docs Token Overview + Official ATH Bridges): recorded in `bridges`.
+  - Axelar locks Ethereum ATH against the Arbitrum supply; Stargate backs Solana; eATH is LayerZero.
+  - Never summed: Arbitrum's totalSupply stays the one supply read.
+  - The rewards API is partner-only.
+  - `python check_offline_items.py aethir_reward_distributors` groups one day of Arbitrum ATH transfers by sender, to
+    find the checker and compute reward distributors.
+- **Aerodrome:** the Blockworks probe also asks by project slug `aerodrome-finance`. Jake's project id is recorded but
+  not queried, because app.blockworks.com research data is subscription.
+
 ## 11am. NEAR buyback by balance, Sky NPS confirmed, GEODNET's Solana side — 2026-10-07 (late)
 
 **NEAR.** The buyback is the day's change in the THREE revenue wallets' combined liquid close. Internal moves cancel,
