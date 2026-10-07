@@ -242,6 +242,7 @@ METRICS = {
     # locked_tokens = the on-chain page's totalStaked; these are the parts it shows beside it, and
     # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
     "locked_tokens_ai":      {"label": "Staked — AI pool (Aethir dashboard aiStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
+    "emissions_tokens_declared":    {"label": "Emissions per day as DECLARED by the vest streams (reference beside the measured release)", "kind": "flow", "unit": "tokens", "archetypes": [3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",), "view_only": True},
     "emissions_tokens_arbitrum":    {"label": "FLUID claimed out of Fluid's ARBITRUM MerkleDistributors (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Fluid",)},
     "locked_tokens_ai_onchain":     {"label": "Staked — AI pool, ON-CHAIN (veAethir.balanceOf(AI Pool)) — check on aiStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_gaming_onchain": {"label": "Staked — Gaming pool, ON-CHAIN (veAethir.balanceOf(Gaming Pool)) — check on gamingStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
@@ -7071,13 +7072,19 @@ PROJECTS = [
             "steps": [
                 {"from": "2022-01-01", "until": "2023-12-31", "rate": 2.0, "unit": "GEOD/hour",
                  "note": "stated in GEOD/hour in the docs, not GEOD/day — do not compare directly with the rows below"},
-                {"from": "2025-07-01", "until": "2026-06-30", "tokens_per_miner_per_day": 12.0},
-                {"from": "2026-07-01", "until": "2027-06-30", "tokens_per_miner_per_day": 6.0, "current": True},
+                # CONFIRMED by Jake 2026-10-07 (docs.geodnet.com 'Tokenomics'): per TRIPLE-BAND base station;
+                # dual-band was retired in June 2025. credibility._base_reward_ceiling reads these two steps.
+                {"from": "2025-07-01", "until": "2026-06-30", "tokens_per_miner_per_day": 12.0,
+                 "band": "triple-band"},
+                {"from": "2026-07-01", "until": "2027-06-30", "tokens_per_miner_per_day": 6.0, "current": True,
+                 "band": "triple-band"},
                 {"from": "2027-07-01", "until": "2028-06-30", "tokens_per_miner_per_day": 3.0, "status": "expected"},
             ],
             "multipliers": {
                 "superhex_zones_up_to": 4.0,
-                "band_type": "triple-band and dual-band miners earn differently; the per-band figures are not on file",
+                "band_type": "the base rates are per triple-band station; dual-band was retired in June 2025 (Jake, "
+                             "2026-10-07, docs.geodnet.com 'Tokenomics')",
+                "actual_reward": "base x data-quality / hex / SuperHex / performance rules",
             },
             "total_supply_cap": 1_000_000_000,
             "source_url": "https://docs.geodnet.com/geod-token/tokenomics",
@@ -7416,8 +7423,9 @@ PROJECTS = [
                                         # mining_distribution_polygon was checked on the live run this
                                         # round) — set on the strength of identical docs wording and the
                                         # same source page as the two siblings that WERE confirmed.
-                note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page. Address confirmed; "
-                     "holdings unread."),
+                note="VERIFIED 2026-09-17 against GEODNET's own tokenomics page; CONFIRMED AGAIN by Jake 2026-10-07 "
+                     "(docs.geodnet.com 'Tokenomics': 'team, investors, and ecosystem will undergo a multi-year "
+                     "unlocking process') — non-circulating, subtracted as treasury_holding_tokens."),
         },
         # CONFIRMED 2026-09-21. The single thing this block was waiting for — a GEODNET-authored
         # statement of the mechanism, as opposed to our own query observing its effects — arrived
@@ -8343,16 +8351,20 @@ PROJECTS = [
             # (never locked_tokens, never summed into it — the wrapper read already contains them). IDC and
             # edge stake are not on these pools and stay dashboard-only.
             "veaethir_token": _contract(
-                "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490", "ethereum", "bridged_representation", "veATH",
+                "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490", "ethereum", "bridged_representation", "veAethir",
                 "https://aethir.com/",
                 verified="2026-09-24",
+                # SYMBOL 'veAethir' (Jake's run 2026-10-07: the symbol check read 'veAethir'; 'veATH' was my guess).
+                # The address is tied to Aethir by the chain, not by a page: both pools on Aethir's staking page
+                # return it from token(); the Keystone registry names it VeAethir. docs.aethir.com did not answer
+                # from here (2026-10-07), so no docs page is cited.
                 provenance="pool.token() on both pools (Jake's read, 2026-09-24; "
-                           "aethir_staking.veAethir_token_2026_09_24)",
+                           "aethir_staking.veAethir_token_2026_09_24); symbol() = 'veAethir' (Jake's run 2026-10-07)",
                 token_standard="erc20",
                 purpose="veAethir — the token the AI and Gaming pools lock. REFERENCE ONLY: the balanceOf "
                         "target (and decimals) for the two pool reads below; never a supply."),
             "staking_ai_pool_balance": _contract(
-                "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4", "ethereum", "ve_total_supply", "veATH",
+                "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4", "ethereum", "ve_total_supply", "veAethir",
                 "https://aethir.com/",
                 verified="2026-09-24", metric_override="locked_tokens_ai_onchain",
                 provenance="the AI Pool address above (staking_ai_pool); veAethir per pool.token()",
@@ -8360,7 +8372,7 @@ PROJECTS = [
                 holder_has_code=True,
                 purpose="veAethir.balanceOf(AI Pool) — the on-chain count behind the dashboard's aiStaked."),
             "staking_gaming_pool_balance": _contract(
-                "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31", "ethereum", "ve_total_supply", "veATH",
+                "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31", "ethereum", "ve_total_supply", "veAethir",
                 "https://aethir.com/",
                 verified="2026-09-24", metric_override="locked_tokens_gaming_onchain",
                 provenance="the Gaming Pool address above (staking_gaming_pool); veAethir per pool.token()",
@@ -13283,14 +13295,35 @@ PROJECTS = [
         # transaction as the 2,860,943.76 SKY burn. The 2026-08-13 stream (96,903,706 / 90 days) ran
         # 2026-08-13..2026-09-12; the new one 2026-09-13..2026-12-11 (90 days inclusive). Past the expiry
         # the schedule goes silent and the Gap Report says SCHEDULE EXPIRED.
+        # ===== THE DECLARED STREAM WAS INCOMPLETE (Jake's run 2026-10-07: declared Q0 73,158,xxx vs measured
+        # 189,109,xxx). It began at the 2026-08-13 stream and missed every earlier vest still paying inside Q0. Every
+        # lsSKY->SKY vest reset in sky-ecosystem/spells-mainnet@3982314 archive/*/DssSpell.sol (updateFarmVest /
+        # the 2025-10-30 init), each a 90-day stream from execution (the 2025-10-30 init: 180 days, bgn - 7 days):
+        #   2025-10-30 1,000,000,000 / 180d | 2026-04-09 192,110,322 | 2026-04-23 53,960,949 | 2026-05-07 239,982,804
+        #   2026-06-18 240,862,942 | 2026-07-16 286,714,697 | 2026-08-13 96,903,706 | 2026-09-10 143,208,393 (exec 09-13)
+        # updateFarmVest distributes the old vest's unpaid amount, YANKS it and starts the new one
+        # (endgame-toolkit TreasuryFundedFarmingInit.updateFarmVest), so each stream pays until the next. Q0 rebuilt:
+        # 21.4M (06-18 vest, 8 days) + 89.2M (07-16, 28 d) + 33.4M (08-13, 31 d) + 38.2M (09-13, 24 d) = ~182M against
+        # the measured 189.1M (3.8%; weekly distribute() calls move releases across the window edges). THE MEASURED
+        # RELEASE IS THE FIGURE (emissions_from_metric below); this schedule is its reference, emissions_tokens_declared.
+        # Step dates are SPELL dates except 09-13 (the recorded execution): execution follows the GSM delay, so an
+        # earlier step may start a few days later than written.
+        "emissions_from_metric": "emissions_tokens_scan",
         "issuance_schedule": {
+            "emissions_metric": "emissions_tokens_declared",
             "steps": [
+                {"from": "2025-10-30", "tokens_per_day": 1_000_000_000 / 180},
+                {"from": "2026-04-09", "tokens_per_day": 192_110_322 / 90},
+                {"from": "2026-04-23", "tokens_per_day": 53_960_949 / 90},
+                {"from": "2026-05-07", "tokens_per_day": 239_982_804 / 90},
+                {"from": "2026-06-18", "tokens_per_day": 240_862_942 / 90},
+                {"from": "2026-07-16", "tokens_per_day": 286_714_697 / 90},
                 {"from": "2026-08-13", "tokens_per_day": 96_903_706 / 90, "until": "2026-09-12"},
                 {"from": "2026-09-13", "tokens_per_day": 143_208_393 / 90, "until": "2026-12-11"},
             ],
-            "source_url": "https://github.com/sky-ecosystem/spells-mainnet/blob/8a4c4b23406cd078dfdc8b7b252a6d9287510b3b/"
-                          "archive/2026-09-10-DssSpell/DssSpell.sol",
-            "source_date": "2026-09-13", "status": "active",
+            "source_url": "https://github.com/sky-ecosystem/spells-mainnet/tree/3982314374da47886295aede7305cbb6a8cbb4fb/"
+                          "archive (every DssSpell.sol naming REWARDS_DIST_LSSKY_SKY)",
+            "source_date": "2026-10-07", "status": "active",
             "emissions_only": True,
             "note": "LSSKY->SKY staking rewards RELEASED from treasury SKY (DssVestTransferrable "
                     "MCD_VEST_SKY_TREASURY, czar = Pause Proxy) — NOT minted: 96,903,706 SKY / 90 days from "
@@ -20150,11 +20183,18 @@ CIRCULATING_ONCHAIN = {
                # Free float subtracts BOTH lock legs: sPENDLE (locked_tokens) and the legacy vePENDLE balance —
                # Pendle's own circulating excludes both (Tokenomics.md L26-27).
                "free_float_lock_extra": ("locked_tokens_legacy_vependle",),
+               # COINGECKO STILL COUNTS sPENDLE (Jake's run 2026-10-07: our free float 142,975,xxx vs CoinGecko
+               # 173,742,xxx, -17.7%). Our free float IS Pendle's documented circulating (Tokenomics.md L24-33 excludes
+               # sPENDLE, vePENDLE and the three multisigs). The 30.77M gap is the sPENDLE stake (31.4M): CoinGecko +
+               # 0.4% of (ours + sPENDLE), while (ours + vePENDLE 63.5M) would be +19%. So CoinGecko excludes vePENDLE
+               # but not sPENDLE — the pre-sPENDLE definition. The check compares like with like (ours + the legs
+               # CoinGecko counts) and records ours as the stricter, documented figure; the headline keeps it.
+               "coingecko_counts_lock_legs": ("locked_tokens",),
                "method": "total − the fee wallet 0x8270… − Ecosystem Fund − Governance multisig − Team "
                          "multisig (pendle-finance/documentation@3cc3658 Tokenomics.md L24-33). Pendle's OWN "
                          "figure also excludes sPENDLE and vePENDLE: by the convention staked tokens are "
-                         "circulating and come out SEPARATELY as locked, so Pendle's figure (and CoinGecko's, "
-                         "read from Pendle's endpoint) is OUR FREE FLOAT",
+                         "circulating and come out SEPARATELY as locked, so Pendle's figure is OUR FREE FLOAT. "
+                         "CoinGecko's counts sPENDLE (2026-10-07, arithmetic above)",
                "decision": "ON-CHAIN — Pendle documents the complete set (vesting ended Sep 2024). CoinGecko's "
                            "~170M is the free-float quantity: used as circulating it subtracted sPENDLE twice "
                            "in free float. Bridged PENDLE on L2s counts as circulating (Pendle excludes mainnet "
@@ -20200,13 +20240,15 @@ CIRCULATING_ONCHAIN = {
                   "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "GEODNET": {"status": "partial", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
-                "decision": "COINGECKO — the Team (~245M), Investor and Vendor/Marketing wallets that explain the "
-                            "−41% gap are listed in NONCIRCULATING_CANDIDATES but NOT wired: they were seen only in "
-                            "search summaries of docs.geodnet.com/geod-token/tokenomics",
-                "missing": "the mining, mining-distribution and ecosystem wallets and both burn "
-                           "accounts are excluded; team, investor and vendor wallets await a direct read of "
-                           "GEODNET's tokenomics page (NONCIRCULATING_CANDIDATES)",
-                "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+                "decision": "COINGECKO until the next run's figure is in — since Jake confirmed GEODNET's tokenomics "
+                            "page (2026-10-07) the Team, Investor, Vendor/Marketing and Public sale wallets are "
+                            "subtracted too (NONCIRCULATING_CANDIDATES, confirm_candidates). Jake's probe put ours "
+                            "at ~536.4M without the public-sale wallet vs CoinGecko 462.4M (+16%); if the run lands "
+                            "within the circulating row's 5%, ratios_use becomes 'onchain' (Jake, 2026-10-07)",
+                "missing": "Solana-side allocation wallets after the migration and the burn-pending wallet; the "
+                           "seven Polygon wallets on GEODNET's tokenomics page are all excluded",
+                "decided_by": "Claude Code 2026-10-07 on Jake's confirmation of docs.geodnet.com 'Tokenomics', "
+                              "pending Jake's review"},
     "Morpho": {"status": "not_established",
                "why": "no Morpho DAO treasury, vesting or foundation address is documented in config"},
     # AERODROME (Jake's decision, 2026-09-30): the team's 95M in PERMANENT veNFTs is EXCLUDED from
@@ -20280,28 +20322,41 @@ CIRCULATING_ONCHAIN = {
 # circulating, so staking and ve contracts are listed only where they explain a balance.
 NONCIRCULATING_CANDIDATES = {
     "GEODNET": {
-        "note": "the allocation wallets of GEODNET's tokenomics page, as search-engine summaries of "
-                "docs.geodnet.com/geod-token/tokenomics give them (the mining, distribution and ecosystem wallets "
-                "already wired match the same list). NOT subtracted until Jake opens the page and confirms "
-                "them — Claude Code 2026-10-06, pending Jake's review",
+        # CONFIRMED BY JAKE 2026-10-07 from GEODNET's own docs (docs.geodnet.com "Tokenomics"), which list seven
+        # allocation wallets and say: "Each wallet will adhere to its own unlocking schedule ... team, investors,
+        # and ecosystem will undergo a multi-year unlocking process." Mining 0xfa5fEd5c…, Mining distribution
+        # 0x8FB9dd00… and Ecosystem 0x3A6906E4… were already wired (contracts mining_polygon,
+        # mining_distribution_polygon, ecosystem_polygon — treasury_holding_tokens, subtracted); the four below
+        # are the rest of the page's list.
+        "note": "the allocation wallets of GEODNET's tokenomics page (docs.geodnet.com 'Tokenomics'), confirmed by "
+                "Jake 2026-10-07 — Team, Investor, Vendor/Marketing and Public sale; Mining, Mining distribution "
+                "and Ecosystem are the contracts already wired",
         "addresses": [
-            {"role": "Team (25%, 244,142,392; coincarp's rich list shows 245,000,000 here)", "chain": "polygon",
+            {"role": "Team (multi-year unlocking per the docs)", "chain": "polygon",
              "address": "0xca3E874Bc4e830796d822F529C29Df30302324b2",
-             "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
-            {"role": "Investor (25%, 244,142,392)", "chain": "polygon",
+             "source": "docs.geodnet.com 'Tokenomics', read by Jake 2026-10-07"},
+            {"role": "Investor (multi-year unlocking per the docs)", "chain": "polygon",
              "address": "0x486559899e96981DFE55C4E6EBF5101A76BfAdfa",
-             "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
-            {"role": "Vendor / Marketing (3%)", "chain": "polygon",
-             "address": "0x82146cf0f350c241757660fd803c73313b06d75c",
-             "source": "search summary of docs.geodnet.com/geod-token/tokenomics, 2026-10-06 (unconfirmed)"},
+             "source": "docs.geodnet.com 'Tokenomics', read by Jake 2026-10-07"},
+            {"role": "Vendor / Marketing", "chain": "polygon",
+             "address": "0x82146CF0f350C241757660Fd803c73313b06D75C",
+             "source": "docs.geodnet.com 'Tokenomics', read by Jake 2026-10-07"},
+            {"role": "Public sale", "chain": "polygon",
+             "address": "0xcEcccB3ee2C208Fb58A5a02499E97D4BF041Ff6f",
+             "source": "docs.geodnet.com 'Tokenomics', read by Jake 2026-10-07"},
         ],
-        "not_established": "the addresses themselves (page not opened); Solana-side allocation wallets after "
-                           "the migration; the burn-pending wallet",
-        # THE ONE-LINE SWITCH (overnight 2026-10-06, C). False: listed only. True — set ONLY after Jake opens
-        # docs.geodnet.com/geod-token/tokenomics and confirms the three addresses — reads each wallet's GEOD on
-        # Polygon into noncirculating_holding_tokens and subtracts it from GEODNET's on-chain circulating (below).
-        # `python check_offline_items.py geod_candidate_wallets` prints their balances, behaviour and the result first.
-        "confirm_candidates": False},
+        "not_established": "Solana-side allocation wallets after the migration; the burn-pending wallet",
+        # JAKE'S PROBE 2026-10-07 (geod_candidate_wallets): Team 0xca3E874B… is a CONTRACT holding 245,000,000 GEOD
+        # with 0 transfers in 180 days (locked in practice); Investor 0x48655989… holds 1,183,291 (the allocation
+        # already distributed); Vendor 0x82146cf0… holds 1,961,186 (3.9M sent out). Excluding those three: ~536.4M vs
+        # CoinGecko 462.4M (+16%, ~74M). The public-sale wallet was not in that probe; its balance is the first
+        # thing the next run reads (`check_offline_items.py geod_candidate_wallets` prints all four).
+        "probe_2026_10_07": {"team": 245_000_000, "investor": 1_183_291, "vendor": 1_961_186,
+                             "ours_excluding_all": 536_400_000, "coingecko": 462_400_000},
+        # THE ONE-LINE SWITCH (overnight 2026-10-06, C). ON since Jake confirmed the docs page on 2026-10-07: each
+        # wallet's GEOD on Polygon is read into noncirculating_holding_tokens and subtracted from GEODNET's
+        # on-chain circulating (CIRCULATING_ONCHAIN below).
+        "confirm_candidates": True},
     "Morpho": {
         "note": "no Morpho docs or tokenomics repository exists (morpho-org's 71 public repos)",
         "addresses": [
@@ -20417,7 +20472,7 @@ def _apply_confirmed_candidates() -> None:
     for n, a in enumerate(cand["addresses"], start=1):
         p["contracts"][f"noncirc_candidate_{n}"] = _contract(
             a["address"], a["chain"], "treasury_holding", "GEOD",
-            "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-10-06", purpose=a["role"],
+            "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-10-07", purpose=a["role"],
             provenance="CONFIRMED by Jake (confirm_candidates) — " + a["source"], holder_has_code=False,
             metric_override=_NC)
     spec = CIRCULATING_ONCHAIN["GEODNET"]
@@ -20458,6 +20513,11 @@ def free_float_lock_metrics(project_name: str) -> tuple:
     # lock from the one printed beside it would not be the column's own figure.
     spec = CIRCULATING_ONCHAIN.get(project_name) or {}
     return (lock_display_metric(project_name), *spec.get("free_float_lock_extra", ()))
+
+
+def coingecko_counted_lock_legs(project_name: str) -> tuple:
+    """Lock legs CoinGecko still COUNTS as circulating although its basis is free float (Pendle: sPENDLE)."""
+    return tuple((CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_counts_lock_legs", ()))
 
 
 def coingecko_counts_total(project_name: str) -> bool:
@@ -22390,11 +22450,12 @@ CREDIBILITY: dict = {
         "a4_gross_issuance": {"formula": "eth_issuance_curve", "tol": 10.0,
                               "note": "An UPPER bound: the curve assumes full participation; missed attestations and "
                                       "penalties take actual issuance a few % below it."},
-        "a4_net_change": {"formula": "delta_q0", "args": {"metric": "circulating_supply"}, "tol": 20.0,
-                          "source": "CoinGecko circulating supply (ETH: = total), change across Q0 — ours is Etherscan "
-                                    "issuance minus burn",
-                          "note": "CoinGecko's supply is a daily snapshot; a ~0.01% rounding moves a 90-day change by "
-                                  "several %."},
+        # 2026-10-07: the reference was CoinGecko's d(circulating) over Q0 and read 1.43M ETH (impossible); it is now
+        # the issuance curve minus DefiLlama's burn on OUR common days — both independent of our Etherscan reads.
+        "a4_net_change": {"formula": "eth_net_formula", "tol": 20.0,
+                          "source": "issuance curve (166.32 x sqrt(staked ETH)/day) − DefiLlama burned fees / price, on "
+                                    "the same days our issuance and burn are both stored — ours is Etherscan's",
+                          "note": "The curve assumes full participation: an upper bound by ~1-2% of issuance."},
         "a1_validator_yield": {"metric": "staking_apr_lido", "window": "now", "scale": 1 / 0.9, "tol": 15.0,
                                "source": "Lido stETH APR (7-day SMA, eth-api.lido.fi) grossed up for Lido's 10% fee — "
                                          "Lido's figure, consensus + execution (MEV) rewards of Lido's validators",
@@ -22512,7 +22573,9 @@ CREDIBILITY: dict = {
                                       "source": "the documented curve, rate set by TOTAL stake, paid on ACTIVE stake "
                                                 "(validatorSummaries: jailed / inactive excluded)",
                                       "note": "Jake's run 2026-10-05: observed -24% vs the curve on total stake. If "
-                                              "this row PASSES, inactive stake explains the gap."}),
+                                              "this row PASSES, inactive stake explains the gap. STATUS 2026-10-07: "
+                                              "-22.8% on the run of 2026-10-07 against the total-stake curve; no new "
+                                              "research resolves the rest — open, no action (Jake)."}),
         "in_emissions": _c_in("Emissions Q0 (fall in tokenDetails.futureEmissions)", "emissions_tokens", "q0",
                               {"metric": "emissions_modelled_tokens", "window": "q0", "tol": 20.0,
                                "source": "the documented reward curve applied to the daily stake (emissions_modelled_tokens)",
@@ -22679,7 +22742,11 @@ CREDIBILITY: dict = {
                                     "the MIP-021 buyback executor and the SSF address are not established either — "
                                     "Blockworks' filing says repurchased SYRUP is held in the DAO treasury.",
                              "resolve": "Maple's own definition of revenueUsd (which pools, chains, gross or net of the "
-                                        "holders share) from its docs/methodology, then a month-by-month reconciliation"},
+                                        "holders share) from its docs/methodology, then a month-by-month reconciliation. "
+                                        "STATUS 2026-10-07: +16.7% vs DefiLlama on matched months (Jake's run); the "
+                                        "overnight research explains part (Basic-strategy fees and Base unread by "
+                                        "DefiLlama, OTC near zero before its 2026-08-22 fix) but not all — open, no "
+                                        "action (Jake)."},
                             fmt=_C_USD),
         "in_buyback": _c_in("SYRUP bought Q0 (transparency page)", "actual_buyback_tokens", "q0", _c_chk(
             "The page is the only source; no buyback executor address is on file, so on-chain purchases cannot be "
@@ -22819,16 +22886,17 @@ CREDIBILITY: dict = {
         "in_nps": _c_in("Net Protocol Surplus (manual monthly)", "net_protocol_surplus_usd", "q0", _c_unv(
             "The manual NPS rows ARE Sky's own figures (insights.skyeco.com / financial.skyeco.com); there is no "
             "second publisher of NPS."), fmt=_C_USD),
-        "in_emissions": _c_in("Emissions Q0 — staking rewards RELEASED from treasury SKY (declared vest streams)",
+        "in_emissions": _c_in("Emissions Q0 — staking rewards RELEASED from treasury SKY (measured: REWARDS_DIST_LSSKY_SKY -> farm)",
                               "emissions_tokens", "q0",
-                              # B2 (overnight 2026-10-06): the release MEASURED on-chain (log_scans
-                              # .lssky_rewards_released) against our declared streams.
-                              {"metric": "emissions_tokens_scan", "window": "q0", "tol": 10.0,
-                               "source": "SKY Transfer events REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY summed over Q0 "
-                                         "(spells-mainnet addresses_mainnet.sol L594-595)",
-                               "note": "Ours is the declared vest streams (143,208,393 SKY / 90 days from the 2026-09-10 "
-                                       "spell; 96,903,706 / 90 days before). Tolerance 10%: the distributor releases "
-                                       "when distribute() is called, so a window edge can shift a few days' release."}),
+                              # 2026-10-07: ours is the MEASURED release (SKY REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY,
+                              # log_scans.lssky_rewards_released); the reference is every declared vest stream.
+                              {"metric": "emissions_tokens_declared", "window": "q0", "tol": 10.0,
+                               "source": "the declared lsSKY->SKY vest streams, every reset spell since 2025-10-30 "
+                                         "(spells-mainnet archive; issuance_schedule)",
+                               "note": "Tolerance 10%: distribute() runs about weekly, so a window edge moves up to a "
+                                       "week's release, and step dates before 2026-09-13 are spell dates (execution "
+                                       "follows a few days later). Before 2026-10-07 the declared side was ours and "
+                                       "missed the 06-18 and 07-16 streams (73.2M vs 189.1M measured)."}),
     },
     # ---------------------------------------------------------------- Uniswap
     "Uniswap": {
@@ -22850,11 +22918,28 @@ CREDIBILITY: dict = {
                                     "args": {"daily": "gross_burn_tokens", "monthly": "gross_burn_tokens_dune_monthly",
                                              "side": "ref"},
                                     "source": "Dune 8683175 monthly burn (Polygon + Solana), the same months"}),
-        "a4_pool_release": _c_unv(
-            "Measured from the two mining wallets' own balances; GEODNET publishes no release schedule.",
-            "a published GEOD release/emission schedule"),
-        "a2_emissions": _c_unv("Equal to pool release (the mining wallets' measured outflow); GEODNET publishes "
-                               "no emission schedule.", "a published GEOD release/emission schedule"),
+        # BASE-REWARD CEILING (Jake, 2026-10-07, docs.geodnet.com 'Tokenomics'): the published schedule is PER
+        # STATION — 6 GEOD/day per triple-band base station 2026-07-01..2027-06-30 (12 the year before, halving
+        # each 30 June; dual-band retired June 2025) — and the actual reward applies data-quality / hex / SuperHex /
+        # performance rules to it. Base x active stations (supply_units) x our days is a PLAUSIBILITY BOUND, so a
+        # wide tolerance: Jake's arithmetic put ours at ~122K/day vs ~132K/day (~21,950 x 6), ~93%. It replaces
+        # "no published schedule" on both rows.
+        "a4_pool_release": {"formula": "base_reward_ceiling", "args": {"cover_metric": "pool_release_tokens"},
+                            "tol": 15.0,
+                            "source": "PLAUSIBILITY BOUND — GEODNET's base reward per triple-band station per day "
+                                      "(docs.geodnet.com 'Tokenomics', read by Jake 2026-10-07) x active stations "
+                                      "(supply_units) over our days",
+                            "note": "Not a reconciliation: data-quality, hex, SuperHex (up to 4x) and performance "
+                                    "rules move the actual reward either way of the base. Ours is measured from the "
+                                    "two mining wallets' balances."},
+        "a2_emissions": {"formula": "base_reward_ceiling", "args": {"cover_metric": "emissions_tokens"},
+                         "tol": 15.0,
+                         "source": "PLAUSIBILITY BOUND — GEODNET's base reward per triple-band station per day "
+                                   "(docs.geodnet.com 'Tokenomics', read by Jake 2026-10-07) x active stations "
+                                   "(supply_units) over our days",
+                         "note": "Not a reconciliation: data-quality, hex, SuperHex (up to 4x) and performance rules "
+                                 "move the actual reward either way of the base. Ours equals pool release (the "
+                                 "mining wallets' measured outflow)."},
         "a2_customer_revenue": _c_chk(
             "Ours is DefiLlama's burn-derived fees (holders revenue / 0.8) — the burn itself, restated; GEODNET's own "
             "revenue reports are not wired. The split in use is 0.80, restated by GEODNET itself on 2026-07-02 "

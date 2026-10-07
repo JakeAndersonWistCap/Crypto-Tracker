@@ -65,6 +65,15 @@ def hexint(value) -> int:
     return int(s, 16)
 
 
+def _tail_net(explorer, chain_id: int, token: str, holder: str, after_block: int) -> int:
+    """in - out for `holder` in the blocks after `after_block`, from the explorer's logs."""
+    got = 0
+    for sign, topics in ((1, [TRANSFER_TOPIC, None, pad_address(holder)]), (-1, [TRANSFER_TOPIC, pad_address(holder)])):
+        logs, _meta = explorer.get_logs(chain_id, token, topics, int(after_block) + 1, "latest")
+        got += sign * sum(_amount(e) for e in logs)
+    return got
+
+
 def _amount(entry: dict) -> int:
     """Transfer's value is the DATA word — from and to are the indexed topics."""
     return hexint(entry.get("data"))
@@ -287,6 +296,34 @@ class LogScan:
         return f" SINCE {since}: counted {tot / scale:,.2f}" + (f" — {rows}." if rows else " (none).")
 
     # ------------------------------------------------------------------ one scan
+    def _balance_at(self, chain: str, chain_id: int, token: str, holder: str, block: int) -> int:
+        """balanceOf(holder) at `block` for the reconciliation (Jake's run 2026-10-07). First the archive read, through
+        every endpoint (<CHAIN>_RPC_URL first). If EVERY endpoint refuses past-block state, LOGS STAND IN FOR IT:
+        balanceOf at the latest block minus the holder's Transfer net after `block` (explorer logs) — the same
+        integer, read from the tip. A transfer landing between the two reads makes it differ, and the scan then
+        reports a non-reconciliation rather than storing anything."""
+        if hasattr(self.reader, "erc20_balance_at"):
+            try:
+                return self.reader.erc20_balance_at(chain, token, holder, block)
+            except Exception as e:  # noqa: BLE001
+                archive_err = e
+        else:
+            try:
+                return int(self.reader.erc20(chain, token).functions.balanceOf(
+                    self.reader.checksum(holder)).call(block_identifier=block))
+            except Exception as e:  # noqa: BLE001
+                archive_err = e
+        try:
+            latest = int(self.reader.erc20(chain, token).functions.balanceOf(
+                self.reader.checksum(holder)).call(block_identifier="latest"))
+            bal = latest - _tail_net(self.explorer, chain_id, token, holder, block)
+        except Exception as e2:  # noqa: BLE001
+            raise RuntimeError(f"{archive_err}; and the latest-balance-minus-logged-tail route failed too: {e2}") \
+                from e2
+        log.info("%s: balanceOf(%s) at %s from the tip (latest - logged tail) — no endpoint served past state: %s",
+                 chain, holder, block, archive_err)
+        return bal
+
     def _scan(self, p: dict, spec: dict, window_days, out) -> None:
         name, key, metric = p["name"], spec["key"], spec["metric"]
         chain, token = spec["chain"], spec["token"]
@@ -414,8 +451,7 @@ class LogScan:
         for h in holders:
             net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
             try:
-                bal = int(self.reader.erc20(chain, token).functions.balanceOf(
-                    self.reader.checksum(h)).call(block_identifier=to_block))
+                bal = self._balance_at(chain, chain_id, token, h, to_block)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{key}: balanceOf({h}) at block {to_block} failed: {e}", TIER)
                 out.gap(name, metric,

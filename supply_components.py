@@ -82,6 +82,11 @@ def report(name: str, rows: dict, runlog) -> list[str]:
             cmp_to, what = now(spec["total"]), "our TOTAL (CoinGecko counts every token)"
             out.append(f"  ours is STRICTER by {_fmt((now(spec['total']) or 0) - (circ_used or 0))} "
                        f"({' + '.join(spec.get('subtract') or ())})")
+        elif config.coingecko_is_free_float(name) and config.coingecko_counted_lock_legs(name):
+            legs = config.coingecko_counted_lock_legs(name)
+            add = sum(now(m) or 0.0 for m in legs)
+            cmp_to, what = ff + add, f"our free float + {' + '.join(legs)} (CoinGecko still counts them)"
+            out.append(f"  ours is STRICTER by {_fmt(add)} ({' + '.join(legs)}): Pendle-style documented method")
         elif config.coingecko_is_free_float(name):
             cmp_to, what = ff, "our free float"
         else:

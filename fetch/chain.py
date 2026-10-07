@@ -468,6 +468,25 @@ class ChainReader:
     def erc20(self, chain: str, address: str):
         return self.web3(chain).eth.contract(address=self.checksum(address), abi=ERC20_ABI)
 
+    def erc20_balance_at(self, chain: str, token: str, holder: str, block) -> int:
+        """balanceOf(holder) at `block`, FALLING THROUGH THE ENDPOINT LIST (Jake's run 2026-10-07: Fluid's Arbitrum
+        scan died on arbitrum-one-rpc.publicnode.com answering 403 to a past-block call — a node without archive
+        state). <CHAIN>_RPC_URL is first when set (rpc_endpoints); every endpoint refusing raises with each error."""
+        errors = []
+        tried = set()
+        for url in [self._w3_url.get(chain)] + rpc_endpoints(chain):
+            if not url or url in tried:
+                continue
+            tried.add(url)
+            try:
+                w3 = self._w3[chain] if url == self._w3_url.get(chain) and chain in self._w3 \
+                    else self.make_web3(chain, url, 30)
+                c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
+                return int(c.functions.balanceOf(self.checksum(holder)).call(block_identifier=block))
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
+        raise RuntimeError(f"balanceOf at block {block} refused by every {chain} endpoint: {'; '.join(errors)}")
+
     # ===== ONE READ PER (chain, contract, call) PER RUN. Added 2026-09-28. =====
     # symbol(), decimals() and eth_getCode were re-read for every holder of the same token: 105
     # calls a run against 21 distinct contracts. Memoised on this reader, which lives for one

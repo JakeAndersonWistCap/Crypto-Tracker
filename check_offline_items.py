@@ -3141,6 +3141,164 @@ def geodnet_staking_candidates(days: int = 30):
     print("  contract (per-hex, or custodial in GEODNET's console) — say so and stop hunting.")
 
 
+# ===== GEODNET: THE ~74M COINGECKO EXCLUDES THAT WE DO NOT (Jake's probe 2026-10-07). =====
+# With the three candidates out, ours ~536.4M vs CoinGecko ~462.4M. Our exclusions are POLYGON wallets; GEODNET
+# migrated toward Solana (GIP-7), so allocation / mining / treasury SKY-side balances may sit in Solana accounts while
+# the Polygon side holds the bridged lock (counted as circulating by us). This lists, read-only:
+#   1. the Solana mint's total supply and its 20 largest accounts (getTokenLargestAccounts — free public RPC), each
+#      with its OWNER (getAccountInfo) — a treasury / mining / bridge wallet shows up here by size;
+#   2. the largest Polygon GEOD destinations of the last `days` days (the same read as geodnet_staking_candidates).
+# Nothing is wired: a wallet is excluded only when GEODNET's own page names it (NONCIRCULATING_CANDIDATES).
+# ===== ALCHEMY ON BASE — HOW WIDE AN eth_getLogs RANGE DOES THE FREE TIER SERVE? (Jake, 2026-10-07) =====
+# Base has no free explorer log route (Etherscan free excludes it; Blockscout's PRO API is paid on Base), so
+# Chainlink's Base PLUS lines (VRF, Automation, CCIP) and Fluid's Base MerkleDistributors are not scanned and
+# Chainlink's lines read "PARTIAL, missing: base". Alchemy's support page says the FREE tier caps eth_getLogs at
+# 10 blocks on Base (PAYG: 10,000 blocks, or any range returning <= 10,000 logs) — this measures it on Jake's key,
+# and what a year and a day of those lines would cost at the range that works. Reads only; nothing stored.
+_BASE_BLOCKS_PER_DAY = 43_200                                # 2-second blocks
+
+
+def alchemy_base_logs(chain: str = "base"):
+    from fetch.base import redact                           # noqa: PLC0415
+    import config                                           # noqa: PLC0415
+    head(f"ALCHEMY on {chain.upper()} — widest eth_getLogs range the keyed endpoint serves, and a year at it")
+    try:
+        from dotenv import load_dotenv                      # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    url = os.environ.get(f"{chain.upper()}_RPC_URL", "").split(",")[0].strip()
+    if not url:
+        print(f"  {chain.upper()}_RPC_URL is not set — nothing to test.")
+        return
+    print(f"  endpoint: {_rpc_host(url)} (key not shown)")
+    lines = config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["chains"].get(chain) or {}
+    addrs = [lines[k] for k in ("vrf_v2_5", "automation_registry", "ccip_router") if lines.get(k)]
+    # Fluid's Base MerkleDistributors paying FLUID 0x61E030A5… (Instadapp/fluid-contracts-public deployments.md
+    # @9496626, '## MerkleDistributors', read 2026-10-06): Transfer logs OUT of each, on the token.
+    fluid_token = "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd"
+    fluid_holders = ["0x94312a608246Cecfce6811Db84B3Ef4B2619054E", "0xF36029358A684CdDD5103A4b84dC8a832c6e5b40"]
+    try:
+        tip = int(rpc(url, "eth_blockNumber")["result"], 16)
+    except Exception as e:  # noqa: BLE001
+        print(f"  eth_blockNumber FAILED — {redact(str(e))[:200]}")
+        return
+    print(f"  head block {tip:,}")
+    widest, lat = 0, []
+    for span in (10, 100, 1_000, 10_000, 100_000):
+        flt = {"fromBlock": hex(tip - span + 1), "toBlock": hex(tip), "address": addrs}
+        t0 = time.time()
+        try:
+            j = rpc(url, "eth_getLogs", [flt])
+        except Exception as e:  # noqa: BLE001
+            print(f"    {span:>7,} blocks: FAILED — {redact(str(e))[:200]}")
+            break
+        dt = time.time() - t0
+        if "error" in j:
+            print(f"    {span:>7,} blocks: REFUSED — {redact(str(j['error']))[:220]}")
+            break
+        widest = span
+        lat.append(dt)
+        print(f"    {span:>7,} blocks: OK, {len(j.get('result') or [])} log(s) from the Chainlink lines, {dt:.2f}s")
+    if not widest:
+        print("  -> no range served: there is no Base log route on this key.")
+        return
+    flt = {"fromBlock": hex(tip - widest + 1), "toBlock": hex(tip), "address": fluid_token,
+           "topics": [TRANSFER_TOPIC, [_pad(h) for h in fluid_holders]]}
+    try:
+        j = rpc(url, "eth_getLogs", [flt])
+        print(f"  Fluid Base distributors, last {widest:,} blocks: "
+              + (f"REFUSED — {redact(str(j['error']))[:160]}" if "error" in j else f"{len(j.get('result') or [])} claim(s)"))
+    except Exception as e:  # noqa: BLE001
+        print(f"  Fluid Base distributors: FAILED — {redact(str(e))[:160]}")
+    per = sum(lat) / len(lat)
+    year_calls = -(-365 * _BASE_BLOCKS_PER_DAY // widest)
+    day_calls = -(-_BASE_BLOCKS_PER_DAY // widest)
+    print(f"\n  WIDEST RANGE SERVED: {widest:,} blocks ({widest * 2 / 60:.1f} minutes of Base). One filter carries every")
+    print("  address of a line set, so these are calls per FILTER (Chainlink's lines in one, Fluid's in another):")
+    print(f"    a year:  {year_calls:,} calls per filter ~ {year_calls * per / 3600:,.1f} h at the measured {per:.2f}s/call, "
+          f"one at a time")
+    print(f"    a day:   {day_calls:,} calls per filter (the daily increment)")
+    print("  READING IT: under ~20,000 calls a year (the explorers' scale) is practical — wire it. At the free tier's")
+    print("  10 blocks a year is ~1.58M calls per filter (days of calls, and well past a free monthly compute quota);")
+    print("  then Base stays PARTIAL and the choice is Alchemy PAYG (10,000-block ranges: ~1,600 calls a year).")
+    print("  Nothing was stored. PASTE BACK the section.")
+
+
+def geod_residual(days: int = 180):
+    head("GEODNET — where is the ~74M CoinGecko excludes and we count? Solana largest accounts + Polygon sinks")
+    url = "https://api.mainnet-beta.solana.com"
+    try:
+        sup = (rpc(url, "getTokenSupply", [GEODNET_SOL_MINT]).get("result") or {}).get("value") or {}
+        print(f"  Solana mint {GEODNET_SOL_MINT}: supply {sup.get('uiAmountString')} GEOD")
+        big = (rpc(url, "getTokenLargestAccounts", [GEODNET_SOL_MINT]).get("result") or {}).get("value") or []
+    except Exception as e:  # noqa: BLE001
+        print(f"  Solana UNREACHABLE — {e}")
+        big = []
+    if big:
+        print(f"\n  {'token account':<46} {'GEOD':>16}  owner (wallet / program)")
+        for a in big:
+            owner = "?"
+            try:
+                v = (rpc(url, "getAccountInfo", [a["address"], {"encoding": "jsonParsed"}]).get("result") or {}).get("value")
+                owner = ((((v or {}).get("data") or {}).get("parsed") or {}).get("info") or {}).get("owner") or "?"
+            except Exception:  # noqa: BLE001
+                pass
+            print(f"  {a['address']:<46} {float(a.get('uiAmount') or 0):>16,.0f}  {owner}")
+        print("  READING IT: GEODNET's own reward / treasury / bridge accounts are the large ones; any of them not")
+        print("  yet in config (contracts burn_solana_token_account; NONCIRCULATING_CANDIDATES) is a candidate. Its")
+        print("  role must come from GEODNET's docs or a GIP before it is excluded.")
+    print()
+    geodnet_staking_candidates(days)
+
+
+# ===== SKY lsSKY REWARDS: EVERY RELEASE, AGAINST THE STREAM ACTIVE THAT DAY (Jake's run 2026-10-07). =====
+# The measured release (189.1M over Q0) was 2.6x the declared streams as they stood (73.2M). This lists every SKY
+# transfer REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY: date, size, tx, and the vest stream config says was paying
+# (issuance_schedule, rebuilt from every reset spell on 2026-10-07), plus each release's size in DAYS of that
+# stream — a weekly distribute() should read ~7 days; a lump far above it would be a top-up or a migration.
+def sky_lssky_releases(days: int = 120):
+    import config                                          # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head(f"SKY lsSKY rewards — every distributor -> farm transfer, last {days} days, vs the declared stream")
+    sky, dist, farm = ("0x56072C95FAA701256059aa122697B133aDEd9279", "0x675671A8756dDb69F7254AFB030865388Ef699Ee",
+                       "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc")
+    head_hex, _url = eth_block_number()
+    if not head_hex:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber.")
+        return
+    from_block = int(head_hex, 16) - days * 7_200
+    logs, detail = explorer_logs(1, sky, [TRANSFER_TOPIC, _pad(dist), _pad(farm)], from_block)
+    if logs is None:
+        print(f"  UNAVAILABLE — {detail}")
+        return
+    print(f"  {detail}")
+    steps = sorted(config.PROJECT_BY_NAME["Sky"]["issuance_schedule"]["steps"], key=lambda s: s["from"])
+
+    def rate_on(d):
+        r = None
+        for s in steps:
+            if d >= pd.Timestamp(s["from"]) and (not s.get("until") or d <= pd.Timestamp(s["until"])):
+                r = s
+        return r
+    total, rows = 0.0, []
+    for lg in sorted(logs, key=lambda e: int(e["blockNumber"])):
+        d = pd.Timestamp(int(lg["timeStamp"]), unit="s")
+        v = _hexint(lg["data"]) / 1e18
+        st = rate_on(d.normalize())
+        per = st["tokens_per_day"] if st else None
+        rows.append((d, v, per, st["from"] if st else "-", lg.get("transactionHash", "")))
+        total += v
+    print(f"\n  {'when (UTC)':<20} {'SKY released':>16} {'stream from':>12} {'= days of it':>13}  tx")
+    for d, v, per, frm, tx in rows:
+        print(f"  {str(d)[:19]:<20} {v:>16,.0f} {frm:>12} {('%.1f' % (v / per)) if per else '-':>13}  {tx[:18]}")
+    lo = pd.Timestamp.now("UTC").tz_localize(None).normalize() - pd.Timedelta(days=90)
+    q0 = sum(v for d, v, *_ in rows if d >= lo)
+    print(f"\n  {len(rows)} release(s), {total:,.0f} SKY over {days} days; last 90 days: {q0:,.0f} SKY")
+    print("  READING IT: ~7 days of the paying stream per release = weekly distribute(); a release far larger is a")
+    print("  lump (a yanked stream's unpaid balance is paid out at a reset, by design). Nothing was stored.")
+
+
 # ===== GEODNET'S CANDIDATE NON-CIRCULATING WALLETS (overnight 2026-10-06, C). =====
 # The three allocation wallets in config.NONCIRCULATING_CANDIDATES["GEODNET"] — seen only in search summaries of
 # GEODNET's tokenomics page, so NOT subtracted. This prints, per wallet: its GEOD balance on Polygon now, its
@@ -3185,9 +3343,23 @@ def geod_candidate_wallets(days: int = 180):
             print(f"    {label}: {len(logs)} transfer(s), {amt:,.0f} GEOD"
                   + ("; top counterparties " + ", ".join(f"{p[:10]}… {v:,.0f}" for p, v in top) if top else ""))
     supply = _uint(GEOD_POLYGON, "0x18160ddd", "polygon")
-    print(f"\n  the three together: {total:,.0f} GEOD"
+    print(f"\n  the {len(cand['addresses'])} together: {total:,.0f} GEOD"
           + (f" = {total / (supply / 1e18):.1%} of Polygon totalSupply {supply / 1e18:,.0f}" if supply else ""))
-    print("  IF CONFIRMED, our on-chain circulating falls by that sum (each wallet's balance on the day of the read).")
+    print("  Subtracted from our on-chain circulating while confirm_candidates is True (each wallet's balance on the "
+          "day of the read).")
+    # 1b (Jake, 2026-10-07): the wallets added since his probe, against CoinGecko at the circulating row's 5%
+    pr = cand.get("probe_2026_10_07") or {}
+    probed = {"0xca3e874bc4e830796d822f529c29df30302324b2", "0x486559899e96981dfe55c4e6ebf5101a76bfadfa",
+              "0x82146cf0f350c241757660fd803c73313b06d75c"}
+    extra = sum((_bal(GEOD_POLYGON, a["address"], "polygon") or 0) / 1e18
+                for a in cand["addresses"] if a["address"].lower() not in probed)
+    if pr:
+        ours = pr["ours_excluding_all"] - extra
+        gap = ours / pr["coingecko"] - 1
+        print(f"  RESULT (approximate — the 2026-10-07 probe's {pr['ours_excluding_all']:,.0f} less today's balance of the "
+              f"wallets added since, {extra:,.0f}): ours ~{ours:,.0f} vs CoinGecko {pr['coingecko']:,.0f} = {gap:+.1%} "
+              f"-> {'WITHIN' if abs(gap) <= 0.05 else 'OUTSIDE'} the circulating row's 5%. The run's Credibility tab "
+              f"has the exact figure; within 5% -> set CIRCULATING_ONCHAIN['GEODNET']['ratios_use'] = 'onchain'.")
     print("  READING IT: a vesting / allocation wallet sends out in steps to a few recipients (exchanges, OTC);")
     print("  one that never moves is locked in practice. Tokens moved to Solana after the migration are NOT here.")
     print("  Nothing was stored. PASTE BACK the section.")
@@ -6144,7 +6316,7 @@ CHECKS = (
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
     uniswap_firepit_threshold, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
-    aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, chainlink_revenue_coverage,
+    aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,

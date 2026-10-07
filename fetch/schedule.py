@@ -81,11 +81,12 @@ class Schedule:
             # figure feeds emissions_tokens as well, so net absorption nets it off rather than
             # counting the buyback alone and overstating the result.
             if sched.get("also_emissions") or sched.get("emissions_only"):
-                metrics.append("emissions_tokens")
+                # Sky (2026-10-07): the release is MEASURED; the schedule lands as its reference series
+                metrics.append(sched.get("emissions_metric", "emissions_tokens"))
             for metric in metrics:
                 # A schedule that is only PART of the emissions says so on its rows (Aethir, B3).
                 src = (config.mark_source(SOURCE, "PARTIAL")
-                       if metric == "emissions_tokens" and sched.get("emissions_partial_reason")
+                       if metric.startswith("emissions_tokens") and sched.get("emissions_partial_reason")
                        else SOURCE)
                 df = pd.DataFrame({"date": per_day.index, "project": p["name"],
                                    "metric": metric, "value": per_day.values,

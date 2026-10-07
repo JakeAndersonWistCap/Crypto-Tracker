@@ -70,6 +70,64 @@ def _eth_issuance_formula(p, rows, long, asof, **_):
         f"166.32 x sqrt({staked:,.0f} ETH staked) x {cov:.0f}/365 — the issuance curve at full participation")
 
 
+def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn="gross_burn_tokens", **_):
+    """ETHEREUM'S NET SUPPLY CHANGE FROM INDEPENDENT SOURCES, OVER OUR OWN COMMON DAYS (Jake's run 2026-10-07: the
+    reference was CoinGecko's d(circulating) across Q0 and read 1.43M ETH — impossible; its stored history is not
+    one consistent series). Ours is issuance - burn on the days BOTH our series hold (net_supply_change_tokens). The
+    reference takes the SAME days: the issuance curve at our staked ETH (166.32 x sqrt(staked)/365 a day, full
+    participation: an upper bound by ~1-2%) minus DefiLlama's burned fees / same-day price."""
+    lo, hi = _q0(asof)
+    si, sb = _series(long, p, issuance), _series(long, p, burn)
+    days = sorted(d for d in set(si.index) & set(sb.index) if lo < d <= hi)
+    staked = _num((rows.get(f"{p}|beacon_chain_eth") or {}).get("now"))
+    if not days:
+        return None, None, f"no day on which both {issuance} and {burn} are stored in Q0"
+    if not staked:
+        return None, None, "no staked-ETH figure (beacon_chain_eth) stored"
+    px, rev = _series(long, p, "price_usd"), _series(long, p, "revenue_usd")
+    priced = [d for d in days if d in px.index and px.loc[d] and d in rev.index]
+    if len(priced) < len(days):
+        return None, None, f"DefiLlama burn / price missing on {len(days) - len(priced)} of our {len(days)} common day(s)"
+    iss = 166.32 * math.sqrt(staked) / 365.0 * len(days)
+    brn = float(sum(rev.loc[d] / px.loc[d] for d in days))
+    return iss - brn, str(days[-1].date()), (
+        f"issuance curve {iss:,.0f} ETH (166.32 x sqrt({staked:,.0f}) over {len(days)} day(s)) − DefiLlama burn "
+        f"{brn:,.0f} ETH, on our {len(days)} common day(s) {days[0].date()}..{days[-1].date()}")
+
+
+def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens", units="supply_units", **_):
+    """GEODNET'S BASE-REWARD CEILING, A PLAUSIBILITY BOUND (Jake, 2026-10-07, docs.geodnet.com 'Tokenomics'): the
+    base reward per triple-band station per day (config per_miner_reward_schedule: 12 GEOD to 2026-06-30, 6 from
+    2026-07-01, halving each 30 June) x active stations (supply_units, the nearest stored reading) summed over the
+    days our series holds in Q0. The actual reward applies data-quality, hex, SuperHex and performance rules to the
+    base, so it moves either way of this — a bound on scale, not a reconciliation."""
+    lo, hi = _q0(asof)
+    cov = _series(long, p, cover_metric)
+    days = [d for d in cov.index if lo < d <= hi]
+    if not days:
+        return None, None, f"no {cover_metric} day in Q0"
+    st = _series(long, p, units)
+    if st.empty:
+        return None, None, f"no {units} reading stored"
+    steps = [s0 for s0 in (config.PROJECT_BY_NAME[p].get("per_miner_reward_schedule") or {}).get("steps", ())
+             if "tokens_per_miner_per_day" in s0]
+    tot, used, rates = 0.0, set(), set()
+    for d in days:
+        step = next((s0 for s0 in steps if pd.Timestamp(s0["from"]) <= d <= pd.Timestamp(s0["until"])), None)
+        if step is None:
+            return None, None, f"no base-reward step covers {d.date()}"
+        before = st[st.index <= d]
+        u_day, u = (before.index[-1], before.iloc[-1]) if len(before) else (st.index[0], st.iloc[0])
+        used.add(str(u_day.date()))
+        rates.add(step["tokens_per_miner_per_day"])
+        tot += float(step["tokens_per_miner_per_day"]) * float(u)
+    return tot, str(days[-1].date()), (
+        f"PLAUSIBILITY BOUND: base reward {'/'.join(f'{r:g}' for r in sorted(rates))} GEOD/station/day x {units} "
+        f"(reading(s) of {', '.join(sorted(used))}, the nearest on or before each day) over our {len(days)} "
+        f"{cover_metric} day(s) {days[0].date()}..{days[-1].date()} — before data-quality / hex / SuperHex / "
+        f"performance rules")
+
+
 def _q0(asof):
     return asof - pd.Timedelta(days=90), asof
 
@@ -192,7 +250,7 @@ def _sum_months(p, rows, long, asof, metric="", months=(), **_):
     return tot, ", ".join(seen), f"{metric} summed over {', '.join(seen)}"
 
 
-def _free_float_now(p, rows, long, asof, **_):
+def _free_float_now(p, rows, long, asof, add_back=(), **_):
     """OUR free float now: the circulating the ratios use − the locked tokens inside it (as A2 computes it)."""
     # FROM THE BUILT ROWS (2026-10-06 overnight, A1/A2): the on-chain circulating is a READ-TIME view, absent from
     # the raw store — reading the store fell back to CoinGecko's circulating, which for Pendle / Aerodrome already
@@ -225,8 +283,17 @@ def _free_float_now(p, rows, long, asof, **_):
             lock = max(0.0, lock - x)
             if x:
                 parts.append(f"less {x:,.0f} declared locked exclusion")
-    return circ - lock, None if day is None else str(day)[:10], \
-        f"{m} {circ:,.0f} − locked ({'; '.join(parts) or '0'}) = A2 free float"
+    extra, extra_parts = 0.0, []
+    for lm in add_back:                       # lock legs the REFERENCE still counts (Pendle: CoinGecko's sPENDLE)
+        v, _d = now(lm)
+        if v is None:
+            return None, None, f"no {lm} figure to add back"
+        extra += v
+        extra_parts.append(f"{lm} {v:,.0f}")
+    how = f"{m} {circ:,.0f} − locked ({'; '.join(parts) or '0'}) = A2 free float"
+    if extra_parts:
+        how += f", + {'; '.join(extra_parts)} (counted by the reference) for like-for-like"
+    return circ - lock + extra, None if day is None else str(day)[:10], how
 
 
 def _common_day(p, long, a, b, asof):
@@ -412,14 +479,14 @@ def _aero_rebase_formula(p, rows, long, asof, epochs=4, side="ref", **_):
 
 
 FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
-            "aero_rebase_formula": _aero_rebase_formula, "common_days_sum": _common_days_sum,
+            "aero_rebase_formula": _aero_rebase_formula, "common_days_sum": _common_days_sum, "eth_net_formula": _eth_net_formula,
             "sums_on_common_day": _sums_on_common_day,
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
             "value_on": _value_on, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,
-            "hl_reward_active": _hl_reward_active}
+            "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -687,6 +754,15 @@ def circulating_input(name: str) -> dict:
                                   "with our on-chain total, not with our stricter circulating",
                         "note": spec.get("decision", "")}}
     if config.coingecko_is_free_float(name):     # CoinGecko excludes staked/locked: it is OUR free float
+        legs = config.coingecko_counted_lock_legs(name)
+        if legs:                                  # ...except legs it still counts (Pendle: sPENDLE, 2026-10-07)
+            return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT + {' + '.join(legs)} (CoinGecko "
+                            f"still counts them); ours is stricter by exactly that",
+                    "ours": {"py": "free_float_now", "args": {"add_back": legs}}, "fmt": '#,##0;(#,##0);-',
+                    "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
+                            "source": "CoinGecko circulating_supply — it excludes the legacy lock but still counts "
+                                      f"{', '.join(legs)}, so it is compared with our free float plus those",
+                            "note": (config.circulating_onchain(name) or {}).get("decision", "")}}
         return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT ({ours_m} − locked)",
                 "ours": {"py": "free_float_now", "args": {}}, "fmt": '#,##0;(#,##0);-',
                 "ref": {"metric": "circulating_supply", "window": "now", "tol": 5.0,

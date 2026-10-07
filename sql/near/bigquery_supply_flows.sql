@@ -9,6 +9,9 @@
 -- (about 1 block in 43,000), and both raw parts are returned beside the totals.
 -- Reads 3 columns (block_date, block_height, total_supply: FLOAT64 yoctoNEAR), partition-pruned on block_date.
 -- Parameters: @d0, @d1 DATE — days [@d0, @d1] inclusive.
+-- CTE NAMES NEVER EQUAL A COLUMN NAME (Jake's run 2026-10-07: "ORDER BY does not support ..."): the per-day CTE was
+-- called `day` and also had a column `day`, so the final ORDER BY day resolved to the TABLE alias — a STRUCT of the
+-- whole row — which BigQuery cannot order. The CTE is `per_day` now (tests check every sql/near file for this).
 WITH b AS (
   SELECT block_height, ANY_VALUE(block_date) AS block_date, ANY_VALUE(total_supply) AS total_supply
     FROM `bigquery-public-data.crypto_near_mainnet_us.blocks`
@@ -20,7 +23,7 @@ d AS (
          (total_supply - LAG(total_supply) OVER (ORDER BY block_height)) / 1e24 AS delta_near
     FROM b
 ),
-day AS (
+per_day AS (
   SELECT block_date AS day,
          COUNT(*) AS n_blocks,
          COUNTIF(delta_near > 0) AS n_epoch_starts,
@@ -37,5 +40,5 @@ SELECT day, n_blocks, n_epoch_starts,
        net_mint_near
          + n_epoch_starts * IFNULL(SAFE_DIVIDE(burn_ex_boundary_near, n_blocks - n_epoch_starts), 0) AS issuance_near,
        burn_ex_boundary_near, net_mint_near, supply_change_near
-  FROM day
+  FROM per_day
  ORDER BY day

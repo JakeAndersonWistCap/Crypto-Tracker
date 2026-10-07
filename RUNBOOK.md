@@ -527,6 +527,64 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11aj. Jake's run 2026-10-07 09:16: three failures fixed, Sky emissions, Pendle and ETH references
+
+**Failures.**
+- **NEAR supply flows:** the per-day CTE was named `day` and also had a `day` column, so `ORDER BY day` named a
+  STRUCT. It is now `per_day`, and a test checks every `sql/near` file for a CTE named like a column.
+- **Aethir pools:** the contract's symbol is `veAethir`.
+- **Fluid Arbitrum:** the reconciliation's past-block balance read now falls through every RPC endpoint, with
+  `ARBITRUM_RPC_URL` first once set. If no endpoint serves past state, it uses balanceOf(latest) minus the holder's
+  logged transfers after the pinned block.
+
+**Sky emissions.**
+- The measured release (distributor → farm, 189.1M over Q0) is right. The declared streams missed the 06-18 and
+  07-16 vests; rebuilt from every reset spell, Q0 is ~182M (3.8% under).
+- `emissions_tokens` now shows the measured release. The rebuilt schedule is `emissions_tokens_declared`, the
+  reference.
+- Old schedule rows: `python run_sql.py CE`, then `python run_sql.py --delete CE`.
+- Per-release listing: `python check_offline_items.py sky_lssky_releases`.
+
+**Pendle.**
+- Ours is Pendle's documented circulating (Tokenomics.md: no sPENDLE, no vePENDLE, no multisigs).
+- CoinGecko still counts sPENDLE: our figure plus sPENDLE is within 0.4% of it.
+- The check adds sPENDLE back for the comparison only; the headline keeps the documented figure.
+
+**Ethereum net supply change.** The reference was CoinGecko's change in circulating supply (1.43M ETH, impossible).
+It is now the issuance curve minus DefiLlama's burn, on our own common days.
+
+**GEODNET (addendum, Jake read docs.geodnet.com 'Tokenomics' on 2026-10-07).**
+- Team, Investor, Vendor/Marketing and Public sale (0xcEcccB3e…) are now subtracted from on-chain circulating
+  (`confirm_candidates` is on). Ecosystem, Mining and Mining distribution were already subtracted.
+- Jake's probe put ours at ~536.4M without the public-sale wallet, against CoinGecko's 462.4M. The public-sale
+  balance has not been read yet: `python check_offline_items.py geod_candidate_wallets` prints it and the result
+  against the circulating row's 5%. Within 5%, GEODNET's ratios switch to the on-chain figure (one line in config).
+- A year of the new wallets' balances: `python archive_backfill.py --run --project GEODNET`.
+- **Base-reward ceiling.** Pool release and emissions are checked against base reward x active stations
+  (supply_units) x our days: 6 GEOD per triple-band station per day from 2026-07-01, 12 the year before. This is a
+  plausibility bound with 15% tolerance, because data-quality, hex, SuperHex and performance rules move the actual
+  reward either way. It replaces "no published schedule".
+- `python check_offline_items.py geod_residual` still lists the Solana-side candidates.
+
+**Alchemy (addendum).**
+- Arbitrum: past-block balance reads use `ARBITRUM_RPC_URL` first, so Fluid's Arbitrum distributor now reads
+  through Alchemy. `python check_offline_items.py archive_probe` re-tests a year back on Arbitrum and Base.
+- Base logs: `python check_offline_items.py alchemy_base_logs` measures the widest eth_getLogs range the key
+  serves, and the calls a year would take for Chainlink's Base lines and Fluid's Base distributors.
+  - Alchemy's support page puts the free tier at 10 blocks on Base. That is ~1.58M calls per filter for a year, so
+    Base stays PARTIAL.
+  - PAYG serves 10,000-block ranges: ~1,600 calls a year.
+
+**Manual readings in chat (addendum).** Readings Jake sends in chat are loaded without the CSV, through the same
+checks as the form:
+
+    python manual_form.py text "Chainlink in_locked = 45,123,456 (2026-10-07, staking.chain.link)"
+    python manual_form.py text --file readings.txt
+
+- One reading per line: `Project row [YYYY-MM] = value (YYYY-MM-DD, source)`.
+- Each is stored with read_by Jake and the page, and marked as entered by Claude Code.
+- A later reading for the same row and period replaces the earlier one.
+
 ## 11ai. Overnight round 2026-10-06: wrong figures fixed, independent references, ops
 
 **Decisions recorded (Jake):** the circulating convention is CONFIRMED — staked tokens count as circulating

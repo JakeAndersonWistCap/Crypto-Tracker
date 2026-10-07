@@ -9,6 +9,14 @@ manual_form.py — the MANUAL READINGS form (Jake, 2026-10-06).
     python manual_form.py load FILE.csv     -> reads the filled form in one pass: every line with a `value` is checked
                                                (a number, a read_on date, a period for monthly lines), previewed, and on
                                                one typed "yes" written to manual_references.csv, which Credibility reads.
+    python manual_form.py text "LINE" ...   -> the same, from readings given IN CHAT, without the CSV (Jake, 2026-10-07).
+    python manual_form.py text --file F.txt    One reading per line:
+                                                   Project row [YYYY-MM] = value (YYYY-MM-DD, source) optional note
+                                               e.g.  Chainlink in_locked = 45,123,456 (2026-10-07, staking.chain.link)
+                                                     Sky in_buyback [2026-09] = 12,400,000 (2026-10-07, forum.sky.money)
+                                                     Aerodrome a3_protocol_yield = 24.5% (2026-10-07, aerodrome.finance/vote)
+                                               A trailing % is divided by 100; commas and $ are dropped; nothing else is
+                                               interpreted (1.2M is refused, not guessed). Blank and # lines are skipped.
 
 Fill `value` (in the stated unit), `read_on` (YYYY-MM-DD) and, if you like, `note`. Leave `value` empty to skip a
 line. Re-loading a line for the same project/row/period replaces the earlier reading. Readings carry read_by (Jake
@@ -83,10 +91,10 @@ def make(args) -> int:
     return 0
 
 
-def validate(lines: list[dict]) -> tuple[list[dict], list[str]]:
+def validate(lines: list[dict], start: int = 2) -> tuple[list[dict], list[str]]:
     """(readings to store, problems). A line without a value is skipped silently; a bad one is a problem."""
     good, bad = [], []
-    for n, r in enumerate(lines, start=2):
+    for n, r in enumerate(lines, start=start):
         v = (r.get("value") or "").strip().replace(",", "")
         if not v:
             continue
@@ -111,10 +119,72 @@ def validate(lines: list[dict]) -> tuple[list[dict], list[str]]:
     return good, bad
 
 
+# One chat reading: "Project row [YYYY-MM] = value (YYYY-MM-DD, source) note". The row is a Credibility row id.
+TEXT_LINE = re.compile(r"^\s*(?P<project>[A-Za-z][\w.\- ]*?)\s*(?:\||\s)\s*(?P<row>(?:a[1-4]|in)_[a-z0-9_]+)\s*"
+                       r"(?:\[\s*(?P<period>[^\]]*?)\s*\])?\s*=\s*(?P<value>[^()=]+?)\s*"
+                       r"\(\s*(?P<read_on>[^,()]+?)\s*,\s*(?P<source>[^()]+?)\s*\)\s*(?P<note>.*)$")
+
+
+def parse_text(text: str) -> tuple[list[dict], list[str]]:
+    """(form-shaped lines for validate(), problems) from readings typed in chat — one per line. The page's tile, unit
+    and tolerance come from manual_refs.PAGES; the source given in the line is the page the reading came from."""
+    import config
+    by_lower = {n.lower(): n for n in config.PROJECT_BY_NAME}
+    lines, bad = [], []
+    for n, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip() or raw.strip().startswith("#"):
+            continue
+        m = TEXT_LINE.match(raw)
+        if not m:
+            bad.append(f"text line {n}: not 'Project row [YYYY-MM] = value (YYYY-MM-DD, source)': {raw.strip()[:120]}")
+            continue
+        project = by_lower.get(m["project"].strip().lower())
+        if not project:
+            bad.append(f"text line {n}: no project named {m['project'].strip()!r}")
+            continue
+        row = m["row"]
+        known = (set((config.CREDIBILITY.get(project) or {})) | {r for (p, r) in mr.PAGES if p == project}
+                 | set(getattr(config, "CREDIBILITY_COMMON_INPUTS", {}) or {}) | {"in_circ", "in_price"})
+        if row not in known and not row.startswith(("a1_", "a2_", "a3_", "a4_")):
+            bad.append(f"text line {n}: {project} has no Credibility row {row!r}")
+            continue
+        v = m["value"].strip().replace(",", "").replace("$", "").replace(" ", "")
+        pg = mr.page_for(project, row)
+        if v.endswith("%") and "fraction" in str(pg.get("unit", "")):   # only where the page's unit is a fraction
+            try:
+                v = repr(float(v[:-1]) / 100.0)
+            except ValueError:
+                pass                                     # validate() refuses it with the value shown
+        note = ("given in chat; entered by Claude Code" + (f" — {m['note'].strip()}" if m["note"].strip() else ""))
+        lines.append({"project": project, "row": row, "period": (m["period"] or "").strip(), "value": v,
+                      "read_on": m["read_on"].strip(), "read_by": "Jake", "url": m["source"].strip(),
+                      "tile": pg.get("tile", ""), "unit": pg.get("unit", ""), "tol_pct": str(pg.get("tol_pct", 10.0)),
+                      "note": note, "_line": n})
+    return lines, bad
+
+
+def text(args) -> int:
+    body = "\n".join(args.lines or [])
+    if args.file:
+        with open(args.file, encoding="utf-8") as fh:
+            body += ("\n" if body else "") + fh.read()
+    lines, bad = parse_text(body)
+    good = []
+    for ln in lines:                                     # one at a time, so a refusal names the line Jake typed
+        g, b = validate([ln], start=ln["_line"])
+        good += g
+        bad += [x.replace("line ", "text line ", 1) for x in b]
+    return _store(good, bad, args.yes)
+
+
 def load(args) -> int:
     with open(args.file, newline="", encoding="utf-8") as fh:
         lines = list(csv.DictReader(fh))
     good, bad = validate(lines)
+    return _store(good, bad, args.yes)
+
+
+def _store(good: list[dict], bad: list[str], yes: bool) -> int:
     for b in bad:
         print(f"REFUSED {b}")
     if not good:
@@ -124,7 +194,7 @@ def load(args) -> int:
     for r in good:
         print(f"  {r['project']:<10} {r['row']:<22} {r['period'] or '':<8} {r['value']:>18} {r['unit']:<10} "
               f"read {r['read_on']} by {r['read_by']} — {r['url']}")
-    if not args.yes and input('type "yes" to store them: ').strip().lower() != "yes":
+    if not yes and input('type "yes" to store them: ').strip().lower() != "yes":
         print("not stored")
         return 1
     keep = {(r["project"], r["row"], r.get("period") or ""): r for r in mr.load()}
@@ -144,8 +214,12 @@ def main(argv=None) -> int:
     lo = sub.add_parser("load")
     lo.add_argument("file")
     lo.add_argument("--yes", action="store_true", help="store without the typed confirmation")
+    tx = sub.add_parser("text", help="readings typed in chat: 'Project row [YYYY-MM] = value (YYYY-MM-DD, source)'")
+    tx.add_argument("lines", nargs="*")
+    tx.add_argument("--file")
+    tx.add_argument("--yes", action="store_true", help="store without the typed confirmation")
     args = ap.parse_args(argv)
-    return make(args) if args.cmd == "make" else load(args)
+    return {"make": make, "load": load, "text": text}[args.cmd](args)
 
 
 if __name__ == "__main__":

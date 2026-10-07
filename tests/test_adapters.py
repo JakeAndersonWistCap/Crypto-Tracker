@@ -5637,7 +5637,10 @@ def test_geodnet_sql_addresses_match_config_exactly():
     # retired_contracts; any rows it wrote are section AD's. Listed here as the tripwire's record.
     retired = config.PROJECT_BY_NAME["GEODNET"]["retired_contracts"]
     assert set(retired) == {"buyback_wallet_polygon_historical"}
-    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15 | added_2026_10_05, \
+    #   noncirc_candidate_1..4             2026-10-07, Team / Investor / Vendor-Marketing / Public sale, confirmed by
+    #                                      Jake from docs.geodnet.com 'Tokenomics' (confirm_candidates on)
+    added_2026_10_07 = {f"noncirc_candidate_{n}" for n in range(1, 5)}
+    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15 | added_2026_10_05 | added_2026_10_07, \
         f"unexpected contract keys on GEODNET: {sorted(contracts)}"
     for key in added_2026_09_15:
         c = contracts[key]
@@ -19366,8 +19369,12 @@ def test_completeness_counts_mechanism_starts_complete_and_names_every_forward_o
     # stream's mechanism start now lives on emissions_tokens.
     v, d = cr.classify(sky, "gross_issuance_tokens", ok, "2026-08-13", asof)
     assert v == "COMPLETE" and d.startswith("0 — DECLARED") and "not minted" in d
+    # since Jake's run 2026-10-07 the declared streams reach back to the first lsSKY vest (2025-10-30), so the
+    # measured release is complete from there — a series held only from 2026-08-13 is short, not complete
+    v, d = cr.classify(sky, "emissions_tokens", ok, "2025-10-30", asof)
+    assert v == "COMPLETE" and d.startswith("COMPLETE FROM MECHANISM START 2025-10-30") and "young" in d
     v, d = cr.classify(sky, "emissions_tokens", ok, "2026-08-13", asof)
-    assert v == "COMPLETE" and d.startswith("COMPLETE FROM MECHANISM START 2026-08-13") and "young" in d
+    assert v == "MATURING"
     v, d = cr.classify(sky, "sky_stage2_burn_tokens", ok, "2026-09-14", asof)
     assert v == "COMPLETE" and "2026-09-13" in d
     v, d = cr.classify(config.PROJECT_BY_NAME["Near"], "locked_tokens", {"status": "ok"}, "2026-09-11", asof)
@@ -24233,7 +24240,9 @@ def test_sky_rewards_are_released_not_minted():
     f = out.frame()
     gi = f[f.metric == "gross_issuance_tokens"]
     assert len(gi) == 1 and gi["value"].iloc[0] == 0.0 and gi["source"].iloc[0] == "schedule:config:declared"
-    em = f[f.metric == "emissions_tokens"].set_index("date")["value"]
+    # the declared streams are the REFERENCE series since Jake's run 2026-10-07; emissions_tokens is the measured release
+    assert f[f.metric == "emissions_tokens"].empty
+    em = f[f.metric == "emissions_tokens_declared"].set_index("date")["value"]
     assert em[pd.Timestamp("2026-09-12")] == _pytest.approx(96_903_706 / 90)
     if pd.Timestamp("2026-09-13") in em.index:
         assert em[pd.Timestamp("2026-09-13")] == _pytest.approx(143_208_393 / 90)
@@ -25331,14 +25340,18 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
                    and c["source_url"].startswith("https://") and c["expected_symbol"] == sym
                    and c["holder_has_code"] is False for c in cs.values()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
-    # GEODNET's team/investor wallets: candidates only (search summaries), never subtracted
-    assert not any(k.startswith("noncirc_") for k in config.PROJECT_BY_NAME["GEODNET"]["contracts"])
-    assert len(config.NONCIRCULATING_CANDIDATES["GEODNET"]["addresses"]) == 3
+    # GEODNET's allocation wallets: confirmed by Jake from the docs page (2026-10-07) and subtracted
+    geo = {k: c for k, c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].items() if k.startswith("noncirc_")}
+    assert len(geo) == len(config.NONCIRCULATING_CANDIDATES["GEODNET"]["addresses"]) == 4
+    assert all(c["verified"] == "2026-10-07" and "read by Jake 2026-10-07" in c["provenance"] for c in geo.values())
+    assert "noncirculating_holding_tokens" in config.circulating_onchain("GEODNET")["subtract"]
     # the declared team 95M leaves Aerodrome's locked total once its on-chain figure is primary
     assert config.circulating_excludes_declared("Aerodrome")
     # the credibility row compares CoinGecko with OUR free float where CoinGecko's basis is free float
     spec = cred.circulating_input("Pendle")
-    assert spec["ours"] == {"py": "free_float_now", "args": {}} and spec["ref"]["metric"] == "circulating_supply"
+    # like-for-like since Jake's run 2026-10-07: CoinGecko counts sPENDLE, so ours adds it back for the comparison
+    assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",)}} and \
+        spec["ref"]["metric"] == "circulating_supply"
     long = pd.DataFrame({"date": pd.Timestamp("2026-10-05"), "project": "Pendle",
                          "metric": ["circulating_supply_onchain", "locked_tokens"], "value": [250e6, 80e6]})
     v, _d, _how = cred.FORMULAS["free_float_now"]("Pendle", {}, long, pd.Timestamp("2026-10-06"))
@@ -25689,21 +25702,31 @@ def test_aerodrome_buyback_input_is_a_declared_na_so_net_absorption_is_checkable
     assert "in_buyback" not in eth or eth["in_buyback"]["ref"]["verdict"] == "N/A"
 
 
-def test_geodnet_candidate_wallets_are_one_switch_away_and_off_by_default(monkeypatch):
-    """C: the three candidate wallets join the exclusion list only when confirm_candidates is True."""
+def test_geodnet_candidate_wallets_are_one_switch_away_and_on_since_jake_confirmed_the_docs(monkeypatch):
+    """C: the candidate wallets join the exclusion list only when confirm_candidates is True — ON since Jake read
+    docs.geodnet.com 'Tokenomics' (2026-10-07): Team, Investor, Vendor/Marketing and Public sale. Ecosystem,
+    Mining and Mining distribution are the contracts already wired."""
     cand = config.NONCIRCULATING_CANDIDATES["GEODNET"]
-    assert cand["confirm_candidates"] is False
-    assert not any(k.startswith("noncirc_candidate_") for k in config.PROJECT_BY_NAME["GEODNET"]["contracts"])
-    assert "noncirculating_holding_tokens" not in config.CIRCULATING_ONCHAIN["GEODNET"]["subtract"]
+    assert cand["confirm_candidates"] is True
+    addrs = {a["address"] for a in cand["addresses"]}
+    assert "0xcEcccB3ee2C208Fb58A5a02499E97D4BF041Ff6f" in addrs and len(addrs) == 4
+    wired = {c["address"] for c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].values()}
+    for a in ("0x3A6906E4239F9860C81035c54198Df58D892653b", "0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F",
+              "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478"):
+        assert a in wired and a not in addrs                     # never subtracted twice
+    assert len([k for k in config.PROJECT_BY_NAME["GEODNET"]["contracts"] if k.startswith("noncirc_candidate_")]) == 4
+    assert "noncirculating_holding_tokens" in config.CIRCULATING_ONCHAIN["GEODNET"]["subtract"]
     import copy
-    contracts = copy.deepcopy(config.PROJECT_BY_NAME["GEODNET"]["contracts"])
+    contracts = {k: v for k, v in copy.deepcopy(config.PROJECT_BY_NAME["GEODNET"]["contracts"]).items()
+                 if not k.startswith("noncirc_candidate_")}
     circ = copy.deepcopy(config.CIRCULATING_ONCHAIN["GEODNET"])
+    circ["subtract"] = tuple(m for m in circ["subtract"] if m != "noncirculating_holding_tokens")
     monkeypatch.setitem(config.PROJECT_BY_NAME["GEODNET"], "contracts", contracts)
     monkeypatch.setitem(config.CIRCULATING_ONCHAIN, "GEODNET", circ)
     monkeypatch.setitem(cand, "confirm_candidates", True)
     config._apply_confirmed_candidates()
     new = [v for k, v in contracts.items() if k.startswith("noncirc_candidate_")]
-    assert len(new) == 3 and all(v["metric_override"] == "noncirculating_holding_tokens" and v["chain"] == "polygon"
+    assert len(new) == 4 and all(v["metric_override"] == "noncirculating_holding_tokens" and v["chain"] == "polygon"
                                  for v in new)
     assert circ["subtract"][-1] == "noncirculating_holding_tokens"
 
@@ -25751,3 +25774,209 @@ def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
     assert "GROSS" in why and "nets a holders" not in why
     import check_offline_items as coi
     assert coi.geod_candidate_wallets in coi.CHECKS and coi.chainlink_revenue_coverage in coi.CHECKS
+
+
+def test_near_sql_never_names_a_cte_like_one_of_its_columns():
+    """Jake's run 2026-10-07: the supply-flows dry run failed "ORDER BY does not support ..." — the CTE `day` also had a
+    column `day`, so `ORDER BY day` named the table alias (a STRUCT). Static check on every NEAR query's text: no CTE
+    name is also a column alias anywhere in the same query."""
+    import re
+    root = Path(__file__).resolve().parent.parent / "sql" / "near"
+    for f in sorted(root.glob("bigquery_*.sql")):
+        code = "\n".join(line.split("--", 1)[0] for line in f.read_text().splitlines())
+        ctes = set(re.findall(r"(?:WITH|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(", code, flags=re.I))
+        aliases = set(re.findall(r"\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()", code, flags=re.I))
+        clash = {c.lower() for c in ctes} & {a.lower() for a in aliases}
+        assert not clash, f"{f.name}: CTE name(s) {sorted(clash)} are also column aliases"
+    flows = (root / "bigquery_supply_flows.sql").read_text()
+    assert "FROM per_day" in flows and "ORDER BY day" in flows
+
+
+# ===================================================================== Jake's run 2026-10-07
+def test_aethir_pool_reads_expect_the_symbol_the_contract_reports():
+    """1b: the symbol check read 'veAethir' from 0x1B49F587…; the three entries expect exactly that."""
+    c = config.PROJECT_BY_NAME["Aethir"]["contracts"]
+    for k in ("veaethir_token", "staking_ai_pool_balance", "staking_gaming_pool_balance"):
+        assert c[k]["expected_symbol"] == "veAethir", k
+    assert c["veaethir_token"]["address"].lower() == "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490"
+
+
+def test_reconciliation_falls_back_to_the_tip_minus_logged_tail_when_no_endpoint_serves_past_state(tmp_path):
+    """1c: Fluid's Arbitrum scan died on a 403 for a past-block balanceOf (no archive state). The archive read now falls
+    through every endpoint; if all refuse, balanceOf(latest) minus the holder's logged Transfer net after the pinned
+    block gives the same integer — logs instead of historical state."""
+    from fetch.logscan import LogScan
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    holder, token = "0x" + "11" * 20, "0x" + "22" * 20
+
+    class Reader:
+        def erc20_balance_at(self, chain, token_, holder_, block):
+            raise RuntimeError("403 Forbidden — archive state not available")
+
+        def checksum(self, a):
+            return a
+
+        def erc20(self, chain, token_):
+            class F:
+                @staticmethod
+                def balanceOf(h):
+                    class Call:
+                        @staticmethod
+                        def call(block_identifier=None):
+                            assert block_identifier == "latest"
+                            return 1_000
+                    return Call()
+            return type("C", (), {"functions": F})()
+
+    class Ex:
+        def get_logs(self, cid, address, topics, frm, to):
+            assert frm == 101 and to == "latest" and address == token
+            if topics == [TRANSFER_TOPIC, None, pad_address(holder)]:
+                return [{"data": hex(300)}], {}
+            return [{"data": hex(50)}], {}
+    ls = LogScan(explorer=Ex(), reader=Reader(), cache=None)
+    assert ls._balance_at("arbitrum", 42161, token, holder, 100) == 1_000 - (300 - 50)
+
+
+def test_sky_emissions_are_the_measured_release_and_the_rebuilt_streams_are_its_reference():
+    """2: the declared streams read 73.2M over Q0 against 189.1M released — they began at 08-13 and missed the 06-18 and
+    07-16 streams. emissions_tokens is now the measured release; every reset spell is a step of the reference."""
+    import build_workbook as bw
+    from fetch.schedule import Schedule
+    sky = config.PROJECT_BY_NAME["Sky"]
+    froms = [s["from"] for s in sky["issuance_schedule"]["steps"]]
+    assert {"2026-06-18", "2026-07-16", "2026-08-13", "2026-09-13"} <= set(froms)
+    assert sky["emissions_from_metric"] == "emissions_tokens_scan"
+    out = FetchOutput()
+    Schedule().run([sky], 30, out)
+    got = set(out.frame()["metric"])
+    assert "emissions_tokens_declared" in got and "emissions_tokens" not in got
+    # Q0 of the rebuilt schedule (2026-07-08..2026-10-06) is ~182M, within 4% of the measured 189.1M
+    f = out.frame().query("metric == 'emissions_tokens_declared'").set_index("date")["value"]
+    q0 = float(f[(f.index > pd.Timestamp("2026-07-07")) & (f.index <= pd.Timestamp("2026-10-06"))].sum())
+    assert 175e6 < q0 < 190e6, q0
+    d = pd.Timestamp("2026-10-05")
+    mk = lambda m, v, src: pd.DataFrame({"date": [d], "project": ["Sky"], "metric": [m], "value": [v],  # noqa: E731
+                                         "source": [src], "tier": [2]})
+    groups = {("Sky", "emissions_tokens_scan"): mk("emissions_tokens_scan", 9.9e6, "logscan:lssky"),
+              ("Sky", "emissions_tokens"): mk("emissions_tokens", 1.07e6, "schedule:config")}
+    bw._emissions_from_metric_views(groups)
+    e = groups[("Sky", "emissions_tokens")]
+    assert len(e) == 1 and e["value"].iloc[0] == 9.9e6 and e["metric"].iloc[0] == "emissions_tokens"
+    groups = {("Sky", "emissions_tokens"): mk("emissions_tokens", 1.07e6, "schedule:config")}
+    bw._emissions_from_metric_views(groups)
+    assert groups[("Sky", "emissions_tokens")].empty, "no measured rows: empty, never the old partial schedule"
+    ref = config.CREDIBILITY["Sky"]["in_emissions"]["ref"]
+    assert ref["metric"] == "emissions_tokens_declared" and ref["tol"] == 10.0
+
+
+def test_pendle_is_compared_with_coingecko_like_for_like_and_ours_stays_the_documented_method():
+    """3: ours 142,975,xxx (Pendle's documented circulating: no sPENDLE, no vePENDLE, no multisigs) vs CoinGecko
+    173,742,xxx. CoinGecko still counts sPENDLE (ours + sPENDLE is within 0.4%; ours + vePENDLE would be +19%), so
+    the check adds sPENDLE back for the comparison only."""
+    import credibility as cred
+    assert config.coingecko_counted_lock_legs("Pendle") == ("locked_tokens",)
+    spec = cred.circulating_input("Pendle")
+    assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",)}}
+    rows = {"Pendle|circulating_supply_onchain": {"now": 237.9e6, "latest_date": "2026-10-07"},
+            "Pendle|locked_tokens": {"now": 31.4e6}, "Pendle|locked_tokens_legacy_vependle": {"now": 63.5e6}}
+    ff, _d, _h = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"))
+    v, _d, how = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"),
+                                                 add_back=("locked_tokens",))
+    assert abs(ff - 143.0e6) < 1 and abs(v - 174.4e6) < 1 and "counted by the reference" in how
+
+
+def test_ethereum_net_change_reference_is_independent_and_uses_our_common_days():
+    """4: the reference read CoinGecko's d(circulating) = 1.43M ETH over Q0 (impossible). It is now the issuance curve
+    minus DefiLlama's burn on exactly the days our issuance and burn share."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-10-07")
+    days = pd.date_range("2026-09-29", "2026-10-06")
+    long = pd.concat([pd.DataFrame({"date": days, "project": "Ethereum", "metric": m, "value": v})
+                      for m, v in (("gross_issuance_tokens", 2_700.0), ("gross_burn_tokens", 100.0),
+                                   ("price_usd", 4_000.0), ("revenue_usd", 400_000.0))], ignore_index=True)
+    rows = {"Ethereum|beacon_chain_eth": {"now": 36e6}}
+    v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", rows, long, asof)
+    iss = 166.32 * (36e6 ** 0.5) / 365 * 8
+    assert abs(v - (iss - 8 * 100.0)) < 1e-6 and d == "2026-10-06" and "8 common day(s)" in how
+    assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["formula"] == "eth_net_formula"
+
+
+def test_new_probes_for_the_sky_releases_and_the_geodnet_residual_are_registered():
+    import check_offline_items as coi
+    assert coi.sky_lssky_releases in coi.CHECKS and coi.geod_residual in coi.CHECKS
+
+
+def test_geodnet_release_and_emissions_are_bounded_by_the_published_base_reward_times_stations():
+    """1d (Jake, 2026-10-07, docs.geodnet.com 'Tokenomics'): base 6 GEOD/day per triple-band station from 2026-07-01
+    (12 the year before) x active stations x our days — a plausibility bound replacing 'no published schedule'."""
+    import credibility as cred
+    asof = pd.Timestamp("2026-07-05")
+    days = pd.date_range("2026-06-29", "2026-07-04")                      # straddles the 30 June halving
+    rows = [(d, "GEODNET", "pool_release_tokens", 122_000.0) for d in days]
+    rows += [(pd.Timestamp("2026-06-01"), "GEODNET", "supply_units", 20_000.0),
+             (pd.Timestamp("2026-07-02"), "GEODNET", "supply_units", 21_950.0)]
+    long = pd.DataFrame(rows, columns=["date", "project", "metric", "value"])
+    v, d, how = cred.FORMULAS["base_reward_ceiling"]("GEODNET", {}, long, asof)
+    assert v == 2 * 12 * 20_000 + 1 * 6 * 20_000 + 3 * 6 * 21_950 and d == "2026-07-04"
+    assert how.startswith("PLAUSIBILITY BOUND") and "6/12 GEOD/station/day" in how
+    for row, cover in (("a4_pool_release", "pool_release_tokens"), ("a2_emissions", "emissions_tokens")):
+        spec = config.CREDIBILITY["GEODNET"][row]
+        assert spec["formula"] == "base_reward_ceiling" and spec["args"]["cover_metric"] == cover
+        assert "PLAUSIBILITY BOUND" in spec["source"] and "verdict" not in spec
+    assert cred.FORMULAS["base_reward_ceiling"]("GEODNET", {}, long[long.metric != "supply_units"], asof)[0] is None
+
+
+def test_alchemy_base_probe_finds_the_widest_range_estimates_a_year_and_never_prints_the_key(monkeypatch, capsys):
+    """Addendum 2 (Jake, 2026-10-07): how wide an eth_getLogs range Alchemy serves on Base, and a year at it."""
+    import check_offline_items as coi
+    monkeypatch.setenv("BASE_RPC_URL", "https://base-mainnet.g.alchemy.com/v2/SECRETKEY123")
+
+    def fake(url, method, params=None):
+        if method == "eth_blockNumber":
+            return {"result": hex(30_000_000)}
+        f = params[0]
+        span = int(f["toBlock"], 16) - int(f["fromBlock"], 16) + 1
+        if span > 10:
+            return {"error": {"code": 400, "message": "Under the Free tier plan, you can make eth_getLogs requests "
+                                                      "with up to a 10 block range. " + url}}
+        return {"result": []}
+    monkeypatch.setattr(coi, "rpc", fake)
+    coi.alchemy_base_logs()
+    out = capsys.readouterr().out
+    assert "SECRETKEY123" not in out and "base-mainnet.g.alchemy.com" in out
+    assert "WIDEST RANGE SERVED: 10 blocks" in out and "1,576,800 calls per filter" in out
+    assert "100 blocks: REFUSED" in out and coi.alchemy_base_logs in coi.CHECKS
+
+
+def test_manual_readings_given_in_chat_load_without_the_csv(tmp_path, monkeypatch, capsys):
+    """Addendum 3 (Jake, 2026-10-07): readings typed in chat, one per line, are stored as manual references — dated,
+    with the page, read_by Jake, marked as entered by Claude Code — through the same validation as the form."""
+    import manual_form as mf
+    import manual_refs as mr
+    monkeypatch.setattr(mr, "STORE", tmp_path / "manual_references.csv")
+    txt = tmp_path / "chat.txt"
+    txt.write_text("# Jake, chat 2026-10-07\n"
+                   "Chainlink in_locked = 45,123,456 (2026-10-07, https://staking.chain.link)\n"
+                   "sky in_buyback [2026-09] = 21,000,000 (2026-10-06, forum.sky.money) September settlement\n"
+                   "Aerodrome a3_protocol_yield = 24.5% (2026-10-07, aerodrome.finance/vote)\n"
+                   "Chainlink in_locked = 1.2M (2026-10-07, x)\n"
+                   "Sky in_buyback = 5 (2026-10-07, x)\n"
+                   "Chainlink in_locked = 5 (2099-01-01, x)\n"
+                   "Nowhere in_circ = 1 (2026-10-07, x)\n"
+                   "Chainlink in_locked 45 2026-10-07\n", encoding="utf-8")
+    assert mf.main(["text", "--file", str(txt), "--yes"]) == 2          # stored, with refusals reported
+    out = capsys.readouterr().out
+    for refused in ("text line 5", "text line 6", "text line 7", "text line 8", "text line 9"):
+        assert f"REFUSED {refused}" in out, refused
+    got = mr.by_row(mr.load())
+    cl = got[("Chainlink", "in_locked")][0]
+    assert float(cl["value"]) == 45_123_456 and cl["read_on"] == "2026-10-07" and cl["read_by"] == "Jake"
+    assert cl["url"] == "https://staking.chain.link" and "entered by Claude Code" in cl["note"]
+    sk = got[("Sky", "in_buyback")][0]
+    assert sk["period"] == "2026-09" and float(sk["value"]) == 21e6 and "September settlement" in sk["note"]
+    assert float(got[("Aerodrome", "a3_protocol_yield")][0]["value"]) == 0.245     # the page's unit is a fraction
+    ref, _ = mr.reference_for(got[("Chainlink", "in_locked")], None)
+    assert ref["manual"]["read_by"] == "Jake" and ref["tol"] == 2.0
+    assert mf.main(["text", "Chainlink in_locked = 45,200,000 (2026-10-07, staking.chain.link)", "--yes"]) == 0
+    assert float(mr.by_row(mr.load())[("Chainlink", "in_locked")][0]["value"]) == 45_200_000   # replaces, not adds

@@ -1947,6 +1947,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _relabel_views(groups)
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
+    _emissions_from_metric_views(groups)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
     _VIEW_BLOCKS_PENDING.clear()
@@ -3852,6 +3853,26 @@ def _buyback_tokens_from_usd_views(groups: dict) -> None:
         tok["value"] = tok["value"].astype(float) / tok["date"].map(price_on)
         tok["metric"], tok["source"] = "actual_buyback_tokens", DERIVED_USD_OVER_PRICE
         groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
+
+
+def _emissions_from_metric_views(groups: dict) -> None:
+    """emissions_tokens := the MEASURED release named by config `emissions_from_metric` (Sky, Jake's run
+    2026-10-07: the declared vest streams read 73.2M over Q0 where SKY actually released to the farm was 189.1M —
+    the declared steps missed two earlier streams). The measured rows replace the column; rows the schedule wrote
+    into emissions_tokens before 2026-10-07 are not shown (orphan_cleanup.sql section CE lists them). No measured
+    rows yet: the column is empty, never the old partial schedule."""
+    for p in scoped_projects():
+        src_metric = p.get("emissions_from_metric")
+        if not src_metric:
+            continue
+        name = p["name"]
+        measured = groups.get((name, src_metric))
+        held = groups.get((name, "emissions_tokens"))
+        if measured is not None and not measured.empty:
+            groups[(name, "emissions_tokens")] = _as_stored(measured.assign(metric="emissions_tokens"),
+                                                            measured.columns)
+        elif held is not None and not held.empty:
+            groups[(name, "emissions_tokens")] = held[~held["source"].astype(str).str.startswith("schedule")]
 
 
 def _native_fee_usd_views(groups: dict) -> None:

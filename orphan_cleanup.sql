@@ -4369,3 +4369,23 @@ SELECT h.date, ROUND(h.value, 2) AS value, h.source, h.fetched_at,
 --    AND date IN (SELECT date FROM metrics WHERE project = 'Ether.fi' AND metric = 'holders_revenue_usd_defillama');
 -- UPDATE metrics SET metric = 'holders_revenue_usd_defillama'
 --  WHERE project = 'Ether.fi' AND metric = 'holders_revenue_usd' AND source LIKE 'defillama%';
+
+-- ========================================================================================
+-- CE. SKY emissions_tokens: THE PARTIAL DECLARED STREAM GIVES WAY TO THE MEASURED RELEASE  2026-10-07
+--     Jake's run 2026-10-07: the declared vest streams read 73,158,xxx SKY over Q0 against 189,109,xxx actually
+--     released (SKY REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY). The declared steps began at the 2026-08-13 stream
+--     and missed the 2026-06-18 and 2026-07-16 streams still paying inside Q0. emissions_tokens is now the MEASURED
+--     release (a read-time view of emissions_tokens_scan); the rebuilt schedule lands as emissions_tokens_declared.
+--     The rows the schedule wrote into emissions_tokens before today are no longer shown (the view ignores them);
+--     CE1 lists them (expected: one per day for up to a year, source 'schedule:config'); CE2 removes ONLY them.
+--     Run: python run_sql.py CE, then python run_sql.py --delete CE.
+-- ========================================================================================
+-- CE1. WHAT GOES: Sky emissions_tokens rows written by the declared schedule.
+SELECT date, metric, ROUND(value, 2) AS value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Sky' AND metric = 'emissions_tokens' AND source LIKE 'schedule:config%'
+ ORDER BY date;
+
+-- CE2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'Sky' AND metric = 'emissions_tokens' AND source LIKE 'schedule:config%';

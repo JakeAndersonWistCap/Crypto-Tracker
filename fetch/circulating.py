@@ -89,8 +89,9 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
         elif config.coingecko_is_free_float(name):
             # CoinGecko's figure EXCLUDES staked/locked tokens (Pendle, Aerodrome; 2026-10-06): it is set against
             # OUR free float — circulating − the locked tokens inside it — never against our circulating.
-            legs = config.free_float_lock_metrics(name)                 # the lock SHOWN, then extra legs
-            lock = _daily(h, name, legs[0])
+            counted = set(config.coingecko_counted_lock_legs(name))    # legs CoinGecko still counts (sPENDLE)
+            legs = [m for m in config.free_float_lock_metrics(name) if m not in counted]
+            lock = _daily(h, name, legs[0]) if legs else ours * 0.0
             for extra in legs[1:]:                                      # Pendle's legacy vePENDLE leg
                 lock = lock.add(_daily(h, name, extra), fill_value=0.0)
             if config.circulating_excludes_declared(name):
