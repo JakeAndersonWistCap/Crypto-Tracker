@@ -483,7 +483,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # unreconciled, held on attribution), and those win over this. This answers only when the
     # scan did not run at all this pass.
     scan = next((sc for sc in project.get("log_scans") or [] if sc.get("metric") == metric
-                 or (sc.get("decompose") or {}).get("metric") == metric), None)
+                 or (sc.get("decompose") or {}).get("metric") == metric
+                 or (sc.get("decompose") or {}).get("aps_metric") == metric), None)
     if scan:
         return (f"read from Transfer events {'INTO' if scan['direction'] == 'in' else 'OUT OF'} "
                 f"{', '.join(scan['holders'])} on {scan['chain']} (log_scans.{scan['key']}) via a "
@@ -1041,6 +1042,9 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m = {sc["metric"] for sc in project.get("log_scans") or []}
         # the share-price decomposition's reconciled series comes out of the same scan (2026-10-06)
         m |= {sc["decompose"]["metric"] for sc in project.get("log_scans") or [] if sc.get("decompose")}
+        # and its daily rebuilt assets-per-share (Jake's probes14, 2026-10-07)
+        m |= {sc["decompose"]["aps_metric"] for sc in project.get("log_scans") or []
+              if (sc.get("decompose") or {}).get("aps_metric")}
         if "actual_buyback_tokens" in m:
             m.add("buyback_last_inflow_date")
     elif source == "coingecko":

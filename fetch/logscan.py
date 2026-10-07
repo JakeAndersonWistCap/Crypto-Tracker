@@ -219,6 +219,19 @@ class LogScan:
                 f"(assets {r['assets_now']:,.2f}, shares {r['shares_now']:,.2f} at block {to_block:,}). BY CLASS: "
                 f"{parts}. The classes sum to the change exactly; the reconciled reward tokens per day are stored.",
                 TIER)
+        # THE REBUILT ASSETS-PER-SHARE, daily (Jake's probes14 2026-10-07: the 365-day reference must be the year's own
+        # growth, 0.940728 -> 1.246158, not the ~89-day archive read annualised): each day's close, carried forward
+        # over days without a transaction, from the window's first day.
+        if dec.get("aps_metric"):
+            eod, rows, cur = r.get("aps_eod") or {}, [], a0
+            for d in days:
+                if d < since.normalize():
+                    continue
+                cur = eod.get(d, cur)
+                rows.append((d, cur))
+            out.add(tidy(rows, name, dec["aps_metric"], f"{SOURCE}:{key}.aps_walk", TIER), SOURCE, name,
+                    f"{dec['aps_metric']} — assets-per-share rebuilt from the Transfer logs, daily since {since.date()}",
+                    TIER)
 
     def _classify_outside(self, chain_id: int, cls: dict, outside: list, holders: list,
                           to_block: int, spec: dict) -> str:

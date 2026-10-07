@@ -600,6 +600,11 @@ METRICS = {
                  "issuance is forward-only from 2026-09-30, so Q0 covers those days and the caveat says how many)",
         "kind": "flow", "unit": "tokens", "archetypes": [1, 4], "tiers": [2], "sanity_min": -1e9, "sanity_max": 1e9,
         "only_projects": ("Ethereum",), "view_only": True},
+    "sethfi_aps_rebuilt": {
+        "label": "sETHFI assets-per-share REBUILT from the Transfer logs (ETHFI in - out over shares minted - burned), each "
+                 "day's close over the decomposition window — the trailing-365 yield's reference (fetch/share_decompose.py)",
+        "kind": "stock", "unit": "ratio", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 100,
+        "only_projects": ("Ether.fi",)},
     "sethfi_reward_tokens_reconciled": {
         "label": "ETHFI gained by sETHFI holders, RECONCILED to the share price: every transaction's change in "
                  "assets-per-share x shares (top-ups of every sender, burns without outflow, exit/entry fees) — "
@@ -16676,7 +16681,9 @@ PROJECTS = [
                 # burns without asset outflow (unstake fees / penalties) and entry/exit fees; the reconciled total
                 # per day is the token yield's numerator (PROTOCOL_YIELD["Ether.fi"]).
                 # 365 days since 2026-10-07 (Jake): the A3 headline is the trailing-365-day realised yield
-                "decompose": {"metric": "sethfi_reward_tokens_reconciled", "window_days": 365},
+                "decompose": {"metric": "sethfi_reward_tokens_reconciled", "window_days": 365,
+                              # the year's own assets-per-share, daily (Jake's probes14): the trailing-365 reference
+                              "aps_metric": "sethfi_aps_rebuilt"},
                 "sender_labels": {
                     "0x2f5301a3d59388c509c65f8698f521377d41fd0f": "OLD-programme buyback Safe — its top-ups are the "
                                                                   "old programme's distributions",
@@ -17398,6 +17405,35 @@ _NONCIRC_WALLETS_FIRST_PARTY["Maple"] = [
     ("security_admin", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818", "ethereum", "SYRUP", _MAPLE_FILING,
      "2026-10-07", "Security Admin, 3-of-6 multisig (Maple's Blockworks filing)"),
 ]
+# THE BLOCKWORKS FILINGS' WALLET SECTIONS (Jake's probes14 + run 2026-10-07 18:11: "Labelled Unissued & Operational
+# Token Wallets", each project's own filing). Liquid balances here; AERO held as veAERO locks is read by
+# aerodrome_filing_wallets until a per-owner lock read is wired.
+_AERO_FILING = "https://blockworks.com/token-transparency (Aerodrome's filing; read by Jake 2026-10-07)"
+_NONCIRC_WALLETS_FIRST_PARTY["Aerodrome"] = [
+    ("flight_school", "0x51E171d2FDe9b37BBBb624A53Ef54959422388E4", "base", "AERO", _AERO_FILING, "2026-10-07",
+     "Protocol Grants / Flight School (Aerodrome's filing)"),
+    ("buyback_locked_funds", "0x623CF63A1fA7068EBBDBa9F2EB262613EaB557a1", "base", "AERO", _AERO_FILING, "2026-10-07",
+     "Buyback / Locked Funds (Aerodrome's filing)"),
+    ("tge_incentives", "0x7269de76188E6597444D0859C4e5c336D3c39dDb", "base", "AERO", _AERO_FILING, "2026-10-07",
+     "Liquid AERO at TGE — Incentives (Aerodrome's filing)"),
+    ("velodrome_foundation_airdrop", "0x5b1892b546002Ff3dd508500575bD6Bf7a101431", "base", "AERO", _AERO_FILING,
+     "2026-10-07", "Velodrome Foundation airdrop (Aerodrome's filing)"),
+]
+_MORPHO_FILING = "https://blockworks.com/token-transparency (Morpho's filing; read by Jake 2026-10-07)"
+_NONCIRC_WALLETS_FIRST_PARTY["Morpho"] += [
+    ("association_master_safe", "0x6ABfd6139c7C3CC270ee2Ce132E309F59cAaF6a2", "ethereum", "MORPHO", _MORPHO_FILING,
+     "2026-10-07", "Morpho Association Master Safe (Morpho's filing)"),
+    ("association_ops_safe", "0x4d2008931e86E97D676767c49A1089f5Dd90fd30", "ethereum", "MORPHO", _MORPHO_FILING,
+     "2026-10-07", "Morpho Association Ops Safe (Morpho's filing)"),
+    ("contributor_grants_safe", "0x53051Ef9E20cB8Ad9262b77754b1D95e7B79b281", "ethereum", "MORPHO", _MORPHO_FILING,
+     "2026-10-07", "Contributor Grants SAFE (Morpho's filing)"),
+    ("contributor_grants_safe_2", "0x1590e7F4c3E1B4493Abb462e34593aef3A9397Dd", "ethereum", "MORPHO", _MORPHO_FILING,
+     "2026-10-07", "Contributor Grants SAFE 2 (Morpho's filing)"),
+    ("operative_safe_1", "0xD81E0983e8e133d34670728406d08637374e545D", "ethereum", "MORPHO", _MORPHO_FILING,
+     "2026-10-07", "Operative SAFE (Morpho's filing; multi-chain — Ethereum read, other chains not on file)"),
+    ("operative_safe_2", "0xd2C7eF9f4d30C476C135449949f124A4D3f14526", "ethereum", "MORPHO", _MORPHO_FILING,
+     "2026-10-07", "Operative SAFE (Morpho's filing; multi-chain — Ethereum read, other chains not on file)"),
+]
 for _name, _rows in _NONCIRC_WALLETS_FIRST_PARTY.items():
     for _key, _addr, _chain, _sym, _url, _date, _why in _rows:
         PROJECT_BY_NAME[_name]["contracts"][f"noncirc_{_key}"] = _contract(
@@ -17987,6 +18023,20 @@ PROTOCOL_YIELD = {
                  # 09-14 162K, 09-26 100K), so a 90-day window swings with each one; the app shows 1.79% (a forward
                  # rate). Headline = reconciled reward tokens over the last 365 days / AVERAGE ETHFI staked over them
                  # (build_workbook._trailing_yield_views); Q0 realised and the app's APY sit beside it on Credibility.
+                 # THE YEAR'S FUNDING MIX (Jake's etherfi_yield_reconcile, 2026-10-07, 365 days, ETHFI): what the
+                 # +32.47% assets-per-share growth was made of. Only the old programme's top-ups were BOUGHT; the
+                 # exit penalties are stakers paying stakers.
+                 "funding_mix_2026_10_07": {
+                     "topup_identified": 7_625_806, "of_which_old_programme_0x2f53": 6_488_333,
+                     "of_which_topup_safe_0x3fb6": 1_137_473,
+                     "topup_unclassified": 10_387_925,
+                     "unlabelled_senders": {"0xcf413a1989e33c8ef59fba79935d93205c9be4c7": 5_424_500,
+                                            "0xe0080d2f853ecddbd81a643dc10da075df26fd3f": 4_963_420},
+                     "burn_no_outflow": 14_119_679, "burn_no_outflow_txs": 236,
+                     "deposit_fee": -7_682_848, "withdrawal_fee": -1_248_401,
+                     "aps": "0.940728 -> 1.246158 (+32.47%); daily-weighted rewards 27.74%; old formula 25.88%",
+                     "open": "who the two unlabelled senders are (etherfi_sender_trace); what burn_no_outflow is "
+                             "mechanically (the same probe samples its transactions)"},
                  "token_yield": {"tokens": "sethfi_reward_tokens_reconciled", "bought": "actual_buyback_tokens",
                                  "trailing_days": 365, "share_price_metric": "sethfi_share_price_onchain",
                                  "bought_share_alltime": "buyback_bought_share_alltime",
@@ -20671,7 +20721,9 @@ CIRCULATING_ONCHAIN = {
                            "in free float. Bridged PENDLE on L2s counts as circulating (Pendle excludes mainnet "
                            "addresses only)",
                "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
-    "Fluid": {"status": "partial", "total": "total_supply",
+    # CONFIRMED BY FLUID'S OWN BLOCKWORKS FILING (Jake, 2026-10-07): its wallets are the DAO Treasury 0x2884… and the
+    # Team Multisig 0x4F6F…, both already subtracted.
+    "Fluid": {"status": "partial", "total": "total_supply", "filing_confirms": "2026-10-07",
               "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
               "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… − (the full sweep, 2026-10-07) the "
                         "governance Timelock, TEAM_MULTISIG_2, FLUID_FOUNDATION (fluid-governance@8891f73d "
@@ -20682,7 +20734,10 @@ CIRCULATING_ONCHAIN = {
                           "5M moves on from the Team Multisig to an unpublished 'dedicated wallet': once moved it "
                           "would read as circulating here, so CoinGecko's ~79M stays primary until that address is "
                           "known (the same rule as Morpho's vesting)",
-              "missing": "the IGP-137 dedicated custody wallet (address not published); the L2 MerkleDistributors "
+              # IGP-137's description (fluid-governance @8891f73d) routes the 5M through the Team Multisig before a
+              # dedicated wallet; fluid_igp137_wallet lists what left the multisig after it arrived.
+              "missing": "the IGP-137 dedicated custody wallet (not named in the payload; python check_offline_items.py "
+                         "fluid_igp137_wallet finds the recipient on chain); the L2 MerkleDistributors "
                          "(they pay bridged FLUID) are not in the set",
               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     # THE FULL SWEEP (Jake, 2026-10-07): ether.fi's own Blockworks Token Transparency filing labels its unissued and
@@ -20744,7 +20799,9 @@ CIRCULATING_ONCHAIN = {
     # Solana holders are NOT GEODNET's (SOLANA_HOLDERS_CHECKED below): no Solana exclusion. The 462M (Blockworks =
     # CoinGecko = Kraken 462,360,759) is a STATIC third-party figure — the ~54.4M gap is ~446 days of mining releases
     # at ~122K/day, frozen since ~mid-2025 — kept as a labelled cross-check. GEODNET publishes no figure of its own.
-    "GEODNET": {"status": "established", "total": "total_supply_gross",
+    # CONFIRMED BY GEODNET'S OWN BLOCKWORKS FILING (Jake, 2026-10-07): its wallet section lists exactly the seven docs
+    # wallets this set already subtracts (mining, ecosystem, burn, and the four allocation wallets).
+    "GEODNET": {"status": "established", "total": "total_supply_gross", "filing_confirms": "2026-10-07",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
                 "ratios_use": "onchain", "metric": "circulating_supply_third_party",
                 "was": {"ratios_use": "third_party_reference", "status": "partial"},
@@ -20810,9 +20867,12 @@ CIRCULATING_ONCHAIN = {
     # Association allocation are not yet identified — so it is the cross-check; CoinGecko stays in use until the set
     # is complete (TokenOps remains the reference: Morpho was not found to designate it).
     "Morpho": {"status": "partial", "total": "total_supply", "subtract": ("noncirculating_holding_tokens",),
-               "decision": "COINGECKO until the vesting contracts are wired; the on-chain set (total - DAO treasury - "
-                           "Rewards Multisig) is the cross-check and reads HIGH by the unvested allocations",
-               "missing": "the initial-distribution vesting contracts; the Morpho Association allocation wallet",
+               "decision": "COINGECKO until the like-for-like holds: the on-chain set is now Morpho's own filing list "
+                           "(DAO Treasury, Rewards Safe, Association Master and Ops Safes, two Contributor Grants "
+                           "SAFEs, two Operative SAFEs — Blockworks filing, Jake 2026-10-07) and is the cross-check "
+                           "against TokenOps / CoinGecko; on-chain becomes primary once it agrees",
+               "missing": "the Operative SAFEs' balances on chains other than Ethereum (no MORPHO token address on file "
+                          "for them); the initial-distribution vesting contracts, if not among the filing's Safes",
                "was": "not_established",
                "why": "no Morpho DAO treasury, vesting or foundation address was documented in config before 2026-10-07",
                "bridged_and_legacy": "OFTAdapter lockbox 0x50d3d6fD7518682155E3C1B65FDD50e1b35649D9 and legacy "
@@ -23671,7 +23731,8 @@ CREDIBILITY: dict = {
         "a2_emissions": _c_chk(
             "Merkl distributor + the Morpho URD 0x330eefa8… outflows on Ethereum (PARTIAL — other URD instances and "
             "other chains unscanned).",
-            "sum Merkl's campaign amounts (api.merkl.xyz /v4/campaigns, MORPHO) for the same window and compare"),
+            "python check_offline_items.py morpho_merkl_campaigns — Merkl's MORPHO campaign amounts pro-rated to the "
+            "window (scheduled), set against the claims measured here"),
         # THE SWEEP (2026-10-07): DefiLlama's /protocol/morpho tvl counts collateral, so the comparable figure is the
         # BORROW side — blue-api's listed-market borrow (utilisation x supply, same day) against DefiLlama's borrowed
         # (DefiLlama-Adapters@aa45ca13 projects/morpho-blue/index.js L119-142: every market whose collateral has a
@@ -23700,7 +23761,8 @@ CREDIBILITY: dict = {
             "page) is not read.", "read the average voter APR on aerodrome.finance/vote by hand and record it"),
         "in_locked": _c_in("veAERO locked supply (veAERO.supply())", "ve_locked_supply_tokens", "now", _c_chk(
             "No second source for the ve-locked total is wired (Dune 2986047 is closed).",
-            "DefiLlama's Aerodrome 'staking' TVL / price, or the vote page's total locked, by hand")),
+            "the vote page's total locked, by hand (manual_form.py). DefiLlama is no route: its Aerodrome adapter exports "
+            "pool TVL only, no staking (DefiLlama-Adapters main, projects/aerodrome-CL/index.js, read 2026-10-07)")),
         "in_buyback": _c_in("Buyback", "actual_buyback_tokens", "q0", _c_na(
             "no buyback by design — 100% of fees go to veAERO voters in the pairs' own tokens")),
         # B3 (overnight 2026-10-06): the rebase recomputed from the MINTER's own formula — no free log route serves
@@ -23726,8 +23788,8 @@ CREDIBILITY: dict = {
                                  "tol": 25.0, "source": "sETHFI share price over Q0, annualised"}, fmt=_C_PCT),
         # THE APP'S PUBLISHED APY (Jake, 2026-10-07: 1.79%) beside our trailing-365-day realised yield — different
         # quantities (the app's is a forward rate; ours is what holders actually gained), shown labelled.
-        "in_apy_published": _c_in_py("sETHFI yield: ours trailing 365 days realised (reconciled top-ups / average ETHFI "
-                                     "staked) vs the app's published APY",
+        "in_apy_published": _c_in_py("sETHFI yield: ours trailing 365 days realised (each day's reconciled rewards over "
+                                     "that day's stake) — the app's published APY (a forward rate) recorded beside it",
                                      "trailing_token_yield", {"tokens": "sethfi_reward_tokens_reconciled",
                                                               "lock": "locked_tokens_underlying", "days": 365},
                                      _c_chk("Awaiting a reading of the app's staked-ETHFI APY.",
@@ -23739,13 +23801,21 @@ CREDIBILITY: dict = {
         # Q0 figure and the "101.7%/yr" week were read from it and are NOT established as real accrual; DefiLlama's
         # holders revenue (old programme only, $0 since 2026-09-03) is not a reference for this row either.
         # TRAILING 365 DAYS ON BOTH SIDES since the headline became the trailing-year yield (Jake, 2026-10-07).
-        "a3_protocol_yield": {"formula": "share_price_growth", "args": {"metric": "sethfi_share_price_onchain",
-                                                                       "days": 365},
-                              "tol": 25.0,
-                              "source": "sETHFI share price at one block (convertToAssets / balanceOf÷totalSupply), "
-                                        "over the trailing 365 days via archive, annualised — the realised yield",
-                              "note": "Ours counts top-ups (no shares minted) over ETHFI held; the share price rises by "
-                                      "exactly those top-ups per share, so the two should agree up to timing."},
+        # THE YEAR'S OWN ASSETS-PER-SHARE (Jake's probes14, 2026-10-07: 0.940728 -> 1.246158 over 365 days, +32.47%).
+        # The old reference (sethfi_share_price_onchain over "365 days") held only the ~89-day archive read, so it was
+        # the Q0 change annualised (9.95%) — the wrong window for a trailing-year headline. Compared like-for-like: the
+        # headline SUMS each day's reward over that day's stake, so the reference is ln(growth) = 28.1% (32.47%
+        # compounded); Q0 realised and the app's APY are their own labelled rows.
+        "a3_protocol_yield": {"formula": "log_price_growth", "args": {"metric": "sethfi_aps_rebuilt", "days": 365},
+                              "tol": 5.0,
+                              "source": "sETHFI assets-per-share rebuilt from the Transfer logs over the trailing 365 days "
+                                        "(sethfi_aps_rebuilt), as a sum of daily returns — the realised yield",
+                              "note": "Funding of the year's +32.47% (decomposition 2026-10-07): bought by the OLD "
+                                      "programme 6.49M ETHFI; top-up Safe 1.14M; transfers from two UNLABELLED senders "
+                                      "10.39M (0xcf413a19… 5.42M, 0xe0080d2f… 4.96M); exit penalties left with the "
+                                      "holders 14.12M (a transfer between stakers, not new revenue); less deposit "
+                                      "(-7.68M) and withdrawal (-1.25M) effects. See PROTOCOL_YIELD Ether.fi "
+                                      "funding_mix_2026_10_07."},
         "in_buyback": _c_in("ETHFI bought Q0 (DEX fills into 0x2f53… + the top-up Safe 0x3fb6…)", "actual_buyback_tokens", "q0", _c_chk(
             "OLD wallet dormant since 2026-04-01; the NEW programme (Snapshot passed 2026-09-03) is ACTIVE through the "
             "top-up Safe 0x3fb6784e… (4 of 5 owners shared with the buyback Safe), which buys on Uniswap v4 and pays "

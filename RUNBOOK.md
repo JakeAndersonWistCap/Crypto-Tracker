@@ -527,6 +527,45 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ap. Jake's probes14 + run 2026-10-07 18:11: like-for-like rows fixed, Ether.fi references, filing wallets
+
+**Like-for-like rows.**
+- `in_circ` now sums from the BUILT rows (`now_sum`). The on-chain circulating is a read-time view, absent from the
+  store, so the store-only sum read "CHECK (no reference)".
+- The gap row is "N/A (recorded)". A bare N/A means "empty by design", so a figure in it read as a contradiction.
+- Ether.fi 797.21M + 168.14M = 965.35M = CoinGecko, and Uniswap matches the same way: both should now PASS.
+
+**Ether.fi trailing yield: the yield is real, the references were wrong.**
+- The A3 reference is the year's own assets-per-share, rebuilt from the Transfer logs. The decomposition stores it
+  daily as `sethfi_aps_rebuilt`.
+- It is compared like-for-like as a sum of daily returns: ln(1.3247) = 28.1% vs the headline's 27.74%, at 5%.
+- Q0 realised stays its own row. The app's APY is "N/A (recorded)" (manual page `record_only`): a forward rate, never
+  judged against a realised year.
+- The year's funding mix is in `PROTOCOL_YIELD["Ether.fi"]["funding_mix_2026_10_07"]`. Only the old programme's
+  6.49M was bought. The 14.12M of burns without an asset outflow are stakers paying stakers.
+- `etherfi_sender_trace` covers the two unlabelled senders (0xcf413a19…, 0xe0080d2f…) and the three holder-report
+  wallets: Safe owners against the buyback and top-up Safes, plus their ETHFI sources. It also samples the burns
+  without an outflow: who burned, whether the burner was paid later, and the called function.
+
+**Filing wallets (non-circulating, source = each project's Blockworks filing):**
+- **Aerodrome:** Flight School, Buyback/Locked Funds, TGE Incentives, Velodrome Foundation airdrop. The Team and
+  Public Goods wallets were already subtracted. Their veAERO locks are read by `aerodrome_filing_wallets`, which also
+  builds the on-chain circulating and the like-for-like.
+- **Morpho:** the Association Master and Ops Safes, two Contributor Grants SAFEs and two Operative SAFEs (Ethereum;
+  other chains not on file). On-chain becomes primary once the like-for-like holds.
+- **GEODNET and Fluid:** the filings confirm the wallets already subtracted.
+- **Pendle, Uniswap, Hyperliquid and the Ether.fi holder-report wallets:** `blockworks_wallet_balances` reads what
+  each filing address holds, from the cached filings, before anything is wired.
+
+**Maple:** `maple_ssf_candidates` now also takes 0xd6d4's recipients. It counts stSYRUP as SYRUP and tests single
+wallets, every pair of the ten largest and the whole set. LP positions are not decomposed.
+
+**Fluid / Morpho:** `fluid_igp137_wallet` finds where IGP-137's 5M went after the Team Multisig. `morpho_merkl_campaigns`
+pro-rates Merkl's MORPHO campaigns to the window.
+
+**Aethir:** re-run `aethir_distributor_match` after about 10 daily runs. It now prints each candidate's code, name and
+symbol first.
+
 ## 11ao. Jake's run 2026-10-07 17:08: like-for-like circulating, Ether.fi yield, Maple SSF, Aethir distributors, filings
 
 **Circulating, like-for-like.** Where our on-chain figure is primary and stricter than CoinGecko, the spec names the

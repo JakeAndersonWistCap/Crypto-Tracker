@@ -287,6 +287,25 @@ def _share_price_growth(p, rows, long, asof, metric="lock_assets_per_share", day
     return v, str(sr.index[-1].date()), f"{metric} {sr.index[0].date()}..{sr.index[-1].date()}, annualised"
 
 
+def _log_price_growth(p, rows, long, asof, metric="", days=365, **_):
+    """ln(last / first) of a price series over the trailing `days`, x 365 / span — a share price's growth expressed as
+    the SUM of its daily returns, the same basis as a headline that sums each day's reward over that day's stake
+    (Ether.fi, Jake's probes14 2026-10-07: assets-per-share +32.47% compounded = 28.1% summed vs the headline's
+    27.74%)."""
+    import math
+    sr = _series(long, p, metric)
+    sr = sr[(sr.index > asof - pd.Timedelta(days=int(days))) & (sr.index <= asof)]
+    if len(sr) < 2 or not sr.iloc[0] or not sr.iloc[-1]:
+        return None, None, f"fewer than two {metric} points in the last {days} days"
+    span = (sr.index[-1] - sr.index[0]).days
+    if span < 7:
+        return None, None, f"{metric} covers {span} day(s) — under a week"
+    g = float(sr.iloc[-1]) / float(sr.iloc[0])
+    return math.log(g) * 365.0 / span, str(sr.index[-1].date()), (
+        f"{metric} {float(sr.iloc[0]):.6f} ({sr.index[0].date()}) -> {float(sr.iloc[-1]):.6f} "
+        f"({sr.index[-1].date()}): {g - 1:+.2%} compounded = {math.log(g):.2%} as a sum of daily returns, x 365/{span}")
+
+
 def _per_day_x_covered(p, rows, long, asof, per_day=0.0, cover_metric="emissions_tokens", label="", **_):
     cov = _num((rows.get(f"{p}|{cover_metric}") or {}).get("q0_covered_days")) or 90.0
     return per_day * cov, None, f"{label or f'{per_day:,.2f}/day'} x {cov:.0f} covered day(s)"
@@ -326,6 +345,25 @@ def _sum_months(p, rows, long, asof, metric="", months=(), **_):
         tot += float(m.sum())
         seen.append(month)
     return tot, ", ".join(seen), f"{metric} summed over {', '.join(seen)}"
+
+
+def _now_sum(p, rows, long, asof, metrics=(), **_):
+    """The latest value of each of `metrics`, summed — FROM THE BUILT ROWS first (a read-time view such as
+    circulating_supply_onchain is absent from the raw store; Jake's run 2026-10-07 18:11 showed the like-for-like row
+    'CHECK (no reference)' because the store-only sum found nothing), else the store's latest."""
+    tot, parts, day = 0.0, [], None
+    for m in metrics:
+        r = (rows or {}).get(f"{p}|{m}") or {}
+        v, d = _num(r.get("now")), r.get("latest_date")
+        if v is None and long is not None:
+            sr = _series(long, p, m)
+            v, d = (float(sr.iloc[-1]), str(sr.index[-1].date())) if len(sr) else (None, None)
+        if v is None:
+            return None, None, f"no {m} figure"
+        tot += v
+        parts.append(f"{m} {v:,.0f}")
+        day = max(day or str(d or ""), str(d or "")) or None
+    return tot, day, " + ".join(parts)
 
 
 def _free_float_now(p, rows, long, asof, add_back=(), **_):
@@ -611,7 +649,8 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
             "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
-            "product_on_common_day": _product_on_common_day}
+            "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
+            "log_price_growth": _log_price_growth}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -930,9 +969,9 @@ def circulating_input(name: str) -> dict:
         a = ("circulating_supply_onchain", *counts)
         return {"what": f"Circulating as CoinGecko counts it = OURS ({ours_m}) + {' + '.join(counts)} (documented "
                         f"wallets our convention excludes and CoinGecko counts)",
-                "ours": {"py": "sums_on_common_day", "args": {"a": a, "b": ("circulating_supply",), "side": "ours"}},
+                "ours": {"py": "now_sum", "args": {"metrics": a}},
                 "fmt": '#,##0;(#,##0);-',
-                "ref": {"formula": "sums_on_common_day", "args": {"a": a, "b": ("circulating_supply",), "side": "ref"},
+                "ref": {"metric": "circulating_supply", "window": "now",
                         "tol": 2.0, "source": "CoinGecko circulating_supply, the same day — compared with ours plus the "
                                               "wallets it still counts; a gap left beyond tolerance is a real "
                                               "disagreement",
@@ -997,9 +1036,11 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             inputs["in_circ_gap"] = {
                 "what": f"Definitional gap: documented wallets our circulating excludes and CoinGecko counts "
                         f"({' + '.join(gap_legs)})",
-                "ours": {"py": "sums_on_common_day", "args": {"a": gap_legs, "b": gap_legs, "side": "ours"}},
+                "ours": {"py": "now_sum", "args": {"metrics": gap_legs}},
                 "fmt": '#,##0;(#,##0);-',
-                "ref": {"verdict": "N/A", "why": "recorded, not judged: the difference between our convention "
+                # "N/A (recorded)", not "N/A": a bare N/A declares the cell EMPTY by design and a figure in it reads as
+                # a contradiction (Jake's run 18:11: "CHECK (figure where none is expected)")
+                "ref": {"verdict": "N/A (recorded)", "why": "recorded, not judged: the difference between our convention "
                                                  "(treasury, team/investor, foundation and operating wallets out) "
                                                  "and CoinGecko's. in_circ compares like-for-like."}}
         inputs.update(generic_inputs(name))

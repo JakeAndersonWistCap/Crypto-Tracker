@@ -87,8 +87,12 @@ PAGES: dict = {
     ("Ether.fi", "in_locked"): {"url": "https://etherscan.io/token/0x86B5780b606940Eb59A062aA85a07959518c0161",
                                 "tile": "sETHFI total supply (shares; the ETHFI it holds is higher by the accrued "
                                         "share price)", "unit": "sETHFI", "tol_pct": 1.0},
+    # RECORDED, NOT COMPARED (Jake's probes14, 2026-10-07): the app's APY is a FORWARD rate; set against our trailing
+    # realised year it is the wrong window and fails by construction. Its reading is shown beside ours, labelled.
     ("Ether.fi", "in_apy_published"): {"url": "https://app.ether.fi", "tile": "staked-ETHFI APY (the app's published, "
-                                       "forward rate)", "unit": "fraction (0.25 = 25%)", "tol_pct": 25.0},
+                                       "forward rate)", "unit": "fraction (0.25 = 25%)", "tol_pct": 25.0,
+                                       "record_only": "the app's FORWARD rate beside our trailing-365 realised yield — "
+                                                      "different quantities, so it is recorded, not judged"},
     ("Near", "in_buyback_wallets"): {"url": "https://revenue.near.org", "tile": "Wallet Breakdown (All-time), total "
                                       "NEAR of the three wallets", "unit": "NEAR", "tol_pct": 5.0},
     ("Aerodrome", "in_voting_power"): {"url": "https://aerodrome.finance", "tile": "total veAERO (voting power — "
@@ -159,6 +163,9 @@ def reference_for(readings: list[dict], ours: dict | None) -> tuple[dict, dict |
         return ref, {"py": "sum_months", "args": {"metric": metric, "months": months}}
     ref = {"manual": {"value": float(first["value"]), "read_on": first.get("read_on"), "read_by": by,
                       "source": src}, "tol": tol}
+    if pg.get("record_only"):                  # shown beside ours, never judged (a different quantity)
+        return {"verdict": "N/A (recorded)", "why": f"{first['value']} read {first.get('read_on')} by {by} ({src}): "
+                                                    f"{pg['record_only']}"}, None
     if pg.get("same_source"):                  # the page ours reads too: FRESH-only at best
         ref["same_source"] = True
     if first.get("note"):

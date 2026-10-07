@@ -65,6 +65,7 @@ def decompose(ins: list, outs: list, mints: list, burns: list, since_ts: int, la
     aps_start = None
     by = {c: {"aps": 0.0, "tokens": 0.0, "txs": 0} for c in CLASSES}
     daily: dict = defaultdict(float)
+    aps_eod: dict = {}                       # assets-per-share at each day's last transaction (the window only)
     n = 0
     for h, t in sorted(tx.items(), key=lambda kv: (kv[1]["block"], kv[1]["idx"])):
         a0, s0 = a, s
@@ -93,9 +94,11 @@ def decompose(ins: list, outs: list, mints: list, burns: list, since_ts: int, la
         by[cls]["tokens"] += tok
         by[cls]["txs"] += 1
         daily[pd.Timestamp(t["ts"], unit="s").normalize()] += tok
+        aps_eod[pd.Timestamp(t["ts"], unit="s").normalize()] = after
         n += 1
     aps_end = (a / sa) / (s / ss) if s > 0 else None
     if aps_start is None:
         aps_start = aps_end
-    return {"aps_start": aps_start, "aps_end": aps_end, "by_class": by, "daily": dict(daily), "txs_in_window": n,
+    return {"aps_start": aps_start, "aps_end": aps_end, "by_class": by, "daily": dict(daily), "aps_eod": aps_eod,
+            "txs_in_window": n,
             "assets_now": a / sa, "shares_now": s / ss}

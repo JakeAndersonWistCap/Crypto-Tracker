@@ -3605,15 +3605,19 @@ def _balance_history(token: str, addr: str, chain_id: int = 1):
 
 
 def maple_ssf_candidates(top: int = 8):
-    """Jake's run 2026-10-07 17:08: 0xd6d4 is NOT the SSF; its one large inflow was 28,550,344 SYRUP from
-    0xa9466eab (the registry's treasury, already subtracted) on 2026-06-26. Each candidate — 0xa9466eab and every
-    address it sent SYRUP to — gets its daily SYRUP balance REBUILT from its own Transfer logs and set against the
-    page's SSF syrupHoldings on every shared day (MATCH = all within MAPLE_SSF_MATCH_PCT). Reads only."""
+    """Jake's runs 2026-10-07: 0xd6d4 is NOT the SSF; 0xa9466eab sent it 320,802,480 SYRUP (8 logs); 0xd6d4 has 14 in /
+    30 out. Candidates = 0xa9466eab, 0xd6d4 and the largest SYRUP recipients of each. Every candidate's daily balance is
+    REBUILT from its own Transfer logs — SYRUP plus stSYRUP (shares at today's convertToAssets rate) — and single
+    wallets, every PAIR and the whole set are tested against the page's SSF syrupHoldings on every shared day
+    (MATCH = all within MAPLE_SSF_MATCH_PCT). A recipient with code may be a pool: its LP share is not decomposed.
+    Reads only."""
+    import itertools                                       # noqa: PLC0415
     import config                                          # noqa: PLC0415
     from fetch import maple_transparency as mt             # noqa: PLC0415
     from fetch.scrape import robots_verdict                # noqa: PLC0415
-    head("MAPLE — which wallet IS the Syrup Strategic Fund? (balance histories vs the page's SSF series)")
-    syrup = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+    head("MAPLE — which wallet(s) ARE the Syrup Strategic Fund? (balance histories vs the page's SSF series)")
+    c = config.PROJECT_BY_NAME["Maple"]["contracts"]
+    syrup, stsyrup = c["token"]["address"], c["stsyrup"]["address"]
     reg = "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19"
     url = "https://maple.finance/transparency"
     ok, why = robots_verdict(url)
@@ -3626,34 +3630,63 @@ def maple_ssf_candidates(top: int = 8):
         return
     ssf = df.set_index("day")["syrup"]
     print(f"  SSF syrupHoldings: {len(ssf)} day(s) {ssf.index[0].date()}..{ssf.index[-1].date()}, last {ssf.iloc[-1]:,.0f}")
-    sent, detail = explorer_logs(1, syrup, [TRANSFER_TOPIC, _pad(reg), None])
-    print(f"  SYRUP sent by 0xa9466eab: {detail}")
-    by = {}
-    for e in sent or ():
-        to = "0x" + e["topics"][2][-40:]
-        by[to] = by.get(to, 0.0) + int(e["data"], 16) / 1e18
-    recips = [a for a, _v in sorted(by.items(), key=lambda kv: -kv[1])[:top]]
-    for a in recips:
-        print(f"    -> {a}  {by[a]:,.0f} SYRUP  {_code(a, 'ethereum')}")
-    hits = []
-    for a in [reg, *recips]:
-        bal, how = _balance_history(syrup, a)
-        if bal is None:
+    rate = (_uint(stsyrup, SEL_CONVERT_TO_ASSETS + hex(10 ** 18)[2:].rjust(64, "0"), "ethereum") or 10 ** 18) / 1e18
+    print(f"  stSYRUP -> SYRUP at today's rate {rate:.6f}")
+    cands = [reg, MAPLE_DAO]
+    for src in (reg, MAPLE_DAO):
+        sent, detail = explorer_logs(1, syrup, [TRANSFER_TOPIC, _pad(src), None])
+        by = {}
+        for e in sent or ():
+            to = "0x" + e["topics"][2][-40:]
+            by[to] = by.get(to, 0.0) + int(e["data"], 16) / 1e18
+        print(f"  SYRUP sent by {src}: {detail}")
+        for a, v in sorted(by.items(), key=lambda kv: -kv[1])[:top]:
+            print(f"    -> {a}  {v:,.0f} SYRUP  {_code(a, 'ethereum')}")
+            if a.lower() not in {x.lower() for x in cands}:
+                cands.append(a)
+    hist = {}
+    for a in cands:
+        s_, how = _balance_history(syrup, a)
+        st, _h = _balance_history(stsyrup, a)
+        if s_ is None and st is None:
             print(f"  {a}: {how}")
             continue
-        common = bal.index.intersection(ssf.index)
+        idx = (s_.index if s_ is not None else st.index).union(st.index if st is not None else [])
+        tot = (s_.reindex(idx).ffill().fillna(0) if s_ is not None else 0) + \
+              ((st.reindex(idx).ffill().fillna(0) * rate) if st is not None else 0)
+        hist[a] = tot
+
+    def test(label, series):
+        common = series.index.intersection(ssf.index)
         if not len(common):
-            print(f"  {a}: no day shared with the SSF series ({how})")
-            continue
-        pct = (bal.loc[common] / ssf.loc[common] - 1) * 100
+            return None
+        pct = (series.loc[common] / ssf.loc[common] - 1) * 100
         within = int((pct.abs() <= MAPLE_SSF_MATCH_PCT).sum())
-        match = within == len(common)
-        hits += [a] if match else []
-        print(f"  {a}: balance now {bal.iloc[-1]:,.0f}; vs SSF on {len(common)} day(s): median {pct.median():+.2f}%, "
-              f"{within} within {MAPLE_SSF_MATCH_PCT}%  {'<-- MATCH' if match else ''}  ({how})")
-    print("\n  VERDICT: " + (f"{', '.join(hits)} tracks the SSF on every shared day — it IS the Syrup Strategic Fund"
-                             if hits else "no single candidate tracks the SSF — the fund may span several wallets "
-                                          "or hold SYRUP in another form"))
+        hit = within == len(common)
+        print(f"    {label}: now {series.iloc[-1]:,.0f}; {len(common)} day(s), median {pct.median():+.2f}%, "
+              f"{within} within {MAPLE_SSF_MATCH_PCT}%{'  <-- MATCH' if hit else ''}")
+        return hit
+    hits = []
+    print("  SINGLE wallets (SYRUP + stSYRUP):")
+    for a, h in hist.items():
+        if test(a, h):
+            hits.append(a)
+    big = sorted(hist, key=lambda a: -float(hist[a].iloc[-1]))[:10]
+    print("  PAIRS of the ten largest:")
+    for x, y in itertools.combinations(big, 2):
+        h = hist[x].add(hist[y], fill_value=0).sort_index().ffill()
+        if test(f"{x[:10]}… + {y[:10]}…", h):
+            hits.append(f"{x} + {y}")
+    allsum = None
+    for h in hist.values():
+        allsum = h if allsum is None else allsum.add(h, fill_value=0)
+    if allsum is not None:
+        print("  ALL candidates together:")
+        if test("sum", allsum.sort_index().ffill()):
+            hits.append("all candidates")
+    print("\n  VERDICT: " + (f"MATCH — {'; '.join(hits)}" if hits else
+                             "no wallet, pair or the whole set tracks the SSF — it may hold SYRUP in LP positions "
+                             "(not decomposed here) or in wallets outside these flows"))
     print("  PASTE BACK the section.")
 
 
@@ -3667,6 +3700,9 @@ AETHIR_DISTRIBUTOR_CANDIDATES = {          # Jake's one-day scan, 2026-10-07 17:
     "0x5cbddc44f31067df328aa7a8da03aca6f2edd2ad": "202 tx / 21 recipients / 2,232,912 ATH",
 }
 AETHIR_MATCH = {"sum_pct": 10.0, "corr": 0.8}
+# Jake's 18:11 run: only 2 days of dashboard rises were stored — re-run after ~10 daily runs (the scheduler). Seen so
+# far: 0xef90d0b3 (1.5-3.0M/day) is closest to checker (2.87M) / cloud host (2.62M); 0x5cbddc44 (3-7M/day, 21
+# recipients) may be a bridge or an exchange — its identity is printed first.
 
 
 def aethir_distributor_match(days: int = 10):
@@ -3701,6 +3737,18 @@ def aethir_distributor_match(days: int = 10):
         print(f"  metrics.db unreadable — {e}")
         return
     for addr, seen in AETHIR_DISTRIBUTOR_CANDIDATES.items():
+        # WHAT IT IS (Jake, 18:11: 0x5cbddc44 — 21 recipients, 3-7M/day — may be a bridge or an exchange): code, and
+        # the contract's own name()/symbol() where it has them
+        ident = []
+        for sel, lab in (("0x06fdde03", "name"), ("0x95d89b41", "symbol")):
+            w, _ = eth_call(addr, sel, chain="arbitrum")
+            try:
+                txt = bytes.fromhex(w[2 + 128:]).rstrip(b"\0").decode("utf-8", "ignore") if w and len(w) > 130 else ""
+            except ValueError:
+                txt = ""
+            if txt:
+                ident.append(f"{lab}={txt[:40]}")
+        print(f"\n  {addr}: {_code(addr, 'arbitrum')} {' '.join(ident) or '(no name/symbol)'}")
         logs, detail = explorer_logs(42161, AETHIR_ARB_ATH, [TRANSFER_TOPIC, _pad(addr), None], start, head_blk)
         if not logs:
             print(f"\n  {addr} ({seen}): {detail}")
@@ -3721,6 +3769,183 @@ def aethir_distributor_match(days: int = 10):
             print(f"    vs {label}: {len(common)} day(s), sums {a.sum():,.0f} vs {b.sum():,.0f} ({gap:+.1f}%), "
                   f"daily correlation {corr:.2f}  {'<-- MATCH' if ok else ''}")
     print("\n  PASTE BACK the section: a MATCH is wired as that stream's on-chain measure (claims = released rewards).")
+
+
+# ===== FLUID — WHERE DID IGP-137's 5,000,000 FLUID GO? (the sweep, 2026-10-07) =====
+# fluid-governance @8891f73d contracts/payloads/IGP137/description.md: 5M FLUID from the Treasury DSA 0x2884… to the
+# Team Multisig 0x4F6F…, "subsequently moved into a dedicated wallet before distribution to the relevant custodial
+# partners", "legally locked for at least 4 years until 2030". The wallet is not named; its inflow is on chain.
+FLUID_TREASURY_DSA = "0x28849D2b63fA8D361e5fc15cB8aBB13019884d09"
+FLUID_TEAM_MULTISIG = "0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e"
+
+
+def fluid_igp137_wallet(min_fluid: float = 100_000):
+    """The 5M FLUID transfer Treasury DSA -> Team Multisig, then every FLUID transfer OUT of the Team Multisig since,
+    of at least `min_fluid`, by recipient (contract or not, and its FLUID balance now). A recipient taking ~5M soon
+    after is the dedicated custody wallet: non-circulating under the convention (locked to 2030). Reads only."""
+    import pandas as pd                                    # noqa: PLC0415
+    head("FLUID — IGP-137's 5M FLUID: the dedicated wallet after the Team Multisig")
+    inn, d1 = explorer_logs(1, FLUID_TOKEN, [TRANSFER_TOPIC, _pad(FLUID_TREASURY_DSA), _pad(FLUID_TEAM_MULTISIG)])
+    print(f"  Treasury DSA -> Team Multisig: {d1}")
+    big = [e for e in inn or () if int(e["data"], 16) / 1e18 >= 4_000_000]
+    for e in big:
+        print(f"    {pd.Timestamp(int(e['timeStamp']), unit='s')}  {int(e['data'], 16) / 1e18:,.0f} FLUID  "
+              f"tx {e['transactionHash']}")
+    if not big:
+        print("  no transfer of 4M+ found — IGP-137 may not have executed yet")
+        return
+    since = min(int(e["timeStamp"]) for e in big)
+    out, d2 = explorer_logs(1, FLUID_TOKEN, [TRANSFER_TOPIC, _pad(FLUID_TEAM_MULTISIG), None])
+    print(f"  FLUID out of the Team Multisig: {d2}")
+    by = {}
+    for e in out or ():
+        if int(e["timeStamp"]) < since:
+            continue
+        to, amt = "0x" + e["topics"][2][-40:], int(e["data"], 16) / 1e18
+        n, tot, first = by.get(to, (0, 0.0, None))
+        by[to] = (n + 1, tot + amt, first or pd.Timestamp(int(e["timeStamp"]), unit="s"))
+    rows = [(a, v) for a, v in by.items() if v[1] >= min_fluid]
+    print(f"  since {pd.Timestamp(since, unit='s').date()}: {len(rows)} recipient(s) of {min_fluid:,.0f}+ FLUID")
+    for a, (n, tot, first) in sorted(rows, key=lambda kv: -kv[1][1]):
+        bal = _bal(FLUID_TOKEN, a, "ethereum")
+        print(f"    {a}  {tot:>14,.0f} FLUID in {n} transfer(s), first {first.date()}  {_code(a, 'ethereum')}  "
+              f"holds {bal / 1e18 if bal is not None else float('nan'):,.0f}")
+    print("  PASTE BACK the section: a ~5M recipient is wired as Fluid's IGP-137 custody wallet (non-circulating,\n"
+          "  locked to 2030), which completes Fluid's on-chain set.")
+
+
+# ===== MORPHO — MERKL'S CAMPAIGN AMOUNTS FOR MORPHO OVER A WINDOW (the sweep, 2026-10-07) =====
+def morpho_merkl_campaigns(days: int = 90):
+    """Every Merkl campaign paying MORPHO on Ethereum (api.merkl.xyz/v4/campaigns, any status), each campaign's amount
+    pro-rated to the overlap of [start, end] with the last `days` — the reference for Morpho's a2_emissions (MORPHO
+    claimed out of Merkl + the URD). Prints the keys the API returned, so a renamed field is visible, not guessed."""
+    import time as _t                                      # noqa: PLC0415
+    head(f"MORPHO — Merkl campaigns paying MORPHO, pro-rated to the last {days} days")
+    morpho = "0x58D97B57BB95320F9a05dC918Aef65434969c2B2"
+    try:
+        j = requests.get("https://api.merkl.xyz/v4/campaigns", params={"tokenAddress": morpho, "chainId": 1},
+                         headers=_ua(), timeout=TIMEOUT).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  Merkl API UNREACHABLE — {e}")
+        return
+    rows = j if isinstance(j, list) else (j.get("campaigns") or j.get("data") or [])
+    print(f"  {len(rows)} campaign(s); keys of the first: {sorted(rows[0])[:25] if rows else '-'}")
+    now, lo = _t.time(), _t.time() - days * 86400
+    total, used = 0.0, 0
+    for c in rows:
+        try:
+            dec = int(((c.get("rewardToken") or {}).get("decimals")) or 18)
+            amt = int(c["amount"]) / 10 ** dec
+            s, e = int(c["startTimestamp"]), int(c["endTimestamp"])
+        except (KeyError, TypeError, ValueError):
+            print(f"    skipped (no amount/startTimestamp/endTimestamp): {str(c)[:160]}")
+            continue
+        ov = max(0.0, min(e, now) - max(s, lo))
+        share = amt * ov / (e - s) if e > s else 0.0
+        total += share
+        used += 1 if share else 0
+        print(f"    {c.get('campaignId', c.get('id', '?'))!s:.20}  {amt:>14,.0f} MORPHO  "
+              f"{_t.strftime('%Y-%m-%d', _t.gmtime(s))}..{_t.strftime('%Y-%m-%d', _t.gmtime(e))}  in window {share:,.0f}")
+    print(f"\n  MORPHO scheduled by Merkl campaigns over the last {days} days: {total:,.0f} ({used} campaign(s) overlap)")
+    print("  PASTE BACK the section: this sum is set against our measured claims (emissions_tokens, Q0) — scheduled vs\n"
+          "  claimed, so a lag is expected; a large gap means an unscanned distributor.")
+
+
+# ===== ETHER.FI — WHO FUNDED sETHFI, AND WHAT THE BURNS WITHOUT OUTFLOW ARE (Jake's probes14, 2026-10-07) =====
+ETHERFI_TRACE = {
+    "0xcf413a1989e33c8ef59fba79935d93205c9be4c7": "unlabelled top-up sender (5,424,500 ETHFI in 365 days)",
+    "0xe0080d2f853ecddbd81a643dc10da075df26fd3f": "unlabelled top-up sender (4,963,420 ETHFI in 365 days)",
+    "0xe4439b1d150ab2febd72d699954c7b4dde2b66e2": "holder-report wallet; a July 2026 sender into the top-up Safe",
+    "0xe67a6ccc7ded59ef055194ed6402465e738339a8": "holder-report wallet",
+    "0xbe2cfe1a304b6497e6f64525d0017abab7a5e8cb": "holder-report wallet",
+}
+SEL_GET_OWNERS, SEL_GET_THRESHOLD = "0xa0e67e2b", "0xe75235b8"
+
+
+def _safe_owners(addr: str) -> tuple:
+    """(owners, threshold) of a Gnosis Safe, or ((), None) when it is not one."""
+    w, _ = eth_call(addr, SEL_GET_OWNERS)
+    if not w or len(w) < 130:
+        return (), None
+    body = w[2:]
+    n = int(body[64:128], 16)
+    owners = tuple("0x" + body[128 + 64 * i + 24:128 + 64 * (i + 1)].lower() for i in range(n))
+    t = _uint(addr, SEL_GET_THRESHOLD, "ethereum")
+    return owners, t
+
+
+def etherfi_sender_trace(days: int = 365, sample: int = 6):
+    """For each address in ETHERFI_TRACE: contract or EOA, Safe owners / threshold and the overlap with the buyback
+    Safe 0x2f53… and the top-up Safe 0x3fb6…, ETHFI held now, and the largest ETHFI senders into it (labelled from
+    config where known). Then the sETHFI burns WITHOUT an asset outflow in the last `days` (from the scan cache):
+    who burned, how often, the called function on a sample, and whether the burner later received ETHFI from the
+    vault (a cooldown escrow pays out later; a penalty never does). Reads only."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.explorer import TRANSFER_TOPIC as T, pad_address  # noqa: PLC0415
+    from fetch.logcache import LogCache, stream_id         # noqa: PLC0415
+    head("ETHER.FI — the unlabelled sETHFI funders, the holder-report wallets, and the burns without outflow")
+    spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
+    token, vault = spec["token"], spec["holders"][0]
+    labels = {k.lower(): v for k, v in (spec.get("sender_labels") or {}).items()}
+    for c in config.PROJECT_BY_NAME["Ether.fi"]["contracts"].values():
+        labels.setdefault(c["address"].lower(), c.get("purpose", "")[:70])
+    ref = {n: _safe_owners(a)[0] for n, a in (("buyback Safe 0x2f53", "0x2f5301a3D59388c509C65f8698f521377D41Fd0F"),
+                                              ("top-up Safe 0x3fb6", "0x3FB6784E263643656f386A0371644931133D7b78"))}
+    for a, why in ETHERFI_TRACE.items():
+        owners, t = _safe_owners(a)
+        bal = _bal(token, a, "ethereum")
+        print(f"\n  {a} — {why}\n    {_code(a, 'ethereum')}; ETHFI now "
+              + (f"{bal / 1e18:,.0f}" if bal is not None else "UNREACHABLE")
+              + (f"; Safe {t}-of-{len(owners)}" if owners else "; not a Safe"))
+        for n, o in ref.items():
+            if owners and o:
+                print(f"    owners shared with the {n}: {len(set(owners) & set(o))} of {len(owners)}")
+        ins, d = explorer_logs(1, token, [TRANSFER_TOPIC, None, _pad(a)])
+        by = {}
+        for e in ins or ():
+            s_ = "0x" + e["topics"][1][-40:]
+            by[s_] = by.get(s_, 0.0) + int(e["data"], 16) / 1e18
+        print(f"    ETHFI into it: {d}; largest senders:")
+        for s_, v in sorted(by.items(), key=lambda kv: -kv[1])[:5]:
+            print(f"      {v:>14,.0f}  {s_}  {labels.get(s_, '')[:70]}")
+    # the burns without outflow, from the cached streams
+    cache = LogCache()
+    zero = pad_address("0x0000000000000000000000000000000000000000")
+    burns = cache.load(stream_id(1, vault, [T, None, zero]))["events"]
+    outs = cache.load(stream_id(1, token, [T, pad_address(vault), None]))["events"]
+    out_tx = {str(e["transactionHash"]).lower() for e in outs}
+    cut = int((pd.Timestamp.now() - pd.Timedelta(days=days)).timestamp())
+    lone = [e for e in burns if int(e.get("timeStamp") or 0) >= cut and str(e["transactionHash"]).lower() not in out_tx]
+    print(f"\n  sETHFI burns with NO ETHFI out in the same transaction, last {days} days: {len(lone)}")
+    if not lone:
+        return
+    burners = {}
+    for e in lone:
+        b = "0x" + e["topics"][1][-40:]
+        n, tot = burners.get(b, (0, 0.0))
+        burners[b] = (n + 1, tot + int(e["data"], 16) / 1e18)
+    later = {}
+    for e in outs:
+        later.setdefault("0x" + e["topics"][2][-40:], []).append(int(e.get("timeStamp") or 0))
+    print("  burned FROM (share holder at the burn), largest first; 'paid later' = ETHFI from the vault to it afterwards:")
+    for b, (n, tot) in sorted(burners.items(), key=lambda kv: -kv[1][1])[:10]:
+        first = min(int(e["timeStamp"]) for e in lone if "0x" + e["topics"][1][-40:] == b)
+        paid = sum(1 for ts in later.get(b, ()) if ts > first)
+        print(f"    {b}  {n:>4} burn(s)  {tot:>14,.2f} sETHFI  {_code(b, 'ethereum')}  paid later: {paid} transfer(s)")
+    print(f"  a sample of {sample} transactions (to, function selector):")
+    for e in lone[:sample]:
+        h = e["transactionHash"]
+        tx = None
+        for url in _rpcs_for("ethereum"):
+            try:
+                tx = rpc(url, "eth_getTransactionByHash", [h]).get("result")
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        print(f"    {h}  to {(tx or {}).get('to')}  selector {str((tx or {}).get('input', ''))[:10]}")
+    print("  PASTE BACK the section: the selector names the function (look it up on the verified sETHFI contract);\n"
+          "  burns 'paid later' are a cooldown escrow (no gain to holders), never paid are a penalty / forfeit.")
 
 
 # ===== BLOCKWORKS TOKEN TRANSPARENCY FILINGS — THE PROJECTS' OWN LABELLED WALLETS (Jake, 2026-10-07 sweep). =====
@@ -3851,6 +4076,113 @@ def blockworks_filings(only: str | None = None):
           + (", ".join(f"{p} ({fid}, {n} address(es))" for p, (fid, n) in found.items()) or "none"))
     print(f"  Raw JSON cached in {BLOCKWORKS_CACHE}/ — attach those files (or paste this section) and the labelled")
     print("  wallets are wired with the filing as their source. Nothing was stored.")
+
+
+# ===== AERODROME — THE FILING'S WALLETS, LIQUID AND LOCKED (Jake's probes14, 2026-10-07) =====
+AERO_VE = "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"          # VotingEscrow (contracts@1ba30815 DeployCore-Base.json)
+AERO_FILING_WALLETS = {
+    "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a": "Team Wallet / AERO Pools Vote Power",
+    "0x834C0DA026d5F933C2c18Fa9F8Ba7f1f792fDa52": "Public Goods Wallet (Foundation)",
+    "0x51E171d2FDe9b37BBBb624A53Ef54959422388E4": "Protocol Grants / Flight School",
+    "0x623CF63A1fA7068EBBDBa9F2EB262613EaB557a1": "Buyback / Locked Funds",
+    "0x7269de76188E6597444D0859C4e5c336D3c39dDb": "Liquid AERO at TGE (Incentives)",
+    "0x5b1892b546002Ff3dd508500575bD6Bf7a101431": "Velodrome Foundation airdrop",
+}
+SEL_OWNER_TOKEN, SEL_LOCKED, SEL_SUPPLY = "0x8bf9d84c", "0xb45a3c0e", "0x047fc9aa"
+
+
+def _ve_locks(owner: str) -> tuple:
+    """(n locks, AERO locked, of which permanent) owned by `owner` in veAERO: balanceOf -> ownerToNFTokenIdList ->
+    locked(id) = (int128 amount, uint256 end, bool isPermanent) (IVotingEscrow.sol L10-14, L268, L344)."""
+    n = _bal(AERO_VE, owner, "base") or 0
+    tot = perm = 0.0
+    for i in range(int(n)):
+        tid = _uint(AERO_VE, SEL_OWNER_TOKEN + owner.lower()[2:].rjust(64, "0") + hex(i)[2:].rjust(64, "0"), "base")
+        if tid is None:
+            continue
+        w, _ = eth_call(AERO_VE, SEL_LOCKED + hex(tid)[2:].rjust(64, "0"), chain="base")
+        if not w or len(w) < 2 + 64 * 3:
+            continue
+        amt = int(w[2:66], 16)
+        amt = amt - (1 << 256) if amt >= 1 << 255 else amt
+        tot += amt / 1e18
+        perm += amt / 1e18 if int(w[130:194], 16) else 0.0
+    return int(n), tot, perm
+
+
+def aerodrome_filing_wallets():
+    """Each filing wallet's liquid AERO and the veAERO locks it OWNS; Aerodrome's on-chain circulating under our
+    convention (total - the filing wallets' liquid + locked - the airdrop distributor's AERO) and the like-for-like
+    with CoinGecko: CoinGecko excludes ve locks, so CoinGecko + every veAERO lock - the filing wallets' locks should
+    equal ours if CoinGecko's other exclusions are the filing wallets' liquid AERO. Reads only."""
+    import sqlite3                                         # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head("AERODROME — the Blockworks filing's wallets: liquid AERO and veAERO locks owned")
+    token = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["token"]["address"]
+    liq = lock = perm = 0.0
+    for a, label in AERO_FILING_WALLETS.items():
+        b = (_bal(token, a, "base") or 0) / 1e18
+        n, t, p = _ve_locks(a)
+        liq, lock, perm = liq + b, lock + t, perm + p
+        print(f"  {a}  {label:<38} liquid {b:>16,.0f}  ve locks {n:>4} = {t:>16,.0f} AERO (permanent {p:,.0f})")
+    drop = (_bal(token, "0xE4c69af018B2EA9e575026c0472B6531A2bC382F", "base") or 0) / 1e18
+    total = (_uint(token, "0x18160ddd", "base") or 0) / 1e18
+    ve_total = (_uint(AERO_VE, SEL_SUPPLY, "base") or 0) / 1e18
+    ours = total - liq - lock - drop
+    print(f"\n  AERO total supply {total:,.0f}; every veAERO lock (supply()) {ve_total:,.0f}")
+    print(f"  filing wallets: liquid {liq:,.0f} + locked {lock:,.0f} (permanent {perm:,.0f}); airdrop distributor {drop:,.0f}")
+    print(f"  ON-CHAIN CIRCULATING (our convention) = {ours:,.0f}")
+    try:
+        cg = sqlite3.connect("metrics.db").execute(
+            "SELECT value, date FROM metrics WHERE project='Aerodrome' AND metric='circulating_supply' "
+            "ORDER BY date DESC LIMIT 1").fetchone()
+    except Exception as e:  # noqa: BLE001
+        cg = None
+        print(f"  metrics.db unreadable — {e}")
+    if cg:
+        lfl = cg[0] + ve_total - lock
+        print(f"  CoinGecko {cg[0]:,.0f} ({cg[1][:10]}); like-for-like = CoinGecko + every lock - the filing's locks = "
+              f"{lfl:,.0f} vs ours {ours:,.0f} ({(ours / lfl - 1) * 100:+.2f}%)")
+    print("  PASTE BACK the section: the locks are wired as a per-owner read and the on-chain figure is compared\n"
+          "  like-for-like on Credibility.")
+
+
+def blockworks_wallet_balances():
+    """Every address in each cached Blockworks filing (.cache/blockworks, from blockworks_filings — no requests to
+    Blockworks), with the project token's balance at it, contract or not, and whether config already subtracts it.
+    The check before wiring a filing address: only addresses that HOLD tokens matter."""
+    import config                                          # noqa: PLC0415
+    head("BLOCKWORKS — the filings' addresses: what each holds of the project's token")
+    if not os.path.isdir(BLOCKWORKS_CACHE):
+        print(f"  no {BLOCKWORKS_CACHE}/ — run blockworks_filings first")
+        return
+    for proj, ticker in BLOCKWORKS_TICKERS.items():
+        path = os.path.join(BLOCKWORKS_CACHE, f"list-{ticker}.json")
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            listing = json.load(fh)
+        fids = [f.get("filing_id") for d in listing.get("data") or [] for f in d.get("filings") or []]
+        p = config.PROJECT_BY_NAME[proj]
+        tok = next((c for c in p.get("contracts", {}).values() if c["kind"] == "erc20_total_supply"), None)
+        wired = {c["address"].lower(): k for k, c in p.get("contracts", {}).items()}
+        for fid in fids:
+            fp = os.path.join(BLOCKWORKS_CACHE, f"{fid}.json")
+            if not os.path.exists(fp):
+                continue
+            with open(fp, encoding="utf-8") as fh:
+                addrs = _blockworks_addresses(json.load(fh))
+            print(f"\n  {proj} ({fid}): {len(addrs)} address(es); token "
+                  + (f"{tok['address']} on {tok['chain']}" if tok else "NOT ON FILE"))
+            for _sec, label, a, ctx in addrs:
+                if not a.startswith("0x") or tok is None:
+                    print(f"    {a}  (not EVM or no token on file)  {label[:40]}")
+                    continue
+                b = _bal(tok["address"], a, tok["chain"])
+                print(f"    {a}  {('%16s' % f'{b / 1e18:,.0f}') if b is not None else 'UNREACHABLE':>16}  "
+                      f"{_code(a, tok['chain']):<8} {('WIRED ' + wired[a.lower()]) if a.lower() in wired else 'not wired'}"
+                      f"  {label[:40]}  {ctx[:60]}")
+    print("\n  PASTE BACK: an address holding tokens and labelled unissued / treasury / team is wired as non-circulating.")
 
 
 # ===== SKY — BLOCK ANALITICA'S ENDPOINTS: WHAT THEY RETURN (Jake, 2026-10-07). =====
@@ -7044,7 +7376,8 @@ CHECKS = (
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
-    aethir_distributor_match,
+    aethir_distributor_match, fluid_igp137_wallet, morpho_merkl_campaigns, etherfi_sender_trace,
+    aerodrome_filing_wallets, blockworks_wallet_balances,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
