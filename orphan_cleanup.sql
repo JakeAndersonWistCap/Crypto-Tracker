@@ -4412,3 +4412,20 @@ SELECT metric, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(SU
 --  WHERE project = 'Near'
 --    AND metric IN ('actual_buyback_tokens', 'near_revenue_inflow_fe_tokens', 'near_revenue_inflow_1cs_tokens')
 --    AND source = 'nearblocks';
+
+-- ========================================================================================
+-- CG. NEAR: THE USD TWIN OF THE RETIRED SCAN BUYBACK (follows CF)  2026-10-07
+--     Jake's run after CF: CF removed the transaction-scan actual_buyback_tokens rows but their derived USD rows stayed
+--     (actual_buyback_usd, source 'derived:tokens*price'; Q0 $2.17M). The USD series is rebuilt at read time from the
+--     balance-change buyback (build_workbook._near_buyback_views), so the stored twin goes too. CG1 lists it; CG2
+--     removes ONLY NEAR's stored 'derived:tokens*price' rows.
+--     Run: python run_sql.py CG, then python run_sql.py --delete CG.
+-- ========================================================================================
+-- CG1. WHAT GOES: NEAR's stored USD buyback rows derived from the scan tokens.
+SELECT COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(SUM(value), 2) AS usd_total
+  FROM metrics
+ WHERE project = 'Near' AND metric = 'actual_buyback_usd' AND source = 'derived:tokens*price';
+
+-- CG2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'Near' AND metric = 'actual_buyback_usd' AND source = 'derived:tokens*price';

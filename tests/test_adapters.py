@@ -26499,3 +26499,34 @@ def test_geod_residual_counts_the_solana_side_once(monkeypatch, capsys):
     assert "custody - Solana supply = +5,239,825" in out
     # our set 516,000,000 - custody 280,000,000 + Solana 274,760,174.65
     assert "= CIRCULATING 510,760,175 GEOD vs Blockworks' 462,000,000 (+10.6%)" in out
+
+
+def test_near_balance_history_never_asks_nearblocks_for_more_than_365_rows(monkeypatch):
+    """Jake's run 2026-10-07 15:51: stats/balance?limit=400 -> HTTP 422 "Expected <=365", and the refusal of the first
+    wallet skipped all three, blanking NEAR's buyback. The request is capped at NearBlocks' maximum of 365 rows, whatever
+    config asks."""
+    import copy
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    monkeypatch.setattr(nearblocks, "today", lambda: pd.Timestamp("2026-10-07"))
+    near = copy.deepcopy(config.PROJECT_BY_NAME["Near"])
+    assert near["nearblocks"]["balance_history"]["limit"] <= 365
+    near["nearblocks"]["balance_history"]["limit"] = 1000            # even a config asking for more is capped
+    limits = []
+
+    class H:
+        def get(self, url, params=None, headers=None):
+            if "/stats/balance" in url:
+                limits.append(params["limit"])
+                if params["limit"] > 365:
+                    raise RuntimeError("HTTP 422 Invalid value: Expected <=365")
+                return {"data": [{"date": "2026-10-05", "amount": str(10 ** 24)}]}
+            return {"data": []}
+    out = FetchOutput()
+    nearblocks.NearBlocks(http=H(), last_dates={("Near", m): "2026-10-06" for m in near["nearblocks"]["metrics"]}
+                          ).run([near], 35, out)
+    assert limits == [365, 365, 365]
+    eod = out.frame().query("metric == 'buyback_fund_balance_eod'")
+    assert list(eod["value"]) == [3.0, 3.0], "all three wallets read; 10-05 and 10-06 stored"

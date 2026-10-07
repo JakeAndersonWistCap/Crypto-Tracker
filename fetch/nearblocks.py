@@ -107,6 +107,10 @@ CREDITS_PER_DAY = 333
 ROWS_PER_CREDIT = 25
 RATE_LIMIT_WAIT = 60.0
 FLOW_PER_PAGE = 50
+# stats/balance answers at most 365 rows: `limit` above that is refused with HTTP 422 ("Expected <=365", Jake's run
+# 2026-10-07 15:51), and the refusal of one wallet skipped all three. Capped here whatever config asks; history
+# older than a year would need paging by year (none of NEAR's three wallets has any: activity starts 2025-11).
+STATS_BALANCE_MAX_ROWS = 365
 
 _clock = time.monotonic   # module-level so tests can swap in a fake clock
 def _sleep(seconds: float) -> None:
@@ -289,7 +293,8 @@ class NearBlocks:
                 out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}; NOTHING STORED", TIER)
                 return
             try:
-                body = self._get(url, {"limit": int(bh.get("limit", 400))}, key)
+                body = self._get(url, {"limit": min(int(bh.get("limit", STATS_BALANCE_MAX_ROWS)),
+                                                    STATS_BALANCE_MAX_ROWS)}, key)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{metric}: {acct}: {self._scrub(spec, e)} — NOTHING STORED (all-or-nothing)", TIER)
                 return

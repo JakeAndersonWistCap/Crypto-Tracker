@@ -3303,7 +3303,9 @@ PROJECTS = [
             # never two wallets of three. actual_buyback_tokens = the day's change in the sum (build_workbook
             # _near_buyback_views): internal moves cancel, and the only outflows are between the three.
             "balance_history": {
-                "path": "/v3/accounts/{account}/stats/balance", "limit": 400,
+                # NearBlocks' maximum is 365 rows (HTTP 422 "Expected <=365" on Jake's run 2026-10-07 15:51). All
+                # three wallets' activity starts within the last year (fefunds 2025-11, 1cs 2026-01, buybacks 2026-03).
+                "path": "/v3/accounts/{account}/stats/balance", "limit": 365,
                 "accounts": ["fefundsadmin.sputnik-dao.near", "buybacks.multisignature.near",
                              "1csfundsadmin.sputnik-dao.near"],
                 "metric": "buyback_fund_balance_eod", "flow": "actual_buyback_tokens", "yocto_exponent": 24,
