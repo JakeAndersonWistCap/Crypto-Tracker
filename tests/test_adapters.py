@@ -13138,9 +13138,10 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
         and "explorer label" in r, r
     # RESOLVED 2026-09-24: NearBlocks' v1 account-txns endpoint reads the inflow directly, so
     # this no longer gaps as "wallet known, inflow not readable" — the route names the real read.
+    # SINCE 2026-10-07 14:17 the route is the three wallets' combined daily close (no outflow but between them).
     r, sug = reason("Near", "actual_buyback_tokens")
-    assert "buybacks.multisignature.near" in r and "near_account_flows" in r, r
-    assert "TRANSFER" in r and "NOT reconciled to a balance" in r, r
+    assert "buybacks.multisignature.near" in r and "COMBINED liquid close" in r, r
+    assert "internal moves cancel" in r and "stats/balance" in r, r
     # The three wallets were ALREADY on file from the 2026-09-23 read of the same adapter; this
     # round re-read it and added two facts rather than a second copy of the list.
     w = config.PROJECT_BY_NAME["Near"]["intents_revenue_wallets"]

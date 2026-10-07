@@ -17428,6 +17428,14 @@ def buyback_route(project_name: str) -> dict:
     # near_account_flows is the same idea — the inflow, never a balance — read from NearBlocks'
     # v1 account-txns endpoint instead. See fetch/nearblocks.py's near_account_flows docstring
     # for why it does NOT carry log_scans' wei-exact reconciliation to a balance.
+    # NEAR SINCE 2026-10-07 14:17: the change in the three revenue wallets' combined daily close (internal moves cancel).
+    bh = (p.get("nearblocks") or {}).get("balance_history") or {}
+    if bh.get("flow") == "actual_buyback_tokens" and dest == "hold":
+        return {"route": "treasury_inflow", "metric": bh["metric"],
+                "reason": (f"the bought tokens are HELD, so the flow is the daily change in the COMBINED liquid close "
+                           f"of {', '.join(bh['accounts'])} (NearBlocks stats/balance; build_workbook."
+                           f"_near_buyback_views): the only outflows are between the three, so internal moves cancel. "
+                           f"{bh.get('partial', '')}")}
     flow = next((f for f in p.get("near_account_flows") or [] if f.get("metric") == "actual_buyback_tokens"),
                None)
     if flow and dest == "hold":

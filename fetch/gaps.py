@@ -309,6 +309,10 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric == "fees_native_tokens" and metric in (nb.get("metrics") or {}):   # 2026-10-06: NEAR's txn_fee
         dedicated.append((f"NearBlocks {nb['metrics'][metric]['path']} field {nb['metrics'][metric]['field']!r} "
                           f"(fetch/nearblocks.py; needs {nb.get('key_env')})", "near"))
+    bh = nb.get("balance_history") or {}
+    if metric == bh.get("metric"):                     # NEAR's three wallets' daily close (2026-10-07 14:17)
+        dedicated.append((f"NearBlocks {bh['path']} for {', '.join(bh['accounts'])}, summed per day "
+                          f"(fetch/nearblocks.py; needs {nb.get('key_env')})", "near_buyback_wallets"))
     # NEAR's other two revenue wallets (2026-10-07): a NearBlocks inflow read, like the buyback wallet's
     flow = next((f for f in project.get("near_account_flows") or []
                  if f["metric"] == metric and metric != "actual_buyback_tokens"), None)
